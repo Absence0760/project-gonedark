@@ -86,4 +86,4 @@ lockstep-ready architecture.
 ## Q6 — Working title
 
 `Going Dark` is a placeholder chosen for the signature mechanic. Not locked; the repo
-and directory (`gonedark`) are trivial to rename.
+and directory (`project-gonedark`) are trivial to rename.
