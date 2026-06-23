@@ -1,0 +1,22 @@
+# TEMPLATE — copy the structure into an encrypted file, never commit this with real
+# values. Workflow:
+#
+#   sops infra-secrets/prod.sops.yaml      # opens $EDITOR; paste & fill; saves ENCRYPTED
+#
+# (.sops.yaml supplies the KMS key automatically.) Terraform reads it via
+# data "sops_file" → local.secrets["database.password"], etc. (see infra/secrets.tf).
+#
+# These are FAKE placeholders for shape only.
+
+database:
+  username: gonedark
+  password: REPLACE_ME
+
+jwt:
+  signing_key: REPLACE_ME
+
+# Add service credentials as the backend grows, e.g.:
+# stripe:
+#   secret_key: REPLACE_ME
+# telemetry:
+#   ingest_token: REPLACE_ME

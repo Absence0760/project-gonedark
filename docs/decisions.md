@@ -202,3 +202,36 @@ stack — none currently true.
 - iOS scripting caveat stands: no JIT, so any embedded VM (e.g. Lua) runs interpreted.
 - Architecture/platforms docs now treat Rust as the language; C++ remains a noted
   fallback only if D10 is ever reversed.
+
+---
+
+## D11 — Local-first dev (Docker + committed defaults); prod secrets via sops; infra via Terraform
+
+**Decision:** Three locked conventions for config, services, and secrets:
+- **Clone-and-run local development.** `.env.development` is committed with safe,
+  non-secret defaults; local services (Postgres, Redis) run via Docker (`compose.yaml`).
+  A fresh clone runs with no cloud access, no secrets, no manual config. Personal
+  overrides go in gitignored `.env.local`.
+- **Production secrets in `./infra-secrets/`, KMS-encrypted with sops.** Only
+  `*.sops.yaml` (ciphertext) is committable; `.gitignore` blocks all plaintext in that
+  directory. Consumed by Terraform via the `carlpett/sops` provider (`data "sops_file"`
+  → `local.secrets[...]`), or decrypt-to-tfvars as the alternative.
+- **All cloud infrastructure is Terraform** (`infra/`), in this project's own AWS
+  account + estate baseline; tfenv-pinned (1.15.0). No click-ops.
+
+**Why:** Clone-and-run removes the credential dance from every contributor's (and AI
+agent's) first experience, which compounds over the project's life. Encrypted-by-default
+secrets + Terraform-only infra make the prod path auditable, reproducible, and safe to
+keep in git — matching the rest of the personal estate.
+
+**Estate caveat:** the global convention keeps prod secrets in the *separate private*
+`Absence0760/infra-secrets` repo, not in (often public) project repos. This project
+keeps them in-repo per the explicit `./infra-secrets` instruction; KMS encryption makes
+that safe (same pattern meryl-green-designs uses). If this repo is published and shipping
+ciphertext is undesirable, lift `infra-secrets/` into the private repo and re-point
+`infra/secrets.tf` — nothing else changes.
+
+**Status:** scaffolding ahead of code (no backend/services exist yet). The conventions
+and `.gitignore` guards are in place so nothing is retrofitted. See
+[`infrastructure.md`](infrastructure.md), [`../infra/README.md`](../infra/README.md),
+[`../infra-secrets/README.md`](../infra-secrets/README.md).

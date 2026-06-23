@@ -1,0 +1,13 @@
+# sops creation rules for this project's production secrets.
+#
+# Encryption uses AWS KMS via your SSO-authenticated profile (no local age key — see
+# ~/CLAUDE.md "sops backend"). The key alias below is created by the estate baseline
+# (`new-project-account.sh gonedark`). Replace <account-id>/<region> after bootstrap.
+#
+# encrypted_regex ensures only values are encrypted, keeping keys/comments readable in
+# diffs while never exposing a secret.
+
+creation_rules:
+  - path_regex: \.sops\.yaml$
+    kms: "arn:aws:kms:us-east-1:<account-id>:alias/gonedark-sops"
+    encrypted_regex: "^(data|stringData|password|secret|token|key|.*_KEY|.*_SECRET)$"

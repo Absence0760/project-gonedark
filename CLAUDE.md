@@ -18,6 +18,7 @@ until the first code phase begins (roadmap Phase 0/1).
 | `docs/game-design.md` | The design — pillars, embodiment, the going-dark vision model, unit-AI philosophy |
 | `docs/architecture.md` | Engine & systems reference — native core, deterministic sim, Vulkan, lockstep netcode |
 | `docs/platforms.md` | Cross-platform plan — Windows/Linux/Android/iOS, shared core + native backends |
+| `docs/infrastructure.md` | Local dev (Docker), env/config files, Terraform infra, sops secrets |
 | `docs/roadmap.md` | Build phases, dev workflow, top risks |
 | `docs/decisions.md` | Decision log (ADR-style, D1…Dn). The *why* behind every locked choice |
 | `docs/open-questions.md` | Unresolved design forks (Q1…Qn) with current leans |
@@ -74,6 +75,13 @@ Do not "improve" past them without the user explicitly reopening the decision.
    `{x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-linux-android,
    aarch64-apple-ios}` — not one
    platform. (`platforms.md` §7.)
+
+8. **Clone-and-run locally; never commit a plaintext secret.** Local dev runs against
+   Docker (`compose.yaml`) using committed, non-secret defaults in `.env.development` —
+   keep it working with zero setup. Real secrets are KMS-encrypted (sops) in
+   `infra-secrets/` (only `*.sops.yaml` is committable — `.gitignore` blocks plaintext
+   there). All cloud infra is Terraform in `infra/`; no click-ops. Never put a real
+   secret in `.env*`, code, or any tracked file. (`docs/infrastructure.md`.)
 
 ---
 

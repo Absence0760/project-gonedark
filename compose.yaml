@@ -1,0 +1,43 @@
+# Local development services. Runs everything the game backend depends on, locally.
+#
+#   docker compose up -d        # start
+#   docker compose ps           # status
+#   docker compose down         # stop (add -v to wipe data)
+#
+# Defaults below mirror .env.development and are inlined with `${VAR:-default}`, so
+# `docker compose up -d` works with zero setup on a fresh clone. The host Postgres
+# port defaults to 5434 to coexist with this workstation's Supabase (5432) and
+# native (5433) Postgres servers.
+
+name: gonedark-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gonedark}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gonedark}
+      POSTGRES_DB: ${POSTGRES_DB:-gonedark_dev}
+    ports:
+      - "${POSTGRES_PORT:-5434}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gonedark} -d ${POSTGRES_DB:-gonedark_dev}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

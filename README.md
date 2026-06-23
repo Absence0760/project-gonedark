@@ -50,6 +50,7 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/game-design.md`](docs/game-design.md) | The game design doc — concept, mechanics, the going-dark rule, unit AI philosophy |
 | [`docs/architecture.md`](docs/architecture.md) | Engine & systems architecture (native core, deterministic sim, Vulkan, netcode) |
 | [`docs/platforms.md`](docs/platforms.md) | Cross-platform plan — Windows/Linux/Android/iOS, one shared core with platform-optimized backends |
+| [`docs/infrastructure.md`](docs/infrastructure.md) | Local dev (clone-and-run via Docker), config/env files, Terraform infra, sops secrets |
 | [`docs/roadmap.md`](docs/roadmap.md) | Build phases, milestones, and the top risks |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
@@ -63,3 +64,17 @@ Vulkan, Metal), developed on Linux desktop first and shipping Android-first. See
 via `wgpu`) — see [`docs/decisions.md`](docs/decisions.md) D10 for the reasoning, and
 the architecture doc for the viable fallbacks (Unity DOTS, Godot + GDExtension) if the
 custom path is ever abandoned.
+
+## Local development
+
+A fresh clone runs against local Docker services with committed, non-secret defaults —
+no cloud access or secrets needed:
+
+```
+docker compose up -d        # Postgres + Redis (backend deps)
+cargo run                   # loads .env.development   (once engine code exists)
+```
+
+Production secrets are KMS-encrypted (sops) in `infra-secrets/` and cloud infra is
+Terraform in `infra/` — neither is touched for local work. Full details in
+[`docs/infrastructure.md`](docs/infrastructure.md).
