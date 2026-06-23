@@ -15,18 +15,19 @@
 
 ## The decision in one page
 
-A custom **C++20 engine core** on the Android NDK — data-oriented ECS, **Vulkan**
-renderer, deterministic fixed-tick simulation, lockstep-capable netcode. A thin
-Kotlin/JNI shim handles OS lifecycle, input, billing, services.
+A custom **Rust engine core** — data-oriented ECS, **`wgpu`** renderer (native
+Vulkan/D3D12/Metal per device), deterministic fixed-tick simulation, lockstep-capable
+netcode. Thin platform shims (Kotlin/JNI on Android, Swift/Obj-C on iOS) handle OS
+lifecycle, input, billing, services.
 
 | Layer | Choice |
 |---|---|
-| Core | C++20 · hand-rolled / EnTT ECS |
-| Render | Vulkan 1.1 · GPU-driven instancing |
+| Core | Rust · ECS (Bevy/hecs/legion or hand-rolled) |
+| Render | `wgpu` → Vulkan / D3D12 / Metal · GPU-driven instancing |
 | Sim | 30 Hz fixed · deterministic · fixed-point |
 | Net | Lockstep · input-delay · desync checks |
-| Platform | Android NDK · Kotlin/JNI shim · AAudio |
-| Build | CMake + Gradle · arm64-v8a · Swappy |
+| Platform | per-OS shim (Kotlin/JNI, Swift) · AAudio/CoreAudio |
+| Build | cargo (+ Gradle/Xcode for store packaging) · arm64-v8a |
 
 The hard constraint of an RTS is not graphics — it is **simulating many independent
 agents deterministically inside a fixed budget**. That is solved by controlling
@@ -34,15 +35,23 @@ memory layout, threading, and the sim loop down to the cache line. Managed runti
 and general-purpose engines abstract exactly those controls away. The trade is build
 cost for ceiling: native gives you the ceiling.
 
-### Language — C++ or Rust (a performance wash)
+### Language — Rust *(decided — [decisions.md](decisions.md) D10)*
 
-Both compile through LLVM to native machine code; neither is faster. Decide on
-engineering values:
-- **C++20** — mature Vulkan + NDK tooling, deepest middleware/talent pool, simpler
-  hot-reload. Pick for ecosystem maturity.
-- **Rust** — compile-time data-race freedom (big for the parallel sim), ownership
-  fits ECS, cargo tooling; younger mobile-gamedev ground, trickier hot-reload. Pick
-  for safety on the threaded sim. (`ash`/`wgpu` + `hecs`/`legion`, or Bevy.)
+**The engine is Rust.** Both Rust and C++ compile through LLVM to native code, so
+performance is a wash; the decision is on engineering values over a long horizon. For a
+greenfield, small-team, custom-native, determinism-critical engine across four
+platforms, Rust wins on the load-bearing axes:
+- **Compile-time data-race freedom** for the heavily-threaded deterministic sim — its
+  worst bugs are silent, non-reproducible races and determinism leaks, and Rust kills
+  that whole class at build time. (The decisive factor.)
+- **`wgpu`** gives native Vulkan/D3D12/Metal per device for free (see Rendering / RHI).
+- Type-system-enforceable determinism (newtype fixed-point), cargo toolchain simplicity,
+  mature ECS/math/physics crates (Bevy/hecs, glam, rapier).
+
+The one real cost is engine-code hot-reload (no stable ABI) — mitigated by
+scripting/data hot-reload and the automated build loop (see roadmap). The C++ snippets
+below are illustrative pseudocode; every system maps 1:1 to Rust (`wgpu` + `hecs`/
+`legion`, or Bevy).
 
 ### Pragmatic fallbacks (if time-to-market beats peak performance)
 
@@ -67,12 +76,12 @@ Presentation   (variable render rate) — HUD/UI, camera + interpolation, VFX,
 Game systems   (30 Hz) — combat & suppression, cover / LoS, territory & resources,
                fog of war, abilities / orders
         ▼
-Engine core    (C++20, data-oriented) — ECS world + scheduler, job system,
+Engine core    (Rust, data-oriented) — ECS world + scheduler, job system,
                pathfinding (flow fields + HPA*), collision / spatial hash,
                allocators, netcode
         ▼
-Platform       (Android NDK + JNI) — Vulkan surface, AAudio, input/touch,
-               Swappy frame pacing, Kotlin/JNI bridge, storage / mmap
+Platform       (per-OS, via PAL) — wgpu surface, audio, input/touch,
+               frame pacing, native shim (JNI/Swift), storage / mmap
 ```
 
 **Side channel:** an offline asset pipeline cooks source art/audio into packed,
@@ -238,10 +247,10 @@ when render rate rises — which is why 120 FPS is reachable.
 
 | Concern | Choice | Why |
 |---|---|---|
-| Language | C++20 (Rust viable) | No GC, full memory/threading control, mature Vulkan + NDK tooling |
+| Language | **Rust** (D10) | No GC, full memory/threading control, compile-time data-race freedom for the threaded sim |
 | Architecture | Data-oriented ECS | Cache-friendly iteration over hundreds of agents |
-| Graphics | Vulkan 1.1 | Low-overhead, multithreaded command buffers, broad modern-Android support |
-| Audio | AAudio + Opus | Low-latency native path; compact compressed assets |
+| Graphics | `wgpu` → Vulkan/D3D12/Metal | Low-overhead, multithreaded, native backend auto-selected per device |
+| Audio | AAudio/CoreAudio + Opus | Low-latency native path; compact compressed assets |
 | Networking | Deterministic lockstep | Bandwidth scales with players, not units |
-| Platform shim | Kotlin / JNI | Lifecycle, input, billing, Play services — thin, off the hot path |
-| Build | CMake + Gradle | Ship arm64-v8a; Swappy for frame pacing |
+| Platform shim | Kotlin/JNI · Swift/Obj-C | Lifecycle, input, billing, platform services — thin, off the hot path |
+| Build | cargo (+ Gradle/Xcode packaging) | Ship arm64-v8a; native frame pacing per platform |

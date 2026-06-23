@@ -34,17 +34,18 @@ These are the load-bearing decisions. Violating any of them silently breaks the 
 Do not "improve" past them without the user explicitly reopening the decision.
 
 1. **No floats in the simulation. Ever.** The sim is **fixed-point** so it is
-   bit-identical across devices, CPU architectures, and compilers. Floats live *only*
-   in rendering. No `libm` transcendentals in sim (use fixed-point / LUTs); fast-math
-   disabled. Floats leaking into the sim desync lockstep **silently** — there is no
-   error, just divergence. (`decisions.md` D7 context, `architecture.md` determinism
-   checklist.)
+   bit-identical across devices, CPU architectures, and compilers. No `f32`/`f64` in
+   sim/core types or math; floats live *only* in rendering. No `std`/libm
+   transcendentals in sim (use fixed-point / LUTs). Floats leaking into the sim desync
+   lockstep **silently** — there is no error, just divergence. (`decisions.md` D7
+   context, `architecture.md` determinism checklist.)
 
 2. **One shared deterministic core; the platform layer never leaks into it.** Game
    logic (ECS, sim, systems, AI, netcode) is identical on all four platforms. Only the
-   thin **PAL** (GPU/audio/input/window/storage) is per-platform. The core carries
-   **zero** platform `#include`s. Never fork game logic per platform — it kills
-   cross-play and multiplies maintenance. (`decisions.md` D9.)
+   thin **PAL** (GPU/audio/input/window/storage) is per-platform. The core crate
+   depends on **no** platform/windowing/GPU crates (`wgpu`, `winit`, JNI, etc.). Never
+   fork game logic per platform — it kills cross-play and multiplies maintenance.
+   (`decisions.md` D9.)
 
 3. **Unit AI is a literal executor, not a strategist.** Units hold their last order +
    a simple stance and do *exactly* that. Never give units autonomous "smart"
@@ -70,7 +71,8 @@ Do not "improve" past them without the user explicitly reopening the decision.
 
 7. **Cross-platform lockstep needs a full CI matrix.** When netcode/sim code exists,
    per-tick checksum diffing must run across
-   `{Windows/MSVC, Linux/Clang, Android/Clang-arm64, iOS/Clang-arm64}` — not one
+   `{x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-linux-android,
+   aarch64-apple-ios}` — not one
    platform. (`platforms.md` §7.)
 
 ---
@@ -92,12 +94,16 @@ Do not "improve" past them without the user explicitly reopening the decision.
 
 ## When code eventually starts (not yet)
 
-- **Language is undecided** — C++20 or Rust (`decisions.md` D8). Cross-platform leans
-  Rust because `wgpu` gives the four native backends nearly free (`platforms.md` §3).
-  Don't assume one until the user picks.
-- **Build:** CMake meta-build, per-platform toolchain files; Android via CMake+Gradle.
+- **Language: Rust** (`decisions.md` D10). Renderer via `wgpu` (native
+  Vulkan/D3D12/Metal per device); ECS via Bevy/hecs/legion or hand-rolled; windowing
+  via `winit`; FFI to Kotlin/JNI (Android) and Swift/Obj-C (iOS) for platform services.
+  C++ is only a fallback if D10 is ever reversed.
+- **Build:** `cargo` meta-build; `cargo-ndk` + Gradle (Android), `cargo` + Xcode (iOS).
 - **The PAL boundary goes in from the first commit of engine code** — retrofitting
   portability is far costlier than building to it.
+- **Mind the one Rust tradeoff:** weaker engine-code hot-reload (no stable ABI). Lean on
+  scripting/data hot-reload and the automated build loop; reach for `hot-lib-reloader`/
+  `dexterous_developer` only if those aren't enough.
 - Workstation toolchain conventions (Android NDK, Rust, etc.) live in the user's global
   `~/CLAUDE.md`, not here.
 

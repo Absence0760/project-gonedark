@@ -9,7 +9,7 @@
 
 - **The game architecture is identical on every platform.** ECS, the deterministic
   fixed-point sim, game systems, pathfinding, AI, netcode — pure portable code
-  (C++20 or Rust), no platform dependencies. It compiles and runs bit-identically
+  (Rust), no platform dependencies. It compiles and runs bit-identically
   everywhere.
 - **The platform *backend* is native and optimized per device.** GPU API, audio,
   windowing, input, storage — each platform gets the path its hardware/OS does best
@@ -43,7 +43,7 @@ per-device optimization done correctly.
         │          │          │             │          │
    ┌────┴────┐  per-platform native backends chosen at build time
    │ Windows │  D3D12 (or Vulkan) · WASAPI/XAudio2 · Win32 · mouse+kbd/pad
-   │ Linux   │  Vulkan · PipeWire/ALSA · Wayland/X11 (SDL3) · mouse+kbd/pad
+   │ Linux   │  Vulkan · PipeWire/ALSA · Wayland/X11 (winit) · mouse+kbd/pad
    │ Android │  Vulkan 1.1 · AAudio · NDK+JNI · touch/gyro
    │ iOS     │  Metal · CoreAudio/AVAudioEngine · UIKit · touch/gyro
    └─────────┘
@@ -56,10 +56,10 @@ per-device optimization done correctly.
 | Sim / ECS / AI / netcode | **100% shared** | — | — | — | — |
 | GPU API (RHI backend) | RHI interface | **D3D12** (Vulkan fallback) | **Vulkan** | **Vulkan 1.1** | **Metal** |
 | Audio | mixer/logic shared | WASAPI / XAudio2 | PipeWire / ALSA | AAudio | CoreAudio |
-| Windowing / lifecycle | event abstraction | Win32 | Wayland/X11 (SDL3) | NDK + Kotlin/JNI | UIKit + CAMetalLayer |
+| Windowing / lifecycle | `winit` + event abstraction | Win32 | Wayland/X11 | NDK + Kotlin/JNI | UIKit + CAMetalLayer |
 | Input | order/intent layer shared | mouse+kbd, gamepad | mouse+kbd, gamepad | touch, gyro | touch, gyro |
 | Filesystem / mmap | VFS interface | Win32 | POSIX | POSIX + AAsset | POSIX + bundle |
-| Build output | — | `.exe` (MSVC/clang) | ELF (Flatpak/AppImage) | `.aab`/`.apk` | `.ipa` |
+| Build output | `cargo` (target triple) | `.exe` | ELF (Flatpak/AppImage) | `.aab`/`.apk` | `.ipa` |
 
 The **Platform Abstraction Layer (PAL)** is the set of narrow interfaces between the
 core and these backends. Keep it *thin* — only what genuinely differs crosses it.
@@ -67,41 +67,37 @@ core and these backends. Keep it *thin* — only what genuinely differs crosses 
 ## 3. Rendering — the RHI (Render Hardware Interface)
 
 The renderer talks to a small internal RHI; each platform implements it with its
-native API. Three realistic ways to get there:
+native API. **With Rust chosen ([`decisions.md`](decisions.md) D10), the RHI is
+[`wgpu`](https://wgpu.rs):** it targets Vulkan (Linux/Android/Windows), **D3D12**
+(Windows), and **Metal** (iOS), and *picks the optimal backend per device
+automatically* — the exact per-device-native goal, handed to you. No hand-rolled RHI,
+no MoltenVK translation layer, no per-platform renderer rewrite.
 
-- **If the engine is Rust:** use **`wgpu`**. It already targets Vulkan (Linux/Android/
-  Windows), **D3D12** (Windows), and **Metal** (iOS) and *picks the optimal backend
-  per device automatically*. This is the cleanest path to the exact goal here and is a
-  strong reason to lean Rust for a multi-platform target. (See
-  [`decisions.md`](decisions.md) D8 — language is still open.)
-- **If the engine is C++:** either hand-roll a thin RHI over Vulkan + Metal + D3D12,
-  or adopt a multi-backend layer — **The Forge** (AAA, Vulkan/D3D12/Metal, shipping
-  games), **bgfx**, or **Diligent Engine**. Hand-rolling gives the most control (the
-  whole point of going native); a library gets you cross-platform faster.
-- **Pragmatic shortcut:** author one **Vulkan** renderer and run it on iOS via
-  **MoltenVK** (Vulkan-over-Metal). Ships on all four with a single backend, then a
-  *native Metal* path can be added later only if iOS profiling demands it. Lowest
-  effort to first-playable-everywhere; slightly off "fully native per device" until
-  the Metal backend lands.
+For reference, had the engine been C++, the equivalents would have been: hand-roll a
+thin RHI over Vulkan + Metal + D3D12, adopt a multi-backend layer (**The Forge**,
+**bgfx**, **Diligent Engine**), or take the pragmatic shortcut of one **Vulkan**
+renderer run on iOS via **MoltenVK**. `wgpu` makes all of that unnecessary — it's one
+of the decisive reasons Rust won the language call.
 
-**Recommendation:** if Rust → `wgpu` and you're basically done. If C++ → start with the
-Vulkan + MoltenVK shortcut to hit all four platforms, add a native Metal (and optional
-D3D12) backend as an optimization pass, not a prerequisite.
+**Recommendation:** `wgpu` for all four platforms. Drop to a raw backend (e.g. `ash`
+for Vulkan) only for a specific hotspot if profiling ever demands it — not up front.
 
 > **macOS bonus:** an iOS Metal backend extends to macOS for nearly free. Not a target
 > now, but worth knowing the door is open.
 
-## 4. Windowing / audio / input — collapse the PAL with SDL3
+## 4. Windowing / audio / input — the rest of the PAL (Rust crates)
 
-Most of the non-GPU PAL surface can be handled by **SDL3**, which covers windowing,
-input, gamepad, and audio across **all four** targets. That leaves you to hand-roll
-only the RHI and a few platform services (billing, push, mmap specifics). On Linux
-this also gives you clean **Wayland** support out of the box.
+With Rust + `wgpu`, the canonical pairing is **`winit`** for windowing/lifecycle/input
+across all four targets (clean **Wayland** support on Linux, Android via
+`android-activity`, iOS supported), **`gilrs`** for gamepad, and **`cpal`** (or a
+higher-level engine like `kira`/`rodio`) for audio backending to WASAPI, CoreAudio,
+AAudio, and PipeWire/ALSA — native per platform, one API. (The **`sdl3`** crate is a
+single-dependency alternative that bundles windowing+input+audio if you'd rather not
+assemble the pieces.) That leaves you to hand-roll only a few platform services
+(billing, push, mmap specifics) behind the PAL.
 
-Audio alternative if not via SDL: **miniaudio** (single-header) backends to WASAPI,
-CoreAudio, AAudio, PipeWire/ALSA — native per platform, one API. Either way, the
-strategic-layer audio mix that bleeds into the embodied "world goes dark" view (design
-doc §6) is engine-side and identical everywhere.
+The strategic-layer audio mix that bleeds into the embodied "world goes dark" view
+(design doc §6) is engine-side and identical everywhere.
 
 ## 5. Input — the real per-platform divergence
 
@@ -146,23 +142,25 @@ kind. That means:
   platform/compiler/arch from day one** — not just Android. Cross-arch determinism is
   the single thing that makes cross-play possible, and it desyncs *silently* if any
   platform diverges. This extends the determinism checklist in
-  [`architecture.md`](architecture.md) to a build matrix:
-  `{Windows/MSVC-x64, Linux/Clang-x64, Android/Clang-arm64, iOS/Clang-arm64}`.
+  [`architecture.md`](architecture.md) to a build matrix (all Rust/LLVM, varying
+  target triple): `{x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu,
+  aarch64-linux-android, aarch64-apple-ios}`.
 - iOS caveat for any scripting VM: **no JIT on iOS** — run Lua (or similar) in
   interpreter mode; LuaJIT's JIT is unavailable. Affects the scripting-hot-reload dev
   convenience (roadmap), not shipping determinism.
 
 ## 8. Build & distribution
 
-Unify on **CMake** as the meta-build (already chosen for Android via CMake+Gradle),
-with one toolchain file per target:
+**`cargo`** is the meta-build; each platform is a target triple plus the store
+wrapper its ecosystem requires (`cargo-ndk` → Gradle for Android, `cargo` → Xcode for
+iOS).
 
-| Platform | Toolchain | Package | Store / channel | Notes |
+| Platform | Build | Package | Store / channel | Notes |
 |---|---|---|---|---|
-| Linux | GCC/Clang | AppImage or **Flatpak** | Flathub, itch, Steam | Easiest desktop bring-up; your dev OS |
-| Windows | MSVC or clang-cl | `.exe` + installer | Steam, itch | D3D12 needs PIX for profiling |
-| Android | NDK + Gradle | `.aab` | Google Play | Existing primary target |
-| iOS | Xcode + clang | `.ipa` | App Store | **Needs a macOS build host**, code signing, review |
+| Linux | `cargo` (gnu triple) | AppImage or **Flatpak** | Flathub, itch, Steam | Easiest desktop bring-up; your dev OS |
+| Windows | `cargo` (msvc triple) | `.exe` + installer | Steam, itch | wgpu picks D3D12; PIX still works for profiling |
+| Android | `cargo-ndk` + Gradle | `.aab` | Google Play | Existing primary target |
+| iOS | `cargo` + Xcode | `.ipa` | App Store | **Needs a macOS build host**, code signing, review |
 
 **Friction ranking (low→high to bring up):** Linux ≈ Windows (desktop, mouse+kbd,
 Vulkan/D3D12) → Android (existing) → **iOS** (Apple toolchain, macOS build host,
@@ -182,7 +180,7 @@ Develop on desktop from day one for fast iteration; ship in risk order.
   pass. Desktop mouse+kbd controls mature here.
 - **Phase 3 — Stand up cross-platform lockstep + the full checksum CI matrix.** Don't
   let platforms diverge before this gate.
-- **Phase 4 — Add iOS.** Metal backend (or MoltenVK shortcut first), Apple toolchain,
+- **Phase 4 — Add iOS.** `wgpu`'s native Metal backend, Apple toolchain,
   signing, review. Last because it carries the most external friction.
 
 ## 10. Risks specific to going cross-platform
@@ -192,6 +190,6 @@ Develop on desktop from day one for fast iteration; ship in risk order.
 | Platform code leaks into the core, killing portability | Enforce the PAL boundary from Phase 0; core has zero platform `#include`s; CI builds the core standalone |
 | Cross-arch sim divergence → silent desync | Fixed-point only; checksum-diff CI across the full platform/compiler/arch matrix from day one |
 | iOS toolchain/process shock | Plan for a macOS build host + signing + review early; don't discover it at ship time |
-| Renderer rewritten N times | One RHI; `wgpu` (Rust) or Vulkan+MoltenVK shortcut (C++) before native D3D12/Metal optimization |
+| Renderer rewritten N times | One RHI — `wgpu` provides the native per-device backend; drop to a raw backend only for a profiled hotspot |
 | Controls good on one input class, bad on another | Phase 0 prototypes **both** touch and mouse+kbd; intent layer keeps the core input-agnostic |
 | Maintenance multiplies | Shared core is non-negotiable; only the thin PAL is per-platform |

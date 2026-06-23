@@ -59,6 +59,7 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 **Pre-production / design.** Target platforms: **Windows, Linux, Android, iOS** — one
 shared deterministic core with platform-optimized backends (D3D12/Vulkan, Vulkan,
 Vulkan, Metal), developed on Linux desktop first and shipping Android-first. See
-[`docs/platforms.md`](docs/platforms.md). Engine direction: custom native (C++20 or
-Rust — Rust's `wgpu` is a strong cross-platform argument) — see the architecture doc
-for the reasoning and the viable fallbacks (Unity DOTS, Godot + GDExtension).
+[`docs/platforms.md`](docs/platforms.md). Engine: **custom native in Rust** (renderer
+via `wgpu`) — see [`docs/decisions.md`](docs/decisions.md) D10 for the reasoning, and
+the architecture doc for the viable fallbacks (Unity DOTS, Godot + GDExtension) if the
+custom path is ever abandoned.

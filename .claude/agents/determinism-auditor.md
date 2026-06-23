@@ -19,26 +19,31 @@ there).
 
 ## What to flag (ordered by severity)
 
-1. **Floats/doubles in the sim.** Any `float`/`double` in core/sim types, component
-   data, or sim math. This is the #1 desync cause. Fixed-point only.
-2. **Non-deterministic transcendentals.** Calls to `libm` (`sinf`, `cos`, `sqrt`,
-   `pow`, …) or `std::` math in sim paths. Must use fixed-point or lookup tables.
-   Flag any build without fast-math disabled for sim TUs.
-3. **Unstable iteration order.** Iterating `unordered_map`/`HashMap`/hash sets in sim
-   logic, or anything whose order varies by run/pointer/insertion-address. Require
-   arrays or sorted keys.
+The engine is **Rust** (decisions.md D10); patterns below lead with Rust, with C/C++
+equivalents in case of FFI shims.
+
+1. **Floats in the sim.** Any `f32`/`f64` (C/C++: `float`/`double`) in core/sim types,
+   component data, or sim math. This is the #1 desync cause. Fixed-point only.
+2. **Non-deterministic transcendentals.** `f32::sin/cos/sqrt/powf`, `libm`, or `std`
+   float math in sim paths (C/C++: `sinf`, `pow`, …). Must use a fixed-point crate or
+   lookup tables.
+3. **Unstable iteration order.** Iterating `std::collections::HashMap`/`HashSet`
+   (C/C++: `unordered_map`/hash sets) in sim logic, or anything whose order varies by
+   run/seed/address. Require `Vec`, `BTreeMap`, or sorted keys. Note: Rust's `HashMap`
+   is randomly seeded by default — especially dangerous here.
 4. **Unseeded / divergent RNG.** Any randomness in sim not driven by the seeded
-   lockstep RNG with an identical call sequence on every peer. Flag `rand()`,
-   `std::random_device`, time-seeded generators, per-platform RNG.
-5. **Pointer/address-dependent state.** Raw pointers stored in sim state, hashing on
-   addresses, serialization that captures pointers — all vary per run/device.
-6. **Uninitialized reads** in sim state; undefined-order evaluation; reliance on
-   `size_t`/`long` widths that differ across 32/64-bit or x64/arm64.
-7. **Platform leakage into the core.** Any platform `#include` (Vulkan/Metal/D3D12,
-   Win32, NDK/JNI, UIKit, SDL) reachable from sim/core code — breaks the shared-core
-   boundary (CLAUDE.md invariant 2).
+   lockstep RNG with an identical call sequence on every peer. Flag `rand::thread_rng`,
+   `getrandom`, time-seeded generators (C/C++: `rand()`, `std::random_device`).
+5. **Address-dependent state.** Hashing on pointer/`*const`/reference addresses, or
+   serialization that captures them — varies per run/device.
+6. **Width/platform-dependent integers.** Reliance on `usize`/`isize` (C/C++:
+   `size_t`/`long`) in serialized or checksummed sim state — differs across 32/64-bit.
+   Pin sim state to fixed-width types (`i32`/`u64`/…).
+7. **Platform leakage into the core.** Any dependency on `wgpu`/`winit`/JNI/platform
+   crates (C/C++: Vulkan/Metal/Win32/NDK/UIKit/SDL `#include`s) reachable from sim/core
+   — breaks the shared-core boundary (CLAUDE.md invariant 2).
 8. **Wall-clock / frame-time in sim.** Sim must advance on fixed ticks driven by
-   orders, never on `delta`/real time.
+   orders, never on `Instant::now()`/`delta`/real time.
 9. **Missing cross-platform checksum CI.** If netcode exists, verify per-tick checksum
    diffing runs across the full `{Windows, Linux, Android, iOS}` matrix, not one
    platform.

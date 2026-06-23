@@ -116,6 +116,9 @@ change — it cannot cause desyncs and needs no special pause machinery.
 
 ## D8 — Pre-production is design-only; engine direction is custom-native with a live fallback
 
+> **Language resolved in [D10](#d10--engine-language-rust): Rust.** The "C++ or Rust"
+> openness below is superseded; the rest of D8 stands.
+
 **Decision:** Target Android-first (arm64-v8a, Vulkan 1.1). Lead direction is a custom
 native engine (C++20 or Rust — a performance wash; decide on engineering values).
 Keep Unity DOTS / Godot+GDExtension as a live fallback until the vertical slice is
@@ -146,11 +149,56 @@ per-tick checksum CI runs across the whole platform/compiler/arch matrix from da
 
 **Consequences:**
 - A **Platform Abstraction Layer (PAL)** boundary is enforced from Phase 0; the core
-  carries zero platform includes. SDL3 can collapse most of the non-GPU PAL.
-- The renderer talks to one **RHI**; `wgpu` (if Rust) or a Vulkan+MoltenVK shortcut (if
-  C++) hits all four before any native D3D12/Metal optimization pass — which
-  **strengthens the Rust option** in the still-open language decision (D8).
+  carries zero platform dependencies (`winit` collapses most of the non-GPU PAL).
+- The renderer talks to one **RHI** — `wgpu` (native Vulkan/D3D12/Metal per device)
+  hits all four targets with no per-platform renderer. *(This was a decisive factor in
+  later choosing Rust as the engine language — see [D10](#d10--engine-language-rust).)*
 - iOS carries the most external friction (macOS build host, signing, review, Metal) and
   is sequenced last.
 
 See [`platforms.md`](platforms.md) for the full plan.
+
+---
+
+## D10 — Engine language: Rust
+
+**Decision:** Build the engine in **Rust**, not C++. Resolves the language question left
+open in [D8](#d8--pre-production-is-design-only-engine-direction-is-custom-native-with-a-live-fallback).
+Renderer via **`wgpu`** (native Vulkan/D3D12/Metal, auto-selected per device); ECS via a
+mature crate (Bevy/hecs/legion) or hand-rolled; FFI to Kotlin/JNI (Android) and
+Swift/Obj-C (iOS) for platform services.
+
+**Why:** Performance is a wash (both are LLVM-native), so the call is on engineering
+values over a long horizon — and for *this* project (greenfield, small/AI-assisted team,
+custom-native, mobile+desktop, determinism-critical) Rust's strengths hit the load-
+bearing needs while its weaknesses miss them:
+
+- **Cross-platform GPU is solved by `wgpu`** — native backends per device, which is
+  exactly the D9 goal. C++ would mean hand-rolling an RHI or adopting The Forge/bgfx.
+- **Fearless concurrency.** The deterministic lockstep sim is heavily threaded (job
+  system, parallel culling/pathfinding/AI). Its worst bugs are silent, non-reproducible
+  data races and determinism leaks. Rust eliminates that entire class at compile time —
+  a correctness guarantee C++ cannot give. This is the decisive factor.
+- **Determinism is more enforceable** via the type system (newtype fixed-point, no
+  implicit float conversions, no UB, no uninitialized reads).
+- **Toolchain simplicity** — `cargo` vs CMake + vcpkg/Conan + per-platform toolchains;
+  compounds across four platforms over years.
+
+**The maturity question, answered:** Rust's remaining gaps don't intersect this project.
+- *Engine-code hot-reload* (no stable ABI) — the one real cost; mitigated by doing
+  game-feel iteration in scripting/data + the automated build loop (roadmap). Architect
+  a reloadable module only if it hurts.
+- *Commercial middleware / hiring pool / console toolchains* — not load-bearing for a
+  custom-native, mobile+desktop, small-team project; platform services cross into
+  Kotlin/Swift via FFI regardless of engine language.
+
+**When this should be revisited:** if priorities shift to shipping in ~6 months, hiring a
+C++-veteran team, targeting consoles, or building on a commercial engine/middleware
+stack — none currently true.
+
+**Consequences:**
+- The risk to actively manage is **engine-iteration speed** — lean on scripting/data hot-
+  reload and the automated edit→build→test loop.
+- iOS scripting caveat stands: no JIT, so any embedded VM (e.g. Lua) runs interpreted.
+- Architecture/platforms docs now treat Rust as the language; C++ remains a noted
+  fallback only if D10 is ever reversed.

@@ -74,18 +74,23 @@ on a small touchscreen. If this isn't fun, no amount of engine work saves it.
 
 ## Dev workflow & iteration
 
-Native C++/Rust doesn't hot-reload for free — that's the iteration cost of the
-performance ceiling. Options, cheapest-value-first:
+Native Rust doesn't hot-reload engine code for free — that's the iteration cost of the
+performance ceiling, and the one real tradeoff of the language choice (D10). Options,
+cheapest-value-first:
 
-- **Automated edit→build→deploy→test loop** — `edit → cmake/gradle → adb install →
-  am start → adb logcat`. A coding agent can script the whole cycle (~10–40 s native)
-  and read logcat to self-diagnose crashes. The default; no special architecture.
+- **Automated edit→build→deploy→test loop** — `edit → cargo build (cargo-ndk for
+  Android) → adb install → am start → adb logcat`. A coding agent can script the whole
+  cycle and read logcat to self-diagnose crashes. The default; no special architecture.
 - **Scripting / config hot reload** — keep tuning and balance in Lua or data files;
-  reload instantly, zero recompile. Best value for iterating on game feel.
+  reload instantly, zero recompile. **Best value for iterating on game feel — and the
+  primary mitigation for Rust's weaker engine-code reload.** (iOS: interpreter mode
+  only, no JIT.)
 - **Asset hot reload** — watch textures/configs, reload at runtime. Easy, worth it
   early.
-- **Reloadable game module** — game/sim logic in a swappable `.so`; host owns state so
-  it survives reload. (Rust: harder, no stable ABI — see `hot-lib-reloader`.)
+- **Reloadable game module** — game/sim logic behind a reload boundary so it survives a
+  swap while the host owns state. In Rust this means `hot-lib-reloader` /
+  `dexterous_developer` (hackier than a C++ `.so` swap) — adopt **only if** the build
+  loop + scripting layer stop being enough, not up front.
 
 **Emulator caveat:** the Android Emulator runs x86_64 — build that ABI in debug for
 fast iteration — but its GPU and thermal behavior won't match a mid-range arm64
