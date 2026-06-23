@@ -49,12 +49,16 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 |---|---|
 | [`docs/game-design.md`](docs/game-design.md) | The game design doc — concept, mechanics, the going-dark rule, unit AI philosophy |
 | [`docs/architecture.md`](docs/architecture.md) | Engine & systems architecture (native core, deterministic sim, Vulkan, netcode) |
+| [`docs/platforms.md`](docs/platforms.md) | Cross-platform plan — Windows/Linux/Android/iOS, one shared core with platform-optimized backends |
 | [`docs/roadmap.md`](docs/roadmap.md) | Build phases, milestones, and the top risks |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
 
 ## Status
 
-**Pre-production / design.** Target platform: Android-first (arm64-v8a, Vulkan).
-Engine direction: custom native (C++20 or Rust) — see the architecture doc for the
-reasoning and the viable fallbacks (Unity DOTS, Godot + GDExtension).
+**Pre-production / design.** Target platforms: **Windows, Linux, Android, iOS** — one
+shared deterministic core with platform-optimized backends (D3D12/Vulkan, Vulkan,
+Vulkan, Metal), developed on Linux desktop first and shipping Android-first. See
+[`docs/platforms.md`](docs/platforms.md). Engine direction: custom native (C++20 or
+Rust — Rust's `wgpu` is a strong cross-platform argument) — see the architecture doc
+for the reasoning and the viable fallbacks (Unity DOTS, Godot + GDExtension).

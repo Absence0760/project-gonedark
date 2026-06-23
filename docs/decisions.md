@@ -125,3 +125,32 @@ validated on real hardware.
 cache-line control that managed runtimes abstract away — but the build cost is real,
 so we don't burn the fallback until Phase 1 proves the slice. See
 [`architecture.md`](architecture.md) and [`roadmap.md`](roadmap.md).
+
+---
+
+## D9 — Four platforms: one shared deterministic core, platform-optimized backends
+
+**Decision:** Ship on **Windows, Linux, Android, and iOS**. The game architecture (ECS,
+deterministic fixed-point sim, game systems, AI, netcode) is **identical on every
+platform**; only the **platform backend** (GPU API, audio, windowing, input, storage)
+and the **presentation tier** (resolution, effects, refresh, controls) are optimized
+per device — native paths: **D3D12/Vulkan on Windows, Vulkan on Linux, Vulkan 1.1 on
+Android, Metal on iOS.** Develop on Linux desktop first; ship Android-first.
+
+**Why:** "Optimized per device" must mean *native backends*, not *forked game logic*.
+Forking the core would (1) kill cross-platform lockstep — deterministic play requires
+every client to run the *same* sim — and (2) turn one game into four to maintain. The
+float-free fixed-point sim already produces bit-identical results across x86-64 and
+arm64, so cross-play across all four platforms is achievable *for free* — provided the
+per-tick checksum CI runs across the whole platform/compiler/arch matrix from day one.
+
+**Consequences:**
+- A **Platform Abstraction Layer (PAL)** boundary is enforced from Phase 0; the core
+  carries zero platform includes. SDL3 can collapse most of the non-GPU PAL.
+- The renderer talks to one **RHI**; `wgpu` (if Rust) or a Vulkan+MoltenVK shortcut (if
+  C++) hits all four before any native D3D12/Metal optimization pass — which
+  **strengthens the Rust option** in the still-open language decision (D8).
+- iOS carries the most external friction (macOS build host, signing, review, Metal) and
+  is sequenced last.
+
+See [`platforms.md`](platforms.md) for the full plan.

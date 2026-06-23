@@ -4,6 +4,12 @@
 > risks: **touch controls** (a product risk, not an engine one) and **determinism**
 > (a correctness risk that gets exponentially harder to retrofit). Both are pulled
 > as early as possible.
+>
+> Cross-platform (Windows/Linux/Android/iOS) threads through every phase rather than
+> being a phase of its own — see [`platforms.md`](platforms.md). The key rule: the
+> Platform Abstraction Layer boundary goes in at Phase 0 so platform code never leaks
+> into the core. Develop on Linux desktop; ship Android-first; iOS last (most
+> external friction).
 
 ## Phase 0 — Control prototype *(do this before anything else)*
 
