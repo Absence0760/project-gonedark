@@ -7,6 +7,11 @@ publish = false
 
 # The renderer. Consumes a read-only core snapshot (invariant #4) and is the float
 # boundary — Q16.16 → f32 happens HERE, never in core. The wgpu device/pipeline is wired
-# in Phase 1 build-order step 4; `wgpu`/`bytemuck` get added then.
+# in Phase 1 build-order step 4. `wgpu` (→ Vulkan/D3D12/Metal per device) and `bytemuck`
+# (for GPU-uploadable Pod instance/uniform structs) land here. NO `winit`/`glam`/`pollster`
+# — those live in the wiring layer (`app`) and the desktop backend (D19); this crate talks
+# only to the abstract `wgpu` API, never to a specific GPU API or to a windowing crate.
 [dependencies]
 gonedark-core = { path = "../core" }
+wgpu = "29"
+bytemuck = { version = "1", features = ["derive"] }

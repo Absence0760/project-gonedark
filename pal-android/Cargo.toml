@@ -5,8 +5,45 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# Android PAL backend — cargo-ndk + JNI shim (the ship target). All Android code is gated
-# to target_os = "android" so on desktop/CI hosts this compiles to an empty lib. The real
-# surface/touch/lifecycle (via android-activity + JNI) and wgpu→Vulkan land in build-order
-# step 6; `android-activity`, `jni`, `ndk` get added then.
+# Android PAL backend — cargo-ndk + JNI shim (the ship target, platforms.md §8).
+#
+# The whole crate is `#![cfg(target_os = "android")]`, so on a desktop/CI host it
+# compiles to an EMPTY lib and drags none of the Android deps below into the host
+# build. Those deps therefore live under a `cfg(target_os = "android")` target table
+# and are only resolved/compiled when cargo-ndk targets `aarch64-linux-android`.
+#
+# Building for-target REQUIRES the Android NDK + `cargo-ndk` (android-activity's C glue
+# is compiled by the NDK clang). On this workstation neither is installed yet — see
+# ../android/README.md for the exact prerequisites and build commands.
+
+[lib]
+# cargo-ndk emits the shared object (`libgonedark.so`) that the Android app loads via
+# `System.loadLibrary`. A `cdylib` plus the host-empty cfg gate coexist fine: on the
+# host the crate is empty, so there is simply nothing to put in the dylib.
+crate-type = ["cdylib"]
+
 [dependencies]
+# The PAL trait definitions this backend implements (invariant #2). Host-safe (no
+# platform deps), so it can sit in the unconditional table.
+gonedark-pal = { path = "../pal" }
+
+# --- Android-target-only deps -------------------------------------------------------
+# Pinned APIs (build-order step 6). Only resolved when targeting android; the host
+# build never sees these.
+[target.'cfg(target_os = "android")'.dependencies]
+# NativeActivity/GameActivity entry point + lifecycle/input event pump. The
+# `native-activity` feature selects the NativeActivity flavor (matches the
+# AndroidManifest below). android_main is generated/exported by this crate's macros.
+android-activity = { version = "0.6", features = ["native-activity"] }
+# JNI bridge for the few platform services that must call into Kotlin/Java
+# (billing, push, etc. — Phase 2). Not load-bearing for the Phase 1 slice.
+jni = "0.21"
+# Safe NDK wrappers (ANativeWindow, AAssetManager, AInputEvent helpers).
+ndk = "0.9"
+# `log` facade + an Android logcat backend so `log::info!` lands in `adb logcat`.
+log = "0.4"
+android_logger = "0.14"
+# RHI: wgpu picks the Vulkan backend on Android automatically (platforms.md §3).
+wgpu = "29"
+# Bridges the NDK `ANativeWindow` to wgpu's surface creation.
+raw-window-handle = "0.6"

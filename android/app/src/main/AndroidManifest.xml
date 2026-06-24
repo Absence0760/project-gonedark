@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Going Dark — NativeActivity manifest (Phase 1 scaffold).
+
+  The whole app is a single android.app.NativeActivity. `android.app.lib_name` names the
+  Rust cdylib (libgonedark.so) WITHOUT the `lib` prefix or `.so` suffix; the platform's
+  NativeActivity loads it and calls ANativeActivity_onCreate, which android-activity's
+  `native-activity` feature wires to our exported `android_main`.
+
+  NOTE: the lib_name must match the cdylib produced by cargo-ndk. The cdylib's package is
+  `gonedark-pal-android`, whose crate name is `gonedark_pal_android` -> cargo emits
+  `libgonedark_pal_android.so`. Set lib_name accordingly below. If the integrator instead
+  makes `app` the cdylib and names it `gonedark`, change this to `gonedark`.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:label="Going Dark"
+        android:hasCode="false"
+        android:allowBackup="true">
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode"
+            android:screenOrientation="landscape">
+
+            <!-- Name of the Rust cdylib (no `lib` prefix, no `.so`). -->
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="gonedark_pal_android" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

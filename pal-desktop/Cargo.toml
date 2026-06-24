@@ -5,8 +5,12 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# Desktop PAL backend (Linux/Windows — dev + CI host). The winit window + wgpu device are
-# wired in Phase 1 build-order step 4; `winit`/`wgpu` get added then. For now this provides
-# a headless stand-in implementing the PAL traits so `app` runs end-to-end today.
+# Desktop PAL backend (Linux/Windows — dev + CI host). The concrete winit window + wgpu
+# device/queue/surface live here (Phase-1 build-order step 4, D19). `wgpu`/`winit`/`pollster`
+# are fine in this crate — invariant #2 only keeps GPU/windowing out of `core` and the
+# abstract `pal` trait crate.
 [dependencies]
 gonedark-pal = { path = "../pal" }
+winit = "0.30"
+wgpu = "29"
+pollster = "0.4"
