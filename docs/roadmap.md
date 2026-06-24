@@ -141,12 +141,15 @@ model.
 
 ## Phase 3 — Scale & net
 
-> **Status: STARTING.** Plan and four-workstream sequencing: **[`phase-3-plan.md`](phase-3-plan.md)**.
-> First slice landed: a deterministic **200-unit stress scenario** + on-device timing mode in
-> `sim-runner` (`pnpm desktop:sim:stress`). Measure-first result — 200 units runs **~2× over the
-> 16.6 ms 60 Hz budget on desktop**, confirming the per-unit flow-field rebuild (not threading) as
-> the #1 target. Decisions still owed before the net/PvP workstreams: **D27** (netcode topology),
-> a snapshot-format Dn, and **Q2** (enemy detection of "gone dark") via `/decision`.
+> **Status: IN PROGRESS.** Plan and four-workstream sequencing:
+> **[`phase-3-plan.md`](phase-3-plan.md)**. Workstream A underway: a deterministic **200-unit
+> stress scenario** + on-device timing mode in `sim-runner` (`pnpm desktop:sim:stress`) showed 200
+> units running **~2× over the 16.6 ms 60 Hz budget on desktop**, pinpointing the per-unit
+> flow-field rebuild (not threading) as the #1 cost. **Flow-field caching then landed** (one field
+> per distinct goal per tick, bit-identical) → **~8× faster, ~3.7 ms/tick median, comfortably under
+> budget** — which also makes sim-side parallelism likely unnecessary for Phase 3. Decisions still
+> owed before the net/PvP workstreams: **D27** (netcode topology), a snapshot-format Dn, and **Q2**
+> (enemy detection of "gone dark") via `/decision`.
 
 **Goal:** make it hold up at size and (if pursued) in multiplayer.
 

@@ -58,23 +58,25 @@ loops at scale, both **algorithmic, not parallelism** problems:
   each call doing a `terrain.line_of_sight` DDA.
 
 **Sequence (each commit green dev+release, path-scoped):**
-1. **Stress harness** — extend `sim-runner` with a scenario selector (default `phase2`
-   scene byte-identical) + a deterministic `stress` scene (~200 units, camps producing,
-   contested points, mixed orders, one embodied). *Lands determinism-at-scale.* ← *this
-   slice is landing first.*
-2. **Timing mode** — `sim-runner --time` prints per-tick wall-clock stats (min / median
-   / p99 / max) to **stderr** (checksum stream on stdout unchanged). Host-side `Instant`
-   only — never touches sim state, so it can't move the checksum. Plus an
-   `android-profile` path reusing the existing adb plumbing → real arm64 numbers.
-3. **criterion benches** (dev-dep on `sim-runner`, **never** in `core` — keeps the
-   invariant-#2 empty-dep tripwire armed): `Sim::step` scaling curve + isolated
-   `FlowField::build` / `combat_system`. **Run them; record the numbers.** This is the
-   measure-first gate and the 60 Hz re-derivation D16/D21 asked for.
-4. **Flow-field caching** (`flow_field`/`orders`/`systems`) — one field per distinct goal
-   per tick. Behavior-preserving → equivalence test vs. the per-unit-rebuild path.
-   `/safe-edit`. Re-measure.
-5. **Spatial hash for target acquisition** (`combat` + new `core::spatial`) — only if
-   step 3/4 shows combat is now the wall. Equivalence + lowest-index-tie-break test.
+1. **Stress harness** ✅ **DONE** — `sim-runner` scenario selector (default `phase2` scene
+   byte-identical, verified) + a deterministic `stress` / `stress:<n>` scene (~200 units,
+   camps producing, contested points, mixed orders, one embodied). Determinism-at-scale.
+2. **Timing mode** ✅ **DONE** — `sim-runner --time` prints per-tick wall-clock stats
+   (min / median / p99 / max) to **stderr** (checksum stream on stdout unchanged).
+   Host-side `Instant` only. *Measured: 200 units ~30 ms/tick on desktop — ~2× over the
+   16.6 ms 60 Hz budget.* (Android adb-profile path still TODO.)
+3. **criterion benches** — *deferred*: the `--time` harness already produced the
+   actionable scaling number (step 2), which was enough to act. Add isolated
+   `FlowField::build` / `combat_system` benches if a finer breakdown is needed later
+   (dev-dep on `sim-runner`, **never** in `core`).
+4. **Flow-field caching** ✅ **DONE** (`flow_field`/`orders`/`systems`) — one field per
+   distinct goal per tick (`FlowFieldCache`), bit-identical to the per-unit rebuild
+   (phase2 stream byte-identical; equivalence test; determinism-auditor + code-reviewer
+   clear). **Re-measured: ~30.4 ms → ~3.7 ms median (~8×), p99 ~3.9 ms — under budget.**
+   This likely removes the need for sim-side parallelism (step 6) in Phase 3.
+5. **Spatial hash for target acquisition** (`combat` + new `core::spatial`) — only if a
+   re-profile shows combat is now the wall (with the flow-field fixed, the tick is now
+   ~3.7 ms, so this may be unnecessary). Equivalence + lowest-index-tie-break test.
    `/safe-edit`.
 6. **rayon parallelism** — **only if still over budget on mid-range arm64.** Pattern:
    *parallel pure-read phase → deterministic serial ordered-write phase* (never
