@@ -20,6 +20,16 @@ on:
   push:
   pull_request:
 
+# Top-level hardening only — the checksum matrix + diff logic below are untouched
+# (invariant #7). These jobs only read the repo and exchange artifacts via the runtime
+# token; contents:read is sufficient.
+permissions:
+  contents: read
+
+concurrency:
+  group: determinism-${{ github.ref }}
+  cancel-in-progress: true
+
 defaults:
   run:
     # bash on every OS (Git Bash on Windows) so `>` redirects are UTF-8/LF everywhere —

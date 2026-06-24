@@ -30,6 +30,10 @@ permissions:
   security-events: write
   pull-requests: read
 
+concurrency:
+  group: gitleaks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan:
     name: gitleaks

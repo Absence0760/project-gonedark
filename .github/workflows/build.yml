@@ -17,6 +17,15 @@ on:
   push:
   pull_request:
 
+# Least-privilege the token (these jobs only read the repo) and cancel superseded runs on
+# a new push to the same ref to save CI minutes.
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   checks:
     # Cheap, link-dep-free quality gates that need no GPU/windowing libs to run.
