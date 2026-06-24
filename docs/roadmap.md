@@ -115,12 +115,12 @@ model.
 > embodied alert HUD, the embodied audio mix, and the touch UI (multi-unit selection + the
 > order/stance vocabulary on screen) — all pure presentation derivations, so the checksum stream
 > stayed byte-identical and the suite grew 149 → 190 tests (green dev + release). **Honest caveats
-> (still NOT done):** gameplay **balance** (the cost/time/damage tables are untuned placeholders —
-> left for playtesting); real audio *output* (the mix is built + tested, the AAudio/desktop sink is
-> still a no-op); a `Command` to set `Patrol`/`HoldPosition`/`FallBack` (the `Order`s exist but the
-> touch vocabulary can't reach them yet — a small determinism-sensitive `core`-surface follow-up);
-> and the netcode/lockstep layer (Phase 3). Open forks Q1/Q2/Q3 are deliberately left open — fog and
-> alerts ship as a *mechanism*, not a lock.
+> (still NOT done):** gameplay **balance** (the cost/time/damage tables — and the 30% retreat
+> default — are untuned placeholders, left for playtesting); real audio *output* (the mix is built +
+> tested, the AAudio/desktop sink is still a no-op); and the netcode/lockstep layer (Phase 3). The
+> full order/stance vocabulary — Patrol, hold position, fall back, and the retreat trigger — is now
+> reachable from the touch UI ([D25](decisions.md), which also corrects a mis-scoping in D24). Open
+> forks Q1/Q2/Q3 are deliberately left open — fog and alerts ship as a *mechanism*, not a lock.
 
 **Goal:** the actual game.
 

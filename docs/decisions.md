@@ -240,6 +240,8 @@ and `.gitignore` guards are in place so nothing is retrofitted. See
 > to the separate private estate repo. The clone-and-run, Terraform-only, and
 > encrypted-by-default conventions stand.
 
+---
+
 ## D12 — Production secrets move to the private estate repo (not in-repo)
 
 **Supersedes:** the secrets-*location* portion of [D11](#d11--local-first-dev-docker--committed-defaults-prod-secrets-via-sops-infra-via-terraform).
@@ -834,11 +836,13 @@ glue, exactly as D23.
 **What this does NOT decide (open questions stay open):** fog and alerts ship as a **mechanism** —
 the current alerts-only thinness ([Q1](open-questions.md)), the "enemy can't tell you're dark"
 posture ([Q2](open-questions.md)), and the avatar-only dark are an *implementation*, not a lock; the
-touch UX (gesture grammar, slot layout) is a working scheme, not settled design. `Patrol`/
-`HoldPosition`/`FallBack` exist as sim `Order`s but have **no `Command`** to set them — exposing
-them through the command UI is a small, determinism-sensitive `core`-surface follow-up, deliberately
-NOT smuggled into this presentation pass. Gameplay **balance** and the netcode/lockstep layer remain
-as deferred in D23.
+touch UX (gesture grammar, slot layout) is a working scheme, not settled design. ~~`Patrol`/
+`HoldPosition`/`FallBack` exist as sim `Order`s but have no `Command` to set them — exposing them
+through the command UI is a small, determinism-sensitive `core`-surface follow-up.~~ **(Correction,
+[D25](#d25--the-orderstance-command-vocabulary-was-already-in-the-sim-touch-ui-now-reaches-it-corrects-d24)):
+this was wrong — `Command::SetOrder`/`SetRetreatThreshold` already exist in `core::sim` and are
+already checksummed; only the touch vocabulary hadn't wired them. D25 does, presentation-only.**
+Gameplay **balance** and the netcode/lockstep layer remain as deferred in D23.
 
 **Consequences:**
 - `render` gains `fog`/`hud` modules (+ `hud.wgsl`); `engine` gains `audio`/`selection`/
@@ -851,3 +855,49 @@ as deferred in D23.
   otherwise have panned left.
 - [`roadmap.md`](roadmap.md) Phase 2 status and [`README.md`](../README.md) repo-map are updated;
   balance + netcode remain the open Phase 2 / Phase 3 items.
+
+---
+
+## D25 — The order/stance command vocabulary was already in the sim; touch UI now reaches it (corrects D24)
+
+**Status:** the touch UI's command vocabulary now issues the full Phase-2 order set —
+`HoldPosition`, `Patrol`, `FallBack`, and the retreat trigger — through the sim's **existing**
+`Command::SetOrder` / `Command::SetRetreatThreshold`. This **corrects a factual error in
+[D24](#d24--phase-2-host-wiring-foghudaudiotouch-ui-behind-a-frozen-presentation-contract)**: that
+entry claimed these orders had "no `Command`" and that exposing them needed a `core`-surface
+change. That was wrong — the commands already existed in `core::sim::Command`, are handled in
+`Sim::apply`, and were already folded into the per-tick checksum (`write_order` serializes
+`Patrol`/`HoldPosition`/`FallBack`). The follow-up was therefore **presentation-only**.
+
+**Decision:**
+
+1. `engine::command_ui` gains slots **5–9**: `HoldPosition`; `Patrol` (leg `a` = the unit's CURRENT
+   position, leg `b` = the tapped point — so each selected unit patrols from where it stood to the
+   tap); `FallBack` to the tapped rally; and **arm/disarm the retreat trigger**
+   (`SetRetreatThreshold` at a placeholder **30%** / `0`). `commands_for` now takes the selection as
+   `(handle, world_pos)` pairs so Patrol can anchor a per-unit leg; every world coordinate — the tap
+   *and* each unit's leg `a` — is quantized via `world_to_fixed` at the input boundary (invariant #1).
+2. The desktop backend maps number keys `7`/`8`/`9`/`0` → slots `6`/`7`/`8`/`9` for dev iteration
+   (joining the existing `1`–`6` → `0`–`5`).
+3. A `core` test now directly covers `SetOrder` + `SetRetreatThreshold` application — the command
+   surface had no direct test before this.
+
+**Why:** the depth layer (game-design §8) must be *reachable* by the player or it isn't real, and
+the only thing missing was the UI mapping — not a sim change. Keeping it presentation-only means the
+D23/D24 guarantee holds unchanged: nothing here mutates sim state, the `sim-runner` checksum stream
+is **byte-identical** (`8cfc2b25ab17a128`), and dev == release. The earlier mis-scoping (treating
+this as a determinism-sensitive `core` change) was a false alarm from an incomplete read of the
+`Command` enum; the lesson recorded here is to grep the *whole* enum before declaring a surface gap.
+
+**What this does NOT decide:** the **30%** retreat default and the slot numbering/layout are a
+working mechanism, not tuned/settled (balance stays open, per D23/D24); `long_press` remains a
+reserved no-op gate for a future context/radial menu.
+
+**Consequences:**
+- No `core` logic change — only a test added; `core` stays float-free with an empty dependency list.
+- The suite grew **190 → 195** tests (the new `core` command test + the expanded `command_ui` slot
+  coverage), green in **both** dev and release; `clippy -D warnings` clean; `aarch64-linux-android`
+  type-checks; `code-reviewer` clean.
+- [D24](#d24--phase-2-host-wiring-foghudaudiotouch-ui-behind-a-frozen-presentation-contract)'s
+  "no `Command`" caveat is struck through with a pointer here; [`roadmap.md`](roadmap.md) drops that
+  caveat from the Phase 2 status. Balance and the netcode/lockstep layer remain the open items.
