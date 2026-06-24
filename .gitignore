@@ -7,7 +7,11 @@
 .gradle/
 local.properties
 /app/build/
+/android/app/build/
 *.iml
+# cargo-ndk output — the native .so is rebuilt into the Gradle project on demand
+# (see android/README.md); it's a build artifact, never committed.
+/android/app/src/main/jniLibs/
 
 # Rust (engine language — decisions.md D10)
 /target/

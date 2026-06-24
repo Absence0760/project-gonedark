@@ -29,9 +29,7 @@ use gonedark_pal::{Audio, Input, InputFrame, Rhi, Storage, Window};
 use android_activity::input::{InputEvent, KeyAction, KeyEvent, MotionAction, MotionEvent};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use log::{info, warn};
-use raw_window_handle::{
-    HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
-};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 // ---------------------------------------------------------------------------------------
 // Entry point
@@ -46,8 +44,11 @@ use raw_window_handle::{
 /// We block indefinitely between frames when idle and pump a frame on `MainEvent::RedrawNeeded`
 /// (or, here, opportunistically while the window is up). The surface is created on
 /// `InitWindow` and dropped on `TerminateWindow`, matching Android's surface lifecycle.
+// android-activity's `native-activity` glue declares `android_main` with the Rust ABI
+// (`extern "Rust"`) and calls it from `ANativeActivity_onCreate`; a plain `#[no_mangle] fn`
+// matches that — `extern "C"` would mismatch the ABI and isn't FFI-safe for `AndroidApp`.
 #[no_mangle]
-pub extern "C" fn android_main(app: AndroidApp) {
+fn android_main(app: AndroidApp) {
     // Route `log::*` into logcat. `adb logcat` / the dev loop (roadmap.md) reads this.
     android_logger::init_once(
         android_logger::Config::default()
@@ -61,7 +62,7 @@ pub extern "C" fn android_main(app: AndroidApp) {
     let mut window = AndroidWindow::new(app.clone());
     let mut input = AndroidInput::new(app.clone());
     let mut rhi: Option<AndroidRhi> = None;
-    let mut storage = AndroidStorage::new(app.clone());
+    let storage = AndroidStorage::new(app.clone());
     let mut audio = AndroidAudio::default();
 
     // Sanity-touch the stub PAL services so the deferred impls are linked, not dead code.
@@ -360,11 +361,12 @@ impl AndroidRhi {
         let (width, height) = (native_window.width() as u32, native_window.height() as u32);
         let target = AndroidSurfaceTarget { native_window };
 
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             // wgpu picks Vulkan on Android; pin it explicitly so we never silently fall
-            // back to GL.
+            // back to GL. wgpu 29's `InstanceDescriptor` has no `Default` (the `display`
+            // field is a boxed trait object), so spread from its constructor instead.
             backends: wgpu::Backends::VULKAN,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
 
         // SAFETY/lifetime: `target` owns the NativeWindow for the surface's life. We leak
@@ -389,6 +391,7 @@ impl AndroidRhi {
             // Vulkan 1.1 mobile floor (platforms.md §6): stay within downlevel defaults.
             required_limits: wgpu::Limits::downlevel_defaults(),
             memory_hints: wgpu::MemoryHints::default(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
             trace: wgpu::Trace::Off,
         }))
         .map_err(|e| format!("request_device: {e}"))?;
@@ -437,18 +440,21 @@ impl Rhi for AndroidRhi {
     }
 
     fn begin_frame(&mut self) -> bool {
+        // wgpu 29 returns a `CurrentSurfaceTexture` enum (not a `Result`): `Suboptimal`
+        // still yields a usable frame; `Lost`/`Outdated` mean reconfigure and skip.
         match self.surface.get_current_texture() {
-            Ok(frame) => {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
                 self.frame = Some(frame);
                 true
             }
             // Surface lost/outdated (common on resume): reconfigure and skip this frame.
-            Err(wgpu::SurfaceError::Lost) | Err(wgpu::SurfaceError::Outdated) => {
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
                 false
             }
-            Err(e) => {
-                warn!("get_current_texture: {e}");
+            other => {
+                warn!("get_current_texture: {other:?}");
                 false
             }
         }
