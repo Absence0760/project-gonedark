@@ -7,10 +7,13 @@
 # Identical streams -> on-device determinism holds. Any divergence is a desync — a real
 # bug (invariant #7), printed and surfaced as a non-zero exit, NEVER silenced.
 #
-#   Usage:  scripts/android-checksum.sh [ticks]   (default 300)
+#   Usage:  scripts/android-checksum.sh [ticks] [device-serial]   (default 300 ticks)
+#
+# Picking a device (you have several): set GONEDARK_DEVICE=<serial>, or pass the serial as
+# the second arg. One device → auto-selected; several & none chosen → it stops and lists them.
 #
 # Env knobs:  ANDROID_HOME / ANDROID_SDK_ROOT (SDK path), ANDROID_NDK_HOME (else newest
-#   ndk/<ver> under the SDK is auto-selected), ADB (adb path).
+#   ndk/<ver> under the SDK is auto-selected), GONEDARK_DEVICE (adb serial), ADB (adb path).
 #
 # Requires: cargo-ndk, an Android SDK + NDK, adb, and a USB-debugging arm64 device.
 set -euo pipefail
@@ -20,6 +23,8 @@ SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
 ADB="${ADB:-$SDK/platform-tools/adb}"
 ABI="arm64-v8a"
 TICKS="${1:-300}"
+# Target device serial: GONEDARK_DEVICE, else the optional 2nd CLI arg, else auto/none.
+DEVICE="${GONEDARK_DEVICE:-${2:-}}"
 DEVICE_BIN="/data/local/tmp/gonedark-sim-runner"
 HOST_BIN="$ROOT/target/aarch64-linux-android/release/gonedark-sim-runner"
 
@@ -48,17 +53,39 @@ need_cargo_ndk() {
 	exit 1
 }
 
-need_device() {
-	if ! "$ADB" get-state >/dev/null 2>&1; then
+# Resolve the target device into DEVICE, or fail with a list (same rule as scripts/android.sh):
+# GONEDARK_DEVICE / 2nd arg wins; else the sole connected device; else stop and list them.
+resolve_device() {
+	local serials count
+	serials="$("$ADB" devices | awk 'NR>1 && $2=="device" {print $1}')"
+	count="$(printf '%s\n' "$serials" | grep -c . || true)"
+	if [[ -n "$DEVICE" ]]; then
+		if ! printf '%s\n' "$serials" | grep -qx "$DEVICE"; then
+			echo "!! GONEDARK_DEVICE='$DEVICE' is not a connected device. Connected:" >&2
+			"$ADB" devices -l >&2
+			exit 1
+		fi
+		return
+	fi
+	if [[ "$count" -eq 0 ]]; then
 		echo "!! no device. Plug in the phone, enable USB debugging, accept the RSA prompt." >&2
 		echo "   check with:  $ADB devices" >&2
 		exit 1
+	elif [[ "$count" -gt 1 ]]; then
+		echo "!! $count devices connected — pick one with GONEDARK_DEVICE=<serial>:" >&2
+		"$ADB" devices -l >&2
+		exit 1
 	fi
+	DEVICE="$(printf '%s\n' "$serials" | head -1)"
+	echo ">> device: $DEVICE"
 }
+
+# adb, scoped to the resolved target device.
+adb_dev() { "$ADB" -s "$DEVICE" "$@"; }
 
 need_cargo_ndk
 resolve_ndk
-need_device
+resolve_device
 
 # Scratch dir for the two checksum streams (kept out of the repo).
 SCRATCH="${TMPDIR:-/tmp}"
@@ -68,7 +95,7 @@ DEVICE_STREAM="$WORK/device.txt"
 cleanup() {
 	rm -rf "$WORK"
 	# Best-effort device cleanup (don't fail the harness if the device vanished).
-	"$ADB" shell rm -f "$DEVICE_BIN" >/dev/null 2>&1 || true
+	adb_dev shell rm -f "$DEVICE_BIN" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -82,11 +109,11 @@ echo ">> cargo ndk build sim-runner ($ABI, release)"
 
 # 2. Push it to the device and run it there for N ticks (capture STDOUT — the checksum
 #    stream — only; the final summary goes to stderr).
-echo ">> adb push -> $DEVICE_BIN"
-"$ADB" push "$HOST_BIN" "$DEVICE_BIN" >/dev/null
-"$ADB" shell chmod 755 "$DEVICE_BIN"
-echo ">> running on-device for $TICKS ticks"
-"$ADB" shell "$DEVICE_BIN" "$TICKS" >"$DEVICE_STREAM" 2>/dev/null
+echo ">> adb -s $DEVICE push -> $DEVICE_BIN"
+adb_dev push "$HOST_BIN" "$DEVICE_BIN" >/dev/null
+adb_dev shell chmod 755 "$DEVICE_BIN"
+echo ">> running on-device ($DEVICE) for $TICKS ticks"
+adb_dev shell "$DEVICE_BIN" "$TICKS" >"$DEVICE_STREAM" 2>/dev/null
 
 # 3. Run the SAME sim-runner on the host for the same N ticks.
 echo ">> running on-host for $TICKS ticks"

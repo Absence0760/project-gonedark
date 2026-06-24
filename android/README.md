@@ -39,16 +39,26 @@ The root `package.json` wraps the commands below behind `scripts/android.sh`, wh
 auto-resolves `ANDROID_NDK_HOME` (newest `ndk/<ver>` under the SDK) so you don't have to
 export it:
 
+    pnpm android:devices   # list connected devices/emulators + their serials
     pnpm android:setup     # one-time: cargo install cargo-ndk + rustup target add aarch64-linux-android
     pnpm android:build     # cargo-ndk: build libgonedark_pal_android.so into jniLibs (debug)
     pnpm android:apk       # gradle :app:assembleDebug -> app-debug.apk
-    pnpm android:install   # build the APK + adb install -r to a connected device
+    pnpm android:install   # build the APK + adb install -r to the target device
     pnpm android:dev       # install + am start + stream logcat (the inner loop)
     pnpm android:logcat    # tail the app's logs (tag `gonedark`)
 
-`GONEDARK_PROFILE=release pnpm android:build` builds a release `.so`. Desktop side:
-`pnpm dev` runs the winit/wgpu app, `pnpm build` builds the workspace, `pnpm sim` runs the
-headless determinism checksum stream. The exact underlying commands follow.
+**Several devices connected?** `install`/`dev`/`logcat`/`checksum` need to know which one.
+One device auto-selects; with several, pick it with `GONEDARK_DEVICE=<serial>` (from
+`pnpm android:devices`) or append the serial after `--`:
+
+    GONEDARK_DEVICE=ABC123 pnpm android:dev
+    pnpm android:dev -- ABC123
+
+`GONEDARK_PROFILE=release pnpm android:build` builds a release `.so`; `GONEDARK_ABI=<abi>`
+overrides the target ABI (default `arm64-v8a`). **Desktop side** (this machine, not a phone):
+`pnpm play` runs the game, `pnpm desktop:build` builds the workspace, `pnpm desktop:sim` runs
+the headless determinism checksum stream. `pnpm help` lists every task by target. The exact
+underlying commands follow.
 
 ## On-device determinism proof (`pnpm android:checksum`)
 
