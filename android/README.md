@@ -30,6 +30,23 @@ The wrapper JAR + `gradlew` scripts are not committed. Generate them once:
 
 After this you can use `./gradlew` as shown below.
 
+## pnpm shortcuts (the easy path)
+
+The root `package.json` wraps the commands below behind `scripts/android.sh`, which
+auto-resolves `ANDROID_NDK_HOME` (newest `ndk/<ver>` under the SDK) so you don't have to
+export it:
+
+    pnpm android:setup     # one-time: cargo install cargo-ndk + rustup target add aarch64-linux-android
+    pnpm android:build     # cargo-ndk: build libgonedark_pal_android.so into jniLibs (debug)
+    pnpm android:apk       # gradle :app:assembleDebug (needs the wrapper, above)
+    pnpm android:install   # build the APK + adb install -r to a connected device
+    pnpm android:dev       # install + am start + stream logcat (the inner loop)
+    pnpm android:logcat    # tail the app's logs (tag `gonedark`)
+
+`GONEDARK_PROFILE=release pnpm android:build` builds a release `.so`. Desktop side:
+`pnpm dev` runs the winit/wgpu app, `pnpm build` builds the workspace, `pnpm sim` runs the
+headless determinism checksum stream. The exact underlying commands follow.
+
 ## Build commands (exact)
 
 Build the Rust cdylib for arm64 into `jniLibs`, then assemble the APK:
