@@ -101,6 +101,21 @@ model.
 
 ## Phase 2 — Game systems
 
+> **Status: IN PROGRESS — systems spine landed ([`decisions.md`](decisions.md) D23).** A first,
+> fully-deterministic implementation of every bullet below lives in `core` as eight new modules
+> (`terrain, combat, economy, territory, fog, orders, alerts, event`): fixed-point combat with
+> suppression/cover/line-of-sight, territory capture, resources/economy/camps + production, fog
+> of war (a pure client-side derivation, not sim state), the widened order/stance vocabulary with
+> a literal-executor + retreat trigger, and the alert channel. All fixed-point, float-free, and
+> folded into the per-tick checksum (territory/economy are sim state; fog/alerts are excluded as
+> derived presentation). `core` tests grew 57 → 128 (green dev + release); the headless
+> `sim-runner` scenario now exercises the systems so the cross-arch determinism matrix covers
+> Phase 2. **Honest caveats (NOT done):** host/presentation wiring of fog rendering + the alert
+> HUD + the embodied audio mix; the shipping touch UI (multi-unit selection, the vocabulary on a
+> small screen); gameplay **balance** (the cost/time/damage tables are untuned placeholders); and
+> the netcode/lockstep layer (Phase 3). Open forks Q1/Q2/Q3 are deliberately left open — fog and
+> alerts ship as a *mechanism*, not a lock.
+
 **Goal:** the actual game.
 
 - Combat, suppression, cover, line-of-sight.

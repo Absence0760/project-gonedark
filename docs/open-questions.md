@@ -114,7 +114,7 @@ approach) and D15 for the full caveats (audio still faked; not a determinism tes
 
 **Resolved in [D16](decisions.md): 30 Hz is too coarse for embodied combat — target 60 Hz.**
 The Phase 0.5 A/B was decisive: 30 Hz felt "chunky/bad" for first-person aim/fire, 60 Hz was
-the only acceptable rate — and this held *even with* avatar-local prediction ([Q7](decisions.md)/D15) on,
+the only acceptable rate — and this held *even with* avatar-local prediction ([Q7](#q7--what-netcode-model-carries-embodied-fps-combat--resolved-d15decisionsmd)/D15) on,
 because prediction kills input *latency* but not the *granularity* of hit/aim resolution. The
 embodied layer needs the higher rate.
 

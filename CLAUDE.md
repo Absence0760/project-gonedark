@@ -10,7 +10,8 @@ is active.** The custom Rust engine ([D10]) is committed; the Unity/Godot fallba
 retired. The design corpus in `docs/` is the product of record; engine code now exists in the
 Cargo workspace (`core/ pal/ render/ engine/ pal-desktop/ pal-android/ app/ sim-runner/
 server/`) with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]).
-A real deterministic **flow field** (`core::flow_field`) drives the `movement_system`; a real
+A real deterministic **flow field** (`core::flow_field`) drives unit movement (the literal-executor
+`core::orders::order_system` via `core::systems::step_toward`); a real
 `wgpu` 29 + `winit` 0.30 desktop renderer and PAL backend interpolate prev→curr snapshots
 (invariant #4); and the shared game loop in the `engine` crate is driven by **both** the desktop
 `app` and Android's `android_main` ([D20]). Per [D19], `core`+`pal` stay GPU-free. **Phase 1

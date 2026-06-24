@@ -673,3 +673,106 @@ weight.
 - The `prototypes/` tree and its `phase0:*` task-runner scripts are removed; docs that pointed
   at the prototypes are updated to past tense (their decision records D14/D15 stand as history).
 - D8's "live fallback" clause is superseded; the custom-native direction is now committed.
+
+---
+
+## D23 — Phase 2 game systems: the deterministic model and its module decomposition
+
+**Status:** a first, fully-deterministic implementation of the Phase 2 (game-systems) bullets
+from [`roadmap.md`](roadmap.md) has landed in `core` — combat/suppression/cover/line-of-sight,
+territory capture, resources/economy/camps + production, fog of war, the order/stance
+vocabulary with a literal-executor and a retreat trigger, and an alert channel. It is the
+game-systems *spine*, not the balanced/host-wired finished game (see **Deferred** below).
+
+**Decision:**
+
+1. **Factions are a component, not a player object.** A new `components::Faction`
+   (`Player`/`Enemy`/`Neutral`) plus `EntityKind` (`Unit`/`Building`) tag every entity. Combat
+   engages only across distinct, non-neutral factions; resources and territory income are
+   per-faction. This keeps everything in the one SoA `World` (no parallel player graphs).
+
+2. **Each system is a pure function over the `World`, run in one fixed order per tick**
+   (`Sim::step`): **orders → combat → territory → economy**. The order is arbitrary but
+   *fixed* (determinism), and chosen so movement resolves before fire, capture is counted on
+   post-combat survivors, and production/income closes the tick. New modules:
+   `core::{terrain, combat, economy, territory, fog, orders, alerts, event}`.
+
+3. **Combat is fixed-point hitscan with cover, suppression, and literal stances.** Units
+   acquire a target by stance (`HoldFire` never; `ReturnFire` only its `last_attacker`;
+   `FireAtWill` the nearest enemy, ties to the lowest index), within weapon range (squared
+   compare — never a sqrt) and `terrain` line of sight, fire on cooldown for cover-mitigated
+   damage, accumulate **suppression** (which pins firing and, in `orders`, slows movement),
+   and despawn at zero health. The literal-executor rule (invariant #3) holds: combat acts on
+   the stance the player set, it never invents targets or chases.
+
+4. **Terrain is a static cover grid sharing `flow_field`'s exact cell mapping.** `Cover`
+   (`None`/`Light`/`Heavy`) gives a damage multiplier; `Heavy` also blocks sight. Line of
+   sight is an integer supercover DDA, **symmetric by construction** (the endpoint pair is
+   canonicalised) and corner-tight (a wall corner cannot be peeked through). Terrain is set
+   once and never mutated, so it is **not** in the checksum.
+
+5. **Territory, resources, economy, and camps ARE checksummed sim state.** Control points
+   capture to the sole contesting faction (contested → stalls); held points feed integer
+   per-tick income; camps build over time, upgrade, and run a FIFO production queue that spawns
+   units from a fixed `UnitKind` stat table (so every peer spawns the bit-identical unit).
+   Production spawns are deferred to a second pass so `world.spawn()` never reallocates under a
+   live index loop.
+
+6. **The order vocabulary is where the depth lives (game-design §8).** `Order` widens to
+   `Idle`/`MoveTo`/`AttackMove`/`Patrol{a,b}`/`HoldPosition`/`FallBack`. The **retreat trigger**
+   (`retreat_below` fraction) lets a player pre-program "fall back below X% HP" — the unit's
+   order is *replaced* with a terminal `FallBack(rally)` (rally = nearest friendly building, else
+   origin); the unit never decides for itself. Movement is the one shared
+   `systems::step_toward(_speed)`; for an unsuppressed unit `MoveTo`/`Idle` is bit-identical to
+   the Phase 1 mover (the old `movement_system` is deleted as dead code).
+
+7. **Fog of war and alerts are pure, presentation-side derivations — NOT sim state.** Per the
+   netcode design ([`architecture.md`](architecture.md) §Netcode) every client holds the full
+   world, so fog is a client-side filter: `fog::{command_visibility, embodied_visibility}` are
+   pure functions over `World`+`terrain` that never mutate sim state and are excluded from the
+   checksum. `embodied_visibility` is the vision half of "the world goes dark" (invariant #6).
+   The `alerts` channel turns the per-tick `event::SimEvent` stream into directional alerts
+   ("alerts, not intel", game-design §6) for the embodied HUD — also excluded from the checksum.
+
+8. **The per-tick checksum (invariant #7) folds all new sim state, and the RNG state.** Every
+   new per-entity component, plus per-faction resources and the territory points, is folded;
+   the RNG `(state, inc)` is now folded too so a divergence in the *number* of draws surfaces
+   immediately rather than only through its downstream effect. The headless `sim-runner` CI
+   scenario was rebuilt to exercise combat, territory, economy, and the order vocabulary, so
+   the cross-arch determinism matrix actually covers Phase 2.
+
+**Why:** the load-bearing risk in Phase 2 is the same as Phase 1 — a float or an unstable
+iteration leaking into the now-much-larger sim desyncs lockstep **silently** (invariants #1,
+#7). Making *every* system a pure, fixed-point, index-ordered function over one SoA world,
+with one fixed system order and a checksum that folds everything that mutates, keeps the
+determinism guarantee **structural** rather than a thing to remember — the same principle as
+D17/D18. Splitting fog/alerts out as pure derivations (not sim state) is the other half: it
+keeps the client-side "world goes dark" presentation rule from ever touching the
+competitive-integrity boundary the netcode owns, so it cannot desync. The work was built
+behind a frozen cross-module contract so the systems could be implemented in parallel without
+any one of them editing the shared determinism glue (`ecs`/`sim`/`checksum`).
+
+**What this does NOT decide (open questions stay open):** `fog`/`alerts` are implemented as a
+**mechanism**, deliberately not settling **how thin the thread back is** ([Q1](open-questions.md))
+or **whether the enemy can tell you've gone dark** ([Q2](open-questions.md)); possession remains
+unconstrained, not settling the **leash** question ([Q3](open-questions.md)). The current
+"alerts-only" lean is the mechanism shipped, not a lock.
+
+**Consequences:**
+- `core` gains eight modules and ~nine new per-entity component arrays; its dependency list
+  stays **empty** (invariant #2 tripwire armed) and it is `f32`/`f64`-free (invariant #1).
+- The suite grew from 57 to 128 `core` tests, green in **both** dev and release profiles; the
+  `sim-runner` stream is bit-identical dev↔release (a determinism check across overflow-check
+  profiles). The Phase 1 checksum literal recorded in [D22](#d22--phase-1-vertical-slice-passed-on-real-arm64-custom-rust-engine-validated-fallback-retired) is now historical — the new
+  `sim-runner` scenario produces a new value; what the matrix asserts is cross-arch *equality*,
+  not a fixed literal.
+- `World` gains an O(1) `entity(i)` accessor (an index→handle inverse the systems need to put a
+  real generational handle into an event/`last_attacker`).
+- [`roadmap.md`](roadmap.md) Phase 2 is updated to reflect the systems-code landing with its
+  honest caveats; [`README.md`](../README.md) repo-map notes the new `core` systems.
+
+**Deferred (honest scope — NOT done here):** host/presentation wiring of fog rendering, the
+alert HUD, and the embodied audio mix; the shipping touch UI for multi-unit selection and the
+order/stance vocabulary on a small screen; gameplay **balance** of the cost/time/damage tables
+(values are placeholders chosen for testable behavior, not tuned); and the netcode/lockstep
+layer itself (Phase 3). Avatar-local prediction ([D15](#d15--embodied-combat-over-lockstep-avatar-local-prediction-phase-05-passes)) is still the Phase 1 stub.
