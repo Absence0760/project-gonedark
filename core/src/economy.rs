@@ -27,41 +27,86 @@ use crate::territory::Territory;
 // Cost / time / stat tables. All integer or fixed-point (invariant #1). These
 // are the single source of truth every peer reads, so the same action costs and
 // the same unit spawns identically everywhere (lockstep).
+//
+// FIRST-PASS BALANCE BASELINE — UNTUNED (playtest only, NOT a locked design).
+// ---------------------------------------------------------------------------
+// Goal: an internally-coherent starting point, reasoned in *seconds* (the sim
+// runs at 60 Hz, so `seconds * 60 = ticks`) and against the demo's seed purse
+// of `Resources::new(500)` (see sim-runner / engine). Every number below is a
+// believable RTS placeholder, not a precision-tuned final value — expect to
+// move all of them once real playtests exist. The economy must remain
+// integer/fixed-point (invariant #1) and bit-identical dev==release.
+//
+// The shape of the design:
+//   * Income drips per-tick. With base 1/tick that is 60 resources/second of
+//     hands-off income; each held point adds 2/tick = 120/second. So holding
+//     territory roughly *triples* your income — territory genuinely matters.
+//   * Costs are sized in that 60/s frame so they read in seconds of saving:
+//     a Rifleman (~1.7 s of base income) is cheap and spammable; a Heavy
+//     (~4 s) is a real investment that buys ~2.2x HP and ~2x burst; a camp
+//     (~4 s, half the seed purse) is a commitment but affordable turn-one.
+//   * Build/production times read in seconds: Rifleman a handful of seconds,
+//     Heavy notably longer, camp construction longer still.
+//   * A camp + one held point pays its 250 cost back in ~2 s of holding, so
+//     "expand + bank a camp" is a real economic line against "spend it on
+//     bodies now" — that fork is the intended decision.
 // ===========================================================================
 
 /// Cost (resources) to start building a [`Camp`](BuildingKind::Camp).
-pub const CAMP_BUILD_COST: i64 = 200;
+/// 250 = half the demo seed purse (500): a genuine commitment, yet you can
+/// still afford exactly one turn-one (leaving 250 for an opening unit or two).
+pub const CAMP_BUILD_COST: i64 = 250;
 
 /// Resource cost to produce one [`Rifleman`](UnitKind::Rifleman).
-pub const RIFLEMAN_COST: i64 = 50;
+/// 100 ≈ 1.7 s of base income (60/s): cheap and spammable, the bread-and-butter
+/// body you mass.
+pub const RIFLEMAN_COST: i64 = 100;
 /// Resource cost to produce one [`Heavy`](UnitKind::Heavy).
-pub const HEAVY_COST: i64 = 120;
+/// 250 = 2.5x a Rifleman for ~2.2x HP (220 vs 100) and ~2x burst (11 vs 4 dmg):
+/// a deliberate investment, so massing Heavies is a real economic choice, not a
+/// strict upgrade.
+pub const HEAVY_COST: i64 = 250;
 
-/// Ticks to finish a freshly-placed camp's construction.
-pub const CAMP_BUILD_TICKS: u16 = 120;
+/// Ticks to finish a freshly-placed camp's construction. 1200 ticks = 20 s — a
+/// camp is a slow, deliberate structural commitment, far longer than any unit.
+pub const CAMP_BUILD_TICKS: u16 = 1200;
 
-/// Base ticks to produce one [`Rifleman`](UnitKind::Rifleman) (before level speedup).
-pub const RIFLEMAN_BASE_TICKS: u16 = 90;
+/// Base ticks to produce one [`Rifleman`](UnitKind::Rifleman) (before level
+/// speedup). 300 ticks = 5 s: a handful of seconds, fast enough to reinforce.
+pub const RIFLEMAN_BASE_TICKS: u16 = 300;
 /// Base ticks to produce one [`Heavy`](UnitKind::Heavy) (before level speedup).
-pub const HEAVY_BASE_TICKS: u16 = 180;
+/// 720 ticks = 12 s: notably longer than a Rifleman, matching its higher cost
+/// and battlefield value.
+pub const HEAVY_BASE_TICKS: u16 = 720;
 
 /// Each upgrade level shaves this many ticks off production time...
-pub const LEVEL_PROD_SPEEDUP: u16 = 15;
+/// 60 ticks = 1 s faster per level — a tangible, readable reward for investing
+/// in a camp instead of (or alongside) more bodies.
+pub const LEVEL_PROD_SPEEDUP: u16 = 60;
 /// ...down to no faster than this floor (so a maxed camp can't produce instantly).
-pub const PROD_TICKS_FLOOR: u16 = 30;
+/// 120 ticks = 2 s: even a fully-upgraded camp still takes a beat per unit, so
+/// production speed never trivializes the army-vs-economy tension.
+pub const PROD_TICKS_FLOOR: u16 = 120;
 
 /// Resources every faction accrues per tick regardless of held territory.
+/// 1/tick = 60/second — a steady hands-off drip you always get.
 pub const BASE_INCOME: i64 = 1;
 /// Extra per-tick resources per controlled territory point.
+/// 2/tick = 120/second per point — each point roughly *doubles* base income, so
+/// holding ground is the dominant way to out-produce an opponent.
 pub const PER_POINT_INCOME: i64 = 2;
 
-/// Starting HP of a [`Camp`](BuildingKind::Camp).
-const CAMP_HP: i32 = 600;
+/// Starting HP of a [`Camp`](BuildingKind::Camp). 1000 HP — ~4.5x a Rifleman and
+/// ~4.5x a Heavy: a strategic structure that takes a sustained commitment to
+/// raze, not something a stray squad deletes in passing.
+const CAMP_HP: i32 = 1000;
 
-/// Cost to upgrade a camp currently at `level` to the next tier: `150 * (level + 1)`.
+/// Cost to upgrade a camp currently at `level` to the next tier: `200 * (level + 1)`.
+/// Level 0→1 costs 200 (≈ two Riflemen), and each tier costs more (200, 400,
+/// 600, …) so deep upgrades are a real resource sink competing with army size.
 #[inline]
 pub const fn upgrade_cost(level: u8) -> i64 {
-    150 * (level as i64 + 1)
+    200 * (level as i64 + 1)
 }
 
 /// Resource cost to produce one unit of `kind`.
@@ -591,8 +636,38 @@ mod tests {
     #[test]
     fn higher_level_camp_produces_faster_with_floor() {
         assert!(prod_time(UnitKind::Rifleman, 1) < prod_time(UnitKind::Rifleman, 0));
+        // Each level shaves exactly LEVEL_PROD_SPEEDUP off the base.
+        assert_eq!(
+            prod_time(UnitKind::Rifleman, 1),
+            RIFLEMAN_BASE_TICKS - LEVEL_PROD_SPEEDUP
+        );
+        assert_eq!(
+            prod_time(UnitKind::Heavy, 2),
+            HEAVY_BASE_TICKS - 2 * LEVEL_PROD_SPEEDUP
+        );
         // Floor is respected at a very high (saturated) level.
         assert_eq!(prod_time(UnitKind::Rifleman, 255), PROD_TICKS_FLOOR);
         assert_eq!(prod_time(UnitKind::Heavy, 255), PROD_TICKS_FLOOR);
+    }
+
+    /// Anchor the playtest baseline in seconds (60 Hz) so an accidental edit that
+    /// breaks the intended "reads in seconds" shape trips a test. Untuned — these
+    /// assertions are expected to move when the numbers are next rebalanced.
+    #[test]
+    fn balance_baseline_reads_in_seconds() {
+        const HZ: u16 = 60;
+        // Camp build is the slowest action; units are a handful of seconds.
+        assert_eq!(CAMP_BUILD_TICKS, 20 * HZ, "camp construction is 20 s");
+        assert_eq!(RIFLEMAN_BASE_TICKS, 5 * HZ, "rifleman is 5 s");
+        assert_eq!(HEAVY_BASE_TICKS, 12 * HZ, "heavy is 12 s");
+        // A camp is buildable turn-one from the 500-resource demo purse, with
+        // resources to spare. (Bound to locals so the check is on values, not a
+        // const expression — clippy flags `assert!` on a constant condition.)
+        let (camp_cost, rifle_cost, heavy_cost) = (CAMP_BUILD_COST, RIFLEMAN_COST, HEAVY_COST);
+        assert!(camp_cost < 500, "camp affordable at the seed purse");
+        // Holding one point ~doubles base income (territory matters).
+        assert_eq!(PER_POINT_INCOME, 2 * BASE_INCOME);
+        // Heavy is a real investment over the spammable Rifleman.
+        assert!(heavy_cost > rifle_cost, "heavy costs more than a rifleman");
     }
 }
