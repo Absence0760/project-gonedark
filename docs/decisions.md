@@ -233,5 +233,88 @@ ciphertext is undesirable, lift `infra-secrets/` into the private repo and re-po
 
 **Status:** scaffolding ahead of code (no backend/services exist yet). The conventions
 and `.gitignore` guards are in place so nothing is retrofitted. See
+[`infrastructure.md`](infrastructure.md), [`../infra/README.md`](../infra/README.md).
+
+> **Superseded in part by [D12](#d12--production-secrets-move-to-the-private-estate-repo-not-in-repo).**
+> The secrets-*location* bullet ("in `./infra-secrets/`") no longer holds: secrets moved
+> to the separate private estate repo. The clone-and-run, Terraform-only, and
+> encrypted-by-default conventions stand.
+
+## D12 — Production secrets move to the private estate repo (not in-repo)
+
+**Supersedes:** the secrets-*location* portion of [D11](#d11--local-first-dev-docker--committed-defaults-prod-secrets-via-sops-infra-via-terraform).
+Everything else in D11 stands unchanged.
+
+**Decision:** This project's KMS-encrypted production secrets live in the **separate
+private estate repo** `Absence0760/infra-secrets` (checked out at `~/github/infra-secrets/`,
+a sibling of this repo), under a `gonedark/` subdirectory — **not** in a
+`./infra-secrets/` folder inside this repo. The in-repo folder created by D11 is deleted.
+Terraform's `carlpett/sops` data source now reads
+`${path.module}/../../infra-secrets/gonedark/prod.sops.yaml`. The estate repo's
+`.sops.yaml` gains a `^gonedark/.*\.sops\.yaml$` rule keyed to `alias/gonedark-sops`
+(this project's own KMS key), and encrypts **every value** (no `encrypted_regex`) —
+strictly safer than the per-key regex the in-repo `.sops.yaml` used.
+
+**Why:** D11 kept secrets in-repo and justified it by citing "the explicit
+`./infra-secrets` instruction" and the meryl-green-designs precedent. Both are weak: the
+"instruction" traced back to this project's own earlier docs (circular), and meryl
+committing its `*.sops` into a *public* repo is the exact anti-pattern the estate is
+**migrating off**, not a model to copy. The global estate convention is
+defense-in-depth — GitHub *private-repo* access control **and** KMS — and this game repo
+is likely to be made public. Even though KMS ciphertext is safe to expose, shipping it
+from a public repo throws away one of the two layers for no benefit. One subdir per
+project in the shared private repo is the established estate shape (`flakey/`,
+`running/`), so gonedark now matches it.
+
+**Cost of the move:** near zero — no real secrets existed yet, so nothing had to be
+re-encrypted. It was a scaffolding + path + docs change: repoint `infra/secrets.tf`,
+delete the in-repo folder, drop its `.gitignore` block, and update cross-references.
+
+**Status:** done, ahead of any backend code. `~/github/infra-secrets/gonedark/` holds
+`prod.sops.yaml.example` (template) and the `.sops.yaml` rule with a placeholder ARN;
+the real `alias/gonedark-sops` key + encrypted `prod.sops.yaml` get created when
+`new-project-account.sh gonedark` runs and the backend needs its first secret. See
 [`infrastructure.md`](infrastructure.md), [`../infra/README.md`](../infra/README.md),
-[`../infra-secrets/README.md`](../infra-secrets/README.md).
+and the estate repo's own `README.md` (`~/github/infra-secrets/README.md`).
+
+---
+
+## D13 — Monetization: cosmetic-only (weapon & player/unit skins)
+
+**Decision:** The game monetizes **only through cosmetics** — weapon skins and
+player/unit skins. **No pay-to-win:** nothing purchasable touches stats, balance, or
+capability. Cosmetics are **presentation-layer only** and never enter the simulation.
+
+**Why:**
+- It's the one revenue path that doesn't corrode the competitive core. The entire design
+  is a fairness argument — literal-executor AI (D3), "going dark" must read as *"I stayed
+  too long"* (D7), divided attention as the only skill (D2). Pay-to-win detonates all of
+  it. Skins sell **identity, not advantage.**
+- It rides the decoupled sim/render split for free: a skin is a render-asset swap, so it
+  *cannot* affect determinism or lockstep (invariants #1, #4). Monetization adds no sim
+  surface area.
+
+**Guardrails (non-negotiable — so cosmetics can't become pay-to-win by accident):**
+- **Sim-identical.** A skin must never change hitbox, collision, unit
+  silhouette/footprint/size, or readability/visibility. The sim is bit-identical
+  regardless of equipped cosmetics — two players with different skins compute the same
+  world.
+- **No tell tampering.** A skin must not suppress, fake, or alter any "embodied unit"
+  tell. If [Q2](open-questions.md) lands on the marked-hero option, that marker is
+  engine-owned — skins render *under* it, never over it.
+- **Out-of-band loadout.** Cosmetic choice travels as a non-sim-affecting tag alongside
+  player identity/entitlements, **never** as sim state in the lockstep order stream. A
+  peer missing a skin asset falls back to the default model with zero sim divergence.
+
+**Consequences:**
+- Validates the planned **accounts + entitlements** backend (and the Stripe hint in the
+  infra scaffolding): purchases map to per-account cosmetic entitlements, resolved at
+  load and applied in the render layer only.
+- Asset-pipeline load: cosmetic variants are extra cooked assets under the mobile
+  texture/download budget (ASTC/atlas discipline — see `architecture.md` §asset
+  pipeline). Skins are the first real content-volume driver; budget for them.
+- Opens a **new billing-rails fork → [Q9](open-questions.md):** mobile-first means
+  digital cosmetics on iOS/Android generally **must** route through Apple StoreKit /
+  Google Play Billing (platform IAP policy + revenue share), so Stripe/Steam apply only
+  to desktop/web storefronts. Which rails per platform — and whether entitlements unify
+  across them — is undecided.

@@ -166,3 +166,17 @@ built for mouse + keyboard. Translating that to a small touchscreen — *and*
 layering a competent FPS control scheme on top, *and* making the swap between them
 feel instant — is harder than any engine problem in this project. **Prototype the
 controls before committing to the systems.** (See the roadmap — this is Phase 0.)
+
+## 12. Monetization — cosmetic-only
+
+**Locked: the game sells only cosmetics — weapon skins and player/unit skins. No
+pay-to-win, ever.** Nothing purchasable touches stats, balance, or capability; skins
+sell *identity, not advantage*. ([`decisions.md`](decisions.md) D13.)
+
+This is the only revenue model that doesn't contradict pillar 4 (*the cost must always
+feel fair*). The whole game is a fairness argument — a purchasable edge would detonate
+it. Skins are **presentation-layer only**, so they ride the decoupled sim/render split
+for free and can't affect determinism, hitboxes, silhouette readability, or the
+embodied-unit tell (the hard guardrails live in D13). The open fork is *billing rails*
+per platform — store IAP on mobile vs Stripe/Steam on desktop —
+[`open-questions.md`](open-questions.md) Q9.

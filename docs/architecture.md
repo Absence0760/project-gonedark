@@ -162,6 +162,14 @@ On mobile, draw calls and bandwidth are the wall, not triangles.
 - **Dynamic resolution** to hold frame time when GPU-bound or throttling; UI stays
   native res.
 
+> **One world, two viewing distances — an unbudgeted production tension.** A CoH-style
+> strategic map is essentially 2.5D over terrain; an FPS embodiment demands a fully 3D
+> world with verticality, eye-level-credible meshes/animations, and fine collision.
+> Every battlefield must read cleanly *top-down as an RTS map* **and** hold up *at eye
+> level as a shooter space*. That doubles asset/LoD/collision-fidelity requirements and
+> is a real art-and-content cost the budgets below don't yet account for. Flag for the
+> vertical slice: prove one space works in both views before scaling content.
+
 ## Pathfinding & movement — the RTS bottleneck
 
 Layered, because per-unit per-frame A* doesn't scale:
@@ -203,6 +211,44 @@ Bandwidth scales with players, not the hundreds of units on the field.
   the "world goes dark" blindness is a client-side presentation rule, so it is NOT a
   competitive-integrity boundary — it shapes the intended experience, not a
   cheat-proof information wall.)**
+
+### Embodied combat over lockstep — the open tension
+
+> The netcode model above is **RTS-optimal and FPS-hostile**, and the FPS layer rides
+> the same wire. This is the biggest unresolved technical-design fork — tracked as
+> [`open-questions.md`](open-questions.md) Q7 (netcode model) and Q8 (tick rate), and
+> the reason the roadmap pulls a **Phase 0.5 latency spike** before the full engine.
+
+Lockstep + input delay is the right call for hundreds of units — but **input delay
+deliberately executes orders several ticks in the future**, and it ships with no
+client-side prediction, no rollback, and no lag compensation: precisely the things
+competitive shooters exist to provide. For top-down command that's invisible; for a
+first-person gunfight it is fixed input latency on aim and fire. The architecture
+currently treats the netcode as "solved" because it is solved *for the RTS* — the
+embodied half inherits a model built for the other half.
+
+This does **not** sink the design, but it must be confronted before Phase 1, not
+discovered in Phase 3:
+
+- **Avatar-local prediction (current lean).** Predict only *your* embodied entity
+  locally and reconcile against the authoritative tick; the other ~200 units stay pure
+  lockstep. Keeps the deterministic core intact while giving the one entity you're
+  twitch-controlling responsive aim. The prediction lives in the **presentation/input
+  path** — it must never feed back into deterministic sim state, or it desyncs.
+- **Tick rate (Q8).** Hits/ballistics/aim resolve *in* the 30 Hz sim, so they carry the
+  tick's granularity. Whether 30 Hz + interpolation reads as crisp enough, or the
+  embodied layer needs a higher-rate path, is an open question the spike answers.
+- **Determinism still binds the FPS math.** Aim angles, recoil, raycasts, and
+  projectile integration run inside the sim and so are **fixed-point with LUT trig** —
+  the "no floats in the sim" invariant covers first-person combat, not just unit
+  movement. The earlier "embodiment is cheap" finding is about *state plumbing* (the
+  input-source swap and vision toggle), not about combat-resolution math.
+
+**Sequencing rule:** validate embodied feel under real input delay in the Phase 0.5
+spike. If pure lockstep feels unacceptable and avatar-local prediction can't rescue it,
+the netcode model (Q7) or tick rate (Q8) must change *before* the engine spine is
+committed — retrofitting a prediction/rollback boundary into a finished sim is far
+costlier than designing to it.
 
 ## Memory & concurrency
 

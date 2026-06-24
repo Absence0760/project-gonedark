@@ -2,7 +2,9 @@
 
 How the project runs locally (clone-and-go) and how production infra and secrets are
 managed. The game **client** is a native Rust app; this doc is about the **backend/
-services** side it will eventually talk to (matchmaker, relay, accounts, telemetry) and
+services** side it will eventually talk to (matchmaker, relay, accounts, telemetry,
+and cosmetic store/entitlements — see [`decisions.md`](decisions.md) D13,
+[`open-questions.md`](open-questions.md) Q9) and
 the cloud infra behind it. Most of this is scaffolding ahead of the server code — the
 conventions are fixed now so nothing has to be retrofitted.
 
@@ -31,11 +33,11 @@ That's it — no secrets to fetch, nothing to configure.
 |---|---|---|
 | `.env.development` | **yes** | Safe local defaults. Clone-and-run. Assume everything in it is public. |
 | `.env.local` | no (gitignored) | Personal overrides (e.g. a different port). Takes precedence. |
-| `infra-secrets/*.sops.yaml` | yes (encrypted) | **Production** secrets only. Never read locally. |
+| `../../infra-secrets/gonedark/*.sops.yaml` | yes, but in a **separate private repo** (encrypted) | **Production** secrets only. Not in this repo; never read locally. |
 
 Precedence: `.env.local` > `.env.development`. Never put a real secret in either — real
-values live only in `infra-secrets/` (prod) and are injected by Terraform/deploy, not
-by `.env`.
+values live only in the private estate repo (`~/github/infra-secrets/gonedark/`, prod)
+and are injected by Terraform/deploy, not by `.env`.
 
 ## Local services (Docker)
 
@@ -63,12 +65,16 @@ S3 + lock, `gonedark-sops` KMS key, GitHub OIDC deploy role, delegated
 
 ## Secrets (sops + AWS KMS)
 
-Lives in [`infra-secrets/`](../infra-secrets/). KMS-encrypted via your SSO profile (no
-local age key). **Only encrypted `*.sops.yaml` is ever committed** — `.gitignore`
-blocks plaintext in that directory. Terraform reads them through the `carlpett/sops`
-provider (`data "sops_file"` → `local.secrets[...]`). Create/edit with
-`sops infra-secrets/prod.sops.yaml`. Full details and the estate-convention note in
-[`infra-secrets/README.md`](../infra-secrets/README.md).
+Secrets do **not** live in this repo. They sit in the separate private estate repo,
+`~/github/infra-secrets/gonedark/` (a sibling of this repo, one subdir per project) —
+KMS-encrypted via your SSO profile (no local age key). **Only encrypted `*.sops.yaml`
+is ever committed**, and only to that private repo, so this potentially-public game
+repo never ships ciphertext (decision D12). Terraform reads them through the
+`carlpett/sops` provider (`data "sops_file"` at `../../infra-secrets/gonedark/prod.sops.yaml`
+→ `local.secrets[...]`). Create/edit with `sops gonedark/prod.sops.yaml` from inside
+that repo (after `aws sso login --profile gonedark`). Full per-project workflow in the
+estate repo's `README.md`; estate pattern reference in
+`~/github/templates/docs/secrets-management.md`.
 
 ## Why this shape
 

@@ -1,9 +1,10 @@
 # Roadmap
 
-> Build order and milestones. The sequencing reflects the project's two biggest
-> risks: **touch controls** (a product risk, not an engine one) and **determinism**
-> (a correctness risk that gets exponentially harder to retrofit). Both are pulled
-> as early as possible.
+> Build order and milestones. The sequencing reflects the project's three biggest
+> risks: **touch controls** (a product risk, not an engine one), **embodied combat feel
+> over the network** (the FPS layer rides RTS-optimal lockstep — see Phase 0.5), and
+> **determinism** (a correctness risk that gets exponentially harder to retrofit). All
+> are pulled as early as possible.
 >
 > Cross-platform (Windows/Linux/Android/iOS) threads through every phase rather than
 > being a phase of its own — see [`platforms.md`](platforms.md). The key rule: the
@@ -16,9 +17,10 @@
 **Goal:** prove the core interaction is fun on a touchscreen before building any
 systems behind it.
 
-The single biggest risk in this project is not the engine — it's whether *CoH*-style
-command **and** a competent FPS scheme **and** an instant swap between them feel good
-on a small touchscreen. If this isn't fun, no amount of engine work saves it.
+The first risk to hit — and the one this phase exists to kill — is not the engine: it's
+whether *CoH*-style command **and** a competent FPS scheme **and** an instant swap
+between them feel good on a small touchscreen. If this isn't fun, no amount of engine
+work saves it. (Embodied feel *over the network* is the next risk — Phase 0.5.)
 
 - Throwaway prototype (can be in anything fast — even a non-final engine).
 - One controllable unit; tap-to-select / order on the command layer.
@@ -26,6 +28,30 @@ on a small touchscreen. If this isn't fun, no amount of engine work saves it.
 - The "world goes dark" vignette + an alert ping, faked.
 - **Exit criterion:** the embody ↔ command loop feels good in hand. Kill or rework
   the concept here if it doesn't.
+
+## Phase 0.5 — Embodiment-over-network latency spike *(before the engine spine)*
+
+**Goal:** prove embodied FPS combat feels acceptable under the chosen
+deterministic-lockstep + input-delay netcode — *before* committing the full engine.
+
+The netcode is RTS-optimal and FPS-hostile: input delay executes orders a few ticks
+ahead, with no prediction/rollback/lag-comp (see
+[`architecture.md`](architecture.md) §"Embodied combat over lockstep — the open
+tension" and [`open-questions.md`](open-questions.md) Q7/Q8). Phase 0 can't surface
+this — it's
+single-unit and local. If embodied combat feels laggy over the wire, you want to know
+*now*, not after building the ECS, renderer, and systems on top of an unfit netcode
+model.
+
+- Throwaway, like Phase 0 — minimal, not the final engine.
+- **Two networked clients**, one embodied unit each, fighting under *real* input delay
+  (and at the real 30 Hz tick, to test Q8 alongside Q7).
+- Try **avatar-local prediction** (predict only your own embodied entity, reconcile
+  against the tick) if raw lockstep feels bad — the current lean for Q7.
+- **Exit criterion:** a credible path to good embodied combat feel over the net — *or*
+  a decision to change the netcode model (Q7) or tick rate (Q8) **before** Phase 1.
+  Retrofitting a prediction/rollback boundary into a finished sim is far costlier than
+  designing to it.
 
 ## Phase 1 — Vertical slice
 
@@ -103,6 +129,8 @@ phone. Iterate logic on the emulator; **profile performance on real target devic
 | Risk | Why it's dangerous | Mitigation |
 |---|---|---|
 | **Touch controls** | CoH controls were built for mouse+keyboard; layering FPS + instant swap on a touchscreen is harder than any engine problem here | **Phase 0** — prototype controls before committing to systems |
+| **Embodied combat feels laggy** | Lockstep + input delay is RTS-optimal but adds fixed input latency with no prediction/rollback — wrong for twitch FPS aim (Q7/Q8) | **Phase 0.5** — latency spike before the engine; lean is avatar-local prediction; change netcode/tick *before* Phase 1 if needed |
+| **One world, two views** | The same battlefield must work top-down as an RTS map *and* at eye level as an FPS space — double the asset/collision/LoD cost | Prove one space in both views in the **Phase 1** slice before scaling content |
 | **Build cost** | A custom native engine is a real investment | De-risk with the Phase 1 vertical slice on real hardware; keep Unity/Godot fallback live until it passes |
 | **Determinism bugs** | Any float leaking into the sim breaks lockstep silently | Enforce fixed-point in the sim layer; per-tick checksum diffing in CI from day one |
 | **Device fragmentation** | Android GPU/thermal variance is wide | Quality tiers + dynamic scaling baked in early, not as a post-ship patch |
