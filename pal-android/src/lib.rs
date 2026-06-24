@@ -55,6 +55,12 @@ fn android_main(app: AndroidApp) {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("gonedark"),
     );
+    // Without a hook, a Rust panic (and wgpu treats its errors as fatal = panic) prints to
+    // stderr, which Android does NOT route to logcat — so the real cause is invisible and the
+    // activity just dies. Route panics to logcat so InitWindow/GPU failures are diagnosable.
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("PANIC: {info}");
+    }));
     info!("android_main: starting Going Dark (Android PAL, Phase 1 scaffold)");
 
     // Build the PAL pieces. Window/Input wrap the AndroidApp; the RHI is created lazily on
@@ -151,6 +157,18 @@ fn android_main(app: AndroidApp) {
         // Drain native input into the shared InputFrame each iteration. A real loop calls
         // this once per tick; the produced frame feeds the core's intent vocabulary.
         let _frame: InputFrame = input.poll();
+
+        // Scaffold proof-of-life: while the surface is up, render (clear-present) every
+        // iteration so the device shows a live frame regardless of RedrawNeeded cadence —
+        // this confirms the wgpu/Vulkan round-trip on real hardware. The real fixed-tick
+        // sim+render loop (mirroring app/src/main.rs) is wired in here in Phase 2.
+        if window.surface_up {
+            if let Some(rhi) = rhi.as_mut() {
+                if rhi.begin_frame() {
+                    rhi.end_frame();
+                }
+            }
+        }
 
         if window.destroy_requested {
             break 'outer;
@@ -374,9 +392,11 @@ impl AndroidRhi {
         // ANativeWindow stays valid until `AndroidRhi` (and thus the surface) is dropped on
         // TerminateWindow. The Arc is held by the closure below.
         let target = Arc::new(target);
+        info!("RHI: instance created (Vulkan); native window {width}x{height}");
         let surface = instance
             .create_surface(target.clone())
             .map_err(|e| format!("create_surface: {e}"))?;
+        info!("RHI: surface created");
 
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -384,19 +404,44 @@ impl AndroidRhi {
             force_fallback_adapter: false,
         }))
         .map_err(|e| format!("request_adapter: {e}"))?;
+        let ainfo = adapter.get_info();
+        info!(
+            "RHI: adapter = {} (backend {:?}, type {:?}, driver {})",
+            ainfo.name, ainfo.backend, ainfo.device_type, ainfo.driver
+        );
+
+        // Vulkan 1.1 mobile floor (platforms.md §6): keep the conservative downlevel limits
+        // for every resource EXCEPT texture dimensions. downlevel_defaults caps
+        // max_texture_dimension_2d at 2048, but a modern phone's swapchain is wider (this
+        // Adreno is 2340px) — configuring a 2340-wide surface against a 2048 cap is a
+        // validation error. Raise just the texture-dimension caps to the adapter's real max
+        // so the full-screen surface configures. (wgpu 29 dropped Limits::using_resolution,
+        // so set the three fields by hand.)
+        let adapter_limits = adapter.limits();
+        let mut required_limits = wgpu::Limits::downlevel_defaults();
+        required_limits.max_texture_dimension_1d = adapter_limits.max_texture_dimension_1d;
+        required_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
+        required_limits.max_texture_dimension_3d = adapter_limits.max_texture_dimension_3d;
 
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("gonedark-android-device"),
             required_features: wgpu::Features::empty(),
-            // Vulkan 1.1 mobile floor (platforms.md §6): stay within downlevel defaults.
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits,
             memory_hints: wgpu::MemoryHints::default(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
             trace: wgpu::Trace::Off,
         }))
         .map_err(|e| format!("request_device: {e}"))?;
+        info!("RHI: device + queue created");
 
         let caps = surface.get_capabilities(&adapter);
+        if caps.formats.is_empty() {
+            return Err("surface reported no supported formats for this adapter".to_string());
+        }
+        info!(
+            "RHI: surface caps — formats={:?} present_modes={:?} alpha_modes={:?}",
+            caps.formats, caps.present_modes, caps.alpha_modes
+        );
         let format = caps
             .formats
             .iter()
@@ -414,7 +459,15 @@ impl AndroidRhi {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
+        // `surface.configure` reports failure via wgpu's uncaptured-error channel (a fatal
+        // panic by default), not a Result — wrap it in a validation scope so a bad config is a
+        // readable Err here instead of an opaque crash.
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         surface.configure(&device, &config);
+        if let Some(err) = block_on(scope.pop()) {
+            return Err(format!("surface.configure ({format:?} {width}x{height}): {err}"));
+        }
+        info!("RHI: surface configured {width}x{height} as {format:?}");
 
         // Keep the surface target alive for the surface's lifetime by forgetting the Arc;
         // it is reclaimed implicitly when the process tears down the native window. (We
@@ -462,10 +515,43 @@ impl Rhi for AndroidRhi {
 
     fn end_frame(&mut self) {
         if let Some(frame) = self.frame.take() {
-            // TODO(phase1-step6): encode the renderer's command buffer against
-            //   `frame.texture` here and `self.queue.submit(...)`. For now we present the
-            //   acquired (uncleared) frame to prove the swapchain round-trips.
-            let _ = &self.queue;
+            // TODO(phase1-step6): encode the shared `gonedark_render::Renderer` against
+            //   `frame.texture` here (the desktop host already does this). For now we clear
+            //   to a recognizable colour so a successful surface round-trip is VISIBLE on the
+            //   device — an uncleared swapchain image is undefined (reads as black/garbage).
+            let view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder =
+                self.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("gonedark-android-clear"),
+                    });
+            {
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("gonedark-android-clear-pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            // "Going dark" indigo — distinct from black so it's unambiguous.
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.10,
+                                g: 0.12,
+                                b: 0.28,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+            }
+            self.queue.submit(std::iter::once(encoder.finish()));
             frame.present();
         }
     }
