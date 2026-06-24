@@ -518,3 +518,42 @@ guarantee structural.**
 is parameterized as `core::sim::TICK_HZ` and must be profiled on real arm64 before locking;
 the choice of off-the-shelf crates for *non-sim* layers (wgpu/winit in render/PAL) is
 unaffected by D18.
+
+---
+
+## D19 — The GPU device crosses into the renderer at the concrete wiring layer, not through the abstract PAL trait
+
+**Decision:** `wgpu` enters the build at `render`, `pal-desktop`, `pal-android`, and `app`
+only. The **abstract `pal` crate stays GPU-free** — its `Rhi`/`Window`/`Input` traits name
+no `wgpu` type. The concrete desktop backend (`pal-desktop`) owns the `winit` window plus
+the `wgpu` `Instance`/`Adapter`/`Device`/`Queue`/`Surface`, and exposes them through
+**concrete accessors** (`device()`, `queue()`, `format()`, `acquire()`, `present()`). The
+`app` wiring layer — which already depends on the concrete backend — hands that `&wgpu::Device`
+to `render::Renderer::new(device, format)` and calls `renderer.render(device, queue, view,
+&camera, world_dark)` each frame. `core` and `pal` depend on **no** GPU/windowing crate
+(invariant #2 holds verbatim). This unblocks Phase-1 build-order steps 4–5 without routing a
+GPU handle through the portable seam.
+
+**Why:** the renderer genuinely needs a `wgpu::Device` to build pipelines and buffers, but
+invariant #2 / D9 forbid `core` and the *abstract* PAL from seeing a GPU API. Two ways to
+give `render` a device were possible: (a) widen the abstract `pal::Rhi` trait with
+`wgpu`-typed methods, or (b) let the device cross only at the **concrete** layer where the
+backend and renderer are already platform-specific. (a) would drag `wgpu` into the trait
+crate that `core`-adjacent code links and pin every backend to wgpu's trait shape — the
+opposite of a *thin* seam. (b) keeps the portable boundary exactly as narrow as D9 intended:
+the abstract traits stay an engine-neutral vocabulary, and the wgpu coupling lives entirely
+in the three crates that are per-platform anyway (`render` + each `pal-<platform>` + `app`).
+The renderer talks to `wgpu` (→ Vulkan/D3D12/Metal per device) directly; it never talks to a
+*specific* GPU API or to `winit`, so the RHI-over-many-APIs property (glossary) is intact.
+
+**Consequences:**
+- `render`, `pal-desktop`, `pal-android`, `app` gain `wgpu` (and `winit`/`pollster`/
+  `raw-window-handle` on the desktop backend, `glam` for render-side float matrices). `core`
+  and `pal` keep an **empty** dependency list — the invariant-#2 tripwire stays armed.
+- The `render::Renderer` API freezes to `new(&Device, TextureFormat)` + `prepare(prev, curr,
+  alpha)` + `render(&Device, &Queue, &TextureView, &Camera, world_dark)`. Q16.16→`f32`
+  conversion stays inside `render` (invariant #1).
+- `pal-desktop` freezes a concrete `DesktopRenderSurface` (window + surface + device/queue)
+  and a `DesktopInput` that maps `winit` events onto the engine-neutral `pal::InputFrame`.
+- No change to invariants #1/#4: the sim stays fixed-point and decoupled; `render` only ever
+  reads a `Snapshot` and never calls back to mutate sim state.
