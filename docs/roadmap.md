@@ -14,6 +14,13 @@
 
 ## Phase 0 — Control prototype *(do this before anything else)*
 
+> **Status: PASSED (2026-06-23, [`decisions.md`](decisions.md) D14).** The embody↔command
+> loop feels good in hand, validated on real hardware (Galaxy S24). Touch-feel risk
+> retired; resolves [`open-questions.md`](open-questions.md) Q4. Throwaway prototype lives
+> in [`../prototypes/phase0-controls/`](../prototypes/phase0-controls/) (kept through Phase
+> 0.5, then deleted). Two caveats carried into D14: audio is still faked, and embodied feel
+> *over the network* is untested — that's Phase 0.5, **the next gate.**
+
 **Goal:** prove the core interaction is fun on a touchscreen before building any
 systems behind it.
 
@@ -30,6 +37,8 @@ work saves it. (Embodied feel *over the network* is the next risk — Phase 0.5.
   the concept here if it doesn't.
 
 ## Phase 0.5 — Embodiment-over-network latency spike *(before the engine spine)*
+
+> **Status: NEXT.** Phase 0 passed (D14); this is the next gate before any engine work.
 
 **Goal:** prove embodied FPS combat feels acceptable under the chosen
 deterministic-lockstep + input-delay netcode — *before* committing the full engine.
@@ -128,7 +137,7 @@ phone. Iterate logic on the emulator; **profile performance on real target devic
 
 | Risk | Why it's dangerous | Mitigation |
 |---|---|---|
-| **Touch controls** | CoH controls were built for mouse+keyboard; layering FPS + instant swap on a touchscreen is harder than any engine problem here | **Phase 0** — prototype controls before committing to systems |
+| **Touch controls** | CoH controls were built for mouse+keyboard; layering FPS + instant swap on a touchscreen is harder than any engine problem here | **Phase 0 — PASSED (D14):** prototype felt good in hand on a Galaxy S24. Shipping touch UI still a Phase 2 design task |
 | **Embodied combat feels laggy** | Lockstep + input delay is RTS-optimal but adds fixed input latency with no prediction/rollback — wrong for twitch FPS aim (Q7/Q8) | **Phase 0.5** — latency spike before the engine; lean is avatar-local prediction; change netcode/tick *before* Phase 1 if needed |
 | **One world, two views** | The same battlefield must work top-down as an RTS map *and* at eye level as an FPS space — double the asset/collision/LoD cost | Prove one space in both views in the **Phase 1** slice before scaling content |
 | **Build cost** | A custom native engine is a real investment | De-risk with the Phase 1 vertical slice on real hardware; keep Unity/Godot fallback live until it passes |

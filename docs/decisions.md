@@ -318,3 +318,52 @@ capability. Cosmetics are **presentation-layer only** and never enter the simula
   Google Play Billing (platform IAP policy + revenue share), so Stripe/Steam apply only
   to desktop/web storefronts. Which rails per platform — and whether entitlements unify
   across them — is undecided.
+
+---
+
+## D14 — Phase 0 control prototype passes; touch-feel risk retired
+
+**Resolves:** [Q4](open-questions.md) — the touch-control product risk (the project's #1
+non-engine risk).
+
+**Decision:** The Phase 0 control prototype is a **pass.** The embody↔command loop feels
+good in hand on a touchscreen, validated hands-on on real hardware (Samsung Galaxy S24,
+SM-S921U1). The risk that *CoH*-style command **plus** a competent FPS scheme **plus** an
+instant swap between them couldn't be made to feel good on a small touchscreen is
+**retired.** Greenlight to proceed past Phase 0 — the next gate is the **Phase 0.5**
+embodiment-over-network latency spike ([`roadmap.md`](roadmap.md)), *not* Phase 1 engine
+work.
+
+**What was tested:** a throwaway **Godot 4.6** build (`prototypes/phase0-controls/`,
+explicitly disposable — **not** the engine; the real engine is Rust/`wgpu` per D10, built
+fresh at Phase 1). It modelled **feel only** and stayed faithful to the locked design: one
+unit; tap-to-move literal-executor command layer (D3) with drag-pan and pinch-zoom;
+**embody = swap the same entity's input source + flip vision to avatar-only**, no
+character/respawn system (invariant #5, D6/D7); world-goes-dark with a constant vignette +
+"BLIND" tell and **alerts-not-intel** (directional banner + haptic buzz, never a map
+reveal — §6/D7); embodied scheme = left-thumb virtual stick, right-drag look, FIRE
+hitscan, instant SURFACE.
+
+**Why this is enough to proceed:** Phase 0's sole job per the roadmap was to answer *"does
+the embody↔command loop feel good in hand?"* before building any systems. On a real device
+the answer is yes — the control scheme and the instant swap, the two things that *had* to
+feel right, do. The existential framing Q4 carried ("if it isn't fun in hand, the concept
+reworks or dies here") is settled in the concept's favour. Detailed shipping touch UI
+(multi-unit selection, the full order/stance vocabulary surfaced on a touchscreen) is
+downstream Phase 2 design work, not a reopening of this question.
+
+**Caveats carried forward (on the record, not blockers):**
+- **Audio is still unproven.** The prototype faked it with haptics + visuals, but D7/§6
+  make audio a *primary* system for going-dark — "hear your empire when you can't see it."
+  The full blind-but-hearing feel is not validated until real audio exists; revisit before
+  Phase 0 is considered fully closed.
+- **Single-unit and local only.** The prototype cannot surface the *next* risk — embodied
+  FPS feel **over** lockstep + input-delay netcode (Q7/Q8). That is exactly what Phase 0.5
+  exists to answer, before the engine spine is committed.
+- **Throwaway.** Keep `prototypes/phase0-controls/` as a reference artifact through Phase
+  0.5, then delete it. It carries none of the engine invariants (fixed-point sim, PAL
+  boundary, sim/render split) by design — do not grow it into the game.
+
+**Consequence:** the next concrete step is the Phase 0.5 latency spike (two networked
+clients, one embodied unit each, real input delay at the real 30 Hz tick), which must clear
+before the Rust engine spine (Phase 1) is committed.

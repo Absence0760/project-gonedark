@@ -6,8 +6,10 @@ tactics — then **drop into a single tank or trooper and fight in first person*
 The catch: while you're embodied, *the world goes dark*. You lose all sight of
 the battlefield except what your unit can see. Stay in as long as you dare.
 
-This repo holds the design, architecture, and roadmap. **There is no engine code
-yet** — this is pre-production.
+This repo holds the design, architecture, and roadmap. **There is no _engine_ code
+yet** — this is pre-production. (A disposable Phase 0 control prototype lives in
+[`prototypes/`](prototypes/phase0-controls/); it is feel-test scaffolding, not the
+engine — see Status below.)
 
 ---
 
@@ -54,10 +56,16 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/roadmap.md`](docs/roadmap.md) | Build phases, milestones, and the top risks |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
+| [`prototypes/phase0-controls/`](prototypes/phase0-controls/) | **Throwaway** Godot control prototype — proved the Phase 0 touch-feel gate (D14); deleted after Phase 0.5. Not the engine |
 
 ## Status
 
-**Pre-production / design.** Target platforms: **Windows, Linux, Android, iOS** — one
+**Pre-production.** **Phase 0 (control prototype) passed** (2026-06-23, D14): the
+embody↔command touch loop feels good in hand on real hardware, retiring the project's #1
+non-engine risk. **Next gate: Phase 0.5** — the embodiment-over-network latency spike —
+before any engine code is written. The Rust engine spine starts at Phase 1.
+
+Target platforms: **Windows, Linux, Android, iOS** — one
 shared deterministic core with platform-optimized backends (D3D12/Vulkan, Vulkan,
 Vulkan, Metal), developed on Linux desktop first and shipping Android-first. See
 [`docs/platforms.md`](docs/platforms.md). Engine: **custom native in Rust** (renderer

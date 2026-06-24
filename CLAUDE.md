@@ -5,9 +5,13 @@ grow camps from a top-down view like *Company of Heroes*, then **possess a singl
 and fight it in first person — while the strategic map goes dark.** One player does
 both jobs; the tension is divided attention.
 
-**Current state: pre-production / design-only. There is NO engine code yet.** All work
-so far is the markdown design corpus in `docs/`. Treat changes as documentation work
-until the first code phase begins (roadmap Phase 0/1).
+**Current state: pre-production. No *engine* code yet — the Rust engine (D10) starts at
+Phase 1.** The work is the markdown design corpus in `docs/`, plus a **throwaway Godot
+control prototype** in `prototypes/phase0-controls/` that passed the Phase 0 touch-feel
+gate (D14, 2026-06-23). That prototype is disposable feel-test scaffolding — *not* engine
+code, carries none of the invariants below, and gets deleted after Phase 0.5. Treat the
+docs as the product and the prototype as throwaway; the next gate is **Phase 0.5** (the
+netcode latency spike) before any engine spine. Don't grow the prototype into the game.
 
 ---
 

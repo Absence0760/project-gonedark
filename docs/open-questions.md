@@ -56,15 +56,19 @@ testing.
 
 ---
 
-## Q4 — Touch control scheme (the real product risk)
+## Q4 — Touch control scheme (the real product risk) — RESOLVED ([D14](decisions.md))
 
-Not a design-fork so much as the hardest unsolved problem. How do *CoH*-style
-selection/orders, a competent FPS scheme, and an instant swap between them all coexist
-on a small touchscreen?
+**Resolved in [D14](decisions.md):** the Phase 0 control prototype passed — the
+embody↔command loop (tap-to-move command layer + drag-pan/pinch-zoom, instant embody
+swap, left-stick/right-look/FIRE embodied scheme) feels good in hand, validated on real
+hardware (Galaxy S24). The existential risk this question carried — that the scheme
+couldn't be made fun on a touchscreen — is retired.
 
-**Status:** unsolved by design — this is **Phase 0** in the roadmap. Prototype before
-committing to any systems. If this isn't fun in hand, the concept reworks or dies
-here.
+What remains is *downstream design work, not this fork*: the detailed shipping touch UI
+(multi-unit selection, the full order/stance vocabulary on a small screen) is a Phase 2
+concern. Two Phase-0-adjacent caveats are logged in D14: **audio** is still faked
+(D7/§6 makes it primary for going-dark) and must be validated with real audio, and
+embodied feel **over the network** is unproven — that is the Phase 0.5 spike (see Q7/Q8).
 
 ---
 
