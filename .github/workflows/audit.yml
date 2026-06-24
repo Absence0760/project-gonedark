@@ -1,0 +1,35 @@
+name: audit
+
+# cargo-deny supply-chain gate over the Cargo dependency tree: RustSec security advisories,
+# permissive-licenses-only, crates.io-only sources, and duplicate-crate hygiene. The policy
+# lives in /deny.toml. This guards the large native tree the render/host/Android crates pull
+# (wgpu, winit, android-activity, tokio, axum, jni); `core` (the sim) has zero deps.
+#
+# The weekly cron is load-bearing: a NEW advisory can be published against a dependency you
+# haven't touched, so this re-checks the unchanged tree on a schedule — not only when deps
+# change. (Rust analog of the sibling project-running repo's audit.yml.)
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Prebuilt cargo-deny binary (no compile). Runs all four checks against /deny.toml.
+      # SHA-pinning is handled by Dependabot's github-actions updater (.github/dependabot.yml).
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

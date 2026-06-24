@@ -1,0 +1,73 @@
+# Dependabot — weekly, grouped, low-noise dependency PRs.
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+#
+# Adapted from the sibling project-running repo for this Rust workspace. Three ecosystems:
+#   - cargo: the engine's Cargo dep tree (one root lockfile covers every workspace member).
+#   - github-actions: keeps the pinned action refs current (gitleaks pins by SHA — without
+#     Dependabot that pinning rots silently).
+#   - terraform: the infra/ stack (aws + carlpett/sops providers).
+# Minor/patch bumps are grouped into a single PR per ecosystem; MAJOR bumps stay ungrouped
+# so each gets individual review (a wgpu/winit/AGP major can break the render or Android
+# build). Mondays 06:00 UTC — predictable, lands before the week's work.
+
+version: 2
+updates:
+  # --- Rust workspace -------------------------------------------------------------------
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      # The wgpu + naga render stack versions in lockstep — group so a bump can't ship half.
+      wgpu:
+        patterns: ["wgpu", "wgpu-*", "naga", "naga-*"]
+      # winit + the windowing / raw-handle stack.
+      windowing:
+        patterns: ["winit", "raw-window-handle", "dpi"]
+      # The Android backend crates (move together with the NDK/cargo-ndk toolchain).
+      android:
+        patterns: ["android-activity", "ndk", "ndk-*", "jni", "android_logger"]
+      # Everything else, minor + patch only — majors stay ungrouped for individual review.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # --- GitHub Actions -------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    groups:
+      all-actions:
+        patterns: ["*"]
+
+  # --- Terraform (infra/) ---------------------------------------------------------------
+  # Provider MAJOR bumps (hashicorp/aws v5 → v6) can shift state schema — they stay
+  # ungrouped for individual review; minor/patch ride together.
+  - package-ecosystem: "terraform"
+    directory: "/infra"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore(infra/deps)"
+      include: "scope"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]

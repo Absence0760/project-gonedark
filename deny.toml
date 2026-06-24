@@ -1,0 +1,50 @@
+# cargo-deny config — supply-chain policy for the Cargo dependency tree.
+# Run locally with `cargo deny check`; CI runs it on every push/PR (.github/workflows/audit.yml).
+#
+# Four checks: advisories (RustSec CVEs/unmaintained), licenses (only permissive allowed),
+# bans (duplicate/banned crates), sources (only crates.io). Determinism note: nothing here
+# touches the sim — it's a dependency-hygiene gate for the render/host/Android crates that
+# pull a large native tree (wgpu, winit, android-activity, tokio, axum, jni).
+
+[advisories]
+# RustSec advisory DB. Security vulnerabilities are denied by default (the whole point).
+# A yanked crate version in the lockfile is treated as an error — bump off it.
+yanked = "deny"
+# Add a `RUSTSEC-YYYY-NNNN` here ONLY with a written rationale if an advisory is a false
+# positive or genuinely doesn't apply, never to silence a real one.
+ignore = []
+
+[licenses]
+# Only OSI-permissive licenses are allowed — no copyleft (GPL/LGPL/MPL/AGPL) sneaking in
+# via a transitive dep. Every license below is permissive and compatible with shipping a
+# closed-source game binary. (r-efi is MIT OR Apache-2.0 OR LGPL-2.1; the OR resolves to MIT,
+# so no copyleft obligation — that's why LGPL is NOT in this list.)
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+# Our own workspace crates declare `license = "UNLICENSED"` (private, never published).
+# Skip them — the policy is about third-party deps, not our first-party code.
+private = { ignore = true }
+
+[bans]
+# A few duplicate transitive versions (e.g. windows-sys 0.45/0.52/0.59 via winit/jni) are
+# normal in a big native tree and not worth blocking — surface them as a warning so they
+# don't accrete unbounded, but don't fail CI on them.
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+# Every dependency must come from crates.io. An unknown registry or a git dependency is a
+# supply-chain risk (and a determinism risk if it floats) — deny both.
+unknown-registry = "deny"
+unknown-git = "deny"
