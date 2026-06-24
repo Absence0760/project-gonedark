@@ -31,6 +31,10 @@ gonedark-pal = { path = "../pal" }
 # Pinned APIs (build-order step 6). Only resolved when targeting android; the host
 # build never sees these.
 [target.'cfg(target_os = "android")'.dependencies]
+# The shared platform-agnostic game loop. `android_main` drives the SAME `engine::Game`
+# the desktop host does (sim + render + fixed-tick + cameras); only the surface/input/
+# lifecycle below is Android-specific. Android-target-only because it pulls render+wgpu.
+gonedark-engine = { path = "../engine" }
 # NativeActivity/GameActivity entry point + lifecycle/input event pump. The
 # `native-activity` feature selects the NativeActivity flavor (matches the
 # AndroidManifest below). android_main is generated/exported by this crate's macros.

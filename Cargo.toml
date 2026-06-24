@@ -4,9 +4,11 @@
 #   core        — shared deterministic sim. ZERO platform deps (invariant #2).
 #   pal         — Platform Abstraction Layer: trait definitions only.
 #   render      — wgpu renderer; consumes a read-only snapshot, never mutates sim.
+#   engine      — platform-agnostic game-loop driver (sim+render+fixed-tick+cameras+input);
+#                 both hosts drive it; depends on core/render/pal, never winit/android.
 #   pal-desktop — winit + wgpu backend (dev/CI host).
 #   pal-android — cargo-ndk + JNI shim (the ship target; cfg-gated to android).
-#   app         — wires core + pal + render; owns the run loop and sim/render split.
+#   app         — desktop host: winit run loop that drives `engine::Game`.
 #   sim-runner  — headless core driver emitting per-tick checksums for determinism CI.
 #   server      — backend services (placeholder; see docs/infrastructure.md).
 [workspace]
@@ -15,6 +17,7 @@ members = [
     "core",
     "pal",
     "render",
+    "engine",
     "pal-desktop",
     "pal-android",
     "app",

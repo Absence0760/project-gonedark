@@ -1,0 +1,21 @@
+[package]
+name = "gonedark-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The platform-agnostic game-loop driver: owns the deterministic sim + the renderer +
+# the fixed-tick/camera/embodiment state and exposes one `Game::frame(...)` that BOTH the
+# desktop host (`app`, winit) and the Android entry (`pal-android`'s `android_main`) drive.
+# Depends on core/render/pal — and `wgpu`/`glam` (it's the render-side wiring layer, D19) —
+# but on NO windowing/platform crate (no winit, no android-activity). That keeps the one
+# shared loop identical on every platform (invariant #2 spirit) while the per-platform
+# surface/input/lifecycle stays in the `pal-*` backends.
+[dependencies]
+gonedark-core = { path = "../core" }
+gonedark-render = { path = "../render" }
+gonedark-pal = { path = "../pal" }
+wgpu = "29"
+glam = "0.30"
+log = "0.4"

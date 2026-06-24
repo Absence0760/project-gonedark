@@ -23,8 +23,10 @@
 #![cfg(target_os = "android")]
 
 use std::sync::Arc;
+use std::time::Instant;
 
-use gonedark_pal::{Audio, Input, InputFrame, Rhi, Storage, Window};
+use gonedark_engine::{Game, DEFAULT_SEED};
+use gonedark_pal::{Audio, Input, InputFrame, Storage, Window};
 
 use android_activity::input::{InputEvent, KeyAction, KeyEvent, MotionAction, MotionEvent};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
@@ -63,23 +65,24 @@ fn android_main(app: AndroidApp) {
     }));
     info!("android_main: starting Going Dark (Android PAL, Phase 1 scaffold)");
 
-    // Build the PAL pieces. Window/Input wrap the AndroidApp; the RHI is created lazily on
-    // InitWindow (we have no surface until then).
+    // Build the PAL pieces. Window/Input wrap the AndroidApp; the RHI + the shared
+    // `engine::Game` are created lazily on InitWindow (we have no GPU device until then).
     let mut window = AndroidWindow::new(app.clone());
     let mut input = AndroidInput::new(app.clone());
     let mut rhi: Option<AndroidRhi> = None;
+    let mut game: Option<Game> = None;
+    let mut last_frame = Instant::now();
     let storage = AndroidStorage::new(app.clone());
-    let mut audio = AndroidAudio::default();
+    let mut audio = AndroidAudio;
 
     // Sanity-touch the stub PAL services so the deferred impls are linked, not dead code.
     let _ = storage.read("settings");
     audio.play_oneshot(0);
 
-    // The host owns the real sim/render loop (app/src/main.rs). For the scaffold we just
-    // drive the lifecycle + a present-only RHI; wiring the actual `gonedark_core::Sim` +
-    // `gonedark_render::Renderer` through here is build-order step 5/6 integration.
-    // TODO(phase1-step6): construct the core Sim + Renderer and run the fixed-tick
-    //   accumulator here, exactly as app/src/main.rs does for desktop, feeding `input.poll()`.
+    // Android drives the SAME platform-agnostic loop the desktop host does: `engine::Game`
+    // owns the deterministic sim + renderer + fixed-tick + cameras. Here we only own the
+    // Android surface/input/lifecycle and feed `Game::frame` an InputFrame + a wall-clock dt
+    // + the acquired surface view each iteration (mirroring app/src/main.rs).
 
     'outer: loop {
         // Block forever when idle; android-activity wakes us on the next event. A real
@@ -91,8 +94,13 @@ fn android_main(app: AndroidApp) {
             None
         };
 
-        app.poll_events(timeout, |event| match event {
-            PollEvent::Main(main_event) => match main_event {
+        app.poll_events(timeout, |event| {
+            // android-activity also surfaces non-Main events (config changes, etc.); we only
+            // act on Main lifecycle events here.
+            let PollEvent::Main(main_event) = event else {
+                return;
+            };
+            match main_event {
                 MainEvent::InitWindow { .. } => {
                     info!("MainEvent::InitWindow — creating wgpu surface");
                     window.surface_up = true;
@@ -103,8 +111,16 @@ fn android_main(app: AndroidApp) {
                                 let (w, h) = window.size();
                                 window.width = w;
                                 window.height = h;
+                                // Build the shared game against the live device. Same seed as
+                                // desktop → the bit-identical deterministic scene.
+                                game = Some(Game::new(
+                                    new_rhi.device(),
+                                    new_rhi.format(),
+                                    DEFAULT_SEED,
+                                ));
                                 rhi = Some(new_rhi);
-                                info!("wgpu surface created at {w}x{h}");
+                                last_frame = Instant::now();
+                                info!("wgpu surface + engine created at {w}x{h}");
                             }
                             Err(e) => warn!("RHI init failed: {e}"),
                         },
@@ -112,9 +128,11 @@ fn android_main(app: AndroidApp) {
                     }
                 }
                 MainEvent::TerminateWindow { .. } => {
-                    info!("MainEvent::TerminateWindow — dropping surface");
+                    info!("MainEvent::TerminateWindow — dropping surface + engine");
                     window.surface_up = false;
-                    // Drop the RHI: the ANativeWindow it borrowed is about to go invalid.
+                    // Drop the game BEFORE the RHI: its renderer holds GPU resources owned by
+                    // the device inside `rhi`, and the ANativeWindow is about to go invalid.
+                    game = None;
                     rhi = None;
                 }
                 MainEvent::WindowResized { .. } => {
@@ -127,14 +145,9 @@ fn android_main(app: AndroidApp) {
                     info!("WindowResized -> {w}x{h}");
                 }
                 MainEvent::RedrawNeeded { .. } => {
-                    // Present one frame if we have a surface. The real path renders the
-                    // interpolated snapshot here (invariant #4).
-                    if let Some(rhi) = rhi.as_mut() {
-                        if rhi.begin_frame() {
-                            // TODO(phase1-step6): renderer.draw() against the latest snapshot.
-                            rhi.end_frame();
-                        }
-                    }
+                    // Rendering happens once per loop iteration (below) while the surface is
+                    // up, so RedrawNeeded needs no special handling — the continuous loop
+                    // already keeps the frame fresh.
                 }
                 MainEvent::Resume { .. } => info!("MainEvent::Resume"),
                 MainEvent::Pause => info!("MainEvent::Pause"),
@@ -149,23 +162,24 @@ fn android_main(app: AndroidApp) {
                 }
                 MainEvent::LowMemory => warn!("MainEvent::LowMemory"),
                 _ => {}
-            },
-            // android-activity surfaces non-Main events (config changes, etc.) here.
-            _ => {}
+            }
         });
 
-        // Drain native input into the shared InputFrame each iteration. A real loop calls
-        // this once per tick; the produced frame feeds the core's intent vocabulary.
-        let _frame: InputFrame = input.poll();
+        // Drain native input (touch → pointer for the command-layer tap) into one
+        // engine-neutral frame, then drive the shared game loop: compute the wall-clock dt,
+        // acquire a surface frame, and let `engine::Game` step the deterministic sim + render
+        // the interpolated snapshot — exactly as the desktop host does in app/src/main.rs.
+        let input_frame: InputFrame = input.poll();
 
-        // Scaffold proof-of-life: while the surface is up, render (clear-present) every
-        // iteration so the device shows a live frame regardless of RedrawNeeded cadence —
-        // this confirms the wgpu/Vulkan round-trip on real hardware. The real fixed-tick
-        // sim+render loop (mirroring app/src/main.rs) is wired in here in Phase 2.
         if window.surface_up {
-            if let Some(rhi) = rhi.as_mut() {
-                if rhi.begin_frame() {
-                    rhi.end_frame();
+            if let (Some(rhi), Some(game)) = (rhi.as_mut(), game.as_mut()) {
+                let now = Instant::now();
+                let dt = now.duration_since(last_frame).as_secs_f32();
+                last_frame = now;
+                let viewport = rhi.size();
+                if let Some((frame, view)) = rhi.acquire() {
+                    game.frame(&input_frame, dt, viewport, rhi.device(), rhi.queue(), &view);
+                    rhi.present(frame);
                 }
             }
         }
@@ -320,21 +334,20 @@ impl Input for AndroidInput {
 // RHI — wgpu surface created from the ANativeWindow.
 // ---------------------------------------------------------------------------------------
 
-/// [`Rhi`] backed by wgpu, which selects the **Vulkan** backend on Android automatically
+/// The Android wgpu surface + device, which selects the **Vulkan** backend automatically
 /// (platforms.md §3). The surface is created from the `ANativeWindow` handed to us on
 /// `InitWindow`; it must be recreated whenever the window is recreated (resume).
 ///
-/// Holds the wgpu device/queue/surface and the current config so `resize` can reconfigure
-/// the swapchain. `begin_frame` acquires the next surface texture (returning `false` if the
-/// surface is lost so the caller skips and we recreate next frame); `end_frame` presents.
+/// This is the Android mirror of `pal-desktop::DesktopRenderSurface`: it exposes concrete
+/// `device()`/`queue()`/`format()`/`acquire()`/`present()` accessors that the shared
+/// `engine::Game` (via `android_main`) drives — the abstract `pal::Rhi` trait is not
+/// implemented here (D19: the device crosses at the concrete wiring layer).
 pub struct AndroidRhi {
     _instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    /// The frame currently in flight between begin_frame/end_frame.
-    frame: Option<wgpu::SurfaceTexture>,
 }
 
 /// A `'static` raw-handle wrapper over the `ndk` `NativeWindow`. wgpu's
@@ -465,7 +478,9 @@ impl AndroidRhi {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         surface.configure(&device, &config);
         if let Some(err) = block_on(scope.pop()) {
-            return Err(format!("surface.configure ({format:?} {width}x{height}): {err}"));
+            return Err(format!(
+                "surface.configure ({format:?} {width}x{height}): {err}"
+            ));
         }
         info!("RHI: surface configured {width}x{height} as {format:?}");
 
@@ -480,80 +495,61 @@ impl AndroidRhi {
             device,
             queue,
             config,
-            frame: None,
         })
     }
-}
 
-impl Rhi for AndroidRhi {
-    fn resize(&mut self, width: u32, height: u32) {
+    /// The wgpu device — handed to `engine::Game::new`/`frame` (D19: the device crosses at
+    /// this concrete wiring layer, never through the abstract `pal` trait).
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.config.format
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
+
+    /// Reconfigure the swapchain on resize (ignore zero-area).
+    pub fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
     }
 
-    fn begin_frame(&mut self) -> bool {
-        // wgpu 29 returns a `CurrentSurfaceTexture` enum (not a `Result`): `Suboptimal`
-        // still yields a usable frame; `Lost`/`Outdated` mean reconfigure and skip.
+    /// Acquire the next swapchain image + a default view, mirroring
+    /// `DesktopRenderSurface::acquire`. `None` if the surface is lost/outdated (reconfigure +
+    /// skip the frame); the caller recreates next frame. wgpu 29 returns a
+    /// `CurrentSurfaceTexture` enum, not a `Result`.
+    pub fn acquire(&mut self) -> Option<(wgpu::SurfaceTexture, wgpu::TextureView)> {
         match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.frame = Some(frame);
-                true
+                let view = frame
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+                Some((frame, view))
             }
-            // Surface lost/outdated (common on resume): reconfigure and skip this frame.
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                false
+                None
             }
             other => {
                 warn!("get_current_texture: {other:?}");
-                false
+                None
             }
         }
     }
 
-    fn end_frame(&mut self) {
-        if let Some(frame) = self.frame.take() {
-            // TODO(phase1-step6): encode the shared `gonedark_render::Renderer` against
-            //   `frame.texture` here (the desktop host already does this). For now we clear
-            //   to a recognizable colour so a successful surface round-trip is VISIBLE on the
-            //   device — an uncleared swapchain image is undefined (reads as black/garbage).
-            let view = frame
-                .texture
-                .create_view(&wgpu::TextureViewDescriptor::default());
-            let mut encoder =
-                self.device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("gonedark-android-clear"),
-                    });
-            {
-                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("gonedark-android-clear-pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            // "Going dark" indigo — distinct from black so it's unambiguous.
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.10,
-                                g: 0.12,
-                                b: 0.28,
-                                a: 1.0,
-                            }),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-            }
-            self.queue.submit(std::iter::once(encoder.finish()));
-            frame.present();
-        }
+    /// Present a previously acquired frame.
+    pub fn present(&self, frame: wgpu::SurfaceTexture) {
+        frame.present();
     }
 }
 

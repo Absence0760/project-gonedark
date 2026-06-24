@@ -632,12 +632,10 @@ dependencies = [
 name = "gonedark-app"
 version = "0.0.0"
 dependencies = [
- "glam",
- "gonedark-core",
+ "gonedark-engine",
  "gonedark-pal",
  "gonedark-pal-android",
  "gonedark-pal-desktop",
- "gonedark-render",
  "wgpu",
  "winit",
 ]
@@ -645,6 +643,18 @@ dependencies = [
 [[package]]
 name = "gonedark-core"
 version = "0.0.0"
+
+[[package]]
+name = "gonedark-engine"
+version = "0.0.0"
+dependencies = [
+ "glam",
+ "gonedark-core",
+ "gonedark-pal",
+ "gonedark-render",
+ "log",
+ "wgpu",
+]
 
 [[package]]
 name = "gonedark-pal"
@@ -656,6 +666,7 @@ version = "0.0.0"
 dependencies = [
  "android-activity",
  "android_logger",
+ "gonedark-engine",
  "gonedark-pal",
  "jni 0.21.1",
  "log",
