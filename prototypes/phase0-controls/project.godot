@@ -1,0 +1,35 @@
+; Going Dark — Phase 0 control prototype (THROWAWAY)
+; Disposable Godot 4 build to prove the embody <-> command touch loop in hand.
+; This is NOT the real engine (that is Rust / wgpu, decision D10, roadmap Phase 1).
+
+config_version=5
+
+[application]
+
+config/name="Going Dark — Phase 0 (throwaway)"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+boot_splash/show_image=false
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/handheld/orientation="landscape"
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[input_devices]
+
+; Let desktop mouse drive the same ScreenTouch/Drag path we use on the phone,
+; so the control logic is identical in the editor and on device.
+pointing/emulate_touch_from_mouse=true
+
+[rendering]
+
+; gl_compatibility = widest mid-range Android reach for a first deploy to an
+; unknown test phone. The scene is trivial; switch to "mobile" (Vulkan) later
+; if the target device supports it.
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
