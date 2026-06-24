@@ -114,13 +114,18 @@ model.
 > Phase 2. **The host/presentation wiring is now in ([D24](decisions.md)):** fog rendering, the
 > embodied alert HUD, the embodied audio mix, and the touch UI (multi-unit selection + the
 > order/stance vocabulary on screen) — all pure presentation derivations, so the checksum stream
-> stayed byte-identical and the suite grew 149 → 190 tests (green dev + release). **Honest caveats
-> (still NOT done):** gameplay **balance** (the cost/time/damage tables — and the 30% retreat
-> default — are untuned placeholders, left for playtesting); real audio *output* (the mix is built +
-> tested, the AAudio/desktop sink is still a no-op); and the netcode/lockstep layer (Phase 3). The
-> full order/stance vocabulary — Patrol, hold position, fall back, and the retreat trigger — is now
-> reachable from the touch UI ([D25](decisions.md), which also corrects a mis-scoping in D24). Open
-> forks Q1/Q2/Q3 are deliberately left open — fog and alerts ship as a *mechanism*, not a lock.
+> stayed byte-identical. **A polish round ([D26](decisions.md)) then made it real and checkable:**
+> desktop **audio output** renders the mix through a `cpal` stream (opt-in `audio` feature,
+> procedural placeholder sounds — `pnpm play:audio`); command-layer **selection is now drawn** (a
+> white rim); the full order/stance vocabulary (patrol/hold/fall-back/retreat) is reachable
+> ([D25](decisions.md), which also corrects a mis-scoping in D24); combat lethality + the economy
+> tables got a **first-pass balance baseline**; and a headless **offscreen render harness**
+> (`viz-runner`, `pnpm desktop:viz`) now asserts these behaviors with real pixels. **Honest caveats
+> (still NOT done):** balance is a *baseline*, not tuned (the numbers — incl. the 30% retreat
+> default — expect to move from playtests); audio sounds are *procedural placeholders* (no
+> asset/design pass) and Android's AAudio sink is still a no-op; and the netcode/lockstep layer is
+> Phase 3. Open forks Q1/Q2/Q3 are deliberately left open — fog and alerts ship as a *mechanism*,
+> not a lock.
 
 **Goal:** the actual game.
 

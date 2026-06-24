@@ -901,3 +901,59 @@ reserved no-op gate for a future context/radial menu.
 - [D24](#d24--phase-2-host-wiring-foghudaudiotouch-ui-behind-a-frozen-presentation-contract)'s
   "no `Command`" caveat is struck through with a pointer here; [`roadmap.md`](roadmap.md) drops that
   caveat from the Phase 2 status. Balance and the netcode/lockstep layer remain the open items.
+
+---
+
+## D26 — Phase 2 polish round: real (opt-in) audio output, a selection highlight, and a first-pass balance baseline
+
+**Status:** three follow-ups closing the gaps left after the [D24](#d24--phase-2-host-wiring-foghudaudiotouch-ui-behind-a-frozen-presentation-contract)
+host wiring landed. All are presentation/tuning; the deterministic sim model is unchanged.
+
+**Decision:**
+
+1. **Desktop audio output is real, but opt-in.** `engine::audio::mix_cues` already computed the
+   positioned cues; `pal-desktop`'s `DesktopAudio` now *renders* them through a `cpal` output
+   stream — **procedural per-`SoundId` synthesis** (no audio assets yet: a noise burst for gunfire,
+   a falling tone for a unit lost, a low thud for a base hit, a rising chime for a capture, a blip
+   for production), equal-power panned by `azimuth`, scaled by `gain`, one-pole low-passed when
+   `muffled` (the off-map strategic bleed, invariant #6). It lives behind a default-OFF `audio`
+   cargo feature: a bare build / clone-and-run pulls **no** audio system libs (invariant #8);
+   enabling it pulls `cpal` → links ALSA (`alsa-lib-devel`). Without the feature `DesktopAudio` is
+   a silent no-op, and any device/stream failure degrades to silent rather than panicking — audio
+   is never load-bearing. Run with `pnpm play:audio`.
+
+2. **Command-layer selection is now visible.** Selection state existed but nothing drew it. The
+   renderer gains `FLAG_SELECTED`; `UnitSnapshot` carries its world `entity_index` (presentation
+   data, not sim state, not checksummed) so the renderer can rim selected units in bright white.
+   The rim is a *command-view* affordance — the engine passes no selection while embodied.
+
+3. **A first-pass balance baseline.** The combat lethality (weapon damage halved — troops were
+   deleting each other on contact) and the economy tables (camp/unit costs, build/production
+   times, territory income, camp HP, upgrades) are tuned into an internally-coherent baseline,
+   reasoned in seconds at 60 Hz against the demo's 500-resource seed. It is **explicitly a playtest
+   baseline, NOT a locked design** — the numbers are expected to move once real playtests exist.
+
+**Why:** these were the honest "NOT done" items after D24. Keeping audio opt-in preserves the
+zero-setup local build (invariant #8) while making the embodied mix audible on demand; the
+selection rim is pure render state (invariant #4 — no sim mutation); and the balance pass is a
+sim-input change only — determinism is untouched (dev == release; the per-tick checksum changes,
+which is correct for a balance change — the matrix asserts cross-arch *equality*, not a fixed
+literal). A new headless **offscreen render harness** (`viz-runner`, `pnpm desktop:viz`) renders
+the real `Game` to a texture and asserts the command view draws, embodiment goes dark, the alert
+HUD draws, and the selection rim shows — so these presentation behaviors are now checked with
+actual pixels, not just unit tests (it needs a GPU, so it is local-only, not CI).
+
+**What this does NOT decide:** the procedural sounds are placeholders (real audio assets/design
+are later); the balance numbers are a baseline, not tuned; Android's AAudio sink is still a
+documented no-op. Q1/Q2/Q3 remain open.
+
+**Consequences:**
+- `pal-desktop` gains an optional `cpal` dep behind the `audio` feature; `app` forwards it; the
+  default workspace build/clippy stay header-free (no `cpal`). `core` is untouched by audio +
+  selection; the balance change is confined to `core::economy`/the lethality table.
+- Tests: combat/economy balance + the selection rim are covered; the `viz-runner` scenarios grew
+  to include `selected`. Full suite green dev + release; `clippy -D warnings` clean (default and
+  `--features audio`); `aarch64-linux-android` still type-checks.
+- [`roadmap.md`](roadmap.md) Phase 2 caveats updated (audio output done/opt-in; selection visible;
+  balance has a baseline); [`README.md`](../README.md) repo-map notes the audio feature + the
+  selection rim.
