@@ -101,7 +101,8 @@ model.
 
 ## Phase 2 — Game systems
 
-> **Status: IN PROGRESS — systems spine landed ([`decisions.md`](decisions.md) D23).** A first,
+> **Status: IN PROGRESS — systems spine ([`decisions.md`](decisions.md) D23) + host wiring
+> ([D24](decisions.md)) landed.** A first,
 > fully-deterministic implementation of every bullet below lives in `core` as eight new modules
 > (`terrain, combat, economy, territory, fog, orders, alerts, event`): fixed-point combat with
 > suppression/cover/line-of-sight, territory capture, resources/economy/camps + production, fog
@@ -110,10 +111,15 @@ model.
 > folded into the per-tick checksum (territory/economy are sim state; fog/alerts are excluded as
 > derived presentation). `core` tests grew 57 → 128 (green dev + release); the headless
 > `sim-runner` scenario now exercises the systems so the cross-arch determinism matrix covers
-> Phase 2. **Honest caveats (NOT done):** host/presentation wiring of fog rendering + the alert
-> HUD + the embodied audio mix; the shipping touch UI (multi-unit selection, the vocabulary on a
-> small screen); gameplay **balance** (the cost/time/damage tables are untuned placeholders); and
-> the netcode/lockstep layer (Phase 3). Open forks Q1/Q2/Q3 are deliberately left open — fog and
+> Phase 2. **The host/presentation wiring is now in ([D24](decisions.md)):** fog rendering, the
+> embodied alert HUD, the embodied audio mix, and the touch UI (multi-unit selection + the
+> order/stance vocabulary on screen) — all pure presentation derivations, so the checksum stream
+> stayed byte-identical and the suite grew 149 → 190 tests (green dev + release). **Honest caveats
+> (still NOT done):** gameplay **balance** (the cost/time/damage tables are untuned placeholders —
+> left for playtesting); real audio *output* (the mix is built + tested, the AAudio/desktop sink is
+> still a no-op); a `Command` to set `Patrol`/`HoldPosition`/`FallBack` (the `Order`s exist but the
+> touch vocabulary can't reach them yet — a small determinism-sensitive `core`-surface follow-up);
+> and the netcode/lockstep layer (Phase 3). Open forks Q1/Q2/Q3 are deliberately left open — fog and
 > alerts ship as a *mechanism*, not a lock.
 
 **Goal:** the actual game.

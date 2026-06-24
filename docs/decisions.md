@@ -776,3 +776,78 @@ alert HUD, and the embodied audio mix; the shipping touch UI for multi-unit sele
 order/stance vocabulary on a small screen; gameplay **balance** of the cost/time/damage tables
 (values are placeholders chosen for testable behavior, not tuned); and the netcode/lockstep
 layer itself (Phase 3). Avatar-local prediction ([D15](#d15--embodied-combat-over-lockstep-avatar-local-prediction-phase-05-passes)) is still the Phase 1 stub.
+
+---
+
+## D24 — Phase 2 host wiring: fog/HUD/audio/touch-UI behind a frozen presentation contract
+
+**Status:** the host/presentation wiring [D23](#d23--phase-2-game-systems-the-deterministic-model-and-its-module-decomposition)
+deferred has landed — fog rendering, the embodied alert HUD, the embodied audio mix, and the
+shipping touch UI (multi-unit selection + the order/stance vocabulary on screen). All four are
+**pure presentation derivations** over the existing deterministic `core`; none is sim state, and
+none mutates the sim.
+
+**Decision:**
+
+1. **Built behind a frozen cross-crate contract — the same technique as [D23](#d23--phase-2-game-systems-the-deterministic-model-and-its-module-decomposition).**
+   The shared glue (the PAL seam, the `engine` frame loop, the renderer) was extended and committed
+   first so the four subsystems could be filled in **parallel** without any one of them editing the
+   determinism-adjacent glue. The contract adds: `pal::InputFrame` touch intents (`pointer_up`,
+   `long_press`, `command_slot`) and `pal::Audio::submit_mix` + `AudioCue`/`SoundId`; `engine::Game`
+   driving fog/alerts/audio/selection/command-UI in `frame` (which now takes a `&mut dyn Audio`);
+   and `render` choosing its draw set through a fog filter plus a HUD `LOAD` pass. Each subsystem
+   lives in a **disjoint leaf module** — `render::{fog, hud}` (+ `hud.wgsl`),
+   `engine::{audio, selection, command_ui}`.
+
+2. **Fog rendering** (`render::fog::visible_instances`) applies `core::fog` visibility at the float
+   boundary. Embodied → the map collapses to the avatar's own sight (the avatar always draws);
+   command view → fog of war hides units/buildings outside the player's union vision, while control
+   points stay drawn as known objective markers (invariant #6).
+
+3. **Alert HUD** (`render::hud`) is a separate screen-space, alpha-blended `LOAD` pass: one
+   directional marker per recent alert, placed by bearing relative to the avatar's yaw and faded
+   over a 120-tick (~2 s) window. The thin thread back — *alerts, not intel* (invariant #6). The
+   pure placement/fade math (`marker_for`) is unit-tested; `hud.wgsl` is naga-validated.
+
+4. **Embodied audio mix** (`engine::audio::mix_cues`) turns the per-tick `SimEvent` stream into
+   positioned `AudioCue`s: event → `SoundId`, `azimuth = yaw - world_bearing` (0 = ahead, + = right,
+   the *same* right-handed convention as the HUD), `1/(1+dist/FALLOFF)` attenuation, and a `muffled`
+   flag for strategic sound bleeding into the embodied view. The **mix** (which sounds, where, how
+   loud, what's ducked) is the system and is platform-free + tested; the actual output path stays a
+   per-backend no-op sink for now (real AAudio / desktop output is plumbing, not the system, and is
+   left without pulling an audio crate).
+
+5. **Touch UI** is two pure layers: `engine::selection` (command-view tap-pick / drag-band select;
+   presentation state only, a no-op while embodied) and `engine::command_ui` (the on-screen
+   vocabulary slot → `Move`/`AttackMove`/`SetStance` for the selection, world target quantized via
+   `world_to_fixed` at the input boundary). The desktop backend binds the new intents to
+   left-release / `F` / number keys `1`–`6` for dev iteration.
+
+**Why:** the Phase 2 risk is unchanged from D23 — anything that lets the presentation layer feed
+back into the sim desyncs lockstep **silently** (invariants #1, #4, #7). Keeping every new subsystem
+a read-only derivation that only *reads* the world/events and emits pixels, audio cues, or
+`Command`s the sim already accepts makes that guarantee **structural**: the headless `sim-runner`
+checksum stream is **byte-identical** before and after this work (`8cfc2b25ab17a128`) and dev ==
+release. The frozen-contract technique kept five parallel workstreams off the shared determinism
+glue, exactly as D23.
+
+**What this does NOT decide (open questions stay open):** fog and alerts ship as a **mechanism** —
+the current alerts-only thinness ([Q1](open-questions.md)), the "enemy can't tell you're dark"
+posture ([Q2](open-questions.md)), and the avatar-only dark are an *implementation*, not a lock; the
+touch UX (gesture grammar, slot layout) is a working scheme, not settled design. `Patrol`/
+`HoldPosition`/`FallBack` exist as sim `Order`s but have **no `Command`** to set them — exposing
+them through the command UI is a small, determinism-sensitive `core`-surface follow-up, deliberately
+NOT smuggled into this presentation pass. Gameplay **balance** and the netcode/lockstep layer remain
+as deferred in D23.
+
+**Consequences:**
+- `render` gains `fog`/`hud` modules (+ `hud.wgsl`); `engine` gains `audio`/`selection`/
+  `command_ui`; `pal` gains the touch intents + `AudioCue`/`SoundId`. `core` is **untouched** (its
+  dependency list stays empty; no float entered the sim).
+- The suite grew **149 → 190** tests (fog 5, hud 11, audio 10, selection 8, command_ui 7), green in
+  **both** dev and release; `clippy -D warnings` is clean; `aarch64-linux-android` type-checks.
+- A `code-reviewer` pass caught and fixed an **inverted audio azimuth sign** (it disagreed with the
+  HUD's bearing convention and the cue contract) before the commit — a sound from the right would
+  otherwise have panned left.
+- [`roadmap.md`](roadmap.md) Phase 2 status and [`README.md`](../README.md) repo-map are updated;
+  balance + netcode remain the open Phase 2 / Phase 3 items.
