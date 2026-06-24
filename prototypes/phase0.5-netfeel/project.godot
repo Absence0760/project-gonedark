@@ -1,0 +1,31 @@
+; Going Dark — Phase 0.5 netfeel spike (THROWAWAY)
+; Disposable Godot 4 harness to feel-test embodied FPS combat over deterministic-
+; lockstep + input-delay netcode. NOT the engine (Rust/wgpu, D10, Phase 1) and NOT a
+; determinism test — floats are fine here (docs/phase-0.5-plan.md §2).
+
+config_version=5
+
+[application]
+
+config/name="Going Dark — Phase 0.5 netfeel (throwaway)"
+run/main_scene="res://Main.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+boot_splash/show_image=false
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/handheld/orientation="landscape"
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
