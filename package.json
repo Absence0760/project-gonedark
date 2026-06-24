@@ -2,7 +2,7 @@
   "name": "project-gonedark",
   "version": "0.0.0",
   "private": true,
-  "description": "Going Dark — convenience task runner for local dev services. The game engine is Rust (see CLAUDE.md); this package.json exists ONLY to wrap docker compose, not as a JS build. No dependencies — `pnpm install` is unnecessary.",
+  "description": "Going Dark — convenience task runner for local dev services and the throwaway Phase 0 Godot prototype. The game engine is Rust (see CLAUDE.md); this package.json exists ONLY to wrap docker compose and the prototype's run/deploy scripts, not as a JS build. No dependencies — `pnpm install` is unnecessary.",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "start": "docker compose up -d",
@@ -16,6 +16,10 @@
     "db:logs": "docker compose logs -f postgres",
     "redis:up": "docker compose up -d redis",
     "redis:down": "docker compose stop redis",
-    "redis:logs": "docker compose logs -f redis"
+    "redis:logs": "docker compose logs -f redis",
+    "phase0:linux": "godot --path prototypes/phase0-controls",
+    "phase0:android": "prototypes/phase0-controls/deploy.sh",
+    "phase0:android:build": "prototypes/phase0-controls/deploy.sh build",
+    "phase0:android:logs": "prototypes/phase0-controls/deploy.sh logcat"
   }
 }
