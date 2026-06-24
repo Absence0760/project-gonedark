@@ -73,10 +73,15 @@ model.
 **Goal:** the real engine spine, end to end, with one of everything.
 
 - ECS world + scheduler; data-oriented component storage.
-- Fixed 30 Hz deterministic sim loop + render interpolation.
+- Fixed-tick deterministic sim loop + render interpolation. **Settle the sim rate first
+  ([`open-questions.md`](open-questions.md) Q10 / D16):** 30 Hz is too coarse for embodied
+  combat (~60 Hz target) — profile **global-60 vs dual-rate** on a real target device and
+  lock it *before* building the loop, since it drives netcode, budgets, and thermals.
+- Embodiment as an input-source swap on a single entity; fog → avatar-only on embody. Wire
+  the **avatar-local-prediction boundary (D15) from the first netcode commit** — presentation
+  path only, never writing sim state.
 - Minimal Vulkan renderer (instanced units), camera, top-down view.
 - One unit type moving via a flow field on screen.
-- Embodiment as an input-source swap on a single entity; fog → avatar-only on embody.
 - **Validate on real mid-range arm64 hardware**, not just the emulator.
 - **Exit criterion:** one unit, commandable and embodiable, running deterministically
   at target frame rate on a target device. Keep the Unity/Godot fallback live until

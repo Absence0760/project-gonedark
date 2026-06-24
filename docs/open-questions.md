@@ -110,32 +110,15 @@ approach) and D15 for the full caveats (audio still faked; not a determinism tes
 
 ---
 
-## Q8 — Is a 30 Hz sim tick enough for embodied combat? *(advanced by [D15](decisions.md), still open)*
+## Q8 — Is a 30 Hz sim tick enough for embodied combat? — RESOLVED ([D16](decisions.md): NO)
 
-> **Status after Phase 0.5:** leaning **hold 30 Hz**. The spike ran at 30 Hz and
-> avatar-local prediction ([Q7](#q7--what-netcode-model-carries-embodied-fps-combat--resolved-d15))
-> made it feel good in all conditions — but the 30↔60 Hz toggle was **not** A/B'd, so 30 Hz
-> is not yet rigorously confirmed. **Close this early in Phase 1.**
+**Resolved in [D16](decisions.md): 30 Hz is too coarse for embodied combat — target 60 Hz.**
+The Phase 0.5 A/B was decisive: 30 Hz felt "chunky/bad" for first-person aim/fire, 60 Hz was
+the only acceptable rate — and this held *even with* avatar-local prediction ([Q7](decisions.md)/D15) on,
+because prediction kills input *latency* but not the *granularity* of hit/aim resolution. The
+embodied layer needs the higher rate.
 
-The sim runs **fixed 30 Hz** ([`architecture.md`](architecture.md) Targets / Sim loop). Render
-interpolates to 60/120, but *hits, ballistics, and aim resolution happen in the sim* —
-they mutate deterministic state, so they cannot live in the render layer. 30 Hz
-hit-registration is low next to the 60–128 Hz competitive shooters target.
-
-| Option | Feel | Cost / risk |
-|---|---|---|
-| **Hold 30 Hz everywhere** | Simplest; one tick rate; cheapest sim | Aim/hitreg may feel coarse; leans hard on interpolation + the Q7 answer |
-| **Raise the global sim rate** (e.g. 60 Hz) | Crisper FPS | ~2× sim cost for 200 units; tighter net budget; revisits the frame/sim budgets |
-| **Aim sampled at render rate, committed at tick** | Smooth aim without a faster sim | Added complexity; care needed so the committed result stays deterministic |
-
-**Determinism constraint either way:** embodied aim, recoil, raycasts, and projectile
-ballistics run *inside* the sim and so must be **fixed-point with LUT trig** — the "no
-floats in the sim" invariant applies to first-person combat math too. The "embodiment is
-cheap" finding in [`architecture.md`](architecture.md) is about *state plumbing* (input-
-source swap, vision toggle), not about combat-resolution math, which is real work.
-
-**Current lean:** hold 30 Hz, lean on interpolation, and let the **Phase 0.5 spike**
-decide alongside Q7 whether it's enough.
+**The follow-on — how to deliver it — is now [Q10](#q10--how-to-deliver-the-60-hz-embodied-rate-global-vs-dual-rate).**
 
 ---
 
@@ -159,3 +142,24 @@ refunds, is real work. Mobile *must* use store IAP; desktop *can* use Stripe/Ste
 Stripe/Steam on desktop — behind a **unified entitlement service** keyed to the account
 (ties to the accounts/entitlements backend in [`infrastructure.md`](infrastructure.md)).
 The cross-store reconciliation cost needs scoping before this locks.
+
+---
+
+## Q10 — How to deliver the 60 Hz embodied rate: global vs dual-rate?
+
+[D16](decisions.md) settled that embodied combat needs **~60 Hz** (30 Hz felt chunky). *How*
+to provide it — without wrecking the mobile power/thermal budget at ~200 units — is open, and
+must be decided by **profiling on real mid-range arm64 hardware early in Phase 1, before the
+sim loop is locked.**
+
+| Option | Upside | Cost / risk |
+|---|---|---|
+| **(a) Global 60 Hz** — whole sim runs at 60 | One tick rate; simplest; no dual-clock complexity | ~2× total sim CPU and ~2× battery/heat for 200 units; tighter net budget. Per-tick work (~8.5 ms) still fits a 16.6 ms tick, so feasible — just power-hungry |
+| **(b) Dual-rate** — RTS/unit sim 30 Hz, embodied combat 60 Hz | Far cheaper at scale (combat is a tiny slice of the 200-unit work) | **Two** deterministic clocks that both must stay lockstep-deterministic; careful rate-interaction; more netcode/checksum complexity |
+| **(c) Aim@render, commit@tick** | — | **Insufficient alone** (D16): the chunkiness *is* the 30 Hz commit granularity |
+
+**Constraints either way:** the sim/render decoupling + fixed deterministic tick (invariant
+#4) and fixed-point combat math (invariant #1) hold at whatever rate — a faster tick admits
+no floats. **Current lean:** undecided; the user will *accept the perf cost* (favouring (a))
+if (b) proves too complex, but (b) is the elegant mobile answer if the determinism stays
+clean. Profiling decides.

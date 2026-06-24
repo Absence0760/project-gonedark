@@ -10,7 +10,9 @@
 ## Targets
 
 - **60 FPS** base / **120** flagship · render rate variable.
-- **Sim 30 Hz**, fixed-tick, deterministic, fixed-point.
+- **Sim fixed-tick, deterministic, fixed-point.** Rate **to be finalized in Phase 1**:
+  30 Hz proved too coarse for embodied combat ([`decisions.md`](decisions.md) D16) — target
+  is **~60 Hz** for the embodied layer; global-60 vs dual-rate is [Q10](open-questions.md).
 - **arm64-v8a / Vulkan 1.1**, 200+ units.
 
 ## The decision in one page
@@ -24,7 +26,7 @@ lifecycle, input, billing, services.
 |---|---|
 | Core | Rust · ECS (Bevy/hecs/legion or hand-rolled) |
 | Render | `wgpu` → Vulkan / D3D12 / Metal · GPU-driven instancing |
-| Sim | 30 Hz fixed · deterministic · fixed-point |
+| Sim | fixed-tick · deterministic · fixed-point · rate TBD Phase 1 (≥30; ~60 for embodied, D16/Q10) |
 | Net | Lockstep · input-delay · desync checks |
 | Platform | per-OS shim (Kotlin/JNI, Swift) · AAudio/CoreAudio |
 | Build | cargo (+ Gradle/Xcode for store packaging) · arm64-v8a |
@@ -101,9 +103,12 @@ difference between shipping and dropping frames.
 
 ## Simulation loop — fixed, deterministic, decoupled
 
-The sim advances in fixed 30 Hz ticks driven purely by orders, in fixed-point math,
-so every device computes bit-identical results. Rendering runs at a separate
-variable rate and interpolates between the last two sim states.
+The sim advances in **fixed deterministic ticks** driven purely by orders, in fixed-point
+math, so every device computes bit-identical results. Rendering runs at a separate variable
+rate and interpolates between the last two sim states. *(Tick rate is being finalized in
+Phase 1 — 30 Hz proved too coarse for embodied combat; target ~60 Hz, mechanism is
+[Q10](open-questions.md) / [`decisions.md`](decisions.md) D16. The decoupling and
+fixed-deterministic-tick design below are rate-independent.)*
 
 ```
 acc += realDelta;
@@ -220,8 +225,9 @@ Bandwidth scales with players, not the hundreds of units on the field.
 > The netcode model above is **RTS-optimal and FPS-hostile**, and the FPS layer rides
 > the same wire — this was the biggest technical-design fork. **Resolved by the Phase 0.5
 > latency spike** ([`decisions.md`](decisions.md) D15): embodied combat carries on lockstep
-> **with avatar-local prediction.** Tick rate ([`open-questions.md`](open-questions.md) Q8)
-> is still open — leaning hold-30 Hz, to close early in Phase 1.
+> **with avatar-local prediction.** And the spike settled tick rate too ([D16](decisions.md)):
+> **30 Hz is too coarse for embodied combat — target ~60 Hz**; *how* to deliver it
+> (global-60 vs dual-rate) is [Q10](open-questions.md), to profile early in Phase 1.
 
 Lockstep + input delay is the right call for hundreds of units — but **input delay
 deliberately executes orders several ticks in the future**, and it ships with no
@@ -240,10 +246,12 @@ confirmed this directly — raw lockstep felt laggy; prediction fixed it.
   silently. Authoritative hit resolution and the remote view still resolve at tick **T+D**
   in the sim. This boundary goes in at the **first netcode commit** — retrofitting it into
   a finished sim is far costlier (the reason the spike preceded Phase 1).
-- **Tick rate (Q8) — still open.** Hits/ballistics/aim resolve *in* the 30 Hz sim, so they
-  carry the tick's granularity. The spike felt good at 30 Hz with prediction but did not
-  A/B 60 Hz; whether 30 Hz holds or the embodied layer needs a higher-rate path closes
-  early in Phase 1.
+- **Tick rate (Q8) — resolved by [D16](decisions.md): 30 Hz is too coarse.** Hits/ballistics/
+  aim resolve *in* the sim, so they carry the tick's granularity — and the spike A/B showed
+  30 Hz feels *chunky* for embodied aim/fire (dramatically so), even with prediction on
+  (prediction kills latency, not granularity). Target **~60 Hz** for the embodied layer; the
+  delivery mechanism (global-60 vs dual-rate) is [Q10](open-questions.md), profiled early in
+  Phase 1.
 - **Determinism still binds the FPS math.** Aim angles, recoil, raycasts, and
   projectile integration run inside the sim and so are **fixed-point with LUT trig** —
   the "no floats in the sim" invariant covers first-person combat, not just unit
@@ -286,10 +294,15 @@ interpolation+transforms 0.8 · UI/HUD 1.0 · present+pacing 0.4 → **~6.7 ms u
 Headroom: 9.9 ms @60 · 1.6 ms @120 (120 is tight but feasible on flagship with
 dynamic resolution).
 
-**Per 30 Hz sim tick (~33 ms, amortized):** sim step 3.0 · pathfinding/flow 2.0 ·
-AI (time-sliced) 1.5 · collision/spatial hash 1.5 · net (orders+checksums) 0.5 →
-**~8.5 ms used.** ~24 ms headroom per tick absorbs spikes and does **not** shrink
-when render rate rises — which is why 120 FPS is reachable.
+**Per sim tick (figures shown for 30 Hz / ~33 ms, amortized):** sim step 3.0 ·
+pathfinding/flow 2.0 · AI (time-sliced) 1.5 · collision/spatial hash 1.5 ·
+net (orders+checksums) 0.5 → **~8.5 ms used.** ~24 ms headroom per tick absorbs spikes and
+does **not** shrink when render rate rises — which is why 120 FPS is reachable.
+**Caveat ([D16](decisions.md)):** 30 Hz proved too coarse for embodied combat, so the sim
+runs faster (~60 Hz target). At a 60 Hz tick the window halves to **16.6 ms** — the ~8.5 ms
+still fits per tick, but total sim power roughly doubles, which is exactly the cost driving
+[Q10](open-questions.md) (global-60 vs dual-rate) and pulls mobile thermal budgeting into
+Phase 1.
 
 ## Stack at a glance
 

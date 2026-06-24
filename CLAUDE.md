@@ -60,9 +60,12 @@ Do not "improve" past them without the user explicitly reopening the decision.
    depth goes into the **order/stance vocabulary**, not the AI brain. (`decisions.md`
    D3, `game-design.md` §8.)
 
-4. **Sim and render are decoupled.** Sim runs fixed 30 Hz; render runs at a variable
-   rate and interpolates. The sim never touches Vulkan/Metal/D3D12; the renderer never
-   mutates sim state. (`architecture.md`.)
+4. **Sim and render are decoupled.** The sim runs a **fixed deterministic tick**; render
+   runs at a variable rate and interpolates. The sim never touches Vulkan/Metal/D3D12; the
+   renderer never mutates sim state. (The **tick rate** is being finalized in Phase 1 — 30 Hz
+   proved too coarse for embodied combat, target ~60 Hz; see `decisions.md` D16 and Q10. The
+   decoupling + fixed-deterministic-tick core of this invariant is rate-independent and still
+   load-bearing.) (`architecture.md`.)
 
 5. **Embodiment is an input-source swap + a vision toggle — not a character system.**
    Possessing a unit swaps that ECS entity's input from AI/orders to live player input,

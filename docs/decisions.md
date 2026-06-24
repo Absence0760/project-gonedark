@@ -417,3 +417,56 @@ yet rigorously confirmed — **close Q8 early in Phase 1.**
 - Phase 0.5 is **done** in the roadmap; **Phase 1 (Rust engine spine) is unblocked.**
 - Both throwaway prototypes (`prototypes/phase0-controls`, `prototypes/phase0.5-netfeel`)
   have served their purpose and may be deleted (or kept briefly as reference).
+
+---
+
+## D16 — 30 Hz is too coarse for embodied combat; embodied layer needs ~60 Hz
+
+**Resolves:** [Q8](open-questions.md) (is a 30 Hz tick enough for embodied combat?).
+**Opens:** [Q10](open-questions.md) (how to deliver the higher rate — global vs dual-rate).
+
+**Decision:** **30 Hz is not enough for embodied first-person combat** — it must run at a
+**higher tick (target 60 Hz)**. In the Phase 0.5 harness the player A/B'd the 30 Hz↔60 Hz
+toggle during embodied gunfights and the difference was **dramatic**: 30 Hz felt
+"chunky/bad", 60 Hz was the only acceptable rate for first-person aim/fire. This held
+**even with avatar-local prediction ([D15](#d15--embodied-combat-over-lockstep-avatar-local-prediction-phase-05-passes)) on** — prediction removes input *latency*
+but cannot mask the *granularity* of hit/aim resolution, which happens at the sim tick.
+Direction: prioritize the higher-rate embodied path in Phase 1 and accept/optimize the cost.
+
+**Why:** Phase 0.5 existed to settle exactly this before the engine. Prediction (D15) fixed
+*lag*; this fixes *coarseness* — a distinct axis. The two together are what make embodied
+combat feel good, and both had to be proven by hand before committing the sim loop.
+
+**What this changes — and what it does NOT:** this revises the long-assumed **"fixed 30 Hz
+sim" figure** (architecture Targets; the *rate parameter* of invariant #4). Only the number
+moves. Still standing:
+- **Invariant #4's core** — sim/render **decoupling** and a **fixed deterministic tick**.
+  The render rate still floats and interpolates; the sim is still a fixed-step lockstep
+  clock. Only its rate is up.
+- **Invariant #1** — embodied aim/recoil/raycast/ballistics still resolve **inside the sim**
+  and stay **fixed-point with LUT trig**, at whatever rate. A faster tick does not admit
+  floats.
+
+**Mechanism is deferred to Q10 (needs real-arm64 profiling, early Phase 1):**
+- **(a) Global 60 Hz** — one tick rate, simplest. ~2× total sim CPU for ~200 units and
+  ~2× battery/heat; per-tick work (~8.5 ms) still fits a 60 Hz (16.6 ms) tick, so it's
+  *feasible*, just power-hungry. Viable given the "accept the cost" direction if (b) proves
+  too complex.
+- **(b) Dual-rate** — heavy RTS/unit sim at 30 Hz, embodied-combat resolution (avatars, aim,
+  hit reg) at 60 Hz. Far cheaper at scale, but two deterministic clocks that **both** must
+  stay lockstep-deterministic — real added complexity.
+- **(c)** The old "aim-sampled-at-render, committed-at-tick" idea is **insufficient alone** —
+  the chunkiness *is* the 30 Hz commit granularity; committing at 30 Hz won't fix it.
+
+**Consequences:**
+- Architecture **Targets** ("Sim 30 Hz"), the **simulation-loop** section, and the
+  **frame/sim budget** table all assumed 30 Hz and are now marked *to be finalized in
+  Phase 1* (the budget table's per-tick headroom math changes at 60 Hz).
+- **Mobile thermal/battery budgeting moves earlier** — it was a Phase 4 concern, but the sim
+  rate now drives it, so it's a Phase 1 profiling input.
+- Q8 is closed; the implementation fork lives in **Q10**, to settle on real hardware
+  **before the Phase 1 sim loop is locked**.
+
+**Caveat:** the spike measured *feel* on a throwaway float harness with an idle opponent. It
+proves 30 Hz feels too coarse — **not** the exact rate ceiling or the per-device cost, which
+Phase 1 profiling establishes (60 Hz is the working target, not yet a locked floor).
