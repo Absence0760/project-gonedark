@@ -1,0 +1,29 @@
+title = "project-gonedark gitleaks config"
+
+# Extend (don't replace) gitleaks' built-in ruleset.
+[extend]
+useDefault = true
+
+# Allowlist the deliberately-public values committed so a fresh clone runs with zero setup
+# (CLAUDE.md invariant #8 / docs/infrastructure.md). These are NOT secrets: real prod values
+# are KMS-encrypted (sops) in the separate private estate repo and never live in this tree.
+[allowlist]
+description = "Committed local-dev defaults (invariant #8) — non-secret by contract"
+
+# `.env.development` is committed ON PURPOSE: its entire contract is "everything here is
+# public" (the file says so, and prod overrides come from sops). Path-scope this one file.
+paths = [
+  '''\.env\.development''',
+]
+
+# Value-scoped fake/dev-only literals — matched on the secret itself, NOT a path, so the
+# scanner stays LIVE on the surrounding source: a real high-entropy secret pasted into the
+# same file is still a finding. These are stable, documented placeholders.
+regexes = [
+  # JWT_SIGNING_KEY's dev value in .env.development (overridden in prod by sops). Listed
+  # here too so the same literal is allowed anywhere it's quoted (docs, future tests).
+  '''dev-only-insecure-change-in-prod''',
+  # The local docker-compose Postgres dev creds (user==password=="gonedark"), e.g. in the
+  # committed DATABASE_URL. Low-entropy local-only defaults, never a real credential.
+  '''postgres://gonedark:gonedark@''',
+]

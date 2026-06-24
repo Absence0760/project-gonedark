@@ -1,0 +1,51 @@
+name: gitleaks
+
+# Secret-scan every push, every PR, and the full git history once a week. Catches
+# accidentally-committed AWS keys, Supabase/JWT signing secrets, GitHub/Stripe tokens —
+# anything an automated pattern can recognise — in the working tree AND history.
+#
+# Why this matters HERE (CLAUDE.md invariant #8): this repo is potentially public and is
+# meant to hold NO real secret at all. Real prod values are KMS-encrypted (sops) in the
+# separate private estate repo (../infra-secrets/gonedark), read by Terraform at plan time
+# — they never land in this tree. `.env.development` ships only documented, non-secret dev
+# defaults. gitleaks is the automated tripwire that enforces "no stray secret here" instead
+# of merely trusting it; the sim-determinism hook guards a different bug class (floats), not
+# secrets, so this is additive.
+#
+# False positives go in `.gitleaks.toml` at the repo root, scoped to the exact secret value
+# (not a blanket file rule) wherever possible, so a real key in the same source still fails.
+# Adapted from the sibling project-running repo's gitleaks workflow.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Weekly full-history sweep. The push / PR triggers only diff against the base, so a
+    # secret that landed on a side branch and merged via fast-forward could otherwise slip.
+    - cron: '0 6 * * 1'
+
+permissions:
+  # The action POSTs SARIF findings to the Security tab via security-events.
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  scan:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Required for the full-history scan on the scheduled run. Push/PR triggers have
+          # the base ref via the event itself, so depth there is irrelevant.
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE intentionally unset — the public-repo free tier covers
+          # everything we need. Set it as a repo secret only if this goes private and you
+          # want the upstream-managed dashboard.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'

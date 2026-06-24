@@ -1,0 +1,49 @@
+# Workspace unit tests — the correctness gate, on every push and PR.
+#
+# Distinct purpose from the other two workflows:
+#   - determinism.yml runs `cargo test -p gonedark-core` across the ARCH MATRIX (its job is
+#     the cross-arch per-tick CHECKSUM diff — invariant #7 — not general correctness).
+#   - build.yml guards COMPILE-rot (build + clippy + doc) of the graphical/host crates.
+# This workflow owns running the FULL workspace test suite once (core's 57 + engine's 9 +
+# render's 12, and any future crate's tests) so correctness has a single, clearly-named
+# check. pal-android is excluded — it's an android-target cdylib that's empty on this host
+# (its arm64 compile is covered by build.yml's android-build job).
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: workspace tests · ubuntu x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `engine`/`render` pull `wgpu` and `app` pulls `winit`, so compiling their TEST
+      # binaries links the Vulkan loader + Wayland/X11 libs (the tests themselves are pure
+      # logic and create no GPU device, but the binary still links). Same -dev set as
+      # build.yml's graphics-build. mesa-vulkan-drivers gives the loader a software ICD.
+      - name: Install winit/wgpu link deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libvulkan-dev \
+            mesa-vulkan-drivers
+
+      # rust-toolchain.toml pins the compiler; rustup auto-installs it on first cargo use.
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Workspace tests (excluding android cdylib)
+        run: cargo test --workspace --exclude gonedark-pal-android

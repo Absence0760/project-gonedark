@@ -101,11 +101,8 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --no-deps --exclude gonedark-pal-android
 
-      # Full workspace test, minus the Android cdylib (it only builds for an android target).
-      # The determinism job owns the *cross-arch checksum* purpose; this just keeps the host
-      # crates' own unit tests honest, so it does not duplicate that job.
-      - name: Workspace tests (excluding android cdylib)
-        run: cargo test --workspace --exclude gonedark-pal-android
+  # NOTE: running the unit tests lives in its own workflow (test.yml) so correctness has a
+  # single, clearly-named check; this job stays focused on COMPILE-rot (build/clippy/doc).
 
   android-build:
     # Cross-compile the Android scaffold so it can't rot silently between now and the
