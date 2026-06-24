@@ -2,12 +2,20 @@
 //!
 //! `movement_system` is the literal executor (invariant #3, D3): a unit holds its last
 //! `Order` and does exactly that — here, step toward a `MoveTo` target at a fixed speed.
-//! No autonomy, no pathing intelligence beyond following the (stubbed) flow-field
-//! direction. Embodied units are skipped — their motion comes from live player input.
+//! No autonomy, no pathing intelligence beyond following the flow-field direction toward
+//! its order's target. Embodied units are skipped — their motion comes from live player
+//! input.
+//!
+//! Pathing uses a real deterministic [`FlowField`](crate::flow_field): for each moving
+//! unit we build a field toward its target and step along the sampled downhill direction.
+//! Phase 1 has no obstacles, so the field points at the goal — correct, and the structure
+//! generalises to Phase 2 terrain. The field is rebuilt per unit per tick (cheap and
+//! deterministic for the Phase 1 single-mover); Phase 2 will cache one field per goal.
 
 use crate::components::{InputSource, Order, Vec2};
 use crate::ecs::World;
 use crate::fixed::Fixed;
+use crate::flow_field::FlowField;
 
 /// Base move speed in world units per tick (1/8). Tune via data later.
 pub const MOVE_SPEED: Fixed = Fixed::from_ratio(1, 8);
@@ -37,9 +45,13 @@ pub fn movement_system(world: &mut World) {
                     world.vel[i] = Vec2::ZERO;
                     world.order[i] = Order::Idle;
                 } else {
-                    // Flow-field STUB: direct unit direction. Real flow-field sampling
-                    // replaces `to.normalized()` in Phase 1 build-order step 3.
-                    let step = to.normalized().scale(MOVE_SPEED);
+                    // Real flow-field pathing: build a field toward the target and step
+                    // along the sampled downhill direction (invariant #3 — the unit just
+                    // follows the field, no autonomy). `sample` aims straight at the goal
+                    // near it, so the arrival snap above still lands the final approach.
+                    let field = FlowField::build(target);
+                    let dir = field.sample(world.pos[i]);
+                    let step = dir.scale(MOVE_SPEED);
                     world.vel[i] = step;
                     world.pos[i] = world.pos[i] + step;
                 }

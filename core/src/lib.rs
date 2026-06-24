@@ -15,6 +15,7 @@ pub mod checksum;
 pub mod components;
 pub mod ecs;
 pub mod fixed;
+pub mod flow_field;
 pub mod rng;
 pub mod sim;
 pub mod snapshot;
