@@ -39,6 +39,8 @@ work saves it. (Embodied feel *over the network* is the next risk — Phase 0.5.
 ## Phase 0.5 — Embodiment-over-network latency spike *(before the engine spine)*
 
 > **Status: NEXT.** Phase 0 passed (D14); this is the next gate before any engine work.
+> **Detailed plan: [`phase-0.5-plan.md`](phase-0.5-plan.md)** (harness, netcode models
+> under test, test matrix, decision tree for Q7/Q8).
 
 **Goal:** prove embodied FPS combat feels acceptable under the chosen
 deterministic-lockstep + input-delay netcode — *before* committing the full engine.
