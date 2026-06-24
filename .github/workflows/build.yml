@@ -18,6 +18,28 @@ on:
   pull_request:
 
 jobs:
+  checks:
+    # Cheap, link-dep-free quality gates that need no GPU/windowing libs to run.
+    # Kept SEPARATE from graphics-build so the fast gates (fmt) fail in seconds and
+    # don't wait on the apt install + wgpu/winit link of the heavier job. The
+    # compile-bearing gates (full-workspace clippy + doc) live in graphics-build
+    # instead, because `--workspace` drags in wgpu-linking crates (engine/render/
+    # app/pal-desktop) that only resolve against the -dev packages that job installs —
+    # running them here would mean duplicating that whole apt list for no benefit.
+    name: checks · ubuntu (fmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the compiler + the rustfmt component; rustup
+      # auto-installs both on first cargo/rustfmt invocation — no setup action needed.
+
+      # Formatting gate over EVERY crate. `--check` only reports + fails, never rewrites.
+      # Pure parse/format pass: no crate is compiled, so this needs none of the GPU/
+      # windowing link deps — which is exactly why it sits in this cheap, fast job.
+      - name: Formatting (cargo fmt --check)
+        run: cargo fmt --all -- --check
+
   graphics-build:
     # Compile + lint the graphical/host crates the determinism matrix does not cover.
     # Linux is the cheapest host that links winit/wgpu given the right -dev packages.
@@ -57,9 +79,27 @@ jobs:
       - name: Build host + render + desktop PAL
         run: cargo build -p gonedark-app -p gonedark-render -p gonedark-pal-desktop
 
-      # Lint the same crates with warnings-as-errors so dead/incorrect glue can't accrue.
-      - name: Clippy (deny warnings)
-        run: cargo clippy -p gonedark-render -p gonedark-pal-desktop -p gonedark-app -- -D warnings
+      # Lint the WHOLE workspace with warnings-as-errors so dead/incorrect glue can't
+      # accrue — not just the graphical crates. This catches core/engine/sim-runner/server
+      # too (engine pulls wgpu, so it needs this job's link deps; the sim crates are clean
+      # but ride along for free). --all-targets also lints test/bench/example modules, so a
+      # warning in a #[cfg(test)] block fails CI. pal-android is excluded — it's an
+      # android-target cdylib that's empty on this host; the android-build job covers its
+      # arm64 compile. This runs here (not the cheap `checks` job) precisely because a
+      # workspace clippy must compile the wgpu-linking crates, which need the -dev packages.
+      - name: Clippy (workspace, deny warnings)
+        run: cargo clippy --workspace --exclude gonedark-pal-android --all-targets -- -D warnings
+
+      # Build the rustdoc for every crate with broken-doc-link/doc-test warnings escalated
+      # to errors (RUSTDOCFLAGS=-D warnings). The codebase is heavily doc-commented, so this
+      # keeps the docs honest: a dangling [`Type`] intra-doc link or a malformed code fence
+      # fails the build. --no-deps skips documenting dependencies (we only gate our own
+      # docs); pal-android excluded for the same android-only reason as clippy. Lives here
+      # because --workspace docs the wgpu-linking crates and so needs the link deps.
+      - name: Doc (workspace, deny warnings)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --exclude gonedark-pal-android
 
       # Full workspace test, minus the Android cdylib (it only builds for an android target).
       # The determinism job owns the *cross-arch checksum* purpose; this just keeps the host
