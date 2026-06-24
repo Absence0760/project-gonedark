@@ -296,8 +296,9 @@ impl DesktopInput {
                         KeyCode::KeyD => self.move_right = pressed,
                         // Fire (alternative to right-click), held.
                         KeyCode::Space => self.fire = pressed,
-                        // Touch-UI desktop bindings: F opens the order/stance context;
-                        // number keys 1–6 pick a vocabulary slot (0-based on the wire).
+                        // Touch-UI desktop bindings: F opens the order/stance context; number
+                        // keys pick a vocabulary slot (0-based on the wire) — 1–9 → slots 0–8,
+                        // 0 → slot 9 (see engine::command_ui for the slot table).
                         KeyCode::KeyF => {
                             if pressed && !event.repeat {
                                 self.long_press_latch = true;
@@ -309,6 +310,10 @@ impl DesktopInput {
                         KeyCode::Digit4 if pressed && !event.repeat => self.command_slot = Some(3),
                         KeyCode::Digit5 if pressed && !event.repeat => self.command_slot = Some(4),
                         KeyCode::Digit6 if pressed && !event.repeat => self.command_slot = Some(5),
+                        KeyCode::Digit7 if pressed && !event.repeat => self.command_slot = Some(6),
+                        KeyCode::Digit8 if pressed && !event.repeat => self.command_slot = Some(7),
+                        KeyCode::Digit9 if pressed && !event.repeat => self.command_slot = Some(8),
+                        KeyCode::Digit0 if pressed && !event.repeat => self.command_slot = Some(9),
                         _ => {}
                     }
                 }

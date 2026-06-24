@@ -407,10 +407,26 @@ impl Game {
             self.embodied,
             &candidates,
         );
+        // Resolve the selection to live `(handle, world_pos)` pairs for the vocabulary layer
+        // (Patrol anchors a leg at each unit's current position). Read-only over the sim world;
+        // skip the work entirely when nothing is selected.
+        let selected: Vec<(Entity, (f32, f32))> = if self.selection.is_empty() {
+            Vec::new()
+        } else {
+            self.selection
+                .units
+                .iter()
+                .filter(|&&e| self.sim.world.is_alive(e))
+                .map(|&e| {
+                    let p = self.sim.world.pos[e.index as usize];
+                    (e, (fixed_to_f32(p.x), fixed_to_f32(p.y)))
+                })
+                .collect()
+        };
         commands.extend(command_ui::commands_for(
             input.command_slot,
             input.long_press,
-            &self.selection,
+            &selected,
             pointer_world,
         ));
 

@@ -149,6 +149,35 @@ fn embodied_unit_ignores_orders() {
     assert_eq!(sim.world.pos[e.index as usize], before);
 }
 
+#[test]
+fn set_order_and_retreat_threshold_commands_apply() {
+    // The richer order vocabulary is reachable through `Command` (the touch UI in `engine`
+    // emits these): `SetOrder` installs an arbitrary Phase-2 order, `SetRetreatThreshold`
+    // pre-programs the fall-back trigger. Both are folded into the per-tick checksum.
+    use crate::components::Health;
+    let mut sim = Sim::new(7);
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    // Full HP so combat never despawns it and the retreat trigger never fires (health > 30%).
+    sim.world.health[i] = Health::full(Fixed::from_int(100));
+
+    // HoldPosition is stable under the literal executor, so it survives the step intact.
+    sim.step(&[Command::SetOrder {
+        entity: e,
+        order: Order::HoldPosition,
+    }]);
+    assert_eq!(sim.world.order[i], Order::HoldPosition);
+
+    // The retreat fraction is stored verbatim (systems only consult it), so it survives a step.
+    let frac = Fixed::from_ratio(3, 10);
+    sim.step(&[Command::SetRetreatThreshold {
+        entity: e,
+        fraction: frac,
+    }]);
+    assert_eq!(sim.world.retreat_below[i], frac);
+    assert_eq!(sim.world.order[i], Order::HoldPosition, "healthy unit does not fall back");
+}
+
 // ---------------------------------------------------------------------------
 // fixed — the Q16 dot 16 fixed-point scalar. A wrong result here desyncs downstream.
 // ---------------------------------------------------------------------------
