@@ -130,6 +130,10 @@ Same sim, tuned presentation:
 - The **device-tier system** (low/mid/flagship on mobile; low/high on desktop) is data
   driven — one table, per-platform defaults — not branched code paths.
 
+This is the *runtime* tier — the same source asset scaled per device. Where that source
+art comes from, how it's graded into tiers in the cook step, and the open-source sourcing
++ license policy behind it are covered in [`content-pipeline.md`](content-pipeline.md).
+
 ## 7. Cross-platform deterministic multiplayer — the payoff
 
 Because the sim is **float-free fixed-point**, it produces bit-identical results across

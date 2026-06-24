@@ -163,3 +163,36 @@ sim loop is locked.**
 no floats. **Current lean:** undecided; the user will *accept the perf cost* (favouring (a))
 if (b) proves too complex, but (b) is the elegant mobile answer if the determinism stays
 clean. Profiling decides.
+
+---
+
+## Q11 — How to source the *hero* asset tier: CC0-curated, commissioned, or AI-generated?
+
+The content pipeline ([`content-pipeline.md`](content-pipeline.md)) settles the *mechanism*
+— one high-quality source, cooked down into low/mid/high tiers, license-checked in CI — and
+the *low/mid* tiers are clearly CC0-curated + procedural greybox. What's open is the **hero
+tier** (§2): the rationed, eye-level art the embodied camera lingers on (the player's weapon,
+their own unit, signature structures). Three ways to get it, each a different cost/identity
+bet.
+
+| Option | Upside | Cost / risk |
+|---|---|---|
+| **(a) CC0-curated only** | Cheapest, zero attribution burden, ships today | Generic look; hero assets shared with every other CC0 game; hard to build a distinct art identity |
+| **(b) Commissioned / bought** | Distinct identity; full rights; best eye-level quality | Real money + lead time; needs an art director; the per-hero-asset bill is the budget risk |
+| **(c) AI-generated** (text-to-3D) | Fast, cheap, on-brief iteration | Quality still uneven at eye-level FPS range; **license/ownership terms vary by tool and are unsettled**; output still must pass the two-view filter and the cook |
+
+**Why it matters:** the two-view constraint ([`architecture.md`](architecture.md)) means hero
+assets carry real eye-level scrutiny — exactly where (a)'s generic look and (c)'s uneven
+quality show worst, and where (b)'s cost concentrates. The low/mid tiers don't force this
+call; the hero tier does.
+
+**Constraints either way:** whatever the source, it passes the same license hygiene
+([`content-pipeline.md`](content-pipeline.md) §3) and two-view filter (§4) and goes through
+the same cook (§1) — the pipeline is source-agnostic. This fork is about *spend and identity*,
+not plumbing.
+
+**Current lean:** undecided. Likely a **hybrid** — CC0/procedural for low/mid (most of the
+game), a small *commissioned* hero set for the handful of things the camera lingers on, with
+AI-generation used for *iteration/greyboxing* hero candidates rather than final output until
+its license terms and eye-level quality firm up. Scope the hero-asset count and budget before
+locking.

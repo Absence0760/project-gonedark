@@ -176,7 +176,9 @@ On mobile, draw calls and bandwidth are the wall, not triangles.
 > Every battlefield must read cleanly *top-down as an RTS map* **and** hold up *at eye
 > level as a shooter space*. That doubles asset/LoD/collision-fidelity requirements and
 > is a real art-and-content cost the budgets below don't yet account for. Flag for the
-> vertical slice: prove one space works in both views before scaling content.
+> vertical slice: prove one space works in both views before scaling content. The
+> *production* answer — sourcing, quality tiers, and the two-view gating filter — lives
+> in [`content-pipeline.md`](content-pipeline.md).
 
 ## Pathfinding & movement — the RTS bottleneck
 
@@ -274,7 +276,10 @@ confirmed this directly — raw lockstep felt laggy; prediction fixed it.
 `source art/audio → cook (ASTC · atlas · pack anim) → pak bundle + LZ4 → mmap + async
 stream`. Memory-map bundles so the OS pages assets in on demand; decompress with LZ4;
 stream on background threads — never block sim or render on I/O. Audio as Opus via
-AAudio's low-latency path.
+AAudio's low-latency path. The *cook step* is where the single high-quality source
+asset is graded into the low/mid/flagship device tiers and the top-down/eye-level LOD
+chain — see [`content-pipeline.md`](content-pipeline.md) for sourcing, quality tiers,
+and license hygiene.
 
 ## Mobile realities
 
