@@ -61,10 +61,11 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 
 ## Status
 
-**Pre-production.** **Phase 0 (control prototype) passed** (2026-06-23, D14): the
-embody↔command touch loop feels good in hand on real hardware, retiring the project's #1
-non-engine risk. **Next gate: Phase 0.5** — the embodiment-over-network latency spike —
-before any engine code is written. The Rust engine spine starts at Phase 1.
+**Pre-production.** **Phase 0** (control prototype, D14) and **Phase 0.5** (embodiment-over-
+network latency spike, D15) both **passed** (2026-06-23): the embody↔command touch loop feels
+good in hand, and embodied combat feels good over the lockstep netcode with **avatar-local
+prediction**. That retires the two biggest risks (touch controls; embodied feel over the
+wire). **Next gate: Phase 1 — the Rust engine spine** (vertical slice on real hardware).
 
 Target platforms: **Windows, Linux, Android, iOS** — one
 shared deterministic core with platform-optimized backends (D3D12/Vulkan, Vulkan,

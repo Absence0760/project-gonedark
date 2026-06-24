@@ -6,12 +6,14 @@ and fight it in first person — while the strategic map goes dark.** One player
 both jobs; the tension is divided attention.
 
 **Current state: pre-production. No *engine* code yet — the Rust engine (D10) starts at
-Phase 1.** The work is the markdown design corpus in `docs/`, plus a **throwaway Godot
-control prototype** in `prototypes/phase0-controls/` that passed the Phase 0 touch-feel
-gate (D14, 2026-06-23). That prototype is disposable feel-test scaffolding — *not* engine
-code, carries none of the invariants below, and gets deleted after Phase 0.5. Treat the
-docs as the product and the prototype as throwaway; the next gate is **Phase 0.5** (the
-netcode latency spike) before any engine spine. Don't grow the prototype into the game.
+Phase 1, which is now the next gate.** The work is the markdown design corpus in `docs/`,
+plus two **throwaway Godot prototypes** in `prototypes/`: `phase0-controls/` passed the
+Phase 0 touch-feel gate (D14) and `phase0.5-netfeel/` passed the Phase 0.5 netcode latency
+spike (D15, both 2026-06-23) — embodied combat feels good over lockstep with avatar-local
+prediction. Those prototypes are disposable feel-test scaffolding — *not* engine code, carry
+none of the invariants below, and can be deleted now. Treat the docs as the product and the
+prototypes as throwaway; the next work is the **Phase 1** engine spine. Don't grow a
+prototype into the game.
 
 ---
 

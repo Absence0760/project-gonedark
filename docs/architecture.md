@@ -120,6 +120,9 @@ render(lerp(prevState, curState, alpha));
 - **Stable iteration order** — never iterate by hash-map order; arrays or sorted keys.
 - **Seeded lockstep RNG** — identical seed and call sequence on every peer.
 - **No uninitialized reads, no raw pointers in state.**
+- **Avatar prediction never writes sim state** — the embodied-unit local prediction (D15)
+  lives in the presentation/input path only; it reads sim state but must never mutate it,
+  or lockstep desyncs silently.
 - **Per-tick checksum diffing in CI** across devices and compilers, from day one.
 
 Free win: a deterministic sim gives **replays and tiny save files** for nothing —
@@ -212,43 +215,42 @@ Bandwidth scales with players, not the hundreds of units on the field.
   competitive-integrity boundary — it shapes the intended experience, not a
   cheat-proof information wall.)**
 
-### Embodied combat over lockstep — the open tension
+### Embodied combat over lockstep — settled: avatar-local prediction
 
 > The netcode model above is **RTS-optimal and FPS-hostile**, and the FPS layer rides
-> the same wire. This is the biggest unresolved technical-design fork — tracked as
-> [`open-questions.md`](open-questions.md) Q7 (netcode model) and Q8 (tick rate), and
-> the reason the roadmap pulls a **Phase 0.5 latency spike** before the full engine.
+> the same wire — this was the biggest technical-design fork. **Resolved by the Phase 0.5
+> latency spike** ([`decisions.md`](decisions.md) D15): embodied combat carries on lockstep
+> **with avatar-local prediction.** Tick rate ([`open-questions.md`](open-questions.md) Q8)
+> is still open — leaning hold-30 Hz, to close early in Phase 1.
 
 Lockstep + input delay is the right call for hundreds of units — but **input delay
 deliberately executes orders several ticks in the future**, and it ships with no
 client-side prediction, no rollback, and no lag compensation: precisely the things
 competitive shooters exist to provide. For top-down command that's invisible; for a
-first-person gunfight it is fixed input latency on aim and fire. The architecture
-currently treats the netcode as "solved" because it is solved *for the RTS* — the
-embodied half inherits a model built for the other half.
+first-person gunfight it is fixed input latency on aim and fire. The Phase 0.5 spike
+confirmed this directly — raw lockstep felt laggy; prediction fixed it.
 
-This does **not** sink the design, but it must be confronted before Phase 1, not
-discovered in Phase 3:
+**The decided model (D15):**
 
-- **Avatar-local prediction (current lean).** Predict only *your* embodied entity
-  locally and reconcile against the authoritative tick; the other ~200 units stay pure
-  lockstep. Keeps the deterministic core intact while giving the one entity you're
-  twitch-controlling responsive aim. The prediction lives in the **presentation/input
-  path** — it must never feed back into deterministic sim state, or it desyncs.
-- **Tick rate (Q8).** Hits/ballistics/aim resolve *in* the 30 Hz sim, so they carry the
-  tick's granularity. Whether 30 Hz + interpolation reads as crisp enough, or the
-  embodied layer needs a higher-rate path, is an open question the spike answers.
+- **Avatar-local prediction.** Predict only *your* embodied entity locally and reconcile
+  against the authoritative tick; the other ~200 units stay pure lockstep. Keeps the
+  deterministic core intact while giving the one entity you're twitch-controlling
+  responsive aim. **Non-negotiable:** the prediction lives in the **presentation/input
+  path** and must **never** feed back into deterministic sim state, or it desyncs lockstep
+  silently. Authoritative hit resolution and the remote view still resolve at tick **T+D**
+  in the sim. This boundary goes in at the **first netcode commit** — retrofitting it into
+  a finished sim is far costlier (the reason the spike preceded Phase 1).
+- **Tick rate (Q8) — still open.** Hits/ballistics/aim resolve *in* the 30 Hz sim, so they
+  carry the tick's granularity. The spike felt good at 30 Hz with prediction but did not
+  A/B 60 Hz; whether 30 Hz holds or the embodied layer needs a higher-rate path closes
+  early in Phase 1.
 - **Determinism still binds the FPS math.** Aim angles, recoil, raycasts, and
   projectile integration run inside the sim and so are **fixed-point with LUT trig** —
   the "no floats in the sim" invariant covers first-person combat, not just unit
   movement. The earlier "embodiment is cheap" finding is about *state plumbing* (the
-  input-source swap and vision toggle), not about combat-resolution math.
-
-**Sequencing rule:** validate embodied feel under real input delay in the Phase 0.5
-spike. If pure lockstep feels unacceptable and avatar-local prediction can't rescue it,
-the netcode model (Q7) or tick rate (Q8) must change *before* the engine spine is
-committed — retrofitting a prediction/rollback boundary into a finished sim is far
-costlier than designing to it.
+  input-source swap and vision toggle), not about combat-resolution math. (The Phase 0.5
+  harness used floats — it tested *feel*, not determinism; the fixed-point combat math is
+  still Phase 1 work.)
 
 ## Memory & concurrency
 

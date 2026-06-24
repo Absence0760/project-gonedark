@@ -1,7 +1,9 @@
 # Phase 0.5 — Embodiment-over-network latency spike *(plan)*
 
-> **Status: NEXT** (Phase 0 passed — [`decisions.md`](decisions.md) D14). This is the
-> gate before any engine code. Throwaway, like Phase 0.
+> **Status: DONE — PASSED ([`decisions.md`](decisions.md) D15).** Avatar-local prediction
+> made embodied combat feel good over the lockstep netcode in all tested conditions (raw
+> lockstep felt laggy); Q7 resolved, Q8 still open (leaning hold-30 Hz). Phase 1 unblocked.
+> This plan is retained as the record of how the spike was run. (Throwaway, like Phase 0.)
 >
 > **Goal:** prove embodied FPS combat feels acceptable under the chosen
 > deterministic-lockstep + input-delay netcode — *or* decide to change the netcode model

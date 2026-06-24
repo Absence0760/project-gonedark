@@ -94,29 +94,28 @@ and directory (`project-gonedark`) are trivial to rename.
 
 ---
 
-## Q7 — What netcode model carries *embodied* (FPS) combat?
+## Q7 — What netcode model carries *embodied* (FPS) combat? — RESOLVED ([D15](decisions.md))
 
-The RTS half is settled: **deterministic lockstep + input delay** (see
-[`architecture.md`](architecture.md) §Netcode, D9) — bandwidth scales with players, not
-units. But input-delay lockstep deliberately executes orders *several ticks in the
-future*, which is exactly wrong for twitch first-person aim. The FPS half rides the same
-wire and this tension is not yet resolved. (See the "Embodied combat over lockstep"
-analysis in [`architecture.md`](architecture.md).)
+**Resolved in [D15](decisions.md): avatar-local prediction.** The Phase 0.5 latency spike
+proved that embodied combat over deterministic lockstep + input delay feels good **when the
+player's own embodied entity is predicted locally and reconciled against the authoritative
+tick** (everything else stays pure lockstep) — and feels laggy with raw lockstep alone.
+Validated hands-on over real Wi-Fi up to a simulated "cellular, worst" connection.
 
-| Option | Feel | Cost / risk |
-|---|---|---|
-| **Pure lockstep + tuned input delay** | Reuses everything; one netcode path | Fixed input lag on aim/fire; may feel mushy in a PvP gunfight |
-| **Avatar-local prediction** — predict only *your* embodied unit locally, reconcile against the tick; the other ~200 units stay pure lockstep | Crisp local aim without abandoning lockstep | Reconciliation/mispredict handling on one entity; must not leak into deterministic state |
-| **Rollback on the embodied layer** (GGPO-style, local fight only) | Best twitch feel | Heavy; rollback over a 200-unit deterministic sim is expensive and complex |
-| **Server-arbitrated FPS hits** | Authoritative, cheat-resistant | Breaks the pure-P2P-lockstep model; needs a server in the loop |
-
-**Current lean:** undecided — likely **lockstep + input delay first, add avatar-local
-prediction if embodied combat feels laggy.** This is the primary thing the **Phase 0.5
-spike** ([`roadmap.md`](roadmap.md)) exists to answer *before* the full engine is built.
+**Hard rule carried to Phase 1:** the prediction lives in the **presentation/input path
+only** and must never feed back into deterministic sim state (or it desyncs lockstep);
+authoritative hit resolution still happens at tick T+D. See
+[`architecture.md`](architecture.md) §"Embodied combat over lockstep" (now a settled
+approach) and D15 for the full caveats (audio still faked; not a determinism test).
 
 ---
 
-## Q8 — Is a 30 Hz sim tick enough for embodied combat?
+## Q8 — Is a 30 Hz sim tick enough for embodied combat? *(advanced by [D15](decisions.md), still open)*
+
+> **Status after Phase 0.5:** leaning **hold 30 Hz**. The spike ran at 30 Hz and
+> avatar-local prediction ([Q7](#q7--what-netcode-model-carries-embodied-fps-combat--resolved-d15))
+> made it feel good in all conditions — but the 30↔60 Hz toggle was **not** A/B'd, so 30 Hz
+> is not yet rigorously confirmed. **Close this early in Phase 1.**
 
 The sim runs **fixed 30 Hz** ([`architecture.md`](architecture.md) Targets / Sim loop). Render
 interpolates to 60/120, but *hits, ballistics, and aim resolution happen in the sim* —

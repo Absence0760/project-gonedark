@@ -367,3 +367,53 @@ downstream Phase 2 design work, not a reopening of this question.
 **Consequence:** the next concrete step is the Phase 0.5 latency spike (two networked
 clients, one embodied unit each, real input delay at the real 30 Hz tick), which must clear
 before the Rust engine spine (Phase 1) is committed.
+
+---
+
+## D15 — Embodied combat over lockstep: avatar-local prediction (Phase 0.5 passes)
+
+**Resolves:** [Q7](open-questions.md) (netcode model for embodied combat). Advances —
+but does **not** close — [Q8](open-questions.md) (tick rate).
+
+**Decision:** Embodied first-person combat rides the deterministic lockstep + input-delay
+netcode **with avatar-local prediction**: the client predicts *only the player's own
+embodied entity* locally and reconciles it against the authoritative tick, while everything
+else stays pure lockstep. The Phase 0.5 latency spike **passes** — with prediction on,
+embodied 1v1 combat feels good across every tested connection quality (up to a simulated
+"cellular, worst" preset); with prediction off (raw lockstep + input delay) it feels laggy.
+Greenlight the **Phase 1** engine spine.
+
+**Why:** Phase 0.5 existed to prove embodied feel over the **RTS-optimal / FPS-hostile**
+netcode *before* committing the engine (see [`architecture.md`](architecture.md) §"Embodied
+combat over lockstep", roadmap). The spike — phone (host) vs laptop (client) over real
+Wi-Fi, with a tunable RTT/jitter/loss injector — showed prediction delivers responsive aim
+and movement in every condition while raw lockstep does not. This **confirms the prior
+lean**: predict the one entity you're twitch-controlling, keep the ~200-unit sim on pure
+lockstep, and the deterministic core stays intact.
+
+**Hard rule for Phase 1 (non-negotiable):** the prediction lives in the
+**presentation/input path only** and must **never feed back into deterministic sim state**,
+or it desyncs lockstep silently. Authoritative hit resolution and the remote view still
+resolve at tick **T+D** inside the fixed-point sim. The prediction/reconciliation boundary
+must be designed in from the **first netcode commit** — retrofitting it into a finished sim
+is far costlier, which is the entire reason this spike preceded Phase 1.
+
+**Q8 (tick rate) — still open, leaning hold-30 Hz.** The harness ran at 30 Hz by default
+and prediction made it feel good in all conditions, so "hold 30 Hz, lean on prediction"
+remains the lean. But the 30↔60 Hz toggle was **not** A/B'd in this pass, so 30 Hz is *not*
+yet rigorously confirmed — **close Q8 early in Phase 1.**
+
+**Caveats (on the record, not blockers):**
+- The harness is throwaway and uses **floats** — it is **not** a determinism test; Phase
+  1's fixed-point sim is still unproven (invariant #1 stands).
+- 1v1 over LAN/Wi-Fi with an **idle opponent** — remote-avatar motion under jitter/loss
+  driven by a *second human* was not stress-tested.
+- **Audio still faked** (carry-forward from D14); the going-dark audio feel remains unproven.
+
+**Consequences:**
+- [`architecture.md`](architecture.md) §"Embodied combat over lockstep" flips from *open
+  tension* to a **settled approach** (avatar-local prediction + the presentation-path-only
+  rule). The determinism checklist gains the "prediction never writes sim state" guard.
+- Phase 0.5 is **done** in the roadmap; **Phase 1 (Rust engine spine) is unblocked.**
+- Both throwaway prototypes (`prototypes/phase0-controls`, `prototypes/phase0.5-netfeel`)
+  have served their purpose and may be deleted (or kept briefly as reference).
