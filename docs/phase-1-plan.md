@@ -69,12 +69,16 @@ core/        no platform deps — Fixed-point math + LUTs, deterministic RNG, ti
              ECS world + scheduler, components, systems, sim loop, (stubbed) order/stance
 pal/         trait definitions only — Rhi, Input, Window, Audio, Storage, Clock
 pal-desktop/ winit + wgpu backend (dev/CI host: linux-gnu, win-msvc)
-pal-android/ cargo-ndk + JNI shim (surface, touch, lifecycle) — the ship target
+pal-android/ cargo-ndk + android-activity shim (surface, touch, lifecycle) — the ship target
 render/      wgpu renderer; consumes a read-only interpolated snapshot of core state
-app/         wires core + pal + render; owns the run loop and the sim/render split
+engine/      platform-agnostic game loop (sim+render+fixed-tick+cameras+command/embodiment);
+             both hosts drive Game::frame; depends on core/render/pal, never winit/android (D20)
+app/         thin desktop host: a winit run loop that drives engine::Game
 sim-runner/  headless core driver that emits per-tick checksums (for CI, §6)
 ```
-`pal-ios/` is added later (most external friction; sequenced last per D9).
+`pal-ios/` is added later (most external friction; sequenced last per D9). The shared
+`engine` crate ([D20](decisions.md)) is what lets Android's `android_main` run the *same* loop
+as the desktop host instead of a forked one.
 
 ## 5. Build order (milestones, each independently demoable)
 
@@ -112,9 +116,12 @@ Status legend: **✓ done & verified** · **◐ coded, compile-verified (not run
    project. **Builds for `aarch64-linux-android`** via `cargo ndk -t arm64-v8a build` (NDK 28)
    **and assembles an installable arm64 debug APK** — `pnpm android:apk` runs cargo-ndk →
    `:app:assembleDebug` (committed Gradle 8.11 wrapper + AGP 8.7.2) → `app-debug.apk`
-   bundling `libgonedark_pal_android.so`. *Still ahead:* install on a real device + run the
-   `adb install → am start → adb logcat` loop, and wire the shared sim/render game loop into
-   `android_main` (currently the PAL backend + entry point only — the run loop is Phase 2).*
+   bundling `libgonedark_pal_android.so`. **`android_main` now drives the shared `engine::Game`
+   loop** (the same sim+render the desktop host runs, via [D20](decisions.md)) — not just a
+   clear. An earlier on-device run surfaced + fixed a real arm64 surface-config crash (texture
+   limit). *Still ahead:* confirm the full loop running on a device + stand up the `adb install
+   → am start → adb logcat` inner loop; an Android-native control scheme (touch sticks / gyro,
+   embody gesture) is still Phase 2.*
 7. **◐ Determinism CI:** wire the per-tick checksum matrix (§6) — green before the slice counts.
    *Extended:* the checksum matrix (`determinism.yml`) is unchanged; `build.yml` adds a
    blocking `graphics-build` job (link deps + build/clippy the wgpu/winit crates) and an

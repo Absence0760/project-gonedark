@@ -8,18 +8,20 @@ both jobs; the tension is divided attention.
 **Current state: Phase 1 in progress — the engine spine is real through build-order step 5,
 compile-verified but not yet device-validated (D10).** The design corpus in `docs/` is still
 the product of record, but engine code now exists: the Cargo workspace (`core/ pal/ render/
-pal-desktop/ pal-android/ app/ sim-runner/ server/`) with a deterministic fixed-point `core`
+engine/ pal-desktop/ pal-android/ app/ sim-runner/ server/`) with a deterministic fixed-point `core`
 (Q16.16 [D17], hand-rolled SoA ECS [D18]). **Steps 3–5 done & verified:** a real deterministic
 **flow field** (`core::flow_field` — integer Dijkstra over a 128×128 fixed grid) driving the
 `movement_system`, with `sim-runner` bit-identical run-to-run and debug==release; a real
 `wgpu` 29 + `winit` 0.30 desktop renderer and PAL backend that interpolate prev→curr snapshots
-(invariant #4); and an `app` run loop (fixed-tick accumulator, tap-to-move, embody/surface
-input swap with "world goes dark"). Per [D19], `core`+`pal` stay GPU-free; `render`/
-`pal-desktop`/`app` carry wgpu. **Caveat: steps 4–5 are compile-verified only — not run on a
-GPU/display here.** Step 6 (`pal-android` + `android/` Gradle) **builds for
-real arm64** via `cargo-ndk` and **assembles an installable arm64 debug APK** (committed
-Gradle 8.11 wrapper + AGP 8.7.2, via `pnpm android:apk`); it is **not yet run on a device**,
-and the shared sim/render game-loop wiring inside `android_main` is Phase 2. Step 7 CI is **extended**: a
+(invariant #4); and the shared game loop in a new `engine` crate (fixed-tick accumulator,
+tap-to-move, embody/surface input swap with "world goes dark") that **both** the desktop `app`
+and Android's `android_main` drive ([D20]). Per [D19], `core`+`pal` stay GPU-free; `render`/
+`engine`/`pal-desktop`/`pal-android`/`app` carry wgpu. **Caveat: steps 4–5 are compile-verified
+only — not run on a GPU/display here.** Step 6 (`pal-android` + `android/` Gradle) **builds for
+real arm64** via `cargo-ndk`, **assembles an installable arm64 debug APK** (committed Gradle
+8.11 wrapper + AGP 8.7.2, via `pnpm android:apk`), and now **runs the same `engine::Game` loop
+through `android_main`** (sim + renderer, not just a clear) — but is **not yet confirmed
+running on a device** in this state. Step 7 CI is **extended**: a
 blocking `graphics-build` job + an `android-build` tripwire (`continue-on-error` until the
 backend is real); the determinism checksum matrix is unchanged. Two decide-first gates are
 locked (D17/D18); **sim rate (Q10) is still open**, parameterized as `core::sim::TICK_HZ`
