@@ -20,6 +20,11 @@ use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::Window;
 
+/// Desktop audio backend (worker 3). Owns `DesktopAudio`, the [`gonedark_pal::Audio`] sink the
+/// `app` host constructs and hands to `Game::frame`.
+mod audio;
+pub use audio::DesktopAudio;
+
 /// Owns the `wgpu` surface + device/queue for a `winit` window (D19). Built in the `app`'s
 /// `ApplicationHandler::resumed` from a window the `app` creates, then queried for the
 /// `&Device`/`&Queue`/`TextureFormat` the renderer needs (`render::Renderer::new(device,
@@ -207,6 +212,11 @@ pub struct DesktopInput {
     embody_latch: bool,
     surface_latch: bool,
     click_latch: bool,
+    // Touch-UI desktop bindings (worker 4/5 consume these via InputFrame): left-button release
+    // edge, the "open order context" key (F), and the order/stance vocabulary slot keys (1–6).
+    release_latch: bool,
+    long_press_latch: bool,
+    command_slot: Option<u8>,
 }
 
 impl Default for DesktopInput {
@@ -224,6 +234,9 @@ impl Default for DesktopInput {
             embody_latch: false,
             surface_latch: false,
             click_latch: false,
+            release_latch: false,
+            long_press_latch: false,
+            command_slot: None,
         }
     }
 }
@@ -250,6 +263,8 @@ impl DesktopInput {
                         self.pointer_down = pressed;
                         if pressed {
                             self.click_latch = true; // edge: command-layer click
+                        } else {
+                            self.release_latch = true; // edge: drag/tap completed
                         }
                     }
                     MouseButton::Right => {
@@ -281,6 +296,19 @@ impl DesktopInput {
                         KeyCode::KeyD => self.move_right = pressed,
                         // Fire (alternative to right-click), held.
                         KeyCode::Space => self.fire = pressed,
+                        // Touch-UI desktop bindings: F opens the order/stance context;
+                        // number keys 1–6 pick a vocabulary slot (0-based on the wire).
+                        KeyCode::KeyF => {
+                            if pressed && !event.repeat {
+                                self.long_press_latch = true;
+                            }
+                        }
+                        KeyCode::Digit1 if pressed && !event.repeat => self.command_slot = Some(0),
+                        KeyCode::Digit2 if pressed && !event.repeat => self.command_slot = Some(1),
+                        KeyCode::Digit3 if pressed && !event.repeat => self.command_slot = Some(2),
+                        KeyCode::Digit4 if pressed && !event.repeat => self.command_slot = Some(3),
+                        KeyCode::Digit5 if pressed && !event.repeat => self.command_slot = Some(4),
+                        KeyCode::Digit6 if pressed && !event.repeat => self.command_slot = Some(5),
                         _ => {}
                     }
                 }
@@ -314,8 +342,11 @@ impl DesktopInput {
         let frame = InputFrame {
             pointer: self.pointer,
             pointer_down,
+            pointer_up: self.release_latch,
             embody_pressed: self.embody_latch,
             surface_pressed: self.surface_latch,
+            long_press: self.long_press_latch,
+            command_slot: self.command_slot,
             move_axis: (mx, my),
             look_axis: (self.look_dx, self.look_dy),
             fire: self.fire,
@@ -325,6 +356,9 @@ impl DesktopInput {
         self.embody_latch = false;
         self.surface_latch = false;
         self.click_latch = false;
+        self.release_latch = false;
+        self.long_press_latch = false;
+        self.command_slot = None;
         self.look_dx = 0.0;
         self.look_dy = 0.0;
 

@@ -9,7 +9,7 @@
 //! per-frame `dt` into the engine's fixed-tick accumulator.
 
 use gonedark_engine::{Game, DEFAULT_SEED};
-use gonedark_pal_desktop::{DesktopInput, DesktopRenderSurface};
+use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface};
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -23,6 +23,8 @@ struct App {
     game: Option<Game>,
     surface: Option<DesktopRenderSurface>,
     input: DesktopInput,
+    /// The desktop audio sink handed into `Game::frame` for the embodied mix (worker 3).
+    audio: DesktopAudio,
     last_frame: Instant,
 }
 
@@ -32,6 +34,7 @@ impl App {
             game: None,
             surface: None,
             input: DesktopInput::new(),
+            audio: DesktopAudio::new(),
             last_frame: Instant::now(),
         }
     }
@@ -44,7 +47,8 @@ impl App {
         let dt = now.duration_since(self.last_frame).as_secs_f32();
         self.last_frame = now;
 
-        // `surface` and `game` are disjoint fields, so both mutable borrows are fine.
+        // `surface`, `game`, and `audio` are disjoint fields, so the mutable borrows are fine.
+        let audio = &mut self.audio;
         let (Some(surface), Some(game)) = (self.surface.as_mut(), self.game.as_mut()) else {
             return;
         };
@@ -58,6 +62,7 @@ impl App {
                 surface.device(),
                 surface.queue(),
                 &view,
+                audio,
             );
             surface.present(frame);
         }

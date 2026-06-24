@@ -25,10 +25,19 @@
 //! the avatar. Filtering happens at upload time in [`Renderer::render`]; [`Renderer::prepare`]
 //! still builds the full set so a single un-embodied frame can light the whole map again.
 
+use gonedark_core::alerts::AlertChannel;
 use gonedark_core::components::Faction;
 use gonedark_core::fixed::Fixed;
+use gonedark_core::fog::Visibility;
 use gonedark_core::snapshot::Snapshot;
 use wgpu::util::DeviceExt;
+
+/// Fog-of-war application (worker 1). Owns `visible_instances`: the visibility → drawn-instances
+/// filter the unit pass runs each frame.
+mod fog;
+/// Embodied directional alert HUD (worker 2). Owns `HudRenderer`: the screen-space alert overlay
+/// drawn on top of the embodied frame.
+mod hud;
 
 /// Convert a Q16.16 fixed value to `f32` for the GPU. The ONLY sanctioned fixed→float hop.
 #[inline]
@@ -197,6 +206,9 @@ pub struct Renderer {
     instance_cap: usize,
     /// CPU-side interpolated instances from the last [`Renderer::prepare`].
     instances: Vec<UnitInstance>,
+    /// The embodied directional-alert overlay (worker 2). Drawn as a second LOAD pass by
+    /// [`Renderer::render_hud`] when the local player is embodied.
+    hud: hud::HudRenderer,
 }
 
 impl Renderer {
@@ -305,6 +317,8 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        let hud = hud::HudRenderer::new(device, surface_format);
+
         Renderer {
             pipeline,
             camera_buf,
@@ -313,6 +327,7 @@ impl Renderer {
             instance_buf,
             instance_cap,
             instances: Vec::new(),
+            hud,
         }
     }
 
@@ -331,8 +346,9 @@ impl Renderer {
     /// Upload instances + camera, clear, record one render pass into `view`, and submit.
     ///
     /// `world_dark` is the embodied "world goes dark" state: when set, the frame clears to
-    /// near-black and only embodied instances are drawn (invariant #6 — the map disappears and
-    /// non-avatar units, buildings, and control points leak no pixels).
+    /// near-black (invariant #6). `fog` is the computed visibility mask for the local viewpoint;
+    /// the drawn set is chosen by [`fog::visible_instances`] (worker 1) so unseen enemies vanish
+    /// in command view and the map collapses to the avatar's sight while embodied.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -340,19 +356,13 @@ impl Renderer {
         view: &wgpu::TextureView,
         camera: &Camera,
         world_dark: bool,
+        fog: &Visibility,
     ) {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(camera));
 
-        // Pick the draw set: dark frames show only the embodied avatar(s).
-        let draw_set: Vec<UnitInstance> = if world_dark {
-            self.instances
-                .iter()
-                .copied()
-                .filter(|u| u.flags & FLAG_EMBODIED != 0)
-                .collect()
-        } else {
-            self.instances.clone()
-        };
+        // Pick the draw set: the fog layer applies visibility (and the dark-frame avatar-only
+        // rule) — see `render/src/fog.rs` (worker 1).
+        let draw_set: Vec<UnitInstance> = fog::visible_instances(&self.instances, fog, world_dark);
 
         if draw_set.len() > self.instance_cap {
             let new_cap = draw_set.len().next_power_of_two();
@@ -401,6 +411,26 @@ impl Renderer {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Draw the embodied directional-alert HUD on top of the current frame (a LOAD pass — it
+    /// never clears). Delegates to the [`hud::HudRenderer`] (worker 2). The host calls this only
+    /// while the local player is embodied (the strategic map is dark and alerts are the only
+    /// thread back — invariant #6). `avatar_world` is the listener position, `yaw` its facing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_hud(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        alerts: &AlertChannel,
+        avatar_world: (f32, f32),
+        yaw: f32,
+        viewport: (u32, u32),
+        tick: u64,
+    ) {
+        self.hud
+            .render(device, queue, view, alerts, avatar_world, yaw, viewport, tick);
     }
 }
 

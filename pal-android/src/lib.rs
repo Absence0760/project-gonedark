@@ -187,7 +187,15 @@ fn android_main(app: AndroidApp) {
                 last_frame = now;
                 let viewport = rhi.size();
                 if let Some((frame, view)) = rhi.acquire() {
-                    game.frame(&input_frame, dt, viewport, rhi.device(), rhi.queue(), &view);
+                    game.frame(
+                        &input_frame,
+                        dt,
+                        viewport,
+                        rhi.device(),
+                        rhi.queue(),
+                        &view,
+                        &mut audio,
+                    );
                     rhi.present(frame);
 
                     // Heartbeat: count this presented frame, then ~once per second emit a
@@ -610,6 +618,13 @@ impl Audio for AndroidAudio {
     fn play_oneshot(&mut self, sound_id: u32) {
         // TODO(phase2): open an AAudio stream and mix one-shots. No-op for Phase 1.
         let _ = sound_id;
+    }
+
+    fn submit_mix(&mut self, cues: &[gonedark_pal::AudioCue]) {
+        // WORKER 3 (embodied audio, Android backend): render the per-frame positioned mix —
+        // pan by `cue.azimuth`, scale by `cue.gain`, low-pass `cue.muffled` strategic bleed —
+        // through an AAudio stream. No-op scaffold for now (mirrors `pal-desktop::DesktopAudio`).
+        let _ = cues;
     }
 }
 

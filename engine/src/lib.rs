@@ -19,15 +19,27 @@
 //! sim and no float ever leaks into `core` (invariant #1).
 
 use glam::{Mat4, Vec3, Vec4};
-use gonedark_core::components::{BuildingKind, Faction, Stance, UnitKind, Vec2};
+use gonedark_core::alerts::AlertChannel;
+use gonedark_core::components::{BuildingKind, EntityKind, Faction, Stance, UnitKind, Vec2};
 use gonedark_core::ecs::Entity;
 use gonedark_core::economy::{self, Resources};
+use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
+use gonedark_core::fog::{self, Visibility};
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
 use gonedark_core::territory::ControlPoint;
-use gonedark_pal::InputFrame;
-use gonedark_render::{Camera, Renderer};
+use gonedark_pal::{Audio, InputFrame};
+use gonedark_render::{fixed_to_f32, Camera, Renderer};
+
+use selection::Selection;
+
+/// Embodied audio mix (worker 3). Owns `mix_cues`: events + listener pose → positioned cues.
+mod audio;
+/// Order/stance command vocabulary (worker 5). Owns `commands_for`: UI intent → sim commands.
+mod command_ui;
+/// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
+mod selection;
 
 /// The seed both hosts start the sim with, so desktop and Android run the bit-identical
 /// deterministic scene (invariant #1 / #7).
@@ -205,6 +217,14 @@ pub struct Game {
     /// Accumulated embodied yaw (radians), integrated from raw look deltas. Presentation
     /// only — never written into the sim (D15).
     yaw: f32,
+
+    /// Command-layer unit selection (worker 4) — which player units the next order targets.
+    /// Presentation state; drives the order vocabulary, never the sim directly.
+    selection: Selection,
+
+    /// The rolling embodied alert channel (worker 2's HUD reads this; `core::alerts` derives it).
+    /// A presentation derivation from the event stream — never sim state (invariant #7).
+    alerts: AlertChannel,
 }
 
 impl Game {
@@ -287,6 +307,8 @@ impl Game {
             embodied: false,
             camera: CameraMode::TopDown,
             yaw: 0.0,
+            selection: Selection::new(),
+            alerts: AlertChannel::new(),
         }
     }
 
@@ -295,6 +317,25 @@ impl Game {
     /// entity identity, so we read by index for the embodied camera.
     fn player_pos(&self) -> Vec2 {
         self.sim.world.pos[self.player.index as usize]
+    }
+
+    /// Every living Player-faction unit (not buildings) as `(handle, world_xy)` — the candidate
+    /// set the command-layer [`Selection`] (worker 4) tests the pointer against. Read-only over
+    /// the sim world; positions cross the float boundary via [`fixed_to_f32`] for the UI math.
+    fn selectable_player_units(&self) -> Vec<(Entity, (f32, f32))> {
+        let w = &self.sim.world;
+        let mut out = Vec::new();
+        for i in 0..w.capacity() {
+            if !w.is_index_alive(i) || w.faction[i] != Faction::Player || w.kind[i] != EntityKind::Unit
+            {
+                continue;
+            }
+            if let Some(e) = w.entity(i) {
+                let p = w.pos[i];
+                out.push((e, (fixed_to_f32(p.x), fixed_to_f32(p.y))));
+            }
+        }
+        out
     }
 
     /// The sim's current tick count — a read-only window onto the deterministic clock so a
@@ -327,6 +368,7 @@ impl Game {
     ///
     /// All host-float work; the only thing crossing into the sim is the Fixed-quantized
     /// command set (invariant #1).
+    #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
         input: &InputFrame,
@@ -335,13 +377,42 @@ impl Game {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
+        audio: &mut dyn Audio,
     ) {
         let (width, height) = viewport;
 
         // 1. Map input → sim commands (applied on the first step of this frame). The pure
         // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
         // `map_input_commands`; here we apply the resulting embodiment state transition.
-        let commands = map_input_commands(input, self.embodied, self.player, width, height);
+        let mut commands = map_input_commands(input, self.embodied, self.player, width, height);
+
+        // 1b. Touch-UI layer (workers 4 + 5): in the command view, the pointer drives unit
+        // SELECTION and the on-screen vocabulary issues orders to that selection. Both are pure
+        // presentation→intent layers; the float target is quantized to Fixed at the boundary
+        // inside `command_ui` (invariant #1). With nothing selected they emit nothing and the
+        // legacy single-avatar tap-to-move above still applies (back-compat).
+        let pointer_world = if !self.embodied {
+            input.pointer.and_then(|(px, py)| {
+                let vp = topdown_view_proj(width, height);
+                unproject_topdown(&vp, px, py, width, height)
+            })
+        } else {
+            None
+        };
+        let candidates = self.selectable_player_units();
+        self.selection.update(
+            pointer_world,
+            input.pointer_down,
+            input.pointer_up,
+            self.embodied,
+            &candidates,
+        );
+        commands.extend(command_ui::commands_for(
+            input.command_slot,
+            input.long_press,
+            &self.selection,
+            pointer_world,
+        ));
 
         // Embodiment input-source swap (invariant #5): mirror the toggle the mapping resolved.
         for cmd in &commands {
@@ -369,6 +440,11 @@ impl Game {
         let tick_dt = 1.0 / TICK_HZ as f32;
         self.acc += dt_secs;
 
+        // This frame's emitted sim events, accumulated across however many ticks stepped (each
+        // `Sim::step` clears its own stream). Drives the alert channel + the embodied audio mix
+        // below — both pure presentation derivations, neither touches sim state (invariant #7).
+        let mut frame_events: Vec<SimEvent> = Vec::new();
+
         let mut steps = 0u32;
         let mut first_step = true;
         while self.acc >= tick_dt && steps < MAX_CATCHUP_STEPS {
@@ -379,6 +455,7 @@ impl Game {
             } else {
                 self.sim.step(&[]);
             }
+            frame_events.extend_from_slice(self.sim.events());
             self.curr = self.sim.snapshot();
             self.acc -= tick_dt;
             steps += 1;
@@ -392,8 +469,22 @@ impl Game {
         if first_step && !commands.is_empty() {
             self.prev = self.curr.clone();
             self.sim.step(&commands);
+            frame_events.extend_from_slice(self.sim.events());
             self.curr = self.sim.snapshot();
         }
+
+        // Fold this frame's events into the embodied thread-back: the alert channel (worker 2's
+        // HUD) and the positioned audio mix (worker 3). "Alerts, not intel" — observed as the
+        // local Player faction (invariant #6). Both read-only over the sim.
+        let tick = self.sim.tick_count();
+        self.alerts
+            .ingest(&frame_events, &self.sim.world, Faction::Player, tick);
+        let listener = {
+            let p = self.player_pos();
+            (fixed_to_f32(p.x), fixed_to_f32(p.y))
+        };
+        let cues = audio::mix_cues(&frame_events, self.embodied, listener, self.yaw, &self.sim.world);
+        audio.submit_mix(&cues);
 
         // 3. Interpolation factor for the renderer (invariant #4).
         let alpha = (self.acc / tick_dt).clamp(0.0, 1.0);
@@ -407,19 +498,36 @@ impl Game {
             view_proj: view_proj.to_cols_array_2d(),
         };
 
-        // 5. Interpolate prev→curr into render instances (the float boundary lives in render).
+        // 5. Compute the visibility mask for the active viewpoint (worker 1 applies it in
+        // render). Embodied → only the avatar's sight (the map goes dark); command view → the
+        // Player faction's union vision. A pure derivation over the world — never sim state.
+        let visibility: Visibility = if self.embodied {
+            fog::embodied_visibility(&self.sim.world, &self.sim.terrain, self.player)
+        } else {
+            fog::command_visibility(&self.sim.world, &self.sim.terrain, Faction::Player)
+        };
+
+        // 6. Interpolate prev→curr into render instances (the float boundary lives in render).
         self.renderer.prepare(&self.prev, &self.curr, alpha);
 
-        // 6. Render the interpolated snapshot (world goes dark while embodied) into `view`.
+        // 7. Render the interpolated snapshot, fog-filtered (world goes dark while embodied).
         self.renderer.render(
             device,
             queue,
             view,
             &camera,
             /* world_dark = */ self.embodied,
+            &visibility,
         );
 
-        // 7. Avatar-local prediction seam (D15): presentation-only, NEVER writes sim state.
+        // 8. While embodied, draw the directional alert HUD over the dark frame (worker 2) — the
+        // only thread back to command (invariant #6).
+        if self.embodied {
+            self.renderer
+                .render_hud(device, queue, view, &self.alerts, listener, self.yaw, viewport, tick);
+        }
+
+        // 9. Avatar-local prediction seam (D15): presentation-only, NEVER writes sim state.
         predict_avatar(&self.curr, input, self.embodied);
     }
 }
