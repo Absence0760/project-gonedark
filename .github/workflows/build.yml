@@ -1,0 +1,114 @@
+# Graphical / host / Android build-rot guard (docs/phase-1-plan.md §5 steps 4-8).
+#
+# The determinism matrix (determinism.yml) is the load-bearing job: it diffs per-tick
+# checksums across arch and a divergence there is a real lockstep desync — NEVER narrow
+# or skip a target to make it pass (invariant #7). This workflow is SEPARATE and exists
+# only so the non-deterministic edges of the engine — the `wgpu`/`winit` renderer,
+# desktop PAL backend, the `app` host, and the Android scaffold — don't silently fail to
+# compile. It touches nothing in the checksum path; it cannot weaken determinism.
+#
+# Why a build check at all: `core` (sim) is exercised by the determinism job, but rlibs
+# alone don't *link*. The render/host crates pull `wgpu`/`winit`, which only fully
+# resolve (link an actual binary) against system GPU/windowing libs. Compiling
+# `gonedark-app` to a real binary is what proves those backends still wire up.
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  graphics-build:
+    # Compile + lint the graphical/host crates the determinism matrix does not cover.
+    # Linux is the cheapest host that links winit/wgpu given the right -dev packages.
+    name: graphics build · ubuntu x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # winit (Wayland + X11) and wgpu (Vulkan loader) need these to LINK a binary.
+      # rlibs would compile without them, but `cargo build -p gonedark-app` emits an
+      # executable that must resolve libwayland/libxkbcommon/libX11/libvulkan/libudev.
+      # mesa-vulkan-drivers gives a software ICD so the Vulkan loader has a target
+      # (no GPU on the runner) — link-time only; nothing here renders.
+      - name: Install winit/wgpu link deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libx11-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libvulkan-dev \
+            mesa-vulkan-drivers
+
+      # rust-toolchain.toml pins the exact compiler (1.96.0 + clippy); rustup auto-installs
+      # it on first cargo invocation, same as the determinism job — no separate setup action.
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      # Build the host binary (links everything) plus the render + desktop-PAL crates.
+      # Debug is enough — this guards against rot, not performance.
+      - name: Build host + render + desktop PAL
+        run: cargo build -p gonedark-app -p gonedark-render -p gonedark-pal-desktop
+
+      # Lint the same crates with warnings-as-errors so dead/incorrect glue can't accrue.
+      - name: Clippy (deny warnings)
+        run: cargo clippy -p gonedark-render -p gonedark-pal-desktop -p gonedark-app -- -D warnings
+
+      # Full workspace test, minus the Android cdylib (it only builds for an android target).
+      # The determinism job owns the *cross-arch checksum* purpose; this just keeps the host
+      # crates' own unit tests honest, so it does not duplicate that job.
+      - name: Workspace tests (excluding android cdylib)
+        run: cargo test --workspace --exclude gonedark-pal-android
+
+  android-build:
+    # Cross-compile the Android scaffold so it can't rot silently between now and the
+    # on-device step. This is NOT a device run — there is no emulator/checksum here; the
+    # real on-device cross-arch checksum is build-order step 8 and is tracked by the
+    # TODO(step6/7) in determinism.yml. This job only proves the arm64-android target
+    # still compiles.
+    #
+    # continue-on-error: the Android backend (pal-android JNI shim) was scaffolded WITHOUT
+    # an NDK to verify against, so a for-target compile failure here is expected-possible
+    # and must not block unrelated PRs yet. Treat this as a scaffold-rot TRIPWIRE: it
+    # surfaces breakage in the job log without gating merges. FLIP THIS TO BLOCKING
+    # (remove continue-on-error) the moment the Android backend is real (build-order
+    # step 6 lands a verified NDK build). The determinism job is NEVER continue-on-error.
+    name: android build · aarch64 (scaffold tripwire)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          # Pin a known LTS NDK; bump deliberately alongside the cargo-ndk/Gradle setup
+          # when the real backend lands (step 6).
+          ndk-version: r26d
+
+      # rust-toolchain.toml already declares aarch64-linux-android in its `targets`, so
+      # rustup installs it automatically — this is a defensive belt-and-suspenders add.
+      - name: Add android target
+        run: rustup target add aarch64-linux-android
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # Build the JNI cdylib for arm64. cargo-ndk wires the NDK toolchain/linker for the
+      # android target. TODO(step8): once on real hardware, feed this lib through the
+      # on-device per-tick checksum run alongside the desktop streams (invariant #7).
+      - name: Build pal-android (arm64-v8a)
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cargo ndk -t arm64-v8a build -p gonedark-pal-android
