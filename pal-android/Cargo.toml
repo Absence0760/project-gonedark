@@ -1,0 +1,12 @@
+[package]
+name = "gonedark-pal-android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Android PAL backend — cargo-ndk + JNI shim (the ship target). All Android code is gated
+# to target_os = "android" so on desktop/CI hosts this compiles to an empty lib. The real
+# surface/touch/lifecycle (via android-activity + JNI) and wgpu→Vulkan land in build-order
+# step 6; `android-activity`, `jni`, `ndk` get added then.
+[dependencies]

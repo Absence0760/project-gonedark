@@ -1,0 +1,12 @@
+[package]
+name = "gonedark-pal-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Desktop PAL backend (Linux/Windows — dev + CI host). The winit window + wgpu device are
+# wired in Phase 1 build-order step 4; `winit`/`wgpu` get added then. For now this provides
+# a headless stand-in implementing the PAL traits so `app` runs end-to-end today.
+[dependencies]
+gonedark-pal = { path = "../pal" }

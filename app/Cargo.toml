@@ -1,0 +1,16 @@
+[package]
+name = "gonedark-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The host: wires core + pal + render and owns the run loop / sim-render split. Selects a
+# concrete PAL backend per target (desktop here; android added to the cfg in step 6).
+[dependencies]
+gonedark-core = { path = "../core" }
+gonedark-pal = { path = "../pal" }
+gonedark-render = { path = "../render" }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+gonedark-pal-desktop = { path = "../pal-desktop" }

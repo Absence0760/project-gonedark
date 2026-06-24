@@ -1,0 +1,11 @@
+[package]
+name = "gonedark-pal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Trait definitions only — the narrow seam between the shared core and per-platform
+# backends (invariant #2, D9). No GPU/windowing crate here; the concrete backends
+# (pal-desktop, pal-android) pull those.
+[dependencies]

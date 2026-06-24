@@ -1,0 +1,18 @@
+[package]
+name = "gonedark-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+build = "build/lut.rs"
+
+# INVARIANT #2 (D9): the deterministic core depends on NO platform/windowing/GPU crate
+# and NO float-using crate. This dependency list must stay empty (or contain only
+# audited, float-free, deterministic crates). A `wgpu`/`winit`/`libm` entry here is a
+# bug. INVARIANT #1: there are no `f32`/`f64` tokens anywhere in `core/src` — floats are
+# structurally impossible in the sim, not merely discouraged. (The build script under
+# `build/` uses f64 at *compile time* on the host to bake integer LUTs; that output is
+# pure integer data and never executes inside the sim.)
+[dependencies]
+
+[dev-dependencies]

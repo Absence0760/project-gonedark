@@ -1,0 +1,12 @@
+[package]
+name = "gonedark-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# The renderer. Consumes a read-only core snapshot (invariant #4) and is the float
+# boundary — Q16.16 → f32 happens HERE, never in core. The wgpu device/pipeline is wired
+# in Phase 1 build-order step 4; `wgpu`/`bytemuck` get added then.
+[dependencies]
+gonedark-core = { path = "../core" }

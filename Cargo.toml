@@ -1,0 +1,41 @@
+# Going Dark — Rust engine workspace (decisions.md D10).
+#
+# Layering (docs/architecture.md, docs/phase-1-plan.md §4):
+#   core        — shared deterministic sim. ZERO platform deps (invariant #2).
+#   pal         — Platform Abstraction Layer: trait definitions only.
+#   render      — wgpu renderer; consumes a read-only snapshot, never mutates sim.
+#   pal-desktop — winit + wgpu backend (dev/CI host).
+#   pal-android — cargo-ndk + JNI shim (the ship target; cfg-gated to android).
+#   app         — wires core + pal + render; owns the run loop and sim/render split.
+#   sim-runner  — headless core driver emitting per-tick checksums for determinism CI.
+#   server      — backend services (placeholder; see docs/infrastructure.md).
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "pal",
+    "render",
+    "pal-desktop",
+    "pal-android",
+    "app",
+    "sim-runner",
+    "server",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+# Determinism note (invariant #1): the sim is fixed-point. No fast-math is enabled
+# anywhere (Rust does not enable it by default), and `core` carries no float-using
+# dependency. Release builds keep the default wrapping integer overflow; `core`'s
+# fixed-point ops use explicit wrapping arithmetic so debug and release — and every
+# target arch — produce bit-identical results.
+[profile.release]
+overflow-checks = false
+
+[profile.dev]
+# Keep dev fast; the determinism tests run in both profiles in CI.
+opt-level = 1

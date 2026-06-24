@@ -1,0 +1,28 @@
+//! gonedark-core — the shared deterministic simulation.
+//!
+//! Load-bearing invariants (CLAUDE.md / docs/architecture.md), all structural here:
+//! - **#1 No floats in the sim.** Everything is [`fixed::Fixed`] Q16.16; there is no
+//!   float conversion in `core`, so a stray float does not compile.
+//! - **#2 No platform deps.** This crate pulls no GPU/windowing/OS crate (see Cargo.toml).
+//! - **#4 Sim/render decoupled.** The renderer consumes [`snapshot::Snapshot`] and never
+//!   mutates sim state.
+//! - **#7 Per-tick checksum.** [`sim::Sim::checksum`] folds state for the CI desync matrix.
+//!
+//! See docs/phase-1-plan.md for the build order this scaffolds.
+#![forbid(unsafe_code)]
+
+pub mod checksum;
+pub mod components;
+pub mod ecs;
+pub mod fixed;
+pub mod rng;
+pub mod sim;
+pub mod snapshot;
+pub mod systems;
+pub mod trig;
+
+pub use fixed::Fixed;
+pub use sim::{Command, Sim, TICK_HZ};
+
+#[cfg(test)]
+mod tests;

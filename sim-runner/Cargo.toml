@@ -1,0 +1,11 @@
+[package]
+name = "gonedark-sim-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Headless core driver for determinism CI (invariant #7). Depends ONLY on core — no
+# platform, no render — so the checksum stream it emits is pure sim output.
+[dependencies]
+gonedark-core = { path = "../core" }

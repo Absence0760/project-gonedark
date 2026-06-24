@@ -1,0 +1,78 @@
+# Per-tick checksum matrix (CLAUDE.md invariant #7, docs/phase-1-plan.md §6).
+#
+# The sim is float-free fixed-point so it must be BIT-IDENTICAL across CPU arch and
+# compiler. This workflow runs the headless `sim-runner` on x86_64 (ubuntu, windows) and
+# aarch64 (macOS Apple-Silicon) hosts, then diffs the checksum streams. Any divergence is
+# a lockstep desync — a real bug. NEVER "fix" a failure here by narrowing the matrix or
+# skipping a target (fix-ci skill / invariant #7).
+#
+# Target matrix note: the shipping matrix is {win-msvc, linux-gnu, android-arm64,
+# ios-arm64}. Device runs for Android/iOS need emulators and land in build-order step 6/7;
+# until then this covers the §6 minimum — an x86_64 ↔ arm64 cross-arch check that actually
+# runs in CI (macOS-14 is arm64). TODO(step6/7): add android-arm64 + ios-arm64 device runs.
+name: determinism
+
+on:
+  push:
+  pull_request:
+
+defaults:
+  run:
+    # bash on every OS (Git Bash on Windows) so `>` redirects are UTF-8/LF everywhere —
+    # otherwise PowerShell would write UTF-16 and the streams would falsely "diverge".
+    shell: bash
+
+jobs:
+  checksum:
+    name: sim checksum · ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-14 # Apple Silicon — the aarch64 side of the cross-arch check
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the exact compiler (a determinism input); rustup honors it.
+      - name: Core determinism tests
+        run: cargo test -p gonedark-core --release
+      - name: Emit per-tick checksum stream
+        run: cargo run -q -p gonedark-sim-runner --release -- 300 > "checksums-${{ matrix.target }}.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checksums-${{ matrix.target }}
+          path: checksums-${{ matrix.target }}.txt
+
+  compare:
+    name: cross-arch checksum diff
+    needs: checksum
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: sums
+      - name: Diff all streams (any divergence = desync = fail)
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          files=(sums/**/checksums-*.txt)
+          if [[ ${#files[@]} -lt 2 ]]; then
+            echo "::error::expected >=2 checksum streams, found ${#files[@]}"; exit 1
+          fi
+          echo "comparing ${#files[@]} streams:"; printf '  %s\n' "${files[@]}"
+          ref="${files[0]}"
+          fail=0
+          for f in "${files[@]}"; do
+            if ! diff -q "$ref" "$f" >/dev/null; then
+              echo "::error::checksum divergence between $ref and $f — lockstep desync (invariant #7)"
+              diff "$ref" "$f" | head -20 || true
+              fail=1
+            fi
+          done
+          [[ $fail -eq 0 ]] && echo "all streams identical — determinism holds across arch"
+          exit $fail
