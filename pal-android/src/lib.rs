@@ -23,7 +23,7 @@
 #![cfg(target_os = "android")]
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gonedark_engine::{Game, DEFAULT_SEED};
 use gonedark_pal::{Audio, Input, InputFrame, Storage, Window};
@@ -72,6 +72,15 @@ fn android_main(app: AndroidApp) {
     let mut rhi: Option<AndroidRhi> = None;
     let mut game: Option<Game> = None;
     let mut last_frame = Instant::now();
+
+    // On-device frame-rate + sim-checksum heartbeat (Phase 1 exit criterion: "running at
+    // target frame rate on a target phone"). Throttled to ~one logcat line per second so it
+    // doubles as a determinism eyeball without spamming. Read-only observation of `game` — it
+    // never touches the loop, the sim, or the wall-clock `dt` driving `game.frame(...)`.
+    let mut frame_count: u64 = 0; // total frames presented since process start
+    let mut frames_since_report: u32 = 0; // frames presented since the last heartbeat line
+    let mut last_report = Instant::now();
+
     let storage = AndroidStorage::new(app.clone());
     let mut audio = AndroidAudio;
 
@@ -180,6 +189,25 @@ fn android_main(app: AndroidApp) {
                 if let Some((frame, view)) = rhi.acquire() {
                     game.frame(&input_frame, dt, viewport, rhi.device(), rhi.queue(), &view);
                     rhi.present(frame);
+
+                    // Heartbeat: count this presented frame, then ~once per second emit a
+                    // single line with achieved FPS + the read-only sim tick/checksum. The
+                    // checksum read is `&self`, safe to call now that `game.frame` (which
+                    // took `&mut self`) has returned. Nothing here feeds back into the sim.
+                    frame_count += 1;
+                    frames_since_report += 1;
+                    let elapsed = now.duration_since(last_report);
+                    if elapsed >= Duration::from_secs(1) {
+                        let fps = frames_since_report as f32 / elapsed.as_secs_f32();
+                        info!(
+                            "heartbeat: {fps:.1} fps | frame {n} | tick {t} | checksum {c:016x}",
+                            n = frame_count,
+                            t = game.tick_count(),
+                            c = game.checksum(),
+                        );
+                        frames_since_report = 0;
+                        last_report = now;
+                    }
                 }
             }
         }

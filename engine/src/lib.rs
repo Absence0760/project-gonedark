@@ -122,6 +122,20 @@ impl Game {
         self.sim.world.pos[self.player.index as usize]
     }
 
+    /// The sim's current tick count — a read-only window onto the deterministic clock so a
+    /// host can surface sim progress (e.g. the on-device heartbeat) without reaching into
+    /// private sim state. Observation only: never mutates the sim, no determinism impact.
+    pub fn tick_count(&self) -> u64 {
+        self.sim.tick_count()
+    }
+
+    /// The sim's current per-tick checksum — a read-only window onto deterministic state so a
+    /// host can eyeball lockstep determinism on-device (the heartbeat logs it alongside the
+    /// frame rate). Observation only: never mutates the sim, no determinism impact.
+    pub fn checksum(&self) -> u64 {
+        self.sim.checksum()
+    }
+
     /// Top-down orthographic view-projection. World units are on the ground plane (z = 0;
     /// see `render/shader.wgsl`); the camera looks straight down onto it, framing
     /// `±TOPDOWN_HALF_EXTENT` (aspect-corrected on the long axis).
