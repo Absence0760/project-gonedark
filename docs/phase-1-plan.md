@@ -1,7 +1,13 @@
 # Phase 1 — Vertical slice *(plan)*
 
-> **Status: NEXT — the first real engine code.** Phase 0 (D14) and Phase 0.5 (D15/D16)
-> are done; the throwaway prototypes proved the feel, this builds the spine for real.
+> **Status: IN PROGRESS — the spine is real through build-order step 5, compile-verified but
+> not yet device-validated.** Phase 0 (D14) and Phase 0.5 (D15/D16) are done. The deterministic
+> `core` (fixed-point [D17], SoA ECS [D18]) plus a real **flow field** drive one unit; a real
+> `wgpu`/`winit` desktop renderer + PAL + `app` run loop wire command + embodiment (steps 3–5
+> done — steps 4–5 **compile-verified only, not run on a GPU/display here**). The Android
+> backend (step 6) is **scaffold only, not compile-verified for arm64**; CI (step 7) is
+> extended. **Step 8 (on-device validation) and Q10 are still open — Phase 1 is NOT done.** The
+> Unity/Godot fallback stays live. Progress per step: §2 and §5.
 >
 > **Goal (from [`roadmap.md`](roadmap.md)):** the real engine spine in **Rust** (D10), end
 > to end, with **one of everything** — ECS, a deterministic fixed-tick sim, a minimal `wgpu`
@@ -71,25 +77,46 @@ sim-runner/  headless core driver that emits per-tick checksums (for CI, §6)
 
 ## 5. Build order (milestones, each independently demoable)
 
-1. **Bedrock:** `Fixed` type + LUT trig + deterministic RNG + tick-checksum, with unit tests
+Status legend: **✓ done & verified** · **◐ coded, compile-verified (not run on device)** ·
+**○ scaffold (not compile-verified for target)** · **☐ not started.**
+
+1. **✓ Bedrock:** `Fixed` type + LUT trig + deterministic RNG + tick-checksum, with unit tests
    (incl. a cross-arch check: same inputs → same bits on x86_64 and arm64). Nothing sims until
    this is solid.
-2. **ECS + one entity:** world, scheduler, SoA component storage; one unit with
+2. **✓ ECS + one entity:** world, scheduler, SoA component storage; one unit with
    position/velocity/order/stance. Stable iteration order (no hash-map iteration).
-3. **Deterministic sim loop** at the locked rate (§2), decoupled from render. Literal-executor
-   move-order system; **flow-field** movement for the one unit. Headless first — prove it ticks
-   identically via `sim-runner`.
-4. **PAL + desktop render:** winit window + wgpu device through the PAL; triangle → instanced
+3. **✓ Deterministic sim loop** at the locked rate (§2), decoupled from render. Literal-executor
+   move-order system; **flow-field** movement for the one unit. *Shipped:* `core::flow_field`
+   (integer Dijkstra, Dial's bucket queue, 8-connected, over a 128×128 fixed grid spanning
+   world `[-64, 64)`) feeds `movement_system`, preserving the arrival snap; all fixed-point.
+   Verified headless — `sim-runner` is bit-identical run-to-run **and** debug==release.
+4. **◐ PAL + desktop render:** winit window + wgpu device through the PAL; triangle → instanced
    unit mesh, top-down camera, **render interpolation** between the last two sim ticks.
-5. **Command + embodiment:** input → orders (tap/click-to-move); embody = swap the entity's
+   *Shipped:* real `wgpu` 29 renderer (`render/`) + `winit` 0.30 + `wgpu` desktop backend
+   (`pal-desktop/`), interpolating prev→curr snapshots (invariant #4); per [D19](decisions.md)
+   the GPU device crosses at the concrete wiring layer, not the abstract PAL trait.
+   *Compile-verified only — no GPU/display in this env, so not run.*
+5. **◐ Command + embodiment:** input → orders (tap/click-to-move); embody = swap the entity's
    input source to live player input + flip fog to **avatar-only** (world goes dark); FPS
-   camera. Surface/eject back to command. (No respawn object — invariant #5.)
-6. **Android backend:** cargo-ndk build, Gradle wrapper, JNI shim (surface/touch/lifecycle);
+   camera. Surface/eject back to command. (No respawn object — invariant #5.) *Shipped:*
+   `app/src/main.rs` — a real winit `ApplicationHandler` loop (fixed-tick accumulator, render
+   interpolation, pointer-unproject tap-to-move quantized to `Fixed` at the input boundary,
+   embody/surface swap with the near-black "gone dark" clear, top-down ortho + embodied
+   perspective cameras; the D15 avatar-local-prediction seam kept presentation-only).
+   *Compile-verified only — not run.*
+6. **○ Android backend:** cargo-ndk build, Gradle wrapper, JNI shim (surface/touch/lifecycle);
    deploy to the **real phone**; stand up the `edit → cargo build → adb install → am start →
-   adb logcat` loop (roadmap dev workflow).
-7. **Determinism CI:** wire the per-tick checksum matrix (§6) — green before the slice counts.
-8. **Validate on real mid-range arm64:** deterministic, at target frame rate, embody↔command
-   loop working. *This* is the exit gate; only now retire the fallback.
+   adb logcat` loop (roadmap dev workflow). *Shipped:* `pal-android/` (`android_main` + PAL
+   impls, gated to `target_os = "android"` so the host build is empty) + an `android/` Gradle
+   project. *Scaffold only — no NDK/cargo-ndk in this env, so the aarch64-linux-android build
+   was not run; structurally complete but unverified for-target.*
+7. **◐ Determinism CI:** wire the per-tick checksum matrix (§6) — green before the slice counts.
+   *Extended:* the checksum matrix (`determinism.yml`) is unchanged; `build.yml` adds a
+   blocking `graphics-build` job (link deps + build/clippy the wgpu/winit crates) and an
+   `android-build` cross-compile tripwire (`continue-on-error: true` until step 6 is real).
+8. **☐ Validate on real mid-range arm64:** deterministic, at target frame rate, embody↔command
+   loop working. *This* is the exit gate; only now retire the fallback. **Not started — needs a
+   physical mid-range arm64 phone (the human exit gate).**
 
 ## 6. Determinism CI — from day one, even with one unit
 

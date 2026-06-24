@@ -5,16 +5,26 @@ grow camps from a top-down view like *Company of Heroes*, then **possess a singl
 and fight it in first person — while the strategic map goes dark.** One player does
 both jobs; the tension is divided attention.
 
-**Current state: Phase 1 in progress — the Rust engine (D10) spine scaffold has landed.**
-The design corpus in `docs/` is still the product of record, but engine code now exists: the
-Cargo workspace (`core/ pal/ render/ pal-desktop/ pal-android/ app/ sim-runner/ server/`)
-with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]), the PAL
-trait boundary, render/host/backend skeletons, a headless `sim-runner`, and the per-tick
-checksum CI matrix. Two decide-first gates are locked (D17/D18); **sim rate (Q10) is still
-open**, parameterized as `core::sim::TICK_HZ`. The real `wgpu`/`winit` renderer and the
-Android backend are **stubbed** pending build-order steps 4–8, and the Phase 1 exit criterion
-(one unit, commandable + embodiable, on real arm64 with the checksum matrix green) is **not
-yet met** — keep the Unity/Godot fallback live until it is. The two **throwaway Godot
+**Current state: Phase 1 in progress — the engine spine is real through build-order step 5,
+compile-verified but not yet device-validated (D10).** The design corpus in `docs/` is still
+the product of record, but engine code now exists: the Cargo workspace (`core/ pal/ render/
+pal-desktop/ pal-android/ app/ sim-runner/ server/`) with a deterministic fixed-point `core`
+(Q16.16 [D17], hand-rolled SoA ECS [D18]). **Steps 3–5 done & verified:** a real deterministic
+**flow field** (`core::flow_field` — integer Dijkstra over a 128×128 fixed grid) driving the
+`movement_system`, with `sim-runner` bit-identical run-to-run and debug==release; a real
+`wgpu` 29 + `winit` 0.30 desktop renderer and PAL backend that interpolate prev→curr snapshots
+(invariant #4); and an `app` run loop (fixed-tick accumulator, tap-to-move, embody/surface
+input swap with "world goes dark"). Per [D19], `core`+`pal` stay GPU-free; `render`/
+`pal-desktop`/`app` carry wgpu. **Caveat: steps 4–5 are compile-verified only — not run on a
+GPU/display here.** Step 6 (`pal-android` + `android/` Gradle) is **scaffold only, not
+compile-verified for arm64** (no NDK/cargo-ndk in this env). Step 7 CI is **extended**: a
+blocking `graphics-build` job + an `android-build` tripwire (`continue-on-error` until the
+backend is real); the determinism checksum matrix is unchanged. Two decide-first gates are
+locked (D17/D18); **sim rate (Q10) is still open**, parameterized as `core::sim::TICK_HZ`
+(provisional 60), to be profiled on real arm64 before locking. Step 8 (on-device validation)
+is **not done**, so the Phase 1 exit criterion (one unit, commandable + embodiable, on real
+arm64 with the checksum matrix green) is **not yet met** — keep the Unity/Godot fallback live
+until it is. The two **throwaway Godot
 prototypes** in `prototypes/` (`phase0-controls/` → D14, `phase0.5-netfeel/` → D15, both
 2026-06-23) are disposable feel-test scaffolding — *not* engine code, carry none of the
 invariants below, and can be deleted. Don't grow a prototype into the game; build behind the

@@ -70,14 +70,22 @@ model.
 
 ## Phase 1 — Vertical slice
 
-> **Status: IN PROGRESS — first real engine code has landed.** The Rust workspace scaffold
-> is in: a deterministic fixed-point `core` (Q16.16 [D16→D17](decisions.md), hand-rolled SoA
-> ECS [D18](decisions.md)), the PAL trait boundary, render/host/backend skeletons, a headless
-> `sim-runner`, and the per-tick checksum CI matrix. Two of the three decide-first gates are
-> locked (D17/D18); **sim rate (Q10) stays open**, parameterized as `core::sim::TICK_HZ`
-> pending real-arm64 profiling. Still ahead (build-order steps 4–8): the real `wgpu`/`winit`
-> renderer, the Android backend, on-device validation. Detailed plan:
-> **[`phase-1-plan.md`](phase-1-plan.md)**.
+> **Status: IN PROGRESS — the spine is real through build-order step 5, compile-verified but
+> not yet device-validated.** The Rust workspace carries a deterministic fixed-point `core`
+> (Q16.16 [D16→D17](decisions.md), hand-rolled SoA ECS [D18](decisions.md)), the PAL trait
+> boundary, a headless `sim-runner`, and the per-tick checksum CI matrix. **Steps 3–5 done:**
+> a real deterministic **flow field** (`core::flow_field`, integer Dijkstra over a 128×128
+> fixed grid) drives unit movement, with `sim-runner` bit-identical run-to-run and
+> debug==release; a real `wgpu` 29 + `winit` 0.30 desktop renderer + PAL interpolate prev→curr
+> snapshots; and the `app` run loop wires the fixed-tick accumulator, tap-to-move, and the
+> embody/surface input swap with "world goes dark" (steps 4–5 are **compile-verified only — not
+> run on a GPU/display here**). Step 6 (Android backend + Gradle project) is **scaffold only,
+> not compile-verified for arm64**; step 7 CI is **extended** (a blocking graphics-build job +
+> an Android cross-compile tripwire; the checksum matrix unchanged). Two of the three
+> decide-first gates are locked (D17/D18); **sim rate (Q10) stays open**, parameterized as
+> `core::sim::TICK_HZ`, pending real-arm64 profiling. Still ahead: device-verifying the Android
+> backend and **step 8** on-device validation — the exit gate. The Unity/Godot fallback stays
+> live until then. Detailed plan: **[`phase-1-plan.md`](phase-1-plan.md)**.
 
 **Goal:** the real engine spine, end to end, with one of everything.
 

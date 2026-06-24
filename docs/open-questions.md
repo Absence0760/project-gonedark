@@ -148,9 +148,10 @@ The cross-store reconciliation cost needs scoping before this locks.
 ## Q10 — How to deliver the 60 Hz embodied rate: global vs dual-rate?
 
 [D16](decisions.md) settled that embodied combat needs **~60 Hz** (30 Hz felt chunky). *How*
-to provide it — without wrecking the mobile power/thermal budget at ~200 units — is open, and
-must be decided by **profiling on real mid-range arm64 hardware early in Phase 1, before the
-sim loop is locked.**
+to provide it — without wrecking the mobile power/thermal budget at ~200 units — is open. The
+Phase 1 sim loop is coded against a single parameterized rate (`core::sim::TICK_HZ`, provisional
+60), so the loop runs, but **the rate is not locked**: it must be decided by **profiling on real
+mid-range arm64 hardware** (build-order step 8) before it can be fixed.
 
 | Option | Upside | Cost / risk |
 |---|---|---|
