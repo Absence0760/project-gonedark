@@ -1,0 +1,17 @@
+# Files copied into each new `claude --worktree <name>` checkout.
+#
+# A worktree starts from tracked content only, so the committed safe-default env
+# (.env.development) already travels with it and the stack runs out of the box
+# (CLAUDE.md invariant #8 — clone-and-run). List here only the *gitignored*
+# personal overrides a session would otherwise lose; they win over the committed
+# defaults.
+#
+# NOT copied (intentionally): /target (Rust build cache — heavy; cargo rebuilds
+# from its shared registry) and infra/.terraform (provider plugins — re-fetched
+# by `terraform init`). Run `cargo build` / `terraform init` inside a worktree
+# when you need to build or plan there.
+#
+# Nothing here is required today (no engine code yet). Uncomment as local
+# overrides come into use.
+#.env.local
+#.env.development.local
