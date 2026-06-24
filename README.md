@@ -75,6 +75,7 @@ docker compose up -d        # Postgres + Redis (backend deps)
 cargo run                   # loads .env.development   (once engine code exists)
 ```
 
-Production secrets are KMS-encrypted (sops) in `infra-secrets/` and cloud infra is
+Production secrets are KMS-encrypted (sops) in the separate private estate repo
+(`~/github/infra-secrets/gonedark/`, **not** in this repo — see D12) and cloud infra is
 Terraform in `infra/` — neither is touched for local work. Full details in
 [`docs/infrastructure.md`](docs/infrastructure.md).

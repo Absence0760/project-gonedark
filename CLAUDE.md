@@ -76,12 +76,15 @@ Do not "improve" past them without the user explicitly reopening the decision.
    aarch64-apple-ios}` — not one
    platform. (`platforms.md` §7.)
 
-8. **Clone-and-run locally; never commit a plaintext secret.** Local dev runs against
-   Docker (`compose.yaml`) using committed, non-secret defaults in `.env.development` —
-   keep it working with zero setup. Real secrets are KMS-encrypted (sops) in
-   `infra-secrets/` (only `*.sops.yaml` is committable — `.gitignore` blocks plaintext
-   there). All cloud infra is Terraform in `infra/`; no click-ops. Never put a real
-   secret in `.env*`, code, or any tracked file. (`docs/infrastructure.md`.)
+8. **Clone-and-run locally; never commit a plaintext secret — and no secrets in *this*
+   repo at all.** Local dev runs against Docker (`compose.yaml`) using committed,
+   non-secret defaults in `.env.development` — keep it working with zero setup. Real
+   secrets are KMS-encrypted (sops) in the **separate private estate repo**
+   (`~/github/infra-secrets/gonedark/`, a sibling of this repo), *not* in this
+   potentially-public game repo — Terraform reads them via the `carlpett/sops` provider
+   at `../../infra-secrets/gonedark/prod.sops.yaml`. All cloud infra is Terraform in
+   `infra/`; no click-ops. Never put a real secret in `.env*`, code, or any tracked
+   file. (`docs/decisions.md` D12, `docs/infrastructure.md`.)
 
 ---
 
@@ -97,8 +100,20 @@ Do not "improve" past them without the user explicitly reopening the decision.
   for the user.
 - **Names:** game working title is "Going Dark" (placeholder, `open-questions.md` Q6);
   repo/dir is `project-gonedark`. Keep them distinct.
-- **Git:** commit only when the user asks. Follow the user's global commit rules (no
-  attribution footers/trailers of any kind).
+- **Git — work on `main`, commit completed work.** A normal session works **directly on
+  `main`**; do *not* open a feature branch (this overrides the harness "branch first on
+  the default branch" default). Branches exist only for isolated/parallel runs via
+  `claude --worktree <name>` (see `.claude/README.md`). When a logical unit of work is
+  finished and self-consistent, **commit it** — don't leave the tree dirty waiting to be
+  asked (this overrides the global "commit only when the user asks" default *for this
+  repo*).
+- **Git — keep every commit path-scoped.** Stage and commit only the paths you actually
+  changed: `git add <path>` then `git commit -m "…" -- <path1> <path2>`. **Never**
+  `git add -A`/`.`/`-u`, a bare `git commit`, or `git commit -a` — `git-scope-guard.py`
+  denies them, and for good reason: concurrent sessions and worktrees share this
+  checkout, so a whole-tree stage would sweep up another session's in-flight work. One
+  commit = one workstream. Follow the user's global commit rules (no attribution
+  footers/trailers of any kind).
 
 ## When code eventually starts (not yet)
 

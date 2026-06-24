@@ -6,7 +6,8 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    # carlpett/sops — reads KMS-encrypted secrets from ../infra-secrets at plan time.
+    # carlpett/sops — reads KMS-encrypted secrets from the private estate repo
+    # (../../infra-secrets/gonedark, sibling of this repo) at plan time. See D12.
     sops = {
       source  = "carlpett/sops"
       version = "~> 1.0"

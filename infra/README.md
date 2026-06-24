@@ -26,9 +26,10 @@ terraform plan
 terraform apply
 ```
 
-`plan`/`apply` decrypt `../infra-secrets/prod.sops.yaml` via the `carlpett/sops`
-provider, using your AWS SSO credentials (`kms:Decrypt`). Run `aws sso login --profile
-gonedark` first if your session has expired.
+`plan`/`apply` decrypt `../../infra-secrets/gonedark/prod.sops.yaml` (in the separate
+private estate repo, a sibling of this one under `~/github/` — see D12) via the
+`carlpett/sops` provider, using your AWS SSO credentials (`kms:Decrypt`). Run `aws sso
+login --profile gonedark` first if your session has expired.
 
 ## Files
 
@@ -37,7 +38,7 @@ gonedark` first if your session has expired.
 | `versions.tf` | Terraform + provider versions, S3 remote-state backend |
 | `providers.tf` | AWS provider (SSO profile), default tags |
 | `variables.tf` | region / profile / environment |
-| `secrets.tf` | `data "sops_file"` → `local.secrets` |
+| `secrets.tf` | `data "sops_file"` → `local.secrets` (reads `../../infra-secrets/gonedark/`) |
 | `main.tf` | backend resources (empty until the server side exists) |
 
 ## Notes
