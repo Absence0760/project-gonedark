@@ -61,7 +61,7 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
 | [`prototypes/phase0-controls/`](prototypes/phase0-controls/) | **Throwaway** Godot control prototype — proved the Phase 0 touch-feel gate (D14); deleted after Phase 0.5. Not the engine |
-| `Cargo.toml` + `core/ pal/ render/ pal-desktop/ pal-android/ app/ sim-runner/ server/` | **The Rust engine workspace** (Phase 1). `core` = deterministic fixed-point sim incl. a real flow field (zero platform deps); `pal` = platform traits; `render` = real `wgpu` instanced renderer; `pal-desktop` = real `winit`+`wgpu` backend; `app` = the winit run loop (command + embodiment); `pal-android` = scaffolded JNI/cargo-ndk backend; `sim-runner` = headless checksum driver; `server` = backend placeholder. See [`docs/phase-1-plan.md`](docs/phase-1-plan.md) |
+| `Cargo.toml` + `core/ pal/ render/ pal-desktop/ pal-android/ app/ sim-runner/ server/` | **The Rust engine workspace** (Phase 1). `core` = deterministic fixed-point sim incl. a real flow field (zero platform deps); `pal` = platform traits; `render` = real `wgpu` instanced renderer; `pal-desktop` = real `winit`+`wgpu` backend; `app` = the winit run loop (command + embodiment); `pal-android` = JNI/cargo-ndk backend (builds an arm64 `.so`); `sim-runner` = headless checksum driver; `server` = backend placeholder. See [`docs/phase-1-plan.md`](docs/phase-1-plan.md) |
 
 ## Status
 
@@ -79,8 +79,9 @@ tap-to-move command + embodiment (the "world goes dark" input swap). Per [D19](d
 `sim-runner` determinism check (bit-identical run-to-run **and** debug==release) pass locally;
 the per-tick checksum CI matrix ([invariant #7](docs/phase-1-plan.md)) is green and CI now also
 builds the graphics crates. **Caveats:** the renderer/app are compile-verified only (no
-GPU/display in the build env, so not run); the **Android backend is scaffolded, not yet
-compile-verified for arm64**; and sim rate ([Q10](docs/open-questions.md)) is still open
+GPU/display in the build env, so not run); the **Android backend compiles + links for arm64**
+via `cargo-ndk` but is **not yet APK-packaged or device-run**; and sim rate
+([Q10](docs/open-questions.md)) is still open
 (`core::sim::TICK_HZ`, provisional 60). **Not yet met:** the Phase 1 exit criterion (one unit,
 commandable + embodiable, on **real mid-range arm64 hardware** with the cross-arch checksum
 matrix green) — build-order step 8 (on-device validation) is pending hardware. The Unity/Godot

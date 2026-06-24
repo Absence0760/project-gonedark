@@ -79,8 +79,9 @@ model.
 > debug==release; a real `wgpu` 29 + `winit` 0.30 desktop renderer + PAL interpolate prev→curr
 > snapshots; and the `app` run loop wires the fixed-tick accumulator, tap-to-move, and the
 > embody/surface input swap with "world goes dark" (steps 4–5 are **compile-verified only — not
-> run on a GPU/display here**). Step 6 (Android backend + Gradle project) is **scaffold only,
-> not compile-verified for arm64**; step 7 CI is **extended** (a blocking graphics-build job +
+> run on a GPU/display here**). Step 6 (Android backend + Gradle project) now **compiles + links
+> for arm64** via `cargo-ndk` (the `.so` builds) but is **not yet APK-packaged or device-run**;
+> step 7 CI is **extended** (a blocking graphics-build job +
 > an Android cross-compile tripwire; the checksum matrix unchanged). Two of the three
 > decide-first gates are locked (D17/D18); **sim rate (Q10) stays open**, parameterized as
 > `core::sim::TICK_HZ`, pending real-arm64 profiling. Still ahead: device-verifying the Android

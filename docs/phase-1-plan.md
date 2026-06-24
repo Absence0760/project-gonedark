@@ -5,8 +5,8 @@
 > `core` (fixed-point [D17], SoA ECS [D18]) plus a real **flow field** drive one unit; a real
 > `wgpu`/`winit` desktop renderer + PAL + `app` run loop wire command + embodiment (steps 3–5
 > done — steps 4–5 **compile-verified only, not run on a GPU/display here**). The Android
-> backend (step 6) is **scaffold only, not compile-verified for arm64**; CI (step 7) is
-> extended. **Step 8 (on-device validation) and Q10 are still open — Phase 1 is NOT done.** The
+> backend (step 6) **compiles + links for real arm64** via `cargo-ndk` (the `.so` builds) but
+> is **not yet APK-packaged or run on a device**; CI (step 7) is extended. **Step 8 (on-device validation) and Q10 are still open — Phase 1 is NOT done.** The
 > Unity/Godot fallback stays live. Progress per step: §2 and §5.
 >
 > **Goal (from [`roadmap.md`](roadmap.md)):** the real engine spine in **Rust** (D10), end
@@ -104,12 +104,14 @@ Status legend: **✓ done & verified** · **◐ coded, compile-verified (not run
    embody/surface swap with the near-black "gone dark" clear, top-down ortho + embodied
    perspective cameras; the D15 avatar-local-prediction seam kept presentation-only).
    *Compile-verified only — not run.*
-6. **○ Android backend:** cargo-ndk build, Gradle wrapper, JNI shim (surface/touch/lifecycle);
+6. **◐ Android backend:** cargo-ndk build, Gradle wrapper, JNI shim (surface/touch/lifecycle);
    deploy to the **real phone**; stand up the `edit → cargo build → adb install → am start →
    adb logcat` loop (roadmap dev workflow). *Shipped:* `pal-android/` (`android_main` + PAL
    impls, gated to `target_os = "android"` so the host build is empty) + an `android/` Gradle
-   project. *Scaffold only — no NDK/cargo-ndk in this env, so the aarch64-linux-android build
-   was not run; structurally complete but unverified for-target.*
+   project. **Now compiles + links for `aarch64-linux-android`** via `cargo ndk -t arm64-v8a
+   build` (NDK 28; the `libgonedark_pal_android.so` is produced). *Still ahead:* assemble the
+   APK (Gradle wrapper jar), install on a device, and wire the shared sim/render game loop into
+   `android_main` (currently the PAL backend + entry point only — the run loop is Phase 2).*
 7. **◐ Determinism CI:** wire the per-tick checksum matrix (§6) — green before the slice counts.
    *Extended:* the checksum matrix (`determinism.yml`) is unchanged; `build.yml` adds a
    blocking `graphics-build` job (link deps + build/clippy the wgpu/winit crates) and an
