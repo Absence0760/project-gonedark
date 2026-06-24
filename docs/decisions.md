@@ -557,3 +557,40 @@ The renderer talks to `wgpu` (→ Vulkan/D3D12/Metal per device) directly; it ne
   and a `DesktopInput` that maps `winit` events onto the engine-neutral `pal::InputFrame`.
 - No change to invariants #1/#4: the sim stays fixed-point and decoupled; `render` only ever
   reads a `Snapshot` and never calls back to mutate sim state.
+
+---
+
+## D20 — The platform-agnostic game loop is a shared `engine` crate both hosts drive
+
+**Decision:** The per-frame game loop — the deterministic fixed-tick sim advance, render
+interpolation (invariant #4), the camera/unproject math, the command-layer tap→`Move`
+mapping, the embodiment input-source swap (invariant #5), and the avatar-local-prediction
+seam (D15) — lives in a new **`engine`** crate (`gonedark-engine`) that exposes one entry
+point, `Game::frame(input, dt, viewport, device, queue, view)`. **Both** hosts drive it: the
+desktop `app` (a thin `winit` `ApplicationHandler`) and Android's `android_main` (the
+`android-activity` loop in `pal-android`). `engine` depends on `core` + `render` + `pal`
+(plus `wgpu`/`glam` — the render-side wiring layer, D19) but on **no** windowing/platform
+crate. Each host owns only its surface/input/lifecycle and feeds the engine an `InputFrame`,
+a wall-clock `dt`, and the acquired surface view. Both seed the sim with the same
+`DEFAULT_SEED`, so desktop and Android run the **bit-identical** deterministic scene.
+
+**Why:** the loop had been written inline in the desktop winit host, and Android originally
+had only a present-only clear. Wiring the real sim+render through `android_main` by
+*duplicating* that logic would fork the game loop per platform — the exact failure invariant
+#2 / D9 exist to prevent (it kills cross-play and doubles maintenance). Extracting it into a
+shared crate keeps **one** loop on every platform while the genuinely per-platform parts
+(window/surface/input/lifecycle) stay in the `pal-*` backends. A new crate (rather than a lib
+target on `app`) is required to avoid a dependency cycle: `app → engine`, `pal-android →
+engine`, `engine → {core, render, pal}` — all acyclic, whereas `pal-android → app` (for the
+android entry) plus `app → pal-android` (its android-target dep) would not be.
+
+**Consequences:**
+- New `engine` crate in the workspace; `app` slims to a thin desktop host (drops its direct
+  `core`/`render`/`glam` deps — `engine` re-owns them). `pal-android` gains an
+  android-target `engine` dep and drives `Game::frame`.
+- `AndroidRhi` becomes a **concrete** surface (`device()`/`queue()`/`format()`/`acquire()`/
+  `present()`, mirroring `pal-desktop::DesktopRenderSurface`) and no longer implements the
+  abstract `pal::Rhi` trait — consistent with D19 (the device crosses at the concrete wiring
+  layer, which `engine` now is).
+- No invariant changes: the sim stays fixed-point and decoupled; floats remain render-side;
+  the tap target is still quantized to `Fixed` at the input boundary (invariant #1).
