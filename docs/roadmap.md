@@ -80,7 +80,8 @@ model.
 > snapshots; and the `app` run loop wires the fixed-tick accumulator, tap-to-move, and the
 > embody/surface input swap with "world goes dark" (steps 4–5 are **compile-verified only — not
 > run on a GPU/display here**). Step 6 (Android backend + Gradle project) now **compiles + links
-> for arm64** via `cargo-ndk` (the `.so` builds) but is **not yet APK-packaged or device-run**;
+> for arm64** via `cargo-ndk` and **assembles an installable arm64 debug APK** (Gradle 8.11 +
+> AGP 8.7.2) — but is **not yet run on a device**;
 > step 7 CI is **extended** (a blocking graphics-build job +
 > an Android cross-compile tripwire; the checksum matrix unchanged). Two of the three
 > decide-first gates are locked (D17/D18); **sim rate (Q10) stays open**, parameterized as

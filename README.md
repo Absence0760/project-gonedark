@@ -80,7 +80,8 @@ tap-to-move command + embodiment (the "world goes dark" input swap). Per [D19](d
 the per-tick checksum CI matrix ([invariant #7](docs/phase-1-plan.md)) is green and CI now also
 builds the graphics crates. **Caveats:** the renderer/app are compile-verified only (no
 GPU/display in the build env, so not run); the **Android backend compiles + links for arm64**
-via `cargo-ndk` but is **not yet APK-packaged or device-run**; and sim rate
+via `cargo-ndk` and **assembles an installable arm64 debug APK** (Gradle wrapper committed),
+but is **not yet run on a device**; and sim rate
 ([Q10](docs/open-questions.md)) is still open
 (`core::sim::TICK_HZ`, provisional 60). **Not yet met:** the Phase 1 exit criterion (one unit,
 commandable + embodiable, on **real mid-range arm64 hardware** with the cross-arch checksum

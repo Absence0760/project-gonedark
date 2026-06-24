@@ -6,7 +6,8 @@
 > `wgpu`/`winit` desktop renderer + PAL + `app` run loop wire command + embodiment (steps 3–5
 > done — steps 4–5 **compile-verified only, not run on a GPU/display here**). The Android
 > backend (step 6) **compiles + links for real arm64** via `cargo-ndk` (the `.so` builds) but
-> is **not yet APK-packaged or run on a device**; CI (step 7) is extended. **Step 8 (on-device validation) and Q10 are still open — Phase 1 is NOT done.** The
+> **assembles an installable arm64 debug APK** (committed Gradle wrapper) but is **not yet run
+> on a device**; CI (step 7) is extended. **Step 8 (on-device validation) and Q10 are still open — Phase 1 is NOT done.** The
 > Unity/Godot fallback stays live. Progress per step: §2 and §5.
 >
 > **Goal (from [`roadmap.md`](roadmap.md)):** the real engine spine in **Rust** (D10), end
@@ -108,9 +109,11 @@ Status legend: **✓ done & verified** · **◐ coded, compile-verified (not run
    deploy to the **real phone**; stand up the `edit → cargo build → adb install → am start →
    adb logcat` loop (roadmap dev workflow). *Shipped:* `pal-android/` (`android_main` + PAL
    impls, gated to `target_os = "android"` so the host build is empty) + an `android/` Gradle
-   project. **Now compiles + links for `aarch64-linux-android`** via `cargo ndk -t arm64-v8a
-   build` (NDK 28; the `libgonedark_pal_android.so` is produced). *Still ahead:* assemble the
-   APK (Gradle wrapper jar), install on a device, and wire the shared sim/render game loop into
+   project. **Builds for `aarch64-linux-android`** via `cargo ndk -t arm64-v8a build` (NDK 28)
+   **and assembles an installable arm64 debug APK** — `pnpm android:apk` runs cargo-ndk →
+   `:app:assembleDebug` (committed Gradle 8.11 wrapper + AGP 8.7.2) → `app-debug.apk`
+   bundling `libgonedark_pal_android.so`. *Still ahead:* install on a real device + run the
+   `adb install → am start → adb logcat` loop, and wire the shared sim/render game loop into
    `android_main` (currently the PAL backend + entry point only — the run loop is Phase 2).*
 7. **◐ Determinism CI:** wire the per-tick checksum matrix (§6) — green before the slice counts.
    *Extended:* the checksum matrix (`determinism.yml`) is unchanged; `build.yml` adds a

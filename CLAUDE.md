@@ -16,10 +16,10 @@ pal-desktop/ pal-android/ app/ sim-runner/ server/`) with a deterministic fixed-
 (invariant #4); and an `app` run loop (fixed-tick accumulator, tap-to-move, embody/surface
 input swap with "world goes dark"). Per [D19], `core`+`pal` stay GPU-free; `render`/
 `pal-desktop`/`app` carry wgpu. **Caveat: steps 4–5 are compile-verified only — not run on a
-GPU/display here.** Step 6 (`pal-android` + `android/` Gradle) now **compiles + links for
-real arm64** via `cargo-ndk` (`libgonedark_pal_android.so`); it is **not yet APK-packaged or
-run on a device**, and the shared sim/render game-loop wiring inside `android_main` is Phase
-2. Step 7 CI is **extended**: a
+GPU/display here.** Step 6 (`pal-android` + `android/` Gradle) **builds for
+real arm64** via `cargo-ndk` and **assembles an installable arm64 debug APK** (committed
+Gradle 8.11 wrapper + AGP 8.7.2, via `pnpm android:apk`); it is **not yet run on a device**,
+and the shared sim/render game-loop wiring inside `android_main` is Phase 2. Step 7 CI is **extended**: a
 blocking `graphics-build` job + an `android-build` tripwire (`continue-on-error` until the
 backend is real); the determinism checksum matrix is unchanged. Two decide-first gates are
 locked (D17/D18); **sim rate (Q10) is still open**, parameterized as `core::sim::TICK_HZ`
