@@ -131,8 +131,23 @@ Do not "improve" past them without the user explicitly reopening the decision.
   checkout, so a whole-tree stage would sweep up another session's in-flight work. One
   commit = one workstream. Follow the user's global commit rules (no attribution
   footers/trailers of any kind).
+- **Coding work ships with tests — always, where possible.** A non-trivial code change is
+  not "done" until its **unit tests ship in the same commit and pass**. Add or extend
+  tests for the new/changed logic; don't defer it. This is load-bearing for the sim:
+  `core` logic (fixed-point math, ECS, systems, sim, determinism) **must** be covered,
+  **float-free** (the determinism guard greps tests too), and green in **both** `cargo
+  test` profiles (dev + release). When the logic is trapped behind a platform type that
+  can't be constructed in a test (winit `KeyEvent`, android `MotionEvent`), **extract the
+  pure logic to a testable seam and test it there** — exactly as `engine`'s free fns
+  (`map_input_commands`, the camera math) and `render`'s `interpolate_instances` do — never
+  skip coverage just because the outer glue is awkward. "Where possible" means: **if it has
+  logic, it gets a test; only thin, genuinely un-constructible glue is exempt — and say so
+  explicitly when you skip it.** Before committing non-trivial engine code run **`/check`**
+  (it invokes `test-gap-checker`); use **`/safe-edit`** for high-blast-radius changes
+  (sim/netcode, PAL, embodiment). CI enforces the floor: `test.yml` runs the workspace
+  suite, `determinism.yml` runs `core` tests across the arch matrix.
 
-## When code eventually starts (not yet)
+## Engine code conventions
 
 - **Language: Rust** (`decisions.md` D10). Renderer via `wgpu` (native
   Vulkan/D3D12/Metal per device); ECS via Bevy/hecs/legion or hand-rolled; windowing
