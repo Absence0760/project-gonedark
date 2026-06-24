@@ -73,7 +73,7 @@ impl FlowField {
     ///
     /// Deterministic by construction: cells are processed in nondecreasing cost order, and
     /// within one cost bucket in first-inserted order. Insertion order is fully determined
-    /// by the fixed [`NEIGHBORS`] scan order applied to cells already drained in that same
+    /// by the fixed `NEIGHBORS` scan order applied to cells already drained in that same
     /// order — no priority-queue address/hash ordering, no float keys. With no obstacles
     /// this fills the whole grid with a tidy distance gradient. O(N) in cell count.
     pub fn build(goal: Vec2) -> FlowField {

@@ -35,6 +35,29 @@ pub fn fixed_to_f32(v: Fixed) -> f32 {
     v.to_bits() as f32 / Fixed::SCALE as f32
 }
 
+/// Interpolate between two sim snapshots into render-space [`UnitInstance`]s by `alpha` in
+/// `[0,1]` (invariant #4 — interpolation lives in the renderer, not the sim). Units are
+/// matched by index; the shorter snapshot wins (`min(len)`), so a mismatched unit count
+/// never panics. Positions cross the float boundary via [`fixed_to_f32`] and are lerped
+/// `a + (b - a) * alpha`; the `embodied` flag is taken from the *current* snapshot. This is
+/// device-free and pure so it can be unit-tested without a GPU.
+pub fn interpolate_instances(prev: &Snapshot, curr: &Snapshot, alpha: f32) -> Vec<UnitInstance> {
+    let n = prev.units.len().min(curr.units.len());
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let a = &prev.units[i];
+        let b = &curr.units[i];
+        let (ax, ay) = (fixed_to_f32(a.pos.x), fixed_to_f32(a.pos.y));
+        let (bx, by) = (fixed_to_f32(b.pos.x), fixed_to_f32(b.pos.y));
+        out.push(UnitInstance {
+            x: ax + (bx - ax) * alpha,
+            y: ay + (by - ay) * alpha,
+            embodied: u32::from(b.embodied),
+        });
+    }
+    out
+}
+
 /// Column-major 4x4 view-projection matrix, built by `app` (glam `Mat4::to_cols_array_2d()`).
 ///
 /// Uploaded verbatim into the camera uniform buffer each frame.
@@ -65,12 +88,20 @@ struct QuadVertex {
 
 /// The two triangles of a unit quad, corners in `[-1, 1]^2`.
 const QUAD_VERTS: [QuadVertex; 6] = [
-    QuadVertex { corner: [-1.0, -1.0] },
-    QuadVertex { corner: [1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
+    QuadVertex {
+        corner: [1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, 1.0] },
+    QuadVertex {
+        corner: [-1.0, 1.0],
+    },
 ];
 
 /// Lit-frame clear (command view): a dark slate the units read against.
@@ -226,19 +257,7 @@ impl Renderer {
     /// the sim). Units are matched by index; this assumes a stable unit set. Produces CPU
     /// data only; the GPU upload happens in [`Renderer::render`].
     pub fn prepare(&mut self, prev: &Snapshot, curr: &Snapshot, alpha: f32) {
-        self.instances.clear();
-        let n = prev.units.len().min(curr.units.len());
-        for i in 0..n {
-            let a = &prev.units[i];
-            let b = &curr.units[i];
-            let (ax, ay) = (fixed_to_f32(a.pos.x), fixed_to_f32(a.pos.y));
-            let (bx, by) = (fixed_to_f32(b.pos.x), fixed_to_f32(b.pos.y));
-            self.instances.push(UnitInstance {
-                x: ax + (bx - ax) * alpha,
-                y: ay + (by - ay) * alpha,
-                embodied: u32::from(b.embodied),
-            });
-        }
+        self.instances = interpolate_instances(prev, curr, alpha);
     }
 
     /// The CPU-side interpolated instances from the last [`Renderer::prepare`].
@@ -322,5 +341,161 @@ impl Renderer {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! `render` is the float boundary (invariant #1: floats live only in rendering), so
+    //! `f32` math and epsilon comparisons are fair game in these tests — they exercise the
+    //! device-free interpolation math, never the GPU. `Renderer::new` needs a real
+    //! `wgpu::Device` (no display in CI), so the pipeline path is intentionally untested
+    //! here; the testable math is factored into `interpolate_instances`.
+
+    use super::*;
+    use gonedark_core::components::Vec2;
+    use gonedark_core::snapshot::{Snapshot, UnitSnapshot};
+
+    const EPS: f32 = 1e-4;
+
+    fn unit(x: Fixed, y: Fixed, embodied: bool) -> UnitSnapshot {
+        UnitSnapshot {
+            pos: Vec2::new(x, y),
+            vel: Vec2::ZERO,
+            embodied,
+        }
+    }
+
+    fn snapshot(tick: u64, units: Vec<UnitSnapshot>) -> Snapshot {
+        Snapshot { tick, units }
+    }
+
+    // ---- fixed_to_f32 ----
+
+    #[test]
+    fn fixed_to_f32_one() {
+        assert_eq!(fixed_to_f32(Fixed::ONE), 1.0);
+    }
+
+    #[test]
+    fn fixed_to_f32_zero() {
+        assert_eq!(fixed_to_f32(Fixed::ZERO), 0.0);
+    }
+
+    #[test]
+    fn fixed_to_f32_half() {
+        assert_eq!(fixed_to_f32(Fixed::HALF), 0.5);
+    }
+
+    #[test]
+    fn fixed_to_f32_from_int() {
+        assert_eq!(fixed_to_f32(Fixed::from_int(7)), 7.0);
+        assert_eq!(fixed_to_f32(Fixed::from_int(123)), 123.0);
+    }
+
+    #[test]
+    fn fixed_to_f32_negative() {
+        assert_eq!(fixed_to_f32(Fixed::from_int(-3)), -3.0);
+        // -0.5 in Q16.16.
+        assert_eq!(fixed_to_f32(Fixed::ZERO - Fixed::HALF), -0.5);
+    }
+
+    #[test]
+    fn fixed_to_f32_round_trips_representable_value() {
+        // 2.5 is exactly representable in Q16.16 and in f32, so it round-trips cleanly.
+        let f = Fixed::from_int(2) + Fixed::HALF;
+        assert_eq!(fixed_to_f32(f), 2.5);
+    }
+
+    // ---- interpolate_instances ----
+
+    #[test]
+    fn interpolate_alpha_zero_yields_prev() {
+        let prev = snapshot(0, vec![unit(Fixed::from_int(2), Fixed::from_int(4), false)]);
+        let curr = snapshot(
+            1,
+            vec![unit(Fixed::from_int(10), Fixed::from_int(20), false)],
+        );
+        let out = interpolate_instances(&prev, &curr, 0.0);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].x - 2.0).abs() < EPS);
+        assert!((out[0].y - 4.0).abs() < EPS);
+    }
+
+    #[test]
+    fn interpolate_alpha_one_yields_curr() {
+        let prev = snapshot(0, vec![unit(Fixed::from_int(2), Fixed::from_int(4), false)]);
+        let curr = snapshot(
+            1,
+            vec![unit(Fixed::from_int(10), Fixed::from_int(20), false)],
+        );
+        let out = interpolate_instances(&prev, &curr, 1.0);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].x - 10.0).abs() < EPS);
+        assert!((out[0].y - 20.0).abs() < EPS);
+    }
+
+    #[test]
+    fn interpolate_alpha_half_yields_midpoint() {
+        let prev = snapshot(0, vec![unit(Fixed::from_int(2), Fixed::from_int(4), false)]);
+        let curr = snapshot(
+            1,
+            vec![unit(Fixed::from_int(10), Fixed::from_int(20), false)],
+        );
+        let out = interpolate_instances(&prev, &curr, 0.5);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].x - 6.0).abs() < EPS); // (2 + 10) / 2
+        assert!((out[0].y - 12.0).abs() < EPS); // (4 + 20) / 2
+    }
+
+    #[test]
+    fn interpolate_embodied_flag_comes_from_curr() {
+        // prev says not-embodied, curr says embodied → output carries curr's flag.
+        let prev = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, false)]);
+        let curr = snapshot(1, vec![unit(Fixed::ONE, Fixed::ONE, true)]);
+        let out = interpolate_instances(&prev, &curr, 0.5);
+        assert_eq!(out[0].embodied, 1);
+
+        // And the reverse: curr says not-embodied → flag is 0 even if prev was embodied.
+        let prev = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, true)]);
+        let curr = snapshot(1, vec![unit(Fixed::ONE, Fixed::ONE, false)]);
+        let out = interpolate_instances(&prev, &curr, 0.5);
+        assert_eq!(out[0].embodied, 0);
+    }
+
+    #[test]
+    fn interpolate_mismatched_lengths_use_min_no_panic() {
+        // prev has 3 units, curr has 1 → only 1 instance, no panic / out-of-bounds.
+        let prev = snapshot(
+            0,
+            vec![
+                unit(Fixed::ZERO, Fixed::ZERO, false),
+                unit(Fixed::ONE, Fixed::ONE, false),
+                unit(Fixed::from_int(2), Fixed::from_int(2), false),
+            ],
+        );
+        let curr = snapshot(
+            1,
+            vec![unit(Fixed::from_int(10), Fixed::from_int(10), false)],
+        );
+        let out = interpolate_instances(&prev, &curr, 1.0);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].x - 10.0).abs() < EPS);
+
+        // And the other way around (curr longer than prev).
+        let out = interpolate_instances(&curr, &prev, 0.0);
+        assert_eq!(out.len(), 1);
+        assert!((out[0].x - 10.0).abs() < EPS);
+    }
+
+    #[test]
+    fn interpolate_empty_snapshots_yield_empty() {
+        let empty = snapshot(0, vec![]);
+        assert!(interpolate_instances(&empty, &empty, 0.5).is_empty());
+
+        // One side empty → still empty (min(len) == 0).
+        let nonempty = snapshot(1, vec![unit(Fixed::ONE, Fixed::ONE, false)]);
+        assert!(interpolate_instances(&empty, &nonempty, 0.5).is_empty());
+        assert!(interpolate_instances(&nonempty, &empty, 0.5).is_empty());
     }
 }

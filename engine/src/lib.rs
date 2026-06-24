@@ -58,8 +58,111 @@ enum CameraMode {
 /// `render::fixed_to_f32`. THE input boundary: the float never enters `core`; the `Command`
 /// it produces carries Fixed bits into the deterministic sim (invariant #1).
 #[inline]
-fn world_to_fixed(world_coord: f32) -> Fixed {
+pub fn world_to_fixed(world_coord: f32) -> Fixed {
     Fixed::from_bits((world_coord * Fixed::SCALE as f32).round() as i32)
+}
+
+/// Top-down orthographic view-projection (free fn — viewport only, no `Game`/device needed).
+/// World units are on the ground plane (z = 0; see `render/shader.wgsl`); the camera looks
+/// straight down onto it, framing `±TOPDOWN_HALF_EXTENT` (aspect-corrected on the long axis).
+fn topdown_view_proj(width: u32, height: u32) -> Mat4 {
+    let aspect = width.max(1) as f32 / height.max(1) as f32;
+    let (hx, hy) = if aspect >= 1.0 {
+        (TOPDOWN_HALF_EXTENT * aspect, TOPDOWN_HALF_EXTENT)
+    } else {
+        (TOPDOWN_HALF_EXTENT, TOPDOWN_HALF_EXTENT / aspect)
+    };
+    let proj = Mat4::orthographic_rh(-hx, hx, -hy, hy, -10.0, 10.0);
+    let view = Mat4::look_at_rh(
+        Vec3::new(0.0, 0.0, 5.0),
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+    );
+    proj * view
+}
+
+/// Embodied perspective view-projection (free fn — eye position + yaw + viewport only, no
+/// `Game`/device needed): eye at the possessed unit's position, raised by `EYE_HEIGHT`,
+/// looking out across the ground plane along the current yaw.
+fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, width: u32, height: u32) -> Mat4 {
+    let eye = Vec3::new(eye_x, eye_y, EYE_HEIGHT);
+    let dir = Vec3::new(yaw.cos(), yaw.sin(), -0.15).normalize();
+    let target = eye + dir;
+
+    let aspect = width.max(1) as f32 / height.max(1) as f32;
+    let proj = Mat4::perspective_rh(60_f32.to_radians(), aspect, 0.05, 500.0);
+    let view = Mat4::look_at_rh(eye, target, Vec3::Z);
+    proj * view
+}
+
+/// Unproject a pointer pixel onto the ground plane (z = 0) under the given TOP-DOWN
+/// `view_proj`, returning world `(x, y)`. For the orthographic camera the world XY is
+/// independent of NDC depth, so we invert `view_proj` at the near plane. `None` if the
+/// matrix is singular.
+fn unproject_topdown(
+    view_proj: &Mat4,
+    px: f32,
+    py: f32,
+    width: u32,
+    height: u32,
+) -> Option<(f32, f32)> {
+    let inv = view_proj.inverse();
+    if !inv.is_finite() {
+        return None;
+    }
+    // Pixel → NDC. Pixel origin is top-left, +y down; NDC +y is up, so flip y.
+    let ndc_x = (px / width.max(1) as f32) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (py / height.max(1) as f32) * 2.0;
+    let world = inv * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+    if world.w.abs() < f32::EPSILON {
+        return None;
+    }
+    Some((world.x / world.w, world.y / world.w))
+}
+
+/// Map this frame's `input` + current `embodied` state into the sim commands it produces,
+/// for the given `player` entity and `viewport`. PURE (no `Game`/device): builds the
+/// top-down camera and unprojects the tap internally, quantizing the target to `Fixed` AT
+/// THE INPUT BOUNDARY (invariant #1).
+///
+/// - Command-layer tap: only in top-down (`!embodied`), on a pointer-down edge with a known
+///   position → one [`Command::Move`].
+/// - Embody/surface (invariant #5): edge-triggered, mutually exclusive, *resolved by current
+///   state* — `embody_pressed && !embodied` → [`Command::Embody`]; `surface_pressed &&
+///   embodied` → [`Command::Surface`]. The Android two-finger tap sets BOTH flags; this
+///   state-resolution turns it into the correct toggle.
+fn map_input_commands(
+    input: &InputFrame,
+    embodied: bool,
+    player: Entity,
+    width: u32,
+    height: u32,
+) -> Vec<Command> {
+    let mut commands: Vec<Command> = Vec::new();
+
+    // Command-layer tap: only in top-down, on a pointer-down edge with a known position.
+    // The target is unprojected then quantized to Fixed AT THIS BOUNDARY (invariant #1).
+    if !embodied && input.pointer_down {
+        if let Some((px, py)) = input.pointer {
+            let view_proj = topdown_view_proj(width, height);
+            if let Some((wx, wy)) = unproject_topdown(&view_proj, px, py, width, height) {
+                commands.push(Command::Move {
+                    entity: player,
+                    target: Vec2::new(world_to_fixed(wx), world_to_fixed(wy)),
+                });
+            }
+        }
+    }
+
+    // Embodiment input-source swap (invariant #5) — edge-triggered, mutually exclusive,
+    // resolved by current state (so the two-finger BOTH-flags gesture toggles correctly).
+    if input.embody_pressed && !embodied {
+        commands.push(Command::Embody { entity: player });
+    } else if input.surface_pressed && embodied {
+        commands.push(Command::Surface { entity: player });
+    }
+
+    commands
 }
 
 /// The shared game: the deterministic sim, the possessed entity, the renderer, the two
@@ -136,60 +239,13 @@ impl Game {
         self.sim.checksum()
     }
 
-    /// Top-down orthographic view-projection. World units are on the ground plane (z = 0;
-    /// see `render/shader.wgsl`); the camera looks straight down onto it, framing
-    /// `±TOPDOWN_HALF_EXTENT` (aspect-corrected on the long axis).
-    fn topdown_view_proj(&self, width: u32, height: u32) -> Mat4 {
-        let aspect = width.max(1) as f32 / height.max(1) as f32;
-        let (hx, hy) = if aspect >= 1.0 {
-            (TOPDOWN_HALF_EXTENT * aspect, TOPDOWN_HALF_EXTENT)
-        } else {
-            (TOPDOWN_HALF_EXTENT, TOPDOWN_HALF_EXTENT / aspect)
-        };
-        let proj = Mat4::orthographic_rh(-hx, hx, -hy, hy, -10.0, 10.0);
-        let view = Mat4::look_at_rh(
-            Vec3::new(0.0, 0.0, 5.0),
-            Vec3::new(0.0, 0.0, 0.0),
-            Vec3::new(0.0, 1.0, 0.0),
-        );
-        proj * view
-    }
-
-    /// Embodied perspective view-projection: eye at the possessed unit's position, raised by
-    /// `EYE_HEIGHT`, looking out across the ground plane along the current yaw.
+    /// Embodied perspective view-projection for the active player — thin wrapper over the
+    /// free [`embodied_view_proj`] that reads this player's authoritative position.
     fn embodied_view_proj(&self, width: u32, height: u32) -> Mat4 {
         let p = self.player_pos();
         let px = gonedark_render::fixed_to_f32(p.x);
         let py = gonedark_render::fixed_to_f32(p.y);
-
-        let eye = Vec3::new(px, py, EYE_HEIGHT);
-        let dir = Vec3::new(self.yaw.cos(), self.yaw.sin(), -0.15).normalize();
-        let target = eye + dir;
-
-        let aspect = width.max(1) as f32 / height.max(1) as f32;
-        let proj = Mat4::perspective_rh(60_f32.to_radians(), aspect, 0.05, 500.0);
-        let view = Mat4::look_at_rh(eye, target, Vec3::Z);
-        proj * view
-    }
-
-    /// Unproject a pointer pixel onto the ground plane (z = 0) under the current TOP-DOWN
-    /// camera, returning world `(x, y)`. For the orthographic camera the world XY is
-    /// independent of NDC depth, so we invert `view_proj` at the near plane. `None` if the
-    /// matrix is singular.
-    fn unproject_topdown(&self, px: f32, py: f32, width: u32, height: u32) -> Option<(f32, f32)> {
-        let view_proj = self.topdown_view_proj(width, height);
-        let inv = view_proj.inverse();
-        if !inv.is_finite() {
-            return None;
-        }
-        // Pixel → NDC. Pixel origin is top-left, +y down; NDC +y is up, so flip y.
-        let ndc_x = (px / width.max(1) as f32) * 2.0 - 1.0;
-        let ndc_y = 1.0 - (py / height.max(1) as f32) * 2.0;
-        let world = inv * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
-        if world.w.abs() < f32::EPSILON {
-            return None;
-        }
-        Some((world.x / world.w, world.y / world.w))
+        embodied_view_proj(px, py, self.yaw, width, height)
     }
 
     /// Advance and present one frame: map this frame's `input` → sim commands, drain the
@@ -210,37 +266,26 @@ impl Game {
     ) {
         let (width, height) = viewport;
 
-        // 1. Map input → sim commands (applied on the first step of this frame).
-        let mut commands: Vec<Command> = Vec::new();
+        // 1. Map input → sim commands (applied on the first step of this frame). The pure
+        // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
+        // `map_input_commands`; here we apply the resulting embodiment state transition.
+        let commands = map_input_commands(input, self.embodied, self.player, width, height);
 
-        // Command-layer tap: only in top-down, on a pointer-down edge with a known position.
-        // The target is unprojected then quantized to Fixed AT THIS BOUNDARY (invariant #1).
-        if !self.embodied && input.pointer_down {
-            if let Some((px, py)) = input.pointer {
-                if let Some((wx, wy)) = self.unproject_topdown(px, py, width, height) {
-                    commands.push(Command::Move {
-                        entity: self.player,
-                        target: Vec2::new(world_to_fixed(wx), world_to_fixed(wy)),
-                    });
+        // Embodiment input-source swap (invariant #5): mirror the toggle the mapping resolved.
+        for cmd in &commands {
+            match cmd {
+                Command::Embody { .. } => {
+                    self.embodied = true;
+                    self.camera = CameraMode::Embodied;
+                    log::info!("[tick {}] EMBODY — world goes dark", self.sim.tick_count());
                 }
+                Command::Surface { .. } => {
+                    self.embodied = false;
+                    self.camera = CameraMode::TopDown;
+                    log::info!("[tick {}] SURFACE — back to command", self.sim.tick_count());
+                }
+                _ => {}
             }
-        }
-
-        // Embodiment input-source swap (invariant #5) — edge-triggered, mutually exclusive.
-        if input.embody_pressed && !self.embodied {
-            commands.push(Command::Embody {
-                entity: self.player,
-            });
-            self.embodied = true;
-            self.camera = CameraMode::Embodied;
-            log::info!("[tick {}] EMBODY — world goes dark", self.sim.tick_count());
-        } else if input.surface_pressed && self.embodied {
-            commands.push(Command::Surface {
-                entity: self.player,
-            });
-            self.embodied = false;
-            self.camera = CameraMode::TopDown;
-            log::info!("[tick {}] SURFACE — back to command", self.sim.tick_count());
         }
 
         // Integrate look into presentation-only yaw (D15: never into the sim).
@@ -283,7 +328,7 @@ impl Game {
 
         // 4. Build the camera for the active view.
         let view_proj = match self.camera {
-            CameraMode::TopDown => self.topdown_view_proj(width, height),
+            CameraMode::TopDown => topdown_view_proj(width, height),
             CameraMode::Embodied => self.embodied_view_proj(width, height),
         };
         let camera = Camera {
@@ -313,4 +358,168 @@ impl Game {
 /// Authoritative resolution still happens in the sim at tick T+D. Stub for Phase 1.
 fn predict_avatar(_snapshot: &Snapshot, _input: &InputFrame, _embodied: bool) {
     // TODO(phase3): integrate local aim/move from `_input`; reconcile against the tick.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gonedark_core::ecs::World;
+    use gonedark_render::fixed_to_f32;
+
+    /// A throwaway player handle for the command-mapping tests — a real generational handle
+    /// from a `World`, so the produced commands carry a valid entity.
+    fn test_player() -> Entity {
+        let mut world = World::new();
+        world.spawn()
+    }
+
+    /// `world_to_fixed` is the input-boundary quantizer; round-tripping a representable world
+    /// coordinate (integers, halves — exact in Q16.16) through `render::fixed_to_f32` must be
+    /// lossless.
+    #[test]
+    fn world_to_fixed_round_trips_representable_coords() {
+        for &w in &[0.0_f32, 1.0, -1.0, 20.0, -8.0, 0.5, -0.5, 12.25, -3.75] {
+            let back = fixed_to_f32(world_to_fixed(w));
+            assert!((back - w).abs() < 1e-4, "round-trip {w} -> {back}");
+        }
+    }
+
+    /// World `(0,0)` projects to screen center under the top-down ortho camera.
+    #[test]
+    fn topdown_projects_origin_to_screen_center() {
+        let (width, height) = (1920u32, 1080u32);
+        let vp = topdown_view_proj(width, height);
+        let clip = vp * Vec4::new(0.0, 0.0, 0.0, 1.0);
+        let ndc_x = clip.x / clip.w;
+        let ndc_y = clip.y / clip.w;
+        // NDC center -> screen center.
+        let px = (ndc_x * 0.5 + 0.5) * width as f32;
+        let py = (1.0 - (ndc_y * 0.5 + 0.5)) * height as f32;
+        assert!((px - width as f32 / 2.0).abs() < 1e-2, "center x = {px}");
+        assert!((py - height as f32 / 2.0).abs() < 1e-2, "center y = {py}");
+    }
+
+    /// Unprojecting the center pixel returns ~`(0,0)`.
+    #[test]
+    fn unproject_center_pixel_is_origin() {
+        let (width, height) = (1920u32, 1080u32);
+        let vp = topdown_view_proj(width, height);
+        let (wx, wy) =
+            unproject_topdown(&vp, width as f32 / 2.0, height as f32 / 2.0, width, height).unwrap();
+        assert!(wx.abs() < 1e-3, "center world x = {wx}");
+        assert!(wy.abs() < 1e-3, "center world y = {wy}");
+    }
+
+    /// Unprojecting a known off-center pixel returns the expected world point. With a square
+    /// viewport the ortho extent is `±TOPDOWN_HALF_EXTENT` on both axes, so the right edge maps
+    /// to `+half_extent` in x and the top edge to `+half_extent` in y.
+    #[test]
+    fn unproject_offcenter_pixel_matches_expected_world() {
+        let (width, height) = (1000u32, 1000u32); // square -> symmetric extent
+        let vp = topdown_view_proj(width, height);
+
+        // Right edge, vertical center -> (+half_extent, 0).
+        let (wx, wy) = unproject_topdown(&vp, width as f32, height as f32 / 2.0, width, height)
+            .expect("right-edge unproject");
+        assert!((wx - TOPDOWN_HALF_EXTENT).abs() < 1e-2, "right x = {wx}");
+        assert!(wy.abs() < 1e-2, "right y = {wy}");
+
+        // Top edge (py = 0, +y up), horizontal center -> (0, +half_extent).
+        let (wx, wy) = unproject_topdown(&vp, width as f32 / 2.0, 0.0, width, height)
+            .expect("top-edge unproject");
+        assert!(wx.abs() < 1e-2, "top x = {wx}");
+        assert!((wy - TOPDOWN_HALF_EXTENT).abs() < 1e-2, "top y = {wy}");
+    }
+
+    /// Top-down + `pointer_down` with a pointer set -> exactly one `Move`, target ≈ the
+    /// unprojected world point.
+    #[test]
+    fn map_input_topdown_tap_produces_single_move() {
+        let (width, height) = (1280u32, 720u32);
+        let player = test_player();
+        let (px, py) = (900.0_f32, 300.0_f32);
+
+        let input = InputFrame {
+            pointer: Some((px, py)),
+            pointer_down: true,
+            ..Default::default()
+        };
+        let cmds = map_input_commands(&input, false, player, width, height);
+        assert_eq!(cmds.len(), 1, "exactly one command");
+
+        let vp = topdown_view_proj(width, height);
+        let (wx, wy) = unproject_topdown(&vp, px, py, width, height).unwrap();
+        match cmds[0] {
+            Command::Move { entity, target } => {
+                assert_eq!(entity, player);
+                // Compare via the same Fixed bits the mapping produced.
+                assert_eq!(target.x.to_bits(), world_to_fixed(wx).to_bits());
+                assert_eq!(target.y.to_bits(), world_to_fixed(wy).to_bits());
+            }
+            ref other => panic!("expected Move, got {other:?}"),
+        }
+    }
+
+    /// `embody_pressed && !embodied` -> contains `Embody`, not `Surface`.
+    #[test]
+    fn map_input_embody_when_surfaced() {
+        let player = test_player();
+        let input = InputFrame {
+            embody_pressed: true,
+            ..Default::default()
+        };
+        let cmds = map_input_commands(&input, false, player, 800, 600);
+        assert!(cmds.iter().any(|c| matches!(c, Command::Embody { .. })));
+        assert!(!cmds.iter().any(|c| matches!(c, Command::Surface { .. })));
+    }
+
+    /// `surface_pressed && embodied` -> contains `Surface`.
+    #[test]
+    fn map_input_surface_when_embodied() {
+        let player = test_player();
+        let input = InputFrame {
+            surface_pressed: true,
+            ..Default::default()
+        };
+        let cmds = map_input_commands(&input, true, player, 800, 600);
+        assert!(cmds.iter().any(|c| matches!(c, Command::Surface { .. })));
+        assert!(!cmds.iter().any(|c| matches!(c, Command::Embody { .. })));
+    }
+
+    /// The Android two-finger gesture sets BOTH flags; the mapping resolves it by current
+    /// state — `Embody` when surfaced, `Surface` when embodied.
+    #[test]
+    fn map_input_both_flags_resolve_by_state() {
+        let player = test_player();
+        let both = InputFrame {
+            embody_pressed: true,
+            surface_pressed: true,
+            ..Default::default()
+        };
+
+        let surfaced = map_input_commands(&both, false, player, 800, 600);
+        assert!(surfaced.iter().any(|c| matches!(c, Command::Embody { .. })));
+        assert!(!surfaced
+            .iter()
+            .any(|c| matches!(c, Command::Surface { .. })));
+
+        let embodied = map_input_commands(&both, true, player, 800, 600);
+        assert!(embodied
+            .iter()
+            .any(|c| matches!(c, Command::Surface { .. })));
+        assert!(!embodied.iter().any(|c| matches!(c, Command::Embody { .. })));
+    }
+
+    /// Embodied suppresses tap-to-move: a pointer-down while embodied produces no `Move`.
+    #[test]
+    fn map_input_embodied_suppresses_tap_to_move() {
+        let player = test_player();
+        let input = InputFrame {
+            pointer: Some((100.0, 100.0)),
+            pointer_down: true,
+            ..Default::default()
+        };
+        let cmds = map_input_commands(&input, true, player, 800, 600);
+        assert!(!cmds.iter().any(|c| matches!(c, Command::Move { .. })));
+    }
 }
