@@ -168,6 +168,12 @@ impl SubAssign for Fixed {
 impl fmt::Debug for Fixed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Print int part and raw fractional bits — never a float.
-        write!(f, "Fixed({}+{}/{})", self.0 >> Self::FRAC_BITS, self.0 & (Self::SCALE - 1), Self::SCALE)
+        write!(
+            f,
+            "Fixed({}+{}/{})",
+            self.0 >> Self::FRAC_BITS,
+            self.0 & (Self::SCALE - 1),
+            Self::SCALE
+        )
     }
 }
