@@ -9,8 +9,15 @@ publish = false
 # device/queue/surface live here (Phase-1 build-order step 4, D19). `wgpu`/`winit`/`pollster`
 # are fine in this crate — invariant #2 only keeps GPU/windowing out of `core` and the
 # abstract `pal` trait crate.
+# `audio` is OPT-IN (default OFF) so a bare `cargo build` / clone-and-run (invariant #8) needs
+# no system audio dev headers. Enabling it pulls `cpal`, which links ALSA at build time
+# (`dnf install alsa-lib-devel` on Fedora); the no-feature build keeps a silent no-op sink.
+[features]
+audio = ["dep:cpal"]
+
 [dependencies]
 gonedark-pal = { path = "../pal" }
 winit = "0.30"
 wgpu = "29"
 pollster = "0.4"
+cpal = { version = "0.15", optional = true }

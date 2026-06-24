@@ -9,6 +9,7 @@
 
     "play": "cargo run -p gonedark-app --release",
     "play:debug": "cargo run -p gonedark-app",
+    "play:audio": "cargo run -p gonedark-app --release --features audio",
     "desktop:build": "cargo build --workspace",
     "desktop:build:release": "cargo build --workspace --release",
     "desktop:sim": "cargo run -p gonedark-sim-runner",

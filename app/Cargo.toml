@@ -11,6 +11,13 @@ publish = false
 # `winit`/`wgpu` are fine here — invariant #2 only keeps GPU/windowing out of `core` and the
 # abstract `pal` trait crate. (Android does NOT use this binary; its entry is `android_main`
 # in `pal-android`, which drives the same `engine::Game`.)
+# Real desktop audio output is opt-in (forwards to pal-desktop's `audio` feature, which pulls
+# cpal → links ALSA; needs `alsa-lib-devel`). OFF by default so the standard desktop build needs
+# no audio dev headers (invariant #8). Enable with `cargo run -p gonedark-app --features audio`
+# (or `pnpm play:audio`).
+[features]
+audio = ["gonedark-pal-desktop/audio"]
+
 [dependencies]
 gonedark-engine = { path = "../engine" }
 gonedark-pal = { path = "../pal" }
