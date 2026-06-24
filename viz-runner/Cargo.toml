@@ -1,0 +1,18 @@
+[package]
+name = "gonedark-viz-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Headless OFFSCREEN render driver — the visual counterpart to `sim-runner`. It builds the real
+# `engine::Game` against a surfaceless wgpu device, drives scripted input (embody, combat), renders
+# to a texture, reads the pixels back, writes PNGs, and asserts pixel-level invariants (the command
+# view draws units; embodiment goes dark; the alert HUD draws markers). Needs a GPU adapter, so it
+# is a LOCAL tool (run via `pnpm viz`), NOT part of the no-GPU CI matrix.
+[dependencies]
+gonedark-engine = { path = "../engine" }
+gonedark-pal = { path = "../pal" }
+wgpu = "29"
+pollster = "0.4"
+png = "0.17"

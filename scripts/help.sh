@@ -13,6 +13,7 @@ DESKTOP — your workstation (x86_64 host): the playable game + host build
   pnpm desktop:build        Compile the whole workspace FOR THIS MACHINE (host, debug)
   pnpm desktop:build:release Compile the whole workspace for this machine (host, release)
   pnpm desktop:sim          Headless determinism runner on this machine (per-tick checksums)
+  pnpm desktop:viz          Headless offscreen render smoke test (PNGs + pixel asserts; needs a GPU)
   pnpm desktop:server       Run the backend service on this machine (placeholder)
 
 ANDROID — cross-compiled arm64, run on a phone/emulator over adb

@@ -12,6 +12,7 @@
     "desktop:build": "cargo build --workspace",
     "desktop:build:release": "cargo build --workspace --release",
     "desktop:sim": "cargo run -p gonedark-sim-runner",
+    "desktop:viz": "cargo run -p gonedark-viz-runner",
     "desktop:server": "cargo run -p gonedark-server",
 
     "android:devices": "scripts/android.sh devices",

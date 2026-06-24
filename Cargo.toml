@@ -10,6 +10,7 @@
 #   pal-android — cargo-ndk + JNI shim (the ship target; cfg-gated to android).
 #   app         — desktop host: winit run loop that drives `engine::Game`.
 #   sim-runner  — headless core driver emitting per-tick checksums for determinism CI.
+#   viz-runner  — headless OFFSCREEN render driver: pixel-readback smoke test (local, needs a GPU).
 #   server      — backend services (placeholder; see docs/infrastructure.md).
 [workspace]
 resolver = "2"
@@ -22,6 +23,7 @@ members = [
     "pal-android",
     "app",
     "sim-runner",
+    "viz-runner",
     "server",
 ]
 
