@@ -10,9 +10,10 @@
 ## Targets
 
 - **60 FPS** base / **120** flagship · render rate variable.
-- **Sim fixed-tick, deterministic, fixed-point.** Rate **to be finalized in Phase 1**:
-  30 Hz proved too coarse for embodied combat ([`decisions.md`](decisions.md) D16) — target
-  is **~60 Hz** for the embodied layer; global-60 vs dual-rate is [Q10](open-questions.md).
+- **Sim fixed-tick, deterministic, fixed-point.** Rate **locked for Phase 1**: a single
+  **global 60 Hz** tick (`core::sim::TICK_HZ = 60`) — 30 Hz proved too coarse for embodied
+  combat ([`decisions.md`](decisions.md) D16), and [D21](decisions.md) closes Q10 on
+  global-60 (dual-rate deferred to Phase 3's 200-unit thermal re-evaluation, not killed).
 - **arm64-v8a / Vulkan 1.1**, 200+ units.
 
 ## The decision in one page
@@ -26,7 +27,7 @@ lifecycle, input, billing, services.
 |---|---|
 | Core | Rust · ECS (Bevy/hecs/legion or hand-rolled) |
 | Render | `wgpu` → Vulkan / D3D12 / Metal · GPU-driven instancing |
-| Sim | fixed-tick · deterministic · fixed-point · rate TBD Phase 1 (≥30; ~60 for embodied, D16/Q10) |
+| Sim | fixed-tick · deterministic · fixed-point · **global 60 Hz** (D16/D21; dual-rate deferred to Phase 3) |
 | Net | Lockstep · input-delay · desync checks |
 | Platform | per-OS shim (Kotlin/JNI, Swift) · AAudio/CoreAudio |
 | Build | cargo (+ Gradle/Xcode for store packaging) · arm64-v8a |
@@ -75,7 +76,7 @@ float independently of the tick rate.
 Presentation   (variable render rate) — HUD/UI, camera + interpolation, VFX,
                input → orders, FPS embodied view
         ▼
-Game systems   (30 Hz) — combat & suppression, cover / LoS, territory & resources,
+Game systems   (60 Hz) — combat & suppression, cover / LoS, territory & resources,
                fog of war, abilities / orders
         ▼
 Engine core    (Rust, data-oriented) — ECS world + scheduler, job system,
@@ -105,10 +106,10 @@ difference between shipping and dropping frames.
 
 The sim advances in **fixed deterministic ticks** driven purely by orders, in fixed-point
 math, so every device computes bit-identical results. Rendering runs at a separate variable
-rate and interpolates between the last two sim states. *(Tick rate is being finalized in
-Phase 1 — 30 Hz proved too coarse for embodied combat; target ~60 Hz, mechanism is
-[Q10](open-questions.md) / [`decisions.md`](decisions.md) D16. The decoupling and
-fixed-deterministic-tick design below are rate-independent.)*
+rate and interpolates between the last two sim states. *(Tick rate is **locked for Phase 1**
+at a single **global 60 Hz** — 30 Hz proved too coarse for embodied combat (D16), and
+[D21](decisions.md) closes Q10 on global-60 (dual-rate deferred to Phase 3). The decoupling
+and fixed-deterministic-tick design below are rate-independent.)*
 
 ```
 acc += realDelta;
@@ -138,7 +139,7 @@ store the input stream, not the world state.
 > This section is specific to this game. The key finding: **embodiment is cheap to
 > build because it's a presentation/vision change, not a sim change.**
 
-- **The sim never stops while you're embodied.** The deterministic 30 Hz sim keeps
+- **The sim never stops while you're embodied.** The deterministic 60 Hz sim keeps
   grinding underneath, with your other units executing their last orders (see the
   unit-AI philosophy in the game design doc). This is exactly what the decoupled
   sim/render split already enables — no special pause/resume machinery.
@@ -229,7 +230,8 @@ Bandwidth scales with players, not the hundreds of units on the field.
 > latency spike** ([`decisions.md`](decisions.md) D15): embodied combat carries on lockstep
 > **with avatar-local prediction.** And the spike settled tick rate too ([D16](decisions.md)):
 > **30 Hz is too coarse for embodied combat — target ~60 Hz**; *how* to deliver it
-> (global-60 vs dual-rate) is [Q10](open-questions.md), to profile early in Phase 1.
+> (global-60 vs dual-rate) was Q10, now **closed by [D21](decisions.md): a single global
+> 60 Hz** for Phase 1 (dual-rate deferred to Phase 3's 200-unit thermal re-evaluation).
 
 Lockstep + input delay is the right call for hundreds of units — but **input delay
 deliberately executes orders several ticks in the future**, and it ships with no
@@ -252,8 +254,8 @@ confirmed this directly — raw lockstep felt laggy; prediction fixed it.
   aim resolve *in* the sim, so they carry the tick's granularity — and the spike A/B showed
   30 Hz feels *chunky* for embodied aim/fire (dramatically so), even with prediction on
   (prediction kills latency, not granularity). Target **~60 Hz** for the embodied layer; the
-  delivery mechanism (global-60 vs dual-rate) is [Q10](open-questions.md), profiled early in
-  Phase 1.
+  delivery mechanism (global-60 vs dual-rate) was Q10, now **closed by [D21](decisions.md):
+  a single global 60 Hz** for Phase 1 (dual-rate deferred to Phase 3).
 - **Determinism still binds the FPS math.** Aim angles, recoil, raycasts, and
   projectile integration run inside the sim and so are **fixed-point with LUT trig** —
   the "no floats in the sim" invariant covers first-person combat, not just unit
@@ -303,11 +305,12 @@ dynamic resolution).
 pathfinding/flow 2.0 · AI (time-sliced) 1.5 · collision/spatial hash 1.5 ·
 net (orders+checksums) 0.5 → **~8.5 ms used.** ~24 ms headroom per tick absorbs spikes and
 does **not** shrink when render rate rises — which is why 120 FPS is reachable.
-**Caveat ([D16](decisions.md)):** 30 Hz proved too coarse for embodied combat, so the sim
-runs faster (~60 Hz target). At a 60 Hz tick the window halves to **16.6 ms** — the ~8.5 ms
-still fits per tick, but total sim power roughly doubles, which is exactly the cost driving
-[Q10](open-questions.md) (global-60 vs dual-rate) and pulls mobile thermal budgeting into
-Phase 1.
+**Caveat ([D16](decisions.md) / [D21](decisions.md)):** 30 Hz proved too coarse for embodied
+combat, so Phase 1 **locks a single global 60 Hz** tick (D21 closes Q10; dual-rate deferred
+to Phase 3). At 60 Hz the window halves to **16.6 ms** — the ~8.5 ms still fits per tick, but
+total sim power roughly doubles, so **these 30 Hz-amortized figures must be re-derived at
+60 Hz** and mobile thermal budgeting moves earlier. The 200-unit thermal projection is what
+could reopen a dual-rate split at Phase 3.
 
 ## Stack at a glance
 

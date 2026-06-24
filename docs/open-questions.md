@@ -118,7 +118,7 @@ the only acceptable rate — and this held *even with* avatar-local prediction (
 because prediction kills input *latency* but not the *granularity* of hit/aim resolution. The
 embodied layer needs the higher rate.
 
-**The follow-on — how to deliver it — is now [Q10](#q10--how-to-deliver-the-60-hz-embodied-rate-global-vs-dual-rate).**
+**The follow-on — how to deliver it — was [Q10](#q10--how-to-deliver-the-60-hz-embodied-rate-global-vs-dual-rate--resolved-d21-global-60), now resolved in [D21](decisions.md): a single global 60 Hz tick for Phase 1.**
 
 ---
 
@@ -145,25 +145,19 @@ The cross-store reconciliation cost needs scoping before this locks.
 
 ---
 
-## Q10 — How to deliver the 60 Hz embodied rate: global vs dual-rate?
+## Q10 — How to deliver the 60 Hz embodied rate: global vs dual-rate? — RESOLVED ([D21](decisions.md): global-60)
 
-[D16](decisions.md) settled that embodied combat needs **~60 Hz** (30 Hz felt chunky). *How*
-to provide it — without wrecking the mobile power/thermal budget at ~200 units — is open. The
-Phase 1 sim loop is coded against a single parameterized rate (`core::sim::TICK_HZ`, provisional
-60), so the loop runs, but **the rate is not locked**: it must be decided by **profiling on real
-mid-range arm64 hardware** (build-order step 8) before it can be fixed.
+**Resolved in [D21](decisions.md): a single global 60 Hz tick for Phase 1** (`core::sim::TICK_HZ
+= 60`). [D16](decisions.md) settled that embodied combat needs ~60 Hz but deferred the *delivery
+mechanism* to real-arm64 profiling. With Phase 1's **one** unit running on real arm64 (an Adreno
+750), a global 60 Hz tick has enormous headroom, so the dual-rate machinery (two
+lockstep-deterministic clocks) is unjustified complexity here — exactly D16's lean ("start
+global-60; fall to dual-rate only if the 200-unit projection forces it").
 
-| Option | Upside | Cost / risk |
-|---|---|---|
-| **(a) Global 60 Hz** — whole sim runs at 60 | One tick rate; simplest; no dual-clock complexity | ~2× total sim CPU and ~2× battery/heat for 200 units; tighter net budget. Per-tick work (~8.5 ms) still fits a 16.6 ms tick, so feasible — just power-hungry |
-| **(b) Dual-rate** — RTS/unit sim 30 Hz, embodied combat 60 Hz | Far cheaper at scale (combat is a tiny slice of the 200-unit work) | **Two** deterministic clocks that both must stay lockstep-deterministic; careful rate-interaction; more netcode/checksum complexity |
-| **(c) Aim@render, commit@tick** | — | **Insufficient alone** (D16): the chunkiness *is* the 30 Hz commit granularity |
-
-**Constraints either way:** the sim/render decoupling + fixed deterministic tick (invariant
-#4) and fixed-point combat math (invariant #1) hold at whatever rate — a faster tick admits
-no floats. **Current lean:** undecided; the user will *accept the perf cost* (favouring (a))
-if (b) proves too complex, but (b) is the elegant mobile answer if the determinism stays
-clean. Profiling decides.
+**Dual-rate is deferred, not killed.** The 200-unit power/thermal question that motivates a split
+is a **scale** concern → it belongs to **Phase 3** (200-unit stress + thermal profiling), not
+Phase 1. `TICK_HZ` stays a single named constant so the rate is trivially re-tunable if Phase-3
+profiling reopens the split. Invariants #1/#4 hold at any rate (a faster tick admits no floats).
 
 ---
 

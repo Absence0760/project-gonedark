@@ -57,7 +57,7 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/infrastructure.md`](docs/infrastructure.md) | Local dev (clone-and-run via Docker), config/env files, Terraform infra, sops secrets |
 | [`docs/roadmap.md`](docs/roadmap.md) | Build phases, milestones, and the top risks |
 | [`docs/phase-0.5-plan.md`](docs/phase-0.5-plan.md) | Plan + record of the embodiment-over-network latency spike (resolved Q7/Q8 → D15/D16) |
-| [`docs/phase-1-plan.md`](docs/phase-1-plan.md) | Detailed plan for the **next** build — the Phase 1 Rust engine vertical slice |
+| [`docs/phase-1-plan.md`](docs/phase-1-plan.md) | Detailed plan + status for the Phase 1 Rust engine vertical slice (code/CI/tooling complete; two on-device sign-offs remain) |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
 | [`prototypes/phase0-controls/`](prototypes/phase0-controls/) | **Throwaway** Godot control prototype — proved the Phase 0 touch-feel gate (D14); deleted after Phase 0.5. Not the engine |
@@ -65,28 +65,28 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 
 ## Status
 
-**Phase 1 — in progress.** **Phase 0** (control prototype, D14) and **Phase 0.5**
-(embodiment-over-network latency spike, D15) both **passed** (2026-06-23): the
-embody↔command touch loop feels good in hand, and embodied combat feels good over the
-lockstep netcode with **avatar-local prediction**. That retired the two biggest risks
-(touch controls; embodied feel over the wire). **Phase 1 is underway and the spine is
-real through build-order step 5 — compile-verified, not yet device-validated:** a
+**Phase 1 — code / CI / tooling complete; pending final on-device determinism + frame-rate
+confirmation.** **Phase 0** (control prototype, D14) and **Phase 0.5** (embodiment-over-network
+latency spike, D15) both **passed** (2026-06-23): the embody↔command touch loop feels good in
+hand, and embodied combat feels good over the lockstep netcode with **avatar-local prediction**.
+That retired the two biggest risks (touch controls; embodied feel over the wire). **The Phase 1
+engine spine now runs the slice on a real arm64 device** (Adreno 750, Galaxy-class): a
 deterministic fixed-point `core` (Q16.16, [D17](docs/decisions.md); hand-rolled SoA ECS
 [D18](docs/decisions.md)) with a real **flow field** moving one unit; a real `wgpu` 29 + `winit`
-0.30 desktop renderer + PAL that interpolate between snapshots; and an `app` run loop wiring
-tap-to-move command + embodiment (the "world goes dark" input swap). Per [D19](docs/decisions.md),
-`core`/`pal` stay GPU-free; `render`/`pal-desktop`/`app` carry wgpu. The `core` tests and the
-`sim-runner` determinism check (bit-identical run-to-run **and** debug==release) pass locally;
-the per-tick checksum CI matrix ([invariant #7](docs/phase-1-plan.md)) is green and CI now also
-builds the graphics crates. **Caveats:** the renderer/app are compile-verified only (no
-GPU/display in the build env, so not run); the **Android backend compiles + links for arm64**
-via `cargo-ndk` and **assembles an installable arm64 debug APK** (Gradle wrapper committed),
-but is **not yet run on a device**; and sim rate
-([Q10](docs/open-questions.md)) is still open
-(`core::sim::TICK_HZ`, provisional 60). **Not yet met:** the Phase 1 exit criterion (one unit,
-commandable + embodiable, on **real mid-range arm64 hardware** with the cross-arch checksum
-matrix green) — build-order step 8 (on-device validation) is pending hardware. The Unity/Godot
-fallback stays live until it passes.
+0.30 desktop renderer + PAL that interpolate between snapshots; and the shared `engine::Game`
+loop ([D20](docs/decisions.md)) wiring tap-to-move command + embodiment (the "world goes dark"
+input swap) — on-device the unit moves, tap-to-move works, and a provisional two-finger-tap
+embody toggle flips the world dark. Per [D19](docs/decisions.md), `core`/`pal` stay GPU-free;
+`render`/`pal-desktop`/`pal-android`/`app` carry wgpu. **All three decide-first gates are locked**
+— the last, **sim rate ([Q10](docs/open-questions.md)), is closed by [D21](docs/decisions.md):
+global 60 Hz** (`core::sim::TICK_HZ = 60`; dual-rate deferred to Phase 3, not killed).
+Determinism is proven **run-to-run**, **debug==release**, and **cross-arch** in CI — the per-tick
+checksum matrix ([invariant #7](docs/phase-1-plan.md)) now also covers **native arm64 Linux**,
+and CI builds the graphics + Android crates. **Two on-device sign-offs remain before Phase 1 is
+declared done:** (a) on-device determinism — `pnpm android:checksum` must show the device
+checksum stream **bit-identical** to desktop; (b) target frame rate — read on-device via the `adb
+logcat` FPS heartbeat. Until both pass, the Phase 1 exit criterion is **not** met and the
+**Unity/Godot fallback stays live**.
 
 Target platforms: **Windows, Linux, Android, iOS** — one
 shared deterministic core with platform-optimized backends (D3D12/Vulkan, Vulkan,

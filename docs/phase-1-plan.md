@@ -1,14 +1,18 @@
 # Phase 1 — Vertical slice *(plan)*
 
-> **Status: IN PROGRESS — the spine is real through build-order step 5, compile-verified but
-> not yet device-validated.** Phase 0 (D14) and Phase 0.5 (D15/D16) are done. The deterministic
-> `core` (fixed-point [D17], SoA ECS [D18]) plus a real **flow field** drive one unit; a real
-> `wgpu`/`winit` desktop renderer + PAL + `app` run loop wire command + embodiment (steps 3–5
-> done — steps 4–5 **compile-verified only, not run on a GPU/display here**). The Android
-> backend (step 6) **compiles + links for real arm64** via `cargo-ndk` (the `.so` builds) but
-> **assembles an installable arm64 debug APK** (committed Gradle wrapper) but is **not yet run
-> on a device**; CI (step 7) is extended. **Step 8 (on-device validation) and Q10 are still open — Phase 1 is NOT done.** The
-> Unity/Godot fallback stays live. Progress per step: §2 and §5.
+> **Status: CODE / CI / TOOLING COMPLETE — pending final on-device determinism + frame-rate
+> confirmation.** Phase 0 (D14) and Phase 0.5 (D15/D16) are done. The deterministic `core`
+> (fixed-point [D17], SoA ECS [D18]) plus a real **flow field** drive one unit; the shared
+> `engine::Game` loop ([D20]) — sim+render+fixed-tick+cameras+command/embodiment — now runs on a
+> **real arm64 device** (Adreno 750, Galaxy-class): the unit moves via the flow field,
+> tap-to-move works, and a provisional two-finger-tap embody toggle flips the world dark. All
+> three decide-first gates are now locked — the last, **sim rate (Q10), is closed by [D21]:
+> global 60 Hz** (`core::sim::TICK_HZ = 60`). Determinism is proven **run-to-run**,
+> **debug==release**, and **cross-arch** in CI — the checksum matrix now also covers **native
+> arm64 Linux**. **Two on-device sign-offs remain before Phase 1 is declared DONE** (see §10):
+> (a) on-device determinism — the device sim-runner checksum stream must be **bit-identical** to
+> desktop; (b) target frame rate — read on-device. Until both pass, the **Unity/Godot fallback
+> stays live** and the throwaway prototypes are **not** deleted. Progress per step: §2 and §5.
 >
 > **Goal (from [`roadmap.md`](roadmap.md)):** the real engine spine in **Rust** (D10), end
 > to end, with **one of everything** — ECS, a deterministic fixed-tick sim, a minimal `wgpu`
@@ -39,7 +43,7 @@ Each becomes a recorded `Dn` when locked — do not silently pick (CLAUDE.md):
 
 | Gate | Why it's first | Status |
 |---|---|---|
-| **Sim rate — [Q10](open-questions.md)/D16** | Drives the loop, netcode, budgets, thermals; ~60 Hz is the target but global-60 vs dual-rate must be **profiled on a real device first** | **OPEN.** Parameterized as `core::sim::TICK_HZ` (provisional 60). Lean: start global-60; fall to dual-rate only if the 200-unit power/thermal projection forces it. Profile before locking the loop |
+| **Sim rate — [Q10](open-questions.md)/D16** | Drives the loop, netcode, budgets, thermals; ~60 Hz is the target but global-60 vs dual-rate had to be **decided on real arm64 first** | **LOCKED — [D21](decisions.md).** A single **global 60 Hz** tick (`core::sim::TICK_HZ = 60`); with one unit on real arm64 it has enormous headroom, so dual-rate is unjustified now. Dual-rate is **deferred to Phase 3** (the 200-unit thermal re-evaluation), not killed — `TICK_HZ` stays a named constant |
 | **Fixed-point representation** | The bedrock everything sits on; the newtype + scale + LUT trig must exist before any sim math | **LOCKED — [D17](decisions.md).** Hand-rolled Q16.16 `Fixed` newtype (`core::fixed`), no float conversions (a stray float won't compile); LUT/integer trig (`core::trig`), no `libm` |
 | **ECS approach** | Shapes the whole core | **LOCKED — [D18](decisions.md).** Hand-rolled struct-of-arrays (`core::ecs`); index iteration → stable order by construction; no archetype-ECS dependency |
 
@@ -109,26 +113,31 @@ Status legend: **✓ done & verified** · **◐ coded, compile-verified (not run
    embody/surface swap with the near-black "gone dark" clear, top-down ortho + embodied
    perspective cameras; the D15 avatar-local-prediction seam kept presentation-only).
    *Compile-verified only — not run.*
-6. **◐ Android backend:** cargo-ndk build, Gradle wrapper, JNI shim (surface/touch/lifecycle);
+6. **✓ Android backend:** cargo-ndk build, Gradle wrapper, JNI shim (surface/touch/lifecycle);
    deploy to the **real phone**; stand up the `edit → cargo build → adb install → am start →
    adb logcat` loop (roadmap dev workflow). *Shipped:* `pal-android/` (`android_main` + PAL
    impls, gated to `target_os = "android"` so the host build is empty) + an `android/` Gradle
    project. **Builds for `aarch64-linux-android`** via `cargo ndk -t arm64-v8a build` (NDK 28)
    **and assembles an installable arm64 debug APK** — `pnpm android:apk` runs cargo-ndk →
    `:app:assembleDebug` (committed Gradle 8.11 wrapper + AGP 8.7.2) → `app-debug.apk`
-   bundling `libgonedark_pal_android.so`. **`android_main` now drives the shared `engine::Game`
+   bundling `libgonedark_pal_android.so`. **`android_main` drives the shared `engine::Game`
    loop** (the same sim+render the desktop host runs, via [D20](decisions.md)) — not just a
-   clear. An earlier on-device run surfaced + fixed a real arm64 surface-config crash (texture
-   limit); **on-device the unit moves and tap-to-move + a provisional two-finger-tap embody
-   toggle work.** *Still ahead:* the *shipped* Android control scheme (on-screen sticks / gyro,
-   the final embody gesture) is a Phase 2 design call — the two-finger toggle is a dev binding.*
-7. **◐ Determinism CI:** wire the per-tick checksum matrix (§6) — green before the slice counts.
-   *Extended:* the checksum matrix (`determinism.yml`) is unchanged; `build.yml` adds a
-   blocking `graphics-build` job (link deps + build/clippy the wgpu/winit crates) and an
-   `android-build` cross-compile tripwire (`continue-on-error: true` until step 6 is real).
-8. **☐ Validate on real mid-range arm64:** deterministic, at target frame rate, embody↔command
-   loop working. *This* is the exit gate; only now retire the fallback. **Not started — needs a
-   physical mid-range arm64 phone (the human exit gate).**
+   clear. An on-device run surfaced + fixed a real arm64 surface-config crash (texture limit);
+   **on the real device (Adreno 750) the unit moves, tap-to-move works, and a provisional
+   two-finger-tap embody toggle flips the world dark.** *Still ahead:* the *shipped* Android
+   control scheme (on-screen sticks / gyro, the final embody gesture) is a Phase 2 design call —
+   the two-finger toggle is a dev binding.
+7. **✓ Determinism CI:** wire the per-tick checksum matrix (§6) — green before the slice counts.
+   *Done:* the checksum matrix (`determinism.yml`) now also covers **native arm64 Linux**;
+   `build.yml` carries a blocking `graphics-build` job (link deps + build/clippy the wgpu/winit
+   crates) and an `android-build` cross-compile job.
+8. **◐ Validate on real mid-range arm64:** deterministic, at target frame rate, embody↔command
+   loop working. *This* is the exit gate; only now retire the fallback. **In progress on real
+   hardware (Adreno 750):** the embody↔command loop runs on-device. **Two sign-offs remain**
+   before this gate passes — see §10: (a) on-device determinism (`pnpm android:checksum` diffs
+   the device sim-runner checksum stream against desktop — must be **identical**), and (b) the
+   target frame rate (read the per-second FPS heartbeat in `adb logcat` on the device). Until
+   both clear, keep the fallback live.
 
 ## 6. Determinism CI — from day one, even with one unit
 
@@ -159,14 +168,29 @@ all Phase 2/3. Phase 1 ships **one** unit and the **spine**. (The prediction and
 | Risk | Mitigation |
 |---|---|
 | A float leaks into the sim (silent desync) | `Fixed` newtype makes it a compile error; checksum matrix from day one (§6) |
-| Sim-rate choice (Q10) wrong on real silicon | Profile global-60 vs dual-rate on the device **before** locking the loop (§2) |
+| Sim-rate choice (Q10) wrong on real silicon | **Locked — [D21](decisions.md):** global 60 Hz, with huge headroom for Phase 1's one unit on real arm64. The 200-unit power/thermal re-evaluation (could reopen dual-rate) is deferred to Phase 3 |
 | `wgpu`/surface lifecycle quirks on Android | Isolate behind the PAL; desktop backend first, Android second |
 | Custom-engine build cost balloons | Keep the Unity/Godot fallback **live until the slice passes** (D8) |
 | Weak engine hot-reload slows iteration | Scripting/data + asset reload + the automated loop (§7) |
 
+## 10. Remaining on-device sign-offs (the two gates to DONE)
+
+Code, CI, and tooling are complete and the slice runs on real arm64. **Two on-device
+confirmations remain before Phase 1 is declared DONE** (build-order step 8, §5):
+
+1. **On-device determinism.** `pnpm android:checksum` diffs the device sim-runner's per-tick
+   checksum stream against the desktop stream — they must be **bit-identical** (invariant #1/#7).
+   A mismatch is a real desync, never something to silence.
+2. **Target frame rate.** Read the per-second FPS heartbeat in `adb logcat` on the device and
+   confirm the embody↔command loop holds target frame rate.
+
+Until **both** pass: Phase 1 is **not** done, the **Unity/Godot fallback stays live**, and the
+throwaway prototypes are **not** deleted.
+
 ---
 
-**On completion:** record the locked decisions made along the way (sim rate → closes Q10;
-fixed-point representation; ECS choice) as `Dn` entries, mark Phase 1 done in
-[`roadmap.md`](roadmap.md), retire the fallback, and the throwaway prototypes can finally be
-deleted. Then Phase 2 (game systems) begins.
+**On completion (once §10's two sign-offs pass):** the locked decisions are already recorded
+(sim rate → [D21](decisions.md) closes Q10; fixed-point representation → [D17](decisions.md);
+ECS choice → [D18](decisions.md)). Then mark Phase 1 done in [`roadmap.md`](roadmap.md), retire
+the fallback, and the throwaway prototypes can finally be deleted. Then Phase 2 (game systems)
+begins.

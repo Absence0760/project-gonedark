@@ -70,32 +70,34 @@ model.
 
 ## Phase 1 — Vertical slice
 
-> **Status: IN PROGRESS — the spine is real through build-order step 5, compile-verified but
-> not yet device-validated.** The Rust workspace carries a deterministic fixed-point `core`
+> **Status: CODE / CI / TOOLING COMPLETE — pending final on-device determinism + frame-rate
+> confirmation.** The Rust workspace carries a deterministic fixed-point `core`
 > (Q16.16 [D16→D17](decisions.md), hand-rolled SoA ECS [D18](decisions.md)), the PAL trait
-> boundary, a headless `sim-runner`, and the per-tick checksum CI matrix. **Steps 3–5 done:**
-> a real deterministic **flow field** (`core::flow_field`, integer Dijkstra over a 128×128
-> fixed grid) drives unit movement, with `sim-runner` bit-identical run-to-run and
-> debug==release; a real `wgpu` 29 + `winit` 0.30 desktop renderer + PAL interpolate prev→curr
-> snapshots; and the `app` run loop wires the fixed-tick accumulator, tap-to-move, and the
-> embody/surface input swap with "world goes dark" (steps 4–5 are **compile-verified only — not
-> run on a GPU/display here**). Step 6 (Android backend + Gradle project) now **compiles + links
-> for arm64** via `cargo-ndk` and **assembles an installable arm64 debug APK** (Gradle 8.11 +
-> AGP 8.7.2) — but is **not yet run on a device**;
-> step 7 CI is **extended** (a blocking graphics-build job +
-> an Android cross-compile tripwire; the checksum matrix unchanged). Two of the three
-> decide-first gates are locked (D17/D18); **sim rate (Q10) stays open**, parameterized as
-> `core::sim::TICK_HZ`, pending real-arm64 profiling. Still ahead: device-verifying the Android
-> backend and **step 8** on-device validation — the exit gate. The Unity/Godot fallback stays
-> live until then. Detailed plan: **[`phase-1-plan.md`](phase-1-plan.md)**.
+> boundary, a headless `sim-runner`, and the per-tick checksum CI matrix. A real deterministic
+> **flow field** (`core::flow_field`, integer Dijkstra over a 128×128 fixed grid) drives unit
+> movement (`sim-runner` bit-identical run-to-run **and** debug==release); a real `wgpu` 29 +
+> `winit` 0.30 desktop renderer + PAL interpolate prev→curr snapshots; and the shared
+> `engine::Game` loop ([D20](decisions.md)) wires the fixed-tick accumulator, tap-to-move, and
+> the embody/surface input swap with "world goes dark". **That loop now runs on a real arm64
+> device (Adreno 750, Galaxy-class):** the unit moves via the flow field, tap-to-move works, and
+> a provisional two-finger-tap embody toggle flips the world dark. **All three decide-first gates
+> are locked** — the last, **sim rate (Q10), is closed by [D21](decisions.md): global 60 Hz**
+> (`core::sim::TICK_HZ = 60`; dual-rate deferred to Phase 3, not killed). Determinism is proven
+> run-to-run, debug==release, and cross-arch in CI — the checksum matrix now also covers **native
+> arm64 Linux**. **Two on-device sign-offs remain before Phase 1 is DONE:** (a) on-device
+> determinism — `pnpm android:checksum` must show the device checksum stream **bit-identical** to
+> desktop; (b) target frame rate — read on-device via the `adb logcat` FPS heartbeat. Until both
+> pass, the **Unity/Godot fallback stays live** and the prototypes are **not** deleted. Detailed
+> plan: **[`phase-1-plan.md`](phase-1-plan.md)**.
 
 **Goal:** the real engine spine, end to end, with one of everything.
 
 - ECS world + scheduler; data-oriented component storage.
-- Fixed-tick deterministic sim loop + render interpolation. **Settle the sim rate first
-  ([`open-questions.md`](open-questions.md) Q10 / D16):** 30 Hz is too coarse for embodied
-  combat (~60 Hz target) — profile **global-60 vs dual-rate** on a real target device and
-  lock it *before* building the loop, since it drives netcode, budgets, and thermals.
+- Fixed-tick deterministic sim loop + render interpolation. **Sim rate locked
+  ([D21](decisions.md), closing Q10):** 30 Hz was too coarse for embodied combat (D16), so the
+  loop runs a single **global 60 Hz** tick (`core::sim::TICK_HZ = 60`) — with one unit on real
+  arm64 it has huge headroom, so dual-rate is unjustified now and **deferred to Phase 3** (the
+  200-unit thermal re-evaluation), not killed.
 - Embodiment as an input-source swap on a single entity; fog → avatar-only on embody. Wire
   the **avatar-local-prediction boundary (D15) from the first netcode commit** — presentation
   path only, never writing sim state.

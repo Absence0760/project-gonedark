@@ -5,30 +5,31 @@ grow camps from a top-down view like *Company of Heroes*, then **possess a singl
 and fight it in first person — while the strategic map goes dark.** One player does
 both jobs; the tension is divided attention.
 
-**Current state: Phase 1 in progress — the engine spine is real through build-order step 5,
-compile-verified but not yet device-validated (D10).** The design corpus in `docs/` is still
+**Current state: Phase 1 — code/CI/tooling complete; pending final on-device determinism +
+frame-rate confirmation (D10).** The design corpus in `docs/` is still
 the product of record, but engine code now exists: the Cargo workspace (`core/ pal/ render/
 engine/ pal-desktop/ pal-android/ app/ sim-runner/ server/`) with a deterministic fixed-point `core`
-(Q16.16 [D17], hand-rolled SoA ECS [D18]). **Steps 3–5 done & verified:** a real deterministic
-**flow field** (`core::flow_field` — integer Dijkstra over a 128×128 fixed grid) driving the
-`movement_system`, with `sim-runner` bit-identical run-to-run and debug==release; a real
-`wgpu` 29 + `winit` 0.30 desktop renderer and PAL backend that interpolate prev→curr snapshots
-(invariant #4); and the shared game loop in a new `engine` crate (fixed-tick accumulator,
-tap-to-move, embody/surface input swap with "world goes dark") that **both** the desktop `app`
-and Android's `android_main` drive ([D20]). Per [D19], `core`+`pal` stay GPU-free; `render`/
-`engine`/`pal-desktop`/`pal-android`/`app` carry wgpu. **Caveat: steps 4–5 are compile-verified
-only — not run on a GPU/display here.** Step 6 (`pal-android` + `android/` Gradle) **builds for
-real arm64** via `cargo-ndk`, **assembles an installable arm64 debug APK** (committed Gradle
-8.11 wrapper + AGP 8.7.2, via `pnpm android:apk`), and now **runs the same `engine::Game` loop
-through `android_main`** (sim + renderer, not just a clear) — but is **not yet confirmed
-running on a device** in this state. Step 7 CI is **extended**: a
-blocking `graphics-build` job + an `android-build` tripwire (`continue-on-error` until the
-backend is real); the determinism checksum matrix is unchanged. Two decide-first gates are
-locked (D17/D18); **sim rate (Q10) is still open**, parameterized as `core::sim::TICK_HZ`
-(provisional 60), to be profiled on real arm64 before locking. Step 8 (on-device validation)
-is **not done**, so the Phase 1 exit criterion (one unit, commandable + embodiable, on real
-arm64 with the checksum matrix green) is **not yet met** — keep the Unity/Godot fallback live
-until it is. The two **throwaway Godot
+(Q16.16 [D17], hand-rolled SoA ECS [D18]). A real deterministic
+**flow field** (`core::flow_field` — integer Dijkstra over a 128×128 fixed grid) drives the
+`movement_system` (`sim-runner` bit-identical run-to-run and debug==release); a real
+`wgpu` 29 + `winit` 0.30 desktop renderer and PAL backend interpolate prev→curr snapshots
+(invariant #4); and the shared game loop in the `engine` crate (fixed-tick accumulator,
+tap-to-move, embody/surface input swap with "world goes dark") is driven by **both** the desktop
+`app` and Android's `android_main` ([D20]). Per [D19], `core`+`pal` stay GPU-free; `render`/
+`engine`/`pal-desktop`/`pal-android`/`app` carry wgpu. **The slice now runs on a real arm64
+device** (Adreno 750, Galaxy-class): the unit moves via the flow field, tap-to-move works, and a
+provisional two-finger-tap embody toggle flips the world dark. The `pal-android` + `android/`
+Gradle path **builds for real arm64** via `cargo-ndk` and **assembles an installable arm64 debug
+APK** (committed Gradle 8.11 wrapper + AGP 8.7.2, via `pnpm android:apk`). CI carries a blocking
+`graphics-build` job + an `android-build` job; the determinism checksum matrix is green and now
+also covers **native arm64 Linux** (proven run-to-run, debug==release, cross-arch). **All three
+decide-first gates are locked** — the last, **sim rate (Q10), is closed by [D21]: a single global
+60 Hz tick** (`core::sim::TICK_HZ = 60`; dual-rate deferred to Phase 3, not killed). **Two
+on-device sign-offs still gate Phase-1 DONE:** (a) on-device determinism (`pnpm android:checksum`
+diffs the device checksum stream vs desktop — must be bit-identical) and (b) target frame rate
+(read the `adb logcat` FPS heartbeat on-device). Until both pass, the Phase 1 exit criterion
+(one unit, commandable + embodiable, on real arm64 with the checksum matrix green) is **not yet
+met** — keep the Unity/Godot fallback live until it is. The two **throwaway Godot
 prototypes** in `prototypes/` (`phase0-controls/` → D14, `phase0.5-netfeel/` → D15, both
 2026-06-23) are disposable feel-test scaffolding — *not* engine code, carry none of the
 invariants below, and can be deleted. Don't grow a prototype into the game; build behind the
@@ -81,9 +82,10 @@ Do not "improve" past them without the user explicitly reopening the decision.
 
 4. **Sim and render are decoupled.** The sim runs a **fixed deterministic tick**; render
    runs at a variable rate and interpolates. The sim never touches Vulkan/Metal/D3D12; the
-   renderer never mutates sim state. (The **tick rate** is being finalized in Phase 1 — 30 Hz
-   proved too coarse for embodied combat, target ~60 Hz; see `decisions.md` D16 and Q10. The
-   decoupling + fixed-deterministic-tick core of this invariant is rate-independent and still
+   renderer never mutates sim state. (The **tick rate** is locked for Phase 1 — 30 Hz proved
+   too coarse for embodied combat (D16), so the sim runs a single **global 60 Hz** tick
+   (`core::sim::TICK_HZ = 60`; `decisions.md` D21 closes Q10, dual-rate deferred to Phase 3).
+   The decoupling + fixed-deterministic-tick core of this invariant is rate-independent and still
    load-bearing.) (`architecture.md`.)
 
 5. **Embodiment is an input-source swap + a vision toggle — not a character system.**

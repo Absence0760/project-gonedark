@@ -594,3 +594,38 @@ android entry) plus `app → pal-android` (its android-target dep) would not be.
   layer, which `engine` now is).
 - No invariant changes: the sim stays fixed-point and decoupled; floats remain render-side;
   the tap target is still quantized to `Fixed` at the input boundary (invariant #1).
+
+---
+
+## D21 — Sim rate: a single global 60 Hz tick for Phase 1 (dual-rate deferred, not killed)
+
+**Resolves:** [Q10](open-questions.md) (how to deliver the ~60 Hz embodied rate — global vs
+dual-rate). Settles the last open Phase-1 decide-first gate
+([`phase-1-plan.md`](phase-1-plan.md) §2).
+
+**Decision:** the simulation runs **one global 60 Hz** deterministic tick for Phase 1
+(`core::sim::TICK_HZ = 60`). The **dual-rate** split (heavy RTS/unit sim at 30 Hz, embodied
+combat at 60 Hz) is **not adopted now**. `TICK_HZ` stays a single named constant so the rate
+is trivially re-tunable, and dual-rate is explicitly **deferred, not discarded**.
+
+**Why:** [D16](#d16--30-hz-is-too-coarse-for-embodied-combat-embodied-layer-needs-60-hz) settled
+that embodied combat needs ~60 Hz but deferred the *delivery mechanism* to **profiling on real
+arm64**, with the lean "start global-60; fall to dual-rate only if the 200-unit power/thermal
+projection forces it." Phase 1 carries **one** unit, and the slice now runs on real arm64 (an
+Adreno 750, Galaxy-class), where a global 60 Hz tick has enormous headroom. At that scale the
+dual-rate machinery — **two** deterministic clocks that *both* must stay lockstep-deterministic
+([D15](#d15--embodied-combat-over-lockstep-avatar-local-prediction-phase-05-passes)) — is
+unjustified complexity. This follows D16's explicit lean exactly.
+
+**The 200-unit question is real, but it is a *scale* concern, not a Phase-1 one.** Whether
+global-60 wrecks the mobile power/thermal budget only shows up under the full ~200-unit load,
+which Phase 1 deliberately does not have ([`phase-1-plan.md`](phase-1-plan.md) §8). So the
+dual-rate re-evaluation belongs to **Phase 3** (200-unit stress + thermal profiling on target
+hardware — [`roadmap.md`](roadmap.md)), not here, and is not a reason to add a second clock now.
+
+**Consequences:**
+- [Q10](open-questions.md) **closes**; `TICK_HZ = 60` is the Phase-1 lock.
+- **Phase 3** owns the 200-unit thermal re-evaluation that could reopen a dual-rate split; the
+  named constant keeps the door open for a cheap re-tune or split if profiling demands it.
+- No invariant changes: the sim stays **fixed-point** (invariant #1) and **decoupled** from
+  render (invariant #4) at whatever rate; a faster tick admits no floats.
