@@ -2,14 +2,18 @@
 #
 # The sim is float-free fixed-point so it must be BIT-IDENTICAL across CPU arch and
 # compiler. This workflow runs the headless `sim-runner` on x86_64 (ubuntu, windows) and
-# aarch64 (macOS Apple-Silicon) hosts, then diffs the checksum streams. Any divergence is
-# a lockstep desync — a real bug. NEVER "fix" a failure here by narrowing the matrix or
-# skipping a target (fix-ci skill / invariant #7).
+# aarch64 (macOS Apple-Silicon AND native arm64 Linux) hosts, then diffs the checksum
+# streams. Any divergence is a lockstep desync — a real bug. NEVER "fix" a failure here by
+# narrowing the matrix or skipping a target (fix-ci skill / invariant #7). This matrix is
+# ADD-ONLY: coverage may grow, never shrink.
 #
 # Target matrix note: the shipping matrix is {win-msvc, linux-gnu, android-arm64,
-# ios-arm64}. Device runs for Android/iOS need emulators and land in build-order step 6/7;
-# until then this covers the §6 minimum — an x86_64 ↔ arm64 cross-arch check that actually
-# runs in CI (macOS-14 is arm64). TODO(step6/7): add android-arm64 + ios-arm64 device runs.
+# ios-arm64}. The aarch64-unknown-linux-gnu entry (ubuntu-24.04-arm runner) covers the
+# Android ship ISA at the sim level — same arm64-Linux ABI family as the device — so a
+# desync on Android-family hardware surfaces in CI without an emulator. Device runs for
+# Android/iOS still need emulators/adb and land in build-order step 6/7 (the on-device
+# adb run is the device-specific confirmation, tracked separately).
+# TODO(step6/7): add android-arm64 + ios-arm64 device runs.
 name: determinism
 
 on:
@@ -35,6 +39,16 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: macos-14 # Apple Silicon — the aarch64 side of the cross-arch check
             target: aarch64-apple-darwin
+          # Native arm64 LINUX (GitHub's free ubuntu-24.04-arm runner — no qemu, no
+          # cross-linker; aarch64-unknown-linux-gnu is the host target so rustup honors
+          # rust-toolchain.toml directly). This covers the ANDROID SHIP ISA at the sim
+          # level: the shipping arm64-Linux/Android family gets an in-CI checksum stream
+          # diffed against x86_64 and aarch64-apple-darwin. The on-device adb run (step6)
+          # is the device-specific confirmation, tracked separately — this entry is the
+          # CI-level native-arm64-Linux proof. ADD-ONLY: never narrow/remove a matrix
+          # entry to make a divergence go away — a desync is a real bug (invariant #7).
+          - os: ubuntu-24.04-arm # native arm64 Linux — the Android ship ISA at sim level
+            target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
