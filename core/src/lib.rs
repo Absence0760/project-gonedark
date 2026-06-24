@@ -11,15 +11,23 @@
 //! See docs/phase-1-plan.md for the build order this scaffolds.
 #![forbid(unsafe_code)]
 
+pub mod alerts;
 pub mod checksum;
+pub mod combat;
 pub mod components;
 pub mod ecs;
+pub mod economy;
+pub mod event;
 pub mod fixed;
 pub mod flow_field;
+pub mod fog;
+pub mod orders;
 pub mod rng;
 pub mod sim;
 pub mod snapshot;
 pub mod systems;
+pub mod terrain;
+pub mod territory;
 pub mod trig;
 
 pub use fixed::Fixed;

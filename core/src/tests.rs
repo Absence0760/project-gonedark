@@ -516,7 +516,12 @@ fn ecs_stale_handle_to_recycled_slot_is_not_alive() {
 
 #[test]
 fn ecs_respawn_resets_component_arrays() {
-    // A recycled slot must come back zeroed — leftover state would desync the sim.
+    // A recycled slot must come back zeroed — leftover state would desync the sim. Covers the
+    // Phase 1 fields AND every Phase 2 field, so a future `spawn()` that forgets to reset one
+    // (silent stale-state desync on slot recycle) is caught here.
+    use crate::components::{
+        Building, EntityKind, Faction, Health, ProductionItem, UnitKind, Weapon,
+    };
     let mut w = World::new();
     let a = w.spawn();
     let i = a.index as usize;
@@ -525,6 +530,31 @@ fn ecs_respawn_resets_component_arrays() {
     w.order[i] = Order::MoveTo(Vec2::new(Fixed::from_int(1), Fixed::ZERO));
     w.stance[i] = Stance::FireAtWill;
     w.input_source[i] = InputSource::Embodied;
+    w.faction[i] = Faction::Enemy;
+    w.kind[i] = EntityKind::Building;
+    w.health[i] = Health {
+        cur: Fixed::from_int(3),
+        max: Fixed::from_int(9),
+    };
+    w.weapon[i] = Weapon {
+        range: Fixed::from_int(5),
+        damage: Fixed::from_int(2),
+        cooldown_ticks: 7,
+        cooldown_left: 4,
+    };
+    w.suppression[i] = Fixed::HALF;
+    w.last_attacker[i] = Some(a);
+    w.retreat_below[i] = Fixed::from_ratio(1, 3);
+    w.vision[i] = Fixed::from_int(99);
+    w.building[i] = Building {
+        kind: crate::components::BuildingKind::Camp,
+        level: 5,
+        build_ticks_left: 12,
+        queue: vec![ProductionItem {
+            kind: UnitKind::Heavy,
+            ticks_left: 3,
+        }],
+    };
     w.despawn(a);
     let b = w.spawn();
     let j = b.index as usize;
@@ -533,6 +563,16 @@ fn ecs_respawn_resets_component_arrays() {
     assert_eq!(w.order[j], Order::Idle);
     assert_eq!(w.stance[j], Stance::ReturnFire);
     assert_eq!(w.input_source[j], InputSource::Orders);
+    // Phase 2 fields must reset to their defaults too.
+    assert_eq!(w.faction[j], Faction::Player);
+    assert_eq!(w.kind[j], EntityKind::Unit);
+    assert_eq!(w.health[j], Health::default());
+    assert_eq!(w.weapon[j], Weapon::default());
+    assert_eq!(w.suppression[j], Fixed::ZERO);
+    assert_eq!(w.last_attacker[j], None);
+    assert_eq!(w.retreat_below[j], Fixed::ZERO);
+    assert_eq!(w.vision[j], Fixed::from_int(24)); // DEFAULT_VISION
+    assert_eq!(w.building[j], Building::default());
 }
 
 #[test]
