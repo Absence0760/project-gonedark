@@ -119,9 +119,9 @@ Status legend: **✓ done & verified** · **◐ coded, compile-verified (not run
    bundling `libgonedark_pal_android.so`. **`android_main` now drives the shared `engine::Game`
    loop** (the same sim+render the desktop host runs, via [D20](decisions.md)) — not just a
    clear. An earlier on-device run surfaced + fixed a real arm64 surface-config crash (texture
-   limit). *Still ahead:* confirm the full loop running on a device + stand up the `adb install
-   → am start → adb logcat` inner loop; an Android-native control scheme (touch sticks / gyro,
-   embody gesture) is still Phase 2.*
+   limit); **on-device the unit moves and tap-to-move + a provisional two-finger-tap embody
+   toggle work.** *Still ahead:* the *shipped* Android control scheme (on-screen sticks / gyro,
+   the final embody gesture) is a Phase 2 design call — the two-finger toggle is a dev binding.*
 7. **◐ Determinism CI:** wire the per-tick checksum matrix (§6) — green before the slice counts.
    *Extended:* the checksum matrix (`determinism.yml`) is unchanged; `build.yml` adds a
    blocking `graphics-build` job (link deps + build/clippy the wgpu/winit crates) and an

@@ -266,24 +266,39 @@ impl AndroidInput {
 
     /// Translate one motion (touch) event into the running InputFrame.
     fn apply_motion(frame: &mut InputFrame, motion: &MotionEvent) {
-        // NOTE: android-activity 0.6 exposes pointers via `motion.pointers()`; we take the
-        // primary pointer for the command-layer tap. Verify the exact pointer accessor on
-        // the real toolchain — the crate has churned this surface across 0.5/0.6.
+        // android-activity 0.6 exposes pointers via `motion.pointers()`; the primary pointer
+        // drives the command-layer tap position.
         let action = motion.action();
         if let Some(p) = motion.pointers().next() {
             frame.pointer = Some((p.x(), p.y()));
         }
+        // Fingers down for this event (a PointerDown includes the newly-landed one).
+        let pointer_count = motion.pointers().count();
         match action {
-            MotionAction::Down | MotionAction::PointerDown => frame.pointer_down = true,
+            MotionAction::Down | MotionAction::PointerDown => {
+                if pointer_count >= 2 {
+                    // PROVISIONAL Phase-1 binding (the real mobile control scheme is a Phase 2
+                    // design call — open-questions / roadmap): a TWO-FINGER TAP toggles
+                    // embodiment. We raise BOTH edge intents and let `engine::Game` resolve to
+                    // embody-or-surface by the current state (embody while commanding, surface
+                    // while embodied) — the same resolution the desktop E/Q keys get. Suppress
+                    // the single-finger tap-to-move so the gesture doesn't also order a move.
+                    frame.embody_pressed = true;
+                    frame.surface_pressed = true;
+                    frame.pointer_down = false;
+                } else {
+                    frame.pointer_down = true;
+                }
+            }
             MotionAction::Up | MotionAction::PointerUp | MotionAction::Cancel => {
                 frame.pointer_down = false;
             }
             // Move keeps the current down-state; pointer position already updated above.
             _ => {}
         }
-        // TODO(phase1-step6): on-screen virtual sticks -> move_axis / look_axis while
-        //   embodied; gyro (via the ndk Sensor API) -> look_axis. Embody/surface gestures
-        //   (e.g. long-press / dedicated button) -> embody_pressed / surface_pressed.
+        // TODO(phase2): the shipped mobile scheme — on-screen virtual sticks -> move_axis /
+        //   look_axis while embodied, gyro (ndk Sensor API) -> look_axis. The two-finger
+        //   embody toggle above is a provisional dev binding, not the final control design.
     }
 
     /// Translate one key event (back button, gamepad face buttons) into the InputFrame.
