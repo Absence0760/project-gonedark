@@ -7,6 +7,8 @@
   "scripts": {
     "build": "cargo build --workspace",
     "build:release": "cargo build --workspace --release",
+    "play": "cargo run -p gonedark-app --release",
+    "play:debug": "cargo run -p gonedark-app",
     "dev": "cargo run -p gonedark-app",
     "app": "cargo run -p gonedark-app",
     "app:release": "cargo run -p gonedark-app --release",

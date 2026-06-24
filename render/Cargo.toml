@@ -15,3 +15,10 @@ publish = false
 gonedark-core = { path = "../core" }
 wgpu = "29"
 bytemuck = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# Offline WGSL validation in tests: `Renderer::new` needs a real GPU (no display in CI), so
+# the shader can't be exercised there. `naga` (the same shader compiler wgpu uses internally,
+# pinned to wgpu 29's version) parses + validates `shader.wgsl` so a shader regression fails
+# `cargo test`, not silently at pipeline creation on a user's machine.
+naga = { version = "29", features = ["wgsl-in"] }

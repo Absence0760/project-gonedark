@@ -19,11 +19,13 @@
 //! sim and no float ever leaks into `core` (invariant #1).
 
 use glam::{Mat4, Vec3, Vec4};
-use gonedark_core::components::Vec2;
+use gonedark_core::components::{BuildingKind, Faction, Stance, UnitKind, Vec2};
 use gonedark_core::ecs::Entity;
+use gonedark_core::economy::{self, Resources};
 use gonedark_core::fixed::Fixed;
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
+use gonedark_core::territory::ControlPoint;
 use gonedark_pal::InputFrame;
 use gonedark_render::{Camera, Renderer};
 
@@ -32,8 +34,9 @@ use gonedark_render::{Camera, Renderer};
 pub const DEFAULT_SEED: u64 = 0x00C0_FFEE;
 
 /// Half-extent (world units) the top-down command camera covers from center to the shorter
-/// screen edge. The flow-field playfield is roughly `[-64, 64]`; this frames it with margin.
-const TOPDOWN_HALF_EXTENT: f32 = 72.0;
+/// screen edge. Framed on the Phase 2 demo scene (units clustered within ~±25) so the
+/// skirmish, the camp, and the control points read at a usable size.
+const TOPDOWN_HALF_EXTENT: f32 = 40.0;
 
 /// Eye height (world units) of the embodied perspective camera above the ground plane.
 const EYE_HEIGHT: f32 = 1.5;
@@ -165,6 +168,21 @@ fn map_input_commands(
     commands
 }
 
+/// Spawn one Rifleman of `faction` at integer world `(x, y)` with the given stance, taking its
+/// health + weapon from the shared [`economy::unit_stats`] table (so it matches a produced
+/// unit). Demo-scene setup only — the sim itself is seeded the same on every peer.
+fn spawn_unit(sim: &mut Sim, x: i32, y: i32, faction: Faction, stance: Stance) -> Entity {
+    let (health, weapon) = economy::unit_stats(UnitKind::Rifleman);
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    sim.world.faction[i] = faction;
+    sim.world.pos[i] = Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
+    sim.world.health[i] = health;
+    sim.world.weapon[i] = weapon;
+    sim.world.stance[i] = stance;
+    e
+}
+
 /// The shared game: the deterministic sim, the possessed entity, the renderer, the two
 /// latest snapshots for interpolation, the fixed-tick accumulator, and embodiment/camera
 /// state. Construct once a GPU device exists; drive [`Game::frame`] once per presented frame.
@@ -190,16 +208,70 @@ pub struct Game {
 }
 
 impl Game {
-    /// Build the game against a live GPU device, spawn the one Phase-1 unit, and issue its
-    /// initial move order so there is motion to interpolate. `seed` drives the deterministic
-    /// sim — pass [`DEFAULT_SEED`] for the shared scene.
+    /// Build the game against a live GPU device and set up the Phase 2 demo scene: two rifle
+    /// squads skirmishing, a player camp producing reinforcements, and two neutral control
+    /// points to capture. The returned `player` is a Player-faction unit you can embody.
+    /// `seed` drives the deterministic sim — pass [`DEFAULT_SEED`] for the shared scene.
     pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat, seed: u64) -> Self {
         let mut sim = Sim::new(seed);
-        let player = sim.world.spawn();
-        sim.step(&[Command::Move {
-            entity: player,
-            target: Vec2::new(Fixed::from_int(20), Fixed::from_int(8)),
-        }]);
+        sim.resources = Resources::new(500);
+
+        // Two neutral control points to fight over.
+        sim.territory
+            .points
+            .push(ControlPoint::neutral(Vec2::new(Fixed::ZERO, Fixed::ZERO)));
+        sim.territory.points.push(ControlPoint::neutral(Vec2::new(
+            Fixed::from_int(-16),
+            Fixed::from_int(10),
+        )));
+
+        // Player squad (left). The first is the embodiable avatar; it holds and returns fire
+        // (Idle order + FireAtWill stance), the allies attack-move into the enemy line.
+        let player = spawn_unit(&mut sim, -7, -2, Faction::Player, Stance::FireAtWill);
+        let ally_a = spawn_unit(&mut sim, -9, 4, Faction::Player, Stance::FireAtWill);
+        let ally_b = spawn_unit(&mut sim, -9, -7, Faction::Player, Stance::FireAtWill);
+
+        // Enemy squad (right), attack-moving toward the player line.
+        let foe_a = spawn_unit(&mut sim, 8, 0, Faction::Enemy, Stance::FireAtWill);
+        let foe_b = spawn_unit(&mut sim, 10, 6, Faction::Enemy, Stance::FireAtWill);
+        let foe_c = spawn_unit(&mut sim, 9, -6, Faction::Enemy, Stance::FireAtWill);
+
+        // A player camp, pre-built for the demo, producing reinforcements you can watch spawn.
+        if let Some(camp) = economy::build(
+            &mut sim.world,
+            &mut sim.resources,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(-22), Fixed::ZERO),
+        ) {
+            sim.world.building[camp.index as usize].build_ticks_left = 0; // skip construction
+            economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
+            economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
+        }
+
+        // Kick off the skirmish: both squads advance into contact (combat fires en route).
+        sim.step(&[
+            Command::AttackMove {
+                entity: ally_a,
+                target: Vec2::new(Fixed::from_int(6), Fixed::from_int(2)),
+            },
+            Command::AttackMove {
+                entity: ally_b,
+                target: Vec2::new(Fixed::from_int(6), Fixed::from_int(-4)),
+            },
+            Command::AttackMove {
+                entity: foe_a,
+                target: Vec2::new(Fixed::from_int(-6), Fixed::ZERO),
+            },
+            Command::AttackMove {
+                entity: foe_b,
+                target: Vec2::new(Fixed::from_int(-6), Fixed::from_int(4)),
+            },
+            Command::AttackMove {
+                entity: foe_c,
+                target: Vec2::new(Fixed::from_int(-6), Fixed::from_int(-4)),
+            },
+        ]);
 
         let curr = sim.snapshot();
         let prev = curr.clone();
