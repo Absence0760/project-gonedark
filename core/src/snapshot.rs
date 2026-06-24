@@ -15,6 +15,9 @@ use crate::territory::Territory;
 /// One unit's renderable state at a tick.
 #[derive(Clone, Debug)]
 pub struct UnitSnapshot {
+    /// The unit's world (ECS) index — the renderer matches command-layer selection against
+    /// this to highlight selected units. Presentation only; not checksummed.
+    pub entity_index: u32,
     pub pos: Vec2,
     pub vel: Vec2,
     pub embodied: bool,
@@ -51,6 +54,7 @@ impl Snapshot {
                 continue;
             }
             units.push(UnitSnapshot {
+                entity_index: i as u32,
                 pos: world.pos[i],
                 vel: world.vel[i],
                 embodied: world.input_source[i] == InputSource::Embodied,

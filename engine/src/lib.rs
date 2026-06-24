@@ -524,7 +524,17 @@ impl Game {
         };
 
         // 6. Interpolate prev→curr into render instances (the float boundary lives in render).
-        self.renderer.prepare(&self.prev, &self.curr, alpha);
+        // The command-layer selection (presentation only) is handed in as world indices so the
+        // renderer rims the selected units. It is a *command-view* affordance, so we pass none
+        // while embodied — the selection set may linger across an embody, but its rims have no
+        // place in the first-person view.
+        let selected_indices: Vec<u32> = if self.embodied {
+            Vec::new()
+        } else {
+            self.selection.units.iter().map(|e| e.index).collect()
+        };
+        self.renderer
+            .prepare(&self.prev, &self.curr, alpha, &selected_indices);
 
         // 7. Render the interpolated snapshot, fog-filtered (world goes dark while embodied).
         self.renderer.render(

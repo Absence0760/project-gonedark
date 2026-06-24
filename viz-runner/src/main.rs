@@ -7,6 +7,8 @@
 //! invariants:
 //!
 //!   - **command** — top-down view draws units (player-blue + enemy-red) on the lit field.
+//!   - **selected** — a command-layer band-select rims the selected units in bright white (the
+//!     player can see what's selected) — more bright-rim pixels than the un-selected frame.
 //!   - **embodied_dark** — possessing a unit makes the world go dark (invariant #6): the frame is
 //!     ~entirely black (the strategic map is gone; the avatar is self-occluded in first person).
 //!   - **embodied_hud** — after some combat the directional alert HUD draws markers over the dark
@@ -171,6 +173,12 @@ fn is_player_blue(p: [u8; 4]) -> bool {
 fn is_enemy_red(p: [u8; 4]) -> bool {
     p[0] > 150 && p[0] as i32 > p[1] as i32 + 40 && p[0] as i32 > p[2] as i32 + 40
 }
+/// The selection rim is a bright cool-white (R,G,B all high). No other renderable draws this:
+/// faction bodies are saturated, the health bar is green/dark-red, the clear is a dark slate. So
+/// a near-white pixel is a selection-highlight pixel.
+fn is_select_rim(p: [u8; 4]) -> bool {
+    p[0] > 220 && p[1] > 220 && p[2] > 220
+}
 fn count(rgba: &[u8], f: impl Fn([u8; 4]) -> bool) -> usize {
     px(rgba).filter(|&p| f(p)).count()
 }
@@ -224,6 +232,41 @@ fn main() {
     check(&mut failures, "command_not_dark", dark < 0.5, format!("dark fraction {dark:.3} (<0.5 — the lit field is not black)"));
     check(&mut failures, "command_has_player_units", blue > 50, format!("{blue} player-blue px (>50)"));
     check(&mut failures, "command_has_enemy_units", red > 50, format!("{red} enemy-red px (>50)"));
+    // Baseline: with nothing selected the command frame draws no bright selection rim.
+    let baseline_rim = count(&cmd, is_select_rim);
+
+    // --- Scenario 1b: command-layer selection highlight ----------------------------------------
+    // Band-select the player squad (a pointer-down at one corner, pointer-up at the opposite),
+    // then render: the selected units must gain a bright rim the un-selected command frame lacks.
+    println!("[selected] band-selecting the player squad rims the selected units (presentation #4)");
+    let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
+    // The player squad sits at world x≈[-9,-7], y≈[-7,4]. With the square 512² viewport framing
+    // ±40 world units, these pixel corners bracket the whole squad (top-left ≈ (-13,6),
+    // bottom-right ≈ (-5,-9)). Press at one corner, release at the other → a band select.
+    let band_down = InputFrame {
+        pointer: Some((172.0, 217.0)),
+        pointer_down: true,
+        ..Default::default()
+    };
+    let band_up = InputFrame {
+        pointer: Some((224.0, 314.0)),
+        pointer_up: true,
+        ..Default::default()
+    };
+    // Frame 1: press (anchor). Frame 2: release at the opposite corner (commit the band).
+    g.frame(&band_down, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio);
+    g.frame(&band_up, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio);
+    // Settle a few frames so the highlighted units render steadily, then read back.
+    advance(&mut g, 4, InputFrame::default(), &gpu, &view);
+    let sel = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/selected.png", &sel);
+    let sel_rim = count(&sel, is_select_rim);
+    check(
+        &mut failures,
+        "selection_highlight_visible",
+        sel_rim > baseline_rim + 30,
+        format!("{sel_rim} bright-rim px after band-select vs {baseline_rim} with nothing selected (selection rim drawn)"),
+    );
 
     // --- Scenario 2: embodied — world goes dark ------------------------------------------------
     println!("[embodied_dark] possessing a unit collapses vision to the avatar (invariant #6)");
@@ -253,7 +296,7 @@ fn main() {
         format!("{hud_nondark} non-dark px vs {dark_nondark} with no alerts (alert markers added)"),
     );
 
-    println!("\nPNGs: target/viz/{{command,embodied_dark,embodied_hud}}.png");
+    println!("\nPNGs: target/viz/{{command,selected,embodied_dark,embodied_hud}}.png");
     if failures == 0 {
         println!("RESULT: all visual assertions passed ✓");
     } else {

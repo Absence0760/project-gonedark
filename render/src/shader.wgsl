@@ -9,7 +9,8 @@
 // This is the float side of invariant #4 — every number here is already an `f32`; the
 // Q16.16 → f32 hop happened on the CPU in `render::fixed_to_f32`, never in `core`.
 
-const FLAG_RING: u32 = 2u; // a territory control point — drawn as a hollow ring
+const FLAG_RING: u32 = 2u;     // a territory control point — drawn as a hollow ring
+const FLAG_SELECTED: u32 = 4u; // command-layer selected — bright rim around the quad
 
 // Column-major 4x4 view-projection, uploaded by the wiring layer (glam Mat4).
 struct Camera {
@@ -62,6 +63,17 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
             discard;
         }
         return vec4<f32>(in.color, 1.0);
+    }
+
+    // Selection rim (command view): a bright near-white border hugging the outer edge of the
+    // quad, so a selected unit reads obviously different at a glance. Drawn first so it wins over
+    // the body fill; the health bar (top strip) still overlays it where present. The rim is the
+    // outermost ~30% of the quad on either axis (|x| or |y| past the threshold) — thick enough to
+    // read on the small command-view unit quads.
+    let RIM: f32 = 0.7;
+    if (in.flags & FLAG_SELECTED) != 0u
+        && (abs(in.local.x) > RIM || abs(in.local.y) > RIM) {
+        return vec4<f32>(0.98, 0.98, 1.0, 1.0); // bright cool-white selection rim
     }
 
     // Unit / building: body color, with a health bar across the top strip.

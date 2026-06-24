@@ -48,6 +48,7 @@ pub fn fixed_to_f32(v: Fixed) -> f32 {
 /// Instance flag bits.
 pub const FLAG_EMBODIED: u32 = 1; // the possessed avatar — survives the dark-frame filter
 pub const FLAG_RING: u32 = 2; // a territory control point — drawn as a hollow ring
+pub const FLAG_SELECTED: u32 = 4; // command-layer selected — drawn with a bright rim (presentation)
 
 /// Drawn half-extent (world units) per kind. Render-only cosmetic scale.
 const UNIT_HALF: f32 = 0.5;
@@ -74,8 +75,16 @@ const AVATAR_COLOR: [f32; 3] = [1.0, 0.85, 0.2];
 /// shorter snapshot wins, so a mismatched count never panics); positions cross the float
 /// boundary via [`fixed_to_f32`] and are lerped, while faction/health/embodied are read from
 /// the *current* snapshot. Control points are appended from the current snapshot (they are
-/// static, so they are not interpolated). Device-free and pure, so it is unit-testable.
-pub fn interpolate_instances(prev: &Snapshot, curr: &Snapshot, alpha: f32) -> Vec<UnitInstance> {
+/// static, so they are not interpolated). `selected` is the set of currently-selected world
+/// (ECS) indices (command-view-only presentation state — empty while embodied); a unit whose
+/// `entity_index` is in `selected` gets [`FLAG_SELECTED`] so the shader rims it. Device-free
+/// and pure, so it is unit-testable.
+pub fn interpolate_instances(
+    prev: &Snapshot,
+    curr: &Snapshot,
+    alpha: f32,
+    selected: &[u32],
+) -> Vec<UnitInstance> {
     let n = prev.units.len().min(curr.units.len());
     let mut out = Vec::with_capacity(n + curr.control_points.len());
 
@@ -92,6 +101,10 @@ pub fn interpolate_instances(prev: &Snapshot, curr: &Snapshot, alpha: f32) -> Ve
         } else {
             faction_color(b.faction)
         };
+        // Command-layer selection highlight (presentation only — never sim state).
+        if selected.contains(&b.entity_index) {
+            flags |= FLAG_SELECTED;
+        }
         let half_extent = if b.building { BUILDING_HALF } else { UNIT_HALF };
         let health = fixed_to_f32(b.health).clamp(0.0, 1.0);
 
@@ -148,7 +161,7 @@ pub struct UnitInstance {
     pub b: f32,
     /// Health fraction in `[0,1]`; negative ([`NO_HEALTH_BAR`]) draws no bar.
     pub health: f32,
-    /// [`FLAG_EMBODIED`] | [`FLAG_RING`].
+    /// [`FLAG_EMBODIED`] | [`FLAG_RING`] | [`FLAG_SELECTED`].
     pub flags: u32,
 }
 
@@ -333,9 +346,10 @@ impl Renderer {
 
     /// Build render instances by interpolating between the previous and current sim snapshots
     /// by `alpha` in `[0,1]` (invariant #4). Produces CPU data only; the GPU upload happens in
-    /// [`Renderer::render`].
-    pub fn prepare(&mut self, prev: &Snapshot, curr: &Snapshot, alpha: f32) {
-        self.instances = interpolate_instances(prev, curr, alpha);
+    /// [`Renderer::render`]. `selected` carries the command-layer selected world indices so the
+    /// renderer rims them (empty while embodied — presentation state only, never sim state).
+    pub fn prepare(&mut self, prev: &Snapshot, curr: &Snapshot, alpha: f32, selected: &[u32]) {
+        self.instances = interpolate_instances(prev, curr, alpha, selected);
     }
 
     /// The CPU-side interpolated instances from the last [`Renderer::prepare`].
@@ -450,6 +464,7 @@ mod tests {
 
     fn unit(x: Fixed, y: Fixed, embodied: bool) -> UnitSnapshot {
         UnitSnapshot {
+            entity_index: 0,
             pos: Vec2::new(x, y),
             vel: Vec2::ZERO,
             embodied,
@@ -494,7 +509,7 @@ mod tests {
             1,
             vec![unit(Fixed::from_int(10), Fixed::from_int(20), false)],
         );
-        let out = interpolate_instances(&prev, &curr, 0.0);
+        let out = interpolate_instances(&prev, &curr, 0.0, &[]);
         assert_eq!(out.len(), 1);
         assert!((out[0].x - 2.0).abs() < EPS);
         assert!((out[0].y - 4.0).abs() < EPS);
@@ -507,7 +522,7 @@ mod tests {
             1,
             vec![unit(Fixed::from_int(10), Fixed::from_int(20), false)],
         );
-        let out = interpolate_instances(&prev, &curr, 0.5);
+        let out = interpolate_instances(&prev, &curr, 0.5, &[]);
         assert_eq!(out.len(), 1);
         assert!((out[0].x - 6.0).abs() < EPS);
         assert!((out[0].y - 12.0).abs() < EPS);
@@ -526,7 +541,7 @@ mod tests {
             1,
             vec![unit(Fixed::from_int(10), Fixed::from_int(10), false)],
         );
-        let out = interpolate_instances(&prev, &curr, 1.0);
+        let out = interpolate_instances(&prev, &curr, 1.0, &[]);
         assert_eq!(out.len(), 1);
         assert!((out[0].x - 10.0).abs() < EPS);
     }
@@ -538,7 +553,7 @@ mod tests {
         // curr says embodied → amber color, FLAG_EMBODIED set (survives the dark filter).
         let prev = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, true)]);
         let curr = snapshot(1, vec![unit(Fixed::ONE, Fixed::ONE, true)]);
-        let out = interpolate_instances(&prev, &curr, 0.5);
+        let out = interpolate_instances(&prev, &curr, 0.5, &[]);
         assert_eq!(out[0].flags & FLAG_EMBODIED, FLAG_EMBODIED);
         assert_eq!([out[0].r, out[0].g, out[0].b], AVATAR_COLOR);
     }
@@ -548,7 +563,7 @@ mod tests {
         let mut enemy = unit(Fixed::ZERO, Fixed::ZERO, false);
         enemy.faction = Faction::Enemy;
         let s = snapshot(0, vec![enemy]);
-        let out = interpolate_instances(&s, &s, 0.0);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
         assert_eq!([out[0].r, out[0].g, out[0].b], faction_color(Faction::Enemy));
         assert_eq!(out[0].flags & FLAG_EMBODIED, 0);
     }
@@ -559,7 +574,7 @@ mod tests {
         b.building = true;
         b.health = Fixed::HALF;
         let s = snapshot(0, vec![b]);
-        let out = interpolate_instances(&s, &s, 0.0);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
         assert!(out[0].half_extent > UNIT_HALF);
         assert!((out[0].health - 0.5).abs() < EPS);
     }
@@ -572,7 +587,7 @@ mod tests {
             owner: Faction::Enemy,
             progress: Fixed::ZERO,
         }];
-        let out = interpolate_instances(&s, &s, 0.0);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
         assert_eq!(out.len(), 2, "one unit + one control point");
         let cp = &out[1];
         assert_eq!(cp.flags & FLAG_RING, FLAG_RING);
@@ -584,7 +599,51 @@ mod tests {
     #[test]
     fn empty_snapshots_yield_empty() {
         let empty = snapshot(0, vec![]);
-        assert!(interpolate_instances(&empty, &empty, 0.5).is_empty());
+        assert!(interpolate_instances(&empty, &empty, 0.5, &[]).is_empty());
+    }
+
+    // ---- selection highlight (command-view presentation) ----
+
+    /// Build a unit snapshot carrying an explicit world index, so the selection match has
+    /// something to key on.
+    fn unit_at(index: u32, x: Fixed, y: Fixed) -> UnitSnapshot {
+        let mut u = unit(x, y, false);
+        u.entity_index = index;
+        u
+    }
+
+    /// A unit whose world index is in `selected` gets `FLAG_SELECTED`; others don't.
+    #[test]
+    fn selected_index_sets_flag_only_on_matching_unit() {
+        let s = snapshot(
+            0,
+            vec![
+                unit_at(3, Fixed::ZERO, Fixed::ZERO),
+                unit_at(7, Fixed::ONE, Fixed::ONE),
+            ],
+        );
+        let out = interpolate_instances(&s, &s, 0.0, &[7]);
+        assert_eq!(out[0].flags & FLAG_SELECTED, 0, "index 3 not selected");
+        assert_eq!(out[1].flags & FLAG_SELECTED, FLAG_SELECTED, "index 7 selected");
+    }
+
+    /// An empty selection (the embodied case) flags nothing.
+    #[test]
+    fn empty_selection_flags_nothing() {
+        let s = snapshot(0, vec![unit_at(3, Fixed::ZERO, Fixed::ZERO)]);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        assert_eq!(out[0].flags & FLAG_SELECTED, 0);
+    }
+
+    /// Selection rides alongside the embodied flag without clobbering it (both bits coexist).
+    #[test]
+    fn selection_and_embodied_flags_coexist() {
+        let mut u = unit(Fixed::ZERO, Fixed::ZERO, true);
+        u.entity_index = 5;
+        let s = snapshot(0, vec![u]);
+        let out = interpolate_instances(&s, &s, 0.0, &[5]);
+        assert_eq!(out[0].flags & FLAG_EMBODIED, FLAG_EMBODIED);
+        assert_eq!(out[0].flags & FLAG_SELECTED, FLAG_SELECTED);
     }
 
     /// Validate `shader.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression
