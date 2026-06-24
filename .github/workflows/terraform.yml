@@ -1,0 +1,46 @@
+name: terraform
+
+# Lightweight IaC hygiene for infra/: formatting + config validity. No AWS creds and no
+# `plan` here — `init -backend=false` + `validate` check config syntax and provider schemas
+# without touching real state or the sops-encrypted secrets in the private estate repo.
+# (Mirrors the sibling project-running repo's terraform.yml, minus the credentialed plan.)
+# When the stack is bootstrapped for real, a separate credentialed `plan` job (GitHub OIDC
+# → the gonedark deploy role) can be added.
+
+on:
+  push:
+    paths: ['infra/**', '.github/workflows/terraform.yml']
+  pull_request:
+    paths: ['infra/**', '.github/workflows/terraform.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: fmt + validate · infra
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.15.0' # matches infra/.terraform-version (tfenv)
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      # -backend=false: validate config + provider schemas with no AWS creds / no remote
+      # state. Downloads the aws + carlpett/sops providers from the registry.
+      - name: Init (no backend)
+        run: terraform init -backend=false
+
+      - name: Validate
+        run: terraform validate

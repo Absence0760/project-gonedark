@@ -15,13 +15,16 @@ terraform {
   }
 
   # Remote state in this project's own AWS account (S3 + DynamoDB lock), created by
-  # the estate baseline (`new-project-account.sh gonedark`). Fill in after bootstrap.
-  backend "s3" {
-    # bucket         = "gonedark-tfstate-<account-id>"
-    # key            = "infra/terraform.tfstate"
-    # region         = "us-east-1"
-    # dynamodb_table = "gonedark-tflock"
-    # profile        = "gonedark"   # SSO profile
-    # encrypt        = true
-  }
+  # the estate baseline (`new-project-account.sh gonedark`). Fill in + UNCOMMENT the whole
+  # block after bootstrap. Left fully commented so `terraform validate` passes on the
+  # un-bootstrapped scaffold (CI runs `fmt -check` + `validate`): an empty `backend "s3" {}`
+  # with no bucket/key is invalid config and would fail validate. Until then state is local.
+  # backend "s3" {
+  #   bucket         = "gonedark-tfstate-<account-id>"
+  #   key            = "infra/terraform.tfstate"
+  #   region         = "us-east-1"
+  #   dynamodb_table = "gonedark-tflock"
+  #   profile        = "gonedark"   # SSO profile
+  #   encrypt        = true
+  # }
 }
