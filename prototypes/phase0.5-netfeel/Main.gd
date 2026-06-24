@@ -34,20 +34,22 @@ const W := 6                    # redundant input window per packet
 const MAX_HP := 5
 const RESPAWN_TICKS := 60
 
-# ── Latency presets the NET button cycles (plan §7) ──
-const PRESETS := [
-	{ "n": "LAN 0ms",        "rtt": 0.0,   "jit": 0.0,  "loss": 0.0 },
-	{ "n": "40ms clean",     "rtt": 40.0,  "jit": 0.0,  "loss": 0.0 },
-	{ "n": "80ms clean",     "rtt": 80.0,  "jit": 0.0,  "loss": 0.0 },
-	{ "n": "120ms clean",    "rtt": 120.0, "jit": 0.0,  "loss": 0.0 },
-	{ "n": "80ms jit/loss",  "rtt": 80.0,  "jit": 15.0, "loss": 0.02 },
-	{ "n": "160ms jit/loss", "rtt": 160.0, "jit": 20.0, "loss": 0.03 },
+# ── Connection quality the CONNECTION button cycles. Plain labels hide the real
+#    network numbers (RTT ms / jitter / packet loss). Synced to BOTH peers so the
+#    latency is symmetric — otherwise you'd only delay one direction. (plan §7) ──
+const CONN := [
+	{ "label": "PERFECT (same room)", "rtt": 0.0,   "jit": 0.0,  "loss": 0.0 },
+	{ "label": "GOOD WI-FI",          "rtt": 50.0,  "jit": 5.0,  "loss": 0.0 },
+	{ "label": "BAD WI-FI",           "rtt": 120.0, "jit": 15.0, "loss": 0.01 },
+	{ "label": "CELLULAR (worst)",    "rtt": 180.0, "jit": 25.0, "loss": 0.03 },
 ]
 
 enum Role { NONE, HOST, CLIENT }
 var role: int = Role.NONE
 var my_av := 0                  # host drives avatar 0, client avatar 1
 var started := false
+var pending_join_ip := ""       # join keeps retrying this until connected
+var _wired := false
 
 # ── netcode clocks ──
 var tick_hz := 30
@@ -61,10 +63,10 @@ var remote_inputs: Dictionary = {}   # sample_tick -> cmd
 var rtt := 0.0
 var jit := 0.0
 var loss := 0.0
-var preset_i := 0
+var preset_i := 2                    # default BAD WI-FI so the A/B difference is obvious
 
 # ── feel mode ──
-var mode_b := true                   # false = pure lockstep, true = avatar-local prediction
+var mode_b := true                   # INSTANT AIM on = avatar-local prediction; off = pure lockstep
 
 # ── avatars (authoritative) ──
 var avatars: Array = []              # 2 dicts
@@ -85,6 +87,8 @@ var world: Node3D
 var cam3d: Camera3D
 var cover: Array = []
 var hud: CanvasLayer
+var banner: Label
+var hint: Label
 var diag: Label
 var hitmark: Polygon2D
 var crosshair: Polygon2D
@@ -92,9 +96,9 @@ var joy_base: Polygon2D
 var joy_knob: Polygon2D
 var lobby: Control
 var ip_edit: LineEdit
-var mode_btn: Button
-var tick_btn: Button
-var net_btn: Button
+var aim_btn: Button
+var conn_btn: Button
+var smooth_btn: Button
 var fire_btn: Button
 
 # ── touch ──
@@ -108,7 +112,7 @@ var ui_rects: Array = []
 
 func _ready() -> void:
 	randomize()
-	_apply_preset(0)
+	_apply_conn(preset_i)
 	_build_world()
 	_build_arena_and_avatars()
 	_build_hud()
@@ -199,19 +203,37 @@ func _build_hud() -> void:
 	joy_knob.visible = false
 	hud.add_child(joy_knob)
 
+	# big plain-English status, top-centre
+	banner = Label.new()
+	banner.add_theme_font_size_override("font_size", 26)
+	banner.add_theme_color_override("font_color", Color(1, 1, 1))
+	banner.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	banner.add_theme_constant_override("outline_size", 6)
+	banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	banner.visible = false
+	hud.add_child(banner)
+
+	hint = Label.new()
+	hint.add_theme_font_size_override("font_size", 18)
+	hint.add_theme_color_override("font_color", Color(1.0, 0.92, 0.6))
+	hint.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	hint.add_theme_constant_override("outline_size", 5)
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.visible = false
+	hud.add_child(hint)
+
+	# tiny technical readout (for me, when you report back) — bottom-left, dim
 	diag = Label.new()
-	diag.add_theme_font_size_override("font_size", 18)
-	diag.add_theme_color_override("font_color", Color(0.85, 0.95, 0.85))
-	diag.add_theme_color_override("font_outline_color", Color(0, 0, 0))
-	diag.add_theme_constant_override("outline_size", 4)
+	diag.add_theme_font_size_override("font_size", 13)
+	diag.add_theme_color_override("font_color", Color(0.7, 0.8, 0.7, 0.55))
 	diag.visible = false
 	hud.add_child(diag)
 
-	mode_btn = _btn("MODE", Color(0.25, 0.45, 0.7), _toggle_mode)
-	tick_btn = _btn("30Hz", Color(0.3, 0.45, 0.4), _toggle_tick)
-	net_btn = _btn("NET", Color(0.45, 0.4, 0.25), _cycle_net)
+	aim_btn = _btn("INSTANT AIM: ON", Color(0.20, 0.55, 0.40), _toggle_mode)
+	conn_btn = _btn("CONNECTION", Color(0.40, 0.40, 0.55), _cycle_conn)
+	smooth_btn = _btn("SMOOTHNESS: NORMAL", Color(0.42, 0.40, 0.28), _toggle_tick)
 	fire_btn = _btn("● FIRE", Color(0.8, 0.25, 0.2), _fire)
-	for b in [mode_btn, tick_btn, net_btn, fire_btn]:
+	for b in [aim_btn, conn_btn, smooth_btn, fire_btn]:
 		b.visible = false
 		hud.add_child(b)
 
@@ -272,11 +294,19 @@ func host() -> void:
 		_flash_title("server error %d" % err)
 		return
 	multiplayer.multiplayer_peer = peer
-	multiplayer.peer_connected.connect(_on_peer)
-	multiplayer.peer_disconnected.connect(_on_drop)
+	_wire_signals()
 	role = Role.HOST
 	my_av = 0
-	_flash_title("hosting on :%d — waiting for join…" % PORT)
+	_flash_title("hosting on :%d — waiting for the other device to join…" % PORT)
+
+
+func _wire_signals() -> void:
+	if _wired:
+		return
+	_wired = true
+	multiplayer.peer_connected.connect(_on_peer)
+	multiplayer.peer_disconnected.connect(_on_drop)
+	multiplayer.connection_failed.connect(_on_conn_failed)
 
 
 func _join_pressed() -> void:
@@ -284,18 +314,32 @@ func _join_pressed() -> void:
 
 
 func join(ip: String) -> void:
-	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_client(ip, PORT)
-	if err != OK:
-		_flash_title("client error %d" % err)
-		return
-	multiplayer.multiplayer_peer = peer
-	multiplayer.peer_connected.connect(_on_peer)
-	multiplayer.peer_disconnected.connect(_on_drop)
-	multiplayer.connection_failed.connect(func(): _flash_title("connection failed"))
+	pending_join_ip = ip
 	role = Role.CLIENT
 	my_av = 1
-	_flash_title("joining %s…" % ip)
+	_try_connect()
+
+
+func _try_connect() -> void:
+	if started or pending_join_ip == "":
+		return
+	var peer := ENetMultiplayerPeer.new()
+	var err := peer.create_client(pending_join_ip, PORT)
+	if err != OK:
+		_flash_title("can't start client (%d) — retrying…" % err)
+		get_tree().create_timer(1.5).timeout.connect(_try_connect)
+		return
+	multiplayer.multiplayer_peer = peer
+	_wire_signals()
+	_flash_title("looking for host at %s …" % pending_join_ip)
+
+
+func _on_conn_failed() -> void:
+	if started:
+		return
+	_flash_title("no host yet at %s — retrying… (tap HOST on the other device)" % pending_join_ip)
+	multiplayer.multiplayer_peer = null
+	get_tree().create_timer(1.5).timeout.connect(_try_connect)
 
 
 func _on_peer(_id: int) -> void:
@@ -306,8 +350,10 @@ func _on_drop(_id: int) -> void:
 	started = false
 	_flash_title("peer dropped — back to lobby")
 	lobby.visible = true
-	for b in [mode_btn, tick_btn, net_btn, fire_btn]:
+	for b in [aim_btn, conn_btn, smooth_btn, fire_btn]:
 		b.visible = false
+	banner.visible = false
+	hint.visible = false
 	diag.visible = false
 
 
@@ -330,9 +376,12 @@ func _start_match() -> void:
 	started = true
 	print("match start, role=", role, " my_av=", my_av)
 	lobby.visible = false
+	banner.visible = true
+	hint.visible = true
 	diag.visible = true
-	for b in [mode_btn, tick_btn, net_btn, fire_btn]:
+	for b in [aim_btn, conn_btn, smooth_btn, fire_btn]:
 		b.visible = true
+	_update_banner()
 	_relayout()
 
 
@@ -660,35 +709,66 @@ func _fire() -> void:
 
 # ───────────────────────────── buttons / diag ────────────────────────────
 func _toggle_mode() -> void:
+	# INSTANT AIM — local feel choice (prediction on/off); no need to sync
 	mode_b = not mode_b
 	if mode_b:
 		cam_yaw = float(avatars[my_av].yaw)
 		cam_pitch = float(avatars[my_av].pitch)
 		render_pos = avatars[my_av].pos
+	aim_btn.text = "INSTANT AIM: ON" if mode_b else "INSTANT AIM: OFF"
+	_update_banner()
 
 func _toggle_tick() -> void:
-	tick_hz = 60 if tick_hz == 30 else 30
-	tick_btn.text = "%dHz" % tick_hz
+	var hz: int = 60 if tick_hz == 30 else 30
+	_apply_tick(hz)
+	_net_tick.rpc(hz)                 # keep both peers on the same tick
 
-func _cycle_net() -> void:
-	_apply_preset((preset_i + 1) % PRESETS.size())
+func _cycle_conn() -> void:
+	var i: int = (preset_i + 1) % CONN.size()
+	_apply_conn(i)
+	_net_set.rpc(i)                   # symmetric latency on both peers
 
-func _apply_preset(i: int) -> void:
+func _apply_conn(i: int) -> void:
 	preset_i = i
-	var p: Dictionary = PRESETS[i]
+	var p: Dictionary = CONN[i]
 	rtt = p.rtt
 	jit = p.jit
 	loss = p.loss
+	if conn_btn != null:
+		conn_btn.text = "CONNECTION: " + str(CONN[i].label)
+	_update_banner()
+
+func _apply_tick(hz: int) -> void:
+	tick_hz = hz
+	if smooth_btn != null:
+		smooth_btn.text = "SMOOTHNESS: " + ("HIGH" if hz == 60 else "NORMAL")
+	_update_banner()
+
+@rpc("any_peer", "reliable", "call_remote")
+func _net_set(i: int) -> void:
+	_apply_conn(i)
+
+@rpc("any_peer", "reliable", "call_remote")
+func _net_tick(hz: int) -> void:
+	_apply_tick(hz)
+
+func _update_banner() -> void:
+	if banner == null:
+		return
+	var aim: String = "INSTANT AIM: ON" if mode_b else "INSTANT AIM: OFF"
+	banner.text = "%s        %s" % [aim, str(CONN[preset_i].label)]
+	hint.text = ("Aiming feels instant. Tap INSTANT AIM to feel the lag without it." if mode_b
+		else "Feel the delay? Tap INSTANT AIM to switch the fix back on.")
 
 func _update_diag() -> void:
 	var d := _input_delay()
 	var a: Dictionary = avatars[my_av]
 	var en: Dictionary = avatars[1 - my_av]
-	var modename := "B predict" if mode_b else "A lockstep"
-	diag.text = "%s | MODE %s | %dHz | D=%d (%dms) | %s | lag s%d→%d=%d | HP you %d  enemy %d" % [
-		("HOST" if role == Role.HOST else "CLIENT"), modename, tick_hz, d,
-		int(d * 1000.0 / tick_hz), PRESETS[preset_i].n,
-		sim_tick, send_tick, send_tick - sim_tick, int(a.hp), int(en.hp),
+	diag.text = "[tech] %s · aim=%s · %dHz · D=%d(%dms) · %s · lag %d · HP %d/%d" % [
+		("HOST" if role == Role.HOST else "CLIENT"),
+		("predict" if mode_b else "lockstep"), tick_hz, d,
+		int(d * 1000.0 / tick_hz), str(CONN[preset_i].label),
+		send_tick - sim_tick, int(a.hp), int(en.hp),
 	]
 
 
@@ -697,26 +777,37 @@ func _relayout() -> void:
 	var vp: Vector2 = get_viewport().get_visible_rect().size
 	crosshair.position = vp * 0.5
 	hitmark.position = vp * 0.5
-	diag.position = Vector2(16, 10)
+	# top row of the three plain controls (INSTANT AIM is the big headline one)
+	aim_btn.position = Vector2(16, 12); aim_btn.size = Vector2(380, 78)
+	conn_btn.position = Vector2(vp.x * 0.5 - 190, 16); conn_btn.size = Vector2(380, 66)
+	smooth_btn.position = Vector2(vp.x - 360, 16); smooth_btn.size = Vector2(344, 66)
+	# plain status + hint, centred under the row
+	banner.position = Vector2(0, 104); banner.size = Vector2(vp.x, 32)
+	hint.position = Vector2(0, 150); hint.size = Vector2(vp.x, 24)
+	diag.position = Vector2(16, vp.y - 22)
 	fire_btn.position = Vector2(vp.x - 180, vp.y - 150); fire_btn.size = Vector2(150, 110)
-	mode_btn.position = Vector2(vp.x - 180, 16); mode_btn.size = Vector2(164, 52)
-	tick_btn.position = Vector2(vp.x - 360, 16); tick_btn.size = Vector2(120, 52)
-	net_btn.position = Vector2(vp.x - 360, 78); net_btn.size = Vector2(344, 52)
-	net_btn.text = "NET: " + str(PRESETS[preset_i].n)
 	_refresh_ui_rects()
 
 func _refresh_ui_rects() -> void:
-	ui_rects = [fire_btn.get_global_rect(), mode_btn.get_global_rect(),
-		tick_btn.get_global_rect(), net_btn.get_global_rect()]
+	ui_rects = [fire_btn.get_global_rect(), aim_btn.get_global_rect(),
+		conn_btn.get_global_rect(), smooth_btn.get_global_rect()]
 
 
 # ───────────────────────────── misc ──────────────────────────────────────
 func _auto_start_from_cmdline() -> void:
+	var auto := false
 	for arg in OS.get_cmdline_user_args():
 		if arg == "--host":
-			host()
+			host(); auto = true
 		elif arg.begins_with("--join="):
-			join(arg.substr(7))
+			join(arg.substr(7)); auto = true
+	# Lock the lobby on an auto-started instance (the opponent) so it can't be
+	# mis-clicked — the only action a human should take is HOST on the other device.
+	if auto:
+		for c in lobby.get_children():
+			if c is Button or c is LineEdit:
+				c.visible = false
+		_flash_title("OPPONENT (this laptop) — leave this window alone.\nOn the PHONE: tap HOST. This connects on its own.")
 
 func _flash_title(s: String) -> void:
 	if is_instance_valid(lobby) and lobby.get_child_count() > 0:
