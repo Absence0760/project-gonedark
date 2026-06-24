@@ -102,11 +102,16 @@ pub const fn build_cost(kind: BuildingKind) -> i64 {
 /// spawns the bit-identical unit (determinism).
 pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
     match kind {
+        // Damage is a deliberately-low playtest pass (balance is untuned — D24): at 60 Hz a
+        // Rifleman now deals 4 dmg every 30 ticks (8 DPS), so a 1v1 takes ~12.5 s and focus-fire
+        // still resolves quickly — but troops no longer delete each other on contact, and
+        // suppression (pins after 6 hits, ~3 s) gets to matter before a unit dies. Halving the
+        // old damage keeps the Rifleman↔Heavy ratio intact; dial to taste.
         UnitKind::Rifleman => (
             Health::full(Fixed::from_int(100)),
             Weapon {
                 range: Fixed::from_int(15),
-                damage: Fixed::from_int(8),
+                damage: Fixed::from_int(4),
                 cooldown_ticks: 30,
                 cooldown_left: 0,
             },
@@ -115,7 +120,7 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
             Health::full(Fixed::from_int(220)),
             Weapon {
                 range: Fixed::from_int(12),
-                damage: Fixed::from_int(22),
+                damage: Fixed::from_int(11),
                 cooldown_ticks: 60,
                 cooldown_left: 0,
             },
