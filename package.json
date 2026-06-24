@@ -13,6 +13,7 @@
     "desktop:build": "cargo build --workspace",
     "desktop:build:release": "cargo build --workspace --release",
     "desktop:sim": "cargo run -p gonedark-sim-runner",
+    "desktop:sim:stress": "cargo run -p gonedark-sim-runner --release -- 300 stress --time",
     "desktop:viz": "cargo run -p gonedark-viz-runner",
     "desktop:server": "cargo run -p gonedark-server",
 
