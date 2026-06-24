@@ -54,7 +54,8 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/platforms.md`](docs/platforms.md) | Cross-platform plan — Windows/Linux/Android/iOS, one shared core with platform-optimized backends |
 | [`docs/infrastructure.md`](docs/infrastructure.md) | Local dev (clone-and-run via Docker), config/env files, Terraform infra, sops secrets |
 | [`docs/roadmap.md`](docs/roadmap.md) | Build phases, milestones, and the top risks |
-| [`docs/phase-0.5-plan.md`](docs/phase-0.5-plan.md) | Detailed plan for the **next** gate — the embodiment-over-network latency spike (resolves Q7/Q8) |
+| [`docs/phase-0.5-plan.md`](docs/phase-0.5-plan.md) | Plan + record of the embodiment-over-network latency spike (resolved Q7/Q8 → D15/D16) |
+| [`docs/phase-1-plan.md`](docs/phase-1-plan.md) | Detailed plan for the **next** build — the Phase 1 Rust engine vertical slice |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
 | [`prototypes/phase0-controls/`](prototypes/phase0-controls/) | **Throwaway** Godot control prototype — proved the Phase 0 touch-feel gate (D14); deleted after Phase 0.5. Not the engine |

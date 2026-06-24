@@ -70,6 +70,10 @@ model.
 
 ## Phase 1 — Vertical slice
 
+> **Status: NEXT — first real engine code.** Detailed plan:
+> **[`phase-1-plan.md`](phase-1-plan.md)** (decide-first gates, crate skeleton, build order,
+> determinism CI, risks).
+
 **Goal:** the real engine spine, end to end, with one of everything.
 
 - ECS world + scheduler; data-oriented component storage.
