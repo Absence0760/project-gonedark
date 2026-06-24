@@ -2,8 +2,7 @@
 # Going Dark — Rust engine Android build/install/run loop (Phase 1 build-order step 6).
 #
 # Wraps cargo-ndk + Gradle + adb behind one entry point; the root package.json pnpm
-# scripts (`android:*`) call into here. This is the real-engine sibling of the throwaway
-# prototypes/phase0-controls/deploy.sh.
+# scripts (`android:*`) call into here.
 #
 #   Usage:  scripts/android.sh [command]
 #     setup     install the host toolchain (cargo-ndk + the rustup android target)

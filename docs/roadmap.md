@@ -16,10 +16,10 @@
 
 > **Status: PASSED (2026-06-23, [`decisions.md`](decisions.md) D14).** The embody↔command
 > loop feels good in hand, validated on real hardware (Galaxy S24). Touch-feel risk
-> retired; resolves [`open-questions.md`](open-questions.md) Q4. Throwaway prototype lives
-> in [`../prototypes/phase0-controls/`](../prototypes/phase0-controls/) (kept through Phase
-> 0.5, then deleted). Two caveats carried into D14: audio is still faked, and embodied feel
-> *over the network* is untested — that's Phase 0.5, **the next gate.**
+> retired; resolves [`open-questions.md`](open-questions.md) Q4. The throwaway prototype
+> (`prototypes/phase0-controls/`, a Godot build) has since been deleted on Phase 1
+> completion (D22). Two caveats carried into D14: audio is still faked, and embodied feel
+> *over the network* is untested — that's Phase 0.5.
 
 **Goal:** prove the core interaction is fun on a touchscreen before building any
 systems behind it.
@@ -41,10 +41,9 @@ work saves it. (Embodied feel *over the network* is the next risk — Phase 0.5.
 > **Status: PASSED (2026-06-23, [`decisions.md`](decisions.md) D15).** Embodied combat
 > feels good over lockstep **with avatar-local prediction** (raw lockstep felt laggy),
 > validated phone-vs-laptop over real Wi-Fi up to a simulated "cellular" link. Resolves
-> [`open-questions.md`](open-questions.md) Q7; Q8 (tick rate) still open, leaning hold-30 Hz,
-> to close early in Phase 1. **Phase 1 is now unblocked — the next gate.** Throwaway harness:
-> [`../prototypes/phase0.5-netfeel/`](../prototypes/phase0.5-netfeel/). Plan:
-> [`phase-0.5-plan.md`](phase-0.5-plan.md).
+> [`open-questions.md`](open-questions.md) Q7; Q8 (tick rate) resolved in Phase 1 via D16
+> (30 Hz too coarse) + D21 (global 60 Hz). The throwaway harness (`prototypes/phase0.5-netfeel/`)
+> has since been deleted on Phase 1 completion (D22). Plan: [`phase-0.5-plan.md`](phase-0.5-plan.md).
 
 **Goal:** prove embodied FPS combat feels acceptable under the chosen
 deterministic-lockstep + input-delay netcode — *before* committing the full engine.
@@ -70,25 +69,17 @@ model.
 
 ## Phase 1 — Vertical slice
 
-> **Status: CODE / CI / TOOLING COMPLETE — pending final on-device determinism + frame-rate
-> confirmation.** The Rust workspace carries a deterministic fixed-point `core`
-> (Q16.16 [D16→D17](decisions.md), hand-rolled SoA ECS [D18](decisions.md)), the PAL trait
-> boundary, a headless `sim-runner`, and the per-tick checksum CI matrix. A real deterministic
-> **flow field** (`core::flow_field`, integer Dijkstra over a 128×128 fixed grid) drives unit
-> movement (`sim-runner` bit-identical run-to-run **and** debug==release); a real `wgpu` 29 +
-> `winit` 0.30 desktop renderer + PAL interpolate prev→curr snapshots; and the shared
-> `engine::Game` loop ([D20](decisions.md)) wires the fixed-tick accumulator, tap-to-move, and
-> the embody/surface input swap with "world goes dark". **That loop now runs on a real arm64
-> device (Adreno 750, Galaxy-class):** the unit moves via the flow field, tap-to-move works, and
-> a provisional two-finger-tap embody toggle flips the world dark. **All three decide-first gates
-> are locked** — the last, **sim rate (Q10), is closed by [D21](decisions.md): global 60 Hz**
-> (`core::sim::TICK_HZ = 60`; dual-rate deferred to Phase 3, not killed). Determinism is proven
-> run-to-run, debug==release, and cross-arch in CI — the checksum matrix now also covers **native
-> arm64 Linux**. **Two on-device sign-offs remain before Phase 1 is DONE:** (a) on-device
-> determinism — `pnpm android:checksum` must show the device checksum stream **bit-identical** to
-> desktop; (b) target frame rate — read on-device via the `adb logcat` FPS heartbeat. Until both
-> pass, the **Unity/Godot fallback stays live** and the prototypes are **not** deleted. Detailed
-> plan: **[`phase-1-plan.md`](phase-1-plan.md)**.
+> **Status: DONE — PASSED ([`decisions.md`](decisions.md) D22).** The custom Rust engine is
+> validated end-to-end on real arm64 (Galaxy S24, Adreno 750). **On-device evidence:**
+> `pnpm android:checksum` confirmed the device sim-runner checksum stream **bit-identical** to
+> desktop over 300 ticks (`4c34c6b5951edf57`); the `adb logcat` FPS heartbeat showed
+> **120 fps** sustained at the locked **60 Hz** sim tick — demonstrating sim/render decoupling
+> live on hardware. One unit moves via the flow field; tap-to-move works; the two-finger embody
+> toggle flips the world dark. All three decide-first gates locked (D17, D18, D21). The
+> **Unity/Godot fallback (D8) is retired**; the throwaway prototypes are deleted. **Phase 2
+> (game systems) is the active phase.** Honest caveat: validated on a flagship; frame-rate/thermal
+> on mid-range silicon and the 200-unit power budget are Phase 3 (D21). Detailed plan and
+> sign-off record: **[`phase-1-plan.md`](phase-1-plan.md)**.
 
 **Goal:** the real engine spine, end to end, with one of everything.
 
@@ -103,10 +94,10 @@ model.
   path only, never writing sim state.
 - Minimal Vulkan renderer (instanced units), camera, top-down view.
 - One unit type moving via a flow field on screen.
-- **Validate on real mid-range arm64 hardware**, not just the emulator.
-- **Exit criterion:** one unit, commandable and embodiable, running deterministically
-  at target frame rate on a target device. Keep the Unity/Godot fallback live until
-  this passes.
+- **Validate on real arm64 hardware**, not just the emulator.
+- **Exit criterion (met — D22):** one unit, commandable and embodiable, running
+  deterministically at target frame rate on a target device. Passed on Galaxy S24;
+  fallback retired (D22).
 
 ## Phase 2 — Game systems
 
@@ -172,7 +163,7 @@ phone. Iterate logic on the emulator; **profile performance on real target devic
 | **Touch controls** | CoH controls were built for mouse+keyboard; layering FPS + instant swap on a touchscreen is harder than any engine problem here | **Phase 0 — PASSED (D14):** prototype felt good in hand on a Galaxy S24. Shipping touch UI still a Phase 2 design task |
 | **Embodied combat feels laggy** | Lockstep + input delay is RTS-optimal but adds fixed input latency with no prediction/rollback — wrong for twitch FPS aim (Q7/Q8) | **Phase 0.5 — PASSED (D15):** avatar-local prediction makes it feel good across conditions. Tick rate (Q8) still to confirm early in Phase 1 |
 | **One world, two views** | The same battlefield must work top-down as an RTS map *and* at eye level as an FPS space — double the asset/collision/LoD cost | Prove one space in both views in the **Phase 1** slice before scaling content; production-side answer (sourcing, tiers, two-view filter) in [`content-pipeline.md`](content-pipeline.md) |
-| **Build cost** | A custom native engine is a real investment | De-risk with the Phase 1 vertical slice on real hardware; keep Unity/Godot fallback live until it passes |
+| **Build cost** | A custom native engine is a real investment | **Phase 1 PASSED (D22):** vertical slice validated on Galaxy S24; Unity/Godot fallback retired |
 | **Determinism bugs** | Any float leaking into the sim breaks lockstep silently | Enforce fixed-point in the sim layer; per-tick checksum diffing in CI from day one |
 | **Device fragmentation** | Android GPU/thermal variance is wide | Quality tiers + dynamic scaling baked in early, not as a post-ship patch |
 | **Blindness feels unfair** | "World goes dark" can read as robbery if mishandled | Thin alert thread, strong audio, visceral/constant blindness feedback, fast re-entry (design doc §6) |

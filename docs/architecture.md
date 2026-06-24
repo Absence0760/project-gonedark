@@ -63,7 +63,8 @@ below are illustrative pseudocode; every system maps 1:1 to Rust (`wgpu` + `hecs
 - **Godot 4 + GDExtension (C++)** — lighter and open, but renderer/scene model need
   real work to handle hundreds of agents.
 
-Keep a fallback live until the vertical slice is validated on target hardware.
+The vertical slice was validated on target hardware (Galaxy S24, Adreno 750) — the
+fallback is retired (D22). The custom Rust engine is committed.
 
 ## Layered architecture
 

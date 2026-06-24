@@ -51,11 +51,11 @@ This spike tests **1v1 embodied feel over a wire**. Nothing more.
 
 ## 3. Approach — extend the Phase 0 Godot prototype
 
-Reuse `prototypes/phase0-controls/` rather than build fresh. It already has the embodied
-FPS controls, a 3D arena, hitscan fire, and the touch scheme — the expensive parts. We add
-a second networked avatar and a tick/netcode layer on top. Work in a **copy**
-(`prototypes/phase0.5-netfeel/`) so the Phase 0 reference artifact stays intact until both
-are deleted.
+The spike reused the Phase 0 Godot prototype (then at `prototypes/phase0-controls/`,
+since deleted on Phase 1 completion — D22) rather than building fresh. It already had the
+embodied FPS controls, a 3D arena, hitscan fire, and the touch scheme. A second networked
+avatar and a tick/netcode layer were added in a **copy** (`prototypes/phase0.5-netfeel/`,
+also since deleted — D22) so the Phase 0 reference artifact stayed intact.
 
 Transport: Godot high-level multiplayer (`ENetMultiplayerPeer`), host/join by LAN IP —
 runs on Android. We do **not** use Godot's scene-replication; we exchange **input
@@ -179,8 +179,8 @@ and the architecture doc's "open tension" section is updated to a settled approa
 
 ## 10. Build order
 
-1. Copy prototype → `prototypes/phase0.5-netfeel/`; strip command-layer extras, keep the
-   embodied half.
+1. Copied prototype → `prototypes/phase0.5-netfeel/` (since deleted — D22); stripped
+   command-layer extras, kept the embodied half.
 2. Fixed-tick accumulator (30/60 Hz switch) + render interpolation.
 3. ENet host/join by IP; two avatars spawned, one per peer.
 4. Input command serialize + exchange + scheduling buffer (Mode A working end to end).
@@ -200,7 +200,7 @@ and the architecture doc's "open tension" section is updated to a settled approa
   about Phase 1.
 - **Two-peer stalls are expected** — the slowest-peer pacing is real lockstep behaviour;
   measure how bad it feels, don't "fix" it by abandoning lockstep semantics.
-- **Throwaway** — like Phase 0, delete both prototype dirs once Q7/Q8 are settled.
+- **Throwaway** — like Phase 0, both prototype dirs were deleted on Phase 1 completion (D22).
 
 ---
 

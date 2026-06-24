@@ -629,3 +629,47 @@ hardware — [`roadmap.md`](roadmap.md)), not here, and is not a reason to add a
   named constant keeps the door open for a cheap re-tune or split if profiling demands it.
 - No invariant changes: the sim stays **fixed-point** (invariant #1) and **decoupled** from
   render (invariant #4) at whatever rate; a faster tick admits no floats.
+
+---
+
+## D22 — Phase 1 vertical slice PASSED on real arm64; custom Rust engine validated, fallback retired
+
+**Resolves:** the Phase 1 exit criterion ([`roadmap.md`](roadmap.md), [`phase-1-plan.md`](phase-1-plan.md)) and the build-cost de-risk bet of [D8](#d8--pre-production-is-design-only-engine-direction-is-custom-native-with-a-live-fallback).
+
+**Decision:** **Phase 1 is complete.** The custom **Rust** engine ([D10](#d10--engine-language-rust)) is validated end-to-end on real hardware, so the **Unity DOTS / Godot+GDExtension fallback (D8) is retired** and the two throwaway Godot prototypes (`prototypes/phase0-controls` → D14, `prototypes/phase0.5-netfeel` → D15) are **deleted**. Phase 2 (game systems) begins.
+
+**Evidence (Galaxy S24, Adreno 750, `aarch64-linux-android`):**
+- **Determinism — bit-identical to desktop.** `pnpm android:checksum` ran the headless
+  `sim-runner` on-device and diffed its per-tick checksum stream against the x86_64 desktop
+  run over 300 ticks: **identical** (final `4c34c6b5951edf57`). The fixed-point sim is
+  bit-identical across arch on real silicon (invariant #1/#7), on top of the CI matrix that
+  already covers x86_64 win/linux + aarch64 darwin + native arm64 linux.
+- **Commandable + embodiable on device.** One unit moves via the flow field; tap-to-move
+  works; a (provisional) two-finger-tap embody toggle flips the world dark (invariant #5).
+- **At target frame rate.** The on-device FPS heartbeat showed a sustained **120 fps** (the
+  panel rate) with the sim on its locked **60 Hz** tick ([D21](#d21)) — frames advancing
+  ~120/s while ticks advance ~60/s, demonstrating the sim/render decoupling (invariant #4)
+  live on hardware.
+
+**Why retire the fallback now:** D8 kept Unity/Godot live *only* until the slice was validated
+on real hardware — that condition is now met. The slice proves the load-bearing risks the
+fallback hedged (determinism on real arm64, the embodiment model, the PAL boundary, that a
+custom native engine runs at frame rate on a phone). Carrying the fallback further is dead
+weight.
+
+**Scope / honest caveats (NOT blockers — they are later phases by design):**
+- Validated on a **flagship** (S24), not a mid-range device. Determinism is arch-level and
+  therefore device-independent (a mid-range chip yields the identical checksums by
+  construction); **frame-rate/thermal headroom on mid-range silicon, and the 200-unit power
+  budget, are explicitly Phase 3** ([D21] defers the global-60-vs-dual-rate re-evaluation to
+  the 200-unit thermal projection). One unit at 120 fps has enormous headroom regardless.
+- The Android control scheme is a **provisional dev binding** (two-finger embody); the shipped
+  mobile controls (sticks/gyro) are a Phase 2 design call. iOS (`pal-ios`) is still sequenced
+  last (D9) and was never required for the slice.
+
+**Consequences:**
+- [`roadmap.md`](roadmap.md) marks **Phase 1 done**; the "keep the fallback live" guidance is
+  retired; **Phase 2 (game systems)** is the active phase.
+- The `prototypes/` tree and its `phase0:*` task-runner scripts are removed; docs that pointed
+  at the prototypes are updated to past tense (their decision records D14/D15 stand as history).
+- D8's "live fallback" clause is superseded; the custom-native direction is now committed.

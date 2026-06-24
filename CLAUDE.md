@@ -5,35 +5,22 @@ grow camps from a top-down view like *Company of Heroes*, then **possess a singl
 and fight it in first person — while the strategic map goes dark.** One player does
 both jobs; the tension is divided attention.
 
-**Current state: Phase 1 — code/CI/tooling complete; pending final on-device determinism +
-frame-rate confirmation (D10).** The design corpus in `docs/` is still
-the product of record, but engine code now exists: the Cargo workspace (`core/ pal/ render/
-engine/ pal-desktop/ pal-android/ app/ sim-runner/ server/`) with a deterministic fixed-point `core`
-(Q16.16 [D17], hand-rolled SoA ECS [D18]). A real deterministic
-**flow field** (`core::flow_field` — integer Dijkstra over a 128×128 fixed grid) drives the
-`movement_system` (`sim-runner` bit-identical run-to-run and debug==release); a real
+**Current state: Phase 1 COMPLETE — validated on real arm64 (D22). Phase 2 (game systems)
+is active.** The custom Rust engine ([D10]) is committed; the Unity/Godot fallback ([D8]) is
+retired. The design corpus in `docs/` is the product of record; engine code now exists in the
+Cargo workspace (`core/ pal/ render/ engine/ pal-desktop/ pal-android/ app/ sim-runner/
+server/`) with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]).
+A real deterministic **flow field** (`core::flow_field`) drives the `movement_system`; a real
 `wgpu` 29 + `winit` 0.30 desktop renderer and PAL backend interpolate prev→curr snapshots
-(invariant #4); and the shared game loop in the `engine` crate (fixed-tick accumulator,
-tap-to-move, embody/surface input swap with "world goes dark") is driven by **both** the desktop
-`app` and Android's `android_main` ([D20]). Per [D19], `core`+`pal` stay GPU-free; `render`/
-`engine`/`pal-desktop`/`pal-android`/`app` carry wgpu. **The slice now runs on a real arm64
-device** (Adreno 750, Galaxy-class): the unit moves via the flow field, tap-to-move works, and a
-provisional two-finger-tap embody toggle flips the world dark. The `pal-android` + `android/`
-Gradle path **builds for real arm64** via `cargo-ndk` and **assembles an installable arm64 debug
-APK** (committed Gradle 8.11 wrapper + AGP 8.7.2, via `pnpm android:apk`). CI carries a blocking
-`graphics-build` job + an `android-build` job; the determinism checksum matrix is green and now
-also covers **native arm64 Linux** (proven run-to-run, debug==release, cross-arch). **All three
-decide-first gates are locked** — the last, **sim rate (Q10), is closed by [D21]: a single global
-60 Hz tick** (`core::sim::TICK_HZ = 60`; dual-rate deferred to Phase 3, not killed). **Two
-on-device sign-offs still gate Phase-1 DONE:** (a) on-device determinism (`pnpm android:checksum`
-diffs the device checksum stream vs desktop — must be bit-identical) and (b) target frame rate
-(read the `adb logcat` FPS heartbeat on-device). Until both pass, the Phase 1 exit criterion
-(one unit, commandable + embodiable, on real arm64 with the checksum matrix green) is **not yet
-met** — keep the Unity/Godot fallback live until it is. The two **throwaway Godot
-prototypes** in `prototypes/` (`phase0-controls/` → D14, `phase0.5-netfeel/` → D15, both
-2026-06-23) are disposable feel-test scaffolding — *not* engine code, carry none of the
-invariants below, and can be deleted. Don't grow a prototype into the game; build behind the
-invariants instead.
+(invariant #4); and the shared game loop in the `engine` crate is driven by **both** the desktop
+`app` and Android's `android_main` ([D20]). Per [D19], `core`+`pal` stay GPU-free. **Phase 1
+exit criterion met (Galaxy S24, Adreno 750 — D22):** `pnpm android:checksum` confirmed the
+device sim-runner checksum stream **bit-identical** to desktop over 300 ticks
+(`4c34c6b5951edf57`); the `adb logcat` FPS heartbeat showed **120 fps** sustained at the locked
+**60 Hz** sim tick ([D21]: a single global 60 Hz, dual-rate deferred to Phase 3). All three
+decide-first gates locked (D17, D18, D21). The two throwaway Godot prototypes (`phase0-controls/`
+→ D14, `phase0.5-netfeel/` → D15) have been deleted. **Honest caveat:** validated on a
+flagship; frame-rate/thermal on mid-range silicon and the 200-unit power budget are Phase 3.
 
 ---
 

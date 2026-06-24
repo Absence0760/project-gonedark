@@ -7,10 +7,9 @@ The catch: while you're embodied, *the world goes dark*. You lose all sight of
 the battlefield except what your unit can see. Stay in as long as you dare.
 
 This repo holds the design, architecture, and roadmap, and — as of Phase 1 — the
-**Rust engine workspace** (a deterministic core with a real flow field, plus a
-compile-verified desktop renderer + command/embodiment run loop; see Status). The
-disposable Phase 0/0.5 prototypes in [`prototypes/`](prototypes/) are feel-test
-scaffolding, not the engine.
+**Rust engine workspace** (validated end-to-end on real arm64, D22; see Status). The
+Phase 0/0.5 throwaway Godot prototypes that proved touch-feel and netcode feel have
+been deleted on Phase 1 completion.
 
 ---
 
@@ -57,44 +56,36 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/infrastructure.md`](docs/infrastructure.md) | Local dev (clone-and-run via Docker), config/env files, Terraform infra, sops secrets |
 | [`docs/roadmap.md`](docs/roadmap.md) | Build phases, milestones, and the top risks |
 | [`docs/phase-0.5-plan.md`](docs/phase-0.5-plan.md) | Plan + record of the embodiment-over-network latency spike (resolved Q7/Q8 → D15/D16) |
-| [`docs/phase-1-plan.md`](docs/phase-1-plan.md) | Detailed plan + status for the Phase 1 Rust engine vertical slice (code/CI/tooling complete; two on-device sign-offs remain) |
+| [`docs/phase-1-plan.md`](docs/phase-1-plan.md) | Detailed plan + sign-off record for the Phase 1 Rust engine vertical slice (DONE — exit criterion met, Galaxy S24, D22) |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
-| [`prototypes/phase0-controls/`](prototypes/phase0-controls/) | **Throwaway** Godot control prototype — proved the Phase 0 touch-feel gate (D14); deleted after Phase 0.5. Not the engine |
+| `prototypes/` *(deleted)* | The two throwaway Godot prototypes (`phase0-controls/` → D14, `phase0.5-netfeel/` → D15) proved touch-feel and embodied netcode feel; deleted on Phase 1 completion (D22). Not the engine |
 | `Cargo.toml` + `core/ pal/ render/ engine/ pal-desktop/ pal-android/ app/ sim-runner/ server/` | **The Rust engine workspace** (Phase 1). `core` = deterministic fixed-point sim incl. a real flow field (zero platform deps); `pal` = platform traits; `render` = real `wgpu` instanced renderer; `engine` = the platform-agnostic game loop (sim+render+fixed-tick+cameras+command/embodiment) that both hosts drive ([D20](docs/decisions.md)); `pal-desktop` = real `winit`+`wgpu` backend; `app` = thin winit desktop host; `pal-android` = JNI/cargo-ndk backend whose `android_main` drives the same `engine` loop (builds an arm64 APK); `sim-runner` = headless checksum driver; `server` = backend placeholder. See [`docs/phase-1-plan.md`](docs/phase-1-plan.md) |
 
 ## Status
 
-**Phase 1 — code / CI / tooling complete; pending final on-device determinism + frame-rate
-confirmation.** **Phase 0** (control prototype, D14) and **Phase 0.5** (embodiment-over-network
-latency spike, D15) both **passed** (2026-06-23): the embody↔command touch loop feels good in
-hand, and embodied combat feels good over the lockstep netcode with **avatar-local prediction**.
-That retired the two biggest risks (touch controls; embodied feel over the wire). **The Phase 1
-engine spine now runs the slice on a real arm64 device** (Adreno 750, Galaxy-class): a
-deterministic fixed-point `core` (Q16.16, [D17](docs/decisions.md); hand-rolled SoA ECS
-[D18](docs/decisions.md)) with a real **flow field** moving one unit; a real `wgpu` 29 + `winit`
-0.30 desktop renderer + PAL that interpolate between snapshots; and the shared `engine::Game`
-loop ([D20](docs/decisions.md)) wiring tap-to-move command + embodiment (the "world goes dark"
-input swap) — on-device the unit moves, tap-to-move works, and a provisional two-finger-tap
-embody toggle flips the world dark. Per [D19](docs/decisions.md), `core`/`pal` stay GPU-free;
-`render`/`pal-desktop`/`pal-android`/`app` carry wgpu. **All three decide-first gates are locked**
-— the last, **sim rate ([Q10](docs/open-questions.md)), is closed by [D21](docs/decisions.md):
-global 60 Hz** (`core::sim::TICK_HZ = 60`; dual-rate deferred to Phase 3, not killed).
-Determinism is proven **run-to-run**, **debug==release**, and **cross-arch** in CI — the per-tick
-checksum matrix ([invariant #7](docs/phase-1-plan.md)) now also covers **native arm64 Linux**,
-and CI builds the graphics + Android crates. **Two on-device sign-offs remain before Phase 1 is
-declared done:** (a) on-device determinism — `pnpm android:checksum` must show the device
-checksum stream **bit-identical** to desktop; (b) target frame rate — read on-device via the `adb
-logcat` FPS heartbeat. Until both pass, the Phase 1 exit criterion is **not** met and the
-**Unity/Godot fallback stays live**.
+**Phase 1 — DONE (D22). Phase 2 (game systems) is active.** Phase 0 (D14) and Phase 0.5
+(D15) both passed (2026-06-23): touch-feel and embodied-combat-over-lockstep risks retired.
+**Phase 1 exit criterion met on Galaxy S24, Adreno 750:** `pnpm android:checksum` confirmed
+the device sim-runner checksum stream **bit-identical** to desktop over 300 ticks
+(`4c34c6b5951edf57`); the `adb logcat` FPS heartbeat showed **120 fps** sustained at the locked
+**60 Hz** sim tick — demonstrating sim/render decoupling (invariant #4) live on hardware. One
+unit moves via a real deterministic flow field; tap-to-move works; the two-finger embody toggle
+flips the world dark. The Rust engine workspace carries: a deterministic fixed-point `core`
+(Q16.16 [D17](docs/decisions.md), hand-rolled SoA ECS [D18](docs/decisions.md)), the PAL trait
+boundary, a real `wgpu` 29 + `winit` 0.30 renderer + `pal-desktop`/`pal-android` backends
+([D19](docs/decisions.md)), and the shared `engine::Game` loop ([D20](docs/decisions.md)) that
+both hosts drive. All three decide-first gates locked — sim rate closed by
+[D21](docs/decisions.md): **global 60 Hz** (`core::sim::TICK_HZ = 60`; dual-rate deferred to
+Phase 3). The **Unity/Godot fallback ([D8](docs/decisions.md)) is retired**; the custom Rust
+engine is committed. **Honest caveat:** validated on a flagship; frame-rate/thermal on mid-range
+silicon and the 200-unit power budget are Phase 3.
 
-Target platforms: **Windows, Linux, Android, iOS** — one
-shared deterministic core with platform-optimized backends (D3D12/Vulkan, Vulkan,
-Vulkan, Metal), developed on Linux desktop first and shipping Android-first. See
-[`docs/platforms.md`](docs/platforms.md). Engine: **custom native in Rust** (renderer
-via `wgpu`) — see [`docs/decisions.md`](docs/decisions.md) D10 for the reasoning, and
-the architecture doc for the viable fallbacks (Unity DOTS, Godot + GDExtension) if the
-custom path is ever abandoned.
+Target platforms: **Windows, Linux, Android, iOS** — one shared deterministic core with
+platform-optimized backends (D3D12/Vulkan, Vulkan, Vulkan, Metal), developed on Linux desktop
+first and shipping Android-first. See [`docs/platforms.md`](docs/platforms.md). Engine:
+**custom native in Rust** (renderer via `wgpu`) — see [`docs/decisions.md`](docs/decisions.md)
+D10 for the reasoning.
 
 ## Local development
 
