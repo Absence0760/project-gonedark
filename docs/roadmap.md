@@ -70,9 +70,14 @@ model.
 
 ## Phase 1 — Vertical slice
 
-> **Status: NEXT — first real engine code.** Detailed plan:
-> **[`phase-1-plan.md`](phase-1-plan.md)** (decide-first gates, crate skeleton, build order,
-> determinism CI, risks).
+> **Status: IN PROGRESS — first real engine code has landed.** The Rust workspace scaffold
+> is in: a deterministic fixed-point `core` (Q16.16 [D16→D17](decisions.md), hand-rolled SoA
+> ECS [D18](decisions.md)), the PAL trait boundary, render/host/backend skeletons, a headless
+> `sim-runner`, and the per-tick checksum CI matrix. Two of the three decide-first gates are
+> locked (D17/D18); **sim rate (Q10) stays open**, parameterized as `core::sim::TICK_HZ`
+> pending real-arm64 profiling. Still ahead (build-order steps 4–8): the real `wgpu`/`winit`
+> renderer, the Android backend, on-device validation. Detailed plan:
+> **[`phase-1-plan.md`](phase-1-plan.md)**.
 
 **Goal:** the real engine spine, end to end, with one of everything.
 

@@ -30,11 +30,11 @@ Everything else (combat, economy, camps, multiple unit types, real netcode) is d
 
 Each becomes a recorded `Dn` when locked — do not silently pick (CLAUDE.md):
 
-| Gate | Why it's first | Lean (not locked) |
+| Gate | Why it's first | Status |
 |---|---|---|
-| **Sim rate — [Q10](open-questions.md)/D16** | Drives the loop, netcode, budgets, thermals; ~60 Hz is the target but global-60 vs dual-rate must be **profiled on a real device first** | Start global-60 for simplicity; fall to dual-rate only if the 200-unit power/thermal projection forces it |
-| **Fixed-point representation** | The bedrock everything sits on; the newtype + scale + LUT trig must exist before any sim math | A thin `Fixed` newtype (e.g. the `fixed` crate or hand-rolled i32.16) + hand-rolled LUT sin/cos/sqrt; **no `libm`, fast-math off** (invariant #1) |
-| **ECS approach** | Shapes the whole core | Hand-rolled SoA or **hecs**-style archetype store over Bevy — Bevy brings a scheduler/app model we don't want fighting the deterministic loop; full control over iteration order (determinism) matters more than ergonomics |
+| **Sim rate — [Q10](open-questions.md)/D16** | Drives the loop, netcode, budgets, thermals; ~60 Hz is the target but global-60 vs dual-rate must be **profiled on a real device first** | **OPEN.** Parameterized as `core::sim::TICK_HZ` (provisional 60). Lean: start global-60; fall to dual-rate only if the 200-unit power/thermal projection forces it. Profile before locking the loop |
+| **Fixed-point representation** | The bedrock everything sits on; the newtype + scale + LUT trig must exist before any sim math | **LOCKED — [D17](decisions.md).** Hand-rolled Q16.16 `Fixed` newtype (`core::fixed`), no float conversions (a stray float won't compile); LUT/integer trig (`core::trig`), no `libm` |
+| **ECS approach** | Shapes the whole core | **LOCKED — [D18](decisions.md).** Hand-rolled struct-of-arrays (`core::ecs`); index iteration → stable order by construction; no archetype-ECS dependency |
 
 ## 3. Invariants wired in from the first commit (not retrofitted)
 

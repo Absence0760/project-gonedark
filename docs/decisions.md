@@ -470,3 +470,51 @@ moves. Still standing:
 **Caveat:** the spike measured *feel* on a throwaway float harness with an idle opponent. It
 proves 30 Hz feels too coarse — **not** the exact rate ceiling or the per-device cost, which
 Phase 1 profiling establishes (60 Hz is the working target, not yet a locked floor).
+
+---
+
+## D17 — Fixed-point sim scalar: a hand-rolled Q16.16 `Fixed` newtype
+
+**Decision:** The simulation's only scalar type is a **hand-rolled `Fixed` newtype**
+(`i32`, Q16.16; i64 intermediates for mul/div; explicit wrapping arithmetic) living in
+`core::fixed` — **not** the `fixed` crate. It deliberately implements **no** conversion to
+or from `f32`/`f64`; the renderer converts at its own boundary via `Fixed::to_bits()`.
+Transcendentals are LUT/integer (`core::trig`: build-time-baked sine table, integer
+`isqrt`), never `libm`. This closes the first Phase-1 decide-first gate
+([`phase-1-plan.md`](phase-1-plan.md) §2).
+
+**Why:** invariant #1 is that the sim is bit-identical across arch/compiler, and a float
+leak desyncs lockstep *silently*. Owning the type makes "no floats in the sim" a **compile
+error** rather than a lint: with no `From<f32>`, a stray float simply does not typecheck in
+`core`. The `fixed` crate ships float conversions (so a float *would* compile) and would put
+a determinism-critical dependency in the core's hot path; and since the LUT trig has to be
+hand-built regardless (the crate gives no deterministic transcendentals), it saves little.
+The structural guarantee beats the convenience. Cost — getting overflow/division exactly
+right — is covered by unit tests incl. a cross-arch checksum in CI from day one (invariant
+#7). The build script that bakes the LUT may use host `f64` at compile time (its output is
+pure integer data, never executed in the sim); that one spot carries a `// noqa` rationale.
+
+---
+
+## D18 — ECS storage: hand-rolled struct-of-arrays (not an off-the-shelf ECS)
+
+**Decision:** `core`'s world is a **hand-rolled struct-of-arrays** store (`core::ecs`):
+parallel dense `Vec`s per component, entity = index + generation handle, systems iterate by
+index. **Not** Bevy/hecs/legion. Closes the second Phase-1 decide-first gate
+([`phase-1-plan.md`](phase-1-plan.md) §2).
+
+**Why:** determinism needs a **stable iteration order** (invariant #1/#7), and an archetype
+ECS does not contract its iteration order across spawns/despawns or versions — adopting one
+means pinning a version and *auditing* order on every bump, fighting the library to
+guarantee something it doesn't promise. Index iteration is stable **by construction** and
+never touches a randomised `HashMap`. It also gives full control of the SoA memory layout
+that the 200-agent hot path needs ([`architecture.md`](architecture.md)). Phase 1 needs one
+unit and ~5 components, so the initial store is small and grows with the game; the cost is
+weaker query ergonomics (more per-system boilerplate), which is an acceptable trade for
+determinism + layout control. Same principle as D17: **own the load-bearing thing, make the
+guarantee structural.**
+
+**Still open — not decided here:** the **sim tick rate** (global-60 vs dual-rate, Q10/D16)
+is parameterized as `core::sim::TICK_HZ` and must be profiled on real arm64 before locking;
+the choice of off-the-shelf crates for *non-sim* layers (wgpu/winit in render/PAL) is
+unaffected by D18.

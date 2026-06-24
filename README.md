@@ -6,10 +6,10 @@ tactics — then **drop into a single tank or trooper and fight in first person*
 The catch: while you're embodied, *the world goes dark*. You lose all sight of
 the battlefield except what your unit can see. Stay in as long as you dare.
 
-This repo holds the design, architecture, and roadmap. **There is no _engine_ code
-yet** — this is pre-production. (A disposable Phase 0 control prototype lives in
-[`prototypes/`](prototypes/phase0-controls/); it is feel-test scaffolding, not the
-engine — see Status below.)
+This repo holds the design, architecture, and roadmap, and — as of Phase 1 — the
+**Rust engine workspace** (a deterministic-core spine scaffold; see Status). The
+disposable Phase 0/0.5 prototypes in [`prototypes/`](prototypes/) are feel-test
+scaffolding, not the engine.
 
 ---
 
@@ -60,14 +60,22 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
 | [`prototypes/phase0-controls/`](prototypes/phase0-controls/) | **Throwaway** Godot control prototype — proved the Phase 0 touch-feel gate (D14); deleted after Phase 0.5. Not the engine |
+| `Cargo.toml` + `core/ pal/ render/ pal-desktop/ pal-android/ app/ sim-runner/ server/` | **The Rust engine workspace** (Phase 1). `core` = deterministic fixed-point sim (zero platform deps); `pal` = platform traits; `render`/`pal-*`/`app` = backends + host; `sim-runner` = headless checksum driver; `server` = backend placeholder. See [`docs/phase-1-plan.md`](docs/phase-1-plan.md) |
 
 ## Status
 
-**Pre-production.** **Phase 0** (control prototype, D14) and **Phase 0.5** (embodiment-over-
-network latency spike, D15) both **passed** (2026-06-23): the embody↔command touch loop feels
-good in hand, and embodied combat feels good over the lockstep netcode with **avatar-local
-prediction**. That retires the two biggest risks (touch controls; embodied feel over the
-wire). **Next gate: Phase 1 — the Rust engine spine** (vertical slice on real hardware).
+**Phase 1 — in progress.** **Phase 0** (control prototype, D14) and **Phase 0.5**
+(embodiment-over-network latency spike, D15) both **passed** (2026-06-23): the
+embody↔command touch loop feels good in hand, and embodied combat feels good over the
+lockstep netcode with **avatar-local prediction**. That retired the two biggest risks
+(touch controls; embodied feel over the wire). **Phase 1 has now started:** the Rust engine
+workspace scaffold is in — a deterministic fixed-point `core` (Q16.16, [D17](docs/decisions.md)),
+hand-rolled SoA ECS ([D18](docs/decisions.md)), the PAL trait boundary, render/host/backend
+skeletons, and a per-tick checksum CI matrix ([invariant #7](docs/phase-1-plan.md)). The
+`core` tests and a two-run determinism check pass locally. **Not yet met:** the Phase 1 exit
+criterion (one unit, commandable + embodiable, on real arm64 hardware with the real `wgpu`
+renderer and the cross-arch checksum matrix green) — the `wgpu`/`winit`/Android backends are
+stubbed pending build-order steps 4–8. The Unity/Godot fallback stays live until it passes.
 
 Target platforms: **Windows, Linux, Android, iOS** — one
 shared deterministic core with platform-optimized backends (D3D12/Vulkan, Vulkan,

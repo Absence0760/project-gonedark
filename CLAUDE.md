@@ -5,15 +5,20 @@ grow camps from a top-down view like *Company of Heroes*, then **possess a singl
 and fight it in first person — while the strategic map goes dark.** One player does
 both jobs; the tension is divided attention.
 
-**Current state: pre-production. No *engine* code yet — the Rust engine (D10) starts at
-Phase 1, which is now the next gate.** The work is the markdown design corpus in `docs/`,
-plus two **throwaway Godot prototypes** in `prototypes/`: `phase0-controls/` passed the
-Phase 0 touch-feel gate (D14) and `phase0.5-netfeel/` passed the Phase 0.5 netcode latency
-spike (D15, both 2026-06-23) — embodied combat feels good over lockstep with avatar-local
-prediction. Those prototypes are disposable feel-test scaffolding — *not* engine code, carry
-none of the invariants below, and can be deleted now. Treat the docs as the product and the
-prototypes as throwaway; the next work is the **Phase 1** engine spine. Don't grow a
-prototype into the game.
+**Current state: Phase 1 in progress — the Rust engine (D10) spine scaffold has landed.**
+The design corpus in `docs/` is still the product of record, but engine code now exists: the
+Cargo workspace (`core/ pal/ render/ pal-desktop/ pal-android/ app/ sim-runner/ server/`)
+with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]), the PAL
+trait boundary, render/host/backend skeletons, a headless `sim-runner`, and the per-tick
+checksum CI matrix. Two decide-first gates are locked (D17/D18); **sim rate (Q10) is still
+open**, parameterized as `core::sim::TICK_HZ`. The real `wgpu`/`winit` renderer and the
+Android backend are **stubbed** pending build-order steps 4–8, and the Phase 1 exit criterion
+(one unit, commandable + embodiable, on real arm64 with the checksum matrix green) is **not
+yet met** — keep the Unity/Godot fallback live until it is. The two **throwaway Godot
+prototypes** in `prototypes/` (`phase0-controls/` → D14, `phase0.5-netfeel/` → D15, both
+2026-06-23) are disposable feel-test scaffolding — *not* engine code, carry none of the
+invariants below, and can be deleted. Don't grow a prototype into the game; build behind the
+invariants instead.
 
 ---
 
