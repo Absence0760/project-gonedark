@@ -4,13 +4,15 @@ Minimal Gradle project that packages the Rust `cdylib` (from `../pal-android`) i
 NativeActivity APK/AAB. This is **Phase 1 build-order step 6** scaffolding (see
 `docs/phase-1-plan.md` §5, `docs/platforms.md` §8).
 
-> **Status: builds an installable arm64 debug APK.** On the dev workstation (NDK 28,
+> **Status: runs the slice on a real arm64 device.** On the dev workstation (NDK 28,
 > `cargo-ndk` 4.x, JDK 21, Gradle 8.11 via the committed wrapper) `pnpm android:apk`
 > produces `app/build/outputs/apk/debug/app-debug.apk` (`com.jaredhoward.goingdark`,
-> bundling `lib/arm64-v8a/libgonedark_pal_android.so`). **Not yet run on a device**, and
-> `android_main` is the PAL backend + entry point only — the shared sim/render game loop
-> is wired in Phase 2. Built against the pinned APIs (`android-activity` 0.6, `jni` 0.21,
-> `ndk` 0.9, `wgpu` 29).
+> bundling `lib/arm64-v8a/libgonedark_pal_android.so`), and `android_main` drives the
+> **shared `engine::Game` loop** (D20) — on an Adreno 750 the unit moves via the flow
+> field, tap-to-move works, and a provisional two-finger-tap embody toggle flips the world
+> dark. Built against `android-activity` 0.6, `jni` 0.21, `ndk` 0.9, `wgpu` 29. **Two
+> on-device sign-offs still gate Phase 1 DONE:** `pnpm android:checksum` (sim bit-identical
+> vs desktop, below) and the per-second FPS heartbeat in `adb logcat`.
 
 ## Prerequisites (the build machine)
 
@@ -47,6 +49,23 @@ export it:
 `GONEDARK_PROFILE=release pnpm android:build` builds a release `.so`. Desktop side:
 `pnpm dev` runs the winit/wgpu app, `pnpm build` builds the workspace, `pnpm sim` runs the
 headless determinism checksum stream. The exact underlying commands follow.
+
+## On-device determinism proof (`pnpm android:checksum`)
+
+The Phase 1 exit gate / invariant #7: prove the deterministic fixed-point sim is
+**bit-identical on the real arm64 phone** vs the desktop. `pnpm android:checksum`
+(`scripts/android-checksum.sh`) builds the headless `gonedark-sim-runner` (core-only, no
+GPU/PAL deps) for `aarch64-linux-android` with `cargo ndk`, `adb push`es it to
+`/data/local/tmp`, runs it on-device, and diffs its per-tick `<tick> <checksum>` stream
+against the **same** runner on the host:
+
+    pnpm android:checksum         # 300 ticks (default)
+    pnpm android:checksum 1000    # override the tick count
+
+Identical streams print `on-device arm64 determinism holds`; **any divergence prints the
+diff and exits non-zero** — an on-device desync is a real determinism bug (invariant #7),
+never silenced. Needs a connected USB-debugging arm64 device (same prerequisites as the
+other `android:*` scripts). The device binary is cleaned up afterward.
 
 ## Build commands (exact)
 
@@ -95,11 +114,15 @@ coding agent can script this whole cycle and self-diagnose from logcat.
   `android.app.lib_name` is `gonedark_pal_android` (no `lib`/`.so`). If the integrator
   instead makes `app` the cdylib, rename both consistently.
 
-## Not verified
+## Status / remaining
 
-- No for-target build has run here (no NDK/cargo-ndk). The AGP/Gradle/SDK/NDK version
-  pins (`build.gradle.kts`, this README) are sensible defaults, not locked against a
-  real build — adjust to the toolchain on the build machine.
-- `android-activity` 0.6 / `jni` 0.21 / `wgpu` 29 API usage in `../pal-android/src/lib.rs`
-  was written from the pinned-version docs; a couple of input/event accessor calls are
-  flagged with inline `NOTE:` comments to re-check on the real toolchain.
+- The for-target build, APK assembly, and on-device run are all **done** (NDK 28 +
+  cargo-ndk 4.x; Adreno 750). `android-activity` 0.6 / `jni` 0.21 / `wgpu` 29 usage in
+  `../pal-android/src/lib.rs` is exercised on real hardware — an early run surfaced + fixed
+  a real arm64 surface-config crash (the `downlevel_defaults` 2048 texture cap vs a 2340-wide
+  screen).
+- **Remaining to declare Phase 1 done:** run `pnpm android:checksum` against a device (sim
+  bit-identical vs desktop) and read the FPS heartbeat in `adb logcat` (target frame rate).
+- **Provisional, not shipped:** the two-finger-tap embody toggle is a dev binding; the real
+  mobile control scheme (on-screen sticks / gyro) is a Phase 2 design call. The AGP/Gradle/
+  SDK/NDK version pins are this workstation's — adjust on another build machine.

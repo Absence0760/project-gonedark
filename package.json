@@ -21,6 +21,7 @@
     "android:install": "scripts/android.sh install",
     "android:dev": "scripts/android.sh run",
     "android:logcat": "scripts/android.sh logcat",
+    "android:checksum": "scripts/android-checksum.sh",
     "start": "docker compose up -d",
     "stop": "docker compose down",
     "restart": "docker compose restart",
