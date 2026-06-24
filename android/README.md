@@ -4,12 +4,13 @@ Minimal Gradle project that packages the Rust `cdylib` (from `../pal-android`) i
 NativeActivity APK/AAB. This is **Phase 1 build-order step 6** scaffolding (see
 `docs/phase-1-plan.md` §5, `docs/platforms.md` §8).
 
-> **Status: scaffold, not built here.** This workstation has **no Android SDK/NDK and no
-> `cargo-ndk`**, so neither the Rust `aarch64-linux-android` target nor this Gradle app
-> has been compiled. The files are structurally complete against the pinned APIs
-> (`android-activity` 0.6, `jni` 0.21, `ndk` 0.9, `wgpu` 29) and must be built on a
-> machine with the Android toolchain. The wrapper JAR is intentionally absent — generate
-> it (below) rather than committing a binary.
+> **Status: builds an installable arm64 debug APK.** On the dev workstation (NDK 28,
+> `cargo-ndk` 4.x, JDK 21, Gradle 8.11 via the committed wrapper) `pnpm android:apk`
+> produces `app/build/outputs/apk/debug/app-debug.apk` (`com.jaredhoward.goingdark`,
+> bundling `lib/arm64-v8a/libgonedark_pal_android.so`). **Not yet run on a device**, and
+> `android_main` is the PAL backend + entry point only — the shared sim/render game loop
+> is wired in Phase 2. Built against the pinned APIs (`android-activity` 0.6, `jni` 0.21,
+> `ndk` 0.9, `wgpu` 29).
 
 ## Prerequisites (the build machine)
 
@@ -20,15 +21,15 @@ NativeActivity APK/AAB. This is **Phase 1 build-order step 6** scaffolding (see
 - **cargo-ndk**: `cargo install cargo-ndk`
 - **The android Rust target**: `rustup target add aarch64-linux-android`
   (add `x86_64-linux-android` too if you want the emulator — it runs x86_64).
-- **Gradle** (to generate the wrapper once): system Gradle or Android Studio's bundled one.
+- **Gradle** is **not** needed up front — the wrapper (`gradlew` + `gradle-wrapper.jar`,
+  pinned to 8.11) is committed and downloads its own Gradle on first run.
 
-## One-time wrapper generation
+## The Gradle wrapper is committed
 
-The wrapper JAR + `gradlew` scripts are not committed. Generate them once:
-
-    cd android && gradle wrapper --gradle-version 8.11
-
-After this you can use `./gradlew` as shown below.
+`gradlew`, `gradlew.bat`, and `gradle/wrapper/gradle-wrapper.jar` are checked in (pinned to
+Gradle 8.11, compatible with AGP 8.7.2) — the standard reproducible-build setup. You do not
+need a system Gradle; `./gradlew` (or the `pnpm android:*` scripts) bootstraps it. To bump
+the pinned version later: `cd android && ./gradlew wrapper --gradle-version <x>`.
 
 ## pnpm shortcuts (the easy path)
 
@@ -38,7 +39,7 @@ export it:
 
     pnpm android:setup     # one-time: cargo install cargo-ndk + rustup target add aarch64-linux-android
     pnpm android:build     # cargo-ndk: build libgonedark_pal_android.so into jniLibs (debug)
-    pnpm android:apk       # gradle :app:assembleDebug (needs the wrapper, above)
+    pnpm android:apk       # gradle :app:assembleDebug -> app-debug.apk
     pnpm android:install   # build the APK + adb install -r to a connected device
     pnpm android:dev       # install + am start + stream logcat (the inner loop)
     pnpm android:logcat    # tail the app's logs (tag `gonedark`)

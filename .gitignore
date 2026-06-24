@@ -7,8 +7,11 @@
 .gradle/
 local.properties
 /app/build/
+/android/build/
 /android/app/build/
 *.iml
+# The Gradle wrapper (gradlew, gradlew.bat, gradle/wrapper/gradle-wrapper.jar) IS
+# committed — it's how reproducible builds are pinned; do not ignore it.
 # cargo-ndk output — the native .so is rebuilt into the Gradle project on demand
 # (see android/README.md); it's a build artifact, never committed.
 /android/app/src/main/jniLibs/
