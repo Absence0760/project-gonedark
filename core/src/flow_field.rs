@@ -14,8 +14,11 @@
 //! is fixed-point. Iteration order is fixed and documented at every tie, so the field is
 //! bit-identical across arches.
 //!
-//! **Cost, not caching.** Phase 1 rebuilds the field every tick for the single moving
-//! unit (cheap, and deterministic). Phase 2 will cache one field per distinct goal.
+//! **Caching (Phase 3).** A field is a *pure function of its goal*, so units heading to the
+//! same target can share one build. [`FlowFieldCache`] memoises one field per distinct goal
+//! within a tick; the result a unit samples is bit-identical to building its own field, but a
+//! 200-unit push to a shared objective builds a handful of fields instead of ~200 (the per-unit
+//! rebuild was the measured 60 Hz bottleneck — see `docs/phase-3-plan.md` §"Workstream A").
 
 use crate::components::Vec2;
 use crate::fixed::Fixed;
@@ -173,6 +176,50 @@ impl FlowField {
 
         let (dx, dy) = best_dir.unwrap();
         Vec2::new(Fixed::from_int(dx), Fixed::from_int(dy)).normalized()
+    }
+}
+
+/// A per-tick memo of flow fields, keyed by goal. A [`FlowField`] is a pure function of its
+/// goal, so two units with the same target share one build — what each samples is bit-identical
+/// to having built its own field. Create one per tick (goals change as orders do) and drop it at
+/// tick end; nothing in the cache crosses tick boundaries, so it is not sim state and never
+/// touches the checksum.
+///
+/// Determinism: the cache is only ever *probed* (`get`), never iterated for behaviour, so there
+/// is no hash-order hazard — and the value returned is independent of insertion order. The store
+/// is a flat `Vec` linear-probed because the number of distinct goals live in one tick is small
+/// (a handful), so a map's overhead/iteration-order questions buy nothing.
+#[derive(Default)]
+pub struct FlowFieldCache {
+    fields: Vec<(Vec2, FlowField)>,
+}
+
+impl FlowFieldCache {
+    /// An empty cache for a fresh tick.
+    pub fn new() -> Self {
+        FlowFieldCache { fields: Vec::new() }
+    }
+
+    /// The field for `goal`, building and memoising it on first request this tick. The returned
+    /// reference is bit-identical to `FlowField::build(goal)` regardless of how many callers
+    /// shared it.
+    pub fn get(&mut self, goal: Vec2) -> &FlowField {
+        // Resolve the index with no live borrow outstanding, then return — avoids the
+        // conditional-return-of-borrow borrowck snag.
+        let idx = match self.fields.iter().position(|(g, _)| *g == goal) {
+            Some(i) => i,
+            None => {
+                self.fields.push((goal, FlowField::build(goal)));
+                self.fields.len() - 1
+            }
+        };
+        &self.fields[idx].1
+    }
+
+    /// Number of distinct goals built this tick (the dedup factor). Test-only.
+    #[cfg(test)]
+    pub(crate) fn distinct_goals(&self) -> usize {
+        self.fields.len()
     }
 }
 

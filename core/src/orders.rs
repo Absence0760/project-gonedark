@@ -28,6 +28,7 @@ use crate::combat;
 use crate::components::{EntityKind, Faction, InputSource, Order, Vec2};
 use crate::ecs::World;
 use crate::fixed::Fixed;
+use crate::flow_field::FlowFieldCache;
 use crate::systems;
 use crate::terrain::Terrain;
 
@@ -80,6 +81,10 @@ fn move_speed(suppression: Fixed) -> Fixed {
 pub fn order_system(world: &mut World, terrain: &Terrain) {
     let _ = terrain;
     let n = world.capacity();
+    // One flow-field cache for the whole tick: units sharing a goal share a single build. It is
+    // local to this call (dropped at tick end), so it is not sim state and never enters the
+    // checksum; what each unit samples is bit-identical to building its own field.
+    let mut cache = FlowFieldCache::new();
     for i in 0..n {
         if !world.is_index_alive(i) {
             continue;
@@ -113,13 +118,13 @@ pub fn order_system(world: &mut World, terrain: &Terrain) {
                 world.vel[i] = Vec2::ZERO;
             }
             Order::MoveTo(target) => {
-                if step(world, i, target, suppression) {
+                if step(world, &mut cache, i, target, suppression) {
                     world.order[i] = Order::Idle;
                 }
             }
             // Move to the point, then hold there (combat engages en route / on arrival).
             Order::AttackMove(target) => {
-                if step(world, i, target, suppression) {
+                if step(world, &mut cache, i, target, suppression) {
                     world.order[i] = Order::HoldPosition;
                 }
             }
@@ -129,12 +134,12 @@ pub fn order_system(world: &mut World, terrain: &Terrain) {
             // above would re-install FallBack every tick (the order would thrash forever). The
             // `!matches!(.., FallBack)` guard above relies on the order STAYING FallBack here.
             Order::FallBack(target) => {
-                step(world, i, target, suppression);
+                step(world, &mut cache, i, target, suppression);
             }
             // Bounce between the two legs forever.
             Order::Patrol { a, b, toward_b } => {
                 let target = if toward_b { b } else { a };
-                if step(world, i, target, suppression) {
+                if step(world, &mut cache, i, target, suppression) {
                     world.order[i] = Order::Patrol {
                         a,
                         b,
@@ -150,11 +155,17 @@ pub fn order_system(world: &mut World, terrain: &Terrain) {
 /// Phase 1 base-speed path ([`systems::step_toward`]) so determinism is preserved; otherwise
 /// the suppression-derived speed (half, or zero/pinned) is used.
 #[inline]
-fn step(world: &mut World, i: usize, target: Vec2, suppression: Fixed) -> bool {
+fn step(
+    world: &mut World,
+    cache: &mut FlowFieldCache,
+    i: usize,
+    target: Vec2,
+    suppression: Fixed,
+) -> bool {
     if suppression == Fixed::ZERO {
-        systems::step_toward(world, i, target)
+        systems::step_toward(world, cache, i, target)
     } else {
-        systems::step_toward_speed(world, i, target, move_speed(suppression))
+        systems::step_toward_speed(world, cache, i, target, move_speed(suppression))
     }
 }
 
@@ -336,7 +347,10 @@ mod tests {
             w.pos[si].x
         );
         // And it should be strictly behind, not stalled.
-        assert!(w.pos[si].x > Fixed::ZERO, "half-suppressed unit must still move");
+        assert!(
+            w.pos[si].x > Fixed::ZERO,
+            "half-suppressed unit must still move"
+        );
     }
 
     #[test]
@@ -365,6 +379,9 @@ mod tests {
         // And the order is byte-stable across further ticks (no flip → no checksum thrash).
         let order_before = w.order[i];
         run(&mut w, 1);
-        assert_eq!(w.order[i], order_before, "order must not thrash once retreated");
+        assert_eq!(
+            w.order[i], order_before,
+            "order must not thrash once retreated"
+        );
     }
 }

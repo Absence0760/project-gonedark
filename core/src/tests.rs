@@ -5,7 +5,7 @@ use crate::checksum::Checksum;
 use crate::components::{InputSource, Order, Stance, Vec2};
 use crate::ecs::World;
 use crate::fixed::Fixed;
-use crate::flow_field::FlowField;
+use crate::flow_field::{FlowField, FlowFieldCache};
 use crate::rng::Rng;
 use crate::sim::{Command, Sim};
 use crate::trig::{self, Angle, ANGLE_FULL};
@@ -87,6 +87,78 @@ fn flow_field_is_deterministic() {
     for p in probes {
         assert_eq!(a.sample(p), b.sample(p));
     }
+}
+
+#[test]
+fn flow_field_cache_matches_fresh_build() {
+    // The Phase 3 cache must return a field bit-identical (in everything observable) to a fresh
+    // FlowField::build — that equivalence is what makes the optimisation determinism-safe.
+    let goals = [
+        Vec2::new(Fixed::from_int(40), Fixed::ZERO),
+        Vec2::new(Fixed::from_int(-40), Fixed::ZERO),
+        Vec2::new(Fixed::from_int(12), Fixed::from_int(-7)),
+        Vec2::ZERO,
+    ];
+    let probes = [
+        Vec2::ZERO,
+        Vec2::new(Fixed::from_int(-30), Fixed::from_int(20)),
+        Vec2::new(Fixed::from_int(40), Fixed::from_int(40)),
+        Vec2::new(Fixed::from_int(-50), Fixed::from_int(-50)),
+        Vec2::new(Fixed::from_int(9000), Fixed::from_int(-9000)),
+    ];
+    let mut cache = FlowFieldCache::new();
+    for g in goals {
+        let fresh = FlowField::build(g);
+        let cached = cache.get(g);
+        for p in probes {
+            assert_eq!(
+                cached.sample(p),
+                fresh.sample(p),
+                "sample mismatch for goal {g:?}"
+            );
+            assert_eq!(
+                cached.cost_at(p),
+                fresh.cost_at(p),
+                "cost mismatch for goal {g:?}"
+            );
+        }
+    }
+
+    // Hit path: a repeated request for an already-built goal must return a field that still
+    // samples bit-identically to a fresh build (this is what units sharing a goal rely on).
+    let g = goals[0];
+    let fresh = FlowField::build(g);
+    let cached = cache.get(g);
+    for p in probes {
+        assert_eq!(
+            cached.sample(p),
+            fresh.sample(p),
+            "hit-path sample mismatch"
+        );
+        assert_eq!(
+            cached.cost_at(p),
+            fresh.cost_at(p),
+            "hit-path cost mismatch"
+        );
+    }
+}
+
+#[test]
+fn flow_field_cache_dedups_shared_goals() {
+    // Repeated requests for the same goal build once; distinct goals each build. This is the
+    // dedup that turns ~200 per-unit builds into a handful for a shared objective.
+    let mut cache = FlowFieldCache::new();
+    let g1 = Vec2::new(Fixed::from_int(40), Fixed::ZERO);
+    let g2 = Vec2::new(Fixed::from_int(-40), Fixed::ZERO);
+    let _ = cache.get(g1).cost_at(Vec2::ZERO);
+    let _ = cache.get(g1).cost_at(Vec2::ZERO);
+    let _ = cache.get(g2).cost_at(Vec2::ZERO);
+    let _ = cache.get(g1).cost_at(Vec2::ZERO);
+    assert_eq!(
+        cache.distinct_goals(),
+        2,
+        "two distinct goals should build exactly two fields"
+    );
 }
 
 #[test]
@@ -175,7 +247,11 @@ fn set_order_and_retreat_threshold_commands_apply() {
         fraction: frac,
     }]);
     assert_eq!(sim.world.retreat_below[i], frac);
-    assert_eq!(sim.world.order[i], Order::HoldPosition, "healthy unit does not fall back");
+    assert_eq!(
+        sim.world.order[i],
+        Order::HoldPosition,
+        "healthy unit does not fall back"
+    );
 }
 
 // ---------------------------------------------------------------------------
