@@ -2166,3 +2166,95 @@ viewport size into `render()`. Pure seams unit-tested (parser + all error varian
 committed `.mesh`, `model_matrix`, `weapon_view_model`, `token_for`, `embodied_proj`); the GPU path is
 covered by viz-runner (all visual assertions pass; the PNGs show the 3D weapon + 3D tokens with UI decals
 on top). Full suite + clippy + determinism + lockstep + viz all green.
+
+---
+
+## D45 — The headless asset-tooling toolbox (one scriptable CLI per content lane)
+
+**Status:** decided + installed (machine-wide on the workstation; no repo code yet). Generalises
+D41 (the Blender method) and D44 (the cook) across the other content lanes.
+
+**Decision:**
+
+- Asset creation across **every** content lane uses a **headless, Claude-scriptable CLI** — the
+  D41 model (script the generator, commit the script + manifest, never an opaque binary blob)
+  extended from 3D to audio and 2D/UI. The chosen tools, all installed machine-wide and on PATH:
+  - **Blender** (`bpy`) — 3D author: meshes, geometry-nodes terrain, rig/anim, glTF export (D41).
+  - **gltfpack** — 3D cook: glTF mesh/texture compression (meshopt/Draco) for the mobile /
+    200-unit budget.
+  - **SoX** — SFX synthesis + processing.
+  - **Csound** — deterministic, **seed-scripted** SFX, regenerable + git-diffable: the audio
+    analogue of D41's procedural meshes (audio is a primary system, invariant #6).
+  - **Inkscape** (`--export-type=png`) — vector → PNG HUD / command-layer UI icons across DPIs.
+  - **ImageMagick** (`magick`) — scripted textures, atlases, noise / normal maps (already present).
+- Recorded as project convention in [`CLAUDE.md`](../CLAUDE.md) and as the can/can't toolbox table
+  in [`content-pipeline.md`](content-pipeline.md) §6, so **every session reaches for these first**
+  rather than requesting commissioned art or committing binaries.
+
+**Why:** tools existing on disk doesn't make sessions *use* them — awareness has to live in the
+always-loaded project conventions, not just the workstation `~/CLAUDE.md`. One scriptable CLI per
+lane keeps asset provenance uniform (script + `source`/`license`/`sha256` manifest, §3) and
+reproducible, and extends D41's "no external license to vet, output is CC0-able, owned" property
+from meshes to sound and UI. **Csound over SuperCollider** because it's the lighter "script a file
+from a seed" fit; **gltfpack** (native prebuilt binary) **over the `gltf-transform` npm tool**
+because this is a Cargo workspace with no Node manifest to pin a per-project dep into.
+
+**What this does NOT decide:** the **hero-tier** sourcing fork (commissioned vs CC0 vs AI-gen)
+stays open — [`open-questions.md`](open-questions.md) **Q11**; this is greybox/placeholder
+infrastructure, the same scope as D41. No sim / `core` / netcode is touched — these are offline
+authoring tools, so invariants #1 / #4 / #7 are untouched.
+
+**Consequences:** per-tool install provenance is recorded in the workstation `~/CLAUDE.md`
+("Specific tool decisions"); **Csound is a source build** (no Fedora package) so it is *not*
+auto-updated by `update-all` — bump manually. New content work (a Csound going-dark alert SFX, an
+Inkscape HUD icon set, a gltfpack pass over the D41/D44 greybox `.glb`s) now has a named tool and
+the §6 toolbox table to point at.
+
+---
+
+## D45 — Tilt the command camera (three-quarter RTS view) so the 3D tokens read
+
+**Status:** decided + landed (engine command camera + unprojection; viz-runner green). The
+follow-on to [D44](#d44--cooked-greybox-meshes-the-glb-to-runtime-pipeline--3d-mesh-rendering) —
+it **resolves D44's explicit "command-camera framing / kept straight-down" caveat**: with the
+models now rendered as 3D meshes, a straight-down camera saw only their flat tops, so infantry read
+as specks. This tilts the command view enough that the greybox forms read as forms.
+
+**Decision:** the command-view camera (`engine::topdown_view_proj`) goes from straight-down
+orthographic to a **fixed three-quarter tilt** — pitched `COMMAND_PITCH_DEG = 58°` above the horizon,
+looking north from the south (think Company of Heroes). It stays **orthographic** (units keep a
+constant on-screen size regardless of position — the RTS-legible choice) and the tilt is **pure pitch
+about the world X axis: no yaw, no roll.** Pointer unprojection (`unproject_topdown`) is generalized
+from "invert the matrix at one depth" (only valid looking straight down) to a **ground-plane ray
+cast** (unproject the pixel at two depths, intersect `z = 0`), which is correct for the tilt and for
+any future perspective camera.
+
+**Why:** D44 made units/structures 3D, but a top-down ortho flattens a 3D model to its silhouette —
+the whole point of the meshes was lost. A three-quarter tilt is the classic RTS answer (it shows
+fronts and sides, and the receding ground grid adds depth) while orthographic keeps unit size
+constant across the field, which top-down RTS legibility wants. **Pure pitch (no yaw) is the
+load-bearing constraint:** a tilt purely about X keeps the ground↔screen mapping *axis-separable*
+(screen-X depends only on world-X, screen-Y only on world-Y), so band-select's world-space
+axis-aligned rectangle test (`selection::within_rect`) stays **exact with zero changes** — a yaw
+would shear that and silently corrupt picking. The no-yaw invariant is pinned by a separability unit
+test and documented on the constant. This is **render/input-boundary only** (host-side `f32`): the
+camera and unproject never enter `core`/the sim (invariant #1) — the `Command` world coordinates that
+do reach the sim still cross `world_to_fixed`, so determinism + the lockstep checksum matrix are
+untouched.
+
+**What this does NOT decide / honest caveats:** **camera control** — pitch/zoom/pan stay *fixed*; a
+player-controllable command camera (and especially any **yaw**, which would require moving band-select
+into screen space) is out of scope. **Picking parallax** — `unproject_topdown` returns the *ground*
+point under the cursor, so tapping the visible top of a raised token lands ≈0.94 wu north of its feet
+(at 58°); the zoom-aware tap pick radius (~3.5 wu at the default zoom) swallows it, so taps still
+resolve the unit — a mesh-accurate ray-vs-volume pick is deferred until it's worth it. **Token
+facing** — still unbuilt (D44), so tokens all face the same way under the tilt. The orthographic Y
+extent foreshortens slightly with the tilt (a touch more world Y is framed); accepted.
+
+**Consequences:** `engine::topdown_view_proj` gains `COMMAND_PITCH_DEG` / `COMMAND_EYE_DIST` and the
+tilted view matrix; `unproject_topdown` becomes a ground-plane ray cast (callers — tap-pick, marquee
+anchor, `pointer_world`, the gesture-scale world-per-px derivation, the radial-menu centre — are
+unchanged). The old hardcoded-ortho unproject test is replaced by a project→unproject round-trip test,
+plus a new test pinning axis-separability + that height reads up-screen (both fail if a yaw is ever
+introduced — the regression guard for the no-yaw invariant). Full suite + clippy + viz all green; the
+command/selected PNGs now show upright 3D figures with the selection-rim + health decals on top.

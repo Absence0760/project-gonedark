@@ -217,9 +217,24 @@ pub fn world_to_fixed(world_coord: f32) -> Fixed {
     Fixed::from_bits((world_coord * Fixed::SCALE as f32).round() as i32)
 }
 
-/// Top-down orthographic view-projection (free fn — viewport only, no `Game`/device needed).
-/// World units are on the ground plane (z = 0; see `render/shader.wgsl`); the camera looks
-/// straight down onto it, framing `±TOPDOWN_HALF_EXTENT` (aspect-corrected on the long axis).
+/// Command-view camera tilt above the horizon (D45). A three-quarter RTS pitch (think Company of
+/// Heroes) so the 3D greybox tokens (D44) read as forms with visible fronts/sides instead of flat
+/// tops. **Pitch only — the camera never yaws**, which is load-bearing: a pure tilt about the world
+/// X axis keeps the ground↔screen mapping *separable* (screen-X depends only on world-X, screen-Y
+/// only on world-Y), so band-select's world-space axis-aligned rectangle test stays exact. A yaw
+/// would shear that and break picking. 90° here would be the old straight-down view.
+const COMMAND_PITCH_DEG: f32 = 58.0;
+/// Orthographic eye distance from the focus. With an orthographic projection this does **not** set
+/// the on-screen size (the extents do) — it only positions the eye so the near/far planes bracket
+/// the scene; it must stay larger than the scene's half-extent in Z + the framed ground radius.
+const COMMAND_EYE_DIST: f32 = 120.0;
+
+/// Command-view orthographic view-projection (free fn — viewport only, no `Game`/device needed).
+/// World units are on the ground plane (z = 0; see `render/shader.wgsl`); the camera looks down at a
+/// fixed [`COMMAND_PITCH_DEG`] tilt from the south (−Y), framing roughly `±TOPDOWN_HALF_EXTENT`
+/// (aspect-corrected on the long axis; the tilt foreshortens the Y axis slightly). World +Y reads as
+/// "into the screen / north", world +Z reads as "up". The tilt is pure pitch (no yaw) so the ground
+/// projection stays axis-separable — see [`COMMAND_PITCH_DEG`].
 fn topdown_view_proj(width: u32, height: u32) -> Mat4 {
     let aspect = width.max(1) as f32 / height.max(1) as f32;
     let (hx, hy) = if aspect >= 1.0 {
@@ -227,12 +242,22 @@ fn topdown_view_proj(width: u32, height: u32) -> Mat4 {
     } else {
         (TOPDOWN_HALF_EXTENT, TOPDOWN_HALF_EXTENT / aspect)
     };
-    let proj = Mat4::orthographic_rh(-hx, hx, -hy, hy, -10.0, 10.0);
-    let view = Mat4::look_at_rh(
-        Vec3::new(0.0, 0.0, 5.0),
-        Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(0.0, 1.0, 0.0),
+    let pitch = COMMAND_PITCH_DEG.to_radians();
+    // Eye south-and-above the focus; look at the origin with world +Z as "up" (no roll/yaw).
+    let eye = Vec3::new(
+        0.0,
+        -COMMAND_EYE_DIST * pitch.cos(),
+        COMMAND_EYE_DIST * pitch.sin(),
     );
+    let proj = Mat4::orthographic_rh(
+        -hx,
+        hx,
+        -hy,
+        hy,
+        COMMAND_EYE_DIST - 100.0,
+        COMMAND_EYE_DIST + 140.0,
+    );
+    let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Z);
     proj * view
 }
 
@@ -263,10 +288,17 @@ fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, width: u32, height: u32)
     proj * view
 }
 
-/// Unproject a pointer pixel onto the ground plane (z = 0) under the given TOP-DOWN
-/// `view_proj`, returning world `(x, y)`. For the orthographic camera the world XY is
-/// independent of NDC depth, so we invert `view_proj` at the near plane. `None` if the
-/// matrix is singular.
+/// Unproject a pointer pixel onto the ground plane (z = 0) under the given command-view
+/// `view_proj`, returning world `(x, y)`. Casts the pixel's view ray (the segment between its
+/// near- and far-plane unprojections) and intersects it with `z = 0` — correct for the **tilted**
+/// command camera (D45), where world XY now varies with depth, and for any future perspective
+/// camera. `None` if the matrix is singular or the ray is parallel to the ground.
+///
+/// Accepted tradeoff under the tilt (D45): this returns the *ground* point under the cursor, so
+/// tapping the visible top of a raised 3D token lands a touch north of its feet (≈ height·cotθ ≈
+/// 0.94 wu for a ~1.5 wu token at 58°). The zoom-aware tap pick radius ([`selection::GestureScale`],
+/// ~3.5 wu at the default command zoom) comfortably swallows that offset, so a tap still resolves
+/// the unit; a true mesh-accurate pick (ray vs. token volume) is deferred until it's worth it.
 fn unproject_topdown(
     view_proj: &Mat4,
     px: f32,
@@ -281,11 +313,22 @@ fn unproject_topdown(
     // Pixel → NDC. Pixel origin is top-left, +y down; NDC +y is up, so flip y.
     let ndc_x = (px / width.max(1) as f32) * 2.0 - 1.0;
     let ndc_y = 1.0 - (py / height.max(1) as f32) * 2.0;
-    let world = inv * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
-    if world.w.abs() < f32::EPSILON {
+    // Two points on the pixel's ray: NDC depth 0 (near) and 1 (far).
+    let near4 = inv * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+    let far4 = inv * Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+    if near4.w.abs() < f32::EPSILON || far4.w.abs() < f32::EPSILON {
         return None;
     }
-    Some((world.x / world.w, world.y / world.w))
+    let a = near4.truncate() / near4.w;
+    let b = far4.truncate() / far4.w;
+    let dir = b - a;
+    if dir.z.abs() < f32::EPSILON {
+        return None; // ray parallel to the ground plane — no intersection
+    }
+    // a.z + t·dir.z = 0  →  the parameter where the ray meets z = 0.
+    let t = -a.z / dir.z;
+    let hit = a + dir * t;
+    Some((hit.x, hit.y))
 }
 
 /// Map this frame's `input` + current `embodied` state into the sim commands it produces, for the
@@ -1425,25 +1468,65 @@ mod tests {
         assert!(wy.abs() < 1e-3, "center world y = {wy}");
     }
 
-    /// Unprojecting a known off-center pixel returns the expected world point. With a square
-    /// viewport the ortho extent is `±TOPDOWN_HALF_EXTENT` on both axes, so the right edge maps
-    /// to `+half_extent` in x and the top edge to `+half_extent` in y.
+    /// Unproject round-trips against project for the tilted command camera (D45): the right edge of
+    /// the centre row still maps to `(+hx, 0)` (the X extent + centre-row separability), and a spread
+    /// of ground points survive a project→unproject round-trip — the ground-plane ray cast is exact.
     #[test]
-    fn unproject_offcenter_pixel_matches_expected_world() {
+    fn unproject_roundtrips_on_the_tilted_camera() {
         let (width, height) = (1000u32, 1000u32); // square -> symmetric extent
         let vp = topdown_view_proj(width, height);
 
-        // Right edge, vertical center -> (+half_extent, 0).
+        // Right edge, vertical centre -> (+half_extent, 0). The centre row stays y=0 (separability),
+        // and the X extent is unchanged by the pitch tilt.
         let (wx, wy) = unproject_topdown(&vp, width as f32, height as f32 / 2.0, width, height)
             .expect("right-edge unproject");
         assert!((wx - TOPDOWN_HALF_EXTENT).abs() < 1e-2, "right x = {wx}");
-        assert!(wy.abs() < 1e-2, "right y = {wy}");
+        assert!(wy.abs() < 1e-2, "centre row stays y=0, got {wy}");
 
-        // Top edge (py = 0, +y up), horizontal center -> (0, +half_extent).
-        let (wx, wy) = unproject_topdown(&vp, width as f32 / 2.0, 0.0, width, height)
-            .expect("top-edge unproject");
-        assert!(wx.abs() < 1e-2, "top x = {wx}");
-        assert!((wy - TOPDOWN_HALF_EXTENT).abs() < 1e-2, "top y = {wy}");
+        // Project a ground point to its pixel, then unproject back — must return the same point.
+        let project = |x: f32, y: f32| {
+            let c = vp * Vec4::new(x, y, 0.0, 1.0);
+            let (nx, ny) = (c.x / c.w, c.y / c.w);
+            (
+                (nx * 0.5 + 0.5) * width as f32,
+                (1.0 - (ny * 0.5 + 0.5)) * height as f32,
+            )
+        };
+        for (x, y) in [(0.0, 0.0), (12.0, -7.0), (-20.0, 15.0), (33.0, 4.0)] {
+            let (px, py) = project(x, y);
+            let (ux, uy) = unproject_topdown(&vp, px, py, width, height).expect("roundtrip");
+            assert!(
+                (ux - x).abs() < 1e-2 && (uy - y).abs() < 1e-2,
+                "round-trip ({x},{y}) -> ({ux},{uy})"
+            );
+        }
+    }
+
+    /// The command camera is tilted (so 3D tokens read) yet axis-separable (so band-select's
+    /// world-AABB stays exact) — the load-bearing property of the D45 pure-pitch tilt. Ground points
+    /// sharing a world axis share that screen axis; raising a point in +Z moves it up-screen.
+    #[test]
+    fn command_camera_is_tilted_and_axis_separable() {
+        let (width, height) = (1000u32, 1000u32);
+        let vp = topdown_view_proj(width, height);
+        let project = |x: f32, y: f32, z: f32| {
+            let c = vp * Vec4::new(x, y, z, 1.0);
+            (c.x / c.w, c.y / c.w)
+        };
+        // No yaw: ground points sharing world-x share screen-x; sharing world-y share screen-y.
+        let (ax, _) = project(5.0, 0.0, 0.0);
+        let (bx, _) = project(5.0, 18.0, 0.0);
+        assert!((ax - bx).abs() < 1e-4, "same world-x → same screen-x ({ax} vs {bx})");
+        let (_, cy) = project(0.0, 7.0, 0.0);
+        let (_, dy) = project(22.0, 7.0, 0.0);
+        assert!((cy - dy).abs() < 1e-4, "same world-y → same screen-y ({cy} vs {dy})");
+        // Tilted, not straight down: a point raised in +Z reads higher up the screen than its base.
+        let (_, ground_y) = project(0.0, 0.0, 0.0);
+        let (_, up_y) = project(0.0, 0.0, 5.0);
+        assert!(
+            up_y > ground_y + 1e-3,
+            "height reads as up-screen under the tilt ({ground_y} → {up_y})"
+        );
     }
 
     /// A bare left-click (`pointer_down`) no longer moves a hard-wired avatar (D42): movement comes
