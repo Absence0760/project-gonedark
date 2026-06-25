@@ -21,6 +21,7 @@ pub mod event;
 pub mod fixed;
 pub mod flow_field;
 pub mod fog;
+pub mod lockstep;
 pub mod orders;
 pub mod rng;
 pub mod sim;
