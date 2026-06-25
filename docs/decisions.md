@@ -1423,3 +1423,61 @@ decision log truthful and lets Phase 3 (scale & net) proceed on a complete syste
 **What this does NOT decide:** it does not declare the balance tuned, the audio designed, or the
 forks locked; it does not claim on-device audio or the on-device checksum leg has run. Those are
 named above as owed.
+
+---
+
+## D32 — Meta-UI / app shell: native per-platform shells (out-of-match), in-engine in-session
+
+**Status:** resolves **[Q12](open-questions.md)**. The **app shell** — the out-of-match screens
+scoped in [`roadmap.md`](roadmap.md) Phase 4 (title, onboarding, settings, match setup, lobby,
+profile, store, consent/legal) — is built as **native per-platform shells**: SwiftUI on iOS,
+Jetpack Compose on Android, and a native desktop shell on Windows/Linux. The **in-session** shell
+(pause, reconnect prompt, post-match summary) is the one carve-out: it stays **in-engine**
+(`render`/`wgpu`), because it renders *while embodied* and is therefore bound by invariant #6.
+
+**Decision:**
+
+- **Out-of-match surfaces → native** (Q12 option **b**). Each platform owns its shell in the
+  native UI toolkit, getting OS-native text input/IME, scroll, the accessibility tree, deep links,
+  the back-stack, and — decisively — first-class store/billing sheets (StoreKit, Play Billing) and
+  account flows for free, rather than re-implementing them in `wgpu`.
+- **In-session surfaces → in-engine** (forced, not chosen). Pause/reconnect/post-match draw under
+  the same avatar-only fog as the match (invariant #6); a native overlay there could leak
+  strategic intel or break the fog. This is the constraint Q12 already named as holding "either
+  way," so it is not a reopening of #6.
+- **The shell↔sim boundary is a new, explicit seam.** Native shells drive the shared engine
+  through a narrow, **GPU-free, logic-free** command/query interface (start/configure/abort a
+  match, read settings + progression, surface store state). The shell holds **no** game/sim logic
+  — exactly like the PAL holds no game logic. This keeps the native fork *above* a thin boundary,
+  consistent with invariant #2: game logic stays single-sourced in `core`; only the chrome forks.
+
+**Why:** the two places this fork actually bites — the **store** ([Q9](open-questions.md): mandatory
+StoreKit/Play Billing on mobile) and **accessibility** (a colorblind/hard-of-hearing equivalent for
+the going-dark flash+audio alert channel, invariant #6) — are precisely where native toolkits give
+for free what an in-engine shell would have to re-earn, and where store-policy compliance is least
+negotiable. The cost native shells carry is a per-platform UI fork — the very thing invariant #2
+exists to prevent — but #2 forbids forking **game logic**, not chrome. A title screen or a settings
+sheet is platform glue, the same category as the PAL; building it natively does not multi-source the
+sim, the netcode, or the order/stance vocabulary, which remain identical on all four platforms. The
+real obligation the decision takes on is keeping the shell↔sim boundary disciplined enough that no
+game logic leaks up into a shell — enforced the same way the PAL boundary is.
+
+**What this does NOT decide:** it does not settle the billing rails themselves
+([Q9](open-questions.md) stays open — *which* rails per platform, and desktop Stripe-vs-Steam), the
+onboarding/PvE-first sequencing ([Q5](open-questions.md)), or the hero-asset source feeding the
+store catalog ([Q11](open-questions.md)). It does not pick the desktop toolkit concretely
+(native-vs-egui is a Phase-4 implementation call). It does not reopen invariant #6 — it is bounded
+by it. No shell code exists yet; this fixes the *approach* before Phase 4 shell work starts, so the
+shell↔sim boundary can be designed for it.
+
+**Consequences:**
+- [`open-questions.md`](open-questions.md) **Q12** migrates to RESOLVED (header + closing lean now
+  point here); the original in-engine-vs-native analysis is retained beneath the resolution.
+- [`roadmap.md`](roadmap.md) Phase 4 gains the **Meta-UI / app shell** scope subsection, and its
+  "One shell or four?" constraint now resolves to this decision instead of an open fork.
+- **Owed when Phase 4 shell work begins** (not now): define the **shell↔sim boundary** seam (the
+  narrow GPU-free, logic-free command/query interface native shells drive `core` through), likely a
+  short [`architecture.md`](architecture.md) addition; pick the concrete desktop toolkit
+  (native-vs-egui); and keep the boundary under the same no-leak discipline as the PAL so no game
+  logic climbs into a shell. [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)
+  still feed the onboarding, store, and catalog surfaces respectively and remain open.

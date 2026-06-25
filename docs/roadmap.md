@@ -174,9 +174,45 @@ model.
 
 ## Phase 4 — Polish & ship
 
+**Goal:** wrap the game in everything that ships *around* the match — the app shell, the
+storefront, the first-run teach — and tune it to mid-range silicon.
+
 - Thermal/battery tuning; device quality tiers; dynamic resolution.
-- New-player onboarding for the blindness mechanic (teach + telegraph the cost).
-- Store, telemetry, live-ops scaffolding.
+- Telemetry + live-ops scaffolding (consent-gated, per [`infrastructure.md`](infrastructure.md)).
+
+### Meta-UI / app shell — the screens *around* the match
+
+Phase 2 built the **in-match** UI (the touch command UI, fog, the embodied alert HUD —
+D24/D25). What's still unbuilt is the **app shell**: every screen the player touches before,
+between, and after a match. It is one body of work, scoped here so it doesn't get smuggled in
+piecemeal. The shipping touch *gameplay* scheme (D14/Q4) is **not** part of this — that lives
+in the in-match layer; the **settings surface that configures it** is.
+
+| Surface | What it covers | Depends on |
+|---|---|---|
+| **Boot & title** | Splash, title/attract screen, build-channel + version stamp | — |
+| **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a new player reads a loss as *"I stayed too long"* | [Q5](open-questions.md) (PvE-first is the natural teach surface); invariant #6 |
+| **Settings** | Graphics tiers (↔ device quality tiers above), audio-mix levels, the touch-layout / rebind editor (configures the D14 scheme), desktop key/gamepad rebinds, **accessibility** | invariant #6 (see accessibility note) |
+| **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry | order/stance vocab (D25) |
+| **Lobby & matchmaking** (PvP) | Party/invite, connection-quality readout, ready-up. **Seam:** the net plumbing is Phase 3 (D27 lockstep, reconnect/handoff); only the *surface* is Phase 4 | Phase 3 netcode; [Q5](open-questions.md) |
+| **Progression & profile** | Persistence, stats, cosmetic inventory | account/persistence backend ([`infrastructure.md`](infrastructure.md)) |
+| **Store / IAP** | Cosmetic purchases, restore-purchases, receipts, refund paths | [Q9](open-questions.md) (per-platform billing rails); [Q11](open-questions.md) (hero-tier cosmetics feed the catalog) |
+| **Consent & legal** | Telemetry/privacy consent, age gate, ToS/EULA — **gates** store + telemetry, so it precedes them | [`infrastructure.md`](infrastructure.md) |
+| **In-session shell** | Pause, surrender/leave, post-match summary, reconnect prompt | reconnect/handoff is Phase 3 |
+
+**Cross-cutting constraints:**
+
+- **Fairness (invariant #6) outranks the shell.** No meta-UI element — not a notification, a
+  reconnect toast, nor a post-match teaser — may leak strategic intel *while embodied*. The
+  in-session shell renders under the same avatar-only fog as the game.
+- **Accessibility is load-bearing here, not optional polish.** The going-dark alert channel is
+  a directional **flash + audio** (invariant #6); a colorblind or hard-of-hearing player needs
+  an equivalent cue or the core mechanic is unfair to them. The settings surface owns this.
+- **One shell or four?** Settled in **[D32](decisions.md)**: **native per-platform shells** for
+  these out-of-match surfaces (SwiftUI / Jetpack Compose / a desktop shell), with the **in-session**
+  shell (pause/reconnect/post-match) kept **in-engine** because it renders under avatar-only fog
+  (invariant #6). Invariant #2 holds — the fork is *chrome*, not game logic; the sim/netcode/order
+  vocab stay single-sourced in `core`, reached through a narrow GPU-free, logic-free shell↔sim seam.
 
 ---
 

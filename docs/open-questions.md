@@ -200,3 +200,44 @@ game), a small *commissioned* hero set for the handful of things the camera ling
 AI-generation used for *iteration/greyboxing* hero candidates rather than final output until
 its license terms and eye-level quality firm up. Scope the hero-asset count and budget before
 locking.
+
+---
+
+## Q12 — Does the meta-UI / app shell render in-engine, or as native per-platform shells? — RESOLVED ([D32](decisions.md): native shells, in-engine in-session)
+
+**Resolved in [D32](decisions.md): native per-platform shells for the out-of-match app shell
+(option b), with the in-session shell kept in-engine** because it renders under avatar-only fog
+while embodied (invariant #6). Native toolkits (SwiftUI / Jetpack Compose / a desktop shell) win
+exactly where the fork bites — store/billing sheets ([Q9](open-questions.md)) and accessibility
+for the going-dark alert channel (invariant #6) — and the per-platform fork is *chrome*, not game
+logic, so invariant #2 holds: the sim/netcode/order vocab stay single-sourced in `core`, reached
+through a narrow GPU-free, logic-free shell↔sim seam. Original analysis retained below.
+
+---
+
+The in-match UI is already in-engine (`wgpu`/`render`, D24/D25). The **app shell** — title,
+onboarding, settings, lobby, store, profile (scoped in [`roadmap.md`](roadmap.md) Phase 4) — is
+unbuilt, and *how* it renders is a real fork. Invariant #2 (one shared core, thin PAL) pushes
+toward one shared UI; store/OS integration pushes toward native.
+
+| Option | Upside | Cost / risk |
+|---|---|---|
+| **(a) In-engine** (wgpu-drawn, one shared shell) | One UI across all four platforms — matches invariant #2; no per-platform UI fork to maintain; consistent look; reuses the renderer already shipped | Rebuilds what the OS gives free (text input, scroll, accessibility tree, IME); native store/account sheets (StoreKit, Play Billing) still must be hosted; weaker OS-native feel |
+| **(b) Native shells** (SwiftUI / Jetpack Compose / desktop egui-or-native, per platform) | Best OS integration — accessibility, IME, store/billing sheets, deep links, back-stack; fastest path to platform store compliance | A UI fork *per platform* (the thing invariant #2 exists to avoid), ×4 maintenance; the shared core must expose a clean shell↔sim boundary; look drifts across platforms |
+| **(c) Hybrid** | In-engine for the *in-session* shell (pause/summary — must match the game's look + fairness fog); native for *out-of-match* shells where store/OS/accessibility integration pays | Two UI stacks to maintain; a clear seam needed for which surface lives where |
+
+**Why it matters:** the store (Q9 billing rails) and accessibility (the colorblind/HoH
+equivalent for the going-dark alert channel, invariant #6) are exactly where native shells earn
+their keep — and exactly where an in-engine shell has to *re-earn* what the OS gives for free.
+But a per-platform UI fork is the precise cost invariant #2 was written to avoid, so this isn't
+a free "just use native" call.
+
+**Constraint either way:** whichever renders, the **in-session** shell (pause, reconnect,
+post-match) must obey invariant #6 — it renders under avatar-only fog while embodied and leaks
+no strategic intel. That argues the in-session shell stays in-engine regardless, which is why
+(c) is more than a fence-sit.
+
+**Resolved to (b) + the forced in-session carve-out ([D32](decisions.md)).** The analysis
+above leaned (c) hybrid; the decision lands on **native out-of-match shells** with the in-session
+shell in-engine because invariant #6 forces it — which is the (c)-shaped carve-out folded into a
+(b) choice. The shell↔sim boundary it gates is fixed before Phase 4 shell work begins.
