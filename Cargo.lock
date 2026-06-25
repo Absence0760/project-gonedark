@@ -864,7 +864,10 @@ name = "gonedark-server"
 version = "0.0.0"
 dependencies = [
  "axum",
+ "serde",
+ "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]
