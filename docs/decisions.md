@@ -1942,42 +1942,55 @@ not weakened. Render tests + viz-runner green.
 
 ## D41 — AI-generated placeholder models for all render content (skip commissioned art for now)
 
-**Status:** decided (sourcing direction); not yet landed (no assets generated yet). Scopes the art bullet
-of the [`roadmap.md`](roadmap.md) "Path to publishable" checklist.
+**Status:** decided (sourcing direction + method); assets not yet landed. **Method chosen:**
+Claude-authored **Blender (`bpy`) procedural scripts → `.glb`** — i.e. simple models *scripted* in a
+Claude Code session, not pulled from an external text-to-3D service. Scopes the art bullet of the
+[`roadmap.md`](roadmap.md) "Path to publishable" checklist.
 
 **Decision:**
 
 - For the push to a publishable, *complete-feeling* build, **every** visible model — units, structures,
-  and the embodied weapon viewmodel — is sourced as an **AI-generated placeholder** rather than
+  and the embodied weapon viewmodel — is sourced as a **placeholder generated in-session** rather than
   commissioned, bought, or hand-sculpted art. Custom 3D authoring is deferred, not cancelled.
-- This **pulls the "AI-assisted" route forward**: [`content-pipeline.md`](content-pipeline.md) §2 had
-  reserved AI assistance for the *hero* tier (the few things the camera lingers on); D41 makes
-  AI-generated assets the **default greybox/low tier for the whole game** for now. The mid and hero tiers
-  remain the documented endgame — this is a temporal (axis-C) call, not a new permanent tier.
-- **Nothing about the pipeline relaxes.** Generated assets are still **one source `.glb` per object** fed
-  through the existing cook → LOD → ASTC/atlas chain ([`content-pipeline.md`](content-pipeline.md) §1),
-  must pass the **two-view filter** (§4: a credible RTS token *and* an eye-level FPS mesh), and must clear
-  **license hygiene** (§3) — each carries a manifest entry recording it as AI-generated, with the
-  generator/model and its commercial-use terms, and CI still fails the build on a missing/disallowed
-  provenance. AI-generated provenance is treated as its own license class to vet, not an automatic ✅.
+- **Method: Claude-scripted procedural Blender.** Models are built from primitives by a headless
+  `blender --background --python` script (`tools/models/gen_models.py`) that exports one `.glb` per object
+  plus a license manifest. This is the **procedural / kit-bash** lane that
+  [`content-pipeline.md`](content-pipeline.md) §5–§6 already puts in the **"Claude *can*"** column —
+  *not* the "Claude cannot sculpt hero meshes" lane. It is greybox quality by construction: blocky,
+  intentional-looking placeholders, not final art.
+- This **pulls the "AI-assisted" route forward**: §2 had reserved AI/assisted authoring for the *hero*
+  tier (the few things the camera lingers on); D41 makes scripted placeholders the **default greybox/low
+  tier for the whole game** for now. The mid and hero tiers remain the documented endgame — this is a
+  temporal (axis-C) call, not a new permanent tier.
+- **The provenance/open thread is resolved by the method.** Code-authored geometry from primitives has
+  **no external-tool license to vet** — output is original, CC0-able, owned. The earlier "which generator,
+  on what terms?" question is moot: each asset's manifest entry reads `source: procedural (Blender bpy)`,
+  `license: CC0-1.0`, with a `sha256`. License hygiene (§3) is *satisfied*, not relaxed.
+- **Nothing else about the pipeline relaxes.** Generated assets are still **one source `.glb` per object**
+  destined for the cook → LOD → ASTC/atlas chain (§1) and must pass the **two-view filter** (§4) — and the
+  honest weak axis is exactly there: primitive-built models read fine as **top-down RTS tokens** but are
+  crude at **FPS eye-level**. That's the accepted placeholder trade; the mid/hero art pass is what
+  eventually fixes eye-level credibility.
 
 **Why:** The game now *plays* (D37–D40) but looks like greybox; commissioning or hand-authoring art is
 the single most expensive, slowest path to "looks finished," and the design corpus has always been
 placeholder-first (§2) — buying art before feel is locked is exactly what the production ladder warns
-against. AI generation gets a consistent, intentional-looking placeholder set across every object cheaply
-and fast, which is all a publishable *first* build needs; real mid/hero art is a later, post-feel spend.
+against. Scripting simple models in-session gets a consistent, license-clean, intentional-looking
+placeholder set across every object for near-zero cost, which is all a publishable *first* build needs;
+real mid/hero art is a later, post-feel spend.
 
-**What this does NOT decide:** the specific generator/tool or its terms (a per-tool license check under
-§3, not a blanket approval); the *hero*-tier sourcing question — [`open-questions.md`](open-questions.md)
+**What this does NOT decide:** the *hero*-tier sourcing question — [`open-questions.md`](open-questions.md)
 **Q11 stays open**, since D41 is about the **placeholder/greybox** tier, not the few things the camera
-lingers on; final art direction or the eventual mid/hero authoring (still the endgame per §2/§6);
-anything in the sim — assets are render-only, so invariant #1 (no floats in the sim) does not reach here. It also does not change the two-view filter or the cook step; AI assets ride the *same*
-pipeline, they're just a cheaper *source*.
+lingers on; final art direction or the eventual mid/hero authoring (still the endgame per §2/§6); the
+**glTF runtime loader** — `render` currently draws procedural instanced primitives and has *no* mesh
+loader, so wiring these `.glb` into the renderer (+ a cook step) is separate follow-on work; anything in
+the sim — assets are render-only, so invariant #1 (no floats in the sim) does not reach here.
 
-**Consequences:** `content-pipeline.md` §2 updated so the low/greybox tier names AI-generated models as
+**Consequences:** a new `tools/models/` (the `bpy` generator + a wrapper) and `assets/models/` (the
+`.glb` outputs + `manifest.json`) land, behind a `pnpm assets:models` task; Blender becomes a
+content-tooling dependency (dnf, headless). `content-pipeline.md` §2 names scripted procedural models as
 the default placeholder source and the hero bullet points back here; the roadmap "Path to publishable"
-art bullet cites D41. No code or asset lands yet — this records the sourcing direction the checklist
-executes against.
+art bullet cites D41.
 
 ---
 

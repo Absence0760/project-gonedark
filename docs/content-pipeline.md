@@ -49,15 +49,17 @@ Placeholder-first. Don't buy or commission art before the slice proves the space
 in both views.
 
 - **Low / greybox** — kit-bashed primitives + CC0 mobile packs (procedurally generated
-  where possible, see §5) **plus AI-generated placeholder models** ([`decisions.md`](decisions.md)
+  where possible, see §5) **plus scripted procedural models** ([`decisions.md`](decisions.md)
   D41). Purpose: *play* the Phase 1 slice and prove the "one world, two views" thesis
   ([`architecture.md`](architecture.md)) before spending a cent on art. Disposable.
   **For the push to a publishable build (D41), this is the *default* tier for every visible
-  object** — units, structures, and the embodied weapon — sourced AI-generated rather than
-  commissioned, so the game looks intentional cheaply while feel is still being locked. AI
-  assets ride the *same* pipeline as anything else: one source `.glb` through the cook → LOD
-  chain (§1), the two-view filter (§4), and license hygiene (§3) — their provenance is its own
-  license class to vet (§3), not an automatic pass.
+  object** — units, structures, and the embodied weapon — built by a Claude-authored headless
+  **Blender (`bpy`) script** (`tools/models/gen_models.py` → one `.glb` per object), not pulled
+  from an external text-to-3D service. That keeps it license-clean by construction: code-authored
+  geometry from primitives has no third-party tool terms to vet, so each asset's manifest reads
+  `source: procedural (Blender bpy)`, `license: CC0-1.0` — license hygiene (§3) is *satisfied*,
+  not a question. These ride the *same* pipeline as anything else (cook → LOD §1, two-view filter
+  §4); their honest weak axis is eye-level FPS credibility (§4), the accepted placeholder trade.
 - **Mid** — curated open-source assets, decimated and re-textured to mobile budget, that
   pass the two-view filter (§4). The default tier most of the game ships at — the endgame
   target the D41 AI placeholders are eventually *replaced* by, not the launch tier.
