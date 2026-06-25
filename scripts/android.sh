@@ -10,7 +10,7 @@
 #     build     cargo-ndk: build libgonedark_pal_android.so into android/app/.../jniLibs
 #     apk       gradle :app:assembleDebug (its cargoNdkBuild task builds the .so first)
 #     install   build the APK, then `adb install -r` to the target device
-#     run|dev   install + `am start` the NativeActivity + stream logcat  (the inner loop)
+#     run|dev   install + `am start` the launcher (MainActivity) + stream logcat  (inner loop)
 #     logcat    just tail the app's logs (tag `gonedark`)
 #   (default command: run)
 #
@@ -35,8 +35,12 @@ ABI="${GONEDARK_ABI:-arm64-v8a}"
 PROFILE="${GONEDARK_PROFILE:-debug}"
 # Target device serial: GONEDARK_DEVICE, else the optional 2nd CLI arg, else auto/none.
 DEVICE="${GONEDARK_DEVICE:-${2:-}}"
+# Launch the exported Compose app shell (the LAUNCHER); it starts the non-exported
+# NativeActivity (the Rust engine) internally on "Start". adb (uid 2000) cannot
+# `am start` the non-exported NativeActivity directly — that's a SecurityException
+# ("not exported from uid"). See android/app/src/main/AndroidManifest.xml (D35 split).
 PKG="com.jaredhoward.goingdark"
-ACTIVITY="$PKG/android.app.NativeActivity"
+ACTIVITY="$PKG/.MainActivity"
 APK="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
 
 # Resolve ANDROID_NDK_HOME (cargo-ndk and the Gradle cargoNdkBuild task both need it).
@@ -124,6 +128,33 @@ cmd_setup() {
 	echo ">> done. (NDK + SDK themselves come from Android Studio's SDK manager.)"
 }
 
+# Copy libc++_shared.so (the NDK C++ runtime our cdylib links against — oboe-sys compiles
+# Oboe's C++, see pal-android/build.rs) into jniLibs so it ships in the APK. Without it the
+# app dies in dlopen at launch. The Gradle apk path does this via the copyCxxShared task;
+# this covers the direct `cargo ndk build` path. Maps the ABI to its toolchain triple and
+# resolves the host prebuilt dir rather than hardcoding linux-x86_64.
+copy_cxx_shared() {
+	local triple
+	case "$ABI" in
+		arm64-v8a) triple=aarch64-linux-android ;;
+		armeabi-v7a) triple=arm-linux-androideabi ;;
+		x86_64) triple=x86_64-linux-android ;;
+		x86) triple=i686-linux-android ;;
+		*) echo "!! unknown ABI '$ABI' — can't locate libc++_shared.so" >&2; exit 1 ;;
+	esac
+	local prebuilt src dest
+	prebuilt="$(ls -d "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/ 2>/dev/null | head -1)"
+	src="${prebuilt%/}/sysroot/usr/lib/$triple/libc++_shared.so"
+	dest="$ROOT/android/app/src/main/jniLibs/$ABI"
+	if [[ ! -f "$src" ]]; then
+		echo "!! libc++_shared.so not found at $src" >&2
+		exit 1
+	fi
+	mkdir -p "$dest"
+	cp -f "$src" "$dest/"
+	echo ">> bundled libc++_shared.so -> jniLibs/$ABI"
+}
+
 cmd_build() {
 	need_cargo_ndk
 	resolve_ndk
@@ -132,6 +163,7 @@ cmd_build() {
 	echo ">> cargo ndk build ($ABI, $PROFILE) -> android/app/src/main/jniLibs"
 	(cd "$ROOT" && cargo ndk -t "$ABI" -o android/app/src/main/jniLibs build \
 		-p gonedark-pal-android "${flags[@]}")
+	copy_cxx_shared
 }
 
 cmd_apk() {
@@ -156,7 +188,7 @@ cmd_install() {
 
 cmd_run() {
 	cmd_install
-	echo ">> am start $ACTIVITY  (on $DEVICE)"
+	echo ">> am start $ACTIVITY  (launcher; taps through to the engine on \"Start\") (on $DEVICE)"
 	adb_dev shell am start -n "$ACTIVITY"
 	cmd_logcat
 }

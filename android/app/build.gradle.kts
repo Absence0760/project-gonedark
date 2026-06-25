@@ -111,8 +111,43 @@ val cargoNdkBuild by tasks.registering(Exec::class) {
     )
 }
 
-// Make every native-lib merge depend on the cargo build. Covers debug + release variants.
+// Bundle the NDK C++ shared runtime alongside our cdylib. `oboe-sys` compiles Oboe's C++,
+// so libgonedark_pal_android.so is linked against libc++_shared.so (see ../../pal-android/
+// build.rs). That .so is NOT part of our crate's output and is not bundled by default, so the
+// app would `dlopen`-fail at launch with "library libc++_shared.so not found". Copy it from
+// the active NDK into the same jniLibs/<abi> dir cargo-ndk writes to. The host prebuilt dir
+// (linux-x86_64 / darwin-* / windows-*) is resolved rather than hardcoded.
+// Resolve the NDK the same way scripts/android.sh / cargo-ndk do — from ANDROID_NDK_HOME /
+// ANDROID_NDK_ROOT, else the newest ndk/<ver> under the SDK. Deliberately NOT via
+// `android.ndkDirectory`, which forces NDK auto-detection at configuration time and fails
+// with "NDK is not installed" unless `ndkVersion` is pinned (the cargoNdkBuild task above
+// avoids it for the same reason).
+fun resolveNdkDir(): File {
+    System.getenv("ANDROID_NDK_HOME")?.let { return File(it) }
+    System.getenv("ANDROID_NDK_ROOT")?.let { return File(it) }
+    val sdk = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+    val ndkRoot = sdk?.let { File("$it/ndk") }
+    val newest = ndkRoot?.listFiles()?.filter { it.isDirectory }?.maxByOrNull { it.name }
+    return newest ?: throw GradleException(
+        "Cannot locate the Android NDK. Set ANDROID_NDK_HOME, or install one via the SDK manager."
+    )
+}
+
+val copyCxxShared by tasks.registering(Copy::class) {
+    group = "rust"
+    description = "Copy libc++_shared.so (the C++ runtime oboe needs) from the NDK into jniLibs"
+    val abi = "arm64-v8a"
+    val triple = "aarch64-linux-android"
+    val prebuilt = File(resolveNdkDir(), "toolchains/llvm/prebuilt").listFiles()
+        ?.firstOrNull { it.isDirectory }
+        ?: throw GradleException("No NDK llvm prebuilt toolchain under the resolved NDK")
+    from(File(prebuilt, "sysroot/usr/lib/$triple/libc++_shared.so"))
+    into(layout.projectDirectory.dir("src/main/jniLibs/$abi"))
+}
+
+// Make every native-lib merge depend on the cargo build AND the C++ runtime copy. Covers
+// debug + release variants.
 tasks.matching { it.name.startsWith("merge") && it.name.contains("JniLibFolders") }
-    .configureEach { dependsOn(cargoNdkBuild) }
+    .configureEach { dependsOn(cargoNdkBuild, copyCxxShared) }
 // Belt-and-suspenders: also gate preBuild so a fresh checkout builds the lib first.
-tasks.named("preBuild").configure { dependsOn(cargoNdkBuild) }
+tasks.named("preBuild").configure { dependsOn(cargoNdkBuild, copyCxxShared) }
