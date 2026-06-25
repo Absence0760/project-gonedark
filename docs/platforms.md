@@ -97,7 +97,11 @@ assemble the pieces.) That leaves you to hand-roll only a few platform services
 (billing, push, mmap specifics) behind the PAL.
 
 The strategic-layer audio mix that bleeds into the embodied "world goes dark" view
-(design doc §6) is engine-side and identical everywhere.
+(design doc §6) is engine-side and identical everywhere — and the per-voice *render* math
+(pan/gain/muffle/sum) is shared too, in the host-tested `pal::mix` seam, so every backend
+mixes identically. **Implemented backends:** desktop renders the mix via `cpal` (opt-in
+`audio` feature, D26); **Android renders it via `oboe` — a real low-latency AAudio output
+stream (D29)** (the §1 table's "Android · AAudio" entry). iOS (CoreAudio) is later.
 
 ## 5. Input — the real per-platform divergence
 

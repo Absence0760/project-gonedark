@@ -1177,3 +1177,167 @@ test that rides the arch matrix means a format regression fails CI the same way 
   DECIDED. [`architecture.md`](architecture.md) §Netcode notes the format is now decided (D28),
   code pending. [`README.md`](../README.md) repo-map will note `core::persist` when the first slice
   lands (not before — it does not exist yet).
+
+---
+
+## D29 — Android audio sink: `oboe` (low-latency AAudio), mixing through a shared host-tested seam
+
+**Status:** the Android `pal::Audio` backend, which was a documented no-op (the last gap flagged in
+[D26](#d26--phase-2-polish-round-real-opt-in-audio-output-a-selection-highlight-and-a-first-pass-balance-baseline)),
+is now a real low-latency AAudio output stream. Presentation/PAL only; the deterministic sim is
+untouched.
+
+**Decision:**
+
+1. **The Android backend uses `oboe` 0.6 directly (not `cpal`).** `oboe` is Google's official
+   AAudio/OpenSL ES wrapper — the literal "low-latency AAudio" path
+   [`platforms.md`](platforms.md) §2 asks for. The alternative, `cpal`'s Android backend (which
+   internally uses oboe anyway), needs an `ndk-context` JavaVM handle wired through
+   `android-activity` and negotiates whatever latency it picks; going to oboe directly skips that
+   and lets us request `PerformanceMode::LowLatency` + `SharingMode::Exclusive` explicitly. The dep
+   is added to **`pal-android/Cargo.toml` only**, under its `cfg(target_os = "android")` table,
+   pinned `oboe = "0.6"` (already in `Cargo.lock` transitively under cpal — this promotes it to a
+   direct dep, no version invention). The DEFAULT feature set is used deliberately: we do **not**
+   add `java-interface` (the JavaVM/`ndk-context` path) — we talk straight to AAudio. (`cpal`
+   already activates oboe's `java-interface` transitively, so `ndk 0.8` + `jni` are in the lock
+   regardless; they coexist with our `ndk 0.9`, so this direct dep adds **no new version
+   conflict**.) `oboe-sys` builds its C++ shim via `cc` against the NDK clang the build already
+   needs.
+
+2. **The per-voice render math is extracted to a shared, host-tested seam — `gonedark_pal::mix`.**
+   The pan/gain/muffle/sum/eviction math (equal-power pan from `azimuth`, gain clamp, the one-pole
+   low-pass that makes `muffled` off-map bleed read as distant — invariant #6 — voice summation +
+   soft-clamp, `MAX_VOICES` eviction) previously lived **inline and untested** in `pal-desktop`'s
+   `audio` backend. It now lives in `pal/src/mix.rs` (the host-safe trait crate, pulling only `std`
+   + `Arc`), exposing `Voice`, `Mixer`, `voice_from_cue`, `synth_bank`, `oneshot_sound`. **Both**
+   backends mix through it; `pal-desktop` was refactored to consume it (behavior-identical), and the
+   Android backend uses the same functions. This is the CLAUDE.md "extract the pure logic to a
+   testable seam" pattern — same as `render::interpolate_instances` and `engine`'s free fns: the
+   realtime stream callback (cpal/oboe, un-constructible in a host test) is the only thin glue left
+   per platform, and the math is unit-tested on the host with no audio device (16 tests).
+
+3. **Failure degrades to silence, never a panic (invariant #8).** `AndroidAudio::new()` opens the
+   stream; any device/builder/stream-open failure logs `[audio] disabled (silent)` to logcat and
+   sets `inner: None` so every `submit_mix`/`play_oneshot` is a no-op. The realtime callback
+   `try_lock`s the shared `Mixer` and emits a frame of silence if the game thread holds it — it
+   never blocks the audio thread (oboe's realtime-callback contract; mirrors the desktop cpal rule).
+
+**Why:** audio is the *primary* directional-awareness system while the map is dark (invariant #6),
+so the Android sink has to actually pan by `azimuth` and muffle the strategic bleed — playing
+centered would break the "alerts, not intel by ear" model. Rendering through the SAME `mix_cues`
+output the desktop renders keeps the embodied audio model identical across platforms (invariant
+#2 — the *render* is legitimately per-platform, which is what the PAL boundary is for; the *mix
+derivation* stays shared in `engine::audio`). Lifting the render math into `pal::mix` is the
+load-bearing move: it makes the only non-trivial logic host-testable (the tests-ship rule), kills a
+silently-untested copy in `pal-desktop`, and guarantees the two backends can't drift. Floats here
+are sanctioned — this is the platform/presentation side, never the sim (the determinism guard
+scopes its float greps to `core`/`sim`, deliberately excluding `pal/`).
+
+**What this does NOT decide / what is owed:**
+- **On-device audibility.** The crate **compiles for `aarch64-linux-android`** with the NDK
+  (oboe-sys's C++ shim builds), but audible output, the negotiated low-latency path, and the
+  muffled-bleed audibility are device-judgment calls — shake out with `pnpm android:dev` and listen
+  / read logcat for the fallback line. The glue is marked `# NOT device-verified` in the file's
+  existing honest style.
+- **Real audio assets.** Sounds are still the placeholder procedural cues (now shared in
+  `pal::mix::synth_bank`); a real asset pass is later, unchanged from D26.
+- **The two other Android phase-2 TODOs are explicitly NOT bundled here** (one-commit-one-
+  workstream): the shipped mobile control scheme (on-screen virtual sticks / gyro → `move_axis`/
+  `look_axis`) is an unsettled **design** call (must not be silently decided — `open-questions`/
+  roadmap), and the resume snapshot (`MainEvent::SaveState`) depends on `AndroidStorage` being real
+  (also stubbed) plus the [D28](#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)
+  serialize/restore path landing. Both TODOs keep sharpened notes in `pal-android/src/lib.rs`.
+
+**Consequences:**
+- New module `pal/src/mix.rs` (shared render math + 16 host tests, dev + release green);
+  `pal-desktop/src/audio.rs` slimmed to consume it (its inline `Voice`/`Mixer`/synth removed);
+  `pal-android` gains a real `AndroidAudio` + `oboe` dep and `android_main` opens the stream.
+- `core` untouched; `pal` trait surface (`Audio`, `AudioCue`, `SoundId`) unchanged and still
+  audio-API-free. No checksum impact (presentation only).
+- [`platforms.md`](platforms.md) §2's "AAudio sink" is now real; [`README.md`](../README.md)
+  repo-map gains `pal::mix`; `android/README.md` notes the audio sink is implemented (on-device
+  audibility still owed).
+
+---
+
+## D30 — A measured combat/economy balance baseline + a deterministic balance-metrics harness
+
+**Status:** supersedes [D26](#d26--phase-2-polish-round-real-opt-in-audio-output-a-selection-highlight-and-a-first-pass-balance-baseline)
+§3's first-pass balance numbers. Still a **playtest baseline, NOT a locked design** — but the
+numbers are now backed by an objective, deterministic metric rather than by feel. Sim-input +
+test/harness change only; the deterministic *model* is unchanged.
+
+**Decision:**
+
+1. **A deterministic balance-metrics harness lands first** (`sim-runner`'s `metrics` module +
+   `--metrics[=<which>]` mode). It scripts canonical fights/economy runs and reads integer/`Fixed`
+   metrics straight off fully-observable sim state — alive-count and summed-HP (as raw Q16.16
+   bits) per faction, resource purse, controlled-point count — and derives the headline numbers:
+   **time-to-kill**, **equal-cost army trade**, **suppression pin-vs-kill timing**, and the
+   **economy ramp**. Floats appear *only* at the stderr print boundary (seconds = ticks/60, for
+   humans), exactly like `--time`; the stdout `<tick> <checksum>` stream is untouched, so the mode
+   cannot affect determinism (invariants #1, #7). This makes balance an objective,
+   regression-testable signal *before* any number moves.
+
+2. **Combat re-tune (measured against the harness):**
+   - **Rifleman** 6 dmg / 30-tick cooldown (12 DPS), range 14 — a symmetric open 1v1 now resolves
+     in **~8.0 s** (down from the old ~12 s: decisive without being a contact-delete), and the
+     longer reach means rifle *mass* wins at range.
+   - **Heavy** reworked from a strictly-dominated stat-line into a short-range **bruiser**: 280 HP,
+     18 dmg / 48-tick cooldown (~22 DPS), range 11 (shorter than the Rifleman), cost 220
+     (down from 250), production 660 ticks (11 s, down from 12 s). The harness proved the old Heavy
+     *lost every equal-cost trade* (rifle-mass wiped heavy-mass 0-for); now the matchup is
+     **range-dependent rock-paper-scissors** — measured: at point-blank an equal-cost Heavy blob
+     out-trades the rifles (eq-cost 500 sep5 → heavies win), at rifle range the cheaper,
+     longer-reaching rifles kite and win (eq-cost 1000 sep9 → rifles win). Neither strictly
+     dominates.
+   - **Suppression pin** lowered 3/4 → **1/2** (`SUPPRESSION_PER_HIT` 1/8 and `SUPPRESSION_DECAY`
+     1/64 unchanged). The harness showed the old 3/4 pin **never triggered before a kill** —
+     suppression was cosmetic. At 1/2 a unit pins once four shots land before they decay: a
+     4-shooter focus-fire pins the target on the first burst (*before* it dies, the D26 goal),
+     while a lone shooter never accumulates enough (the clean 1v1 still resolves by damage). So
+     suppression is now specifically a "concentrate fire to pin" lever.
+
+3. **Economy** tables left at the D26 values (camp 250, rifle 100, camp HP 1000, income 1 + 2/pt,
+   build/production times, upgrades) — the harness's economy ramp confirmed them coherent (holding
+   one point triples income; a camp pays back in ~2 s of holding). Only `HEAVY_COST` (250 → 220)
+   and `HEAVY_BASE_TICKS` (720 → 660) moved, as part of the Heavy rework above.
+
+**Why:** D26 shipped a balance baseline reasoned in seconds but never *measured* — and measurement
+exposed two real degeneracies (the Heavy was a trap pick that lost every cost-equal fight, and
+suppression never mattered before death). Standing up a deterministic metrics harness turns
+"is the balance good?" into integer numbers the sim produces bit-identically on every arch, so the
+re-tune is justified by a TTK band / win-rate / ramp target instead of vibe — and any future
+balance regression is caught by a test, not a playtest. The harness mirrors the `--time` discipline
+(stderr only, stdout checksum untouched) so it rides the existing determinism guarantees for free,
+and every tuned number stays fixed-point (`Fixed::from_int`/`from_ratio`, all power-of-two-clean
+ratios — `1/2`, `1/8`, `1/64` are exact in Q16.16) so invariant #1 holds and dev == release.
+
+**Honest caveat (carried from D26):** this is a *more-justified* baseline — the numbers are backed
+by measured TTK / equal-cost-trade / pin-timing / ramp targets — but final *feel* still requires
+human playtests. The framing stays "playtest baseline, not locked design."
+
+**What this does NOT decide:** the target TTK band (settled at ~6–10 s here) and the exact
+equal-cost win-rate split are first measured targets, not final; no new unit types, weapons, or
+stances; the touch-UI retreat default (30%, `engine::command_ui`) is unchanged.
+
+**Consequences:**
+- `core::economy::unit_stats` (Rifleman/Heavy stats), `HEAVY_COST`, `HEAVY_BASE_TICKS`, and
+  `core::combat::SUPPRESSION_PIN` move. The lockstep-coupled tests update **in the same commit**:
+  `economy::balance_baseline_reads_in_seconds` re-anchored (heavy 11 s, heavy cost 220), a new
+  `unit_stats_match_measured_d30_baseline` locks the tuned stats + the bruiser relationship, and
+  `orders::half_suppressed_unit_moves_slower_than_clean_one` now uses a 1/4 fixture (below the new
+  1/2 pin). New `sim-runner::metrics` tests assert metric determinism plus the measured properties
+  (TTK band, Heavy-not-dominated-at-close-range, rifles-win-at-range, pin-before-kill, cover
+  extends survival, one-point-triples-income). Full suite green dev + release.
+- **Checksum impact (expected and correct):** the balance change moves the per-tick checksum
+  stream. The `sim-runner` 300-tick `phase2` final checksum is now **`41e4d81992787504`** (was
+  `4c34c6b5951edf57` under the D26 numbers — the value recorded in D22's *historical* on-device
+  validation, left intact as a record of that run). There is **no committed golden checksum
+  literal** anywhere, so [`determinism.yml`](../.github/workflows/determinism.yml) /
+  `android-checksum.sh` still pass: they diff streams across the arch matrix for *equality*, which
+  a balance change preserves (all arches compute the new value identically). **Owed elsewhere:** an
+  on-device arm64 re-confirmation (`pnpm android:checksum` should now agree on `41e4d81992787504`)
+  and human playtests for final feel — neither is doable in this environment.
+- [`README.md`](../README.md) repo-map notes the `sim-runner` `--metrics` harness;
+  [`roadmap.md`](roadmap.md) Phase 2 balance note updated (baseline is now measured, not first-pass).

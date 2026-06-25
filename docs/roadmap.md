@@ -119,10 +119,14 @@ model.
 > procedural placeholder sounds — `pnpm play:audio`); command-layer **selection is now drawn** (a
 > white rim); the full order/stance vocabulary (patrol/hold/fall-back/retreat) is reachable
 > ([D25](decisions.md), which also corrects a mis-scoping in D24); combat lethality + the economy
-> tables got a **first-pass balance baseline**; and a headless **offscreen render harness**
-> (`viz-runner`, `pnpm desktop:viz`) now asserts these behaviors with real pixels. **Honest caveats
-> (still NOT done):** balance is a *baseline*, not tuned (the numbers — incl. the 30% retreat
-> default — expect to move from playtests); audio sounds are *procedural placeholders* (no
+> tables got a **first-pass balance baseline** — since **measured** into a more-justified baseline
+> against a deterministic balance-metrics harness (`sim-runner --metrics`: TTK / equal-cost-trade /
+> suppression-pin / economy-ramp), which fixed two degeneracies the first pass hid (a
+> strictly-dominated Heavy and cosmetic suppression) ([D30](decisions.md)); and a headless
+> **offscreen render harness** (`viz-runner`, `pnpm desktop:viz`) now asserts these behaviors with
+> real pixels. **Honest caveats (still NOT done):** balance is a *measured baseline*, not final
+> feel (the numbers — incl. the 30% retreat default — still expect to move from human playtests);
+> audio sounds are *procedural placeholders* (no
 > asset/design pass) and Android's AAudio sink is still a no-op; and the netcode/lockstep layer is
 > Phase 3. Open forks Q1/Q2/Q3 are deliberately left open — fog and alerts ship as a *mechanism*,
 > not a lock.

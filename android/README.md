@@ -118,8 +118,10 @@ coding agent can script this whole cycle and self-diagnose from logcat.
 
 - `../pal-android` is the `cdylib` crate. It exports `android_main` (via
   `android-activity`'s `native-activity` feature) and implements the `gonedark_pal`
-  traits backed by Android (touch input, wgpu/Vulkan surface, AAudio/AAssetManager
-  stubs).
+  traits backed by Android: touch input, wgpu/Vulkan surface, a real low-latency
+  **AAudio** sink (via `oboe`, D29 — mixes the same positioned cues as desktop through the
+  shared `gonedark_pal::mix` math; audible output still owed an on-device listen), and an
+  AAssetManager/storage stub.
 - The produced library is `libgonedark_pal_android.so`; `AndroidManifest.xml`'s
   `android.app.lib_name` is `gonedark_pal_android` (no `lib`/`.so`). If the integrator
   instead makes `app` the cdylib, rename both consistently.
@@ -136,3 +138,8 @@ coding agent can script this whole cycle and self-diagnose from logcat.
 - **Provisional, not shipped:** the two-finger-tap embody toggle is a dev binding; the real
   mobile control scheme (on-screen sticks / gyro) is a Phase 2 design call. The AGP/Gradle/
   SDK/NDK version pins are this workstation's — adjust on another build machine.
+- **Audio (D29):** the `oboe`/AAudio sink is implemented and the crate builds for
+  `aarch64-linux-android` with the NDK, but **audible output is owed an on-device listen** —
+  run `pnpm android:dev`, listen for panned/muffled cues while embodied, and confirm logcat
+  does NOT show `[audio] disabled (silent)` (which would mean the stream failed to open and
+  the sink degraded to a silent no-op, per invariant #8).
