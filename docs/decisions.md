@@ -1047,3 +1047,133 @@ Building and validating against the in-process double *first* puts the cheapest-
   `pal::Transport` when the first slice lands (not before — they do not exist yet).
 - `determinism.yml` will gain an ADD-ONLY networked-checksum job; the existing single-client
   matrix is never narrowed.
+
+---
+
+## D28 — Authoritative snapshot format: a hand-rolled LE serialization sharing the checksum walk
+
+**Status:** format decided; **no code yet.** This entry fixes the *serialization format* for
+an authoritative, bit-identical-resume snapshot before the wire/persistence code is written —
+exactly as [D27](#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait)
+fixed the netcode topology before the lockstep code. It opens Phase 3 workstream C
+([`phase-3-plan.md`](phase-3-plan.md) §"Workstream C — Reconnect / snapshot / handoff"). The
+first code slice (`core::persist` + `Sim::serialize`/`deserialize` + `Rng::from_state` + the
+round-trip-replay test) is forthcoming under `/safe-edit`, **not** landed here.
+
+**The two-snapshots distinction is the whole reason this exists.** [`core::snapshot`](../core/src/snapshot.rs)
+is the **render** snapshot: lossy by design — alive units only, `health.fraction()` collapsing
+`cur`/`max`, no RNG, no free-list, no dead slots — taken for interpolation (invariant #4) and
+deliberately **not** checksummed. It is **unfit for resume**: deserializing it could never
+reproduce the exact world the checksum hashes, so a peer rebuilt from it would desync on the
+next tick. D28 defines a *second*, **authoritative** serialization: every bit needed to resume
+a peer such that its checksum stream stays **bit-identical** to a never-interrupted run.
+
+**Decision:**
+
+1. **A new authoritative serialization, distinct from the render snapshot.** It captures the
+   exact deterministic state `Sim::checksum` hashes — not a presentation copy. Render snapshot =
+   lossy / interpolation-only / not-for-resume; authoritative snapshot = complete / byte-exact /
+   the only thing a reconnecting peer may resume from. The two never share a type.
+
+2. **Format: a hand-rolled little-endian `Writer`/`Reader`, generalizing the existing
+   `core::checksum` byte discipline — no serde/bincode in `core`.** The `Writer` emits the same
+   LE byte stream `Checksum` already folds (`write_u8`/`i32`/`u32`/`u64` → `to_le_bytes`); the
+   `Reader` is its exact inverse. This keeps `core`'s dependency list **empty** (invariant #2
+   tripwire armed) — pulling serde/bincode would put a determinism-critical, version-sensitive
+   dependency in the sim's resume path for zero benefit, since the byte discipline is already
+   written and proven. **`Fixed` crosses as `to_bits()` / `from_bits()`, never as a float**
+   (invariant #1) — identical to how the checksum and the `core::lockstep` wire codec
+   ([D27](#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait))
+   already treat it. The `Reader` rejects malformed input (bad length / trailing bytes / unknown
+   tag) rather than silently producing a divergent world, mirroring the lockstep codec's
+   never-panic decode.
+
+3. **What is captured** (enumerated from the code; the *why* given for the non-obvious ones):
+   - **Every `World` component array — including dead slots.** The checksum already walks
+     `0..world.capacity()`, alive or not; the snapshot walks the same range so a deserialized
+     world has byte-identical component arrays, not just identical *live* entities.
+   - **The liveness triple — `generation` / `alive` / `free` (the free-list, in order).** This is
+     the subtle one: `World::spawn` pops the **free list** to reuse a slot, so **free-list order
+     decides which slot the next spawn lands in**. Serialize it in the wrong order and the very
+     next production spawn picks a different slot on the resumed peer than on the others — an
+     **instant desync**. The free list is sim state, not a derivable cache.
+   - **`Resources`** (per-faction, in fixed `Faction::ALL` order) and **`Territory`** (control
+     points, stable vector order) — both already checksummed, both required to resume income and
+     capture state.
+   - **`Rng(state, inc)` — flagged as the single most important non-obvious field.** Omit it and
+     the resumed peer's PRNG stream diverges by exactly the draws that happened before the
+     snapshot: a **guaranteed draw-count divergence**, the classic lockstep desync the checksum's
+     RNG fold ([D23](#d23--phase-2-game-systems-the-deterministic-model-and-its-module-decomposition))
+     exists to catch. The first code slice adds a `Rng::from_state(state, inc)` reconstructor
+     (paired with the existing read-only `checksum_state`) so the generator round-trips exactly.
+   - **`tick`** — the resume clock; `cmds[T..]` must replay from the right `T`.
+   - **Excluded: `events`** — the per-tick `SimEvent` stream is **transient** (cleared at the top
+     of every `step`, never checksummed); it is regenerated by the next tick and must not be
+     serialized.
+   - **Terrain → serialize a `map_id`, not the grid.** `Terrain` is **static map data**, set once
+     at scenario build and never mutated by a system (which is exactly why it is *not* in the
+     checksum). Serializing the `GRID×GRID` cell array would bloat every snapshot with constant
+     data; instead the snapshot carries a small `map_id` and the resuming peer rebuilds the same
+     terrain from it. (Both peers already agree on the map out-of-band; the snapshot only needs to
+     name it.)
+
+4. **Structural safeguard: `Sim::checksum` and `Sim::serialize` share one field-walk.** Refactor
+   the field traversal into a single generic walk (e.g. `fn fold<S: StateSink>(&self, sink: &mut S)`)
+   that both a `Checksum` sink and a `Writer` sink drive. Then **anything added to the checksum is
+   serialized for free**, and the two can never silently drift — a new component that gets
+   checksummed-but-not-serialized (or vice versa) becomes structurally impossible rather than a
+   thing to remember. This is the same "make the guarantee structural, don't rely on memory"
+   principle as [D17](#d17--fixed-point-sim-scalar-a-hand-rolled-q1616-fixed-newtype)/[D18](#d18--ecs-storage-hand-rolled-struct-of-arrays-not-an-off-the-shelf-ecs)/[D23](#d23--phase-2-game-systems-the-deterministic-model-and-its-module-decomposition).
+   **This refactor of `Sim::checksum` is the one determinism-sensitive change** in workstream C —
+   the checksum is the lockstep tripwire itself — so it lands under `/safe-edit` with the
+   `sim-runner` stream verified byte-identical before/after the refactor.
+
+5. **The headline invariant test (the load-bearing guard): serialize → deserialize → replay is
+   bit-identical.** serialize@`T` → deserialize → replay `cmds[T..L]` through a plain `step` loop
+   yields a checksum stream **bit-identical** to the never-interrupted run, on **every arch**.
+   Because the test lives in `core`'s test module, it rides the existing determinism matrix
+   ([`determinism.yml`](../.github/workflows/determinism.yml)) automatically — no new CI job
+   needed for the format itself (invariant #7). Once this round-trip holds, **reconnect = snapshot
+   + replay-buffered-commands** (the lockstep command buffer from D27 supplies `cmds[T..L]`),
+   correct **by construction** — there is no separate reconnect algorithm to get wrong.
+
+**Why:** the load-bearing risk is identical to every prior determinism decision — a missing or
+mis-ordered field leaking into a resumed world desyncs lockstep **silently** (invariants #1, #7).
+A reconnecting peer that is even one free-list slot or one RNG draw off computes a different world
+on its first tick back, with no error — just divergence. Making the snapshot capture *exactly*
+what the checksum hashes, through *one shared walk*, makes "the snapshot is complete" a
+**structural** property rather than a checklist: the checksum is already the authority on what sim
+state *is*, so binding serialization to it means the resume path inherits that authority for free.
+Owning a hand-rolled LE codec (rather than serde) keeps the empty-dep guarantee and reuses the
+byte discipline already validated by the checksum and the lockstep wire codec — the same "own the
+load-bearing thing" call as D17/D18/D27. And expressing correctness as a single round-trip-replay
+test that rides the arch matrix means a format regression fails CI the same way a sim desync does.
+
+**What this does NOT decide (deliberately left open):**
+- **The on-wire transport for shipping a snapshot.** Moving the serialized bytes from peer to peer
+  sits entirely behind [`pal::Transport`](#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait)
+  (D27) — `core` produces/consumes opaque bytes and never names a socket. QUIC's connection
+  migration (the Wi-Fi↔cellular input to the D27 transport lean) is a transport concern, not a
+  format one.
+- **The reconnect *policy* / handoff specifics** — when to snapshot, how far back the command
+  buffer must reach, the stalled-peer recovery choice (drop / AI-substitute, `architecture.md`
+  §Netcode), and the Wi-Fi↔cellular handoff pause behavior. D28 decides only the *format* and the
+  *round-trip invariant*; the policy that drives it is a later workstream-C concern.
+- **Snapshot cadence, versioning across game updates, and on-disk save persistence** — beyond the
+  format + round-trip, untouched here.
+
+**Consequences:**
+- A forthcoming first slice adds `core::persist` (the `Writer`/`Reader`), `Sim::serialize`/
+  `deserialize`, `Rng::from_state`, the shared `fold<S: StateSink>` walk (refactoring
+  `Sim::checksum` onto it), and the round-trip-replay determinism test — all under `/safe-edit`,
+  `core` deps staying **empty**, `f32`/`f64`-free. The `core::snapshot` render snapshot is
+  **untouched** (the two coexist).
+- No invariant changes: the serialization is fixed-point (`Fixed` via `to_bits`, invariant #1),
+  lives in platform-free `core` (invariant #2), and its correctness is asserted on the existing
+  cross-arch matrix (invariant #7). The render snapshot stays the only thing the renderer reads
+  (invariant #4).
+- [`phase-3-plan.md`](phase-3-plan.md) §"Workstream C" is unblocked (the first slice can land
+  alongside workstream A); the "Decisions Phase 3 will need" snapshot-format bullet flips to
+  DECIDED. [`architecture.md`](architecture.md) §Netcode notes the format is now decided (D28),
+  code pending. [`README.md`](../README.md) repo-map will note `core::persist` when the first slice
+  lands (not before — it does not exist yet).

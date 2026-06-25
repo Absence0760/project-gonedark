@@ -12,7 +12,7 @@ Phase 3 has four workstreams (`roadmap.md` §"Phase 3 — Scale & net"):
 |---|---|---|---|
 | A | **Scale & perf** — 200-unit stress, profiling, job-system, dual-rate re-eval | Low→Med | No (measure-first) |
 | B | **Lockstep netcode** — input-delay exchange, avatar-local prediction (D15), CI | **High** | **D27 decided** (topology locked; code not yet landed) |
-| C | **Reconnect / snapshot / handoff** — authoritative serialize + resume | Med→High | **Yes — snapshot format (Dn)** |
+| C | **Reconnect / snapshot / handoff** — authoritative serialize + resume | Med→High | **D28 decided** (format locked; code not yet landed) |
 | D | **PvP attention mind-game** — enemy detection of "gone dark" | Low (mostly design) | **Yes — Q2 via `/decision`** |
 
 The load-bearing finding from the scouting pass: **every workstream has a pure-`core`,
@@ -175,9 +175,13 @@ every arch. Because it lives in `core`'s test module, it rides the existing arch
 automatically. Reconnect then = snapshot + replay-buffered-commands (a plain `step` loop)
 — correct *by construction* once the round-trip invariant holds.
 
+**Format decided in [D28](decisions.md#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)**
+(hand-rolled LE `Writer`/`Reader` sharing the checksum field-walk; `Rng(state, inc)` captured;
+terrain by `map_id`; serde-free in `core`) — the first slice is now **unblocked**.
+
 **First slice (no net dependency — can land alongside A):** `core::persist` +
 `Sim::serialize/deserialize` + `Rng::from_state` + the round-trip-replay determinism
-test. Needs a **new Dn** (snapshot format + terrain-by-map-id). `/safe-edit`.
+test. `/safe-edit`.
 
 ---
 
@@ -210,8 +214,10 @@ needs the net layer: the *actual* two-human mind game.
 - **D27 — netcode topology** ✓ **DECIDED** (lockstep loop + wire codec in `core::lockstep`;
   transport behind `pal::Transport`; sockets in `pal-desktop`/`server`). `architecture.md`
   §Netcode updated. *Code not yet landed; unlocks workstream B.*
-- **Dn — authoritative snapshot format** (hand-rolled LE writer sharing the checksum
-  walk; terrain by map-id). *Blocks workstream C.*
+- **D28 — authoritative snapshot format** ✓ **DECIDED** (hand-rolled LE `Writer`/`Reader`
+  sharing the checksum field-walk; `Rng(state, inc)` captured; terrain by `map_id`; serde-free
+  in `core`). [`decisions.md`](decisions.md#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)
+  §D28. *Format locked; the `core::persist` slice is unblocked, code not yet landed.*
 - **Dn — Q2 resolution** (enemy detection of "gone dark"), or an explicit "ship the
   tunable mechanism, defer the lock" entry. *Gates workstream D.*
 - **Dn — D21 dual-rate re-evaluation outcome** (confirm global-60, or adopt dual-rate

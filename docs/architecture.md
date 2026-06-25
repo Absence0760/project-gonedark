@@ -218,6 +218,15 @@ spread cost.
 > reference). Avatar-local prediction (D15) stays in the `engine` presentation path, never touching
 > sim state.
 
+> **Reconnect snapshot format decided ([`decisions.md`](decisions.md) D28); code pending
+> ([`phase-3-plan.md`](phase-3-plan.md) §"Workstream C").** The authoritative resume snapshot is a
+> *second*, complete serialization distinct from the lossy render snapshot — a hand-rolled LE
+> `Writer`/`Reader` sharing one field-walk with `Sim::checksum` (so it captures exactly what the
+> checksum hashes: every component incl. dead slots, the free-list order, `Rng(state, inc)`, `tick`),
+> serde-free in `core`, terrain by `map_id`. Reconnect = snapshot + replay the buffered commands,
+> correct by construction; the load-bearing guard is the round-trip-replay determinism test on the
+> arch matrix. The forthcoming `core::persist` slice lands under `/safe-edit`.
+
 Because the sim is deterministic, clients exchange only **orders**, not world state.
 Bandwidth scales with players, not the hundreds of units on the field.
 
