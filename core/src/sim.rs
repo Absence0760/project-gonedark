@@ -308,8 +308,10 @@ impl Sim {
         if ver != SNAPSHOT_VERSION {
             return Err(DeserializeError::BadVersion(ver));
         }
-        let map_id =
-            MapId::try_from(r.read_u32()?).map_err(|_| DeserializeError::LengthOverflow)?;
+        let map_id = MapId::try_from(r.read_u32()?).map_err(|_| DeserializeError::CorruptState)?;
+        // Re-derive terrain from the id now, rejecting an unknown map loudly (a newer build's
+        // snapshot must not silently fall back to the wrong terrain — invariant #7).
+        let terrain = Terrain::from_map_id(map_id).ok_or(DeserializeError::UnknownMapId(map_id))?;
 
         // Slot capacity (written by `serialize` before the fold). Bound it against the remaining
         // bytes so a garbage value can't drive a huge pre-allocation; the smallest possible slot
@@ -421,11 +423,11 @@ impl Sim {
                 building,
             },
         )
-        .ok_or(DeserializeError::TrailingBytes)?;
+        .ok_or(DeserializeError::CorruptState)?;
 
         Ok(Sim {
             world,
-            terrain: Terrain::from_map_id(map_id),
+            terrain,
             resources,
             territory,
             events: Vec::new(),
@@ -496,7 +498,7 @@ fn write_building<S: StateSink>(sink: &mut S, b: &Building) {
 fn read_u16(r: &mut Reader) -> Result<u16, DeserializeError> {
     // Encoded as a u32 (matching the checksum's `cooldown_ticks as u32` / queue `ticks_left`),
     // so it round-trips through the same byte width; a value above u16 range is corruption.
-    u16::try_from(r.read_u32()?).map_err(|_| DeserializeError::LengthOverflow)
+    u16::try_from(r.read_u32()?).map_err(|_| DeserializeError::CorruptState)
 }
 
 fn read_vec2(r: &mut Reader) -> Result<Vec2, DeserializeError> {

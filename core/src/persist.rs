@@ -120,6 +120,15 @@ pub enum DeserializeError {
     /// The buffer parsed fully but left unconsumed trailing bytes — a sign of format/version
     /// skew. Rejecting it makes the skew loud here instead of a silent later desync.
     TrailingBytes,
+    /// The buffer was well-formed (right length, known tags) but described a logically
+    /// inconsistent world — e.g. a liveness/free-list mismatch, or a field value outside its
+    /// valid domain. Distinct from a length/format error: the bytes parsed, the *state* is
+    /// corrupt. Rejected rather than resumed (it would desync).
+    CorruptState,
+    /// The snapshot named a `map_id` this build does not know how to rebuild. A snapshot from a
+    /// newer build that added a map is rejected **loudly** here rather than silently falling back
+    /// to the wrong (default) terrain — which would desync on the first tick (invariant #7).
+    UnknownMapId(crate::terrain::MapId),
 }
 
 /// A little-endian byte reader — the decode half of the codec. The exact inverse of [`Writer`];

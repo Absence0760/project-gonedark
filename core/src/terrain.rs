@@ -83,13 +83,15 @@ impl Terrain {
     /// Rebuild the terrain named by `id`. The inverse of "which map am I on?" used by the
     /// authoritative snapshot to re-derive `Terrain` without serializing the grid (D28).
     ///
-    /// Only [`SCENE_MAP_ID`](Self::SCENE_MAP_ID) (`0`, the open playfield) is defined today; an
-    /// unknown id rebuilds the open field too, so a forward-compatible snapshot never panics.
-    /// As real authored maps land, this gains a match arm per id (each a deterministic builder).
-    pub fn from_map_id(id: MapId) -> Terrain {
+    /// Only [`SCENE_MAP_ID`](Self::SCENE_MAP_ID) (`0`, the open playfield) is defined today.
+    /// Returns `None` for an unknown id so the caller can reject the snapshot **loudly** rather
+    /// than silently rebuilding the wrong terrain (which would desync on the first tick —
+    /// invariant #7). As real authored maps land, this gains a match arm per id (each a
+    /// deterministic builder).
+    pub fn from_map_id(id: MapId) -> Option<Terrain> {
         match id {
-            Self::SCENE_MAP_ID => Terrain::open(),
-            _ => Terrain::open(),
+            Self::SCENE_MAP_ID => Some(Terrain::open()),
+            _ => None,
         }
     }
 

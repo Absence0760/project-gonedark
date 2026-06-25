@@ -1277,4 +1277,12 @@ fn deserialize_rejects_malformed_input() {
     // The Reader's own primitives reject a short read.
     let mut r = Reader::new(&[0u8, 1]);
     assert_eq!(r.read_u32().unwrap_err(), DeserializeError::UnexpectedEof);
+
+    // An unknown map_id is rejected LOUDLY, never silently rebuilt as the wrong (default)
+    // terrain — that would desync on the first tick (invariant #7). Overwrite a valid
+    // snapshot's map_id (the u32 at bytes 1..5, just after the version byte) with an
+    // undefined id; the rest of the buffer stays well-formed, so this isolates the map check.
+    let mut bytes = sim.serialize();
+    bytes[1..5].copy_from_slice(&7u32.to_le_bytes());
+    assert_eq!(err(&bytes), DeserializeError::UnknownMapId(7));
 }
