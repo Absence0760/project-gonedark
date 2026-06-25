@@ -3,6 +3,12 @@
 //! Concrete backends (`pal-desktop`, `pal-android`, later `pal-ios`) implement these;
 //! `core` never sees them. Keep this seam *thin* — only what genuinely differs per
 //! platform crosses it. Floats are fine here: this is the platform side, not the sim.
+//!
+//! [`mix`] is the one piece of *shared* logic in this crate: the per-voice audio render math
+//! (pan/gain/muffle/sum) every backend mixes through — pure, float-only, host-testable, and
+//! pulling no platform deps (see its module docs).
+
+pub mod mix;
 
 /// Monotonic clock for the run loop's frame timing.
 pub trait Clock {

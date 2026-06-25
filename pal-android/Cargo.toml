@@ -51,3 +51,14 @@ android_logger = "0.14"
 wgpu = "29"
 # Bridges the NDK `ANativeWindow` to wgpu's surface creation.
 raw-window-handle = "0.6"
+# Low-latency audio sink (platforms.md §2): oboe is Google's official AAudio/OpenSL ES wrapper
+# and the idiomatic "low-latency AAudio" path the §2 mandate calls for (D29). Already present in
+# Cargo.lock transitively (under cpal); this promotes it to a direct dep. The DEFAULT feature set
+# is used deliberately — we do NOT add `java-interface` (the JavaVM/`ndk-context` path); we talk
+# straight to AAudio. Note `cpal` already activates oboe's `java-interface` transitively, so
+# `ndk 0.8` + `jni` are in the lock regardless — but that coexists with our `ndk 0.9`, so adding
+# this direct dep introduces NO new version conflict. `oboe-sys` builds a small C++ shim via `cc`
+# against the NDK clang (the same NDK toolchain android-activity's C glue already requires — not
+# net-new tooling). The shared per-voice render math lives in the host-
+# tested `gonedark_pal::mix` seam; only the thin stream glue below is android-only.
+oboe = "0.6"

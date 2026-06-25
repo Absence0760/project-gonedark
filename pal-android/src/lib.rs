@@ -9,9 +9,11 @@
 //!
 //! # NOT device-verified
 //! This was written against the *pinned* `android-activity` 0.6 / `jni` 0.21 / `ndk` 0.9 /
-//! `wgpu` 29 APIs, but **cannot be built for `aarch64-linux-android` on this workstation**
-//! (no NDK, no `cargo-ndk`). A real machine with the NDK must do the for-target build and
-//! on-device shakeout (see ../android/README.md). Spots that are deferred or that need an
+//! `wgpu` 29 / `oboe` 0.6 APIs. The **for-target build is verified on this workstation**
+//! (NDK 28.2 + `cargo-ndk`): `cargo ndk -t arm64-v8a build -p gonedark-pal-android` passes in
+//! dev and release. What remains **OWED is on-device shakeout** — actual audible/low-latency
+//! AAudio output, surface/lifecycle behavior, input feel (see ../android/README.md). Spots that
+//! are deferred or that need an
 //! API sanity-check on real toolchain are flagged with `TODO(...)` / `NOTE:` inline.
 //!
 //! # Where `android_main` lives
@@ -22,11 +24,17 @@
 //! re-export / route to this entry — see the integrator note at the bottom of this file.
 #![cfg(target_os = "android")]
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gonedark_engine::{Game, DEFAULT_SEED};
-use gonedark_pal::{Audio, Input, InputFrame, Storage, Window};
+use gonedark_pal::mix::{oneshot_sound, synth_bank, voice_from_cue, Mixer};
+use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, Window};
+
+// Bring oboe's stream-control traits into scope for the methods used below (`get_sample_rate`
+// lives on `AudioStreamBase`, `request_start` on `AudioStream`).
+use oboe::{AudioStream, AudioStreamBase};
 
 use android_activity::input::{InputEvent, KeyAction, KeyEvent, MotionAction, MotionEvent};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
@@ -82,7 +90,9 @@ fn android_main(app: AndroidApp) {
     let mut last_report = Instant::now();
 
     let storage = AndroidStorage::new(app.clone());
-    let mut audio = AndroidAudio;
+    // Open the AAudio sink now so the stream is live before the first frame. Failure degrades to a
+    // silent no-op (invariant #8) — never fatal.
+    let mut audio = AndroidAudio::new();
 
     // Sanity-touch the stub PAL services so the deferred impls are linked, not dead code.
     let _ = storage.read("settings");
@@ -167,7 +177,13 @@ fn android_main(app: AndroidApp) {
                     window.destroy_requested = true;
                 }
                 MainEvent::SaveState { .. } => {
-                    // TODO(phase2): persist a resume snapshot here.
+                    // TODO(phase2): persist a resume snapshot across process death. BLOCKED on two
+                    // landings, deliberately NOT done here (one-commit-one-workstream): (1)
+                    // `AndroidStorage::{read,write}` must be real — they are still stubs below; and
+                    // (2) the sim serialize/restore path (D28's `core::persist` — the snapshot
+                    // format is decided, code pending). Once both exist: serialize the `Game`'s sim
+                    // state via D28's `Sim::serialize` and write the bytes through `AndroidStorage`,
+                    // restoring on the next `InitWindow`. Gating on Storage first.
                 }
                 MainEvent::LowMemory => warn!("MainEvent::LowMemory"),
                 _ => {}
@@ -335,6 +351,11 @@ impl AndroidInput {
         // TODO(phase2): the shipped mobile scheme — on-screen virtual sticks -> move_axis /
         //   look_axis while embodied, gyro (ndk Sensor API) -> look_axis. The two-finger
         //   embody toggle above is a provisional dev binding, not the final control design.
+        //   Deliberately NOT done in the audio workstream: the control scheme is an UNSETTLED
+        //   DESIGN decision (open-questions / roadmap Phase 2) and must not be silently decided.
+        //   When built, the stick-geometry -> axis mapping should be a pure free fn tested on the
+        //   host (the same seam pattern `engine::map_input_commands` already uses), so the
+        //   `MotionEvent` glue here stays thin and the math is covered.
     }
 
     /// Translate one key event (back button, gamepad face buttons) into the InputFrame.
@@ -605,26 +626,166 @@ impl AndroidRhi {
 }
 
 // ---------------------------------------------------------------------------------------
-// Audio + Storage — minimal honest stubs (Phase 1 audio is out of scope).
+// Audio (real, oboe/AAudio — D29) + Storage (still a stub).
 // ---------------------------------------------------------------------------------------
 
-/// [`Audio`] stub. Real impl backends to **AAudio** (platforms.md §2) for low-latency
-/// one-shots; the strategic→embodied "world goes dark" mix is engine-side and identical
-/// everywhere (game-design.md §6).
-#[derive(Default)]
-pub struct AndroidAudio;
+/// [`Audio`] backed by a low-latency **AAudio** stream via `oboe` (platforms.md §2, D29).
+///
+/// The Android mirror of `pal-desktop::DesktopAudio`: it renders the SAME positioned mix
+/// (`engine::audio::mix_cues` → [`AudioCue`](gonedark_pal::AudioCue)s) the desktop backend does, by
+/// pushing each cue through the shared, host-tested `gonedark_pal::mix` render math (equal-power
+/// pan from `azimuth`, gain clamp, the `muffled` low-pass that makes off-map bleed read as distant
+/// — invariant #6 — voice summation + soft-clamp + [`MAX_VOICES`](gonedark_pal::mix::MAX_VOICES)
+/// eviction). Only the oboe stream lifecycle + the realtime `on_audio_ready` callback live here;
+/// all the math is in `pal::mix`, so this glue is the thin, host-un-constructible part.
+///
+/// Invariant #8 / audio-never-load-bearing: if the device/stream can't be opened the sink degrades
+/// to a silent no-op (`inner: None`, logged to logcat via `log::warn!`) — it NEVER panics.
+///
+/// # NOT device-verified
+/// The oboe builder/callback calls are written against the pinned `oboe` 0.6 API but the audible
+/// output, the negotiated low-latency path (§2), and the muffled-bleed audibility are device-
+/// judgment calls — shake them out with `pnpm android:dev` (listen + read logcat for the
+/// `[audio] disabled (silent)` fallback line).
+pub struct AndroidAudio {
+    inner: Option<AndroidAudioActive>,
+}
+
+/// The live oboe output stream (kept alive by ownership), the shared mixer the realtime callback
+/// reads, and the synthesized cue bank the game thread looks voices up in.
+struct AndroidAudioActive {
+    // The async stream owns the callback (which holds a clone of `mixer`). Kept alive by
+    // ownership; dropping it stops + closes the stream. Boxed behind the concrete oboe type.
+    _stream: oboe::AudioStreamAsync<oboe::Output, OboeMixCallback>,
+    mixer: Arc<Mutex<Mixer>>,
+    bank: HashMap<SoundId, Arc<Vec<f32>>>,
+}
+
+/// The realtime audio callback: it owns a handle to the shared [`Mixer`] and fills each requested
+/// stereo frame buffer. It must NEVER block the audio thread (oboe docs: no locks/alloc/syscalls in
+/// `on_audio_ready`), so it `try_lock`s the mixer and emits silence if the game thread holds it —
+/// exactly the desktop cpal callback's rule.
+struct OboeMixCallback {
+    mixer: Arc<Mutex<Mixer>>,
+}
+
+impl oboe::AudioOutputCallback for OboeMixCallback {
+    // Stereo f32 frames: the frame type's element is `(f32, f32)` (left, right).
+    type FrameType = (f32, oboe::Stereo);
+
+    fn on_audio_ready(
+        &mut self,
+        _stream: &mut dyn oboe::AudioOutputStreamSafe,
+        frames: &mut [(f32, f32)],
+    ) -> oboe::DataCallbackResult {
+        match self.mixer.try_lock() {
+            Ok(mut m) => {
+                for frame in frames.iter_mut() {
+                    let (l, r) = m.next_frame();
+                    *frame = (l, r);
+                }
+            }
+            Err(_) => {
+                // Game thread holds the lock (its critical section is tiny) — emit a frame of
+                // silence rather than block the realtime thread.
+                for frame in frames.iter_mut() {
+                    *frame = (0.0, 0.0);
+                }
+            }
+        }
+        oboe::DataCallbackResult::Continue
+    }
+}
+
+impl Default for AndroidAudio {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AndroidAudio {
+    /// Open the AAudio output stream; on any failure degrade to a silent no-op (invariant #8).
+    pub fn new() -> Self {
+        match AndroidAudioActive::open() {
+            Ok(active) => AndroidAudio {
+                inner: Some(active),
+            },
+            Err(e) => {
+                warn!("[audio] disabled (silent): {e}");
+                AndroidAudio { inner: None }
+            }
+        }
+    }
+
+    /// Queue one voice for `sound`, panned by `azimuth`, scaled by `gain`, low-passed when
+    /// `muffled` — via the shared `gonedark_pal::mix` render math (identical to desktop).
+    fn queue(&self, sound: SoundId, azimuth: f32, gain: f32, muffled: bool) {
+        let Some(active) = &self.inner else { return };
+        let Some(samples) = active.bank.get(&sound) else {
+            return;
+        };
+        let voice = voice_from_cue(Arc::clone(samples), azimuth, gain, muffled);
+        if let Ok(mut mixer) = active.mixer.lock() {
+            mixer.push(voice);
+        }
+    }
+}
+
+impl AndroidAudioActive {
+    fn open() -> Result<AndroidAudioActive, String> {
+        let mixer = Arc::new(Mutex::new(Mixer::new()));
+        let callback = OboeMixCallback {
+            mixer: Arc::clone(&mixer),
+        };
+
+        // Low-latency AAudio output (platforms.md §2): stereo f32, exclusive sharing + low-latency
+        // performance mode is the lowest-latency AAudio path. We let oboe negotiate the device
+        // sample rate (no `set_sample_rate`), then read it back to synthesize the cue bank at that
+        // rate so cues play at the intended pitch.
+        let mut stream = oboe::AudioStreamBuilder::default()
+            .set_performance_mode(oboe::PerformanceMode::LowLatency)
+            .set_sharing_mode(oboe::SharingMode::Exclusive)
+            .set_format::<f32>()
+            .set_stereo()
+            .set_callback(callback)
+            .open_stream()
+            .map_err(|e| format!("oboe open_stream: {e:?}"))?;
+
+        // The negotiated rate is known only after the stream opens; build the bank at it.
+        let sample_rate = stream.get_sample_rate();
+        let sample_rate = if sample_rate > 0 {
+            sample_rate as u32
+        } else {
+            48_000 // defensive: a non-positive rate shouldn't happen, but never divide by it
+        };
+        let bank = synth_bank(sample_rate);
+
+        stream
+            .request_start()
+            .map_err(|e| format!("oboe request_start: {e:?}"))?;
+        info!("[audio] AAudio stream started ({sample_rate} Hz, stereo f32, low-latency)");
+
+        Ok(AndroidAudioActive {
+            _stream: stream,
+            mixer,
+            bank,
+        })
+    }
+}
 
 impl Audio for AndroidAudio {
     fn play_oneshot(&mut self, sound_id: u32) {
-        // TODO(phase2): open an AAudio stream and mix one-shots. No-op for Phase 1.
-        let _ = sound_id;
+        // Legacy fire-and-forget path: map the opaque id onto a cue, centered at full gain.
+        self.queue(oneshot_sound(sound_id), 0.0, 0.9, false);
     }
 
     fn submit_mix(&mut self, cues: &[gonedark_pal::AudioCue]) {
-        // WORKER 3 (embodied audio, Android backend): render the per-frame positioned mix —
-        // pan by `cue.azimuth`, scale by `cue.gain`, low-pass `cue.muffled` strategic bleed —
-        // through an AAudio stream. No-op scaffold for now (mirrors `pal-desktop::DesktopAudio`).
-        let _ = cues;
+        // Render the per-frame positioned mix — pan by `cue.azimuth`, scale by `cue.gain`, low-pass
+        // `cue.muffled` strategic bleed (invariant #6) — through the AAudio stream, exactly as
+        // `pal-desktop::DesktopAudio` does, via the shared `pal::mix` math.
+        for c in cues {
+            self.queue(c.sound, c.azimuth, c.gain, c.muffled);
+        }
     }
 }
 
