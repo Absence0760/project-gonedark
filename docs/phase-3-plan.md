@@ -156,9 +156,18 @@ checksum byte-identical with prediction on vs off."*
    load-bearing guard test asserts the lockstep-driven single-player checksum stream is
    identical to direct stepping. (Multiplayer per-frame submit *pacing* for `delay > 0` is
    left to step 7.) `engine` tests 33 → 43, dev + release.
-5. **Fill in `engine::predict_avatar`** — presentation-only predict + reconcile; the
-   byte-identical-checksum guard test. Highest-risk single commit (`audit-determinism`).
-   *(Next; sequential after step 4 — same file, reconciles against the tick step 4 sources.)*
+5. **Fill in `engine::predict_avatar`** ✅ **DONE** — replaced the stub with an `AvatarPrediction`
+   (presentation-only): the embodied eye **leads** the authoritative ticks (`extrapolate_avatar`,
+   by the avatar's authoritative velocity) and **reconciles** toward each tick (`reconcile_avatar`,
+   ease + snap-past-threshold) instead of snapping; the first-person camera + audio listener read
+   the predicted eye, aim (`yaw`) stays the local-instant value. The type never reaches `&mut Sim`,
+   so it cannot desync (D15, invariant #1) — guarded by a byte-identical-checksum test (prediction
+   on vs off) + pure predict/reconcile unit tests; **code-reviewer + determinism-auditor both
+   clean**. `engine` tests 43 → 49, dev + release. *Honest scope:* embodied locomotion isn't a sim
+   command yet and single-player runs at delay 0, so today's visible effect is sub-tick eye
+   smoothing — the **boundary** is what lands now (as D15/`architecture.md` mandate: it goes in at
+   the first netcode commit), ready for multiplayer delay + authoritative embodied motion. Two LOW
+   feel-polish follow-ups noted in code (dt-independent smoothing; arch-stable ease/snap boundary).
 5. **Fill in `engine::predict_avatar`** — presentation-only predict + reconcile; the
    byte-identical-checksum guard test. Highest-risk single commit (`audit-determinism`).
 6. **android-arm64 + ios-arm64 device entries** (the `determinism.yml` TODO) + runtime
