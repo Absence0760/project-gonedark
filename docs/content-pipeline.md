@@ -19,7 +19,7 @@ how you end up authoring the same asset three times.
 | Axis | What varies | Owner | Status |
 |---|---|---|---|
 | **A. Device tier** (runtime) | same asset, scaled per phone class — low/mid/flagship | cook + runtime | designed ([`platforms.md`](platforms.md) §6) |
-| **B. View / LOD** (runtime) | top-down RTS token vs eye-level FPS mesh | cook (LOD chain) | tension flagged ([`architecture.md`](architecture.md)) |
+| **B. View / LOD** (runtime) | top-down RTS token vs eye-level FPS mesh | cook (LOD chain) | greybox LOD chain **implemented** (gltfpack, §2); hero-tier tension flagged ([`architecture.md`](architecture.md)) |
 | **C. Production maturity** (temporal) | greybox placeholder → mid → final source art | sourcing | **this doc** |
 
 **The load-bearing rule:** author **one high-quality source asset**, then *derive* the
@@ -61,6 +61,25 @@ in both views.
   `source: procedural (Blender bpy)`, `license: CC0-1.0` — license hygiene (§3) is *satisfied*,
   not a question. These ride the *same* pipeline as anything else (cook → LOD §1, two-view filter
   §4); their honest weak axis is eye-level FPS credibility (§4), the accepted placeholder trade.
+  **The LOD chain (axis B) is now built for this tier.** After the full-detail cook,
+  `gen_models.py` runs `gltfpack -si <ratio> -sa` over each model's `.glb` and re-imports the
+  simplified result into Blender to re-run the *same* `.mesh` cook — so every tier lands in the
+  identical GDM1 format with freshly recomputed flat normals. Each model emits a monotone
+  decimation pyramid beside its full-detail `<name>.mesh`:
+
+  | Tier | Cooked file | ~Triangles | Built from |
+  |---|---|---|---|
+  | LOD0 | `<name>.mesh` | full detail | the welded primitives (unchanged path) |
+  | LOD1 | `<name>.lod1.mesh` | ~½ of LOD0 | `gltfpack -si 0.5 -sa` on `<name>.glb` |
+  | LOD2 | `<name>.lod2.mesh` | ~¼ of LOD0 | `gltfpack -si 0.5 -sa` chained on `<name>.lod1.glb` |
+
+  `-sa` (aggressive) is required because the flat-shaded soup splits normals at every face, so a
+  plain `-si` finds almost no shared edges to collapse; chaining LOD2 off LOD1's glb keeps the
+  pyramid monotone (simplification never *adds* triangles). Already-minimal models (crate, rock,
+  barricade) floor out and their lower tiers equal LOD0 — still emitted, so the runtime loads a
+  uniform tier set. Per-tier byte/sha/`tri_count` stats live in each asset's `lods` array in
+  `manifest.json`. The renderer selects a tier by on-screen size: LOD0 for the embodied eye-level
+  view, the decimated tiers for distant / top-down command-view tokens.
 - **Mid** — curated open-source assets, decimated and re-textured to mobile budget, that
   pass the two-view filter (§4). The default tier most of the game ships at — the endgame
   target the D41 AI placeholders are eventually *replaced* by, not the launch tier.
@@ -141,7 +160,7 @@ needs an asset; script the generator and commit the *script* + a manifest entry
 | Tool | Lane | Used for |
 |---|---|---|
 | **Blender** (`bpy`) | 3D author | procedural/greybox meshes, geometry-nodes terrain, rig/anim, glTF export (`tools/models/gen_models.py`, D41) |
-| **gltfpack** | 3D cook | glTF mesh/texture compression (meshopt/Draco) for the mobile / 200-unit budget |
+| **gltfpack** | 3D cook | glTF mesh/texture compression (meshopt/Draco) for the mobile / 200-unit budget; **drives the greybox LOD chain** (`-si … -sa`, gen_models.py §2) |
 | **SoX** | audio | SFX synthesis + processing |
 | **Csound** | audio | deterministic, **seed-scripted** SFX — regenerable + git-diffable, the audio analogue of D41 (audio is a primary system, invariant #6) |
 | **Inkscape** (`--export-type=png`) | 2D / UI | vector → PNG HUD / command-layer icons across DPIs |

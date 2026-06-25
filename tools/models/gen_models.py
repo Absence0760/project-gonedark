@@ -2,9 +2,14 @@
 # Going Dark — placeholder model generator (decisions.md D41).
 #
 # Builds the game's greybox/low-tier placeholder models from primitives in Blender and
-# exports, per object, into ../../assets/models/:
-#   - one `.glb`  — the standard interchange / source-of-record (two-view harness §4, tools)
-#   - one `.mesh` — the COOKED runtime format the engine actually loads (decisions.md D44)
+# exports, per object, into ../../assets/models/, as a small LOD chain:
+#   - LOD0 (full detail) — one `.glb` (interchange / source-of-record, two-view harness §4)
+#     and one `.mesh` (the COOKED runtime format the engine actually loads, decisions.md D44)
+#   - LOD1/LOD2 (decimated) — `<name>.lod1.glb`/`.lod1.mesh` (and `.lod2.*`), produced by
+#     running `gltfpack -si … -sa` over the glb to simplify the geometry, then re-importing
+#     the simplified glb and running the SAME `.mesh` cook on it — so every tier is the
+#     identical GDM1 format with freshly recomputed flat normals. The renderer picks a tier
+#     by on-screen size/distance (top-down tokens use a low tier; the embodied view uses LOD0).
 # plus a license manifest. These are deliberately blocky, intentional-looking placeholders —
 # the "Claude can generate procedural & greybox content" lane of content-pipeline.md §6, NOT
 # final/hero art.
@@ -32,6 +37,8 @@ import json
 import math
 import struct
 import hashlib
+import shutil
+import subprocess
 
 # --- where to write -------------------------------------------------------------------
 try:
@@ -183,6 +190,69 @@ def sha256(path):
     return h.hexdigest()
 
 
+def mesh_tris(path):
+    """Triangle count of a cooked `.mesh` — read straight from the GDM1 header. The soup is
+    3 verts per triangle (one corner each, no dedup), so `tris == v_count / 3`."""
+    with open(path, "rb") as f:
+        head = f.read(12)
+    assert head[0:4] == MESH_MAGIC, f"{path} is not a GDM1 mesh"
+    v_count = struct.unpack("<I", head[4:8])[0]
+    return v_count // 3
+
+
+# --- LOD chain (gltfpack decimation → re-import → re-cook) -------------------------------
+# The full-detail tier (LOD0) is the unchanged `.glb`+`.mesh` pair above. Each decimated tier
+# is gltfpack-simplified geometry re-cooked back through `export_mesh`, so every tier lands in
+# the identical GDM1 format. We run gltfpack with:
+#   -sa  : aggressively hit the target ratio *across attribute discontinuities*. Our `.mesh`
+#          (and the exported glb) is a flat-shaded soup — adjacent faces don't share normals,
+#          so a plain `-si` finds almost no collapsible edges and reduces nothing. `-sa` welds
+#          across those seams to actually decimate (quality is secondary for a distance LOD).
+#   -noq : emit plain float glTF (no KHR_mesh_quantization / meshopt extension), so the
+#          re-import is trivially lossless to read back — and we recompute our own flat normals
+#          on the cook anyway, so gltfpack's normals are irrelevant.
+# LOD2 is chained off LOD1's glb (not the source) so the pyramid is monotone by construction —
+# simplification never *adds* triangles, so tris(LOD2) <= tris(LOD1) <= tris(LOD0) always.
+GLTFPACK = shutil.which("gltfpack") or "gltfpack"
+
+# (level, filename suffix, ratio passed to gltfpack for THIS step, cumulative ratio vs LOD0)
+LOD_TIERS = [
+    (1, ".lod1", 0.5, 0.5),
+    (2, ".lod2", 0.5, 0.25),
+]
+
+
+def run_gltfpack(src_filename, dst_filename, ratio):
+    """Simplify `src_filename` → `dst_filename` (both under OUT_DIR) at triangle ratio `ratio`."""
+    src = os.path.join(OUT_DIR, src_filename)
+    dst = os.path.join(OUT_DIR, dst_filename)
+    subprocess.run(
+        [GLTFPACK, "-i", src, "-o", dst, "-si", str(ratio), "-sa", "-noq"],
+        check=True, capture_output=True, text=True,
+    )
+    return dst
+
+
+def import_glb(filename):
+    """Import a (gltfpack-simplified) glb and return one welded, Z-up mesh object.
+
+    Blender's glTF importer carries glTF's +Y-up convention as an *object rotation* rather than
+    baking it into the vertex data, so we `transform_apply` it down — that restores the same
+    Z-up coordinates the LOD0 cook used, keeping every tier in one convention."""
+    path = os.path.join(OUT_DIR, filename)
+    bpy.ops.import_scene.gltf(filepath=path)
+    meshes = [o for o in bpy.context.selected_objects if o.type == "MESH"]
+    assert meshes, f"no mesh imported from {filename}"
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in meshes:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = meshes[0]
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    if len(meshes) > 1:  # join() warns "No mesh data to join" on a single object
+        bpy.ops.object.join()
+    return bpy.context.active_object
+
+
 # --- the models -----------------------------------------------------------------------
 # Conventions: Z-up, feet/base at z≈0, sizes roughly in metres. Each builder returns a
 # single welded object; `description` feeds the manifest + the two-view filter (§4) notes.
@@ -323,15 +393,49 @@ MODELS = [
 ]
 
 
+def tier_record(level, glb_name, mesh_name, ratio):
+    """Manifest record for one LOD tier — geometry stats for both the glb and the cooked mesh."""
+    glb_path = os.path.join(OUT_DIR, glb_name)
+    mesh_path = os.path.join(OUT_DIR, mesh_name)
+    return {
+        "level": level,
+        "file": glb_name,
+        "cooked": mesh_name,
+        "simplify_ratio": ratio,
+        "tri_count": mesh_tris(mesh_path),
+        "bytes": os.path.getsize(glb_path),
+        "sha256": sha256(glb_path),
+        "cooked_bytes": os.path.getsize(mesh_path),
+        "cooked_sha256": sha256(mesh_path),
+    }
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     entries = []
     for stem, builder, description in MODELS:
         reset_scene()
         obj = builder()
-        # `.glb` (interchange source) + `.mesh` (cooked runtime format the engine loads, D44).
+        # LOD0 (full detail): `.glb` (interchange source) + `.mesh` (cooked runtime format the
+        # engine loads, D44). This path is unchanged — the LOD0 `.mesh` stays byte-identical.
         glb_path = export_glb(obj, stem + ".glb")
         mesh_path = export_mesh(obj, stem + ".mesh")
+        lods = [tier_record(0, stem + ".glb", stem + ".mesh", 1.0)]
+
+        # Decimated tiers: gltfpack simplifies the glb, then we re-import it and run the SAME
+        # `export_mesh` cook so the tier lands in the identical GDM1 format with recomputed flat
+        # normals. LOD2 chains off LOD1's glb (monotone pyramid; see LOD_TIERS notes).
+        prev_glb = stem + ".glb"
+        for level, suffix, ratio_arg, cum_ratio in LOD_TIERS:
+            lod_glb = stem + suffix + ".glb"
+            lod_mesh = stem + suffix + ".mesh"
+            run_gltfpack(prev_glb, lod_glb, ratio_arg)
+            reset_scene()
+            imp = import_glb(lod_glb)
+            export_mesh(imp, lod_mesh)
+            lods.append(tier_record(level, lod_glb, lod_mesh, cum_ratio))
+            prev_glb = lod_glb
+
         entries.append({
             "name": stem,
             "file": stem + ".glb",
@@ -347,17 +451,23 @@ def main():
             "sha256": sha256(glb_path),
             "cooked_bytes": os.path.getsize(mesh_path),
             "cooked_sha256": sha256(mesh_path),
+            "lods": lods,
         })
-        print(f"  wrote {stem}.glb ({entries[-1]['bytes']} B) "
-              f"+ {stem}.mesh ({entries[-1]['cooked_bytes']} B)")
+        tiers = " → ".join(f"L{t['level']}:{t['tri_count']}t" for t in lods)
+        print(f"  wrote {stem} [{tiers}]  (LOD0 {entries[-1]['cooked_bytes']} B)")
 
     manifest = {
         "note": (
             "Placeholder greybox models, generated by tools/models/gen_models.py "
-            "(decisions.md D41). Each ships a `.glb` (interchange source) and a cooked `.mesh` "
-            "the engine loads directly (decisions.md D44). Render-only; regenerate with "
-            "`pnpm assets:models`. License-clean by construction — code-authored primitives, "
-            "CC0-1.0 (content-pipeline.md §3). Honest weak axis: eye-level FPS credibility (§4)."
+            "(decisions.md D41). Each model ships a full-detail tier — a `.glb` (interchange "
+            "source) and a cooked `.mesh` the engine loads directly (decisions.md D44) — plus a "
+            "gltfpack-decimated LOD chain (`<name>.lod1.*`, `<name>.lod2.*`): gltfpack simplifies "
+            "the glb (`-si … -sa`), which is then re-imported and re-cooked so every tier is the "
+            "identical GDM1 `.mesh` format with recomputed flat normals. Per-tier stats live in "
+            "each asset's `lods` array; the renderer selects a tier by on-screen size/distance. "
+            "Render-only; regenerate with `pnpm assets:models`. License-clean by construction — "
+            "code-authored primitives, CC0-1.0 (content-pipeline.md §3). Honest weak axis: "
+            "eye-level FPS credibility (§4)."
         ),
         "license_default": LICENSE,
         "assets": entries,
