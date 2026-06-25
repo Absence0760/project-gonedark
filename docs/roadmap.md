@@ -237,6 +237,67 @@ in the in-match layer; the **settings surface that configures it** is.
 
 ---
 
+## Path to publishable — completion checklist
+
+> A flat, checkable list of what stands between the current build (systems-complete +
+> playable — D31, D37–D40) and something you'd hand a stranger or a store reviewer. These
+> items **re-cut the phases above by "is it shippable,"** not by engine risk, so they
+> deliberately overlap Phase 4's app shell and [`content-pipeline.md`](content-pipeline.md).
+> Nothing here reopens a locked invariant — it's product completeness, not architecture.
+> A box is checked **only** where the work has actually landed (decision id cited); the
+> rest is the real remaining work.
+
+### Playable game loop — building & upgrading troops
+
+- [x] Camp building, production & economy exist in `core` ([D23](decisions.md))
+- [x] Win/lose evaluator + match end ([D38](decisions.md))
+- [x] Order/stance vocabulary reachable on the touch UI ([D25](decisions.md))
+- [ ] **Build menu UI** — place/queue structures from the command view (today it's sim-only,
+  no on-screen way to build)
+- [ ] **Troop-training UI** — pick a unit type, see cost + queue + ETA, set a rally point
+- [ ] **Upgrade trees** — per-structure and per-unit upgrades with cost, prerequisites, and
+  a readable tier display (the "growth" half of "command and grow your camps")
+- [ ] Resource/economy readout that makes cost and income legible at a glance
+- [ ] A full match a new player can complete start→finish unaided (loop closes; needs the
+  UI above wrapped around the D38 evaluator)
+
+### UI / UX polish — make it read as a product
+
+- [x] In-match command HUD, selection rim, embodied alert HUD ([D24](decisions.md)/[D26](decisions.md))
+- [x] Native title screens — Android Compose ([D35](decisions.md)) + desktop egui ([D36](decisions.md))
+- [ ] **Visual-design pass** on the command HUD — consistent iconography, type scale,
+  spacing, colour language (so it looks intentional, not greybox)
+- [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface)
+- [ ] Onboarding / first-possession tutorial (teach the going-dark cost — invariant #6 lives here)
+- [ ] In-session shell — pause, surrender/leave, post-match summary
+- [ ] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
+  cue for the directional-flash + audio alert channel)
+- [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions
+
+### Art & assets — AI-generated placeholders (skip custom 3D for now)
+
+- [ ] **Adopt AI-generated placeholder models** for units, structures, and the embodied
+  weapon instead of commissioned art — this pulls the "AI-assisted" route that
+  [`content-pipeline.md`](content-pipeline.md) §2 reserved for *hero* art forward to
+  *everything*, sitting at the greybox/low tier of the production ladder
+- [ ] One source `.glb` per unit/structure run through the existing cook → LOD chain so it
+  satisfies the two-view filter (top-down token *and* eye-level mesh — §4)
+- [ ] License-clean & logged — generated assets recorded in the asset manifest (§ license hygiene)
+- [ ] A consistent placeholder visual language across units/structures/world so the build
+  looks deliberate rather than unfinished
+- [ ] FPS-view world dressing beyond the existing ground/sky/cover ([D40](decisions.md)) —
+  enough to read as a *place*
+
+### Release readiness — the store-facing layer
+
+- [ ] Match-setup / skirmish-entry screen (Phase 4)
+- [ ] Consent & legal gate (ToS / privacy / age) — gates telemetry + store, so it precedes them
+- [ ] Store listing — icon, screenshots, description + a Play Console build channel
+- [ ] Performance / thermal pass on mid-range arm64 (the honest Phase 1/3 caveat — not yet validated off-flagship)
+- [ ] Crash + telemetry consent wiring verified end-to-end (telemetry/consent gate landed, Phase 4 workstream D)
+
+---
+
 ## Dev workflow & iteration
 
 Native Rust doesn't hot-reload engine code for free — that's the iteration cost of the
