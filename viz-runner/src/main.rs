@@ -179,6 +179,17 @@ fn is_enemy_red(p: [u8; 4]) -> bool {
 fn is_select_rim(p: [u8; 4]) -> bool {
     p[0] > 220 && p[1] > 220 && p[2] > 220
 }
+/// Radial-menu chrome (the hub + wedge slots): a mid, blue-leaning grey — brighter than the slate
+/// field and the dim backdrop, but well below the player-blue body and the white selection rim, so
+/// it reads as its own band. `B > R` and `G > R` keep warm bodies/health bars out; the upper bounds
+/// keep player-blue and the rim out.
+fn is_radial_wedge(p: [u8; 4]) -> bool {
+    (110..=160).contains(&p[0])
+        && (120..=170).contains(&p[1])
+        && (140..=190).contains(&p[2])
+        && p[2] > p[0]
+        && p[1] > p[0]
+}
 fn count(rgba: &[u8], f: impl Fn([u8; 4]) -> bool) -> usize {
     px(rgba).filter(|&p| f(p)).count()
 }
@@ -313,6 +324,63 @@ fn main() {
         format!("{sel_rim} bright-rim px after band-select vs {baseline_rim} with nothing selected (selection rim drawn)"),
     );
 
+    // --- Scenario 1c: radial command menu ------------------------------------------------------
+    // With the squad selected, a held long-press opens the radial command menu (engine::command_ui
+    // Preview): a wedge ring of the applicable vocabulary slots, drawn as a command-view LOAD pass.
+    println!(
+        "[radial] a held long-press over a selection opens the radial command menu (vocabulary)"
+    );
+    let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
+    g.frame(
+        &band_down,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
+    g.frame(
+        &band_up,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
+    advance(&mut g, 2, InputFrame::default(), &gpu, &view);
+    // Baseline: the selection is up but no long-press → no radial chrome on the frame.
+    let pre_menu = read_pixels(&gpu.device, &gpu.queue, &target);
+    let pre_wedge = count(&pre_menu, is_radial_wedge);
+    // Hold a long-press anchored at the screen center (a pointer, no down/up edge so the selection
+    // is untouched; no command_slot so it is a Preview, not a Commit) → the menu opens.
+    let long_press = InputFrame {
+        pointer: Some((256.0, 256.0)),
+        long_press: true,
+        ..Default::default()
+    };
+    g.frame(
+        &long_press,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
+    let radial = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/radial.png", &radial);
+    let radial_wedge = count(&radial, is_radial_wedge);
+    check(
+        &mut failures,
+        "radial_menu_drawn",
+        radial_wedge > pre_wedge + 200,
+        format!(
+            "{radial_wedge} radial-chrome px with the menu open vs {pre_wedge} without (wedge ring drawn)"
+        ),
+    );
+
     // --- Scenario 2: embodied — world goes dark ------------------------------------------------
     println!("[embodied_dark] possessing a unit collapses vision to the avatar (invariant #6)");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
@@ -369,7 +437,7 @@ fn main() {
         format!("{hud_nondark} non-dark px vs {dark_nondark} with no alerts (alert markers added)"),
     );
 
-    println!("\nPNGs: target/viz/{{command,selected,embodied_dark,embodied_hud}}.png");
+    println!("\nPNGs: target/viz/{{command,selected,radial,embodied_dark,embodied_hud}}.png");
     if failures == 0 {
         println!("RESULT: all visual assertions passed ✓");
     } else {

@@ -33,6 +33,7 @@ use gonedark_core::snapshot::Snapshot;
 use gonedark_core::territory::ControlPoint;
 use gonedark_pal::{Audio, InputFrame, Transport};
 use gonedark_render::overlay::Overlay;
+use gonedark_render::radial::RadialMenu;
 use gonedark_render::{fixed_to_f32, Camera, Renderer};
 
 use selection::{GestureScale, Selection};
@@ -984,10 +985,33 @@ impl Game {
             );
         }
 
+        // 8b. In the command view, draw the radial command menu when a held long-press has one open
+        // (engine::command_ui's radial preview). It is NDC chrome with no world position and is
+        // gated to `!embodied`, so it never paints over the dark frame (invariant #6). The menu
+        // anchors at the pointer (mapped pixels → NDC) or the screen center when none is known.
+        if !self.embodied && !self.radial_menu.is_empty() {
+            let center = input
+                .pointer
+                .map(|(px, py)| {
+                    [
+                        px / width as f32 * 2.0 - 1.0,
+                        1.0 - py / height as f32 * 2.0,
+                    ]
+                })
+                .unwrap_or([0.0, 0.0]);
+            let menu = RadialMenu {
+                center,
+                slots: self.radial_menu.len(),
+                highlight: None,
+            };
+            self.renderer.render_radial(device, queue, view, &menu);
+        }
+
         // 9. Draw the in-session shell overlay (Phase 4 WS-B) LAST, over everything else — so the
         // pause / reconnect prompt / post-match summary dims and sits above the (possibly dark)
-        // frame and the alert HUD. It is screen-space chrome with no world position, so it never
-        // widens the avatar-only fog beneath it (invariant #6). `Overlay::None` is a no-op.
+        // frame, the alert HUD, and the radial menu. It is screen-space chrome with no world
+        // position, so it never widens the avatar-only fog beneath it (invariant #6). `Overlay::None`
+        // is a no-op.
         let overlay = overlay_for_surface(self.shell.surface());
         self.renderer.render_overlay(device, queue, view, &overlay);
     }

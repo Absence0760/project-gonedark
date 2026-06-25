@@ -42,6 +42,10 @@ mod hud;
 /// post-match-summary chrome, drawn on top of the (possibly dark) match frame. Public so the host
 /// can describe which surface to draw via [`overlay::Overlay`].
 pub mod overlay;
+/// Radial command menu. Owns `RadialRenderer`: the wedge ring a held long-press opens over the
+/// command vocabulary, drawn as a LOAD pass in the command view. Public so the host can describe the
+/// open menu via [`radial::RadialMenu`].
+pub mod radial;
 
 /// Device quality tiers + dynamic-resolution + thermal-backoff policy (Phase 4 WS-C). Pure,
 /// host-testable RENDER decisions (invariant #1/#4: never a sim input) — see the module docs.
@@ -235,6 +239,9 @@ pub struct Renderer {
     /// The in-session shell overlay (Phase 4 WS-B). Drawn as a LOAD pass by
     /// [`Renderer::render_overlay`] when an in-session surface (pause/reconnect/summary) is up.
     overlay: overlay::OverlayRenderer,
+    /// The radial command menu. Drawn as a LOAD pass by [`Renderer::render_radial`] in the command
+    /// view when a held long-press has a menu open.
+    radial: radial::RadialRenderer,
 }
 
 impl Renderer {
@@ -345,6 +352,7 @@ impl Renderer {
 
         let hud = hud::HudRenderer::new(device, surface_format);
         let overlay = overlay::OverlayRenderer::new(device, surface_format);
+        let radial = radial::RadialRenderer::new(device, surface_format);
 
         Renderer {
             pipeline,
@@ -356,6 +364,7 @@ impl Renderer {
             instances: Vec::new(),
             hud,
             overlay,
+            radial,
         }
     }
 
@@ -483,6 +492,20 @@ impl Renderer {
         overlay: &overlay::Overlay,
     ) {
         self.overlay.render(device, queue, view, overlay);
+    }
+
+    /// Draw the radial command menu on top of the current frame (a LOAD pass — it never clears),
+    /// delegating to [`radial::RadialRenderer`]. The host calls this only in the command view, when a
+    /// held long-press has a menu open ([`radial::RadialMenu::slots`] > 0). It is screen-space chrome
+    /// with no world position and is never drawn over the dark embodied frame (invariant #6).
+    pub fn render_radial(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        menu: &radial::RadialMenu,
+    ) {
+        self.radial.render(device, queue, view, menu);
     }
 }
 
