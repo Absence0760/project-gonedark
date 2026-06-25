@@ -88,6 +88,11 @@ pub mod readout;
 /// const cost, and a host-supplied affordability flag — for the W4 text pass; reaches into no sim
 /// state (only the `core` const cost table). Public so the `build_menu_entries` seam is reachable.
 pub mod build_menu;
+/// Command-view troop-training panel (Phase 2). Pure layout of per-unit cost + production ETA + the
+/// live queue from the static `economy` tables + host-supplied dynamic state (camp level, resources,
+/// queue) — no new sim read, the `readout` pattern. Public so the `train_options` / `train_panel_labels`
+/// seams are reachable; the host drives the text pass.
+pub mod train_panel;
 
 /// Device quality tiers + dynamic-resolution + thermal-backoff policy (Phase 4 WS-C). Pure,
 /// host-testable RENDER decisions (invariant #1/#4: never a sim input) — see the module docs.

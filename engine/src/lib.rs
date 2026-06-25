@@ -51,6 +51,12 @@ mod command_ui;
 /// Build palette vocabulary. Owns `build_commands`: a chosen structure + placement tap → a
 /// `Command::Build`, quantizing the placement point to `Fixed` at the boundary (invariant #1).
 mod build_ui;
+/// Troop-training command-UI seam (Phase 2). Owns `train_commands`: a camp + unit-type choice →
+/// `Command::QueueProduction`, plus the `rally_point` quantization seam (no camp-rally sim command
+/// exists yet — flagged follow-up). Pure presentation→intent, like `command_ui`. Public so the
+/// `train_commands` / `rally_point` seams are reachable for the host to wire (mirrors the pub
+/// `readout` / `train_panel` render seams); the integrator routes the commands into the loop.
+pub mod train_ui;
 /// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
 mod selection;
 /// Embodied-fire input seam (W1). Owns `fire_command`: host yaw + trigger → `Command::Fire`,
