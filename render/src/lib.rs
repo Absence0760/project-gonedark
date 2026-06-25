@@ -55,6 +55,16 @@ pub mod radial;
 /// can `queue` strings (e.g. radial action names, summary numbers, button labels) and flush them.
 pub mod text;
 
+/// Command-view ground grid (W6). Owns `TerrainRenderer`: a world-space lattice drawn under the units
+/// (first in the command pass) so position/motion read against a fixed reference instead of flat
+/// slate. Public so the pure `grid_lines` layout seam is reachable; the `Renderer` drives the pass.
+pub mod terrain;
+
+/// Command-view readouts (W6). Pure derivation of a unit/point/objective tally from the draw set the
+/// renderer already holds, laid out as corner labels for the W4 text pass — no new sim read. Public
+/// so the `tally` / `readout_labels` seams are reachable; the `Renderer` drives the text.
+pub mod readout;
+
 /// Device quality tiers + dynamic-resolution + thermal-backoff policy (Phase 4 WS-C). Pure,
 /// host-testable RENDER decisions (invariant #1/#4: never a sim input) — see the module docs.
 pub mod tiers;
@@ -89,8 +99,9 @@ pub fn faction_color(faction: Faction) -> [f32; 3] {
     }
 }
 
-/// The embodied avatar's color — warm amber, the unit you possess.
-const AVATAR_COLOR: [f32; 3] = [1.0, 0.85, 0.2];
+/// The embodied avatar's color — warm amber, the unit you possess. `pub(crate)` so the command-view
+/// readout (`readout.rs`) can exclude the avatar from the per-faction unit tally.
+pub(crate) const AVATAR_COLOR: [f32; 3] = [1.0, 0.85, 0.2];
 
 /// Build render instances from two sim snapshots interpolated by `alpha` in `[0,1]` (invariant
 /// #4 — interpolation lives in the renderer, not the sim). Units are matched by index (the
@@ -253,6 +264,14 @@ pub struct Renderer {
     /// The band-select marquee. Drawn as a LOAD pass by [`Renderer::render_marquee`] in the command
     /// view while a band-drag is in flight.
     marquee: marquee::MarqueeRenderer,
+    /// The command-view ground grid (W6). A world-space lattice drawn FIRST in the command pass
+    /// (under the units) so position/motion read against a fixed reference. Shares the unit pass's
+    /// camera bind group, so it uses the same top-down view-projection.
+    terrain: terrain::TerrainRenderer,
+    /// The screen-space text pass (W4), owned here so the command pass can draw its readout labels
+    /// (unit/enemy/point counts) as a final LOAD pass over the command frame. Other hosts still own
+    /// their own `TextRenderer` for menus/summaries; this one is dedicated to the command readouts.
+    text: text::TextRenderer,
 }
 
 impl Renderer {
@@ -365,6 +384,9 @@ impl Renderer {
         let overlay = overlay::OverlayRenderer::new(device, surface_format);
         let radial = radial::RadialRenderer::new(device, surface_format);
         let marquee = marquee::MarqueeRenderer::new(device, surface_format);
+        // The ground grid shares the unit pass's camera layout so it uses the same view-projection.
+        let terrain = terrain::TerrainRenderer::new(device, surface_format, &camera_layout);
+        let text = text::TextRenderer::new(device, surface_format);
 
         Renderer {
             pipeline,
@@ -378,6 +400,8 @@ impl Renderer {
             overlay,
             radial,
             marquee,
+            terrain,
+            text,
         }
     }
 
@@ -452,6 +476,15 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
+            // Command view: draw the ground grid FIRST (under the units) so position/motion read
+            // against a fixed world reference instead of flat slate (W6). It shares the unit pass's
+            // camera bind group (same top-down view-projection) and is world-space, fog-free cosmetic
+            // terrain — so it is gated to `!world_dark` and never paints the dark embodied frame
+            // (invariant #6).
+            if !world_dark {
+                self.terrain.draw(&mut pass, &self.camera_bind_group);
+            }
+
             if !draw_set.is_empty() {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
@@ -462,6 +495,27 @@ impl Renderer {
         }
 
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Command-view readouts (W6): a unit/enemy/point tally derived from the SAME fog-filtered
+        // draw set — no new sim read — laid out as top-left corner labels and drawn via the W4 text
+        // pass as a final LOAD pass over the command frame. Screen-space chrome only (invariant #6);
+        // gated to `!world_dark` so it never draws over the dark embodied frame. The resource line is
+        // a placeholder seam (the renderer has no economy read) and stays absent until a host plumbs
+        // one in — see `readout`.
+        if !world_dark {
+            let t = readout::tally(&draw_set);
+            for label in readout::readout_labels(&t, None) {
+                self.text.queue(
+                    label.text,
+                    label.pos,
+                    label.px_size,
+                    label.anchor,
+                    label.color,
+                    label.alpha,
+                );
+            }
+            self.text.render(device, queue, view);
+        }
     }
 
     /// Draw the embodied directional-alert HUD on top of the current frame (a LOAD pass — it
