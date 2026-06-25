@@ -57,6 +57,10 @@ mod build_ui;
 /// `train_commands` / `rally_point` seams are reachable for the host to wire (mirrors the pub
 /// `readout` / `train_panel` render seams); the integrator routes the commands into the loop.
 pub mod train_ui;
+/// Camp-upgrade UI intent. Owns `upgrade_commands`: an "upgrade the selected camp" tap →
+/// `Command::Upgrade` (the "growth" half of command-and-grow). Pure intent, never mutates the sim.
+/// Public so a host/integrator can wire the on-screen Upgrade button into the command stream.
+pub mod upgrade_ui;
 /// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
 mod selection;
 /// Embodied-fire input seam (W1). Owns `fire_command`: host yaw + trigger → `Command::Fire`,

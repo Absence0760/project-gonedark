@@ -83,6 +83,11 @@ pub mod terrain;
 /// renderer already holds, laid out as corner labels for the W4 text pass — no new sim read. Public
 /// so the `tally` / `readout_labels` seams are reachable; the `Renderer` drives the text.
 pub mod readout;
+/// Command-view upgrade panel — the readable per-camp tier display ("growth" half of command-and-
+/// grow). Pure derivation of current tier / next-tier cost / production-speed effect / affordability
+/// from host-supplied camp level + resources, laid out as a corner panel for the text pass. No sim
+/// read (invariant #4); public so the `upgrade_view` / `upgrade_labels` seams are reachable.
+pub mod upgrade_panel;
 
 /// Command-view build palette (Phase 2). Pure layout of the placeable-structure palette — label,
 /// const cost, and a host-supplied affordability flag — for the W4 text pass; reaches into no sim
