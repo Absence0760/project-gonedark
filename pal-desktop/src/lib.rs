@@ -204,8 +204,10 @@ impl DesktopRenderSurface {
 /// intents (embody / surface / click) are *latched* so they read `true` for exactly one
 /// [`drain_frame`](Self::drain_frame) and are then cleared.
 ///
-/// Default keymap (desktop): `E` embody, `Q` surface, `WASD` move, raw mouse delta looks,
-/// left-click is the command-layer pointer-down, right-click or `Space` fires.
+/// Default keymap (desktop, classic-RTS split — D41): `E` embody, `Q` surface, `WASD` move, raw
+/// mouse delta looks. **Left-click selects** (the command-layer pointer-down / band-select) and, when
+/// embodied, **fires**; **right-click commands** the current selection (move, or attack on an enemy);
+/// `Space` is the alternate fire. Number keys `1`–`0` pick the advanced order/stance vocabulary slots.
 #[derive(Debug)]
 pub struct DesktopInput {
     // Accumulated (held / latest) state.
@@ -223,6 +225,8 @@ pub struct DesktopInput {
     embody_latch: bool,
     surface_latch: bool,
     click_latch: bool,
+    // Right-click "command the selection" edge (D41), cleared on drain.
+    command_latch: bool,
     // Touch-UI desktop bindings (worker 4/5 consume these via InputFrame): the left-button release
     // edge and the order/stance vocabulary slot keys (1–6).
     release_latch: bool,
@@ -248,6 +252,7 @@ impl Default for DesktopInput {
             embody_latch: false,
             surface_latch: false,
             click_latch: false,
+            command_latch: false,
             release_latch: false,
             long_press: false,
             command_slot: None,
@@ -307,19 +312,27 @@ impl DesktopInput {
         self.pointer = None;
     }
 
-    /// A mouse button changed state. Left is the command-layer pointer (held, with press/release
-    /// edges latched so a fast click is never dropped); right fires (held).
+    /// A mouse button changed state (classic-RTS split, D41). **Left** is the command-layer pointer
+    /// (held, with press/release edges latched so a fast click is never dropped) — it drives unit
+    /// SELECTION in the command view, and doubles as FIRE while embodied (the two consumers are
+    /// mode-exclusive, so one button is unambiguous). **Right** is the edge-triggered "command the
+    /// selection here" intent (move / attack); it is not held.
     fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
         match button {
             MouseButton::Left => {
                 self.pointer_down = pressed;
+                // Embodied fire rides the left button (FPS convention); the command view ignores
+                // `fire`, so this never collides with left-click selection.
+                self.fire = pressed;
                 if pressed {
-                    self.click_latch = true; // edge: command-layer click
+                    self.click_latch = true; // edge: command-layer click (select)
                 } else {
                     self.release_latch = true; // edge: drag/tap completed
                 }
             }
-            MouseButton::Right => self.fire = pressed,
+            // Right-click commands the current selection — latch the press edge (with the cursor
+            // already tracked in `pointer`). Released state needs no signal.
+            MouseButton::Right if pressed => self.command_latch = true,
             _ => {}
         }
     }
@@ -346,7 +359,7 @@ impl DesktopInput {
             KeyCode::KeyS => self.move_down = pressed,
             KeyCode::KeyA => self.move_left = pressed,
             KeyCode::KeyD => self.move_right = pressed,
-            // Fire (alternative to right-click), held.
+            // Fire (alternate to left-click), held — convenient for embodied combat from the keyboard.
             KeyCode::Space => self.fire = pressed,
             // Touch-UI desktop bindings: F opens the order/stance context; number keys pick a
             // vocabulary slot (0-based on the wire) — 1–9 → slots 0–8, 0 → slot 9 (see
@@ -396,6 +409,7 @@ impl DesktopInput {
             surface_pressed: self.surface_latch,
             long_press: self.long_press,
             command_slot: self.command_slot,
+            command_click: self.command_latch,
             move_axis: (mx, my),
             look_axis: (self.look_dx, self.look_dy),
             fire: self.fire,
@@ -407,6 +421,7 @@ impl DesktopInput {
         self.embody_latch = false;
         self.surface_latch = false;
         self.click_latch = false;
+        self.command_latch = false;
         self.release_latch = false;
         self.command_slot = None;
         self.look_dx = 0.0;
@@ -587,14 +602,33 @@ mod input_tests {
     }
 
     #[test]
-    fn right_click_and_space_both_fire_held() {
+    fn left_click_and_space_both_fire_held() {
+        // Classic-RTS split (D41): fire rides the LEFT button (FPS convention) + Space, not RMB.
         let mut input = DesktopInput::new();
-        input.on_mouse_button(MouseButton::Right, true);
-        assert!(input.drain_frame().fire, "RMB fires");
-        input.on_mouse_button(MouseButton::Right, false);
-        assert!(!input.drain_frame().fire, "RMB released");
+        input.on_mouse_button(MouseButton::Left, true);
+        assert!(input.drain_frame().fire, "LMB fires (embodied)");
+        input.on_mouse_button(MouseButton::Left, false);
+        assert!(!input.drain_frame().fire, "LMB released → no fire");
         input.on_key(KeyCode::Space, true, false);
         assert!(input.drain_frame().fire, "Space also fires");
+    }
+
+    #[test]
+    fn right_click_is_a_one_shot_command_edge_not_fire() {
+        // RMB is the "command the selection" edge (D41): it latches command_click for exactly one
+        // drain and never sets fire.
+        let mut input = DesktopInput::new();
+        input.on_mouse_button(MouseButton::Right, true);
+        let f = input.drain_frame();
+        assert!(f.command_click, "RMB press → command_click edge");
+        assert!(!f.fire, "RMB does not fire");
+        assert!(
+            !input.drain_frame().command_click,
+            "command_click latch cleared after one drain"
+        );
+        // The release edge produces nothing (the command already issued on press).
+        input.on_mouse_button(MouseButton::Right, false);
+        assert!(!input.drain_frame().command_click, "RMB release → no edge");
     }
 
     #[test]

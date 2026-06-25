@@ -161,6 +161,42 @@ pub fn commands_for(
     out
 }
 
+/// The **right-click "command here"** action (classic-RTS desktop scheme, D41): the primary,
+/// no-modifier way to order the current selection. Issues the *default* order at the clicked point
+/// to every selected unit, in selection order — a plain [`Command::Move`] onto empty ground, or a
+/// [`Command::AttackMove`] when the click landed on an enemy (`on_enemy`). This is the
+/// quick-path counterpart to the explicit slot vocabulary ([`commands_for`]); the number keys /
+/// radial still reach the *advanced* orders (attack-move-anywhere, stances, patrol, fall-back).
+///
+/// Pure intent → `Command`s: emits nothing with an empty selection or no `target_world`, and
+/// quantizes the world point to `Fixed` at the input boundary via [`crate::world_to_fixed`]
+/// (invariant #1). The caller decides `on_enemy` by hit-testing the target against enemy units.
+pub fn command_click_commands(
+    selected: &[(Entity, (f32, f32))],
+    target_world: Option<(f32, f32)>,
+    on_enemy: bool,
+) -> Vec<Command> {
+    let Some((tx, ty)) = target_world else {
+        return Vec::new();
+    };
+    if selected.is_empty() {
+        return Vec::new();
+    }
+    let target = Vec2::new(crate::world_to_fixed(tx), crate::world_to_fixed(ty));
+    selected
+        .iter()
+        .map(|&(entity, _)| {
+            if on_enemy {
+                // Right-click on an enemy → attack-move onto it: advance and engage (the
+                // literal-executor unit still fires by its stance — invariant #3).
+                Command::AttackMove { entity, target }
+            } else {
+                Command::Move { entity, target }
+            }
+        })
+        .collect()
+}
+
 /// A long-press interaction over the command vocabulary, resolved to one of its two edges.
 ///
 /// Pure intent (invariant #3: vocabulary depth, never unit autonomy). The `Preview` carries no
@@ -270,6 +306,54 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn right_click_empty_ground_moves_each_selected_unit() {
+        let selection = sel(&[(1, 0.0, 0.0), (2, 0.0, 0.0)]);
+        let (tx, ty) = (12.5_f32, -4.25_f32);
+        let cmds = command_click_commands(&selection, Some((tx, ty)), false);
+        assert_eq!(cmds.len(), 2, "one Move per selected unit");
+        let want_x = crate::world_to_fixed(tx).to_bits();
+        let want_y = crate::world_to_fixed(ty).to_bits();
+        for (cmd, &(ent, _)) in cmds.iter().zip(&selection) {
+            match cmd {
+                Command::Move { entity, target } => {
+                    assert_eq!(*entity, ent);
+                    assert_eq!(target.x.to_bits(), want_x);
+                    assert_eq!(target.y.to_bits(), want_y);
+                }
+                other => panic!("expected Move, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn right_click_on_enemy_attack_moves_each_selected_unit() {
+        let selection = sel(&[(7, 0.0, 0.0), (8, 0.0, 0.0)]);
+        let (tx, ty) = (9.0_f32, 6.0_f32);
+        let cmds = command_click_commands(&selection, Some((tx, ty)), true);
+        assert_eq!(cmds.len(), 2);
+        for cmd in &cmds {
+            assert!(
+                matches!(cmd, Command::AttackMove { .. }),
+                "on_enemy → AttackMove, got {cmd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn right_click_with_no_selection_or_no_target_emits_nothing() {
+        let empty: Vec<(Entity, (f32, f32))> = Vec::new();
+        assert!(
+            command_click_commands(&empty, Some((1.0, 1.0)), false).is_empty(),
+            "no selection → nothing"
+        );
+        let selection = sel(&[(1, 0.0, 0.0)]);
+        assert!(
+            command_click_commands(&selection, None, false).is_empty(),
+            "no target point → nothing"
+        );
     }
 
     #[test]

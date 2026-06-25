@@ -275,39 +275,21 @@ fn unproject_topdown(
     Some((world.x / world.w, world.y / world.w))
 }
 
-/// Map this frame's `input` + current `embodied` state into the sim commands it produces,
-/// for the given `player` entity and `viewport`. PURE (no `Game`/device): builds the
-/// top-down camera and unprojects the tap internally, quantizing the target to `Fixed` AT
-/// THE INPUT BOUNDARY (invariant #1).
+/// Map this frame's `input` + current `embodied` state into the sim commands it produces, for the
+/// given `player` entity. PURE (no `Game`/device).
 ///
-/// - Command-layer tap: only in top-down (`!embodied`), on a pointer-down edge with a known
-///   position → one [`Command::Move`].
+/// This handles ONLY the embodiment input-source swap. Unit *movement* is no longer a side effect
+/// of any pointer-down — under the classic-RTS desktop scheme (D41) the **left-click selects** and
+/// the **right-click commands the selection** (`command_ui::command_click_commands`, wired in
+/// [`Game::frame`]); a bare click never moves a hard-wired avatar. (The old "any tap moves
+/// `player`" behavior was the unintuitive feel this replaced.)
+///
 /// - Embody/surface (invariant #5): edge-triggered, mutually exclusive, *resolved by current
-///   state* — `embody_pressed && !embodied` → [`Command::Embody`]; `surface_pressed &&
-///   embodied` → [`Command::Surface`]. The Android two-finger tap sets BOTH flags; this
-///   state-resolution turns it into the correct toggle.
-fn map_input_commands(
-    input: &InputFrame,
-    embodied: bool,
-    player: Entity,
-    width: u32,
-    height: u32,
-) -> Vec<Command> {
+///   state* — `embody_pressed && !embodied` → [`Command::Embody`]; `surface_pressed && embodied`
+///   → [`Command::Surface`]. The Android two-finger tap sets BOTH flags; this state-resolution
+///   turns it into the correct toggle.
+fn map_input_commands(input: &InputFrame, embodied: bool, player: Entity) -> Vec<Command> {
     let mut commands: Vec<Command> = Vec::new();
-
-    // Command-layer tap: only in top-down, on a pointer-down edge with a known position.
-    // The target is unprojected then quantized to Fixed AT THIS BOUNDARY (invariant #1).
-    if !embodied && input.pointer_down {
-        if let Some((px, py)) = input.pointer {
-            let view_proj = topdown_view_proj(width, height);
-            if let Some((wx, wy)) = unproject_topdown(&view_proj, px, py, width, height) {
-                commands.push(Command::Move {
-                    entity: player,
-                    target: Vec2::new(world_to_fixed(wx), world_to_fixed(wy)),
-                });
-            }
-        }
-    }
 
     // Embodiment input-source swap (invariant #5) — edge-triggered, mutually exclusive,
     // resolved by current state (so the two-finger BOTH-flags gesture toggles correctly).
@@ -694,6 +676,30 @@ impl Game {
         out
     }
 
+    /// Whether the command-view world point `target` lands on a living **non-Player** unit — the
+    /// hit-test that turns a right-click into an *attack* rather than a *move* (D41). Read-only over
+    /// the sim world; a presentation derivation (the resulting `AttackMove` carries a Fixed-quantized
+    /// point, so no float reaches the sim — invariant #1). The pick radius is generous enough that a
+    /// click *near* an enemy reads as "attack that one" (units render at half-extent ~0.5).
+    fn enemy_unit_at(&self, target: (f32, f32)) -> bool {
+        const ENEMY_PICK_RADIUS: f32 = 1.25;
+        let w = &self.sim.world;
+        for i in 0..w.capacity() {
+            if !w.is_index_alive(i)
+                || w.faction[i] == Faction::Player
+                || w.kind[i] != EntityKind::Unit
+            {
+                continue;
+            }
+            let p = w.pos[i];
+            let (dx, dy) = (fixed_to_f32(p.x) - target.0, fixed_to_f32(p.y) - target.1);
+            if dx * dx + dy * dy <= ENEMY_PICK_RADIUS * ENEMY_PICK_RADIUS {
+                return true;
+            }
+        }
+        false
+    }
+
     /// The radial command menu open this frame: the action labels a held long-press is offering for
     /// the current selection, or empty when no menu is open. Presentation intent only — reading it
     /// never mutates the sim, and a preview emits no `Command`s. A host's on-screen radial renderer
@@ -766,7 +772,7 @@ impl Game {
         // 1. Map input → sim commands (applied on the first step of this frame). The pure
         // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
         // `map_input_commands`; here we apply the resulting embodiment state transition.
-        let mut commands = map_input_commands(input, self.embodied, self.player, width, height);
+        let mut commands = map_input_commands(input, self.embodied, self.player);
 
         // 1b. Touch-UI layer (workers 4 + 5): in the command view, the pointer drives unit
         // SELECTION and the on-screen vocabulary issues orders to that selection. Both are pure
@@ -855,6 +861,18 @@ impl Game {
                     pointer_world,
                 ));
             }
+        }
+
+        // Right-click "command here" (classic-RTS scheme, D41): the primary, no-modifier order to
+        // the current selection — Move onto empty ground, AttackMove onto an enemy. Command view
+        // only; ignored while embodied (right-click has no command-layer meaning in first person).
+        if input.command_click && !self.embodied {
+            let on_enemy = pointer_world.is_some_and(|t| self.enemy_unit_at(t));
+            commands.extend(command_ui::command_click_commands(
+                &selected,
+                pointer_world,
+                on_enemy,
+            ));
         }
 
         // Embodiment input-source swap (invariant #5): mirror the toggle the mapping resolved.
@@ -1361,33 +1379,22 @@ mod tests {
         assert!((wy - TOPDOWN_HALF_EXTENT).abs() < 1e-2, "top y = {wy}");
     }
 
-    /// Top-down + `pointer_down` with a pointer set -> exactly one `Move`, target ≈ the
-    /// unprojected world point.
+    /// A bare left-click (`pointer_down`) no longer moves a hard-wired avatar (D41): movement comes
+    /// from the right-click "command the selection" path, not from `map_input_commands`. The
+    /// selection gesture rides `pointer_down` separately (see `Selection`).
     #[test]
-    fn map_input_topdown_tap_produces_single_move() {
-        let (width, height) = (1280u32, 720u32);
+    fn map_input_bare_click_emits_no_movement() {
         let player = test_player();
-        let (px, py) = (900.0_f32, 300.0_f32);
-
         let input = InputFrame {
-            pointer: Some((px, py)),
+            pointer: Some((900.0, 300.0)),
             pointer_down: true,
             ..Default::default()
         };
-        let cmds = map_input_commands(&input, false, player, width, height);
-        assert_eq!(cmds.len(), 1, "exactly one command");
-
-        let vp = topdown_view_proj(width, height);
-        let (wx, wy) = unproject_topdown(&vp, px, py, width, height).unwrap();
-        match cmds[0] {
-            Command::Move { entity, target } => {
-                assert_eq!(entity, player);
-                // Compare via the same Fixed bits the mapping produced.
-                assert_eq!(target.x.to_bits(), world_to_fixed(wx).to_bits());
-                assert_eq!(target.y.to_bits(), world_to_fixed(wy).to_bits());
-            }
-            ref other => panic!("expected Move, got {other:?}"),
-        }
+        let cmds = map_input_commands(&input, false, player);
+        assert!(
+            cmds.is_empty(),
+            "a left-click selects; it must not emit a Move/AttackMove, got {cmds:?}"
+        );
     }
 
     /// `embody_pressed && !embodied` -> contains `Embody`, not `Surface`.
@@ -1398,7 +1405,7 @@ mod tests {
             embody_pressed: true,
             ..Default::default()
         };
-        let cmds = map_input_commands(&input, false, player, 800, 600);
+        let cmds = map_input_commands(&input, false, player);
         assert!(cmds.iter().any(|c| matches!(c, Command::Embody { .. })));
         assert!(!cmds.iter().any(|c| matches!(c, Command::Surface { .. })));
     }
@@ -1411,7 +1418,7 @@ mod tests {
             surface_pressed: true,
             ..Default::default()
         };
-        let cmds = map_input_commands(&input, true, player, 800, 600);
+        let cmds = map_input_commands(&input, true, player);
         assert!(cmds.iter().any(|c| matches!(c, Command::Surface { .. })));
         assert!(!cmds.iter().any(|c| matches!(c, Command::Embody { .. })));
     }
@@ -1427,13 +1434,13 @@ mod tests {
             ..Default::default()
         };
 
-        let surfaced = map_input_commands(&both, false, player, 800, 600);
+        let surfaced = map_input_commands(&both, false, player);
         assert!(surfaced.iter().any(|c| matches!(c, Command::Embody { .. })));
         assert!(!surfaced
             .iter()
             .any(|c| matches!(c, Command::Surface { .. })));
 
-        let embodied = map_input_commands(&both, true, player, 800, 600);
+        let embodied = map_input_commands(&both, true, player);
         assert!(embodied
             .iter()
             .any(|c| matches!(c, Command::Surface { .. })));
@@ -1449,7 +1456,7 @@ mod tests {
             pointer_down: true,
             ..Default::default()
         };
-        let cmds = map_input_commands(&input, true, player, 800, 600);
+        let cmds = map_input_commands(&input, true, player);
         assert!(!cmds.iter().any(|c| matches!(c, Command::Move { .. })));
     }
 
