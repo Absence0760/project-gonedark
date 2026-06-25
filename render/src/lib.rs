@@ -50,6 +50,11 @@ pub mod overlay;
 /// open menu via [`radial::RadialMenu`].
 pub mod radial;
 
+/// Screen-space text pass (W4). Owns `TextRenderer`: a baked bitmap-glyph LOAD pass that draws
+/// labels/numbers at an NDC position with a size + color. Public so the host and other render passes
+/// can `queue` strings (e.g. radial action names, summary numbers, button labels) and flush them.
+pub mod text;
+
 /// Device quality tiers + dynamic-resolution + thermal-backoff policy (Phase 4 WS-C). Pure,
 /// host-testable RENDER decisions (invariant #1/#4: never a sim input) — see the module docs.
 pub mod tiers;
