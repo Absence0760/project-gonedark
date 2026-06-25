@@ -318,6 +318,11 @@ fn put_command(w: &mut Writer, c: &Command) {
             put_entity(w, camp);
             put_unit_kind(w, unit);
         }
+        Command::Fire { entity, dir } => {
+            w.u8(10);
+            put_entity(w, entity);
+            put_vec2(w, dir);
+        }
     }
 }
 
@@ -360,6 +365,10 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
         9 => Command::QueueProduction {
             camp: get_entity(r)?,
             unit: get_unit_kind(r)?,
+        },
+        10 => Command::Fire {
+            entity: get_entity(r)?,
+            dir: get_vec2(r)?,
         },
         t => return Err(DecodeError::BadTag(t)),
     })
@@ -906,6 +915,10 @@ mod tests {
             Command::QueueProduction {
                 camp: ent(7, 3),
                 unit: UnitKind::Heavy,
+            },
+            Command::Fire {
+                entity: ent(9, 1),
+                dir: v(1, 0),
             },
             // Cover the remaining Order variants too.
             Command::SetOrder {

@@ -63,6 +63,12 @@ pub enum Command {
     Upgrade { camp: Entity },
     /// Queue a unit for production at a built camp (spends resources).
     QueueProduction { camp: Entity, unit: UnitKind },
+    /// An embodied unit fires its weapon along `dir` (a unit aim vector, already quantized to
+    /// `Fixed` bits at the host boundary — invariant #1). The sim resolves a fixed-point cone
+    /// hitscan ([`combat::resolve_fire`]); embodied units fire ONLY via this command, never the
+    /// auto-combat resolver (combat skips `InputSource::Embodied`). Sim-authoritative: the hit is
+    /// decided here, on every peer identically, not on the firing host.
+    Fire { entity: Entity, dir: Vec2 },
 }
 
 /// The simulation: the deterministic world, the static terrain, per-faction resources, the
@@ -183,6 +189,17 @@ impl Sim {
             }
             Command::QueueProduction { camp, unit } => {
                 economy::queue_production(&mut self.world, &mut self.resources, camp, unit);
+            }
+            Command::Fire { entity, dir } => {
+                if self.world.is_alive(entity) {
+                    combat::resolve_fire(
+                        &mut self.world,
+                        &self.terrain,
+                        entity.index as usize,
+                        dir,
+                        &mut self.events,
+                    );
+                }
             }
         }
     }

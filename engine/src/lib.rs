@@ -46,6 +46,9 @@ mod audio;
 mod command_ui;
 /// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
 mod selection;
+/// Embodied-fire input seam (W1). Owns `fire_command`: host yaw + trigger → `Command::Fire`,
+/// quantizing the aim direction to `Fixed` at the boundary (invariant #1).
+mod fire;
 /// In-session shell (Phase 4 WS-B): the in-engine pause / surrender / post-match-summary /
 /// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
 /// session state — never mutates sim state. Public so a host (and tests) can drive it.
@@ -789,6 +792,17 @@ impl Game {
 
         // Integrate look into presentation-only yaw (D15: never into the sim).
         self.yaw += input.look_axis.0 * LOOK_SENSITIVITY;
+
+        // Embodied fire (W1, invariant #5/#1): while possessed, a pressed trigger emits a
+        // `Command::Fire` whose aim direction is the host yaw quantized to `Fixed` AT THE BOUNDARY
+        // (pure seam `fire::fire_command`). It enters the same lockstep command stream as taps, so
+        // the cone-hitscan hit is resolved sim-side, bit-identically on every peer. Embodied units
+        // never auto-fire (combat skips them); this is their only weapon path.
+        if self.embodied {
+            if let Some(cmd) = fire::fire_command(self.player, self.yaw, input.fire) {
+                commands.push(cmd);
+            }
+        }
 
         // 2. Fixed-tick accumulator → lockstep drive. The deterministic sim advances in whole
         // ticks, but each tick is now driven through `core::lockstep` (D27 step 4) instead of
