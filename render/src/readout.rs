@@ -15,18 +15,29 @@
 //! interpolator already baked (`faction_color` / [`crate::FLAG_RING`]). That is exactly the right
 //! number to surface in a fog-of-war RTS — it is what the commander can *see*, not omniscient truth.
 //!
-//! True resource/economy numbers (credits, production) are NOT available render-side: they live in
-//! the sim and are never sent to the renderer. Rather than reach into `engine`/`core` (forbidden
-//! for this render-only worker), [`readout_labels`] emits a clearly-commented **placeholder seam**
-//! for the resource line: a host that later plumbs a `resources: Option<u32>` into the render call
-//! can fill it without touching this layout. Until then the resource readout shows the live counts
-//! it CAN derive (units/points), and the placeholder stays out of the frame.
+//! ## Resource / economy readout (the seam, now filled)
+//!
+//! True resource/economy numbers (banked credits, income) live in the sim and are never sent to
+//! the renderer, which is the float boundary and never calls back into `core` at runtime
+//! (invariant #4). So the renderer cannot *read* them — but it can *lay them out* once a host
+//! hands them in as plain data. [`readout_labels`] takes an optional [`EconomyReadout`] (banked
+//! `resources` + an `income_per_tick` rate); when present it appends a `RESOURCES:` line and an
+//! `INCOME: <n>/s` line so cost and income are legible at a glance. The integrator supplies those
+//! figures from the sim's `economy_system` (the [`Resources`](gonedark_core::economy::Resources)
+//! purse + held-point count); render only formats them. A host that has only a held-point count
+//! can derive the rate with [`income_per_tick`] (the same `BASE_INCOME + PER_POINT_INCOME * points`
+//! shape the sim uses), and [`income_per_second`] converts a per-tick rate to the per-second figure
+//! shown to the player (`TICK_HZ` = 60). These reference `core`'s economy/tick CONSTS at compile
+//! time only — there is still no runtime sim read and no engine plumbing inside render.
 //!
 //! ## Fairness (invariant #6)
 //!
 //! The labels are screen-space NDC chrome (the W4 text pass), carry no world position, and are
-//! emitted only for the command view — never over the dark embodied frame. They report only counts
-//! already on the (fog-filtered) command frame, so they leak no intel the player can't already see.
+//! emitted only for the command view: [`readout_labels`] takes a `world_dark` flag and returns an
+//! EMPTY label set while embodied, so the count/economy chrome can NEVER draw over the dark frame
+//! (that would hand back exactly the strategic intel "going dark" removes — banked credits and
+//! income are pure command-layer information). On the command frame the labels report only
+//! counts/credits the commander is entitled to, leaking no intel the player can't already see.
 //!
 //! ## The pure seam
 //!
@@ -37,6 +48,11 @@
 use crate::text::Anchor;
 use crate::{faction_color, UnitInstance, FLAG_RING};
 use gonedark_core::components::Faction;
+// Compile-time CONSTS only — the truthful single source of the balance/tick numbers the displayed
+// income figure must agree with. Importing a `const` is not a runtime sim read: it inlines to a
+// literal, so render still never calls into `core`/`engine` at runtime (invariant #4).
+use gonedark_core::economy::{BASE_INCOME, PER_POINT_INCOME};
+use gonedark_core::sim::TICK_HZ;
 
 /// A per-faction / objective tally derived from the command-view draw set. Counts only what is on
 /// the (fog-filtered) frame — the commander's visible picture, not omniscient truth.
@@ -104,24 +120,73 @@ const LINE_STEP: f32 = 0.075;
 const PLAYER_LABEL: [f32; 3] = [0.55, 0.78, 1.0];
 const ENEMY_LABEL: [f32; 3] = [1.0, 0.55, 0.48];
 const NEUTRAL_LABEL: [f32; 3] = [0.85, 0.85, 0.9];
+/// Economy lines (banked resources + income) — a credits-gold tint so cost/income read as their
+/// own legible class, distinct from the unit counts.
+const ECON_LABEL: [f32; 3] = [1.0, 0.86, 0.4];
 
-/// Lay out the command-view readout labels from a [`Tally`] (and an optional, host-supplied resource
-/// count — the placeholder seam). Pure (no GPU, no sim) — the testable layout seam. The labels stack
-/// down the top-left corner:
+/// The economy figures a host hands render to fill the resource/income readout. Plain data — the
+/// renderer never reads these from the sim (invariant #4); the integrator supplies them from the
+/// sim's `economy_system` (the [`Resources`](gonedark_core::economy::Resources) purse + held-point
+/// count). `income_per_tick` is the sim's native per-tick rate; the label converts it to a
+/// per-second figure ([`income_per_second`]) for legibility.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct EconomyReadout {
+    /// Banked resources (current credits) for the local commander.
+    pub resources: u32,
+    /// Income rate in resources per sim tick (the sim's native unit). Derive it from a held-point
+    /// count with [`income_per_tick`], or pass a figure already read from the sim.
+    pub income_per_tick: i64,
+}
+
+/// Per-tick income for `points` held control points, using the SAME shape the sim's
+/// `economy_system` uses: `BASE_INCOME + PER_POINT_INCOME * points`. Pure (no GPU, no runtime sim
+/// read — only `core`'s balance consts at compile time), so a host that has just a held-point count
+/// can produce a truthful [`EconomyReadout::income_per_tick`] without duplicating the formula.
+#[inline]
+pub fn income_per_tick(points: u32) -> i64 {
+    BASE_INCOME + PER_POINT_INCOME * points as i64
+}
+
+/// Convert a per-tick income rate to the per-second figure shown to the player. The sim ticks at a
+/// fixed [`TICK_HZ`] (= 60, D21), so per-second = per-tick × 60 — a far more legible "at a glance"
+/// number than a raw per-tick drip.
+#[inline]
+pub fn income_per_second(per_tick: i64) -> i64 {
+    per_tick * TICK_HZ as i64
+}
+
+/// Lay out the command-view readout labels from a [`Tally`] (and an optional, host-supplied
+/// [`EconomyReadout`] — the resource/income seam, now filled). Pure (no GPU, no runtime sim read) —
+/// the testable layout seam. The labels stack down the top-left corner:
 ///
 /// - `UNITS: <n>`     — the player's visible unit count (player-blue).
 /// - `ENEMY: <n>`     — the visible enemy unit count (enemy-red).
 /// - `POINTS: <n>`    — control points on the frame (neutral white).
-/// - `RESOURCES: <n>` — ONLY when `resources` is `Some` (the seam). The renderer has no sim read for
-///   the economy, so a host that later plumbs a resource count into the render call fills this in;
-///   until then it is absent (no fake number is shown).
+/// - `RESOURCES: <n>` — banked credits, ONLY when `economy` is `Some` (credits-gold).
+/// - `INCOME: <n>/s`  — income converted to per-second ([`income_per_second`]), ONLY when `economy`
+///   is `Some` (credits-gold). The renderer has no sim read for the economy, so the host supplies
+///   these figures; absent (no fake number) until it does.
+///
+/// `world_dark` is the fairness gate (invariant #6): while embodied the world goes dark, so this
+/// returns an EMPTY set — the command readout (counts AND economy) must never draw over the dark
+/// frame, where the alert HUD is the only sanctioned visual thread back to the map. The host need
+/// not special-case the call; it passes the embodied/dark state and gets nothing back.
 ///
 /// All positions are NDC ([-1,1], +y up) anchored [`Anchor::TopLeft`], so they hug the screen corner
 /// independent of the framing. Screen-space chrome only (invariant #6) — no world position.
-pub fn readout_labels(t: &Tally, resources: Option<u32>) -> Vec<ReadoutLabel> {
+pub fn readout_labels(
+    t: &Tally,
+    economy: Option<EconomyReadout>,
+    world_dark: bool,
+) -> Vec<ReadoutLabel> {
+    // Fairness gate (invariant #6): emit nothing while embodied. The command-layer chrome — visible
+    // counts AND banked credits/income — is exactly the strategic intel "going dark" removes.
+    if world_dark {
+        return Vec::new();
+    }
     let top = 1.0 - MARGIN; // top edge, inset
     let left = -1.0 + MARGIN; // left edge, inset
-    let mut out = Vec::with_capacity(4);
+    let mut out = Vec::with_capacity(5);
     let mut row = 0;
     let mut push = |text: String, color: [f32; 3], row: &mut i32| {
         out.push(ReadoutLabel {
@@ -142,10 +207,19 @@ pub fn readout_labels(t: &Tally, resources: Option<u32>) -> Vec<ReadoutLabel> {
         NEUTRAL_LABEL,
         &mut row,
     );
-    // Placeholder seam: only emitted if a host hands a real resource count in. The renderer can't
-    // read the sim economy, so we never invent one — see the module docs.
-    if let Some(res) = resources {
-        push(format!("RESOURCES: {res}"), NEUTRAL_LABEL, &mut row);
+    // Resource/income seam: only emitted when a host hands real economy figures in. The renderer
+    // can't read the sim economy, so we never invent one — see the module docs.
+    if let Some(econ) = economy {
+        push(
+            format!("RESOURCES: {}", econ.resources),
+            ECON_LABEL,
+            &mut row,
+        );
+        push(
+            format!("INCOME: {}/s", income_per_second(econ.income_per_tick)),
+            ECON_LABEL,
+            &mut row,
+        );
     }
 
     out
@@ -226,6 +300,13 @@ mod tests {
 
     // ---- readout_labels ----
 
+    fn econ(resources: u32, income_per_tick: i64) -> EconomyReadout {
+        EconomyReadout {
+            resources,
+            income_per_tick,
+        }
+    }
+
     #[test]
     fn labels_report_the_tally_counts() {
         let t = Tally {
@@ -233,8 +314,8 @@ mod tests {
             enemy_units: 3,
             control_points: 2,
         };
-        let labels = readout_labels(&t, None);
-        // Three lines without the resource seam.
+        let labels = readout_labels(&t, None, false);
+        // Three lines without the economy seam.
         assert_eq!(labels.len(), 3);
         assert!(labels[0].text.contains('5'), "player count in the units line");
         assert!(labels[1].text.contains('3'), "enemy count in the enemy line");
@@ -245,18 +326,82 @@ mod tests {
     }
 
     #[test]
-    fn resource_seam_only_appears_when_supplied() {
+    fn economy_seam_only_appears_when_supplied() {
         let t = Tally::default();
-        assert_eq!(readout_labels(&t, None).len(), 3, "no resource line by default");
-        let with = readout_labels(&t, Some(250));
-        assert_eq!(with.len(), 4, "resource line appears when a host supplies it");
-        assert!(with[3].text.contains("250"));
+        assert_eq!(
+            readout_labels(&t, None, false).len(),
+            3,
+            "no economy lines by default"
+        );
+        let with = readout_labels(&t, Some(econ(250, income_per_tick(0))), false);
+        assert_eq!(
+            with.len(),
+            5,
+            "RESOURCES + INCOME lines appear when a host supplies economy"
+        );
         assert!(with[3].text.starts_with("RESOURCES"));
+        assert!(with[4].text.starts_with("INCOME"));
+    }
+
+    #[test]
+    fn resource_line_shows_the_banked_credits() {
+        // The banked figure the host hands in is the exact number shown.
+        let labels = readout_labels(&Tally::default(), Some(econ(1337, income_per_tick(0))), false);
+        assert!(labels[3].text.contains("1337"), "banked credits verbatim");
+    }
+
+    #[test]
+    fn income_label_converts_per_tick_to_per_second() {
+        // Base income (no points) is 1/tick -> 60/s at TICK_HZ = 60.
+        let base = readout_labels(&Tally::default(), Some(econ(0, income_per_tick(0))), false);
+        assert!(base[4].text.contains("60/s"), "1/tick reads as 60/s, got {:?}", base[4].text);
+        // Holding two points: 1 + 2*2 = 5/tick -> 300/s.
+        let held = readout_labels(&Tally::default(), Some(econ(0, income_per_tick(2))), false);
+        assert!(held[4].text.contains("300/s"), "5/tick reads as 300/s, got {:?}", held[4].text);
+    }
+
+    #[test]
+    fn income_per_tick_matches_the_sim_economy_shape() {
+        // Mirror of economy_system: BASE_INCOME + PER_POINT_INCOME * points.
+        assert_eq!(income_per_tick(0), BASE_INCOME);
+        assert_eq!(income_per_tick(3), BASE_INCOME + PER_POINT_INCOME * 3);
+    }
+
+    #[test]
+    fn income_per_second_scales_by_tick_hz() {
+        assert_eq!(income_per_second(1), TICK_HZ as i64);
+        assert_eq!(income_per_second(5), 5 * TICK_HZ as i64);
+    }
+
+    #[test]
+    fn nothing_is_emitted_for_the_dark_embodied_frame() {
+        // Fairness (invariant #6): while embodied the world goes dark — no command/economy chrome,
+        // even when counts and a fat purse are available. The readout must stay off that frame.
+        let t = Tally {
+            player_units: 9,
+            enemy_units: 9,
+            control_points: 4,
+        };
+        assert!(
+            readout_labels(&t, Some(econ(9999, income_per_tick(4))), true).is_empty(),
+            "no labels at all over the dark embodied frame"
+        );
+        // And with no economy either — the count chrome is also withheld.
+        assert!(readout_labels(&t, None, true).is_empty());
+    }
+
+    #[test]
+    fn economy_lines_carry_the_credits_color() {
+        let labels = readout_labels(&Tally::default(), Some(econ(100, income_per_tick(1))), false);
+        // The two economy lines share the credits-gold tint, distinct from the white point line.
+        assert_eq!(labels[3].color, ECON_LABEL, "RESOURCES line is credits-gold");
+        assert_eq!(labels[4].color, ECON_LABEL, "INCOME line is credits-gold");
+        assert_ne!(labels[2].color, ECON_LABEL, "points line is not the economy color");
     }
 
     #[test]
     fn labels_stack_down_the_top_left_corner() {
-        let labels = readout_labels(&Tally::default(), None);
+        let labels = readout_labels(&Tally::default(), None, false);
         for w in labels.windows(2) {
             // Each line is left-aligned at the same x and steps DOWN (smaller y) from the last.
             assert_eq!(w[0].pos[0], w[1].pos[0], "same left x");
@@ -276,7 +421,7 @@ mod tests {
             enemy_units: 99,
             control_points: 9,
         };
-        for l in readout_labels(&t, Some(9999)) {
+        for l in readout_labels(&t, Some(econ(9999, income_per_tick(9))), false) {
             assert!(l.pos[0] >= -1.0 && l.pos[0] <= 1.0, "x in NDC");
             assert!(l.pos[1] >= -1.0 && l.pos[1] <= 1.0, "y in NDC");
             assert!(l.px_size > 0.0 && l.alpha > 0.0);
@@ -285,7 +430,7 @@ mod tests {
 
     #[test]
     fn each_side_label_carries_its_faction_color() {
-        let labels = readout_labels(&Tally::default(), None);
+        let labels = readout_labels(&Tally::default(), None, false);
         // The player line leans blue, the enemy line leans red (so each reads as its side).
         assert!(labels[0].color[2] > labels[0].color[0], "player label is blue-leaning");
         assert!(labels[1].color[0] > labels[1].color[2], "enemy label is red-leaning");

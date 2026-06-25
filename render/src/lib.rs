@@ -595,10 +595,13 @@ impl Renderer {
 
         // Command-view readouts (W6): a unit/enemy/point tally derived from the SAME fog-filtered
         // draw set (the un-flagged copy) — no new sim read — laid out as corner labels and drawn via
-        // the W4 text pass over the command frame. Screen-space chrome only (invariant #6). The
-        // resource line is a placeholder seam (the renderer has no economy read) — see `readout`.
+        // the W4 text pass over the command frame. Screen-space chrome only (invariant #6). This is
+        // the command frame (never the dark embodied frame), so `world_dark = false`. The economy
+        // seam is `None` here: the renderer has no economy read, so the resource/income lines stay
+        // out until the integrator plumbs an `EconomyReadout` from the sim into this pass — see
+        // `readout`.
         let t = readout::tally(&draw_set);
-        for label in readout::readout_labels(&t, None) {
+        for label in readout::readout_labels(&t, None, false) {
             self.text.queue(
                 label.text,
                 label.pos,
