@@ -170,10 +170,29 @@ checksum byte-identical with prediction on vs off."*
    feel-polish follow-ups noted in code (dt-independent smoothing; arch-stable ease/snap boundary).
 5. **Fill in `engine::predict_avatar`** — presentation-only predict + reconcile; the
    byte-identical-checksum guard test. Highest-risk single commit (`audit-determinism`).
-6. **android-arm64 + ios-arm64 device entries** (the `determinism.yml` TODO) + runtime
-   cross-client checksum-agreement broadcast.
-7. **Concrete UDP/relay transport** + RTT-driven adaptive delay `D`. Last, lowest-risk
-   to correctness (validated against the in-process double).
+6. **Runtime cross-client checksum-agreement broadcast** ✅ **DONE** — the lockstep wire codec
+   is now a tagged union (`version,kind` prefix; `WIRE_VERSION` 1→2), adding a **Checksum** frame.
+   `Lockstep::record_checksum` (host records its post-`step` checksum into a bounded window),
+   `drain_outbound` emits checksum reports (loss-tolerant resend), `deliver` compares an inbound
+   report to the local one and queues a `Desync{tick,peer,local,remote}` (drained via
+   `take_desyncs`, deduped per `(tick,peer)`); a `delay()` accessor was added. **Detection only —
+   never alters stepping** (determinism-auditor confirmed clean separation; no false positives;
+   streams byte-identical). `net-sim-runner` exercises it + asserts an injected divergence is
+   caught. `core` 151→161 tests. **device CI status:** `aarch64-unknown-linux-gnu` +
+   `aarch64-apple-darwin` already cover the Android/iOS **ship ISAs at the sim level**; a real
+   on-**device** run (Android emulator/adb, iOS) is deferred to device-farm CI (GitHub Actions
+   can't host it), and **iOS is additionally blocked until an iOS build target exists** — recorded
+   in the `determinism.yml` comment, no flaky jobs added.
+7. **Concrete transport** ✅ **DONE (UDP half)** — a real `UdpTransport` (`std::net::UdpSocket`,
+   zero new deps) implements `pal::Transport` in `pal-desktop` (the real-socket sibling of the
+   in-process `LoopbackTransport`): one frame ↔ one datagram, non-blocking drain, never-panic on
+   socket errors (UDP loss is the lockstep retransmit window's job). `UdpTransport::pair()` gives a
+   connected localhost pair for tests (13 tests, dev+release). **UDP first** per the plan (swappable
+   behind the trait); **QUIC stays the documented future** (D27's Wi-Fi↔cellular lean). **Still owed
+   for step 7:** **RTT-driven adaptive delay `D`** — deferred as a separate, determinism-sensitive
+   follow-up because a mid-session delay change must be a *deterministic, agreed* protocol event or
+   peers desync silently; the `delay()` accessor (step 6) is the seam it will build on. Relay /
+   matchmaking ([Q9](open-questions.md)) untouched.
 
 ---
 
