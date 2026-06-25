@@ -279,7 +279,7 @@ fn unproject_topdown(
 /// given `player` entity. PURE (no `Game`/device).
 ///
 /// This handles ONLY the embodiment input-source swap. Unit *movement* is no longer a side effect
-/// of any pointer-down — under the classic-RTS desktop scheme (D41) the **left-click selects** and
+/// of any pointer-down — under the classic-RTS desktop scheme (D42) the **left-click selects** and
 /// the **right-click commands the selection** (`command_ui::command_click_commands`, wired in
 /// [`Game::frame`]); a bare click never moves a hard-wired avatar. (The old "any tap moves
 /// `player`" behavior was the unintuitive feel this replaced.)
@@ -677,7 +677,7 @@ impl Game {
     }
 
     /// Whether the command-view world point `target` lands on a living **non-Player** unit — the
-    /// hit-test that turns a right-click into an *attack* rather than a *move* (D41). Read-only over
+    /// hit-test that turns a right-click into an *attack* rather than a *move* (D42). Read-only over
     /// the sim world; a presentation derivation (the resulting `AttackMove` carries a Fixed-quantized
     /// point, so no float reaches the sim — invariant #1). The pick radius is generous enough that a
     /// click *near* an enemy reads as "attack that one" (units render at half-extent ~0.5).
@@ -863,7 +863,7 @@ impl Game {
             }
         }
 
-        // Right-click "command here" (classic-RTS scheme, D41): the primary, no-modifier order to
+        // Right-click "command here" (classic-RTS scheme, D42): the primary, no-modifier order to
         // the current selection — Move onto empty ground, AttackMove onto an enemy. Command view
         // only; ignored while embodied (right-click has no command-layer meaning in first person).
         if input.command_click && !self.embodied {
@@ -1379,7 +1379,7 @@ mod tests {
         assert!((wy - TOPDOWN_HALF_EXTENT).abs() < 1e-2, "top y = {wy}");
     }
 
-    /// A bare left-click (`pointer_down`) no longer moves a hard-wired avatar (D41): movement comes
+    /// A bare left-click (`pointer_down`) no longer moves a hard-wired avatar (D42): movement comes
     /// from the right-click "command the selection" path, not from `map_input_commands`. The
     /// selection gesture rides `pointer_down` separately (see `Selection`).
     #[test]

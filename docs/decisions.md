@@ -1978,3 +1978,53 @@ pipeline, they're just a cheaper *source*.
 the default placeholder source and the hero bullet points back here; the roadmap "Path to publishable"
 art bullet cites D41. No code or asset lands yet — this records the sourcing direction the checklist
 executes against.
+
+---
+
+## D42 — Desktop command controls: the classic-RTS split (left-click selects, right-click commands)
+
+**Status:** decided + landed (desktop). A control-feel fix on top of the playability push
+([`playability-plan.md`](playability-plan.md)): the *desktop* command-layer input scheme. The
+question came from play — "if I select a troop and then click, shouldn't it move there?" — and
+exposed a genuine smell.
+
+**The problem:** a single left-click did two conflicting things. `map_input_commands` emitted a
+`Move` for a **hard-wired avatar** (`Game::player`) on *any* command-view click — ignoring the
+selection — while the *same* click also drove unit selection. To actually move the **selected**
+squad you had to additionally press a number-key vocabulary slot (slot 0 = Move). So "select a
+troop, then click" did **not** move that troop; it moved the avatar and re-selected.
+
+**Decision (desktop):**
+
+- **Left-click selects** (single-click a unit, drag = band-select) and, while **embodied**, **fires**
+  (FPS convention; the two consumers are mode-exclusive, so one button is unambiguous). Fire moved
+  off the right button onto left + `Space`.
+- **Right-click commands the current selection** — the primary, no-modifier order: `Move` onto empty
+  ground, `AttackMove` onto an enemy (a generous host-side hit-test picks "on an enemy"). A new
+  edge-triggered `pal::InputFrame::command_click` carries this; the desktop backend latches it from
+  the right mouse button.
+- **The number keys / radial keep the *advanced* order vocabulary** (attack-move-anywhere, the three
+  stances, hold, patrol, fall-back, retreat trigger) — `command_ui::commands_for` is unchanged. They
+  are now the *depth* layer (invariant #3 / game-design §8), not the only way to move.
+- `map_input_commands` no longer moves anything — it handles only the embody/surface swap. The new
+  right-click path is a pure `command_ui::command_click_commands` seam, unit-tested.
+
+**Why:** Click-to-command is what every RTS player (and the cited *Company of Heroes* lineage)
+expects; separating select (left) from command (right) removes the one-button overload that made the
+feel muddy. It is purely the presentation→intent layer — it emits the *same* `Move`/`AttackMove`
+commands the sim already had, quantized to `Fixed` at the boundary, so there is **no sim or
+determinism change** (the per-tick checksum and 2-peer lockstep are byte-identical before and after).
+
+**What this does NOT decide:** the **touch** scheme. The game is mobile-first and touch has no right
+button, so the phone needs its own gesture mapping onto `command_click` (e.g. tap-to-select then
+tap-ground-to-move, long-press for the radial) — that stays **[Q4](open-questions.md)** and is wired
+later. It also does not add a select-all / control-group / shift-queue system, or a click-to-attack on
+a *specific* entity handle (right-click-on-enemy maps to `AttackMove` onto the point, which the
+literal-executor unit then engages by stance — invariant #3).
+
+**Consequences:** `pal::InputFrame` gains `command_click`; `pal-desktop` rebinds the mouse (left =
+select/fire, right = command) and updates its input tests; `engine::command_ui` gains
+`command_click_commands`; `engine` adds an `enemy_unit_at` hit-test and the right-click wiring in
+`Game::frame`, and `map_input_commands` loses the legacy avatar-move. Covered by new unit tests
+(command-click move/attack/empty cases, the rebind, the no-bare-click-move guarantee); full suite +
+determinism + lockstep + viz all green.

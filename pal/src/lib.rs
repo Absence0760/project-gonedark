@@ -43,7 +43,7 @@ pub struct InputFrame {
     /// integer so the PAL backend needn't know the vocabulary.
     pub command_slot: Option<u8>,
     /// Edge-triggered "command the current selection here" intent — the **right-click** in the
-    /// classic-RTS desktop scheme (D41): a one-shot signal that the player issued the default order
+    /// classic-RTS desktop scheme (D42): a one-shot signal that the player issued the default order
     /// at [`pointer`](Self::pointer). The command-UI layer resolves it to a `Move` (empty ground) or
     /// `AttackMove` (on an enemy) across the whole selection. Distinct from
     /// [`pointer_down`](Self::pointer_down) (the left-click *selection* gesture) so selecting and

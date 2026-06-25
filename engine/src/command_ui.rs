@@ -161,7 +161,7 @@ pub fn commands_for(
     out
 }
 
-/// The **right-click "command here"** action (classic-RTS desktop scheme, D41): the primary,
+/// The **right-click "command here"** action (classic-RTS desktop scheme, D42): the primary,
 /// no-modifier way to order the current selection. Issues the *default* order at the clicked point
 /// to every selected unit, in selection order — a plain [`Command::Move`] onto empty ground, or a
 /// [`Command::AttackMove`] when the click landed on an enemy (`on_enemy`). This is the

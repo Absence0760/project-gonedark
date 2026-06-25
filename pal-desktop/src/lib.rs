@@ -204,7 +204,7 @@ impl DesktopRenderSurface {
 /// intents (embody / surface / click) are *latched* so they read `true` for exactly one
 /// [`drain_frame`](Self::drain_frame) and are then cleared.
 ///
-/// Default keymap (desktop, classic-RTS split — D41): `E` embody, `Q` surface, `WASD` move, raw
+/// Default keymap (desktop, classic-RTS split — D42): `E` embody, `Q` surface, `WASD` move, raw
 /// mouse delta looks. **Left-click selects** (the command-layer pointer-down / band-select) and, when
 /// embodied, **fires**; **right-click commands** the current selection (move, or attack on an enemy);
 /// `Space` is the alternate fire. Number keys `1`–`0` pick the advanced order/stance vocabulary slots.
@@ -225,7 +225,7 @@ pub struct DesktopInput {
     embody_latch: bool,
     surface_latch: bool,
     click_latch: bool,
-    // Right-click "command the selection" edge (D41), cleared on drain.
+    // Right-click "command the selection" edge (D42), cleared on drain.
     command_latch: bool,
     // Touch-UI desktop bindings (worker 4/5 consume these via InputFrame): the left-button release
     // edge and the order/stance vocabulary slot keys (1–6).
@@ -312,7 +312,7 @@ impl DesktopInput {
         self.pointer = None;
     }
 
-    /// A mouse button changed state (classic-RTS split, D41). **Left** is the command-layer pointer
+    /// A mouse button changed state (classic-RTS split, D42). **Left** is the command-layer pointer
     /// (held, with press/release edges latched so a fast click is never dropped) — it drives unit
     /// SELECTION in the command view, and doubles as FIRE while embodied (the two consumers are
     /// mode-exclusive, so one button is unambiguous). **Right** is the edge-triggered "command the
@@ -603,7 +603,7 @@ mod input_tests {
 
     #[test]
     fn left_click_and_space_both_fire_held() {
-        // Classic-RTS split (D41): fire rides the LEFT button (FPS convention) + Space, not RMB.
+        // Classic-RTS split (D42): fire rides the LEFT button (FPS convention) + Space, not RMB.
         let mut input = DesktopInput::new();
         input.on_mouse_button(MouseButton::Left, true);
         assert!(input.drain_frame().fire, "LMB fires (embodied)");
@@ -615,7 +615,7 @@ mod input_tests {
 
     #[test]
     fn right_click_is_a_one_shot_command_edge_not_fire() {
-        // RMB is the "command the selection" edge (D41): it latches command_click for exactly one
+        // RMB is the "command the selection" edge (D42): it latches command_click for exactly one
         // drain and never sets fire.
         let mut input = DesktopInput::new();
         input.on_mouse_button(MouseButton::Right, true);
