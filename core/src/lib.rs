@@ -15,6 +15,7 @@ pub mod alerts;
 pub mod checksum;
 pub mod combat;
 pub mod components;
+pub mod detection;
 pub mod economy;
 pub mod ecs;
 pub mod event;
