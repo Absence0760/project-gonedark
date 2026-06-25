@@ -33,8 +33,10 @@ use crate::sim::Command;
 
 /// Wire format version. Bumped on any codec change so a mismatched build is rejected, not
 /// silently misparsed. 2 added the frame-kind tag (command vs. checksum report); 3 added the
-/// `DelayChange` frame (the agreed RTT-adaptive input-delay change).
-const WIRE_VERSION: u8 = 3;
+/// `DelayChange` frame (the agreed RTT-adaptive input-delay change); 4 added the
+/// `Command::Locomote` vocabulary (tag 11) — a build without it would only choke on `BadTag(11)`
+/// mid-session, so the bump fails the skew loudly at the connection handshake instead.
+const WIRE_VERSION: u8 = 4;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
 /// carry command sets, checksum reports, and delay-change proposals over the one wire format.
@@ -323,6 +325,11 @@ fn put_command(w: &mut Writer, c: &Command) {
             put_entity(w, entity);
             put_vec2(w, dir);
         }
+        Command::Locomote { entity, dir } => {
+            w.u8(11);
+            put_entity(w, entity);
+            put_vec2(w, dir);
+        }
     }
 }
 
@@ -367,6 +374,10 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
             unit: get_unit_kind(r)?,
         },
         10 => Command::Fire {
+            entity: get_entity(r)?,
+            dir: get_vec2(r)?,
+        },
+        11 => Command::Locomote {
             entity: get_entity(r)?,
             dir: get_vec2(r)?,
         },
@@ -920,6 +931,10 @@ mod tests {
                 entity: ent(9, 1),
                 dir: v(1, 0),
             },
+            Command::Locomote {
+                entity: ent(9, 1),
+                dir: v(0, 1),
+            },
             // Cover the remaining Order variants too.
             Command::SetOrder {
                 entity: ent(8, 0),
@@ -1335,6 +1350,19 @@ mod tests {
                     },
                 ],
             }
+        } else if t == delay + 10 {
+            // Mid-embodiment (p[0] is embodied from `delay` to `delay + 25`): drive the avatar with
+            // a live Locomote so the full gate → merge → step → `step_along` → pos/vel → checksum
+            // path runs across the two-peer channel, not just the codec round-trip. dir is a Fixed
+            // unit vector (what the engine seam will quantize to); both peers see the identical
+            // command, so the checksum must still agree (invariant #7).
+            match peer {
+                0 => vec![Command::Locomote {
+                    entity: h.p[0],
+                    dir: v(1, 0),
+                }],
+                _ => Vec::new(),
+            }
         } else if t == delay + 25 {
             match peer {
                 0 => vec![
@@ -1544,16 +1572,20 @@ mod tests {
     }
 
     #[test]
-    fn wire_version_2_frame_now_rejected() {
-        // The bump to WIRE_VERSION 3 must be enforced: a frame written under the old version is
-        // rejected loudly, never silently misparsed against the new layout.
-        let mut w = Writer::new();
-        w.u8(2); // the previous WIRE_VERSION
-        w.u8(FrameKind::Command as u8);
-        w.u32(0);
-        w.u64(0);
-        w.u32(0);
-        assert_eq!(decode_frame(&w.buf).unwrap_err(), DecodeError::BadVersion(2));
+    fn older_wire_version_frames_now_rejected() {
+        // Every codec bump must be enforced: a frame written under any older WIRE_VERSION is
+        // rejected loudly, never silently misparsed against the new layout. Cover both the
+        // original frame-kind bump (2) and the immediately-previous version (3, pre-`Locomote`),
+        // since `Locomote` (tag 11) is the reason WIRE_VERSION is now 4.
+        for old in [2u8, 3] {
+            let mut w = Writer::new();
+            w.u8(old);
+            w.u8(FrameKind::Command as u8);
+            w.u32(0);
+            w.u64(0);
+            w.u32(0);
+            assert_eq!(decode_frame(&w.buf).unwrap_err(), DecodeError::BadVersion(old));
+        }
     }
 
     #[test]

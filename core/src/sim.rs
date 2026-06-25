@@ -25,6 +25,7 @@ use crate::orders;
 use crate::persist::{DeserializeError, Reader, StateSink, Writer};
 use crate::rng::Rng;
 use crate::snapshot::Snapshot;
+use crate::systems;
 use crate::terrain::{MapId, Terrain};
 use crate::territory::{self, ControlPoint, Territory};
 
@@ -69,6 +70,17 @@ pub enum Command {
     /// auto-combat resolver (combat skips `InputSource::Embodied`). Sim-authoritative: the hit is
     /// decided here, on every peer identically, not on the firing host.
     Fire { entity: Entity, dir: Vec2 },
+    /// Drive an embodied unit one tick along `dir` — the first-person locomotion intent (the
+    /// twin-stick / WASD avatar mover). `dir` is the desired heading already quantized to `Fixed`
+    /// at the host boundary (invariant #1, exactly like [`Fire`](Self::Fire)'s aim); its magnitude
+    /// is the analog deflection so a half-pushed stick walks at half speed. Applied via
+    /// [`systems::step_along`](crate::systems::step_along) at the base
+    /// [`MOVE_SPEED`](crate::systems::MOVE_SPEED) and **only** for a unit whose `input_source` is
+    /// `Embodied` — a `Locomote` for an order-driven (or dead) unit is a no-op, mirroring how
+    /// `combat` ignores embodied units. One such command is emitted per embodied unit per tick the
+    /// stick is live; it enters the same lockstep stream as taps/fire and so stays bit-identical
+    /// across peers (invariant #7).
+    Locomote { entity: Entity, dir: Vec2 },
 }
 
 /// The simulation: the deterministic world, the static terrain, per-faction resources, the
@@ -199,6 +211,17 @@ impl Sim {
                         dir,
                         &mut self.events,
                     );
+                }
+            }
+            Command::Locomote { entity, dir } => {
+                // Embodied avatar only: an order-driven (or dead) unit ignores live locomotion,
+                // exactly as `orders::order_system` skips embodied units. Applied here in the
+                // command phase (before systems run); the order system won't overwrite it.
+                let i = entity.index as usize;
+                if self.world.is_alive(entity)
+                    && self.world.input_source[i] == InputSource::Embodied
+                {
+                    systems::step_along(&mut self.world, i, dir, systems::MOVE_SPEED);
                 }
             }
         }
@@ -665,5 +688,88 @@ fn unit_kind_tag(k: UnitKind) -> u8 {
     match k {
         UnitKind::Rifleman => 0,
         UnitKind::Heavy => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::systems::MOVE_SPEED;
+
+    /// Spawn one embodied unit at the origin and return its entity + the sim.
+    fn sim_with_embodied_unit() -> (Sim, Entity) {
+        let mut sim = Sim::new(0);
+        let e = sim.world.spawn();
+        sim.world.input_source[e.index as usize] = InputSource::Embodied;
+        (sim, e)
+    }
+
+    #[test]
+    fn locomote_walks_the_embodied_unit_one_tick() {
+        let (mut sim, e) = sim_with_embodied_unit();
+        let dir = Vec2::new(Fixed::ONE, Fixed::ZERO);
+        sim.step(&[Command::Locomote { entity: e, dir }]);
+        // The avatar advances exactly dir * MOVE_SPEED; nothing else moves it (orders skips
+        // embodied units, combat has no targets).
+        assert_eq!(
+            sim.world.pos[e.index as usize],
+            Vec2::new(MOVE_SPEED, Fixed::ZERO)
+        );
+    }
+
+    #[test]
+    fn locomote_is_ignored_for_an_order_driven_unit() {
+        let (mut sim, e) = sim_with_embodied_unit();
+        // Surface the unit back to order-driven control: live locomotion must no-op now.
+        sim.world.input_source[e.index as usize] = InputSource::Orders;
+        let before = sim.world.pos[e.index as usize];
+        sim.step(&[Command::Locomote {
+            entity: e,
+            dir: Vec2::new(Fixed::ONE, Fixed::ZERO),
+        }]);
+        assert_eq!(sim.world.pos[e.index as usize], before);
+    }
+
+    #[test]
+    fn locomote_for_a_dead_entity_is_a_no_op() {
+        // A stale handle (never spawned / wrong generation) must not panic or move anything. In a
+        // zero-spawn sim the component spans are empty, so the `is_alive` guard is load-bearing:
+        // without it `step_along(world, 0, …)` would index out of bounds and panic. The real
+        // assertion is therefore "no panic"; the tick advancing to 1 proves `step` ran to
+        // completion with the guard correctly suppressing the move.
+        let mut sim = Sim::new(0);
+        let stale = Entity {
+            index: 0,
+            generation: 7,
+        };
+        sim.step(&[Command::Locomote {
+            entity: stale,
+            dir: Vec2::new(Fixed::ONE, Fixed::ZERO),
+        }]);
+        assert_eq!(sim.tick_count(), 1);
+    }
+
+    #[test]
+    fn locomote_speed_matches_an_ordered_move() {
+        // The embodied mover and the order-driven mover share MOVE_SPEED, so a straight-line dash
+        // covers the same ground per tick whether you possess the unit or order it. Compare one
+        // tick of Locomote against one tick of step_along at the base speed.
+        let (mut sim, e) = sim_with_embodied_unit();
+        sim.step(&[Command::Locomote {
+            entity: e,
+            dir: Vec2::new(Fixed::ZERO, Fixed::ONE),
+        }]);
+        let mut reference = World::new();
+        let r = reference.spawn();
+        crate::systems::step_along(
+            &mut reference,
+            r.index as usize,
+            Vec2::new(Fixed::ZERO, Fixed::ONE),
+            MOVE_SPEED,
+        );
+        assert_eq!(
+            sim.world.pos[e.index as usize],
+            reference.pos[r.index as usize]
+        );
     }
 }

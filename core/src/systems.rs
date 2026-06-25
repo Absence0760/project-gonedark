@@ -61,3 +61,65 @@ pub fn step_toward_speed(
 pub fn step_toward(world: &mut World, cache: &mut FlowFieldCache, i: usize, target: Vec2) -> bool {
     step_toward_speed(world, cache, i, target, MOVE_SPEED)
 }
+
+/// Step a single unit along an explicit `dir` at `speed` (world units per tick) — the
+/// flow-field-free mover for the **embodied** avatar, whose heading comes straight from live
+/// player input, not a goal ([`orders::order_system`](crate::orders) skips embodied units). `dir`
+/// is the desired heading already quantized to `Fixed` at the host boundary (invariant #1, same
+/// rule as the [`Command::Fire`](crate::sim::Command::Fire) aim); its magnitude is the analog
+/// deflection (`≤ 1` for a clamped stick, so partial deflection moves proportionally slower).
+/// Unlike [`step_toward_speed`] there is no arrival test — locomotion is continuous and re-issued
+/// every tick — so this just sets velocity and integrates position. A zero `dir` parks the unit.
+pub fn step_along(world: &mut World, i: usize, dir: Vec2, speed: Fixed) {
+    let step = dir.scale(speed);
+    world.vel[i] = step;
+    world.pos[i] = world.pos[i] + step;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn world_with_unit() -> (World, usize) {
+        let mut w = World::new();
+        let e = w.spawn();
+        (w, e.index as usize)
+    }
+
+    #[test]
+    fn step_along_advances_by_dir_times_speed() {
+        let (mut w, i) = world_with_unit();
+        // +x unit heading at the base move speed: one tick advances exactly MOVE_SPEED in x.
+        step_along(&mut w, i, Vec2::new(Fixed::ONE, Fixed::ZERO), MOVE_SPEED);
+        assert_eq!(w.pos[i], Vec2::new(MOVE_SPEED, Fixed::ZERO));
+        assert_eq!(w.vel[i], Vec2::new(MOVE_SPEED, Fixed::ZERO));
+    }
+
+    #[test]
+    fn step_along_accumulates_across_ticks() {
+        let (mut w, i) = world_with_unit();
+        let dir = Vec2::new(Fixed::ZERO, Fixed::ONE);
+        step_along(&mut w, i, dir, MOVE_SPEED);
+        step_along(&mut w, i, dir, MOVE_SPEED);
+        assert_eq!(w.pos[i], Vec2::new(Fixed::ZERO, MOVE_SPEED * Fixed::from_int(2)));
+    }
+
+    #[test]
+    fn half_deflection_walks_at_half_speed() {
+        // Analog magnitude carries through: a half-pushed stick covers half the ground.
+        let (mut w, i) = world_with_unit();
+        let half = Fixed::from_ratio(1, 2);
+        step_along(&mut w, i, Vec2::new(half, Fixed::ZERO), MOVE_SPEED);
+        assert_eq!(w.pos[i].x, MOVE_SPEED * half);
+    }
+
+    #[test]
+    fn zero_dir_parks_the_unit() {
+        let (mut w, i) = world_with_unit();
+        w.pos[i] = Vec2::new(Fixed::from_int(3), Fixed::from_int(4));
+        w.vel[i] = Vec2::new(MOVE_SPEED, MOVE_SPEED);
+        step_along(&mut w, i, Vec2::ZERO, MOVE_SPEED);
+        assert_eq!(w.pos[i], Vec2::new(Fixed::from_int(3), Fixed::from_int(4)));
+        assert_eq!(w.vel[i], Vec2::ZERO);
+    }
+}
