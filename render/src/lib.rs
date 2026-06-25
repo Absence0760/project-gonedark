@@ -43,6 +43,12 @@ mod hud;
 /// can describe which surface to draw via [`overlay::Overlay`].
 pub mod overlay;
 
+/// Device quality tiers + dynamic-resolution + thermal-backoff policy (Phase 4 WS-C). Pure,
+/// host-testable RENDER decisions (invariant #1/#4: never a sim input) — see the module docs.
+pub mod tiers;
+
+pub use tiers::{next_resolution_scale, thermal_backoff, Backoff, QualityTier, TierParams};
+
 /// Convert a Q16.16 fixed value to `f32` for the GPU. The ONLY sanctioned fixed→float hop.
 #[inline]
 pub fn fixed_to_f32(v: Fixed) -> f32 {

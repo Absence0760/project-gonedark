@@ -328,6 +328,18 @@ and license hygiene.
 - **Fragmentation & lifecycle** — Vulkan 1.1 baseline + runtime feature detection;
   quality tiers by GPU; handle surface loss on resume (recreate swapchain cleanly).
 
+**Where this lives in code (Phase 4 WS-C).** All three knobs above are **rendering** choices
+(invariant #1/#4) — none touches the sim, so the per-tick checksum stream is byte-identical at
+every tier. The **quality tiers** (`Low`/`Mid`/`High` → resolution-scale floor/ceiling, draw
+distance, effect density, instance budget) and the pure **dynamic-resolution** + **thermal-backoff**
+policy fns live in `render::tiers` (host-testable, no GPU); the engine-side controller that drives
+them per frame is `engine::tuning::RenderTuning` (owns the running scale + FPS cap, fed frame timing
+and a thermal state). The thermal/battery *signal* crosses the **PAL** as `pal::ThermalSensor` →
+`pal::ThermalState`/`PowerState` (invariant #2 — never in `core`); `pal-desktop` ships a synthetic
+stub (the dev workstation has no usable thermal sensor), and a real `PowerManager`/`BatteryManager`
+reader is **OWED** in `pal-android` — that is where the on-device 200-unit thermal numbers that may
+reopen the [D21](decisions.md) dual-rate question come from.
+
 ## Frame & sim budgets (design targets, not measurements)
 
 Two independent budgets because render is decoupled from sim.

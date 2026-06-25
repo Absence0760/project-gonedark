@@ -48,6 +48,11 @@ mod selection;
 /// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
 /// session state — never mutates sim state. Public so a host (and tests) can drive it.
 pub mod session_shell;
+/// Render quality tuning (Phase 4 WS-C). Owns `RenderTuning`: the tier + dyn-res + thermal-backoff
+/// controller. A RENDERING choice only — never touches the sim (invariant #1/#4).
+pub mod tuning;
+
+pub use tuning::RenderTuning;
 
 /// The seed both hosts start the sim with, so desktop and Android run the bit-identical
 /// deterministic scene (invariant #1 / #7).
@@ -373,6 +378,17 @@ pub struct Game {
     /// count produced/lost/killed over the match. Presentation derivation only (the event stream is
     /// already-checksummed state copied out — never re-folded; invariant #7).
     match_events: Vec<SimEvent>,
+
+    /// Render quality-tuning controller (Phase 4 WS-C): the active tier + the running
+    /// dynamic-resolution scale + the thermal backoff. A RENDERING choice only — it reads frame
+    /// timing + the host-reported thermal state and NEVER touches the sim, so the per-tick checksum
+    /// stream is byte-identical at every tier (invariant #1/#4).
+    tuning: RenderTuning,
+
+    /// The latest thermal state the host reported through the PAL (invariant #2 — the platform
+    /// signal crosses the seam, never `core`). The host calls [`Game::set_thermal_state`] from its
+    /// `pal::ThermalSensor`; defaults to `Nominal` (the desktop stub's value) until it does.
+    thermal: gonedark_pal::ThermalState,
 }
 
 impl Game {
@@ -465,6 +481,12 @@ impl Game {
             // Single-player session (one peer), so a pause may halt the local tick accumulator.
             shell: InSessionShell::new(SP_PEER_COUNT == 1),
             match_events: Vec::new(),
+            // Render quality tuning (Phase 4 WS-C). Default to the High tier — the flagship profile
+            // Phase 1 validated on (D22); a host wires its device-class tier (and the Settings
+            // "graphics tiers" surface) via `set_tier`. RENDER-only state (invariant #1/#4).
+            tuning: RenderTuning::new(gonedark_render::tiers::QualityTier::High),
+            // Until the host reports through its `pal::ThermalSensor`, assume no thermal pressure.
+            thermal: gonedark_pal::ThermalState::Nominal,
         }
     }
 
@@ -513,6 +535,38 @@ impl Game {
             MatchOutcome::Draw,
             &reads,
         )
+    }
+
+    /// Set the active device-class render quality tier (Phase 4 WS-C; the Settings "graphics tiers"
+    /// surface, surface 3, drives this). RENDER-only — re-clamps the running dyn-res scale into the
+    /// new tier's band and never touches the sim (invariant #1/#4).
+    pub fn set_tier(&mut self, tier: gonedark_render::tiers::QualityTier) {
+        self.tuning.set_tier(tier);
+    }
+
+    /// The active render quality tier.
+    pub fn tier(&self) -> gonedark_render::tiers::QualityTier {
+        self.tuning.tier()
+    }
+
+    /// The current dynamic-resolution scale `(0,1]` the render target is drawn at — observation
+    /// for a host that owns an intermediate scaled target. RENDER-only.
+    pub fn resolution_scale(&self) -> f32 {
+        self.tuning.resolution_scale()
+    }
+
+    /// The current FPS cap presentation should pace to (`None` = uncapped), driven by thermal
+    /// backoff. The SIM still ticks at 60 Hz regardless (invariant #1/#4) — this only throttles how
+    /// often the host presents.
+    pub fn fps_cap(&self) -> Option<u32> {
+        self.tuning.fps_cap()
+    }
+
+    /// Report the platform thermal state, read by the host from its `pal::ThermalSensor` (invariant
+    /// #2: the platform signal crosses the PAL seam, never `core`). Consulted by the render-cost
+    /// backoff on the next [`Game::frame`]. Storing it is presentation-only; it never reaches the sim.
+    pub fn set_thermal_state(&mut self, thermal: gonedark_pal::ThermalState) {
+        self.thermal = thermal;
     }
 
     /// The player's authoritative world position, read straight from the sim world (read
@@ -590,6 +644,18 @@ impl Game {
         audio: &mut dyn Audio,
     ) {
         let (width, height) = viewport;
+
+        // 0. Render quality tuning (Phase 4 WS-C): observe this frame's wall-clock `dt` + the
+        // host-reported thermal state and ease the dynamic-resolution scale / FPS cap to hold the
+        // frame budget. PURELY a rendering decision (invariant #1/#4) — it reads frame timing and a
+        // PAL-reported thermal signal (invariant #2), touches only `self.tuning`, and never the sim,
+        // so the per-tick checksum stream below is byte-identical at every tier. The budget paces to
+        // the thermal FPS cap when one is active, else the 60 Hz baseline.
+        let budget_secs = match self.tuning.fps_cap() {
+            Some(cap) if cap > 0 => 1.0 / cap as f32,
+            _ => 1.0 / TICK_HZ as f32,
+        };
+        self.tuning.observe_frame(dt_secs, self.thermal, budget_secs);
 
         // 1. Map input → sim commands (applied on the first step of this frame). The pure
         // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
@@ -1580,5 +1646,88 @@ mod tests {
             run(false),
             "the in-session shell + summary assembler must not perturb the deterministic sim"
         );
+    }
+
+    // --- Render quality tiers / dyn-res / thermal (Phase 4 WS-C) ---
+
+    use gonedark_pal::ThermalState;
+    use gonedark_render::tiers::QualityTier;
+    use tuning::RenderTuning;
+
+    /// THE load-bearing WS-C guard (invariant #1/#4): a quality tier — and the dynamic-resolution
+    /// scale + thermal backoff it drives — is a RENDERING choice, never a sim input. Stepping the
+    /// SAME scripted sim while running the full `RenderTuning` controller at each of Low/Mid/High,
+    /// under each thermal state, must produce a per-tick checksum stream that is byte-identical
+    /// across every tier and identical to a run with NO tuning at all. If a tier ever leaked into
+    /// the sim (a float, a tick-rate change), this diverges loudly.
+    #[test]
+    fn tier_choice_is_sim_independent() {
+        /// Step the drive script through a fresh sim, optionally running the tuning controller at
+        /// `tier` under `thermal` exactly as `Game::frame` does (observe `dt`, no sim feedback).
+        fn run(tuning: Option<(QualityTier, ThermalState)>) -> Vec<u64> {
+            let mut sim = Sim::new(DRIVE_SEED);
+            let player = drive_scene(&mut sim);
+            let script = drive_script(player);
+            let mut ctrl = tuning.map(|(t, _)| RenderTuning::new(t));
+            let tick_dt = 1.0 / TICK_HZ as f32;
+            let mut sums = Vec::new();
+            for (commands, budget) in &script {
+                let budget = if *budget == 0 && !commands.is_empty() {
+                    1
+                } else {
+                    *budget
+                };
+                let mut first = true;
+                for _ in 0..budget {
+                    // Drive the tuning controller every "frame" with a realistic dt — purely a
+                    // render decision; it must not touch the sim at all.
+                    if let (Some(ctrl), Some((_, thermal))) = (ctrl.as_mut(), tuning) {
+                        let cap = ctrl.fps_cap();
+                        let budget_secs = match cap {
+                            Some(c) if c > 0 => 1.0 / c as f32,
+                            _ => tick_dt,
+                        };
+                        ctrl.observe_frame(0.018, thermal, budget_secs);
+                    }
+                    if first {
+                        sim.step(commands);
+                        first = false;
+                    } else {
+                        sim.step(&[]);
+                    }
+                    sums.push(sim.checksum());
+                }
+            }
+            sums
+        }
+
+        let baseline = run(None);
+        assert!(!baseline.is_empty(), "the script must advance some ticks");
+        for tier in [QualityTier::Low, QualityTier::Mid, QualityTier::High] {
+            for thermal in [
+                ThermalState::Nominal,
+                ThermalState::Fair,
+                ThermalState::Serious,
+                ThermalState::Critical,
+            ] {
+                assert_eq!(
+                    run(Some((tier, thermal))),
+                    baseline,
+                    "tier {tier:?} under {thermal:?} must not perturb the sim checksum stream"
+                );
+            }
+        }
+    }
+
+    /// `Game::set_tier` is render-only: changing the tier re-clamps the running scale into the new
+    /// band but reports the new tier and never errors. (The full `Game` needs a GPU device, so the
+    /// controller is exercised directly here — the same `RenderTuning` `Game` owns.)
+    #[test]
+    fn set_tier_switches_render_band_only() {
+        let mut ctrl = RenderTuning::new(QualityTier::High);
+        assert_eq!(ctrl.tier(), QualityTier::High);
+        ctrl.set_tier(QualityTier::Low);
+        assert_eq!(ctrl.tier(), QualityTier::Low);
+        assert!(ctrl.resolution_scale() <= QualityTier::Low.params().res_scale_ceiling + 1e-5);
     }
 }

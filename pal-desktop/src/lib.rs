@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use gonedark_pal::InputFrame;
+use gonedark_pal::{InputFrame, PowerState, ThermalSensor, ThermalState};
 use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::Window;
@@ -387,5 +387,80 @@ impl DesktopInput {
 impl gonedark_pal::Input for DesktopInput {
     fn poll(&mut self) -> InputFrame {
         self.drain_frame()
+    }
+}
+
+/// Desktop [`ThermalSensor`] — a **STUB / synthetic source** (Phase 4 WS-C).
+///
+/// There is no real thermal sensor on the dev workstation (and reading laptop hwmon zones is
+/// neither portable nor meaningful for the *target* mobile thermal budget), so this backend reports
+/// a synthetic state rather than a live one. By default it reports [`ThermalState::Nominal`] on
+/// external power — the desktop runs unthrottled — which keeps the render quality-tuning loop fully
+/// wired on desktop without pretending to measure heat. The settable `forced` field is the test/dev
+/// hook: drive it to `Serious`/`Critical` to exercise the render backoff (FPS cap + dyn-res floor)
+/// end-to-end on desktop without a phone.
+///
+/// **OWED:** the real reading lives in `pal-android` (`PowerManager.getThermalStatus()` +
+/// `BatteryManager` over JNI) — that is where the on-device numbers that may reopen D21 dual-rate
+/// come from (phase-4-plan WS-C step 3). This desktop impl is deliberately inert.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DesktopThermalSensor {
+    /// Synthetic state this stub reports. `None` → [`ThermalState::Nominal`]. Settable so the dev
+    /// loop / tests can drive the backoff policy without real hardware.
+    pub forced: Option<ThermalState>,
+}
+
+impl DesktopThermalSensor {
+    /// A nominal, unthrottled desktop sensor (the default).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Build a stub that reports a forced thermal state — the dev/test hook for exercising the
+    /// render backoff path on desktop (there is no real sensor here).
+    pub fn forced(state: ThermalState) -> Self {
+        DesktopThermalSensor {
+            forced: Some(state),
+        }
+    }
+}
+
+impl ThermalSensor for DesktopThermalSensor {
+    fn thermal_state(&self) -> ThermalState {
+        // Synthetic: the forced override, else nominal. The desktop never throttles on its own.
+        self.forced.unwrap_or(ThermalState::Nominal)
+    }
+
+    fn power_state(&self) -> PowerState {
+        // The dev workstation is wall-powered; no battery telemetry.
+        PowerState {
+            on_external_power: true,
+            charge: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod thermal_tests {
+    use super::*;
+
+    #[test]
+    fn default_desktop_sensor_reports_nominal_on_external_power() {
+        let s = DesktopThermalSensor::new();
+        assert_eq!(s.thermal_state(), ThermalState::Nominal);
+        let p = s.power_state();
+        assert!(p.on_external_power);
+        assert_eq!(p.charge, None);
+    }
+
+    #[test]
+    fn forced_state_is_reported_for_the_dev_hook() {
+        for forced in [
+            ThermalState::Fair,
+            ThermalState::Serious,
+            ThermalState::Critical,
+        ] {
+            assert_eq!(DesktopThermalSensor::forced(forced).thermal_state(), forced);
+        }
     }
 }

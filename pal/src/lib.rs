@@ -114,6 +114,63 @@ pub trait Audio {
     fn submit_mix(&mut self, cues: &[AudioCue]);
 }
 
+/// Coarse thermal pressure reported by the platform (Phase 4 WS-C). Mirrors the shape of
+/// Android's `PowerManager.getCurrentThermalStatus()` / iOS `ProcessInfo.thermalState` buckets,
+/// collapsed to four levels the render-cost backoff policy reasons about. This is a **platform
+/// signal**, so it lives on the PAL boundary and NEVER in `core` (invariant #2): the sim is
+/// thermally blind by design — heat backs off *rendering* (cap FPS, lower the dyn-res floor), never
+/// the deterministic 60 Hz tick (invariant #1/#4). The render-side policy that turns a state into a
+/// backoff is `gonedark_render::tiers::thermal_backoff`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
+pub enum ThermalState {
+    /// No thermal pressure — full render freedom.
+    #[default]
+    Nominal,
+    /// Mild warming — trim obvious waste (don't render faster than the sim ticks).
+    Fair,
+    /// Sustained heat — shed render cost (lower FPS cap, tighter dyn-res floor).
+    Serious,
+    /// Throttling imminent/active — survival: keep the game running and cool over pretty.
+    Critical,
+}
+
+/// Battery / power-source signal reported by the platform (Phase 4 WS-C). Like [`ThermalState`]
+/// this is a PAL-only platform signal (invariant #2) the *rendering* path may consult to bias the
+/// quality tier / FPS cap (e.g. cap harder on a low, unplugged battery to extend playtime). It is
+/// never a sim input. Kept deliberately coarse; `charge` is an optional `[0,1]` hint (`None` when
+/// the platform doesn't report it).
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct PowerState {
+    /// True when running on external power (charging / plugged in).
+    pub on_external_power: bool,
+    /// Battery charge fraction in `[0,1]`, if the platform reports it.
+    pub charge: Option<f32>,
+}
+
+/// Platform thermal/power sensor seam (Phase 4 WS-C). A thin PAL query so the render-cost tuning
+/// (FPS cap + dyn-res floor backoff) can react to heat/battery WITHOUT any platform/sensor code
+/// leaking into `core` (invariant #2). Backends implement it from the OS:
+///  - **Android** (OWED): `PowerManager.getThermalStatus()` + `BatteryManager`, read over JNI in
+///    `pal-android` — this is where the on-device numbers that may reopen D21 dual-rate come from.
+///  - **Desktop** (`pal-desktop`): no real thermal sensor on the dev workstation, so the backend
+///    ships a clearly-marked synthetic/stub source (defaults to [`ThermalState::Nominal`], with a
+///    test hook to drive the other states through the render backoff policy).
+///
+/// The sim never sees this trait — only the render/engine tuning path does, the same way only the
+/// renderer touches `Rhi`.
+pub trait ThermalSensor {
+    /// The current thermal pressure bucket. Cheap to poll (expected once per frame / second).
+    fn thermal_state(&self) -> ThermalState;
+    /// The current power/battery state. Cheap to poll. Defaults to "on external power, charge
+    /// unknown" so a backend with no battery (desktop) needn't override it.
+    fn power_state(&self) -> PowerState {
+        PowerState {
+            on_external_power: true,
+            charge: None,
+        }
+    }
+}
+
 /// Persistent storage / VFS seam (settings, replays).
 pub trait Storage {
     fn read(&self, key: &str) -> Option<Vec<u8>>;

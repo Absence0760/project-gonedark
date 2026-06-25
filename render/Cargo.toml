@@ -13,6 +13,10 @@ publish = false
 # only to the abstract `wgpu` API, never to a specific GPU API or to a windowing crate.
 [dependencies]
 gonedark-core = { path = "../core" }
+# The PAL trait crate — pulled ONLY for the platform-signal *types* (`ThermalState`) the render
+# quality-tuning policy in `tiers` reasons about (invariant #2: render may read a PAL signal; the
+# PAL stays a trait/data crate with no GPU/windowing deps). No concrete backend is referenced here.
+gonedark-pal = { path = "../pal" }
 wgpu = "29"
 bytemuck = { version = "1", features = ["derive"] }
 
