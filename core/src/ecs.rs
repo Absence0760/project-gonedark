@@ -153,4 +153,146 @@ impl World {
             None
         }
     }
+
+    // --- Authoritative snapshot support (D28) ----------------------------------------------
+    //
+    // The liveness triple (`generation` / `alive` / the `free` list, in order) is private sim
+    // state the per-tick checksum does NOT fully hash: the checksum folds each slot's
+    // `is_index_alive` (== `alive[i]`) and component data, but not `generation[i]` nor the
+    // free-list *order*. A resume needs both — `generation[]` for stale-handle detection, and
+    // the free-list order because `spawn` pops it to choose the next reused slot, so a wrong
+    // order makes the next spawn land on a different slot than its peers (an instant desync,
+    // D28 §3). These read accessors + the `from_parts` reconstructor let `persist`/`sim`
+    // capture and rebuild the triple while keeping it encapsulated here (the World owns the
+    // invariant that all its arrays are the same length).
+
+    /// The per-slot generation array (`generation[i]` is slot `i`'s current generation).
+    #[inline]
+    pub fn generations(&self) -> &[u32] {
+        &self.generation
+    }
+
+    /// The per-slot liveness array (`alive[i]` is whether slot `i` currently holds a live
+    /// entity).
+    #[inline]
+    pub fn alive_flags(&self) -> &[bool] {
+        &self.alive
+    }
+
+    /// The free list — slot indices available for reuse, **in stack order** (`spawn` pops the
+    /// last). The order is sim state: it decides which slot the next spawn lands in.
+    #[inline]
+    pub fn free_list(&self) -> &[u32] {
+        &self.free
+    }
+
+    /// Rebuild a [`World`] from its decoded parts (the inverse of the accessors above + the
+    /// public component `Vec`s). Used only by the authoritative-snapshot deserialize (D28).
+    ///
+    /// `components` carries every per-slot component array already filled (length == capacity);
+    /// this fn supplies the private liveness triple and validates the whole structure is
+    /// self-consistent, returning `None` on any mismatch rather than building a corrupt world:
+    /// - all arrays share one length (`capacity`),
+    /// - the free list references only in-range, **dead** slots with no duplicates, and
+    /// - every dead slot appears in the free list (dead ⇔ free), so the resumed world's
+    ///   spawn/despawn bookkeeping is exactly what a never-interrupted run would hold.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_parts(
+        generation: Vec<u32>,
+        alive: Vec<bool>,
+        free: Vec<u32>,
+        components: WorldComponents,
+    ) -> Option<World> {
+        let cap = generation.len();
+        let WorldComponents {
+            pos,
+            vel,
+            order,
+            stance,
+            input_source,
+            faction,
+            kind,
+            health,
+            weapon,
+            suppression,
+            last_attacker,
+            retreat_below,
+            vision,
+            building,
+        } = components;
+        // Every array must be the same length as the liveness arrays.
+        if alive.len() != cap
+            || pos.len() != cap
+            || vel.len() != cap
+            || order.len() != cap
+            || stance.len() != cap
+            || input_source.len() != cap
+            || faction.len() != cap
+            || kind.len() != cap
+            || health.len() != cap
+            || weapon.len() != cap
+            || suppression.len() != cap
+            || last_attacker.len() != cap
+            || retreat_below.len() != cap
+            || vision.len() != cap
+            || building.len() != cap
+        {
+            return None;
+        }
+        // The free list must reference only in-range, dead, non-duplicate slots, and must list
+        // every dead slot exactly once (dead ⇔ free) — the invariant `spawn`/`despawn` maintain.
+        let mut seen = vec![false; cap];
+        for &idx in &free {
+            let i = idx as usize;
+            if i >= cap || alive[i] || seen[i] {
+                return None;
+            }
+            seen[i] = true;
+        }
+        for i in 0..cap {
+            // A dead slot not in the free list (seen) would leak — never spawnable again.
+            if !alive[i] && !seen[i] {
+                return None;
+            }
+        }
+        Some(World {
+            generation,
+            alive,
+            free,
+            pos,
+            vel,
+            order,
+            stance,
+            input_source,
+            faction,
+            kind,
+            health,
+            weapon,
+            suppression,
+            last_attacker,
+            retreat_below,
+            vision,
+            building,
+        })
+    }
+}
+
+/// The full set of per-slot component arrays, decoded from an authoritative snapshot and handed
+/// to [`World::from_parts`]. A plain bag of `Vec`s mirroring the public component fields on
+/// [`World`] — used only on the deserialize path (D28).
+pub struct WorldComponents {
+    pub pos: Vec<Vec2>,
+    pub vel: Vec<Vec2>,
+    pub order: Vec<Order>,
+    pub stance: Vec<Stance>,
+    pub input_source: Vec<InputSource>,
+    pub faction: Vec<Faction>,
+    pub kind: Vec<EntityKind>,
+    pub health: Vec<Health>,
+    pub weapon: Vec<Weapon>,
+    pub suppression: Vec<Fixed>,
+    pub last_attacker: Vec<Option<Entity>>,
+    pub retreat_below: Vec<Fixed>,
+    pub vision: Vec<Fixed>,
+    pub building: Vec<Building>,
 }

@@ -987,3 +987,294 @@ fn idle_unit_has_zero_velocity_and_stays_put() {
     assert_eq!(sim.world.pos[e.index as usize], start);
     assert_eq!(sim.world.vel[e.index as usize], Vec2::ZERO);
 }
+
+// ===========================================================================
+// Authoritative snapshot serialize/deserialize (D28, Phase 3 workstream C).
+//
+// The load-bearing guard: serialize@T → deserialize → replay cmds[T..L] yields a checksum
+// stream bit-identical to the never-interrupted run. Because these live here, they ride the
+// determinism arch matrix automatically (invariant #7).
+// ===========================================================================
+
+use crate::components::{BuildingKind, EntityKind, Faction, UnitKind};
+use crate::economy::{self, Resources};
+use crate::ecs::Entity;
+use crate::persist::{DeserializeError, Reader, StateSink, Writer};
+use crate::territory::ControlPoint;
+
+fn v(x: i32, y: i32) -> Vec2 {
+    Vec2::new(Fixed::from_int(x), Fixed::from_int(y))
+}
+
+/// Spawn an armed rifleman of `faction` at `(x, y)` set to fire at will, returning its handle.
+fn spawn_rifleman(sim: &mut Sim, x: i32, y: i32, faction: Faction) -> Entity {
+    let (health, weapon) = economy::unit_stats(UnitKind::Rifleman);
+    let ent = sim.world.spawn();
+    let i = ent.index as usize;
+    sim.world.kind[i] = EntityKind::Unit;
+    sim.world.faction[i] = faction;
+    sim.world.pos[i] = v(x, y);
+    sim.world.health[i] = health;
+    sim.world.weapon[i] = weapon;
+    sim.world.stance[i] = Stance::FireAtWill;
+    ent
+}
+
+/// A non-trivial deterministic scene: two armed squads in firing range (so combat draws RNG and
+/// despawns the dead — churning the free-list and bumping generations), a neutral control point,
+/// stocked resources, and a player camp. Spawn order is fixed, so the handles are identical
+/// across every sim built this way. Returns the handles a script drives.
+struct Handles {
+    p: [Entity; 3],
+    e: [Entity; 3],
+    camp: Entity,
+}
+
+fn battle_scene(sim: &mut Sim) -> Handles {
+    sim.resources = Resources::new(100_000);
+    sim.territory.points.push(ControlPoint::neutral(Vec2::ZERO));
+    let p = [
+        spawn_rifleman(sim, -5, 0, Faction::Player),
+        spawn_rifleman(sim, -5, 3, Faction::Player),
+        spawn_rifleman(sim, -6, 1, Faction::Player),
+    ];
+    let e = [
+        spawn_rifleman(sim, 5, 0, Faction::Enemy),
+        spawn_rifleman(sim, 5, 3, Faction::Enemy),
+        spawn_rifleman(sim, 6, 1, Faction::Enemy),
+    ];
+    let camp = economy::build(
+        &mut sim.world,
+        &mut sim.resources,
+        Faction::Player,
+        BuildingKind::Camp,
+        v(-20, 20),
+    )
+    .expect("camp affordable");
+    Handles { p, e, camp }
+}
+
+/// A per-tick command script exercising a spread of the vocabulary at two ticks; quiet otherwise.
+/// Drives both squads toward each other (so they engage and die), reshapes orders/stances, and
+/// queues production at the camp — building a rich, churning world to snapshot.
+fn script(h: &Handles, t: u64) -> Vec<Command> {
+    match t {
+        1 => vec![
+            Command::AttackMove {
+                entity: h.p[0],
+                target: v(5, 0),
+            },
+            Command::AttackMove {
+                entity: h.p[1],
+                target: v(5, 3),
+            },
+            Command::SetOrder {
+                entity: h.p[2],
+                order: Order::Patrol {
+                    a: v(-5, 1),
+                    b: v(-5, -6),
+                    toward_b: true,
+                },
+            },
+            Command::AttackMove {
+                entity: h.e[0],
+                target: v(-5, 0),
+            },
+            Command::AttackMove {
+                entity: h.e[1],
+                target: v(-5, 3),
+            },
+            Command::SetRetreatThreshold {
+                entity: h.e[2],
+                fraction: Fixed::from_ratio(1, 3),
+            },
+            Command::QueueProduction {
+                camp: h.camp,
+                unit: UnitKind::Rifleman,
+            },
+        ],
+        40 => vec![
+            Command::Upgrade { camp: h.camp },
+            Command::QueueProduction {
+                camp: h.camp,
+                unit: UnitKind::Heavy,
+            },
+        ],
+        _ => Vec::new(),
+    }
+}
+
+const SNAP_SEED: u64 = 0x9E3779B97F4A7C15;
+
+/// THE headline guard: serialize@T → deserialize → replay must reproduce the never-interrupted
+/// checksum stream exactly. Run for several T spread across the battle (early, mid-fight, late),
+/// each time deserializing a fresh sim and replaying the remaining commands through plain `step`.
+#[test]
+fn snapshot_resume_matches_uninterrupted_run() {
+    const L: u64 = 120;
+
+    // Reference: one sim run straight through, recording every per-tick checksum.
+    let mut refsim = Sim::new(SNAP_SEED);
+    let h = battle_scene(&mut refsim);
+    let mut refsums = Vec::with_capacity(L as usize);
+    for t in 0..L {
+        refsim.step(&script(&h, t));
+        refsums.push(refsim.checksum());
+    }
+
+    for &cut in &[1u64, 5, 30, 41, 80, 119] {
+        // Run a separate sim up to `cut`, snapshot it, then resume a NEW sim from the bytes.
+        let mut sim = Sim::new(SNAP_SEED);
+        let h2 = battle_scene(&mut sim);
+        for t in 0..cut {
+            sim.step(&script(&h2, t));
+        }
+        let bytes = sim.serialize();
+        let mut resumed = Sim::deserialize(&bytes).expect("snapshot must deserialize");
+
+        // The resumed sim must already agree at the cut boundary (checksum of the snapshotted
+        // state == the reference's checksum at the same tick).
+        assert_eq!(
+            resumed.checksum(),
+            sim.checksum(),
+            "deserialized state diverges from the snapshotted sim at cut {cut}"
+        );
+
+        // Replay the remaining commands through a plain step loop; every tick's checksum must
+        // match the never-interrupted run — bit for bit.
+        for t in cut..L {
+            resumed.step(&script(&h2, t));
+            assert_eq!(
+                resumed.checksum(),
+                refsums[t as usize],
+                "resume@{cut}: checksum diverged at tick {t}"
+            );
+        }
+    }
+}
+
+/// `deserialize(serialize(sim))` reproduces an identical checksum AND serializes to the same
+/// bytes — a complete, stable round-trip over a churned (deaths, free-list, production) world.
+#[test]
+fn snapshot_round_trip_is_byte_and_checksum_stable() {
+    let mut sim = Sim::new(SNAP_SEED);
+    let h = battle_scene(&mut sim);
+    for t in 0..75 {
+        sim.step(&script(&h, t));
+    }
+    // Explicitly churn the free-list and generations (despawn two units), then step on so the
+    // freed slots may be recycled by production — exercising the resume-only liveness extras
+    // (generation[] + free-list order) the round-trip must preserve, independent of combat
+    // balance/timing.
+    sim.world.despawn(h.p[1]);
+    sim.world.despawn(h.e[2]);
+    for t in 75..90 {
+        sim.step(&script(&h, t));
+    }
+    assert!(
+        !sim.world.free_list().is_empty() || sim.world.generations().iter().any(|&g| g > 0),
+        "scene should have churned the liveness triple (free-list or a bumped generation)"
+    );
+
+    let bytes = sim.serialize();
+    let restored = Sim::deserialize(&bytes).expect("round-trip deserialize");
+
+    assert_eq!(
+        restored.checksum(),
+        sim.checksum(),
+        "round-trip must reproduce the checksum"
+    );
+    assert_eq!(
+        restored.serialize(),
+        bytes,
+        "re-serializing the restored sim must yield identical bytes"
+    );
+    assert_eq!(restored.tick_count(), sim.tick_count());
+    // The liveness triple round-trips exactly (free-list ORDER and generations preserved).
+    assert_eq!(restored.world.free_list(), sim.world.free_list());
+    assert_eq!(restored.world.generations(), sim.world.generations());
+    assert_eq!(restored.world.capacity(), sim.world.capacity());
+}
+
+/// A freshly-built sim (no churn, empty free-list) also round-trips — covers the trivial world.
+#[test]
+fn snapshot_round_trips_fresh_sim() {
+    let sim = Sim::new(42);
+    let bytes = sim.serialize();
+    let restored = Sim::deserialize(&bytes).expect("fresh sim round-trips");
+    assert_eq!(restored.checksum(), sim.checksum());
+    assert_eq!(restored.serialize(), bytes);
+}
+
+/// The free-list ORDER is load-bearing: it decides the next spawn's slot. A snapshot taken after
+/// despawns must resume with spawns landing on exactly the slots the uninterrupted run would use.
+#[test]
+fn snapshot_preserves_free_list_spawn_order() {
+    let mut sim = Sim::new(7);
+    // Build a deliberate free-list: spawn 5, despawn #1 then #3 (so free = [1, 3] as a stack).
+    let mut ents = Vec::new();
+    for _ in 0..5 {
+        ents.push(sim.world.spawn());
+    }
+    sim.world.despawn(ents[1]);
+    sim.world.despawn(ents[3]);
+    let free_before = sim.world.free_list().to_vec();
+    assert_eq!(free_before, vec![1, 3]);
+
+    let restored = Sim::deserialize(&sim.serialize()).expect("deserialize");
+    assert_eq!(restored.world.free_list(), free_before);
+
+    // The next spawn on BOTH must reuse the same slot (the free-list's top, 3).
+    let mut a = Sim::deserialize(&sim.serialize()).expect("a");
+    let mut b = sim;
+    let sa = a.world.spawn();
+    let sb = b.world.spawn();
+    assert_eq!(sa.index, sb.index, "resumed spawn must pick the same slot");
+    assert_eq!(sa.index, 3, "the free-list top is slot 3");
+}
+
+/// The reader rejects malformed authoritative-snapshot input rather than panicking or silently
+/// producing a divergent world (D28 §2). Covers each `DeserializeError` arm reachable at the
+/// `Sim::deserialize` boundary plus the `Reader` primitives.
+#[test]
+fn deserialize_rejects_malformed_input() {
+    // `Sim` has no Debug impl, so collapse a deserialize Result to just its error for assertions.
+    fn err(bytes: &[u8]) -> DeserializeError {
+        Sim::deserialize(bytes)
+            .err()
+            .expect("expected a decode error")
+    }
+
+    // Empty buffer: not even a version byte.
+    assert_eq!(err(&[]), DeserializeError::UnexpectedEof);
+
+    // Bad version byte.
+    let mut w = Writer::new();
+    w.write_u8(99);
+    assert_eq!(err(&w.into_bytes()), DeserializeError::BadVersion(99));
+
+    // A valid snapshot with a stray trailing byte must be rejected (format/version skew).
+    let sim = Sim::new(1);
+    let mut bytes = sim.serialize();
+    bytes.push(0xFF);
+    assert_eq!(err(&bytes), DeserializeError::TrailingBytes);
+
+    // A truncated valid snapshot (drop the last byte) fails mid-field, never panics.
+    let mut bytes = sim.serialize();
+    bytes.pop();
+    assert!(matches!(
+        err(&bytes),
+        DeserializeError::UnexpectedEof | DeserializeError::TrailingBytes
+    ));
+
+    // A garbage capacity that overruns the buffer is caught before allocating.
+    let mut w = Writer::new();
+    w.write_u8(1); // version
+    w.write_u32(0); // map_id
+    w.write_u32(0xFFFF_FFFF); // capacity claims ~4 billion slots
+    assert_eq!(err(&w.into_bytes()), DeserializeError::LengthOverflow);
+
+    // The Reader's own primitives reject a short read.
+    let mut r = Reader::new(&[0u8, 1]);
+    assert_eq!(r.read_u32().unwrap_err(), DeserializeError::UnexpectedEof);
+}

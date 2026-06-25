@@ -60,11 +60,36 @@ pub struct Terrain {
     cells: Vec<Cover>,
 }
 
+/// A map identifier — names *which* static map a sim is on, out-of-band agreed by both peers.
+///
+/// Terrain is static map data (never mutated by a system, never in the per-tick checksum), so the
+/// authoritative snapshot (D28) carries this small id rather than the whole `GRID×GRID` grid: the
+/// resuming peer rebuilds the identical terrain from the id via [`Terrain::from_map_id`]. The
+/// only scene today is the open playfield, which is map id `0` ([`MapId::SCENE`]).
+pub type MapId = u16;
+
 impl Terrain {
+    /// The default scene's map id: the open playfield. The sim starts on this map (D28: the
+    /// snapshot serializes a `map_id`, not the grid; this is the only one defined so far).
+    pub const SCENE_MAP_ID: MapId = 0;
+
     /// An all-clear field (no cover, no walls) — the Phase 1 open playfield.
     pub fn open() -> Terrain {
         Terrain {
             cells: vec![Cover::None; GRID * GRID],
+        }
+    }
+
+    /// Rebuild the terrain named by `id`. The inverse of "which map am I on?" used by the
+    /// authoritative snapshot to re-derive `Terrain` without serializing the grid (D28).
+    ///
+    /// Only [`SCENE_MAP_ID`](Self::SCENE_MAP_ID) (`0`, the open playfield) is defined today; an
+    /// unknown id rebuilds the open field too, so a forward-compatible snapshot never panics.
+    /// As real authored maps land, this gains a match arm per id (each a deterministic builder).
+    pub fn from_map_id(id: MapId) -> Terrain {
+        match id {
+            Self::SCENE_MAP_ID => Terrain::open(),
+            _ => Terrain::open(),
         }
     }
 

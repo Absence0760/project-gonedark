@@ -51,4 +51,14 @@ impl Rng {
     pub fn checksum_state(&self) -> (u64, u64) {
         (self.state, self.inc)
     }
+
+    /// Reconstruct a generator from a previously captured `(state, inc)` — the inverse of
+    /// [`checksum_state`](Self::checksum_state). Used by the authoritative snapshot (D28) so a
+    /// resumed peer's PRNG continues the *exact* stream it left off on: omit this and the
+    /// resumed peer diverges by precisely the draws taken before the snapshot — a guaranteed
+    /// draw-count desync, the very thing the checksum's RNG fold exists to catch.
+    #[inline]
+    pub const fn from_state(state: u64, inc: u64) -> Self {
+        Rng { state, inc }
+    }
 }

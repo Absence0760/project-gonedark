@@ -23,6 +23,7 @@ pub mod flow_field;
 pub mod fog;
 pub mod lockstep;
 pub mod orders;
+pub mod persist;
 pub mod rng;
 pub mod sim;
 pub mod snapshot;
