@@ -13,7 +13,22 @@
 # desync on Android-family hardware surfaces in CI without an emulator. Device runs for
 # Android/iOS still need emulators/adb and land in build-order step 6/7 (the on-device
 # adb run is the device-specific confirmation, tracked separately).
-# TODO(step6/7): add android-arm64 + ios-arm64 device runs.
+#
+# Decision (step6/7) — why NOT to add device jobs here, and the ADD-ONLY posture:
+#   * The two arm64 entries already present (aarch64-unknown-linux-gnu on
+#     ubuntu-24.04-arm, aarch64-apple-darwin on macos-14) cover the Android and iOS
+#     SHIP ISAs *at the sim level*: both ship targets are arm64, and the float-free
+#     fixed-point sim is ABI/compiler-stable across them, so a per-tick desync on the
+#     Android-family or Apple-Silicon ISA already fails this matrix without a device.
+#   * A real on-DEVICE run (Android emulator / adb, iOS) is DEFERRED to device-farm CI:
+#     GitHub-hosted runners can't host an Android emulator with hardware accel or a
+#     physical iOS device, so the device confirmation lives outside this workflow (the
+#     Phase-1 adb run on the Galaxy S24, D22, was the manual proof; a hosted device-farm
+#     job is the eventual home).
+#   * iOS is ADDITIONALLY blocked until an iOS BUILD TARGET exists (no iOS app/crate yet),
+#     so even a device-farm iOS job has nothing to run until that lands.
+# Therefore this matrix stays as-is for now: ADD-ONLY (coverage may grow, never shrink) —
+# do NOT add device jobs here and do NOT alter any existing job's behavior (invariant #7).
 name: determinism
 
 on:

@@ -218,7 +218,18 @@ struct Config {
     loss_num: u32,
     loss_den: u32,
     net_seed: u64,
+    /// Test-only fault injection: if `Some((peer, tick))`, that peer records a *corrupted*
+    /// post-tick checksum for that tick (XORed with a sentinel) instead of its real one — so
+    /// the wire checksum-agreement broadcast must catch the disagreement on the other peer.
+    /// `None` in every production/`main` run (the wire path is then pure verification). This
+    /// only poisons the *recorded report* — it never touches the sim or the emitted stream, so
+    /// the agreed stdout stream stays byte-identical.
+    corrupt: Option<(PeerId, u64)>,
 }
+
+/// Sentinel XORed into a checksum to forge a divergence in the injection test. Non-zero so the
+/// forged value always differs from the real one.
+const CORRUPT_XOR: u64 = 0xFFFF_FFFF_FFFF_FFFF;
 
 impl Config {
     /// Default channel for `main`: a touch of latency + jitter + light loss so the gate,
@@ -233,6 +244,7 @@ impl Config {
             loss_num: 1,
             loss_den: 6,
             net_seed: NET_SEED,
+            corrupt: None,
         }
     }
 }
@@ -241,6 +253,9 @@ impl Config {
 struct Outcome {
     stream: Vec<u64>,
     agreed: bool,
+    /// Cross-client desyncs surfaced over the wire by the lockstep checksum-agreement broadcast
+    /// (`Lockstep::take_desyncs`), aggregated across both peers. Empty on a healthy run.
+    wire_desyncs: Vec<gonedark_core::lockstep::Desync>,
 }
 
 /// Run the 2-peer lockstep session and the no-network reference in lockstep, asserting
@@ -284,6 +299,8 @@ fn run(cfg: Config) -> Outcome {
         Vec::with_capacity(ticks as usize),
         Vec::with_capacity(ticks as usize),
     ];
+    // Cross-client desyncs surfaced over the wire by the checksum-agreement broadcast.
+    let mut wire_desyncs: Vec<gonedark_core::lockstep::Desync> = Vec::new();
 
     let mut it = 0u64;
     loop {
@@ -311,10 +328,28 @@ fn run(cfg: Config) -> Outcome {
 
         for i in 0..2 {
             while let Some(cmds) = sessions[i].try_advance() {
+                // `next_tick` was just incremented by `try_advance`, so the tick we executed is
+                // `next_tick - 1`.
+                let tick = sessions[i].next_tick() - 1;
                 sims[i].step(&cmds);
-                sums[i].push(sims[i].checksum());
+                let checksum = sims[i].checksum();
+                sums[i].push(checksum);
+                // Record our own post-tick checksum so the wire broadcast can verify agreement.
+                // Test-only: optionally poison the *recorded report* (not the sim, not the
+                // emitted stream) to force a cross-client divergence the broadcast must catch.
+                let recorded = match cfg.corrupt {
+                    Some((p, t)) if p as usize == i && t == tick => checksum ^ CORRUPT_XOR,
+                    _ => checksum,
+                };
+                sessions[i].record_checksum(tick, recorded);
             }
         }
+
+        // Drain any cross-client checksum disagreements the broadcast surfaced this pump.
+        for session in &mut sessions {
+            wire_desyncs.extend(session.take_desyncs());
+        }
+
         if sessions[0].next_tick() >= ticks && sessions[1].next_tick() >= ticks {
             break;
         }
@@ -329,6 +364,23 @@ fn run(cfg: Config) -> Outcome {
             );
             std::process::exit(1);
         }
+    }
+
+    // Both peers have executed every tick, but the *last* ticks' checksum reports may still be
+    // in flight (the broadcast is loss-tolerant resend, same posture as command frames). Pump a
+    // bounded settle phase — drain reports, deliver them, collect any surfaced desyncs — so the
+    // wire checksum-agreement path is fully exercised right to the final tick. No sim stepping
+    // happens here (both peers are done), so the emitted stream is untouched.
+    for _ in 0..(2 * (base_delay_settle(&cfg) + 1) + 4) {
+        let f0 = sessions[0].drain_outbound();
+        net.send(it, 1, f0);
+        let f1 = sessions[1].drain_outbound();
+        net.send(it, 0, f1);
+        net.deliver_due(it, &mut sessions);
+        for session in &mut sessions {
+            wire_desyncs.extend(session.take_desyncs());
+        }
+        it += 1;
     }
 
     // Both peers ran exactly `ticks` ticks (0..ticks). Assert agreement at every one, and
@@ -346,6 +398,7 @@ fn run(cfg: Config) -> Outcome {
             return Outcome {
                 stream: sums[0][..t].to_vec(),
                 agreed: false,
+                wire_desyncs,
             };
         }
     }
@@ -353,7 +406,14 @@ fn run(cfg: Config) -> Outcome {
     Outcome {
         stream: sums[0].clone(),
         agreed: true,
+        wire_desyncs,
     }
+}
+
+/// How many extra settle pumps to run so the last ticks' checksum reports surely arrive: enough
+/// rounds to cover the channel's worst-case in-flight time (base delay + jitter).
+fn base_delay_settle(cfg: &Config) -> u64 {
+    cfg.base_delay + cfg.jitter as u64
 }
 
 fn emit(tick: u64, checksum: u64) {
@@ -378,9 +438,22 @@ fn main() {
         // The desync detail was already printed to stderr by `run`.
         std::process::exit(1);
     }
+    // The wire checksum-agreement broadcast ran alongside the stream. On a healthy run it
+    // surfaces nothing; any report here is a live cross-client desync the broadcast caught —
+    // a real bug (invariant #7). Detection only — we never mutate stepping in response.
+    if !outcome.wire_desyncs.is_empty() {
+        for d in &outcome.wire_desyncs {
+            eprintln!(
+                "::error::wire checksum-agreement desync at tick {}: peer {} reported \
+                 {:016x}, local {:016x} (delay {delay}) — a real lockstep bug (invariant #7)",
+                d.tick, d.peer, d.remote, d.local
+            );
+        }
+        std::process::exit(1);
+    }
     eprintln!(
         "ok: 2-peer lockstep agreed with the no-network reference over {ticks} ticks \
-         (delay {delay})"
+         (delay {delay}); wire checksum-agreement broadcast surfaced no desync"
     );
 }
 
@@ -476,6 +549,70 @@ mod tests {
             stream[0],
             stream[stream.len() - 1],
             "checksum should evolve"
+        );
+    }
+
+    // ----- runtime wire checksum-agreement broadcast (step 6) -----
+
+    #[test]
+    fn wire_checksum_agreement_reports_no_desync_on_healthy_run() {
+        // A healthy run broadcasts every peer's per-tick checksum over the wire; because the
+        // peers genuinely agree, the agreement check surfaces zero desyncs. This proves the
+        // wire path is actually exercised (reports are emitted, delivered, and compared) and
+        // reports agreement as agreement.
+        let o = run(cfg(120, 2));
+        assert!(o.agreed, "peers agree on the stream");
+        assert!(
+            o.wire_desyncs.is_empty(),
+            "healthy run must surface no wire desyncs, got {:?}",
+            o.wire_desyncs
+        );
+    }
+
+    #[test]
+    fn wire_checksum_agreement_detects_injected_divergence() {
+        // Inject a divergence: poison peer 1's *recorded* checksum for a mid-run tick (not the
+        // sim, not the emitted stream). The wire broadcast must carry peer 1's forged report to
+        // peer 0, which compares it against its own correct checksum for that tick and surfaces
+        // a `Desync`. This is the live-desync detection the whole step is about.
+        let corrupt_tick = 40u64;
+        let mut c = cfg(120, 2);
+        c.corrupt = Some((1, corrupt_tick));
+        let o = run(c);
+
+        assert!(
+            !o.wire_desyncs.is_empty(),
+            "injected divergence must be detected over the wire"
+        );
+        // Peer 0 (holding the correct checksum) detects peer 1's forged report for that tick.
+        let detected = o
+            .wire_desyncs
+            .iter()
+            .find(|d| d.tick == corrupt_tick && d.peer == 1)
+            .expect("the corrupted tick's desync is reported, attributed to peer 1");
+        assert_ne!(
+            detected.local, detected.remote,
+            "a reported desync has mismatched checksums"
+        );
+        assert_eq!(
+            detected.remote,
+            detected.local ^ CORRUPT_XOR,
+            "the remote value is exactly the forged (poisoned) checksum"
+        );
+    }
+
+    #[test]
+    fn injected_divergence_does_not_change_the_emitted_stream() {
+        // Crucial determinism property: the checksum-agreement broadcast is pure VERIFICATION.
+        // Poisoning a recorded report must NOT alter which commands execute or the per-tick
+        // checksums — so the agreed stdout stream is byte-identical with and without injection.
+        let clean = agreed_stream(cfg(120, 2));
+        let mut c = cfg(120, 2);
+        c.corrupt = Some((1, 40));
+        let poisoned = run(c);
+        assert_eq!(
+            clean, poisoned.stream,
+            "injection must not change the emitted checksum stream"
         );
     }
 }

@@ -32,8 +32,29 @@ use crate::fixed::Fixed;
 use crate::sim::Command;
 
 /// Wire format version. Bumped on any codec change so a mismatched build is rejected, not
-/// silently misparsed.
-const WIRE_VERSION: u8 = 1;
+/// silently misparsed. Bumped to 2 for the frame-kind tag (command vs. checksum report).
+const WIRE_VERSION: u8 = 2;
+
+/// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
+/// carry both command sets and checksum reports over the one wire format. Kept loud (a bad tag
+/// is a [`DecodeError::BadTag`]) so codec/version skew is rejected, never silently misparsed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FrameKind {
+    /// A peer's per-tick command set (the original frame; layout unchanged after the tag).
+    Command = 0,
+    /// A peer's post-tick sim checksum report for cross-client agreement verification.
+    Checksum = 1,
+}
+
+impl FrameKind {
+    fn from_u8(v: u8) -> Result<Self, DecodeError> {
+        match v {
+            0 => Ok(FrameKind::Command),
+            1 => Ok(FrameKind::Checksum),
+            t => Err(DecodeError::BadTag(t)),
+        }
+    }
+}
 
 /// A peer's index in the session, `0..peer_count`. Doubles as the fixed merge order.
 pub type PeerId = u32;
@@ -339,10 +360,22 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
     })
 }
 
+/// A decoded wire frame: either a command set for a tick, or a peer's checksum report for a
+/// tick. The codec is a tagged union (version, kind, then the kind's payload).
+#[derive(Clone, Debug)]
+enum Frame {
+    /// `(peer, tick, commands)` — one peer's command set for one execution tick.
+    Command(PeerId, u64, Vec<Command>),
+    /// `(peer, tick, checksum)` — one peer's post-tick sim checksum for that tick. The checksum
+    /// rides the wire as raw `u64` LE bytes (no float) — pure verification, no sim effect.
+    Checksum(PeerId, u64, u64),
+}
+
 /// Encode one peer's command set for one execution tick into a wire frame.
 fn encode_frame(peer: PeerId, tick: u64, commands: &[Command]) -> Vec<u8> {
     let mut w = Writer::new();
     w.u8(WIRE_VERSION);
+    w.u8(FrameKind::Command as u8);
     w.u32(peer);
     w.u64(tick);
     w.u32(u32::try_from(commands.len()).expect("a tick's command set fits in u32"));
@@ -352,31 +385,66 @@ fn encode_frame(peer: PeerId, tick: u64, commands: &[Command]) -> Vec<u8> {
     w.buf
 }
 
-/// Decode a wire frame back into `(peer, tick, commands)`. Never panics on malformed input.
-fn decode_frame(bytes: &[u8]) -> Result<(PeerId, u64, Vec<Command>), DecodeError> {
+/// Encode one peer's post-tick checksum report for `tick` into a wire frame. The checksum is
+/// written as raw `u64` LE bytes — no float ever touches the wire (invariant #1).
+fn encode_checksum_frame(peer: PeerId, tick: u64, checksum: u64) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.u8(WIRE_VERSION);
+    w.u8(FrameKind::Checksum as u8);
+    w.u32(peer);
+    w.u64(tick);
+    w.u64(checksum);
+    w.buf
+}
+
+/// Decode a wire frame back into a [`Frame`]. Never panics on malformed input — a bad version,
+/// kind tag, command tag, short buffer, or trailing byte is a [`DecodeError`], not a crash.
+fn decode_frame(bytes: &[u8]) -> Result<Frame, DecodeError> {
     let mut r = Reader::new(bytes);
     let ver = r.u8()?;
     if ver != WIRE_VERSION {
         return Err(DecodeError::BadVersion(ver));
     }
+    let kind = FrameKind::from_u8(r.u8()?)?;
     let peer = r.u32()?;
     let tick = r.u64()?;
-    let n = r.u32()? as usize;
-    // Cap the pre-allocation so a garbage length can't request a huge Vec; the loop still reads
-    // exactly `n` and fails with UnexpectedEof if the bytes run short.
-    let mut commands = Vec::with_capacity(n.min(256));
-    for _ in 0..n {
-        commands.push(get_command(&mut r)?);
-    }
+    let frame = match kind {
+        FrameKind::Command => {
+            let n = r.u32()? as usize;
+            // Cap the pre-allocation so a garbage length can't request a huge Vec; the loop
+            // still reads exactly `n` and fails with UnexpectedEof if the bytes run short.
+            let mut commands = Vec::with_capacity(n.min(256));
+            for _ in 0..n {
+                commands.push(get_command(&mut r)?);
+            }
+            Frame::Command(peer, tick, commands)
+        }
+        FrameKind::Checksum => Frame::Checksum(peer, tick, r.u64()?),
+    };
     if r.pos != r.buf.len() {
         return Err(DecodeError::TrailingBytes);
     }
-    Ok((peer, tick, commands))
+    Ok(frame)
 }
 
 // ===========================================================================
 // The lockstep state machine.
 // ===========================================================================
+
+/// A detected cross-client checksum disagreement: a peer reported a different post-tick
+/// checksum than ours for the same `tick`. This is **detection only** — surfacing it never
+/// mutates sim/lockstep stepping (that policy decision belongs to the host, D27).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Desync {
+    /// The execution tick whose checksums disagreed.
+    pub tick: u64,
+    /// The remote peer whose report disagreed with ours.
+    pub peer: PeerId,
+    /// Our own recorded post-tick checksum for `tick`.
+    pub local: u64,
+    /// The checksum the remote peer reported for `tick`.
+    pub remote: u64,
+}
 
 /// A single peer's view of a deterministic lockstep session: it buffers per-tick command sets
 /// (its own, stamped at `submit_tick = delay + submits`, and peers' as they arrive), gates the
@@ -399,6 +467,14 @@ pub struct Lockstep {
     /// first-slice simplification; a real ACK/retransmit + flow-control layer is a later slice
     /// (`docs/phase-3-plan.md` §"Workstream B").
     retained: BTreeMap<u64, Vec<u8>>,
+    /// Our own post-tick checksum per recently-executed tick, recorded by the host via
+    /// [`record_checksum`](Self::record_checksum). Used to (a) emit our checksum reports in
+    /// [`drain_outbound`](Self::drain_outbound) and (b) compare against incoming reports in
+    /// [`deliver`](Self::deliver). Pruned on the same window as `retained`/`slots`.
+    checksums: BTreeMap<u64, u64>,
+    /// Detected cross-client checksum disagreements, queued for the host to drain via
+    /// [`take_desyncs`](Self::take_desyncs). Detection only — never alters stepping.
+    desyncs: Vec<Desync>,
 }
 
 impl Lockstep {
@@ -418,7 +494,16 @@ impl Lockstep {
             submitted: 0,
             slots: BTreeMap::new(),
             retained: BTreeMap::new(),
+            checksums: BTreeMap::new(),
+            desyncs: Vec::new(),
         }
+    }
+
+    /// The session's input delay (in ticks). Read-only accessor; a later slice wires RTT-driven
+    /// adaptive delay through here. (No adaptive/renegotiated delay yet — that is a separate,
+    /// determinism-sensitive follow-up.)
+    pub fn delay(&self) -> u64 {
+        self.delay
     }
 
     /// The next tick the sim will execute (None of it has run yet at `next_tick`).
@@ -445,29 +530,81 @@ impl Lockstep {
         slot[self.local as usize] = Some(commands);
     }
 
-    /// Encoded frames to hand to the transport this pump. Re-sends every retained (not-yet-pruned)
-    /// frame; the receiver ignores stale/duplicate ticks, so this is loss-tolerant without ACKs.
-    pub fn drain_outbound(&mut self) -> Vec<Vec<u8>> {
-        self.retained.values().cloned().collect()
+    /// Record our own post-tick sim checksum for `tick`. The host calls this after each
+    /// [`Sim::step`](crate::sim::Sim::step) (the tick just advanced by [`try_advance`]). The
+    /// value is kept in a bounded recent window (pruned like `retained`/`slots`) so we can both
+    /// broadcast it and compare incoming peer reports against it. Pure verification: recording a
+    /// checksum never changes which commands execute or the checksums themselves.
+    ///
+    /// [`try_advance`]: Self::try_advance
+    pub fn record_checksum(&mut self, tick: u64, checksum: u64) {
+        self.checksums.insert(tick, checksum);
     }
 
-    /// Ingest a received frame. Ignores our own echo and frames for already-executed ticks; the
-    /// first set seen for a `(tick, peer)` wins (re-sends are identical). Returns `Err` only if
-    /// the bytes are malformed.
+    /// Encoded frames to hand to the transport this pump. Re-sends every retained command frame
+    /// **and** a checksum report for every recently-recorded tick; the receiver ignores
+    /// stale/duplicate ticks, so this is loss-tolerant without ACKs (same posture as command
+    /// frames). Checksum reports are pure verification — they never change stepping.
+    pub fn drain_outbound(&mut self) -> Vec<Vec<u8>> {
+        let mut frames: Vec<Vec<u8>> = self.retained.values().cloned().collect();
+        for (&tick, &sum) in &self.checksums {
+            frames.push(encode_checksum_frame(self.local, tick, sum));
+        }
+        frames
+    }
+
+    /// Drain the cross-client checksum disagreements detected since the last call. Each is a
+    /// live desync (a peer's post-tick checksum differed from ours for the same tick). Detection
+    /// only — the host decides what to do (halt, snapshot, etc.); lockstep stepping is untouched.
+    pub fn take_desyncs(&mut self) -> Vec<Desync> {
+        std::mem::take(&mut self.desyncs)
+    }
+
+    /// Ingest a received frame. Ignores our own echo and command frames for already-executed
+    /// ticks; the first set seen for a `(tick, peer)` wins (re-sends are identical). A checksum
+    /// report is compared against our own recorded checksum for that tick: a match is a no-op, a
+    /// mismatch queues a [`Desync`] (drainable via [`take_desyncs`](Self::take_desyncs)), and a
+    /// report for a tick whose checksum we have not recorded (not yet executed, or already pruned
+    /// out of our window) is **ignored** — we only verify what we can directly compare, so a late
+    /// or far-ahead report never produces a false desync. Returns `Err` only if the bytes are
+    /// malformed.
     pub fn deliver(&mut self, bytes: &[u8]) -> Result<(), DecodeError> {
-        let (peer, tick, commands) = decode_frame(bytes)?;
-        if peer >= self.peer_count {
-            return Err(DecodeError::PeerOutOfRange(peer));
-        }
-        if peer == self.local || tick < self.next_tick {
-            return Ok(()); // our own echo, or a tick we have already executed
-        }
-        let slot = self
-            .slots
-            .entry(tick)
-            .or_insert_with(|| vec![None; self.peer_count as usize]);
-        if slot[peer as usize].is_none() {
-            slot[peer as usize] = Some(commands);
+        match decode_frame(bytes)? {
+            Frame::Command(peer, tick, commands) => {
+                if peer >= self.peer_count {
+                    return Err(DecodeError::PeerOutOfRange(peer));
+                }
+                if peer == self.local || tick < self.next_tick {
+                    return Ok(()); // our own echo, or a tick we have already executed
+                }
+                let slot = self
+                    .slots
+                    .entry(tick)
+                    .or_insert_with(|| vec![None; self.peer_count as usize]);
+                if slot[peer as usize].is_none() {
+                    slot[peer as usize] = Some(commands);
+                }
+            }
+            Frame::Checksum(peer, tick, remote) => {
+                if peer >= self.peer_count {
+                    return Err(DecodeError::PeerOutOfRange(peer));
+                }
+                if peer == self.local {
+                    return Ok(()); // our own echo
+                }
+                // Only compare ticks we have a recorded checksum for. Unknown ticks (not yet
+                // executed locally, or pruned out of the window) are ignored — see the doc above.
+                if let Some(&local) = self.checksums.get(&tick) {
+                    if local != remote {
+                        self.desyncs.push(Desync {
+                            tick,
+                            peer,
+                            local,
+                            remote,
+                        });
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -510,6 +647,10 @@ impl Lockstep {
         let stale: Vec<u64> = self.slots.range(..lo).map(|(k, _)| *k).collect();
         for k in stale {
             self.slots.remove(&k);
+        }
+        let stale: Vec<u64> = self.checksums.range(..lo).map(|(k, _)| *k).collect();
+        for k in stale {
+            self.checksums.remove(&k);
         }
     }
 }
@@ -594,13 +735,31 @@ mod tests {
             },
         ];
         let bytes = encode_frame(0, 42, &cmds);
-        let (peer, tick, decoded) = decode_frame(&bytes).expect("decode");
+        let (peer, tick, decoded) = match decode_frame(&bytes).expect("decode") {
+            Frame::Command(p, t, c) => (p, t, c),
+            other => panic!("expected a command frame, got {other:?}"),
+        };
         assert_eq!(peer, 0);
         assert_eq!(tick, 42);
         assert_eq!(decoded.len(), cmds.len());
         // Command has no PartialEq; re-encoding the decoded set and comparing bytes is a stronger
         // codec check (it would catch a field silently dropped/reordered).
         assert_eq!(bytes, encode_frame(peer, tick, &decoded));
+    }
+
+    #[test]
+    fn checksum_frame_roundtrips() {
+        let bytes = encode_checksum_frame(1, 77, 0xDEAD_BEEF_F00D_CAFE);
+        match decode_frame(&bytes).expect("decode") {
+            Frame::Checksum(peer, tick, sum) => {
+                assert_eq!(peer, 1);
+                assert_eq!(tick, 77);
+                assert_eq!(sum, 0xDEAD_BEEF_F00D_CAFE);
+            }
+            other => panic!("expected a checksum frame, got {other:?}"),
+        }
+        // Re-encoding the decoded report reproduces the exact bytes (catches a dropped field).
+        assert_eq!(bytes, encode_checksum_frame(1, 77, 0xDEAD_BEEF_F00D_CAFE));
     }
 
     #[test]
@@ -616,6 +775,12 @@ mod tests {
 
         let mut w = Writer::new();
         w.u8(WIRE_VERSION);
+        w.u8(200); // a frame-kind tag that does not exist
+        assert_eq!(decode_frame(&w.buf).unwrap_err(), DecodeError::BadTag(200));
+
+        let mut w = Writer::new();
+        w.u8(WIRE_VERSION);
+        w.u8(FrameKind::Command as u8);
         w.u32(0);
         w.u64(0);
         w.u32(1);
@@ -624,6 +789,7 @@ mod tests {
 
         let mut w = Writer::new();
         w.u8(WIRE_VERSION);
+        w.u8(FrameKind::Command as u8);
         w.u32(0);
         w.u64(0);
         w.u32(5); // claims 5 commands, provides none
@@ -634,10 +800,36 @@ mod tests {
 
         let mut w = Writer::new();
         w.u8(WIRE_VERSION);
+        w.u8(FrameKind::Command as u8);
         w.u32(0);
         w.u64(0);
-        w.u32(0); // a valid empty frame …
+        w.u32(0); // a valid empty command frame …
         w.u8(0xFF); // … then an unexpected trailing byte (codec/version skew)
+        assert_eq!(
+            decode_frame(&w.buf).unwrap_err(),
+            DecodeError::TrailingBytes
+        );
+
+        // A checksum frame that ends mid-checksum (only 4 of the 8 LE bytes present).
+        let mut w = Writer::new();
+        w.u8(WIRE_VERSION);
+        w.u8(FrameKind::Checksum as u8);
+        w.u32(0);
+        w.u64(0);
+        w.u32(0); // 4 bytes where the 8-byte checksum should be
+        assert_eq!(
+            decode_frame(&w.buf).unwrap_err(),
+            DecodeError::UnexpectedEof
+        );
+
+        // A checksum frame with a trailing byte past the checksum is rejected (codec skew).
+        let mut w = Writer::new();
+        w.u8(WIRE_VERSION);
+        w.u8(FrameKind::Checksum as u8);
+        w.u32(0);
+        w.u64(0);
+        w.u64(0);
+        w.u8(0xAB);
         assert_eq!(
             decode_frame(&w.buf).unwrap_err(),
             DecodeError::TrailingBytes
@@ -698,6 +890,123 @@ mod tests {
         let mut ls = Lockstep::new(2, 0, 0);
         let bad = encode_frame(5, 0, &[]); // peer 5 not in a 2-peer session
         assert_eq!(ls.deliver(&bad), Err(DecodeError::PeerOutOfRange(5)));
+    }
+
+    // ----- checksum agreement / desync detection -----
+
+    #[test]
+    fn checksum_report_agreement_is_a_no_op() {
+        let mut ls = Lockstep::new(2, 0, 0);
+        ls.record_checksum(7, 0xABCD);
+        // A matching report from peer 1 for the same tick: no desync.
+        ls.deliver(&encode_checksum_frame(1, 7, 0xABCD)).unwrap();
+        assert!(
+            ls.take_desyncs().is_empty(),
+            "matching checksum is agreement"
+        );
+    }
+
+    #[test]
+    fn checksum_report_mismatch_is_detected_and_surfaced() {
+        let mut ls = Lockstep::new(2, 0, 0);
+        ls.record_checksum(7, 0xABCD);
+        ls.deliver(&encode_checksum_frame(1, 7, 0x9999)).unwrap();
+        let d = ls.take_desyncs();
+        assert_eq!(
+            d,
+            vec![Desync {
+                tick: 7,
+                peer: 1,
+                local: 0xABCD,
+                remote: 0x9999,
+            }]
+        );
+        // Draining clears the queue.
+        assert!(ls.take_desyncs().is_empty(), "desyncs drained once");
+    }
+
+    #[test]
+    fn checksum_report_for_unknown_tick_is_ignored() {
+        let mut ls = Lockstep::new(2, 0, 0);
+        // No recorded checksum for tick 9 yet → cannot compare → ignored, no false desync.
+        ls.deliver(&encode_checksum_frame(1, 9, 0x1234)).unwrap();
+        assert!(ls.take_desyncs().is_empty(), "unknown tick must not desync");
+    }
+
+    #[test]
+    fn checksum_report_ignores_our_own_echo() {
+        let mut ls = Lockstep::new(2, 0, 0);
+        ls.record_checksum(3, 0xAAAA);
+        // Our own report echoed back, even with a (impossible) different value, is ignored.
+        ls.deliver(&encode_checksum_frame(0, 3, 0xBBBB)).unwrap();
+        assert!(ls.take_desyncs().is_empty(), "our own echo never desyncs");
+    }
+
+    #[test]
+    fn checksum_report_rejects_out_of_range_peer() {
+        let mut ls = Lockstep::new(2, 0, 0);
+        ls.record_checksum(1, 0xABCD);
+        let bad = encode_checksum_frame(5, 1, 0xABCD);
+        assert_eq!(ls.deliver(&bad), Err(DecodeError::PeerOutOfRange(5)));
+    }
+
+    #[test]
+    fn drain_outbound_emits_checksum_reports() {
+        let mut ls = Lockstep::new(2, 0, 1);
+        ls.record_checksum(0, 0x1111);
+        ls.record_checksum(1, 0x2222);
+        let frames = ls.drain_outbound();
+        // Decode every frame; collect the checksum reports we emitted.
+        let mut reports: Vec<(u64, u64)> = frames
+            .iter()
+            .filter_map(|f| match decode_frame(f).unwrap() {
+                Frame::Checksum(peer, tick, sum) => {
+                    assert_eq!(peer, 0, "we emit reports under our own peer id");
+                    Some((tick, sum))
+                }
+                Frame::Command(..) => None,
+            })
+            .collect();
+        reports.sort_unstable();
+        assert_eq!(reports, vec![(0, 0x1111), (1, 0x2222)]);
+    }
+
+    #[test]
+    fn checksum_window_prunes_with_the_active_window() {
+        // The checksum window prunes on the same `2*delay+1` tail as slots/retained. With
+        // delay 0 the tail is 1 tick: after advancing well past a recorded tick, that tick's
+        // checksum is dropped, so a *mismatching* report for it from a real peer is ignored
+        // (nothing to compare against) — no false desync from a long-gone tick.
+        let mut ls = Lockstep::new(2, 0, 0);
+        ls.record_checksum(0, 0xDEAD);
+        // Drive the 2-peer session past tick 0: submit locally and feed peer 1's empty sets.
+        for t in 0..5 {
+            ls.submit(Vec::new());
+            ls.deliver(&encode_frame(1, t, &[])).unwrap();
+            ls.try_advance().expect("both peers present → advances");
+        }
+        assert!(ls.next_tick() >= 5);
+        // Tick 0's checksum is pruned; peer 1 reporting a different value for it is a no-op.
+        ls.deliver(&encode_checksum_frame(1, 0, 0xBEEF)).unwrap();
+        assert!(
+            ls.take_desyncs().is_empty(),
+            "a pruned tick must not produce a desync"
+        );
+        // Sanity: an *in-window* mismatch is still caught (proves it's prune, not a dead path).
+        let cur = ls.next_tick();
+        ls.record_checksum(cur, 0xC0FFEE);
+        ls.deliver(&encode_checksum_frame(1, cur, 0xBAD)).unwrap();
+        assert_eq!(
+            ls.take_desyncs().len(),
+            1,
+            "in-window mismatch still caught"
+        );
+    }
+
+    #[test]
+    fn delay_accessor_returns_configured_delay() {
+        assert_eq!(Lockstep::new(2, 0, 0).delay(), 0);
+        assert_eq!(Lockstep::new(2, 1, 7).delay(), 7);
     }
 
     // ----- the headline test: two clients agree over a nasty channel -----
