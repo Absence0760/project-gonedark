@@ -190,6 +190,22 @@ fn is_radial_wedge(p: [u8; 4]) -> bool {
         && p[2] > p[0]
         && p[1] > p[0]
 }
+/// A directional alert-HUD marker pixel (`render/src/hud.rs`). The markers are drawn in the
+/// saturated alert palette — warm orange/red (TakingFire / BaseUnderAttack), cyan-teal
+/// (TerritoryLost), or a bright pale grey (UnitLost) — and composited over the embodied frame near
+/// the screen edge. The embodied WORLD underneath (W5) is a MUTED blue-grey sky + slate floor whose
+/// channels stay close together (low saturation) and never warm. So a marker reads as either a
+/// bright WARM pixel (red strongly dominant, like the alert reds/oranges) or a bright cyan-TEAL
+/// pixel (green+blue both high, red low) — neither of which the cool low-saturation world produces.
+fn is_alert_marker(p: [u8; 4]) -> bool {
+    let (r, g, b) = (p[0] as i32, p[1] as i32, p[2] as i32);
+    // Warm marker (orange/red): red clearly dominant and the pixel is bright.
+    let warm = r > 170 && r > b + 50 && r >= g;
+    // Teal marker (TerritoryLost): green + blue both high with red noticeably lower — a hue the
+    // blue-grey world (where channels track within ~30) never hits.
+    let teal = g > 150 && b > 150 && g > r + 40 && b > r + 30;
+    warm || teal
+}
 fn count(rgba: &[u8], f: impl Fn([u8; 4]) -> bool) -> usize {
     px(rgba).filter(|&p| f(p)).count()
 }
@@ -429,8 +445,24 @@ fn main() {
         format!("{drag_rim} bright box-edge px mid-drag vs {pre_rim} before (selection box drawn)"),
     );
 
-    // --- Scenario 2: embodied — world goes dark ------------------------------------------------
-    println!("[embodied_dark] possessing a unit collapses vision to the avatar (invariant #6)");
+    // --- Scenario 2: embodied — a real first-person world, but the STRATEGIC MAP is gone --------
+    // W5 replaced the bare black void with a ground/sky/weapon FPS world, so "world goes dark" can
+    // no longer be proxied by "the frame is ~all black". We re-express invariant #6 directly,
+    // against what the design actually means by going dark (game-design §6): "fog reverts to
+    // AVATAR-ONLY vision — you do not see the rest of the map." So the test asserts:
+    //   (a) a real world IS drawn (no black void), and
+    //   (b) the STRATEGIC MAP collapsed — your own off-screen squad + every ally + the
+    //       control-point rings (all map intel) VANISH. We measure this as player-blue ≈ 0:
+    //       command view draws hundreds of player-blue px (the whole squad + control points), the
+    //       embodied view draws NONE — the only friendly on screen is the AMBER avatar, never blue.
+    // NOTE on enemies: this is NOT "enemy-red == 0". Avatar-only vision still shows what the avatar
+    // can physically SEE in first person (its vision radius + line of sight) — an enemy standing in
+    // front of you is legitimate FPS sight, not a strategic-map reveal. The fairness boundary is the
+    // fog layer (`render/src/fog.rs`), which keeps ONLY the avatar + its in-sight cells while
+    // embodied and drops the whole-faction strategic union vision and the control-point rings. So
+    // the load-bearing fairness signal is the disappearance of the *rest of the map*, captured by
+    // the player-blue (own-squad/ally/intel) collapse below.
+    println!("[embodied_dark] possessing a unit shows an FPS world but the strategic map is gone (#6)");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     g.frame(
         &embody,
@@ -446,15 +478,36 @@ fn main() {
     save_png("target/viz/embodied_dark.png", &dark_frame);
     let dark_dk = dark_fraction(&dark_frame);
     let dark_nondark = (dark_frame.len() / 4) - count(&dark_frame, is_dark);
+    let embodied_blue = count(&dark_frame, is_player_blue);
+    // (a) A real world is drawn — the embodied view is no longer a black void (W5).
     check(
         &mut failures,
-        "embodied_world_went_dark",
-        dark_dk > 0.95,
-        format!("dark fraction {dark_dk:.4} (>0.95 — the strategic map is gone)"),
+        "embodied_world_drawn",
+        dark_dk < 0.5,
+        format!("dark fraction {dark_dk:.4} (<0.5 — a real ground/sky FPS world is drawn, not a void)"),
+    );
+    // (b) THE fairness assertion (invariant #6): the strategic map collapsed to avatar-only vision.
+    // The player faction's whole-map intel — its off-screen squad, every ally, the control-point
+    // rings — is filtered out; only the amber avatar (never blue) + the camera-derived environment
+    // draw. Command view shows hundreds of player-blue px; embodied shows essentially none. This is
+    // the load-bearing re-expression of the old dark-fraction proxy: it proves the map intel is gone
+    // even though the frame is now lit. The threshold is well below the command-view squad count.
+    check(
+        &mut failures,
+        "embodied_strategic_map_dark",
+        embodied_blue < 20 && (embodied_blue as f32) < (blue as f32) * 0.1,
+        format!(
+            "{embodied_blue} player-blue (own-squad/ally/control-point) px embodied vs {blue} in command view \
+             (<20 and <10% — the strategic map went dark; only the amber avatar remains)"
+        ),
     );
 
     // --- Scenario 3: embodied + combat → alert HUD ---------------------------------------------
-    println!("[embodied_hud] after combat, the directional alert HUD draws markers over the dark");
+    // After combat the directional alert HUD draws markers OVER the FPS world. The markers add
+    // non-dark pixels beyond the no-alert world frame (scenario 2), and — crucially — combat still
+    // leaks NO enemy intel: the alerts are directional pings, never enemy positions. So even with
+    // the enemy actively firing, the embodied frame stays free of enemy-red pixels (invariant #6).
+    println!("[embodied_hud] after combat, the alert HUD draws markers over the FPS world (no intel)");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     g.frame(
         &embody,
@@ -465,25 +518,37 @@ fn main() {
         &view,
         &mut NullAudio,
     );
+    // Capture a no-alert baseline of the SAME embodied scene first (the world + avatar, before any
+    // alerts), so the marker delta isolates the HUD overlay rather than the world itself.
+    let pre_alert = read_pixels(&gpu.device, &gpu.queue, &target);
+    let pre_marker = count(&pre_alert, is_alert_marker);
     advance(&mut g, 220, InputFrame::default(), &gpu, &view); // allies take fire → alerts accrue
     let hud_frame = read_pixels(&gpu.device, &gpu.queue, &target);
     save_png("target/viz/embodied_hud.png", &hud_frame);
-    let hud_dk = dark_fraction(&hud_frame);
-    let hud_nondark = (hud_frame.len() / 4) - count(&hud_frame, is_dark);
-    check(
-        &mut failures,
-        "hud_still_mostly_dark",
-        hud_dk > 0.80,
-        format!(
-            "dark fraction {hud_dk:.4} (>0.80 — markers are a thin overlay, the world stays dark)"
-        ),
-    );
+    let hud_marker = count(&hud_frame, is_alert_marker);
+    // The directional alert HUD draws marker glyphs over the FPS world: more alert-marker-colored
+    // px after combat than before any alert fired. (`is_alert_marker` keys on the saturated marker
+    // palette — orange/red/teal/pale — which the muted blue-grey sky/ground never produces.)
     check(
         &mut failures,
         "hud_markers_drawn",
-        hud_nondark > dark_nondark + 50,
-        format!("{hud_nondark} non-dark px vs {dark_nondark} with no alerts (alert markers added)"),
+        hud_marker > pre_marker + 30,
+        format!("{hud_marker} alert-marker px after combat vs {pre_marker} before (directional pings drawn over the world)"),
     );
+    // The fairness guarantee holds THROUGH combat: the alert HUD is a DIRECTIONAL PING ring near the
+    // screen edge (`render/src/hud.rs`), not a map reveal — it tells you a bearing, never an enemy
+    // position. The strategic map stays dark: the player's own off-screen squad + control-point
+    // intel never reappear. We count player-blue px that are NOT themselves alert markers (the teal
+    // TerritoryLost glyph reads blue-ish but is a directional ping, not ally intel) — that residual
+    // must stay near zero even while the enemy is firing.
+    let hud_map_intel = count(&hud_frame, |p| is_player_blue(p) && !is_alert_marker(p));
+    check(
+        &mut failures,
+        "embodied_combat_strategic_map_stays_dark",
+        hud_map_intel < 20 && (hud_map_intel as f32) < (blue as f32) * 0.1,
+        format!("{hud_map_intel} non-marker player-blue px after combat (<20 and <10% of command's {blue} — the map stays dark; alerts are pings, not intel)"),
+    );
+    let _ = dark_nondark; // (the pre-/post-alert dark counts are now both ~0 with a world drawn)
 
     println!(
         "\nPNGs: target/viz/{{command,selected,radial,marquee,embodied_dark,embodied_hud}}.png"

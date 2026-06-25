@@ -409,6 +409,13 @@ pub struct Game {
     /// signal crosses the seam, never `core`). The host calls [`Game::set_thermal_state`] from its
     /// `pal::ThermalSensor`; defaults to `Nominal` (the desktop stub's value) until it does.
     thermal: gonedark_pal::ThermalState,
+
+    /// The sim tick the embodied player last fired on, or `None` if they have not fired this match
+    /// (W5). PRESENTATION ONLY — it drives the weapon viewmodel's muzzle-flash cue
+    /// ([`gonedark_render::world::muzzle_flash_intensity`]); it is never read by the sim and never
+    /// crosses into `core`. Set from the host-side `input.fire` edge in `frame`, alongside the
+    /// `Command::Fire` the sim resolves authoritatively (invariant #4/#6: a render cue, not intel).
+    last_fire_tick: Option<u64>,
 }
 
 impl Game {
@@ -508,6 +515,8 @@ impl Game {
             tuning: RenderTuning::new(gonedark_render::tiers::QualityTier::High),
             // Until the host reports through its `pal::ThermalSensor`, assume no thermal pressure.
             thermal: gonedark_pal::ThermalState::Nominal,
+            // No shot fired yet → no muzzle flash (W5, presentation only).
+            last_fire_tick: None,
         }
     }
 
@@ -859,6 +868,10 @@ impl Game {
         if self.embodied {
             if let Some(cmd) = fire::fire_command(self.player, self.yaw, input.fire) {
                 commands.push(cmd);
+                // Stamp the muzzle-flash cue (W5, presentation only): the weapon viewmodel flares
+                // for a few ticks after this shot. Never read by the sim — it rides the host clock
+                // alongside the authoritative `Command::Fire`, not in place of it (invariant #4/#6).
+                self.last_fire_tick = Some(self.sim.tick_count());
             }
         }
 
@@ -1045,7 +1058,29 @@ impl Game {
         self.renderer
             .prepare(&self.prev, &self.curr, alpha, &selected_indices);
 
-        // 7. Render the interpolated snapshot, fog-filtered (world goes dark while embodied).
+        // 6b. Embodied first-person WORLD (W5): paint a real ground/sky UNDER the avatar so "world
+        // goes dark" means losing INTEL, not staring at a black void (invariant #6). This is the
+        // CLEARING pass of the embodied frame; the unit pass below then LOADs the avatar over it.
+        // The world is a pure function of the *camera* (inverse view-proj + eye) — it has no access
+        // to sim entities, so it cannot reveal enemy units/buildings/control points; the fog filter
+        // stays the fairness boundary. Skipped entirely in command view (it never clears that path).
+        if self.embodied {
+            // Eye = the predicted listener position (x,y) raised to EYE_HEIGHT — the same eye the
+            // embodied camera uses. The host owns glam, so the matrix inverse is computed HERE (the
+            // render crate stays glam-free, D19) and handed in as plain arrays.
+            let eye = [listener.0, listener.1, EYE_HEIGHT];
+            let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
+            let world_uniform = gonedark_render::world::WorldUniform::new(
+                view_proj.inverse().to_cols_array_2d(),
+                eye,
+                flash,
+            );
+            self.renderer
+                .render_world_sky(device, queue, view, &world_uniform);
+        }
+
+        // 7. Render the interpolated snapshot, fog-filtered (world goes dark while embodied). In the
+        // embodied branch this LOADs over the world drawn in 6b; in command view it CLEARS.
         self.renderer.render(
             device,
             queue,
@@ -1054,6 +1089,15 @@ impl Game {
             /* world_dark = */ self.embodied,
             &visibility,
         );
+
+        // 7a. Embodied weapon viewmodel (W5): the first-person gun over the world + avatar, with a
+        // muzzle flash that flares for a few ticks after the player fires (driven by the `flash`
+        // already in the world uniform). Screen-space chrome, no world position → reveals no intel.
+        if self.embodied {
+            let aspect = width.max(1) as f32 / height.max(1) as f32;
+            self.renderer
+                .render_world_weapon(device, queue, view, aspect);
+        }
 
         // 7b. Command-view band-select marquee: while a drag is in flight, draw the selection box
         // the player is sweeping. Project the world-space drag anchor and the live pointer through
