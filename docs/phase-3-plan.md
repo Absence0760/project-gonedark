@@ -147,9 +147,18 @@ checksum byte-identical with prediction on vs off."*
    type; mirrors `pal::Audio`, [D27](decisions.md)) plus an in-process `LoopbackTransport::pair()`
    in `pal-desktop` (per-direction FIFO, byte-exact framing). Trait + impl + 6 tests only — wiring
    into `engine::Game` is step 4.
-4. **Wire lockstep into `engine::Game::frame`** — source the per-tick command set from
-   `core::lockstep` instead of local input; single-player path keeps working via a
-   trivial local-only transport.
+4. **Wire lockstep into `engine::Game::frame`** ✅ **DONE** — the fixed-tick accumulator now
+   drives each tick through a `core::lockstep::Lockstep` (the per-tick command set comes from
+   `try_advance`, not directly from local input) via an extracted wgpu-free `drive_lockstep`
+   seam (submit → pump transport → step). Single-player keeps working bit-identically via a
+   1-peer, **delay-0** session with a `None`/`NullTransport` (no input latency, no socket);
+   `Game::new`/`frame` signatures unchanged so `app`/`pal-android` need no edits. The
+   load-bearing guard test asserts the lockstep-driven single-player checksum stream is
+   identical to direct stepping. (Multiplayer per-frame submit *pacing* for `delay > 0` is
+   left to step 7.) `engine` tests 33 → 43, dev + release.
+5. **Fill in `engine::predict_avatar`** — presentation-only predict + reconcile; the
+   byte-identical-checksum guard test. Highest-risk single commit (`audit-determinism`).
+   *(Next; sequential after step 4 — same file, reconciles against the tick step 4 sources.)*
 5. **Fill in `engine::predict_avatar`** — presentation-only predict + reconcile; the
    byte-identical-checksum guard test. Highest-risk single commit (`audit-determinism`).
 6. **android-arm64 + ios-arm64 device entries** (the `determinism.yml` TODO) + runtime
@@ -190,9 +199,16 @@ automatically. Reconnect then = snapshot + replay-buffered-commands (a plain `st
 (hand-rolled LE `Writer`/`Reader` sharing the checksum field-walk; `Rng(state, inc)` captured;
 terrain by `map_id`; serde-free in `core`) — the first slice is now **unblocked**.
 
-**First slice (no net dependency — can land alongside A):** `core::persist` +
-`Sim::serialize/deserialize` + `Rng::from_state` + the round-trip-replay determinism
-test. `/safe-edit`.
+**First slice (no net dependency)** ✅ **DONE** — `core::persist` (hand-rolled LE `Writer`/`Reader`,
+serde-free), `Sim::serialize/deserialize` driving a shared `fold<S: StateSink>` walk (so the
+checksum bytes are unchanged — both runner streams byte-identical — while serialize additionally
+captures the resume-only liveness triple `generation`/`alive`/free-list **order**), `Rng::from_state`,
+terrain by `map_id` (unknown ids rejected **loudly**, not silently defaulted), and the headline
+round-trip-replay determinism test (serialize@T → deserialize → replay `cmds[T..L]` bit-identical to
+the uninterrupted run, riding the arch matrix). `core` deps stay empty, float-free. A
+`determinism-auditor` pass confirmed no Critical/High hazards. `core` tests 141 → 151, dev + release.
+**Still owed for workstream C:** the reconnect *policy* + Wi-Fi↔cellular handoff (consumes this
+slice + `core::lockstep`'s command buffer); these are net-facing and follow workstream B.
 
 ---
 
