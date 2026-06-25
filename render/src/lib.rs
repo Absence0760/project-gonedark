@@ -84,6 +84,11 @@ pub mod terrain;
 /// so the `tally` / `readout_labels` seams are reachable; the `Renderer` drives the text.
 pub mod readout;
 
+/// Command-view build palette (Phase 2). Pure layout of the placeable-structure palette — label,
+/// const cost, and a host-supplied affordability flag — for the W4 text pass; reaches into no sim
+/// state (only the `core` const cost table). Public so the `build_menu_entries` seam is reachable.
+pub mod build_menu;
+
 /// Device quality tiers + dynamic-resolution + thermal-backoff policy (Phase 4 WS-C). Pure,
 /// host-testable RENDER decisions (invariant #1/#4: never a sim input) — see the module docs.
 pub mod tiers;

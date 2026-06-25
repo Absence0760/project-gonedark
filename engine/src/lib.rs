@@ -48,6 +48,9 @@ use session_shell::{
 mod audio;
 /// Order/stance command vocabulary (worker 5). Owns `commands_for`: UI intent → sim commands.
 mod command_ui;
+/// Build palette vocabulary. Owns `build_commands`: a chosen structure + placement tap → a
+/// `Command::Build`, quantizing the placement point to `Fixed` at the boundary (invariant #1).
+mod build_ui;
 /// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
 mod selection;
 /// Embodied-fire input seam (W1). Owns `fire_command`: host yaw + trigger → `Command::Fire`,
