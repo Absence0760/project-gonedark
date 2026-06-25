@@ -113,3 +113,28 @@ pub trait Storage {
     fn read(&self, key: &str) -> Option<Vec<u8>>;
     fn write(&mut self, key: &str, bytes: &[u8]);
 }
+
+/// Network transport seam — opaque byte frames in, opaque byte frames out (D27). This is the
+/// netcode's *what*, not its *how*: a frame is just `&[u8]`/`Vec<u8>`, and this trait names **no**
+/// socket, UDP, QUIC, or relay type. Concrete backends (a loopback/in-process double for dev in
+/// `pal-desktop`; real sockets, matchmaking, and relay in `server`) implement it; the abstract
+/// trait stays protocol-free exactly as [`Audio`] stays audio-API-free.
+///
+/// The load-bearing boundary rule (D27 bullet 3): **the transport never understands a `Command`,
+/// and `core` never understands a socket.** `core::lockstep` is sans-I/O — it *produces* outbound
+/// frames and *consumes* inbound ones — and the host drives a `&mut dyn Transport` to move those
+/// bytes between them. So this trait is deliberately object-safe (`&mut dyn Transport`) and deals
+/// only in opaque frames: the lockstep loop assembles/parses the wire format in `core`, hands the
+/// transport sealed bytes, and the transport never inspects them. Frames are delivered whole and
+/// in order per direction; the transport neither splits nor merges them.
+pub trait Transport {
+    /// Hand one opaque outbound frame to the transport for delivery to the peer(s). The bytes are
+    /// already the complete on-wire frame `core::lockstep` produced; the transport ships them
+    /// verbatim and does not interpret them.
+    fn send(&mut self, frame: &[u8]);
+
+    /// Drain every inbound frame received since the last poll, in arrival order. Each `Vec<u8>` is
+    /// one whole frame the host feeds back into `core::lockstep`. Returns empty when nothing has
+    /// arrived — polling is cheap and expected every tick.
+    fn poll(&mut self) -> Vec<Vec<u8>>;
+}
