@@ -1785,3 +1785,155 @@ in-engine — D32 carve-out). It builds **no iOS** shell (no iOS build target ex
   surface 1 + the §"LATER" table and [`roadmap.md`](roadmap.md) §"Meta-UI / app shell" "Boot & title"
   row note both. The deeper menu behind it — match setup / lobby — stays blocked per its own rows
   (**[Q5](open-questions.md)** / Phase-3).
+
+---
+
+## D37 — Embodied firing model: a fixed-point cone hitscan, sim-authoritative via the lockstep stream
+
+**Status:** decided + landed. Part of the **playability push**
+([`playability-plan.md`](playability-plan.md), worker W1). The FPS half of the hybrid was
+non-functional — `core::combat` skipped `InputSource::Embodied` units and there was no fire command,
+so an embodied player could move, look, and *die* but deal no damage. This closes that gap while
+holding invariants #1/#4/#5/#7.
+
+**Decision:**
+
+- An embodied (possessed) unit fires **only** through a new `Command::Fire { entity, dir }` — it never
+  auto-fires (the combat pass keeps skipping `InputSource::Embodied`). Design depth stays in the
+  player's aim/timing, not in unit autonomy (invariant #3/#5).
+- **The firing direction crosses into `core` as `Fixed` bits, never a float.** The host integrates aim
+  as a presentation-only `f32` yaw (D15), then a new pure seam `engine::fire::fire_command` quantizes
+  `cos/sin(yaw)` to a `Fixed` unit vector **at the input boundary** — exactly the `world_to_fixed`
+  pattern used for tap targets. No float leaks into the sim (invariant #1).
+- The shot resolves **sim-side** in `core::combat::resolve_fire`: a fixed-point **cone hitscan** picking
+  the lowest-index living hostile unit with `dir·(t−p) ≥ cos_half·|t−p|` — evaluated by squaring both
+  sides after rejecting a negative projection, so there is **no `sqrt`/normalize** — within weapon
+  `range²` and passing `terrain.line_of_sight`, taking the same cover-mitigated damage / suppression /
+  cooldown writes as the auto-resolver. The aim cone is `cos(30°)` (a 60° hip-fire arc); a clean miss
+  deliberately does **not** spend cooldown.
+- The command rides the **lockstep command stream** like player taps, and writes only
+  already-checksummed fields, so the per-tick checksum `fold()` is **unchanged** and the cross-arch
+  matrix stays comparable (invariant #7). The `core::lockstep` wire codec gained a `Fire` tag.
+
+**Why:** Resolving the shot from a lockstep command on every peer (not on the firing host) is the only
+way to keep it bit-identical for netcode; doing it in fixed-point with no transcendental keeps invariant
+#1. A cone — not a perfect ray — makes a hip-fired shot read as "I pointed at him and hit" while still
+demanding the player face the target.
+
+**What this does NOT decide:** weapon variety, projectile/ballistic weapons, reload/ammo, or aim-assist
+tuning — the cone half-angle and damage reuse the existing Rifleman weapon and are a *baseline*, not a
+balance lock. Embodied locomotion feel is still owed.
+
+**Consequences:** `core::sim` (`Command::Fire`), `core::combat::resolve_fire`, `core::lockstep` codec,
+the new `engine::fire` seam, and one push in `Game::frame`. Covered by core unit tests (cone hit/miss,
+range, LoS, cooldown gate, dead-target skip, tie-break) green dev+release, and the determinism + 2-peer
+lockstep runners stay green.
+
+---
+
+## D38 — Match-end / victory condition is a host-side derivation, not a sim system
+
+**Status:** decided + landed. Playability push ([`playability-plan.md`](playability-plan.md), worker
+W2). A match previously never ended — `MatchOutcome` was hard-wired to `Draw`.
+
+**Decision:**
+
+- The win/lose/draw outcome is decided by a **pure host-side evaluator**
+  (`engine::session_shell::evaluate_outcome`) reading already-checksummed end-state — per-faction alive
+  unit + building counts, territory, resources — **not** by a `core` system folded into the per-tick
+  checksum. It takes an extracted `FactionForces` value, never `&World`, so it is fairness-safe and
+  unit-testable without a GPU.
+- **Rules:** *elimination* (a combatant with 0 alive units **and** 0 buildings loses; sole survivor
+  wins; mutual → draw) dominates a **15-minute** (`elapsed_ticks` ≥ timeout) tiebreak by territory, then
+  resources, else draw. `Neutral` never wins or loses. The evaluator returns `None` while the match is
+  ongoing; `shell.end_match` is idempotent so the first decided outcome sticks.
+
+**Why:** A match must end, but the outcome is *presentation / session policy*, not deterministic sim
+state. Deriving it host-side from facts the sim already settled means it folds nothing new — it
+**cannot desync** lockstep (invariants #1/#7) — and keeps `core` free of a win-condition evaluator,
+consistent with [D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)'s
+"the host fills the summary."
+
+**What this does NOT decide:** game modes beyond skirmish elimination/score (no king-of-the-hill,
+ticket bleed, or objective modes yet); the 15-minute timeout is a default constant, not a tuned value.
+
+**Consequences:** `engine::session_shell` (the evaluator + `FactionForces`) and the `assemble_summary`
+region of `Game::frame` (the `Draw` placeholder swap + the per-faction read). The post-match summary now
+shows a real VICTORY / DEFEAT / DRAW. Ten branch unit tests, green dev+release.
+
+---
+
+## D39 — The enemy is a commander-level scripted AI issuing orders via the lockstep stream
+
+**Status:** decided + landed. Playability push ([`playability-plan.md`](playability-plan.md), worker
+W3). The enemy previously got one `AttackMove` at spawn then went inert forever.
+
+**Decision:**
+
+- The opponent is a deterministic `core::commander::commander_orders(...)` that emits **only existing
+  order/economy commands** (AttackMove / SetOrder-stance / Build / QueueProduction). Units stay
+  **literal executors** — all "intelligence" is the commander *choosing orders*, never per-unit autonomy
+  (**invariant #3**).
+- The host drives it on a **1-second** (`tick % 60 == 0`) gate and feeds its orders into the **same
+  `commands` Vec player input rides, before `drive_lockstep`** — so they travel the lockstep stream and
+  apply bit-identically on every peer.
+- **Determinism (load-bearing):** the commander uses its **own** seeded `core::rng::Rng`
+  (seed = `sim_seed ^ faction`) owned by `Game` — it must **never** draw from `sim.rng()` (that stream is
+  checksummed; a host-side draw would advance it and desync, invariant #7). All targeting is squared-
+  `Fixed` magnitude with stable lowest-index tie-breaks; float-free. Its behavior loop: reinforce at
+  camps when affordable, send idle units to capture the nearest neutral/enemy point, press the nearest
+  hostile otherwise, and bump `HoldFire` units to `ReturnFire`.
+
+**Why:** A playable match needs an opponent, but it must not break the literal-executor rule or
+determinism. Modeling the AI as a *commander that issues orders* preserves invariant #3; routing those
+orders through lockstep (own RNG, never the sim RNG) makes the AI cross-play-safe by construction with
+zero new checksum-folded state.
+
+**What this does NOT decide:** difficulty tiers, build-order sophistication, or PvE campaign structure —
+the commander is a *baseline* opponent. It does not change the netcode topology
+(D27); it is a producer of ordinary commands on the existing stream.
+
+**Consequences:** new `core::commander`, `core::lib` (`pub mod commander`), and the `Game` commander RNG
+field + the 1 Hz push in `Game::frame` (which replaces the one-shot spawn order). Determinism tests
+(same seed+tick ⇒ identical orders; a 300-tick run is checksum-stable) plus a "the enemy now moves,
+captures, and reinforces" integration test, green dev+release; sim + 2-peer lockstep runners stay green.
+
+---
+
+## D40 — Embodied-world rendering: a real FPS world drawn while the strategic map stays dark
+
+**Status:** decided + landed. Playability push ([`playability-plan.md`](playability-plan.md), worker
+W5). The embodied (first-person) view was a literal near-black void + the avatar quad, which read as
+broken and gave no sense of motion or heading.
+
+**Decision:**
+
+- The embodied pass now paints a real first-person space — a camera-reconstructed **sky gradient**, a
+  **gridded ground plane**, and a screen-space **weapon viewmodel** with a muzzle-flash cue — in a new
+  `render::world` module, replacing the bare `CLEAR_DARK` void.
+- **The fairness boundary (invariant #6) is unchanged and structural:** it remains the
+  `render::fog::visible_instances` filter, which while embodied keeps only the avatar (`FLAG_EMBODIED`)
+  plus the avatar's own line of sight and drops the whole strategic map — off-screen squad, allies, and
+  control-point rings. The world pass draws **only the camera-derived environment + a screen-space gun**;
+  it has **no access to sim entities**, so it cannot leak intel even in principle.
+- **"World goes dark" means losing strategic *intel*, not staring at black.** Consistent with
+  [`game-design.md`](game-design.md) §6 / `core::fog::embodied_visibility` ("fog reverts to avatar-only
+  vision"), an enemy physically in the avatar's first-person line of sight is **legitimate FPS sight**,
+  not a map reveal. The viz-runner fairness assertion was correspondingly moved off a brittle
+  "the frame is ~all black" proxy onto the real guarantee: the **strategic map** (own-squad / ally /
+  control-point intel) collapses to ~zero even as the enemy fires, because alerts are directional pings,
+  not intel.
+
+**Why:** The void hurt readability and embodiment feel for no fairness benefit — the fairness comes from
+the fog filter, not from refusing to draw a floor. Rendering the world purely from the *camera* keeps
+the guarantee airtight (the pass literally cannot see sim entities) while making first-person movement
+legible. The muzzle cue is presentation-only (`Game::last_fire_tick`, never read by the sim).
+
+**What this does NOT decide:** real weapon/character art, world geometry/cover meshes, lighting, or a
+skybox asset — the ground/sky/gun are procedural placeholders. It does not change what the fog filter
+reveals; it only stops wasting the frame on black.
+
+**Consequences:** new `render::world` (+ shader) and `world`-pass wiring in `render::lib`; the embodied
+unit pass now LOADs over the sky clear; a presentation-only `last_fire_tick` on `Game`. The viz-runner
+fairness assertions were re-expressed around strategic-map collapse (and proven to hold during combat),
+not weakened. Render tests + viz-runner green.
