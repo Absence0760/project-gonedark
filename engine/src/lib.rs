@@ -20,6 +20,7 @@
 
 use glam::{Mat4, Vec3, Vec4};
 use gonedark_core::alerts::AlertChannel;
+use gonedark_core::commander::{self, COMMANDER_PERIOD};
 use gonedark_core::components::{BuildingKind, EntityKind, Faction, Stance, UnitKind, Vec2};
 use gonedark_core::economy::{self, Resources};
 use gonedark_core::ecs::Entity;
@@ -27,6 +28,7 @@ use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::{self, Visibility};
 use gonedark_core::lockstep::Lockstep;
+use gonedark_core::rng::Rng;
 use gonedark_core::shell::{ConnectionStatus, LinkState, MatchOutcome};
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
@@ -409,6 +411,14 @@ pub struct Game {
     /// signal crosses the seam, never `core`). The host calls [`Game::set_thermal_state`] from its
     /// `pal::ThermalSensor`; defaults to `Nominal` (the desktop stub's value) until it does.
     thermal: gonedark_pal::ThermalState,
+
+    /// The enemy commander's OWN deterministic RNG (W3). Seeded `sim_seed ^ faction-id` so it is
+    /// reproducible yet decoupled from the checksummed `Sim::rng()` stream — the commander must
+    /// NEVER draw from `sim.rng()` (a host-side draw would advance that stream and desync
+    /// lockstep, invariant #7). The commander's orders are pushed into the same `commands` Vec
+    /// player commands ride, so they travel the lockstep stream and stay bit-identical on every
+    /// peer; this RNG is host-side planning input only, never sim state.
+    commander_rng: Rng,
 }
 
 impl Game {
@@ -435,10 +445,13 @@ impl Game {
         let ally_a = spawn_unit(&mut sim, -9, 4, Faction::Player, Stance::FireAtWill);
         let ally_b = spawn_unit(&mut sim, -9, -7, Faction::Player, Stance::FireAtWill);
 
-        // Enemy squad (right), attack-moving toward the player line.
-        let foe_a = spawn_unit(&mut sim, 8, 0, Faction::Enemy, Stance::FireAtWill);
-        let foe_b = spawn_unit(&mut sim, 10, 6, Faction::Enemy, Stance::FireAtWill);
-        let foe_c = spawn_unit(&mut sim, 9, -6, Faction::Enemy, Stance::FireAtWill);
+        // Enemy squad (right). They start IDLE (Stance::FireAtWill) — the enemy commander (W3)
+        // takes over from the first commander tick and drives them: capture points, press the
+        // player line, and reinforce from its camp. No one-shot spawn order; the AI is in charge
+        // the whole match (the previous single AttackMove left the enemy inert forever).
+        spawn_unit(&mut sim, 8, 0, Faction::Enemy, Stance::FireAtWill);
+        spawn_unit(&mut sim, 10, 6, Faction::Enemy, Stance::FireAtWill);
+        spawn_unit(&mut sim, 9, -6, Faction::Enemy, Stance::FireAtWill);
 
         // A player camp, pre-built for the demo, producing reinforcements you can watch spawn.
         if let Some(camp) = economy::build(
@@ -453,7 +466,20 @@ impl Game {
             economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
         }
 
-        // Kick off the skirmish: both squads advance into contact (combat fires en route).
+        // An enemy camp too, so the commander has somewhere to reinforce from — making the
+        // opponent a real economic actor, not just three units that trade and vanish.
+        if let Some(camp) = economy::build(
+            &mut sim.world,
+            &mut sim.resources,
+            Faction::Enemy,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(22), Fixed::ZERO),
+        ) {
+            sim.world.building[camp.index as usize].build_ticks_left = 0; // skip construction
+        }
+
+        // Kick off the player squad's advance into contact (combat fires en route). The enemy is
+        // NOT scripted here — its first move comes from the commander on the next 1 s gate.
         sim.step(&[
             Command::AttackMove {
                 entity: ally_a,
@@ -462,18 +488,6 @@ impl Game {
             Command::AttackMove {
                 entity: ally_b,
                 target: Vec2::new(Fixed::from_int(6), Fixed::from_int(-4)),
-            },
-            Command::AttackMove {
-                entity: foe_a,
-                target: Vec2::new(Fixed::from_int(-6), Fixed::ZERO),
-            },
-            Command::AttackMove {
-                entity: foe_b,
-                target: Vec2::new(Fixed::from_int(-6), Fixed::from_int(4)),
-            },
-            Command::AttackMove {
-                entity: foe_c,
-                target: Vec2::new(Fixed::from_int(-6), Fixed::from_int(-4)),
             },
         ]);
 
@@ -508,6 +522,9 @@ impl Game {
             tuning: RenderTuning::new(gonedark_render::tiers::QualityTier::High),
             // Until the host reports through its `pal::ThermalSensor`, assume no thermal pressure.
             thermal: gonedark_pal::ThermalState::Nominal,
+            // Enemy commander RNG: own stream seeded `sim_seed ^ faction-id` (W3) — decoupled from
+            // the checksummed sim RNG so a host-side draw can never advance/desync it.
+            commander_rng: Rng::new(seed ^ Faction::Enemy.index() as u64),
         }
     }
 
@@ -860,6 +877,27 @@ impl Game {
             if let Some(cmd) = fire::fire_command(self.player, self.yaw, input.fire) {
                 commands.push(cmd);
             }
+        }
+
+        // 1c. Enemy commander (W3). On a once-per-second gate (`tick % COMMANDER_PERIOD == 0`) the
+        // scripted commander surveys the (checksummed) world and emits ORDERS for its faction —
+        // capture points, press the player line, reinforce — using its OWN seeded RNG, never
+        // `sim.rng()` (that stream is checksummed; a host draw would desync, invariant #7). Its
+        // commands are pushed into THIS frame's `commands` Vec, so they enter the same lockstep
+        // stream as player taps and are applied bit-identically on every peer. Units stay literal
+        // executors (invariant #3); the commander only *chooses* their orders. Gating on
+        // `tick_count()` (the next tick to step) keeps the cadence a pure function of sim state, so
+        // it is identical across peers regardless of frame pacing.
+        if self.sim.tick_count().is_multiple_of(COMMANDER_PERIOD) {
+            let cmds = commander::commander_orders(
+                &self.sim.world,
+                &self.sim.territory,
+                &self.sim.resources,
+                &mut self.commander_rng,
+                Faction::Enemy,
+                self.sim.tick_count(),
+            );
+            commands.extend(cmds);
         }
 
         // 2. Fixed-tick accumulator → lockstep drive. The deterministic sim advances in whole
@@ -1915,5 +1953,121 @@ mod tests {
         ctrl.set_tier(QualityTier::Low);
         assert_eq!(ctrl.tier(), QualityTier::Low);
         assert!(ctrl.resolution_scale() <= QualityTier::Low.params().res_scale_ceiling + 1e-5);
+    }
+
+    // --- Enemy commander integration (W3) --------------------------------------------------
+    //
+    // `Game::frame` needs a GPU device, so the commander's host-side wiring (the once-per-second
+    // gate, the own RNG seeded `sim_seed ^ faction`, pushing its orders into the lockstep command
+    // stream BEFORE the step) is exercised here against a raw `Sim` set up like the demo scene —
+    // the same shape `frame()` drives. This is the testable seam for the otherwise-GPU-bound glue.
+
+    /// Drive one tick exactly as `Game::frame` does for the commander path: on the gate, plan with
+    /// the OWN rng and feed the orders into the same command set that steps the sim.
+    fn commander_drive(sim: &mut Sim, rng: &mut Rng, faction: Faction, extra: &[Command]) {
+        let mut commands: Vec<Command> = extra.to_vec();
+        if sim.tick_count().is_multiple_of(COMMANDER_PERIOD) {
+            commands.extend(commander::commander_orders(
+                &sim.world,
+                &sim.territory,
+                &sim.resources,
+                rng,
+                faction,
+                sim.tick_count(),
+            ));
+        }
+        sim.step(&commands);
+    }
+
+    fn enemy_demo_sim() -> Sim {
+        let mut sim = Sim::new(DEFAULT_SEED);
+        sim.resources = Resources::new(500);
+        sim.territory
+            .points
+            .push(ControlPoint::neutral(Vec2::new(Fixed::ZERO, Fixed::ZERO)));
+        sim.territory.points.push(ControlPoint::neutral(Vec2::new(
+            Fixed::from_int(-16),
+            Fixed::from_int(10),
+        )));
+        // Enemy squad + camp, mirroring `Game::new` (the player half is irrelevant to the AI).
+        spawn_unit(&mut sim, 8, 0, Faction::Enemy, Stance::FireAtWill);
+        spawn_unit(&mut sim, 10, 6, Faction::Enemy, Stance::FireAtWill);
+        spawn_unit(&mut sim, 9, -6, Faction::Enemy, Stance::FireAtWill);
+        spawn_unit(&mut sim, -7, -2, Faction::Player, Stance::FireAtWill); // a foe to press
+        if let Some(camp) = economy::build(
+            &mut sim.world,
+            &mut sim.resources,
+            Faction::Enemy,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(22), Fixed::ZERO),
+        ) {
+            sim.world.building[camp.index as usize].build_ticks_left = 0;
+        }
+        sim
+    }
+
+    /// Snapshot each enemy unit's position so we can prove movement.
+    fn enemy_unit_positions(sim: &Sim) -> Vec<Vec2> {
+        let mut v = Vec::new();
+        for i in 0..sim.world.capacity() {
+            if sim.world.is_index_alive(i)
+                && sim.world.kind[i] == EntityKind::Unit
+                && sim.world.faction[i] == Faction::Enemy
+            {
+                v.push(sim.world.pos[i]);
+            }
+        }
+        v
+    }
+
+    /// Over a 300-tick run the commander makes the enemy DO something visible: its units move from
+    /// their spawn (it tasks them to capture/attack) and it reinforces (an enemy unit count above
+    /// the 3 it spawned with). Previously the enemy was inert after one spawn order.
+    #[test]
+    fn enemy_commander_makes_the_enemy_act_over_300_ticks() {
+        let mut sim = enemy_demo_sim();
+        let mut rng = Rng::new(DEFAULT_SEED ^ Faction::Enemy.index() as u64);
+        let start = enemy_unit_positions(&sim);
+        let start_count = start.len();
+        assert_eq!(start_count, 3, "demo enemy starts with three units");
+
+        for _ in 0..300 {
+            commander_drive(&mut sim, &mut rng, Faction::Enemy, &[]);
+        }
+
+        // 1. The original three enemies moved (the commander tasked them) — not all still at spawn.
+        let mut any_moved = false;
+        for (i, &p) in enemy_unit_positions(&sim).iter().take(3).enumerate() {
+            if i < start.len() && p != start[i] {
+                any_moved = true;
+            }
+        }
+        assert!(any_moved, "the commander should have moved its units off their spawn");
+
+        // 2. It reinforced: more enemy units alive than it started with (camp produced from income).
+        let end_count = enemy_unit_positions(&sim).len();
+        assert!(
+            end_count > start_count,
+            "commander should reinforce: {start_count} -> {end_count} enemy units"
+        );
+    }
+
+    /// The commander wiring is deterministic end-to-end: two identical 300-tick runs (same seed,
+    /// same own-RNG seeding) produce the bit-identical per-tick checksum stream. This is the
+    /// host-side guarantee behind lockstep — the orders are a pure function of sim state + the
+    /// own RNG, so every peer's stream agrees.
+    #[test]
+    fn commander_driven_run_is_deterministic() {
+        fn run() -> Vec<u64> {
+            let mut sim = enemy_demo_sim();
+            let mut rng = Rng::new(DEFAULT_SEED ^ Faction::Enemy.index() as u64);
+            let mut stream = Vec::with_capacity(300);
+            for _ in 0..300 {
+                commander_drive(&mut sim, &mut rng, Faction::Enemy, &[]);
+                stream.push(sim.checksum());
+            }
+            stream
+        }
+        assert_eq!(run(), run(), "commander-driven checksum stream must be reproducible");
     }
 }
