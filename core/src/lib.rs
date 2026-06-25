@@ -27,6 +27,7 @@ pub mod persist;
 pub mod rng;
 pub mod sim;
 pub mod snapshot;
+pub mod spatial;
 pub mod systems;
 pub mod terrain;
 pub mod territory;

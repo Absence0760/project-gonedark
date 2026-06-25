@@ -24,6 +24,7 @@ use crate::ecs::World;
 use crate::event::SimEvent;
 use crate::fixed::Fixed;
 use crate::rng::Rng;
+use crate::spatial::SpatialHash;
 use crate::terrain::Terrain;
 
 /// Suppression at or above this fraction of [`SUPPRESSION_MAX`] pins a unit: it may not fire
@@ -77,11 +78,20 @@ fn can_engage(world: &World, terrain: &Terrain, shooter_idx: usize, target_idx: 
 }
 
 /// Pick the target slot for `shooter_idx` under its stance, or `None` to hold fire.
-/// `FireAtWill` takes the nearest valid enemy, ties broken to the lowest index (we only
-/// replace the best on a strictly-smaller squared distance). `ReturnFire` engages only its
-/// recorded `last_attacker` (and only if that attacker is still a valid target). `HoldFire`
-/// never fires.
-fn acquire_target(world: &World, terrain: &Terrain, shooter_idx: usize) -> Option<usize> {
+/// `FireAtWill` takes the nearest valid enemy, ties broken to the lowest index. `ReturnFire`
+/// engages only its recorded `last_attacker` (and only if that attacker is still a valid
+/// target). `HoldFire` never fires.
+///
+/// `FireAtWill` queries the per-tick [`SpatialHash`] instead of scanning all units (O(n²) →
+/// near-O(n)), but the result is **bit-identical** to the old brute-force scan: the hash's
+/// `(dist_sq, idx)` lexicographic comparator reproduces the same min-distance/lowest-index pick,
+/// and `can_engage` remains the sole authoritative range/LoS/hostility filter.
+fn acquire_target(
+    world: &World,
+    terrain: &Terrain,
+    spatial: &SpatialHash,
+    shooter_idx: usize,
+) -> Option<usize> {
     match world.stance[shooter_idx] {
         Stance::HoldFire => None,
         Stance::ReturnFire => {
@@ -97,19 +107,13 @@ fn acquire_target(world: &World, terrain: &Terrain, shooter_idx: usize) -> Optio
         }
         Stance::FireAtWill => {
             let my_pos = world.pos[shooter_idx];
-            let mut best: Option<(usize, Fixed)> = None;
-            for target_idx in 0..world.capacity() {
-                if !can_engage(world, terrain, shooter_idx, target_idx) {
-                    continue;
-                }
-                let dist_sq = (world.pos[target_idx] - my_pos).len_sq();
-                match best {
-                    // Strictly-less keeps the lowest index on a tie (we scan ascending).
-                    Some((_, best_sq)) if dist_sq >= best_sq => {}
-                    _ => best = Some((target_idx, dist_sq)),
-                }
-            }
-            best.map(|(idx, _)| idx)
+            let range = world.weapon[shooter_idx].range;
+            spatial.nearest_within(
+                my_pos,
+                range,
+                |idx| can_engage(world, terrain, shooter_idx, idx),
+                |idx| (world.pos[idx] - my_pos).len_sq(),
+            )
         }
     }
 }
@@ -143,6 +147,12 @@ pub fn combat_system(
         }
     }
 
+    // --- Build the per-tick spatial index for target acquisition (A5) ---
+    // Positions are fixed for the whole engage pass (pass 2 mutates only health/suppression/
+    // cooldown/last_attacker, never `pos`), so one build serves every shooter this tick. It is
+    // NOT sim state — never folded into the checksum, exactly like `flow_field::FlowFieldCache`.
+    let spatial = SpatialHash::build(world);
+
     // --- Pass 2: engage (armed, order-driven, un-pinned units) ---
     for i in 0..n {
         if !world.is_index_alive(i) {
@@ -162,7 +172,7 @@ pub fn combat_system(
             continue;
         }
 
-        let target_idx = match acquire_target(world, terrain, i) {
+        let target_idx = match acquire_target(world, terrain, &spatial, i) {
             Some(t) => t,
             None => continue,
         };
@@ -570,6 +580,26 @@ mod tests {
         let mut events = Vec::new();
         run(&mut world, &terrain, &mut events);
         assert_eq!(world.health[near_low.index as usize].cur, fx(75));
+        assert_eq!(world.health[near_high.index as usize].cur, fx(100));
+    }
+
+    #[test]
+    fn fire_at_will_ties_lowest_index_across_spatial_buckets() {
+        // Three enemies equidistant (distance 5) but in DIFFERENT spatial-hash cells, so the
+        // pick must not depend on which bucket the query reaches first — the lowest slot index
+        // wins (the spatial query reproduces the brute-force scan's tie-break, A5).
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(20, 25, 0));
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        let near_low = spawn_unit(&mut world, 5, 0, Faction::Enemy, 100, Weapon::default());
+        let near_mid = spawn_unit(&mut world, 0, 5, Faction::Enemy, 100, Weapon::default());
+        let near_high = spawn_unit(&mut world, -5, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        run(&mut world, &terrain, &mut events);
+        assert_eq!(world.health[near_low.index as usize].cur, fx(75), "lowest index hit");
+        assert_eq!(world.health[near_mid.index as usize].cur, fx(100));
         assert_eq!(world.health[near_high.index as usize].cur, fx(100));
     }
 
