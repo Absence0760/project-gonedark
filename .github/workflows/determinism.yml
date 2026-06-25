@@ -100,6 +100,19 @@ jobs:
         with:
           name: net-checksums-${{ matrix.target }}
           path: net-checksums-${{ matrix.target }}.txt
+      # ADD-ONLY (Phase 3 workstream A): the deterministic 200-unit `stress` scene stream. A
+      # SEPARATELY-NAMED artifact (`stress-checksums-*`, NOT `checksums-*`) so it is NOT swept
+      # into the `checksums-*.txt` glob the existing `compare` job diffs — the 200-unit scene is
+      # a DISTINCT stream from the phase2 scene and must be its own group, compared by the
+      # `compare-stress` job below (invariant #7, docs/phase-3-plan.md §"Workstream A" CI note).
+      # `--time` is deliberately omitted: it writes only to stderr, but the artifact must be the
+      # bare stdout checksum stream.
+      - name: Emit per-tick stress (200-unit) checksum stream
+        run: cargo run -q -p gonedark-sim-runner --release -- 300 stress > "stress-checksums-${{ matrix.target }}.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stress-checksums-${{ matrix.target }}
+          path: stress-checksums-${{ matrix.target }}.txt
 
   compare:
     name: cross-arch checksum diff
@@ -162,4 +175,38 @@ jobs:
             fi
           done
           [[ $fail -eq 0 ]] && echo "all net streams identical — lockstep determinism holds across arch"
+          exit $fail
+
+  # ADD-ONLY (Phase 3 workstream A): a SEPARATE cross-arch diff for the 200-unit `stress`
+  # stream. Mirrors `compare`'s logic but globs `stress-checksums-*.txt` only, so the stress
+  # stream is diffed across arch INDEPENDENTLY of the phase2 sim stream and the net stream —
+  # leaving the existing `compare` / `compare-net` jobs entirely untouched (invariant #7). A
+  # divergence here is a desync of the sim AT SCALE; never silence it by narrowing the matrix.
+  compare-stress:
+    name: cross-arch stress-checksum diff
+    needs: checksum
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: sums
+      - name: Diff all stress streams (any divergence = desync at scale = fail)
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          files=(sums/**/stress-checksums-*.txt)
+          if [[ ${#files[@]} -lt 2 ]]; then
+            echo "::error::expected >=2 stress-checksum streams, found ${#files[@]}"; exit 1
+          fi
+          echo "comparing ${#files[@]} stress streams:"; printf '  %s\n' "${files[@]}"
+          ref="${files[0]}"
+          fail=0
+          for f in "${files[@]}"; do
+            if ! diff -q "$ref" "$f" >/dev/null; then
+              echo "::error::stress-checksum divergence between $ref and $f — desync at scale (invariant #7)"
+              diff "$ref" "$f" | head -20 || true
+              fail=1
+            fi
+          done
+          [[ $fail -eq 0 ]] && echo "all stress streams identical — determinism holds at scale across arch"
           exit $fail
