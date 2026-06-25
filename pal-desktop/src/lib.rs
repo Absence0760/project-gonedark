@@ -260,88 +260,119 @@ impl DesktopInput {
         Self::default()
     }
 
-    /// Feed one `winit` [`WindowEvent`]. Pointer position and held key/button state are
-    /// accumulated; press *edges* latch the one-shot intents.
+    /// Feed one `winit` [`WindowEvent`]. This is a **thin decoder**: it unpacks the platform event
+    /// into the engine-neutral primitives (a moved/left pointer, a button edge, a key edge with its
+    /// held/repeat flags) and forwards them to the pure `on_*` mappers below. All the *meaning*
+    /// (which intents latch, which keys are held, the keymap) lives in those mappers so it is
+    /// unit-testable without constructing a winit `KeyEvent` (which has private, non-exhaustive
+    /// fields). The decode itself is the only part that needs a real winit event.
     pub fn handle_window_event(&mut self, event: &WindowEvent) {
         match event {
             WindowEvent::CursorMoved { position, .. } => {
-                self.pointer = Some((position.x as f32, position.y as f32));
+                self.on_cursor_moved(position.x as f32, position.y as f32);
             }
-            WindowEvent::CursorLeft { .. } => {
-                self.pointer = None;
-            }
+            WindowEvent::CursorLeft { .. } => self.on_cursor_left(),
             WindowEvent::MouseInput { state, button, .. } => {
-                let pressed = *state == ElementState::Pressed;
-                match button {
-                    MouseButton::Left => {
-                        self.pointer_down = pressed;
-                        if pressed {
-                            self.click_latch = true; // edge: command-layer click
-                        } else {
-                            self.release_latch = true; // edge: drag/tap completed
-                        }
-                    }
-                    MouseButton::Right => {
-                        self.fire = pressed;
-                    }
-                    _ => {}
-                }
+                self.on_mouse_button(*button, *state == ElementState::Pressed);
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                let pressed = event.state == ElementState::Pressed;
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    match code {
-                        // Edge-triggered intents: latch only on the press edge, and only on
-                        // the first press (ignore key-repeat) so they fire exactly once.
-                        KeyCode::KeyE => {
-                            if pressed && !event.repeat {
-                                self.embody_latch = true;
-                            }
-                        }
-                        KeyCode::KeyQ => {
-                            if pressed && !event.repeat {
-                                self.surface_latch = true;
-                            }
-                        }
-                        // Held locomotion axes (WASD).
-                        KeyCode::KeyW => self.move_up = pressed,
-                        KeyCode::KeyS => self.move_down = pressed,
-                        KeyCode::KeyA => self.move_left = pressed,
-                        KeyCode::KeyD => self.move_right = pressed,
-                        // Fire (alternative to right-click), held.
-                        KeyCode::Space => self.fire = pressed,
-                        // Touch-UI desktop bindings: F opens the order/stance context; number
-                        // keys pick a vocabulary slot (0-based on the wire) — 1–9 → slots 0–8,
-                        // 0 → slot 9 (see engine::command_ui for the slot table).
-                        // F is HELD (a level signal, like WASD), NOT an edge: the radial command
-                        // menu stays open while F is down and closes on release. An edge latch here
-                        // would open the menu for a single frame and then immediately drop it.
-                        KeyCode::KeyF => self.long_press = pressed,
-                        KeyCode::Digit1 if pressed && !event.repeat => self.command_slot = Some(0),
-                        KeyCode::Digit2 if pressed && !event.repeat => self.command_slot = Some(1),
-                        KeyCode::Digit3 if pressed && !event.repeat => self.command_slot = Some(2),
-                        KeyCode::Digit4 if pressed && !event.repeat => self.command_slot = Some(3),
-                        KeyCode::Digit5 if pressed && !event.repeat => self.command_slot = Some(4),
-                        KeyCode::Digit6 if pressed && !event.repeat => self.command_slot = Some(5),
-                        KeyCode::Digit7 if pressed && !event.repeat => self.command_slot = Some(6),
-                        KeyCode::Digit8 if pressed && !event.repeat => self.command_slot = Some(7),
-                        KeyCode::Digit9 if pressed && !event.repeat => self.command_slot = Some(8),
-                        KeyCode::Digit0 if pressed && !event.repeat => self.command_slot = Some(9),
-                        _ => {}
-                    }
+                    self.on_key(code, event.state == ElementState::Pressed, event.repeat);
                 }
             }
             _ => {}
         }
     }
 
-    /// Feed one `winit` [`DeviceEvent`] for raw, unaccelerated mouse-look deltas (the FPS
-    /// look axis). Deltas accumulate until the next drain.
+    /// Feed one `winit` [`DeviceEvent`] for raw, unaccelerated mouse-look deltas (the FPS look
+    /// axis). A thin decoder over [`on_mouse_motion`](Self::on_mouse_motion).
     pub fn handle_device_event(&mut self, event: &DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event {
-            self.look_dx += delta.0 as f32;
-            self.look_dy += delta.1 as f32;
+            self.on_mouse_motion(delta.0 as f32, delta.1 as f32);
         }
+    }
+
+    // --- Pure input mappers (the testable seam) -------------------------------------------------
+    // These take engine-neutral primitives, not winit types, so the keymap + latch/held rules are
+    // unit-tested directly (see `input_tests`). `KeyCode`/`MouseButton` are plain constructible
+    // enums; the un-constructible `KeyEvent` is decoded away in `handle_window_event` above.
+
+    /// The command-layer pointer moved to `(x, y)` window pixels.
+    fn on_cursor_moved(&mut self, x: f32, y: f32) {
+        self.pointer = Some((x, y));
+    }
+
+    /// The pointer left the window — drop the position so no stale point lingers.
+    fn on_cursor_left(&mut self) {
+        self.pointer = None;
+    }
+
+    /// A mouse button changed state. Left is the command-layer pointer (held, with press/release
+    /// edges latched so a fast click is never dropped); right fires (held).
+    fn on_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        match button {
+            MouseButton::Left => {
+                self.pointer_down = pressed;
+                if pressed {
+                    self.click_latch = true; // edge: command-layer click
+                } else {
+                    self.release_latch = true; // edge: drag/tap completed
+                }
+            }
+            MouseButton::Right => self.fire = pressed,
+            _ => {}
+        }
+    }
+
+    /// A key changed state. `pressed` is the up/down edge; `repeat` is the OS key-repeat flag.
+    /// Edge intents (embody/surface, vocabulary slots) latch only on the first press (`pressed &&
+    /// !repeat`); held inputs (WASD, fire, the F context key) track the level directly.
+    fn on_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
+        match code {
+            // Edge-triggered intents: latch only on the press edge, and only on the first press
+            // (ignore key-repeat) so they fire exactly once.
+            KeyCode::KeyE => {
+                if pressed && !repeat {
+                    self.embody_latch = true;
+                }
+            }
+            KeyCode::KeyQ => {
+                if pressed && !repeat {
+                    self.surface_latch = true;
+                }
+            }
+            // Held locomotion axes (WASD).
+            KeyCode::KeyW => self.move_up = pressed,
+            KeyCode::KeyS => self.move_down = pressed,
+            KeyCode::KeyA => self.move_left = pressed,
+            KeyCode::KeyD => self.move_right = pressed,
+            // Fire (alternative to right-click), held.
+            KeyCode::Space => self.fire = pressed,
+            // Touch-UI desktop bindings: F opens the order/stance context; number keys pick a
+            // vocabulary slot (0-based on the wire) — 1–9 → slots 0–8, 0 → slot 9 (see
+            // engine::command_ui for the slot table).
+            // F is HELD (a level signal, like WASD), NOT an edge: the radial command menu stays open
+            // while F is down and closes on release. An edge latch here would open the menu for a
+            // single frame and then immediately drop it.
+            KeyCode::KeyF => self.long_press = pressed,
+            KeyCode::Digit1 if pressed && !repeat => self.command_slot = Some(0),
+            KeyCode::Digit2 if pressed && !repeat => self.command_slot = Some(1),
+            KeyCode::Digit3 if pressed && !repeat => self.command_slot = Some(2),
+            KeyCode::Digit4 if pressed && !repeat => self.command_slot = Some(3),
+            KeyCode::Digit5 if pressed && !repeat => self.command_slot = Some(4),
+            KeyCode::Digit6 if pressed && !repeat => self.command_slot = Some(5),
+            KeyCode::Digit7 if pressed && !repeat => self.command_slot = Some(6),
+            KeyCode::Digit8 if pressed && !repeat => self.command_slot = Some(7),
+            KeyCode::Digit9 if pressed && !repeat => self.command_slot = Some(8),
+            KeyCode::Digit0 if pressed && !repeat => self.command_slot = Some(9),
+            _ => {}
+        }
+    }
+
+    /// Accumulate raw, unaccelerated mouse-look delta (cleared each drain).
+    fn on_mouse_motion(&mut self, dx: f32, dy: f32) {
+        self.look_dx += dx;
+        self.look_dy += dy;
     }
 
     /// Produce one frame's [`InputFrame`] and clear the edge-triggered fields (embody /
@@ -440,6 +471,174 @@ impl ThermalSensor for DesktopThermalSensor {
             on_external_power: true,
             charge: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    //! Tests for the pure input mappers (`on_key` / `on_mouse_button` / `on_cursor_*` /
+    //! `on_mouse_motion`) + `drain_frame`. These cover the keymap and the latch-vs-held rules — the
+    //! seam that the un-constructible winit `KeyEvent` previously hid from coverage. `KeyCode` and
+    //! `MouseButton` are plain enums, so the mappers are driven directly.
+
+    use super::*;
+
+    /// THE regression guard: the F context key must be HELD (true while down), not a one-shot edge.
+    /// A prior edge-latch made the radial command menu flash for a single frame and vanish.
+    #[test]
+    fn long_press_is_held_until_release() {
+        let mut input = DesktopInput::new();
+        assert!(!input.drain_frame().long_press, "idle: not pressed");
+        input.on_key(KeyCode::KeyF, true, false);
+        assert!(input.drain_frame().long_press, "held the frame F goes down");
+        assert!(
+            input.drain_frame().long_press,
+            "STILL held with no new event (level state, not a cleared edge)"
+        );
+        input.on_key(KeyCode::KeyF, false, false);
+        assert!(!input.drain_frame().long_press, "released → false");
+    }
+
+    #[test]
+    fn embody_and_surface_are_one_shot_edges() {
+        let mut input = DesktopInput::new();
+        input.on_key(KeyCode::KeyE, true, false);
+        assert!(input.drain_frame().embody_pressed, "embody fires on press");
+        assert!(
+            !input.drain_frame().embody_pressed,
+            "and clears after one drain (one-shot)"
+        );
+        input.on_key(KeyCode::KeyQ, true, false);
+        let f = input.drain_frame();
+        assert!(f.surface_pressed && !f.embody_pressed);
+    }
+
+    #[test]
+    fn edge_intents_ignore_key_repeat() {
+        let mut input = DesktopInput::new();
+        // An OS key-repeat (repeat = true) must NOT re-fire an edge intent.
+        input.on_key(KeyCode::KeyE, true, true);
+        assert!(
+            !input.drain_frame().embody_pressed,
+            "repeat doesn't latch embody"
+        );
+        input.on_key(KeyCode::Digit1, true, true);
+        assert_eq!(
+            input.drain_frame().command_slot,
+            None,
+            "repeat doesn't latch a slot"
+        );
+    }
+
+    #[test]
+    fn number_keys_map_to_zero_based_slots_then_clear() {
+        let mut input = DesktopInput::new();
+        input.on_key(KeyCode::Digit1, true, false);
+        assert_eq!(input.drain_frame().command_slot, Some(0), "1 → slot 0");
+        assert_eq!(input.drain_frame().command_slot, None, "slot is one-shot");
+        input.on_key(KeyCode::Digit0, true, false);
+        assert_eq!(input.drain_frame().command_slot, Some(9), "0 → slot 9");
+    }
+
+    #[test]
+    fn wasd_is_held_level_state() {
+        let mut input = DesktopInput::new();
+        input.on_key(KeyCode::KeyW, true, false); // up → -Y (screen convention)
+        assert_eq!(input.drain_frame().move_axis, (0.0, -1.0));
+        assert_eq!(input.drain_frame().move_axis, (0.0, -1.0), "still held");
+        input.on_key(KeyCode::KeyD, true, false); // + right → +X
+        assert_eq!(input.drain_frame().move_axis, (1.0, -1.0));
+        input.on_key(KeyCode::KeyW, false, false);
+        input.on_key(KeyCode::KeyD, false, false);
+        assert_eq!(
+            input.drain_frame().move_axis,
+            (0.0, 0.0),
+            "released → centered"
+        );
+    }
+
+    #[test]
+    fn left_click_press_then_release_yields_down_then_up() {
+        let mut input = DesktopInput::new();
+        input.on_mouse_button(MouseButton::Left, true);
+        let f = input.drain_frame();
+        assert!(f.pointer_down && !f.pointer_up, "press → down");
+        input.on_mouse_button(MouseButton::Left, false);
+        let f = input.drain_frame();
+        assert!(!f.pointer_down && f.pointer_up, "release → up");
+        assert!(
+            !input.drain_frame().pointer_up,
+            "up latch cleared after one drain"
+        );
+    }
+
+    #[test]
+    fn fast_click_within_one_frame_is_not_dropped() {
+        // Press AND release before the drain: still reads as a pointer-down + up that frame so a
+        // quick tap is never lost (the click latch carries the down).
+        let mut input = DesktopInput::new();
+        input.on_mouse_button(MouseButton::Left, true);
+        input.on_mouse_button(MouseButton::Left, false);
+        let f = input.drain_frame();
+        assert!(
+            f.pointer_down && f.pointer_up,
+            "fast click → down+up in one frame"
+        );
+    }
+
+    #[test]
+    fn right_click_and_space_both_fire_held() {
+        let mut input = DesktopInput::new();
+        input.on_mouse_button(MouseButton::Right, true);
+        assert!(input.drain_frame().fire, "RMB fires");
+        input.on_mouse_button(MouseButton::Right, false);
+        assert!(!input.drain_frame().fire, "RMB released");
+        input.on_key(KeyCode::Space, true, false);
+        assert!(input.drain_frame().fire, "Space also fires");
+    }
+
+    #[test]
+    fn pointer_position_tracks_and_clears_on_leave() {
+        let mut input = DesktopInput::new();
+        assert_eq!(input.drain_frame().pointer, None);
+        input.on_cursor_moved(120.0, 48.0);
+        assert_eq!(input.drain_frame().pointer, Some((120.0, 48.0)));
+        input.on_cursor_left();
+        assert_eq!(
+            input.drain_frame().pointer,
+            None,
+            "pointer dropped on leave"
+        );
+    }
+
+    #[test]
+    fn mouse_look_accumulates_then_clears_each_drain() {
+        let mut input = DesktopInput::new();
+        input.on_mouse_motion(3.0, -2.0);
+        input.on_mouse_motion(1.0, 5.0);
+        assert_eq!(
+            input.drain_frame().look_axis,
+            (4.0, 3.0),
+            "deltas accumulate"
+        );
+        assert_eq!(
+            input.drain_frame().look_axis,
+            (0.0, 0.0),
+            "cleared after drain"
+        );
+    }
+
+    #[test]
+    fn idle_frame_is_all_default() {
+        let mut input = DesktopInput::new();
+        let f = input.drain_frame();
+        assert_eq!(f.pointer, None);
+        assert!(!f.pointer_down && !f.pointer_up);
+        assert!(!f.embody_pressed && !f.surface_pressed);
+        assert!(!f.long_press && !f.fire);
+        assert_eq!(f.command_slot, None);
+        assert_eq!(f.move_axis, (0.0, 0.0));
+        assert_eq!(f.look_axis, (0.0, 0.0));
     }
 }
 
