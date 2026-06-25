@@ -90,9 +90,10 @@ These two layers are mutually exclusive in time. That exclusivity *is* the game.
   world down — vignette, darkened edges, a steady "you are blind right now" signal.
   If the cost is always *felt*, the player owns every death.
 
-Exactly **how thin the thread is** (total blackout / alerts-only / minimap-survives)
-and **whether the enemy can tell you've gone dark** are
-[open questions](open-questions.md). Current lean: alerts-only with strong audio.
+Exactly **how thin the thread is** (total blackout / alerts-only / minimap-survives) is
+an [open question](open-questions.md) (Q1; current lean: alerts-only with strong audio).
+**Whether the enemy can tell you've gone dark** is resolved ([Q2 → D33](decisions.md)): a
+tunable tell (`Hidden|Subtle|Marked`), default the soft, LoS-gated, aging `Subtle` tell.
 
 ## 7. Death & re-entry
 

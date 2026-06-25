@@ -162,8 +162,9 @@ model.
 > opened: **D27 (netcode topology) is decided and its first slice landed** — `core::lockstep`, a
 > platform-free **sans-I/O** deterministic 2-client loop + wire codec, verified in-process over a
 > lossy/jittery/reordering channel (peers' checksums agree + match a no-network reference; no
-> sockets yet). Still owed before the remaining net/PvP workstreams: a snapshot-format Dn, and
-> **Q2** (enemy detection of "gone dark") via `/decision`.
+> sockets yet). The snapshot format ([D28](decisions.md)) and **Q2** (enemy detection of "gone
+> dark", [D33](decisions.md): a tunable tell, default Subtle) are now both decided, and the
+> `core::detection` mechanism has landed; the *two-human* PvP mind game still needs the net layer.
 
 **Goal:** make it hold up at size and (if pursued) in multiplayer.
 

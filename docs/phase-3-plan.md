@@ -12,12 +12,14 @@
 > `pal::Transport` + loopback, engine wiring, avatar prediction, checksum-agreement broadcast, the
 > **UDP** transport, and **RTT-adaptive delay** via the agreed `DelayChange` protocol). **C** — the
 > authoritative snapshot (D28) and the **reconnect policy** (snapshot + buffered-command replay).
+> **D** — the gone-dark **detection** tell (`core::detection`, tunable `Hidden|Subtle|Marked`,
+> default Subtle — **Q2** resolved by [D33](decisions.md)).
 > **Still open:** **A** — rayon-into-`core` (needs a decision *and* is unjustified at ~3.7 ms) and
 > the dual-rate re-eval (D21, needs on-device thermal numbers); **B** — the host-side RTT
 > estimator wiring + relay/matchmaking ([Q9](open-questions.md)); **C** — the Wi-Fi↔cellular
-> **handoff** (blocked on a QUIC transport); **D** — the PvP detection mechanism (blocked on a
-> **Q2** `/decision`). The remaining items are gated on decisions or a physical device, not on more
-> code.
+> **handoff** (blocked on a QUIC transport); **D** — the detection **HUD/AI wiring** (the core
+> mechanism landed; the *two-human* mind game needs the net layer). The remaining items are gated on
+> decisions, a physical device, or the net layer — not on more core code.
 
 Phase 3 has four workstreams (`roadmap.md` §"Phase 3 — Scale & net"):
 
@@ -26,7 +28,7 @@ Phase 3 has four workstreams (`roadmap.md` §"Phase 3 — Scale & net"):
 | A | **Scale & perf** — 200-unit stress, profiling, job-system, dual-rate re-eval | Low→Med | No (measure-first) |
 | B | **Lockstep netcode** — input-delay exchange, avatar-local prediction (D15), CI | **High** | **D27 decided** (topology locked; code not yet landed) |
 | C | **Reconnect / snapshot / handoff** — authoritative serialize + resume | Med→High | **D28 decided** (format locked; code not yet landed) |
-| D | **PvP attention mind-game** — enemy detection of "gone dark" | Low (mostly design) | **Yes — Q2 via `/decision`** |
+| D | **PvP attention mind-game** — enemy detection of "gone dark" | Low (mostly design) | **D33 decided** (Q2: tunable tell, default Subtle) |
 
 The load-bearing finding from the scouting pass: **every workstream has a pure-`core`,
 no-network, fully-testable first slice.** The riskiest code (the wire, prediction) is

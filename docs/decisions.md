@@ -302,8 +302,9 @@ capability. Cosmetics are **presentation-layer only** and never enter the simula
   regardless of equipped cosmetics — two players with different skins compute the same
   world.
 - **No tell tampering.** A skin must not suppress, fake, or alter any "embodied unit"
-  tell. If [Q2](open-questions.md) lands on the marked-hero option, that marker is
-  engine-owned — skins render *under* it, never over it.
+  tell. [Q2](open-questions.md) resolved ([D33](#d33--going-dark-detection-a-tunable-three-mode-tell-default-subtle))
+  to a tunable tell whose `Marked`/`Subtle` markers are engine-owned (`core::detection`) — skins
+  render *under* them, never over them.
 - **Out-of-band loadout.** Cosmetic choice travels as a non-sim-affecting tag alongside
   player identity/entitlements, **never** as sim state in the lockstep order stream. A
   peer missing a skin asset falls back to the default model with zero sim divergence.
@@ -1408,6 +1409,12 @@ not yet exist (real designed audio for Q1; live PvP for Q2/Q3). They ship as a *
 lock** (matching the roadmap), and remain in [`open-questions.md`](open-questions.md) with the lean
 reaffirmed; reopening them is a playtest-driven Phase 3+ task. This is consistent with not deciding
 open questions without the evidence the decision needs.
+
+> **Q2 update — superseded by [D33](#d33--going-dark-detection-a-tunable-three-mode-tell-default-subtle):**
+> the Phase-3 resolution took the **opposite default** to this entry's lean — shipping the *soft tell*
+> (`Subtle`) as the default rather than no-signal — as a **tunable** `Hidden|Subtle|Marked` mechanism
+> so the "mechanism, not a lock" posture above still holds (`Hidden` remains one config field away).
+> Q1 and Q3 stay open with the leans recorded here.
 
 **Why:** Phase 2's goal was "the actual game" — the systems — and those are built, tested,
 deterministic, and demonstrated with real pixels and objective balance metrics. Holding the phase
