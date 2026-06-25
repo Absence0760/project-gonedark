@@ -1633,5 +1633,74 @@ scope — D32's "native shells" remain deferred behind this seam and the
 - [`architecture.md`](architecture.md) gains the shell↔sim boundary note D32 flagged as owed; the
   [`README.md`](../README.md) repo-map lists `shell`; [`phase-4-plan.md`](phase-4-plan.md)
   workstream A is marked landed.
+
+---
+
+## D35 — First native app-shell surface: the Android Compose "Boot & title" landing screen
+
+**Status:** decided + landed (Android only). The **first native out-of-match shell surface** —
+"Boot & title" ([`phase-4-plan.md`](phase-4-plan.md) §2 surface 1) — ships as a native **Jetpack
+Compose** layer in the existing [`android/`](../android) Gradle project, realizing
+[D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session) (native
+per-platform out-of-match shells) and consuming the
+[D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out) `core::shell`
+seam. This is the first surface to become buildable *the moment the seam landed*.
+
+**Decision:**
+
+- **The Android launcher is now a native Compose shell, not the engine.** A new
+  `MainActivity` (`ComponentActivity`) is the **LAUNCHER** and draws the title screen: the **GOING
+  DARK** title, the **COMMAND · EMBODY** tagline, **START / SETTINGS / QUIT** actions, and a
+  build/version stamp, in a dark "going-dark" Material3 palette. The shared Rust engine's
+  `android.app.NativeActivity` (`libgonedark_pal_android.so`) is **demoted** to a non-launcher,
+  non-exported activity that `MainActivity` starts via an explicit `Intent` on **Start**.
+- **Compose/Kotlin are enabled in the Gradle build.** Kotlin 2.0.21 + the Compose compiler plugin +
+  Jetpack Compose (Compose BOM 2024.10.01, Material3, `activity-compose` 1.9.3), `buildFeatures {
+  compose = true; buildConfig = true }`, Java/Kotlin 17. New Kotlin sources live under
+  `android/app/src/main/java/com/jaredhoward/goingdark/` (`MainActivity`, `TitleScreen`,
+  `ui/theme/Theme`, `BuildStamp`), plus a NoActionBar dark theme (`res/values/themes.xml` +
+  `colors.xml`) so there is no white launch flash. `android:hasCode="false"` is removed — the app now
+  carries Kotlin bytecode.
+- **The shell holds NO game/sim logic.** Per [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)/[D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)
+  it reaches `core` only through the `core::shell` seam — exactly like the PAL holds no game logic.
+  Today **Start** launches the engine's **default** match; match-configuration handoff across the
+  seam (army / map / mode) is **deferred** with match-setup, itself **[Q5](open-questions.md)**-blocked.
+- **`abiFilters` stays arm64-v8a only** (Phase-1 stance unchanged). The Compose launcher is pure JVM
+  bytecode and renders on the x86_64 emulator; only pressing **Start** into an embodied match needs
+  the matching native ABI.
+
+**Why:** [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
+chose native shells for the out-of-match surfaces, and
+[D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)'s
+`core::shell` seam — the named prerequisite for *every* shell surface — has now landed. Per
+[`phase-4-plan.md`](phase-4-plan.md) §2, "Boot & title" carries **no** design/net blocker; its *only*
+remaining gate was the missing per-platform native UI project. This change creates that project, so
+"Boot & title" is the first native surface buildable once the seam landed — exactly the sequencing the
+plan called. Building it in Compose buys OS-native text input/IME, scroll, the accessibility tree, the
+back-stack, deep links, and first-class store/billing sheets for free
+([D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)),
+rather than re-earning them in `wgpu`. Invariant #2 holds — the fork is *chrome*, not game logic; the
+sim/netcode/order vocab stay single-sourced in `core`.
+
+**What this does NOT decide:** it does **not** settle the match-config handoff (army/map/mode) across
+the seam — that ships with **match-setup**, **[Q5](open-questions.md)**-blocked (surface 4). **Settings**
+is a no-op placeholder until the Settings surface (surface 3) lands. It does **not** build the
+**desktop** native shell (the `app` crate still boots straight into a match — no desktop shell yet) or
+any **iOS** surface (no iOS build target exists at all per Phase 3). **Onboarding** (surface 2) stays
+**[Q5](open-questions.md)**-blocked. This is **Android only**.
+
+**Consequences:**
+- [`android/`](../android) gains a Kotlin/Compose source set and Gradle Compose enablement; the engine
+  `NativeActivity` is now **Start-launched**, not the launcher.
+- [`phase-4-plan.md`](phase-4-plan.md) §2 surface 1 + the §"LATER" table flip from BLOCKED to
+  **LANDED (Android)** (the deeper menu behind it — match setup / lobby — stays blocked per its own
+  rows); [`roadmap.md`](roadmap.md) §"Meta-UI / app shell" "Boot & title" row notes the Android Compose
+  landing screen has landed.
+- **Tested where it has logic:** the pure `buildStamp()`/`buildChannel()` seam is covered by a JVM unit
+  test (`BuildStampTest`); the Compose UI itself is device-gated chrome
+  ([D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)) and
+  exempt per CLAUDE.md's testing rule (thin, un-constructible glue).
+- **Still owed:** the match-config handoff (Q5), Settings content, the desktop + iOS native shells, and
+  onboarding (Q5) — each tracked against its own blocker in [`phase-4-plan.md`](phase-4-plan.md) §2.
 - The in-engine in-session shell (Phase 4 workstream B) and the native out-of-match shells now have
   a fixed contract to build against.

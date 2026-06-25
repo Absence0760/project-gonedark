@@ -1,8 +1,35 @@
-# Going Dark — Android app scaffold
+# Going Dark — Android app shell + engine scaffold
 
-Minimal Gradle project that packages the Rust `cdylib` (from `../pal-android`) into a
-NativeActivity APK/AAB. This is **Phase 1 build-order step 6** scaffolding (see
-`docs/phase-1-plan.md` §5, `docs/platforms.md` §8).
+Gradle project that does two things: (1) it packages the Rust `cdylib` (from `../pal-android`)
+into a NativeActivity — the shared engine — and (2) it now **launches into a native Jetpack
+Compose title/landing screen** (the first out-of-match app-shell surface, "Boot & title", D32/
+D34/D35). The engine `NativeActivity` is no longer the launcher: the Compose `MainActivity` is,
+and pressing **Start** launches the engine via an explicit `Intent`. The NativeActivity half is
+**Phase 1 build-order step 6** scaffolding (see `docs/phase-1-plan.md` §5, `docs/platforms.md`
+§8); the Compose shell is **Phase 4** (see `docs/phase-4-plan.md` §2 surface 1, `docs/decisions.md`
+D35).
+
+## The native Compose shell (the launcher) — D35
+
+`MainActivity` (a `ComponentActivity`, in `app/src/main/java/com/jaredhoward/goingdark/`) is the
+**LAUNCHER**. It draws `TitleScreen` — the **GOING DARK** title, **COMMAND · EMBODY** tagline,
+**START / SETTINGS / QUIT** actions, and a build/version stamp — in a dark "going-dark" Material3
+theme (`ui/theme/Theme.kt`; NoActionBar theme in `res/values/themes.xml` so there's no white
+launch flash). **Start** fires an explicit `Intent` to `android.app.NativeActivity` (the Rust
+engine, `libgonedark_pal_android.so`), which is now a non-launcher, non-exported activity.
+
+Honest scope (D35): the shell holds **no** game/sim logic — it reaches `core` only through the
+`core::shell` seam (D34). Today **Start** launches the engine's **default** match; the
+match-config handoff (army/map/mode) is deferred with match-setup (Q5-blocked). **Settings** is a
+no-op placeholder until the Settings surface lands. This is **Android only** — desktop boots
+straight into a match, iOS has no build target. The pure `buildStamp()`/`buildChannel()` helpers
+(`BuildStamp.kt`) are unit-tested (`app/src/test/.../BuildStampTest.kt`); the Compose UI itself is
+device-gated chrome, exempt per `CLAUDE.md`'s testing rule.
+
+The build now enables **Kotlin 2.0.21 + the Compose compiler plugin + Jetpack Compose** (Compose
+BOM 2024.10.01, Material3, `activity-compose` 1.9.3) with `buildFeatures { compose; buildConfig }`
+and Java/Kotlin 17 — all downloaded by Gradle on first build, no extra workstation setup.
+`android:hasCode="false"` is gone (the app now carries Kotlin bytecode).
 
 > **Status: runs the slice on a real arm64 device.** On the dev workstation (NDK 28,
 > `cargo-ndk` 4.x, JDK 21, Gradle 8.11 via the committed wrapper) `pnpm android:apk`
@@ -84,9 +111,10 @@ Build the Rust cdylib for arm64 into `jniLibs`, then assemble the APK:
     cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build --release
     cd android && ./gradlew :app:assembleDebug
 
-(The `:app:assembleDebug` task also wires `cargo ndk ... build` via the `cargoNdkBuild`
-Gradle task in `app/build.gradle.kts`, so the explicit `cargo ndk` line is belt-and-
-suspenders — run it standalone when iterating on Rust only.)
+`:app:assembleDebug` builds **both** halves: the Compose shell (Kotlin/Compose, pure JVM
+bytecode) *and*, via the `cargoNdkBuild` Gradle task in `app/build.gradle.kts`, the Rust
+`libgonedark_pal_android.so`. The explicit `cargo ndk` line above is therefore belt-and-
+suspenders — run it standalone when iterating on Rust only.
 
 Run the two commands above from the **repo root** (the `cargo ndk` `-o` path is relative
 to the repo root; `gradlew` lives in `android/`).
@@ -103,16 +131,23 @@ Plug a device (or start an emulator), then:
     cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build && \
       cd android && ./gradlew :app:assembleDebug && \
       adb install -r app/build/outputs/apk/debug/app-debug.apk && \
-      adb shell am start -n com.jaredhoward.goingdark/android.app.NativeActivity && \
+      adb shell am start -n com.jaredhoward.goingdark/.MainActivity && \
       adb logcat -s gonedark:V
+
+Since D35, the launcher is the Compose `MainActivity` — start *that* (above), then tap **Start**
+to enter the engine. The engine `NativeActivity` is non-exported, so `am start -n
+.../android.app.NativeActivity` no longer works directly; go through `MainActivity`.
 
 `adb logcat -s gonedark:V` filters to our log tag (set in `android_main` via
 `android_logger` with `.with_tag("gonedark")`), so crashes/lifecycle are readable. A
 coding agent can script this whole cycle and self-diagnose from logcat.
 
-> **Emulator caveat (roadmap.md):** the Android Emulator is x86_64 — build that ABI in
-> debug (`cargo ndk -t x86_64 ...` and add `x86_64` to `abiFilters`) for the emulator.
-> Real arm64 hardware is what proves the Phase 1 determinism exit criterion.
+> **Emulator caveat (roadmap.md):** the Compose **title/landing screen** is pure JVM bytecode
+> and renders fine on the x86_64 emulator as-is — only pressing **Start** into an embodied match
+> needs a matching native ABI. `abiFilters` stays **arm64-v8a only** (Phase-1 stance, D35); to
+> run the *engine* on the x86_64 emulator, build that ABI in debug (`cargo ndk -t x86_64 ...` and
+> add `x86_64` to `abiFilters`). Real arm64 hardware is what proves the Phase 1 determinism exit
+> criterion.
 
 ## What this maps to in the Rust workspace
 

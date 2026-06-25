@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A NoActionBar framework dark theme (no AppCompat dependency) for the Compose shell. The
+         dark window background + system-bar colours avoid a white launch flash before Compose
+         takes over the window. minSdk 24 has Theme.Material. -->
+    <style name="Theme.GoingDark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/ink</item>
+        <item name="android:statusBarColor">@color/ink</item>
+        <item name="android:navigationBarColor">@color/ink</item>
+    </style>
+</resources>

@@ -1,15 +1,26 @@
-// App module — packages the Rust cdylib (libgonedark.so) into a NativeActivity APK/AAB.
+// App module — the native **app shell** (D32 "Boot & title" landing, Jetpack Compose) plus
+// the Rust engine packaged as a NativeActivity.
 //
-// The Rust → .so build is done by `cargo-ndk` (see README.md) which writes per-ABI
-// libraries into `src/main/jniLibs/<abi>/`. The `cargoNdkBuild` task below wires that
-// step so a plain `./gradlew :app:assembleDebug` builds the native lib first. Phase 1
-// targets arm64-v8a only (real device); add x86_64 for the emulator if needed
-// (platforms.md / roadmap "Emulator caveat").
+// Two layers live here, kept strictly apart (D32):
+//   * the Kotlin/Compose shell (MainActivity + the title screen) — out-of-match chrome, the
+//     LAUNCHER the player lands on;
+//   * the shared Rust engine cdylib (libgonedark_pal_android.so, built by `cargo-ndk` from
+//     `../../pal-android`), loaded by `android.app.NativeActivity` when the shell starts a
+//     match. The cargo-ndk wiring at the bottom is unchanged from the Phase-1 scaffold.
+//
+// The shell holds NO game/sim logic — it reaches the shared `core` only through the
+// GPU-free, logic-free `core::shell` seam (D34) the same way the PAL does. Today "Start"
+// just launches the engine activity (match-config handoff across the seam is deferred with
+// match-setup, Q5). Phase 1 ships arm64-v8a only; the Compose launcher itself is pure JVM
+// bytecode and renders on the x86_64 emulator too (only an embodied match needs the matching
+// native ABI — see README "Emulator caveat").
 
 import org.gradle.api.tasks.Exec
 
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -27,7 +38,8 @@ android {
         versionName = "0.0.0"
 
         ndk {
-            // Phase 1 ships arm64 only (proves real arm64 determinism — invariant #7).
+            // Phase 1 ships arm64 only (proves real arm64 determinism — invariant #7). The
+            // Compose shell does not depend on this; only an embodied match does.
             abiFilters += listOf("arm64-v8a")
         }
     }
@@ -41,6 +53,21 @@ android {
         }
     }
 
+    buildFeatures {
+        compose = true
+        // BuildConfig.VERSION_NAME / DEBUG feed the title screen's build-channel + version
+        // stamp (see BuildStamp.kt).
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
     // The cdylib is delivered as a prebuilt .so under src/main/jniLibs (written by
     // cargo-ndk), so no externalNativeBuild (CMake/ndk-build) block is needed.
     sourceSets {
@@ -48,6 +75,22 @@ android {
             jniLibs.srcDirs("src/main/jniLibs")
         }
     }
+}
+
+dependencies {
+    // Compose, pinned via the BOM so the artifacts stay mutually compatible (2024.10.01
+    // pairs with Kotlin 2.0.21 / the 2.0.21 compose-compiler plugin).
+    val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
+    implementation(composeBom)
+    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // The build-stamp seam is a pure Kotlin fn (BuildStamp.kt); cover it with a plain JVM
+    // unit test (no device needed). The Compose UI itself is device-gated glue (D32 chrome).
+    testImplementation("junit:junit:4.13.2")
 }
 
 // --- cargo-ndk wiring ------------------------------------------------------------------

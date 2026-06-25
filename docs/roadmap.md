@@ -182,9 +182,11 @@ model.
 > (intent in, presentation-safe view out; fairness structural via no `&World`), recorded in
 > [D34](decisions.md). **The four buildable-now Rust workstreams have all landed** — A (seam ✅) · B
 > (in-engine in-session shell ✅) · C (device tiers / dynamic-res / thermal ✅) · D (telemetry +
-> consent gate ✅); full suite green dev+release. What remains is the seven **native out-of-match
-> shells**, deferred behind the seam, missing per-platform UI projects, and the
-> [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
+> consent gate ✅); full suite green dev+release. The **native out-of-match shells** are next —
+> the first has landed: the **Android "Boot & title" Compose landing screen** ([D35](decisions.md)),
+> the first native surface buildable once the seam landed. The other six remain pending (desktop +
+> iOS shells not built — no iOS target at all), deferred behind missing per-platform UI projects and
+> the [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
 
 **Goal:** wrap the game in everything that ships *around* the match — the app shell, the
 storefront, the first-run teach — and tune it to mid-range silicon.
@@ -202,7 +204,7 @@ in the in-match layer; the **settings surface that configures it** is.
 
 | Surface | What it covers | Depends on |
 |---|---|---|
-| **Boot & title** | Splash, title/attract screen, build-channel + version stamp | — |
+| **Boot & title** | Splash, title/attract screen, build-channel + version stamp. **Landed (Android) — [D35](decisions.md):** a native Jetpack Compose title/landing screen (the launcher); desktop + iOS shells still pending | — |
 | **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a new player reads a loss as *"I stayed too long"* | [Q5](open-questions.md) (PvE-first is the natural teach surface); invariant #6 |
 | **Settings** | Graphics tiers (↔ device quality tiers above), audio-mix levels, the touch-layout / rebind editor (configures the D14 scheme), desktop key/gamepad rebinds, **accessibility** | invariant #6 (see accessibility note) |
 | **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry | order/stance vocab (D25) |

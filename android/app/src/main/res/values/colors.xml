@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the Compose "Ink" background (Theme.kt) so the window has no white flash before
+         Compose draws, and the system bars sit flush with the dark shell. -->
+    <color name="ink">#FF07090C</color>
+</resources>
