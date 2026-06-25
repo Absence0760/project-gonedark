@@ -25,11 +25,16 @@ use winit::window::Window;
 mod audio;
 pub use audio::DesktopAudio;
 
-/// In-process loopback transport (worker B, D27). Owns [`LoopbackTransport`], the dev-only
-/// [`gonedark_pal::Transport`] double that moves opaque lockstep frames between two endpoints in
-/// one process (no socket); the host constructs a connected pair and drives `core::lockstep`.
+/// Transport backends (worker B, D27): the [`gonedark_pal::Transport`] seam that moves opaque
+/// lockstep frames between two endpoints. Two concrete impls live here:
+///  - [`LoopbackTransport`] — the dev-only in-process double (no socket); a connected pair shares
+///    queues, for single-process two-instance verification.
+///  - [`UdpTransport`] — the real-socket sibling over `std::net::UdpSocket`: one opaque frame ↔ one
+///    UDP datagram, non-blocking drain, no reliability of its own (the lockstep retransmit/dedup
+///    window already tolerates UDP loss/reorder/dup). **UDP now**; a QUIC transport (Wi-Fi↔cellular
+///    path migration) is the documented future option behind the same trait, per D27.
 mod transport;
-pub use transport::LoopbackTransport;
+pub use transport::{LoopbackTransport, UdpTransport};
 
 /// Owns the `wgpu` surface + device/queue for a `winit` window (D19). Built in the `app`'s
 /// `ApplicationHandler::resumed` from a window the `app` creates, then queried for the
