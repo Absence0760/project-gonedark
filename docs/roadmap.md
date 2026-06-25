@@ -175,6 +175,16 @@ model.
 
 ## Phase 4 — Polish & ship
 
+> **Status: OPENING (plan landed) — Phase 3 still IN PROGRESS.** Plan and workstream sequencing:
+> **[`phase-4-plan.md`](phase-4-plan.md)**. Per [D32](decisions.md) the out-of-match app shell is
+> **native per-platform** (reached through a narrow shell↔sim seam), with the **in-session** shell
+> in-engine. **The seam prerequisite has landed:** `core::shell` — a GPU-free, logic-free façade
+> (intent in, presentation-safe view out; fairness structural via no `&World`), recorded in
+> [D34](decisions.md). The four buildable-now Rust workstreams are A (seam ✅) · B (in-engine
+> in-session shell) · C (device tiers / dynamic-res / thermal) · D (telemetry + consent gate); the
+> seven native out-of-match shells are deferred behind the seam, missing per-platform UI projects,
+> and the [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
+
 **Goal:** wrap the game in everything that ships *around* the match — the app shell, the
 storefront, the first-run teach — and tune it to mid-range silicon.
 

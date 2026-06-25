@@ -27,6 +27,7 @@ pub mod orders;
 pub mod persist;
 pub mod reconnect;
 pub mod rng;
+pub mod shell;
 pub mod sim;
 pub mod snapshot;
 pub mod spatial;

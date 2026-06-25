@@ -91,6 +91,21 @@ Platform       (per-OS, via PAL) — wgpu surface, audio, input/touch,
 **Side channel:** an offline asset pipeline cooks source art/audio into packed,
 compressed, ready-to-mmap bundles. No runtime parsing, no decode-on-load.
 
+**Shell↔sim seam ([D32](decisions.md)/[D34](decisions.md)).** The app shell — the screens
+*around* a match (title, settings, lobby, store, and the in-engine pause/summary) — reaches
+the shared `core` only through one narrow, **GPU-free, logic-free** boundary, `core::shell`,
+on the same footing as the PAL: *intent in, presentation-safe view out*. It holds no game
+logic and mutates no sim state, so the sim/netcode/order-stance vocabulary stay
+single-sourced in `core` (invariant #2) while the out-of-match chrome forks per platform
+(native SwiftUI / Jetpack Compose / desktop). The seam's read views (`MatchSummary` — all
+integer/`Fixed`; the order/stance vocabulary as data; `ConnectionStatus`; the embodied
+`InSessionView`) are derivations on the same footing as `fog`/`alerts`/`detection`: never
+folded into the per-tick checksum. Fairness (invariant #6) is **structural** — the embodied
+`InSessionView::compose` takes already-derived avatar-only fog/alerts/tells, never `&World`,
+so it cannot leak strategic intel while the world is dark. Control intents split into sim
+`Command`s (which enter the lockstep stream) and host-side `SessionAction`s (pause/surrender/
+reconnect — which never do, so they can't desync).
+
 ## Data-oriented ECS — the hot path
 
 Units are rows in tightly packed component arrays (struct-of-arrays), not objects

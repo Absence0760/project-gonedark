@@ -1551,3 +1551,87 @@ follow-ups, not part of this `core` slice.
   [`README.md`](../README.md) repo-map and [`phase-3-plan.md`](phase-3-plan.md) workstream D are
   updated. The mechanism is **single-client now**; the HUD wiring + a scripted enemy that reads the
   channel are the net-facing follow-ups (the *actual* two-human mind game needs the net layer).
+
+---
+
+## D34 — The shell↔sim seam: a GPU-free, logic-free `core::shell` façade (intent in, view out)
+
+**Status:** decided + landed (Phase 4 workstream A — the [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session) prerequisite).
+
+**Context:** [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
+split the meta-UI — **native per-platform** shells for the out-of-match surfaces, the **in-engine**
+in-session shell — and required *both* to reach the shared `core` through "a narrow GPU-free,
+logic-free shell↔sim seam," fixed **before** any shell work begins
+([`phase-4-plan.md`](phase-4-plan.md) workstream A). This decides that boundary's shape.
+
+**Decision:** the seam is a typed **façade / DTO** module, `core::shell`, on the same footing as the
+PAL and the `fog`/`alerts`/`detection` derivations: it carries no game logic, makes no unit
+decisions, runs no AI, touches no GPU, and mutates no sim state — it only *shapes* the shell's coarse
+intents into existing `core` operations and *exposes* `core` state as presentation-safe data. Two
+directions:
+
+- **Read side (`core` → shell) — presentation-safe views, never `&mut`, never folded into the
+  per-tick checksum:**
+  - `MatchStatus` / `MatchPhase` — host-driven match lifecycle (the sim has no "phase" field; the
+    host drives it from session events).
+  - `MatchSummary` / `FactionStats` — the post-match summary, **all integer / `Fixed`, never a
+    float** (invariant #1): no float money (the economy purse is `i64`) and no precomputed ratios (a
+    K/D is the shell's own presentation math above the seam).
+  - The **order/stance vocabulary as data** — `OrderKind` / `StanceKind` + `order_vocabulary()` /
+    `stance_vocabulary()`, **single-sourced** from `core::components` (invariant #2): `OrderKind::of`
+    is the one mapping point, so adding an `Order` variant is a compile error until the vocabulary is
+    updated — a native shell lists the palette without re-declaring it.
+  - `ConnectionStatus` — a **pure projection** of `core::lockstep` state (link state / input delay /
+    next tick) for the reconnect-prompt HUD; **no sockets, no wall-clock** (the transport lives in
+    the PAL, D27).
+  - `InSessionView` — the **fairness-critical** embodied-HUD bundle (see Why).
+- **Control side (shell → `core`):** a coarse `ShellIntent` enum resolved by the pure
+  `resolve_intent` into `ResolvedIntent::{Command, Session}` — either an existing sim `Command`
+  (`Embody` / `Surface`) the host feeds the lockstep stream, or a host-side `SessionAction`
+  (`Pause` / `Resume` / `Surrender` / `RequestReconnect`) that **never enters the lockstep stream**.
+
+**Why:**
+- **One shared core, single-sourced (invariant #2, [D9](#d9--four-platforms-one-shared-deterministic-core-platform-optimized-backends)).**
+  Routing every shell — native or in-engine — through one `core::shell` façade keeps the sim,
+  netcode, and order/stance vocabulary single-sourced; only the *chrome* forks per platform, never
+  the game. The vocabulary-as-data export is what lets four native shells list the order palette
+  without four copies of it drifting apart.
+- **Fairness is STRUCTURAL, not disciplined (invariant #6).** `InSessionView::compose` does **not**
+  take `&World`. It takes the *already-derived* presentation state — the avatar's `fog::Visibility`
+  (the host's contract: `embodied_visibility`, avatar-only, while embodied), the `alerts` channel
+  (the only thread back to command — "alerts, not intel"), and the `detection` tells (themselves
+  fog/LoS-gated, [D33](#d33--going-dark-detection-a-tunable-three-mode-tell-default-subtle)). With no
+  raw world in scope the view *cannot* leak strategic intel even by accident — there is no world to
+  read. A test proves a far friendly unit's and a far enemy's areas stay dark in the in-session view
+  while the *command* view lights them.
+- **Session-control can never desync (invariants #1/#7).** Splitting `ResolvedIntent` into a sim
+  `Command` arm and a `SessionAction` arm makes it structurally impossible for pause/surrender/
+  reconnect to enter the deterministic stream: pause is a host *stop stepping*, not a sim mutation,
+  so a paused peer is bit-identical to a never-paused one once stepping resumes. A test asserts these
+  intents never become sim commands.
+- **Checksum-neutral by construction (invariant #7).** The seam adds no checksum-folded state and
+  feeds no float/logic into the command path; every read view is a derivation on the same footing as
+  `fog`/`detection`/`alerts`. A test composes the full in-session view every tick and asserts the
+  checksum stream stays byte-identical to a sim that never calls the seam.
+
+**What this does NOT decide:** the broader command surface the plan sketches (start/configure/abort a
+match, apply settings, store/progression refresh) is *intended* but **not yet built** — this slice
+lands the in-session + lifecycle + vocabulary + connection contract; the
+match-setup/settings/store commands arrive with their workstreams, several of them blocked on
+[Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md). It adds **no** win-condition
+evaluator (that is game logic for a `core` *system*, not this boundary — the host fills `MatchSummary`
+today) and **no** `PartialEq` on `sim::Command` (a clean follow-up if `ResolvedIntent` ever needs
+comparison). Native UI scaffolding (FFI, SwiftUI / Jetpack Compose / a desktop shell) is out of
+scope — D32's "native shells" remain deferred behind this seam and the
+[Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
+
+**Consequences:**
+- A new `core::shell` module ships (the façade types + `resolve_intent` / `ConnectionStatus::project`
+  / `InSessionView::compose`, plus tests incl. the load-bearing fairness + checksum-neutrality
+  guards); `core` tests grow 193 → 202 (green dev + release; float-free guard clean; `code-reviewer`
+  CLEAN).
+- [`architecture.md`](architecture.md) gains the shell↔sim boundary note D32 flagged as owed; the
+  [`README.md`](../README.md) repo-map lists `shell`; [`phase-4-plan.md`](phase-4-plan.md)
+  workstream A is marked landed.
+- The in-engine in-session shell (Phase 4 workstream B) and the native out-of-match shells now have
+  a fixed contract to build against.
