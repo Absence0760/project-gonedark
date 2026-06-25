@@ -30,9 +30,12 @@ pub struct InputFrame {
     /// Edge-triggered embody / surface intents.
     pub embody_pressed: bool,
     pub surface_pressed: bool,
-    /// Edge-triggered "open the order/stance context" intent (touch: long-press; desktop:
-    /// right-button down). The command-UI layer turns this into a vocabulary action on the
-    /// current selection.
+    /// "Open the order/stance context" input — a HELD/level signal: `true` for as long as the
+    /// player holds the gesture (touch: a long-press held down; desktop: the F key held), NOT a
+    /// one-shot edge. The command-UI layer opens the radial menu while it is held (a preview that
+    /// emits no commands) and *commits* when a [`command_slot`](Self::command_slot) is chosen with
+    /// it held; on release the menu closes. Held semantics are load-bearing — an edge would flash
+    /// the menu for a single frame. See `engine::command_ui::radial_intent`.
     pub long_press: bool,
     /// A discrete order/stance vocabulary slot chosen from the on-screen command UI this frame,
     /// if any (touch: a radial/toolbar button; desktop: number keys). The command-UI layer maps

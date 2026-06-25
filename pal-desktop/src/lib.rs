@@ -223,10 +223,13 @@ pub struct DesktopInput {
     embody_latch: bool,
     surface_latch: bool,
     click_latch: bool,
-    // Touch-UI desktop bindings (worker 4/5 consume these via InputFrame): left-button release
-    // edge, the "open order context" key (F), and the order/stance vocabulary slot keys (1–6).
+    // Touch-UI desktop bindings (worker 4/5 consume these via InputFrame): the left-button release
+    // edge and the order/stance vocabulary slot keys (1–6).
     release_latch: bool,
-    long_press_latch: bool,
+    // The "open the order/stance context" input (F): a HELD/level signal — true for as long as the
+    // key is down, NOT a one-shot edge. The radial command menu stays open while it is held and
+    // closes on release (an edge here would flash the menu for a single frame).
+    long_press: bool,
     command_slot: Option<u8>,
 }
 
@@ -246,7 +249,7 @@ impl Default for DesktopInput {
             surface_latch: false,
             click_latch: false,
             release_latch: false,
-            long_press_latch: false,
+            long_press: false,
             command_slot: None,
         }
     }
@@ -310,11 +313,10 @@ impl DesktopInput {
                         // Touch-UI desktop bindings: F opens the order/stance context; number
                         // keys pick a vocabulary slot (0-based on the wire) — 1–9 → slots 0–8,
                         // 0 → slot 9 (see engine::command_ui for the slot table).
-                        KeyCode::KeyF => {
-                            if pressed && !event.repeat {
-                                self.long_press_latch = true;
-                            }
-                        }
+                        // F is HELD (a level signal, like WASD), NOT an edge: the radial command
+                        // menu stays open while F is down and closes on release. An edge latch here
+                        // would open the menu for a single frame and then immediately drop it.
+                        KeyCode::KeyF => self.long_press = pressed,
                         KeyCode::Digit1 if pressed && !event.repeat => self.command_slot = Some(0),
                         KeyCode::Digit2 if pressed && !event.repeat => self.command_slot = Some(1),
                         KeyCode::Digit3 if pressed && !event.repeat => self.command_slot = Some(2),
@@ -361,19 +363,20 @@ impl DesktopInput {
             pointer_up: self.release_latch,
             embody_pressed: self.embody_latch,
             surface_pressed: self.surface_latch,
-            long_press: self.long_press_latch,
+            long_press: self.long_press,
             command_slot: self.command_slot,
             move_axis: (mx, my),
             look_axis: (self.look_dx, self.look_dy),
             fire: self.fire,
         };
 
-        // Clear one-shot state for the next accumulation window.
+        // Clear one-shot state for the next accumulation window. `long_press` is NOT cleared here —
+        // it is held/level state (true while F is down), mirroring `fire`/WASD; it is reset only by
+        // the F-release event in `handle_window_event`.
         self.embody_latch = false;
         self.surface_latch = false;
         self.click_latch = false;
         self.release_latch = false;
-        self.long_press_latch = false;
         self.command_slot = None;
         self.look_dx = 0.0;
         self.look_dy = 0.0;
