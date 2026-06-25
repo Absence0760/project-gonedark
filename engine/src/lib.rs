@@ -26,10 +26,11 @@ use gonedark_core::ecs::Entity;
 use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::{self, Visibility};
+use gonedark_core::lockstep::Lockstep;
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
 use gonedark_core::territory::ControlPoint;
-use gonedark_pal::{Audio, InputFrame};
+use gonedark_pal::{Audio, InputFrame, Transport};
 use gonedark_render::{fixed_to_f32, Camera, Renderer};
 
 use selection::Selection;
@@ -59,6 +60,104 @@ const LOOK_SENSITIVITY: f32 = 0.0025;
 /// Cap on catch-up sim steps in one frame, so a huge first-frame / stall `dt` can't spiral
 /// the sim ("spiral of death"). Excess time is dropped.
 const MAX_CATCHUP_STEPS: u32 = 8;
+
+/// Single-player lockstep session: one peer (us), local id 0, and **zero input delay** —
+/// commands execute on the tick they're issued, so there's no added input latency and the
+/// feel matches today's direct stepping (D27 step 4). With `peer_count == 1` the gate clears
+/// on the local slot alone, so no real transport is needed (`NullTransport`).
+const SP_PEER_COUNT: u32 = 1;
+const SP_LOCAL: gonedark_core::lockstep::PeerId = 0;
+const SP_DELAY: u64 = 0;
+
+/// A transport that goes nowhere: `send` drops the frame, `poll` is always empty. This is the
+/// single-player wiring — `peer_count == 1` means the lockstep gate never waits on a remote, so
+/// the only frames in flight are our own echoes, which `Lockstep` already ignores. Having it
+/// (rather than skipping the transport entirely) keeps `frame`'s drive loop multiplayer-ready:
+/// swap a real `pal::Transport` in and the same loop is a 2-peer client. Lives HERE in `engine`
+/// (not `pal-desktop`) so the layering stays `engine -> {core, render, pal}` (invariant #2).
+///
+/// Single-player runs the transport as `None` (zero per-frame overhead — the one-peer gate clears
+/// on local input alone), so this is the documented, tested seam for the multiplayer wiring rather
+/// than something the live loop constructs today; the tests drive the seam through it to prove the
+/// transport-present branch is stream-identical.
+#[cfg_attr(not(test), allow(dead_code))]
+struct NullTransport;
+
+impl Transport for NullTransport {
+    fn send(&mut self, _frame: &[u8]) {}
+    fn poll(&mut self) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+}
+
+/// Drive `lockstep` forward by up to `budget` ticks this frame, stepping `sim` with each ready
+/// tick's merged command set — the wgpu-free seam under [`Game::frame`]'s fixed-tick accumulator
+/// (D27 step 4). It mirrors the `net-sim-runner` reference drive loop, in order:
+///
+/// 1. **Submit** `budget` local sets — one per tick this frame intends to advance. The FIRST
+///    carries this frame's `commands`; the rest are empty — exactly as the old accumulator applied
+///    commands only on its first step and passed `&[]` to catch-up steps. (`Lockstep::submit`
+///    stamps each to its own execution tick `delay + submitted`, so input delay is honoured
+///    without the caller tracking tick numbers.)
+/// 2. **Pump the transport** (if present): `drain_outbound -> send`, then `poll -> deliver`. With
+///    the single-player `NullTransport` both are no-ops; with a real peer this is the wire pump.
+/// 3. **Advance**: `while try_advance()` (clamped to `budget`) hand each ready tick's merged set
+///    to `step` — a closure that snapshots `prev = curr`, calls `sim.step`, accumulates events,
+///    and refreshes `curr` back in `Game`.
+///
+/// Returns the number of ticks advanced. For the single-player session (`peer_count == 1`,
+/// `delay == 0`) the gate clears on the local slot alone with no warmup, so each submitted set is
+/// returned by `try_advance` immediately and in order: the stepped checksum stream is
+/// **bit-identical** to stepping `sim` directly with the same per-frame `commands` on the first
+/// step and `&[]` after (invariant #7). `step` only ever sees a merged `&[Command]`, so the seam
+/// stays wgpu-free and is unit-testable against a bare `Sim`.
+///
+/// Caller contract (held by `Game::frame`): never call with `budget == 0` while `commands` is
+/// non-empty — the sub-tick fallback raises the budget to 1 first — so a frame's input is never
+/// submitted to a tick it then declines to advance (which, at `delay == 0`, would strand it).
+fn drive_lockstep(
+    sim: &mut Sim,
+    lockstep: &mut Lockstep,
+    transport: Option<&mut (dyn Transport + '_)>,
+    commands: Vec<Command>,
+    budget: u32,
+    mut step: impl FnMut(&mut Sim, &[Command]),
+) -> u32 {
+    // 1. Submit exactly `budget` local sets — the first carrying this frame's commands, the rest
+    // empty. One submit per tick we intend to advance keeps `submitted` in step with the ticks
+    // executed (no over-submission stranding input at delay 0).
+    let mut commands = Some(commands);
+    for _ in 0..budget {
+        lockstep.submit(commands.take().unwrap_or_default());
+    }
+
+    // 2. Pump the transport: ship our outbound frames, then deliver anything inbound. No-op for
+    // single-player (NullTransport); the real wire pump for a 2-peer client.
+    if let Some(transport) = transport {
+        for frame in lockstep.drain_outbound() {
+            transport.send(&frame);
+        }
+        for frame in transport.poll() {
+            // A malformed frame from the wire is an error to handle, not a crash. There is no
+            // host-visible error channel here yet; drop it (a resend will carry a good copy) and
+            // let the gate stall — the same loss-tolerant posture the protocol already takes.
+            let _ = lockstep.deliver(&frame);
+        }
+    }
+
+    // 3. Advance every ready tick into the sim, clamped to this frame's budget.
+    let mut advanced = 0u32;
+    while advanced < budget {
+        match lockstep.try_advance() {
+            Some(merged) => {
+                step(sim, &merged);
+                advanced += 1;
+            }
+            None => break,
+        }
+    }
+    advanced
+}
 
 /// Which camera the host is presenting through.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -225,6 +324,20 @@ pub struct Game {
     /// The rolling embodied alert channel (worker 2's HUD reads this; `core::alerts` derives it).
     /// A presentation derivation from the event stream — never sim state (invariant #7).
     alerts: AlertChannel,
+
+    /// The per-tick command exchange the sim is driven through (D27 step 4). Single-player runs a
+    /// one-peer, zero-delay session, so the gate clears on local input alone and commands execute
+    /// the tick they're issued (no added latency, today's feel). The frame loop submits this
+    /// frame's mapped commands and steps the sim from `try_advance()`'s merged set rather than
+    /// stepping it directly — making the loop multiplayer-ready without forking the path.
+    lockstep: Lockstep,
+
+    /// The wire transport for `lockstep`'s byte frames, or `None` for single-player. `peer_count
+    /// == 1` means the gate never waits on a remote, so the single-player session needs no real
+    /// transport; a real `pal::Transport` (loopback/UDP/relay) drops in here for multiplayer with
+    /// no change to the drive loop. Boxed `dyn` so `engine` stays free of any concrete backend
+    /// (the layering is `engine -> {core, render, pal}`, invariant #2).
+    transport: Option<Box<dyn Transport>>,
 }
 
 impl Game {
@@ -309,6 +422,10 @@ impl Game {
             yaw: 0.0,
             selection: Selection::new(),
             alerts: AlertChannel::new(),
+            // Single-player lockstep: one peer (us), local id 0, zero input delay (D27 step 4).
+            lockstep: Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY),
+            // No remote → no real transport needed; the one-peer gate clears on local input alone.
+            transport: None,
         }
     }
 
@@ -452,9 +569,12 @@ impl Game {
         // Integrate look into presentation-only yaw (D15: never into the sim).
         self.yaw += input.look_axis.0 * LOOK_SENSITIVITY;
 
-        // 2. Fixed-tick accumulator: advance the deterministic sim in whole ticks. This
-        // frame's commands apply on the FIRST step; catch-up steps pass none. Clamped so a
-        // huge first-frame / stall dt can't spiral.
+        // 2. Fixed-tick accumulator → lockstep drive. The deterministic sim advances in whole
+        // ticks, but each tick is now driven through `core::lockstep` (D27 step 4) instead of
+        // stepped directly: this frame's commands are submitted onto the FIRST advancing tick and
+        // catch-up ticks submit none — exactly as before, but the sim steps from the merged set
+        // `try_advance()` returns, so the path is multiplayer-ready. The accumulator (clamped so a
+        // huge first-frame / stall dt can't spiral) only decides HOW MANY ticks to advance.
         let tick_dt = 1.0 / TICK_HZ as f32;
         self.acc += dt_secs;
 
@@ -463,33 +583,43 @@ impl Game {
         // below — both pure presentation derivations, neither touches sim state (invariant #7).
         let mut frame_events: Vec<SimEvent> = Vec::new();
 
-        let mut steps = 0u32;
-        let mut first_step = true;
-        while self.acc >= tick_dt && steps < MAX_CATCHUP_STEPS {
-            self.prev = self.curr.clone();
-            if first_step {
-                self.sim.step(&commands);
-                first_step = false;
-            } else {
-                self.sim.step(&[]);
-            }
-            frame_events.extend_from_slice(self.sim.events());
-            self.curr = self.sim.snapshot();
+        // Drain the accumulator into a whole-tick budget (clamped). Each whole tick consumes
+        // exactly `tick_dt`; the excess past the clamp is dropped so the sim can't spiral.
+        let mut budget = 0u32;
+        while self.acc >= tick_dt && budget < MAX_CATCHUP_STEPS {
             self.acc -= tick_dt;
-            steps += 1;
+            budget += 1;
         }
-        if steps == MAX_CATCHUP_STEPS && self.acc >= tick_dt {
+        if budget == MAX_CATCHUP_STEPS && self.acc >= tick_dt {
             self.acc = 0.0;
         }
         // Sub-tick frame: if no whole tick elapsed this frame (render faster than TICK_HZ) but
-        // input produced commands, apply them now on an extra step so the edge-triggered
-        // tap/embody intent — which fires for exactly one drained input frame — is not dropped.
-        if first_step && !commands.is_empty() {
-            self.prev = self.curr.clone();
-            self.sim.step(&commands);
-            frame_events.extend_from_slice(self.sim.events());
-            self.curr = self.sim.snapshot();
+        // input produced commands, advance ONE tick anyway so the edge-triggered tap/embody intent
+        // — which fires for exactly one drained input frame — is not dropped. (At delay 0 a
+        // submitted-but-not-advanced tick would strand the input; raising the budget to 1 here is
+        // the contract `drive_lockstep` relies on.)
+        if budget == 0 && !commands.is_empty() {
+            budget = 1;
         }
+
+        // Drive the lockstep loop for `budget` ticks. The per-tick `step` closure preserves the
+        // prev→curr snapshot, the event accumulation, and the sim advance the old accumulator did.
+        let prev = &mut self.prev;
+        let curr = &mut self.curr;
+        let events = &mut frame_events;
+        drive_lockstep(
+            &mut self.sim,
+            &mut self.lockstep,
+            self.transport.as_deref_mut(),
+            commands,
+            budget,
+            |sim, merged| {
+                *prev = curr.clone();
+                sim.step(merged);
+                events.extend_from_slice(sim.events());
+                *curr = sim.snapshot();
+            },
+        );
 
         // Fold this frame's events into the embodied thread-back: the alert channel (worker 2's
         // HUD) and the positioned audio mix (worker 3). "Alerts, not intel" — observed as the
@@ -585,6 +715,8 @@ fn predict_avatar(_snapshot: &Snapshot, _input: &InputFrame, _embodied: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gonedark_core::components::{BuildingKind, EntityKind};
+    use gonedark_core::economy::{self, Resources};
     use gonedark_core::ecs::World;
     use gonedark_render::fixed_to_f32;
 
@@ -743,5 +875,229 @@ mod tests {
         };
         let cmds = map_input_commands(&input, true, player, 800, 600);
         assert!(!cmds.iter().any(|c| matches!(c, Command::Move { .. })));
+    }
+
+    // ---- lockstep drive seam (D27 step 4) ----
+
+    const DRIVE_SEED: u64 = 0x5EED_1234_ABCD_F00D;
+
+    /// A small two-faction scene built into `sim`, returning a handle to drive. Spawn order is
+    /// fixed, so the handles are bit-identical across every sim built this way — exactly the
+    /// determinism the lockstep path leans on.
+    fn drive_scene(sim: &mut Sim) -> Entity {
+        sim.resources = Resources::new(100_000);
+        let (health, weapon) = economy::unit_stats(UnitKind::Rifleman);
+        let mut spawn = |x: i32, y: i32, faction: Faction| {
+            let e = sim.world.spawn();
+            let i = e.index as usize;
+            sim.world.kind[i] = EntityKind::Unit;
+            sim.world.faction[i] = faction;
+            sim.world.pos[i] = Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
+            sim.world.health[i] = health;
+            sim.world.weapon[i] = weapon;
+            sim.world.stance[i] = Stance::FireAtWill;
+            e
+        };
+        let player = spawn(-5, 0, Faction::Player);
+        let _ = spawn(-5, 3, Faction::Player);
+        let _ = spawn(5, 0, Faction::Enemy);
+        let _ = spawn(5, 3, Faction::Enemy);
+        economy::build(
+            &mut sim.world,
+            &mut sim.resources,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(-20), Fixed::from_int(20)),
+        )
+        .expect("camp affordable at 100k");
+        player
+    }
+
+    /// A scripted sequence of per-frame `(commands, budget)` — a few active frames with commands,
+    /// catch-up frames advancing several ticks at once, and quiet frames. Mirrors what the
+    /// accumulator hands `drive_lockstep`: commands ride the FIRST tick of a frame, catch-up ticks
+    /// are empty.
+    fn drive_script(player: Entity) -> Vec<(Vec<Command>, u32)> {
+        let v = |x: i32, y: i32| Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
+        vec![
+            // Frame 0: one tick, a Move command on it.
+            (
+                vec![Command::Move {
+                    entity: player,
+                    target: v(3, 1),
+                }],
+                1,
+            ),
+            // Frame 1: quiet single tick.
+            (Vec::new(), 1),
+            // Frame 2: a catch-up frame — 3 ticks, AttackMove on the first, empty after.
+            (
+                vec![Command::AttackMove {
+                    entity: player,
+                    target: v(4, 0),
+                }],
+                3,
+            ),
+            // Frame 3: budget 0 + a command → the sub-tick fallback raises it to 1 (Embody).
+            (vec![Command::Embody { entity: player }], 0),
+            // Frame 4: several quiet catch-up ticks.
+            (Vec::new(), 4),
+            // Frame 5: Surface, single tick.
+            (vec![Command::Surface { entity: player }], 1),
+            // Frame 6: budget 0, no commands → advances nothing.
+            (Vec::new(), 0),
+            // Frame 7: a longer quiet stretch.
+            (Vec::new(), 6),
+        ]
+    }
+
+    /// Step `sim` directly the way the OLD accumulator did: commands on the first tick of the
+    /// frame, `&[]` on catch-up ticks; the sub-tick fallback forces one tick when budget 0 carries
+    /// commands. Returns the per-tick checksum stream — the reference the lockstep path must match.
+    fn direct_reference(script: &[(Vec<Command>, u32)]) -> Vec<u64> {
+        let mut sim = Sim::new(DRIVE_SEED);
+        let _ = drive_scene(&mut sim);
+        let mut sums = Vec::new();
+        for (commands, budget) in script {
+            let budget = if *budget == 0 && !commands.is_empty() {
+                1
+            } else {
+                *budget
+            };
+            let mut first = true;
+            for _ in 0..budget {
+                if first {
+                    sim.step(commands);
+                    first = false;
+                } else {
+                    sim.step(&[]);
+                }
+                sums.push(sim.checksum());
+            }
+        }
+        sums
+    }
+
+    /// Drive the SAME scripted sequence through a fresh single-player `Lockstep` via the seam,
+    /// optionally with a `transport` present, collecting the per-tick checksum stream.
+    fn lockstep_stream(script: &[(Vec<Command>, u32)], with_transport: bool) -> Vec<u64> {
+        let mut sim = Sim::new(DRIVE_SEED);
+        let _ = drive_scene(&mut sim);
+        let mut ls = Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY);
+        let mut null = NullTransport;
+        let mut sums = Vec::new();
+        for (commands, budget) in script {
+            let budget = if *budget == 0 && !commands.is_empty() {
+                1
+            } else {
+                *budget
+            };
+            let transport: Option<&mut (dyn Transport + '_)> = if with_transport {
+                Some(&mut null)
+            } else {
+                None
+            };
+            drive_lockstep(
+                &mut sim,
+                &mut ls,
+                transport,
+                commands.clone(),
+                budget,
+                |sim, merged| {
+                    sim.step(merged);
+                    sums.push(sim.checksum());
+                },
+            );
+        }
+        sums
+    }
+
+    /// THE load-bearing guard: the single-player lockstep path (peer_count=1, delay=0) produces a
+    /// checksum stream bit-identical to stepping the sim directly with the same per-frame commands
+    /// (invariant #7). If lockstep stamped, gated, or merged differently, this diverges.
+    #[test]
+    fn lockstep_single_player_matches_direct_stepping() {
+        let player = drive_scene(&mut Sim::new(DRIVE_SEED));
+        let script = drive_script(player);
+        let reference = direct_reference(&script);
+        let through = lockstep_stream(&script, /* with_transport = */ false);
+        assert!(!reference.is_empty(), "the script must advance some ticks");
+        assert_eq!(
+            through, reference,
+            "single-player lockstep stream must equal direct stepping"
+        );
+    }
+
+    /// Catch-up (a frame advancing multiple ticks: commands on the first, empty after) matches
+    /// direct stepping — isolates the multi-tick-per-frame path the headline test also covers.
+    #[test]
+    fn lockstep_catch_up_frame_matches_direct_stepping() {
+        let player = drive_scene(&mut Sim::new(DRIVE_SEED));
+        let cmd = Command::AttackMove {
+            entity: player,
+            target: Vec2::new(Fixed::from_int(4), Fixed::from_int(0)),
+        };
+        // One frame, five ticks: the command rides tick 0, the next four are empty.
+        let script = vec![(vec![cmd], 5u32)];
+        assert_eq!(
+            lockstep_stream(&script, false),
+            direct_reference(&script),
+            "a 5-tick catch-up frame must match direct stepping"
+        );
+        // And the stream is genuinely five ticks long.
+        assert_eq!(lockstep_stream(&script, false).len(), 5);
+    }
+
+    /// The transport-present path (here a no-op `NullTransport`: drains/sends our echoes, polls
+    /// nothing) advances identically — the single-peer gate clears on local input regardless, so
+    /// pumping a transport must not change the stream. Exercises the `Some(transport)` branch.
+    #[test]
+    fn lockstep_with_null_transport_matches_no_transport() {
+        let player = drive_scene(&mut Sim::new(DRIVE_SEED));
+        let script = drive_script(player);
+        assert_eq!(
+            lockstep_stream(&script, /* with_transport = */ true),
+            lockstep_stream(&script, /* with_transport = */ false),
+            "a no-op transport must not change the single-player stream"
+        );
+    }
+
+    /// `drive_lockstep` returns the number of ticks advanced and equals the budget for the
+    /// single-player session (the gate never stalls with one peer at delay 0).
+    #[test]
+    fn drive_lockstep_advances_exactly_the_budget() {
+        let mut sim = Sim::new(DRIVE_SEED);
+        let player = drive_scene(&mut sim);
+        let mut ls = Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY);
+        let advanced = drive_lockstep(
+            &mut sim,
+            &mut ls,
+            None,
+            vec![Command::Move {
+                entity: player,
+                target: Vec2::new(Fixed::from_int(1), Fixed::from_int(1)),
+            }],
+            3,
+            |sim, merged| {
+                sim.step(merged);
+            },
+        );
+        assert_eq!(advanced, 3, "single-player advances exactly the budget");
+        assert_eq!(ls.next_tick(), 3, "three ticks executed");
+    }
+
+    /// Budget 0 with no commands advances nothing and leaves the lockstep clock untouched.
+    #[test]
+    fn drive_lockstep_zero_budget_no_commands_is_a_noop() {
+        let mut sim = Sim::new(DRIVE_SEED);
+        let _ = drive_scene(&mut sim);
+        let mut ls = Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY);
+        let before = sim.checksum();
+        let advanced = drive_lockstep(&mut sim, &mut ls, None, Vec::new(), 0, |sim, merged| {
+            sim.step(merged);
+        });
+        assert_eq!(advanced, 0);
+        assert_eq!(ls.next_tick(), 0, "no tick executed");
+        assert_eq!(sim.checksum(), before, "sim untouched");
     }
 }
