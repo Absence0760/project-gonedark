@@ -534,6 +534,16 @@ pub struct Lockstep {
     /// Detected cross-client checksum disagreements, queued for the host to drain via
     /// [`take_desyncs`](Self::take_desyncs). Detection only — never alters stepping.
     desyncs: Vec<Desync>,
+    /// Executed merged per-tick command sets, retained so a reconnecting peer can be replayed from
+    /// an authoritative snapshot (`core::reconnect`, workstream C). Keyed by execution tick.
+    /// Pruned on the normal active window unless a snapshot-retention floor (`retain_floor`) holds
+    /// older ticks. Pure side state: capturing it never changes which commands execute or any
+    /// checksum.
+    executed: BTreeMap<u64, Vec<Command>>,
+    /// The oldest tick the reconnect-replay buffer must keep (the last authoritative snapshot
+    /// tick). `None` ⇒ no snapshot retention configured, so `executed` prunes on the normal
+    /// window. Set/advanced via [`retain_from`](Self::retain_from); monotonic.
+    retain_floor: Option<u64>,
 }
 
 impl Lockstep {
@@ -559,7 +569,36 @@ impl Lockstep {
             retained: BTreeMap::new(),
             checksums: BTreeMap::new(),
             desyncs: Vec::new(),
+            executed: BTreeMap::new(),
+            retain_floor: None,
         }
+    }
+
+    /// Install/advance the snapshot-retention floor: the reconnect-replay buffer keeps every
+    /// executed merged command set at or after `tick`, so a peer can later be resumed from an
+    /// authoritative snapshot taken at `tick` and replayed forward (`core::reconnect`, workstream
+    /// C). The host calls this when it captures a new snapshot. Monotonic — a lower tick than the
+    /// current floor is ignored (snapshots only move forward) — and re-prunes to free anything now
+    /// older than the floor.
+    pub fn retain_from(&mut self, tick: u64) {
+        self.retain_floor = Some(match self.retain_floor {
+            Some(f) => f.max(tick),
+            None => tick,
+        });
+        self.prune();
+    }
+
+    /// The executed merged command sets for `[from, to)`, in tick order, for replaying a peer from
+    /// a snapshot@`from` up to the live tick `to` (normally [`next_tick`](Self::next_tick)).
+    /// Returns `None` if any tick in the range has been pruned out of the buffer — a loud miss the
+    /// caller must handle (snapshot more often / widen the floor), never a silent short replay
+    /// that would resume to a divergent state.
+    pub fn replay_range(&self, from: u64, to: u64) -> Option<Vec<&[Command]>> {
+        let mut out = Vec::with_capacity(to.saturating_sub(from) as usize);
+        for t in from..to {
+            out.push(self.executed.get(&t)?.as_slice());
+        }
+        Some(out)
     }
 
     /// The session's current input delay (in ticks). Adaptive via the agreed
@@ -757,6 +796,7 @@ impl Lockstep {
             }
         }
         if t < self.warmup_until {
+            self.executed.insert(t, Vec::new());
             self.next_tick += 1;
             self.prune();
             return Some(Vec::new());
@@ -771,6 +811,9 @@ impl Lockstep {
             // Vec index order == fixed peer order == the stable application order.
             merged.extend(peer.expect("ready implies every slot Some"));
         }
+        // Retain the executed merged set for reconnect replay (workstream C). Capturing it cannot
+        // change stepping or the checksum — it is read only by `replay_range`.
+        self.executed.insert(t, merged.clone());
         self.next_tick += 1;
         self.prune();
         Some(merged)
@@ -793,6 +836,16 @@ impl Lockstep {
         let stale: Vec<u64> = self.checksums.range(..lo).map(|(k, _)| *k).collect();
         for k in stale {
             self.checksums.remove(&k);
+        }
+        // The reconnect-replay buffer keeps the normal window OR back to the snapshot floor,
+        // whichever is older — so a peer can be replayed from the last snapshot to now.
+        let lo_exec = match self.retain_floor {
+            Some(f) => lo.min(f),
+            None => lo,
+        };
+        let stale: Vec<u64> = self.executed.range(..lo_exec).map(|(k, _)| *k).collect();
+        for k in stale {
+            self.executed.remove(&k);
         }
     }
 }

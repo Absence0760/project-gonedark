@@ -24,6 +24,7 @@ pub mod fog;
 pub mod lockstep;
 pub mod orders;
 pub mod persist;
+pub mod reconnect;
 pub mod rng;
 pub mod sim;
 pub mod snapshot;
