@@ -147,8 +147,9 @@ model.
 > units running **~2× over the 16.6 ms 60 Hz budget on desktop**, pinpointing the per-unit
 > flow-field rebuild (not threading) as the #1 cost. **Flow-field caching then landed** (one field
 > per distinct goal per tick, bit-identical) → **~8× faster, ~3.7 ms/tick median, comfortably under
-> budget** — which also makes sim-side parallelism likely unnecessary for Phase 3. Decisions still
-> owed before the net/PvP workstreams: **D27** (netcode topology), a snapshot-format Dn, and **Q2**
+> budget** — which also makes sim-side parallelism likely unnecessary for Phase 3. **D27 (netcode
+> topology) is now decided** — `core::lockstep` + `pal::Transport` placement locked, code not yet
+> landed. Still owed before the remaining net/PvP workstreams: a snapshot-format Dn, and **Q2**
 > (enemy detection of "gone dark") via `/decision`.
 
 **Goal:** make it hold up at size and (if pursued) in multiplayer.

@@ -1,6 +1,6 @@
 # Phase 3 plan — Scale & net
 
-> **Status: STARTING.** Phase 1 (vertical slice, D22) and Phase 2 (game systems,
+> **Status: IN PROGRESS.** Phase 1 (vertical slice, D22) and Phase 2 (game systems,
 > D23–D26) are done. Phase 3 makes the game hold up *at size* and *over the wire*. This
 > doc is the synthesis of a four-way scouting pass over the four roadmap bullets; it is
 > the product-of-record plan, sequenced by blast radius. Like the Phase 1 / Phase 0.5
@@ -11,7 +11,7 @@ Phase 3 has four workstreams (`roadmap.md` §"Phase 3 — Scale & net"):
 | # | Workstream | Risk | Needs a decision first? |
 |---|---|---|---|
 | A | **Scale & perf** — 200-unit stress, profiling, job-system, dual-rate re-eval | Low→Med | No (measure-first) |
-| B | **Lockstep netcode** — input-delay exchange, avatar-local prediction (D15), CI | **High** | **Yes — netcode topology (D27)** |
+| B | **Lockstep netcode** — input-delay exchange, avatar-local prediction (D15), CI | **High** | **D27 decided** (topology locked; code not yet landed) |
 | C | **Reconnect / snapshot / handoff** — authoritative serialize + resume | Med→High | **Yes — snapshot format (Dn)** |
 | D | **PvP attention mind-game** — enemy detection of "gone dark" | Low (mostly design) | **Yes — Q2 via `/decision`** |
 
@@ -105,7 +105,7 @@ already applies a per-tick command set in stable order; `Sim::checksum` already 
 everything incl. RNG state; and `engine::predict_avatar` already exists as a stub with
 the D15 "MUST NOT feed back into the sim" rule in its doc-comment.
 
-**Crate topology (needs `D27` via `/decision` before code):**
+**Crate topology (decided in [`D27`](decisions.md#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait); code is next):**
 
 | Concern | Lives in |
 |---|---|
@@ -201,9 +201,9 @@ needs the net layer: the *actual* two-human mind game.
 
 ## Decisions Phase 3 will need (record each via `/decision`)
 
-- **D27 — netcode topology** (lockstep loop + wire codec in `core::lockstep`; transport
-  behind `pal::Transport`; sockets in `pal-desktop`/`server`). Flips `architecture.md`
-  §Netcode from design → implemented. *Blocks workstream B.*
+- **D27 — netcode topology** ✓ **DECIDED** (lockstep loop + wire codec in `core::lockstep`;
+  transport behind `pal::Transport`; sockets in `pal-desktop`/`server`). `architecture.md`
+  §Netcode updated. *Code not yet landed; unlocks workstream B.*
 - **Dn — authoritative snapshot format** (hand-rolled LE writer sharing the checksum
   walk; terrain by map-id). *Blocks workstream C.*
 - **Dn — Q2 resolution** (enemy detection of "gone dark"), or an explicit "ship the

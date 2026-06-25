@@ -207,6 +207,14 @@ spread cost.
 
 ## Netcode — deterministic lockstep
 
+> **Topology decided ([`decisions.md`](decisions.md) D27), implementation in progress
+> ([`phase-3-plan.md`](phase-3-plan.md) §"Workstream B").** The lockstep loop + wire codec live
+> in a new platform-free `core::lockstep`; transport is abstracted behind a `pal::Transport` trait
+> (opaque byte frames, no socket type), with concrete sockets/relay in `pal-desktop`/`server` —
+> the same abstract-in-`pal`, concrete-in-the-backend split as D19/D20. `core` never names a
+> socket; the transport never names a `Command`. Avatar-local prediction (D15) stays in the
+> `engine` presentation path, never touching sim state.
+
 Because the sim is deterministic, clients exchange only **orders**, not world state.
 Bandwidth scales with players, not the hundreds of units on the field.
 

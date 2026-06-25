@@ -957,3 +957,84 @@ documented no-op. Q1/Q2/Q3 remain open.
 - [`roadmap.md`](roadmap.md) Phase 2 caveats updated (audio output done/opt-in; selection visible;
   balance has a baseline); [`README.md`](../README.md) repo-map notes the audio feature + the
   selection rim.
+
+---
+
+## D27 — Netcode topology: deterministic lockstep in `core`, transport behind a PAL trait
+
+**Status:** the **topology is decided** to unblock Phase 3 workstream B
+([`phase-3-plan.md`](phase-3-plan.md)). **No netcode code has landed yet** — this entry fixes
+*where each piece lives* before any wire code is written, exactly as [D19](#d19--the-gpu-device-crosses-into-the-renderer-at-the-concrete-wiring-layer-not-through-the-abstract-pal-trait)/[D20](#d20--the-platform-agnostic-game-loop-is-a-shared-engine-crate-both-hosts-drive)
+fixed the PAL boundary before the renderer. The deterministic substrate it builds on already
+exists: `core::sim::Command` is the lockstep "order" unit (`Copy`, float-free), `Sim::step(&[Command])`
+already applies a per-tick command set in stable order, and `Sim::checksum` already folds all sim
+state incl. the RNG ([D23](#d23--phase-2-game-systems-the-deterministic-model-and-its-module-decomposition)).
+
+**Decision:**
+
+1. **The lockstep loop and the wire codec live in `core`, in a new platform-free
+   `core::lockstep` module.** It deals only in already-`core` types — `Command`, `tick`,
+   `checksum` — so `core`'s dependency list stays **empty** (invariant #2 tripwire armed). It owns:
+   the **command-delay buffer** (an input sampled at tick `T` is stamped to execute at `T + D`),
+   the **per-tick command-set assembly** (merge every peer's commands for tick `T` in a **fixed
+   peer order**, preserving the stable application order `Sim::apply` already guarantees), the
+   **gate/stall** (advance the sim only when every peer's slot for `T` is present; an empty slot is
+   the explicit "I have nothing, proceed" signal, so quiet ticks don't stall), and the **wire
+   codec** (serialize `Command`/tick/checksum to bytes, reusing the little-endian discipline of
+   `core::checksum` so the bytes are byte-identical across arch — itself a determinism concern).
+
+2. **Transport is abstracted behind a new `pal::Transport` trait — opaque byte frames, no
+   socket type in the signature.** It mirrors `pal::Audio` exactly: an abstract seam in `pal`
+   (`fn send(&mut self, &[u8])` / `fn poll(&mut self) -> Vec<Vec<u8>>`-shaped), named after *what*
+   not *how*. `core::lockstep` consumes a `&mut dyn Transport`; it never names UDP/QUIC/a socket.
+
+3. **Concrete transport lives in the platform/infra layer — `pal-desktop` and `server`.** A
+   loopback/in-process impl in `pal-desktop` for dev; real sockets, matchmaking, and relay in
+   `server`. The boundary rule (the load-bearing one): **the transport never understands a
+   `Command`; `core` never understands a socket.** This is the precise analogue of D19's "the
+   device crosses at the concrete wiring layer."
+
+4. **Avatar-local prediction ([D15](#d15--embodied-combat-over-lockstep-avatar-local-prediction-phase-05-passes)) stays in the `engine` presentation path — reaffirmed, not
+   moved.** Prediction lives in new `engine::Game` fields (parallel to the existing `yaw`), reads
+   the snapshot/world by shared reference, reconciles against the authoritative tick, and **never**
+   takes `&mut Sim` (invariants #4/#5; the determinism-checklist item "avatar prediction never
+   writes sim state"). It is not part of `core::lockstep`.
+
+5. **Lockstep is testable without sockets, and a desync is a CI failure.** A seeded in-process
+   `Transport` double (latency/jitter/reorder/loss driven by `core::rng`, so the test is itself
+   deterministic) drives a **two-instance lockstep test** asserting both peers agree on every
+   per-tick checksum and match a no-network single run. CI gains a new headless `net-sim-runner`
+   job that runs this across the existing arch matrix — **ADD-ONLY** to `determinism.yml`; a
+   cross-client desync is a real bug, never silenced by narrowing the matrix (invariant #7).
+
+**Why:** the load-bearing risk is unchanged from D17/D18/D23 — a platform detail or an unstable
+ordering leaking into the deterministic sim desyncs lockstep **silently** (invariants #1, #2, #7).
+Putting the loop + wire codec in `core` and the sockets behind a `pal` trait makes that boundary
+**structural**: the type system forbids `wgpu`/`winit`/a socket from reaching the sim, and a
+desync surfaces as a checksum mismatch rather than a heisenbug. It reuses the proven D19/D20 PAL
+pattern (abstract in `pal`, concrete in `pal-desktop`/`server`) rather than inventing a new seam.
+Building and validating against the in-process double *first* puts the cheapest-to-be-wrong code
+(the protocol) in the cheapest place to test it, before real sockets are added.
+
+**What this does NOT decide (deliberately left open):**
+- **The concrete transport (UDP vs QUIC).** The **lean is QUIC** because its connection migration
+  survives a Wi-Fi↔cellular handoff without a full reconnect ([`architecture.md`](architecture.md)
+  §Netcode gotcha) — but that is a transport-layer choice for a later entry, and it sits entirely
+  behind `pal::Transport`, so it changes nothing in `core`.
+- **The reconnect/snapshot serialization format** — its own forthcoming `Dn` (workstream C); it
+  consumes `core::lockstep`'s command buffer but is a separate concern.
+- **Dynamic input-delay tuning, and the stalled-peer recovery policy** (drop / AI-substitute,
+  `architecture.md` §Netcode) — protocol details deferred to the implementation slices.
+- **Matchmaker / accounts / relay service split** ([Q9](open-questions.md)) — untouched.
+- It does **not** reopen the tick model: `core::lockstep` is parameterized on `sim::TICK_HZ`, so a
+  future dual-rate split ([D21](#d21--sim-rate-a-single-global-60-hz-tick-for-phase-1-dual-rate-deferred-not-killed) re-evaluation) would not change this topology.
+
+**Consequences:**
+- New `core::lockstep` module (platform-free; `core` deps stay empty) and a new `pal::Transport`
+  trait with concrete impls in `pal-desktop`/`server`. The implementation lands incrementally,
+  each slice under `/safe-edit`, per [`phase-3-plan.md`](phase-3-plan.md) §"Workstream B".
+- [`architecture.md`](architecture.md) §Netcode flips from design prose to **decided** (topology),
+  referencing this entry; [`README.md`](../README.md) repo-map will note `core::lockstep` and
+  `pal::Transport` when the first slice lands (not before — they do not exist yet).
+- `determinism.yml` will gain an ADD-ONLY networked-checksum job; the existing single-client
+  matrix is never narrowed.
