@@ -56,30 +56,38 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    // Control point: a hollow ring (round the square quad, punch out the centre).
+    // Control point: a hollow ring (round the square quad, punch out the centre). The ring is
+    // drawn thicker and with a brighter outer edge than the body fill so an objective reads
+    // unmistakably as a ring at a glance over the ground grid — not just a faint outline. The band
+    // is [0.55, 1.0] (was [0.6, 1.0]); the outermost slice gets a bright lift so the ring "pops".
     if (in.flags & FLAG_RING) != 0u {
         let radius = length(in.local);
-        if radius > 1.0 || radius < 0.6 {
+        if radius > 1.0 || radius < 0.55 {
             discard;
         }
-        return vec4<f32>(in.color, 1.0);
+        // Brighten the outer 25% of the ring so its edge reads crisply against the grid.
+        let edge = smoothstep(0.78, 0.96, radius);
+        let ring = mix(in.color, min(in.color + vec3<f32>(0.25, 0.25, 0.3), vec3<f32>(1.0)), edge);
+        return vec4<f32>(ring, 1.0);
     }
 
     // Selection rim (command view): a bright near-white border hugging the outer edge of the
     // quad, so a selected unit reads obviously different at a glance. Drawn first so it wins over
     // the body fill; the health bar (top strip) still overlays it where present. The rim is the
-    // outermost ~30% of the quad on either axis (|x| or |y| past the threshold) — thick enough to
-    // read on the small command-view unit quads.
-    let RIM: f32 = 0.7;
+    // outermost ~25% of the quad on either axis (|x| or |y| past the threshold) — thick enough to
+    // read on the small command-view unit quads (widened from 0.7 → 0.74 keeps it crisp but visible).
+    let RIM: f32 = 0.74;
     if (in.flags & FLAG_SELECTED) != 0u
         && (abs(in.local.x) > RIM || abs(in.local.y) > RIM) {
         return vec4<f32>(0.98, 0.98, 1.0, 1.0); // bright cool-white selection rim
     }
 
-    // Unit / building: body color, with a health bar across the top strip.
+    // Unit / building: body color, with a health bar across the top strip and a thin dark outline
+    // so every quad has a crisp edge against the ground grid (an un-selected unit otherwise blends
+    // into the lattice at small command-view sizes). The outline is the outermost ~8% of the quad.
     //
-    // Color literals here (selection rim above, health fill below) are hand-tuned to read against
-    // the faction body palette — keep them in step with the Rust source of truth in `lib.rs`
+    // Color literals here (selection rim above, outline + health fill below) are hand-tuned to read
+    // against the faction body palette — keep them in step with the Rust source of truth in `lib.rs`
     // (`faction_color` / `AVATAR_COLOR`); a designer retuning the palette in Rust must mirror it
     // here, since WGSL has no shared constant with the CPU side.
     if in.health >= 0.0 && in.local.y > 0.55 {
@@ -95,6 +103,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         // Lost health: a desaturated charcoal, deliberately off pure red so the empty segment
         // can't be mistaken for the enemy-faction red body at small command-view sizes.
         return vec4<f32>(0.18, 0.18, 0.2, 1.0);
+    }
+
+    // Thin dark body outline (outermost edge), so the quad has a defined border over the grid.
+    let OUTLINE: f32 = 0.9;
+    if abs(in.local.x) > OUTLINE || abs(in.local.y) > OUTLINE {
+        return vec4<f32>(in.color * 0.35, 1.0);
     }
 
     return vec4<f32>(in.color, 1.0);
