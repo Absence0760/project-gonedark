@@ -49,15 +49,23 @@ Placeholder-first. Don't buy or commission art before the slice proves the space
 in both views.
 
 - **Low / greybox** — kit-bashed primitives + CC0 mobile packs (procedurally generated
-  where possible, see §5). Purpose: *play* the Phase 1 slice and prove the
-  "one world, two views" thesis ([`architecture.md`](architecture.md)) before spending a
-  cent on art. Disposable.
+  where possible, see §5) **plus AI-generated placeholder models** ([`decisions.md`](decisions.md)
+  D41). Purpose: *play* the Phase 1 slice and prove the "one world, two views" thesis
+  ([`architecture.md`](architecture.md)) before spending a cent on art. Disposable.
+  **For the push to a publishable build (D41), this is the *default* tier for every visible
+  object** — units, structures, and the embodied weapon — sourced AI-generated rather than
+  commissioned, so the game looks intentional cheaply while feel is still being locked. AI
+  assets ride the *same* pipeline as anything else: one source `.glb` through the cook → LOD
+  chain (§1), the two-view filter (§4), and license hygiene (§3) — their provenance is its own
+  license class to vet (§3), not an automatic pass.
 - **Mid** — curated open-source assets, decimated and re-textured to mobile budget, that
-  pass the two-view filter (§4). The default tier most of the game ships at.
+  pass the two-view filter (§4). The default tier most of the game ships at — the endgame
+  target the D41 AI placeholders are eventually *replaced* by, not the launch tier.
 - **High / hero** — final assets (commissioned, bought, or AI-assisted) reserved for the
   few things the camera *lingers* on at eye level — the embodied weapon, the player's own
   unit, signature structures. Everything else stays mid. Hero art is rationed, not
-  spread.
+  spread. (D41 pulls the AI-assisted route *forward* to the whole greybox tier for now; the
+  hero tier stays the later, rationed spend.)
 
 ## 3. License hygiene (hard constraint)
 

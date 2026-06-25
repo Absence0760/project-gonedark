@@ -1937,3 +1937,44 @@ reveals; it only stops wasting the frame on black.
 unit pass now LOADs over the sky clear; a presentation-only `last_fire_tick` on `Game`. The viz-runner
 fairness assertions were re-expressed around strategic-map collapse (and proven to hold during combat),
 not weakened. Render tests + viz-runner green.
+
+---
+
+## D41 — AI-generated placeholder models for all render content (skip commissioned art for now)
+
+**Status:** decided (sourcing direction); not yet landed (no assets generated yet). Scopes the art bullet
+of the [`roadmap.md`](roadmap.md) "Path to publishable" checklist.
+
+**Decision:**
+
+- For the push to a publishable, *complete-feeling* build, **every** visible model — units, structures,
+  and the embodied weapon viewmodel — is sourced as an **AI-generated placeholder** rather than
+  commissioned, bought, or hand-sculpted art. Custom 3D authoring is deferred, not cancelled.
+- This **pulls the "AI-assisted" route forward**: [`content-pipeline.md`](content-pipeline.md) §2 had
+  reserved AI assistance for the *hero* tier (the few things the camera lingers on); D41 makes
+  AI-generated assets the **default greybox/low tier for the whole game** for now. The mid and hero tiers
+  remain the documented endgame — this is a temporal (axis-C) call, not a new permanent tier.
+- **Nothing about the pipeline relaxes.** Generated assets are still **one source `.glb` per object** fed
+  through the existing cook → LOD → ASTC/atlas chain ([`content-pipeline.md`](content-pipeline.md) §1),
+  must pass the **two-view filter** (§4: a credible RTS token *and* an eye-level FPS mesh), and must clear
+  **license hygiene** (§3) — each carries a manifest entry recording it as AI-generated, with the
+  generator/model and its commercial-use terms, and CI still fails the build on a missing/disallowed
+  provenance. AI-generated provenance is treated as its own license class to vet, not an automatic ✅.
+
+**Why:** The game now *plays* (D37–D40) but looks like greybox; commissioning or hand-authoring art is
+the single most expensive, slowest path to "looks finished," and the design corpus has always been
+placeholder-first (§2) — buying art before feel is locked is exactly what the production ladder warns
+against. AI generation gets a consistent, intentional-looking placeholder set across every object cheaply
+and fast, which is all a publishable *first* build needs; real mid/hero art is a later, post-feel spend.
+
+**What this does NOT decide:** the specific generator/tool or its terms (a per-tool license check under
+§3, not a blanket approval); the *hero*-tier sourcing question — [`open-questions.md`](open-questions.md)
+**Q11 stays open**, since D41 is about the **placeholder/greybox** tier, not the few things the camera
+lingers on; final art direction or the eventual mid/hero authoring (still the endgame per §2/§6);
+anything in the sim — assets are render-only, so invariant #1 (no floats in the sim) does not reach here. It also does not change the two-view filter or the cook step; AI assets ride the *same*
+pipeline, they're just a cheaper *source*.
+
+**Consequences:** `content-pipeline.md` §2 updated so the low/greybox tier names AI-generated models as
+the default placeholder source and the hero bullet points back here; the roadmap "Path to publishable"
+art bullet cites D41. No code or asset lands yet — this records the sourcing direction the checklist
+executes against.

@@ -277,9 +277,9 @@ in the in-match layer; the **settings surface that configures it** is.
 ### Art & assets — AI-generated placeholders (skip custom 3D for now)
 
 - [ ] **Adopt AI-generated placeholder models** for units, structures, and the embodied
-  weapon instead of commissioned art — this pulls the "AI-assisted" route that
-  [`content-pipeline.md`](content-pipeline.md) §2 reserved for *hero* art forward to
-  *everything*, sitting at the greybox/low tier of the production ladder
+  weapon instead of commissioned art ([D41](decisions.md)) — this pulls the "AI-assisted"
+  route that [`content-pipeline.md`](content-pipeline.md) §2 reserved for *hero* art forward
+  to *everything*, sitting at the greybox/low tier of the production ladder
 - [ ] One source `.glb` per unit/structure run through the existing cook → LOD chain so it
   satisfies the two-view filter (top-down token *and* eye-level mesh — §4)
 - [ ] License-clean & logged — generated assets recorded in the asset manifest (§ license hygiene)
