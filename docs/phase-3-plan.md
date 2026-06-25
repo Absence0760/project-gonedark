@@ -280,25 +280,29 @@ and only the UDP transport has landed, so it is **deferred until a QUIC `pal::Tr
 
 ## Workstream D — PvP attention mind-game (design-led, LAST)
 
-The live fork is **Q2** (`open-questions.md`): *can the enemy tell you've gone dark?* —
-options: no signal / soft tell (marked hero unit) / no tell at all; current lean
-undecided, "soft tell" most interesting but needs playtest. Bounded by **Q1** (how thin
-the thread back to command; lean: alerts-only) and **Q3** (possession leashed vs global).
-The shipped *posture* today is "no tell" by omission. **Resolving Q2 is a `/decision`
-co-authored with the user — the first step, before any code.**
+**Q2 is RESOLVED ([D33](decisions.md)): a tunable three-mode tell, default `Subtle`.** The fork
+(*can the enemy tell you've gone dark?* — no signal / soft tell / no tell) is settled the
+"mechanism, not lock" way: ship all three modes behind a config and default to the soft tell.
+Bounded by **Q1** (alerts-only lean) and **Q3** (possession leashed vs global), both still open with
+their leans and compatible with the mechanism.
 
-The deliverable mirrors the Phase 2 house style (D23/D26): ship a **tunable mechanism,
-not a locked design.** A `core::detection::DetectionConfig` (a `tell_mode:
-Hidden|Subtle|Marked` switch + fixed-point `tell_range` / `tell_linger_ticks`) drives a
-**pure, checksum-excluded derivation** `detectable_embodiment(...)` — same side of the
-line as fog/alerts, never sim state, LoS-gated via the existing `terrain.line_of_sight`.
-One build covers all three Q2 options for A/B playtesting. The same config bounds the
-**PvE AI's permitted knowledge** so "no omniscient peek" (invariant #3, D2) is structural
-— the load-bearing test: *AI behavior bit-identical whether or not a player is embodied,
-in Hidden mode.*
+The deliverable mirrors the Phase 2 house style (D23/D26): a **tunable mechanism, not a locked
+design.** A `core::detection::DetectionConfig` (a `tell_mode: Hidden|Subtle|Marked` switch +
+fixed-point `tell_range` / `tell_linger_ticks`) drives a **pure, checksum-excluded derivation**
+`detectable_embodiment(...)` — same side of the line as fog/alerts, never sim state, LoS-gated via
+the existing `terrain.line_of_sight`. One build covers all three Q2 options for A/B playtesting. The
+same config bounds the **PvE AI's permitted knowledge** so "no omniscient peek" (invariant #3, D2)
+is structural — the load-bearing test: *computing detection leaves the checksum byte-identical, and
+in `Hidden` the derivation is empty even with a unit embodied in plain sight.*
 
-Single-client now: the config, the derivation, its tests, a scripted enemy. Genuinely
-needs the net layer: the *actual* two-human mind game.
+**Mechanism** ✅ **DONE (core slice)** — `core::detection`: `TellMode`/`DetectionConfig` (default
+`Subtle`), the `detectable_embodiment` derivation (per-observer, hostile embodied units only,
+range+LoS-gated with an aging `tell_linger_ticks` lingering marker in `Subtle`; persistent in
+`Marked`; empty in `Hidden`), and a `DetectionMemory` for the linger (presentation state, never sim
+state). Tests cover the three modes, the linger/aging, and the load-bearing checksum-neutrality +
+`Hidden`-is-empty guards. **Still owed (net-facing follow-ups, not this slice):** the host/HUD wiring
+that draws the tell for an enemy, and a scripted/PvE enemy that *consults* the channel — the
+*actual* two-human mind game genuinely needs the net layer.
 
 ---
 
@@ -311,8 +315,9 @@ needs the net layer: the *actual* two-human mind game.
   sharing the checksum field-walk; `Rng(state, inc)` captured; terrain by `map_id`; serde-free
   in `core`). [`decisions.md`](decisions.md#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)
   §D28. *Format locked; the `core::persist` slice is unblocked, code not yet landed.*
-- **Dn — Q2 resolution** (enemy detection of "gone dark"), or an explicit "ship the
-  tunable mechanism, defer the lock" entry. *Gates workstream D.*
+- **D33 — Q2 resolution** ✓ **DECIDED** (enemy detection of "gone dark"): a tunable three-mode
+  tell (`Hidden|Subtle|Marked`), default `Subtle`, as a pure checksum-excluded `core::detection`
+  derivation. *Unblocked + landed the workstream-D core slice; HUD/AI wiring is the follow-up.*
 - **Dn — D21 dual-rate re-evaluation outcome** (confirm global-60, or adopt dual-rate
   with the two-clock contract), informed by workstream A's on-device numbers.
 - **Dn (conditional) — rayon into `core`** if A's measurements prove parallelism is

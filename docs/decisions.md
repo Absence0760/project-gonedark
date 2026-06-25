@@ -1481,3 +1481,66 @@ shell↔sim boundary can be designed for it.
   (native-vs-egui); and keep the boundary under the same no-leak discipline as the PAL so no game
   logic climbs into a shell. [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)
   still feed the onboarding, store, and catalog surfaces respectively and remain open.
+
+---
+
+## D33 — "Going dark" detection: a tunable three-mode tell, default Subtle
+
+**Status:** resolves **[Q2](open-questions.md)** (can the enemy tell you've gone dark?) and gates
+**workstream D** ([`phase-3-plan.md`](phase-3-plan.md)). We ship a **tunable mechanism, not a locked
+design** (the D31 house style): a `core::detection` module with a `tell_mode: Hidden | Subtle |
+Marked` switch, **defaulting to `Subtle`** — a soft, line-of-sight-gated, *aging* tell on the
+embodied unit. One build covers all three modes for A/B playtesting; the default ships ON so the
+embodied-PvP mind-game has its bite, but the final lock stays playtest-driven.
+
+**Decision:**
+
+- **`core::detection::DetectionConfig { tell_mode, tell_range, tell_linger_ticks }`** drives a
+  **pure, checksum-excluded derivation** `detectable_embodiment(...)` — same side of the line as
+  fog/alerts ([`fog`](../core/src/fog.rs), [`alerts`](../core/src/alerts.rs)): it reads `&World`/
+  `&Terrain`, **never** mutates sim state and is **never folded into the per-tick checksum**, so it
+  cannot desync lockstep (invariants #1/#7).
+- **The three modes:**
+  - **`Hidden`** — no tell, ever. Pure inference: the enemy sees the embodied unit only as a normal
+    unit (basic LoS targeting already works), with no marker distinguishing the player's avatar.
+  - **`Subtle`** (default) — the embodied unit is revealed to an observer **only when that observer
+    has a living unit within `tell_range` *and* in line of sight**, and the tell then **lingers and
+    ages** for `tell_linger_ticks` after sight is lost (a fading, last-known-position marker). The
+    tell is *earned* by proximity + sightline, not free intel.
+  - **`Marked`** — a persistent marker on the embodied unit (the strongest tell), for the
+    fairness/feel end of the A/B range.
+- **Fairness (invariant #6) is built in:** in `Subtle` the tell costs the observer a unit in range
+  with a sightline, and decays once they lose it — so a loss reads as *"I stayed embodied too long,
+  too close,"* never *"the game robbed me."* `Hidden` is the floor (no tell); `Marked` is the
+  ceiling; `Subtle` is the tuned middle we default to and validate.
+- **No omniscient AI (invariant #3, [D2](#d2--unit-ai-is-a-literal-executor-not-a-strategist)) is
+  structural:** `detectable_embodiment` is the **only** sanctioned channel for "which unit is the
+  hero." In `Hidden` it returns nothing, so a PvE AI consulting it gains zero knowledge — and
+  because the derivation takes `&World` it can never feed back into the sim, the AI's orders stay
+  literal-executor. The load-bearing test: **computing detection every tick leaves the checksum
+  stream byte-identical, and in `Hidden` the derivation is empty even with a unit embodied in plain
+  sight.**
+
+**Why:** Q2's lean was always *"soft tell is the most interesting, but it needs playtest."* Locking
+one design now would either foreclose the mind-game (`Hidden`) or freeze a fairness-sensitive choice
+unvalidated (`Marked`). Shipping the **mechanism** with `Subtle` as the default gives the embodied
+mind-game its intended tension *immediately* while keeping `Hidden`/`Marked` one config field away
+for A/B — exactly the "mechanism, not lock" posture D31 reaffirmed for Q1/Q2/Q3. Putting the tell on
+the same pure-derivation footing as fog/alerts means it can never desync lockstep, and routing all
+"is this the hero" knowledge through one checksum-excluded channel makes the no-omniscient-peek
+invariant a structural property rather than a discipline.
+
+**What this does NOT decide:** it does not *lock* the final tell mode (the default `Subtle`, the
+`tell_range`, and `tell_linger_ticks` are a starting point to move from play, like the D30 balance
+baseline); it does not resolve **[Q1](open-questions.md)** (how thin the thread back to command;
+lean: alerts-only) or **[Q3](open-questions.md)** (possession leashed vs global) — both stay open
+with their leans, and the detection mechanism is compatible with either. The **host/HUD wiring** (an
+enemy seeing the tell on screen) and a **scripted/PvE enemy that consults the channel** are
+follow-ups, not part of this `core` slice.
+
+**Consequences:**
+- [`open-questions.md`](open-questions.md) **Q2** migrates to RESOLVED, pointing here.
+- A new `core::detection` module ships (config + `detectable_embodiment` + tests); the
+  [`README.md`](../README.md) repo-map and [`phase-3-plan.md`](phase-3-plan.md) workstream D are
+  updated. The mechanism is **single-client now**; the HUD wiring + a scripted enemy that reads the
+  channel are the net-facing follow-ups (the *actual* two-human mind game needs the net layer).

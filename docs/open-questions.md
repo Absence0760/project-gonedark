@@ -22,7 +22,20 @@ lock is gated on a *real-audio* playtest (the load-bearing half has never been v
 
 ---
 
-## Q2 — Can the enemy tell when you've gone dark?
+## Q2 — Can the enemy tell when you've gone dark? — RESOLVED ([D33](decisions.md): tunable tell, default Subtle)
+
+**Resolved in [D33](decisions.md): ship a tunable three-mode mechanism (`Hidden | Subtle |
+Marked`), default `Subtle`.** Rather than lock one design, `core::detection` ships all three behind
+a `DetectionConfig`, defaulting to the **soft tell** — a line-of-sight-gated, *aging* marker on the
+embodied unit that an observer earns only by having a unit in range with a sightline, and that fades
+after sight is lost. The derivation is a pure, checksum-excluded view (same footing as fog/alerts),
+so it can never desync lockstep, and in `Hidden` it returns nothing — making the no-omniscient-AI
+invariant (#3) structural. The default is a starting point to tune from play, not a frozen lock;
+`Hidden`/`Marked` stay one config field away for A/B. The Phase-2-close lean (below) leaned the other
+way (no-signal default); D33 takes the *soft-tell-default* fork instead, shipped as a tunable
+mechanism so the lean can be validated rather than assumed. Original analysis retained below.
+
+---
 
 Does an opponent get any signal that you're currently embodied (and therefore blind)?
 
@@ -39,12 +52,13 @@ is blind and punish it.* In PvE, the AI simulates the same pressure by punishing
 undefended angles when you've overstayed (but should NOT be omnisciently "you're
 embodied, attack now" — that feels cheap).
 
-**Current lean:** undecided. The "soft tell / marked hero unit" option is the most
-interesting risk/reward but needs playtesting. **Reviewed at Phase-2 close ([decisions.md](decisions.md)
-D31, medium confidence):** lean toward *no-signal / pure inference* as the default + ship target
-(purest expression of pillars 1–2, lowest invariant-#6 risk, and already how the shipped code
-behaves), keeping the *soft-tell marker* as a cheap, deferred knob (D13 reserves the engine-owned
-marker). Locking needs live PvP to confirm the inference is actually readable.
+**Resolved to a tunable mechanism, default Subtle ([D33](decisions.md)).** The Phase-2-close review
+(D31, medium confidence) leaned the *other* way — *no-signal / pure inference* as the default,
+soft-tell held as a deferred knob. D33 instead **ships all three modes** (`Hidden`/`Subtle`/`Marked`)
+behind `core::detection::DetectionConfig` and **defaults to `Subtle`** (the soft tell, now built and
+LoS-gated/aging), so the "most interesting but needs playtesting" option is shipped ON and validated
+from play rather than assumed — with `Hidden` (the old lean) one config field away for A/B. The final
+lock still needs live PvP; this resolves *what to build and default*, not the frozen design.
 
 ---
 
