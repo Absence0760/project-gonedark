@@ -57,6 +57,19 @@ const EYE_HEIGHT: f32 = 1.5;
 /// Mouse-look sensitivity (radians of yaw per accumulated raw look-delta unit).
 const LOOK_SENSITIVITY: f32 = 0.0025;
 
+/// Avatar-local prediction (D15): the predicted embodied eye eases toward the authoritative
+/// target by this fraction each frame — high enough to feel responsive, low enough that a
+/// per-tick correction reads as smooth rather than a snap. Presentation feel knob; tunable.
+/// TODO(phase3 feel polish): this is a raw per-FRAME coefficient, so the ease rate is
+/// frame-rate-dependent (120 fps converges faster than 30). Make it dt-independent (half-life /
+/// `1-(1-base)^dt`) once embodied locomotion gives real motion to tune against across device tiers.
+const AVATAR_RECONCILE_SMOOTHING: f32 = 0.5;
+
+/// Avatar-local prediction (D15): if the predicted eye is more than this many world units from
+/// the authoritative target, **snap** instead of easing — a large correction (snapshot resume,
+/// a future teleport, gross misprediction) should resolve at once, not slide across the world.
+const AVATAR_RECONCILE_SNAP_DIST: f32 = 5.0;
+
 /// Cap on catch-up sim steps in one frame, so a huge first-frame / stall `dt` can't spiral
 /// the sim ("spiral of death"). Excess time is dropped.
 const MAX_CATCHUP_STEPS: u32 = 8;
@@ -314,8 +327,13 @@ pub struct Game {
     camera: CameraMode,
 
     /// Accumulated embodied yaw (radians), integrated from raw look deltas. Presentation
-    /// only — never written into the sim (D15).
+    /// only — never written into the sim (D15). The aim half of the predicted avatar transform.
     yaw: f32,
+
+    /// Avatar-local prediction (D15): the smooth, led embodied **eye** for the first-person
+    /// camera + audio listener. PRESENTATION ONLY — see [`AvatarPrediction`]; it holds no sim
+    /// state and the type can never reach `&mut Sim`, so it cannot desync lockstep.
+    avatar: AvatarPrediction,
 
     /// Command-layer unit selection (worker 4) — which player units the next order targets.
     /// Presentation state; drives the order vocabulary, never the sim directly.
@@ -420,6 +438,7 @@ impl Game {
             embodied: false,
             camera: CameraMode::TopDown,
             yaw: 0.0,
+            avatar: AvatarPrediction::default(),
             selection: Selection::new(),
             alerts: AlertChannel::new(),
             // Single-player lockstep: one peer (us), local id 0, zero input delay (D27 step 4).
@@ -471,12 +490,17 @@ impl Game {
         self.sim.checksum()
     }
 
-    /// Embodied perspective view-projection for the active player — thin wrapper over the
-    /// free [`embodied_view_proj`] that reads this player's authoritative position.
+    /// Embodied perspective view-projection for the active player — thin wrapper over the free
+    /// [`embodied_view_proj`]. The eye is the **predicted** avatar position (D15, smooth + led)
+    /// once prediction is anchored; before the first embodied frame anchors it, falls back to the
+    /// raw authoritative position so the very first frame is never off at the origin.
     fn embodied_view_proj(&self, width: u32, height: u32) -> Mat4 {
-        let p = self.player_pos();
-        let px = gonedark_render::fixed_to_f32(p.x);
-        let py = gonedark_render::fixed_to_f32(p.y);
+        let (px, py) = if self.avatar.valid {
+            self.avatar.eye
+        } else {
+            let p = self.player_pos();
+            (fixed_to_f32(p.x), fixed_to_f32(p.y))
+        };
         embodied_view_proj(px, py, self.yaw, width, height)
     }
 
@@ -621,13 +645,43 @@ impl Game {
             },
         );
 
+        // Interpolation factor for this frame (invariant #4): how far into the next tick the
+        // render clock sits. Drives both the avatar-prediction lead just below and the renderer.
+        let alpha = (self.acc / tick_dt).clamp(0.0, 1.0);
+
+        // Avatar-local prediction (D15): lead + reconcile the embodied eye from the authoritative
+        // snapshot. PRESENTATION ONLY — reads `curr` by shared ref, mutates only `self.avatar`,
+        // never the sim. While embodied, find the avatar in the latest snapshot and update it;
+        // when not embodied, drop the prediction so the next embody re-anchors cleanly.
+        if self.embodied {
+            if let Some(u) = self
+                .curr
+                .units
+                .iter()
+                .find(|u| u.entity_index == self.player.index)
+            {
+                let pos = (fixed_to_f32(u.pos.x), fixed_to_f32(u.pos.y));
+                let vel = (fixed_to_f32(u.vel.x), fixed_to_f32(u.vel.y));
+                // Lead by this frame's sub-tick fraction. Multiplayer adds the input-delay lead
+                // (`delay * tick_dt`) once a 2-peer session runs delay > 0; the single-player
+                // delay-0 session leads only by the sub-tick, which simply smooths the 60 Hz eye.
+                self.avatar.update(pos, vel, alpha * tick_dt);
+            }
+        } else {
+            self.avatar.clear();
+        }
+
         // Fold this frame's events into the embodied thread-back: the alert channel (worker 2's
         // HUD) and the positioned audio mix (worker 3). "Alerts, not intel" — observed as the
         // local Player faction (invariant #6). Both read-only over the sim.
         let tick = self.sim.tick_count();
         self.alerts
             .ingest(&frame_events, &self.sim.world, Faction::Player, tick);
-        let listener = {
+        // The listener follows the PREDICTED eye while embodied (so the positioned mix lines up
+        // with the first-person camera), else the raw authoritative position.
+        let listener = if self.embodied && self.avatar.valid {
+            self.avatar.eye
+        } else {
             let p = self.player_pos();
             (fixed_to_f32(p.x), fixed_to_f32(p.y))
         };
@@ -640,10 +694,7 @@ impl Game {
         );
         audio.submit_mix(&cues);
 
-        // 3. Interpolation factor for the renderer (invariant #4).
-        let alpha = (self.acc / tick_dt).clamp(0.0, 1.0);
-
-        // 4. Build the camera for the active view.
+        // 4. Build the camera for the active view (alpha computed above for the avatar lead).
         let view_proj = match self.camera {
             CameraMode::TopDown => topdown_view_proj(width, height),
             CameraMode::Embodied => self.embodied_view_proj(width, height),
@@ -698,18 +749,78 @@ impl Game {
                 tick,
             );
         }
-
-        // 9. Avatar-local prediction seam (D15): presentation-only, NEVER writes sim state.
-        predict_avatar(&self.curr, input, self.embodied);
     }
 }
 
-/// Avatar-local prediction (D15) lives HERE, in the presentation path. It reads sim state
-/// plus the latest input to predict the embodied unit's transform for a responsive local
-/// view, and MUST NOT feed back into the sim (or lockstep desyncs silently — invariant #1).
-/// Authoritative resolution still happens in the sim at tick T+D. Stub for Phase 1.
-fn predict_avatar(_snapshot: &Snapshot, _input: &InputFrame, _embodied: bool) {
-    // TODO(phase3): integrate local aim/move from `_input`; reconcile against the tick.
+/// Extrapolate the embodied avatar's eye to the current render instant: its latest authoritative
+/// position carried forward along its authoritative velocity by `lead_secs` — the render sub-tick
+/// fraction plus, in multiplayer, the input-delay lead. This is the **predict** half of D15: the
+/// one entity you twitch-control leads the discrete authoritative ticks so it reads as responsive,
+/// while every other unit stays pure interpolated lockstep. The float boundary lives HERE — Fixed
+/// authoritative state crosses to f32 for presentation and never crosses back (invariant #1).
+fn extrapolate_avatar(pos: (f32, f32), vel: (f32, f32), lead_secs: f32) -> (f32, f32) {
+    (pos.0 + vel.0 * lead_secs, pos.1 + vel.1 * lead_secs)
+}
+
+/// Reconcile the running predicted eye toward a fresh authoritative `target`: ease by `smoothing`
+/// (clamped to `[0,1]`), but **snap** when the error meets/exceeds `snap_dist` so a large
+/// correction resolves at once instead of sliding. Pure; returns the new predicted eye. This is
+/// the **reconcile against the tick** half of D15 — misprediction (and, in multiplayer, the
+/// authoritative T+D resolution differing from the local lead) decays smoothly, never as a jolt.
+fn reconcile_avatar(
+    predicted: (f32, f32),
+    target: (f32, f32),
+    smoothing: f32,
+    snap_dist: f32,
+) -> (f32, f32) {
+    let (dx, dy) = (target.0 - predicted.0, target.1 - predicted.1);
+    if dx * dx + dy * dy >= snap_dist * snap_dist {
+        return target; // too far to ease — snap to the authoritative target
+    }
+    let s = smoothing.clamp(0.0, 1.0);
+    (predicted.0 + dx * s, predicted.1 + dy * s)
+}
+
+/// Avatar-local prediction state (D15) — the predicted embodied **eye position**, living entirely
+/// in the PRESENTATION path. It is fed the authoritative avatar pose (read from the snapshot by
+/// shared reference) and leads + reconciles a smooth eye for the first-person camera + audio
+/// listener. It holds **no** `Sim` and is never handed `&mut Sim`, so it *structurally cannot*
+/// feed back into deterministic state — the silent-desync risk invariant #1 exists to prevent.
+/// Aim (yaw) is the other half of the predicted transform and is integrated locally in
+/// [`Game::yaw`]; together they are the predicted avatar transform. (Authoritative hit
+/// resolution still happens in the sim at tick T+D.)
+#[derive(Clone, Copy, Default)]
+struct AvatarPrediction {
+    /// Predicted eye position (world XY, f32). Meaningful only while `valid`.
+    eye: (f32, f32),
+    /// False until the first embodied frame anchors `eye` to the authoritative position (so the
+    /// camera never eases in from a stale/origin value); reset to false on surfacing.
+    valid: bool,
+}
+
+impl AvatarPrediction {
+    /// Drop the prediction (call when not embodied) — the next embodied frame re-anchors.
+    fn clear(&mut self) {
+        self.valid = false;
+    }
+
+    /// Update the predicted eye from the authoritative avatar pose (`pos`/`vel`, world f32),
+    /// leading by `lead_secs` and reconciling against the tick. Presentation-only — touches only
+    /// `self`. The first embodied frame anchors (no ease-in); subsequent frames reconcile.
+    fn update(&mut self, pos: (f32, f32), vel: (f32, f32), lead_secs: f32) {
+        let target = extrapolate_avatar(pos, vel, lead_secs);
+        self.eye = if self.valid {
+            reconcile_avatar(
+                self.eye,
+                target,
+                AVATAR_RECONCILE_SMOOTHING,
+                AVATAR_RECONCILE_SNAP_DIST,
+            )
+        } else {
+            self.valid = true;
+            target
+        };
+    }
 }
 
 #[cfg(test)]
@@ -1099,5 +1210,118 @@ mod tests {
         assert_eq!(advanced, 0);
         assert_eq!(ls.next_tick(), 0, "no tick executed");
         assert_eq!(sim.checksum(), before, "sim untouched");
+    }
+
+    // --- Avatar-local prediction (D15, workstream B step 5) ---
+
+    #[test]
+    fn extrapolate_avatar_leads_along_velocity() {
+        // Position carried forward by velocity × lead time.
+        assert_eq!(extrapolate_avatar((1.0, 2.0), (3.0, -1.0), 0.5), (2.5, 1.5));
+        // Zero velocity (an embodied unit holding position) → no lead, eye sits on the unit.
+        assert_eq!(extrapolate_avatar((4.0, 4.0), (0.0, 0.0), 1.0), (4.0, 4.0));
+        // Zero lead → identity.
+        assert_eq!(
+            extrapolate_avatar((7.0, -3.0), (9.0, 9.0), 0.0),
+            (7.0, -3.0)
+        );
+    }
+
+    #[test]
+    fn reconcile_avatar_eases_toward_target() {
+        // Within the snap distance, ease by `smoothing` — halfway at 0.5, then closer again.
+        let a = reconcile_avatar((0.0, 0.0), (4.0, 0.0), 0.5, 100.0);
+        assert_eq!(a, (2.0, 0.0));
+        let b = reconcile_avatar(a, (4.0, 0.0), 0.5, 100.0);
+        assert_eq!(b, (3.0, 0.0));
+        // It converges toward, never past, the target (no overshoot).
+        assert!(b.0 < 4.0 && b.0 > a.0);
+    }
+
+    #[test]
+    fn reconcile_avatar_snaps_past_threshold() {
+        // Error ≥ snap_dist → snap straight to the target (a big correction resolves at once,
+        // rather than sliding across the world).
+        let snapped = reconcile_avatar((0.0, 0.0), (10.0, 0.0), 0.5, 5.0);
+        assert_eq!(snapped, (10.0, 0.0));
+        // Exactly at the threshold also snaps (>= boundary).
+        assert_eq!(
+            reconcile_avatar((0.0, 0.0), (5.0, 0.0), 0.5, 5.0),
+            (5.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn reconcile_avatar_clamps_smoothing() {
+        // A smoothing > 1 is clamped to 1 — reach the target in one step (within snap dist),
+        // never overshoot past it.
+        assert_eq!(
+            reconcile_avatar((0.0, 0.0), (3.0, 0.0), 2.0, 100.0),
+            (3.0, 0.0)
+        );
+        // A negative smoothing clamps to 0 — hold position.
+        assert_eq!(
+            reconcile_avatar((1.0, 1.0), (3.0, 3.0), -1.0, 100.0),
+            (1.0, 1.0)
+        );
+    }
+
+    #[test]
+    fn avatar_prediction_anchors_then_reconciles_and_clears() {
+        let mut p = AvatarPrediction::default();
+        assert!(!p.valid, "starts invalid");
+        // First embodied frame ANCHORS to the extrapolated target (no ease-in from origin).
+        p.update((10.0, 0.0), (0.0, 0.0), 0.5);
+        assert!(p.valid);
+        assert_eq!(p.eye, (10.0, 0.0), "first frame anchors exactly");
+        // A subsequent frame with a moved authoritative target reconciles (eases), not snaps.
+        p.update((12.0, 0.0), (0.0, 0.0), 0.0);
+        assert_eq!(p.eye, (11.0, 0.0), "eases halfway toward the new target");
+        // Clearing (surfacing) resets so the next embody re-anchors.
+        p.clear();
+        assert!(!p.valid);
+        p.update((-3.0, 7.0), (0.0, 0.0), 0.0);
+        assert_eq!(p.eye, (-3.0, 7.0), "re-anchors after clear");
+    }
+
+    /// THE load-bearing guard (invariant #1, D15): running avatar prediction exactly as `frame`
+    /// does — reading each tick's snapshot and updating — must leave the sim's per-tick checksum
+    /// stream **byte-identical** to a run that never touches prediction. Prediction is
+    /// presentation-only and structurally cannot reach `&mut Sim`; this fails loudly if that ever
+    /// regresses (e.g. someone threads the sim into the prediction path).
+    #[test]
+    fn avatar_prediction_never_perturbs_the_sim_checksum() {
+        fn run(with_prediction: bool) -> Vec<u64> {
+            let mut sim = Sim::new(DRIVE_SEED);
+            let player = drive_scene(&mut sim);
+            // Give the avatar a move order so it actually carries velocity for the prediction
+            // to read (a non-trivial input to the seam, not a frozen zero).
+            sim.step(&[Command::Move {
+                entity: player,
+                target: Vec2::new(Fixed::from_int(12), Fixed::from_int(0)),
+            }]);
+            let mut pred = AvatarPrediction::default();
+            let tick_dt = 1.0 / TICK_HZ as f32;
+            let mut stream = vec![sim.checksum()];
+            for _ in 0..120 {
+                sim.step(&[]);
+                if with_prediction {
+                    let snap = sim.snapshot();
+                    if let Some(u) = snap.units.iter().find(|u| u.entity_index == player.index) {
+                        let pos = (fixed_to_f32(u.pos.x), fixed_to_f32(u.pos.y));
+                        let vel = (fixed_to_f32(u.vel.x), fixed_to_f32(u.vel.y));
+                        pred.update(pos, vel, 0.5 * tick_dt);
+                    }
+                }
+                stream.push(sim.checksum());
+            }
+            assert!(pred.eye.0.is_finite(), "prediction produced a usable eye");
+            stream
+        }
+        assert_eq!(
+            run(true),
+            run(false),
+            "avatar prediction must not perturb the deterministic sim"
+        );
     }
 }
