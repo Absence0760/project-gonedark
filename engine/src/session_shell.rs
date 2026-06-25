@@ -275,6 +275,91 @@ pub struct EndStateRead {
     pub resources_total: i64,
 }
 
+/// One combatant faction's standing forces + score, as the host derives them by scanning
+/// checksummed sim state (alive entities by kind, territory, purse) — the inputs the win-condition
+/// evaluator reads. **Plain integers/`i64`, no float** (invariant #1), and — critically — this is a
+/// *snapshot of already-checksummed state*, not new sim state: deriving it folds nothing new and so
+/// cannot perturb the per-tick checksum or desync lockstep (invariants #1/#7). The evaluator takes
+/// these (never `&World`), exactly the "extract a pure testable seam" pattern this repo uses, so it
+/// is unit-testable without a GPU and structurally cannot reach into the sim.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct FactionForces {
+    /// Living `Unit`-kind entities this faction has on the field.
+    pub alive_units: u32,
+    /// Living `Building`-kind entities this faction has on the field.
+    pub buildings: u32,
+    /// Territory control points this faction currently holds (the timeout primary tiebreak).
+    pub territory_held: u32,
+    /// Banked resources (the timeout secondary tiebreak — the purse is `i64`).
+    pub resources_total: i64,
+}
+
+impl FactionForces {
+    /// Whether this faction has been **eliminated**: zero living units *and* zero living buildings.
+    /// A faction with even one building (which can still produce) or one unit is still in the match.
+    pub fn is_eliminated(&self) -> bool {
+        self.alive_units == 0 && self.buildings == 0
+    }
+}
+
+/// **The match-end / victory-condition evaluator.** A *pure* host-side function of already-derived,
+/// already-checksummed state (D34: there is no win-condition evaluator in `core`; the host owns
+/// this). It takes the two combatants' [`FactionForces`] plus the elapsed tick and a timeout limit,
+/// and returns `Some(outcome)` once the match is decided, or `None` while it is still ongoing.
+///
+/// Because it reads only `Copy` integer snapshots and never `&World` / `&Sim`, computing it folds
+/// nothing into the checksum and so cannot desync (invariants #1/#7); it invents no gameplay — it
+/// only *reads off* a winner from facts the sim already settled.
+///
+/// ## Rules (in priority order)
+///
+/// 1. **Elimination.** A combatant with zero alive units *and* zero buildings has lost
+///    ([`FactionForces::is_eliminated`]). If exactly one combatant survives, that one **wins**
+///    immediately (regardless of the clock). If *both* are eliminated in the same evaluation
+///    (mutual annihilation), it is a [`Draw`](MatchOutcome::Draw).
+/// 2. **Timeout tiebreak.** If neither side is eliminated but `elapsed_ticks >= timeout_ticks`, the
+///    match is decided on score: more **territory** held wins; on equal territory, more
+///    **resources** wins; on a dead-equal score, [`Draw`](MatchOutcome::Draw).
+/// 3. **Ongoing.** Otherwise the match is not over — return `None`.
+///
+/// `player` / `enemy` are the two combatant factions' forces (Neutral never wins or loses — it
+/// holds no army). The caller derives them in the stable [`Faction::ALL`] index order so the inputs
+/// are deterministic.
+pub fn evaluate_outcome(
+    player: FactionForces,
+    enemy: FactionForces,
+    elapsed_ticks: u64,
+    timeout_ticks: u64,
+) -> Option<MatchOutcome> {
+    let player_out = player.is_eliminated();
+    let enemy_out = enemy.is_eliminated();
+
+    // Rule 1 — elimination dominates the clock: a wiped-out side has lost now.
+    match (player_out, enemy_out) {
+        (false, true) => return Some(MatchOutcome::Victory(Faction::Player)),
+        (true, false) => return Some(MatchOutcome::Victory(Faction::Enemy)),
+        (true, true) => return Some(MatchOutcome::Draw), // mutual annihilation
+        (false, false) => {}                             // both alive — fall through
+    }
+
+    // Rule 2 — timeout tiebreak: territory first, then resources, else a true draw.
+    if elapsed_ticks >= timeout_ticks {
+        let outcome = match player.territory_held.cmp(&enemy.territory_held) {
+            core::cmp::Ordering::Greater => MatchOutcome::Victory(Faction::Player),
+            core::cmp::Ordering::Less => MatchOutcome::Victory(Faction::Enemy),
+            core::cmp::Ordering::Equal => match player.resources_total.cmp(&enemy.resources_total) {
+                core::cmp::Ordering::Greater => MatchOutcome::Victory(Faction::Player),
+                core::cmp::Ordering::Less => MatchOutcome::Victory(Faction::Enemy),
+                core::cmp::Ordering::Equal => MatchOutcome::Draw,
+            },
+        };
+        return Some(outcome);
+    }
+
+    // Rule 3 — still ongoing.
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +743,121 @@ mod tests {
             assert_eq!(s.units_lost, 0);
             assert_eq!(s.units_killed, 0);
         }
+    }
+
+    // ---- the match-end / victory-condition evaluator (pure, no &World) ----
+
+    /// A long timeout so the elimination/ongoing tests never trip the clock branch.
+    const NEVER: u64 = u64::MAX;
+
+    fn forces(alive_units: u32, buildings: u32, territory_held: u32, resources_total: i64) -> FactionForces {
+        FactionForces {
+            alive_units,
+            buildings,
+            territory_held,
+            resources_total,
+        }
+    }
+
+    #[test]
+    fn elimination_is_zero_units_and_zero_buildings() {
+        // A faction with any unit OR any building is still in the match; only both-zero is out.
+        assert!(forces(0, 0, 0, 0).is_eliminated());
+        assert!(!forces(1, 0, 0, 0).is_eliminated(), "a unit keeps you in");
+        assert!(!forces(0, 1, 0, 0).is_eliminated(), "a building keeps you in");
+        assert!(!forces(3, 2, 0, 0).is_eliminated());
+    }
+
+    #[test]
+    fn player_eliminated_enemy_survives_enemy_wins() {
+        // Player wiped (0 units, 0 buildings), enemy still has forces → Enemy victory, now, even
+        // though the clock is nowhere near the timeout.
+        let out = evaluate_outcome(forces(0, 0, 1, 100), forces(2, 1, 0, 50), 10, NEVER);
+        assert_eq!(out, Some(MatchOutcome::Victory(Faction::Enemy)));
+    }
+
+    #[test]
+    fn enemy_eliminated_player_survives_player_wins() {
+        // The plan's named case: P1 (player) drives P2 (enemy) to elimination → player wins.
+        let out = evaluate_outcome(forces(4, 1, 2, 300), forces(0, 0, 0, 0), 10, NEVER);
+        assert_eq!(out, Some(MatchOutcome::Victory(Faction::Player)));
+    }
+
+    #[test]
+    fn mutual_elimination_is_a_draw() {
+        // Both sides wiped in the same evaluation (e.g. simultaneous last-unit trade) → Draw.
+        let out = evaluate_outcome(forces(0, 0, 0, 0), forces(0, 0, 0, 0), 10, NEVER);
+        assert_eq!(out, Some(MatchOutcome::Draw));
+    }
+
+    #[test]
+    fn mutual_survival_is_ongoing() {
+        // Both factions still have forces and the timeout has not arrived → the match is not over.
+        let out = evaluate_outcome(forces(3, 1, 1, 200), forces(2, 1, 2, 150), 100, NEVER);
+        assert_eq!(out, None, "neither eliminated, before timeout → ongoing");
+    }
+
+    #[test]
+    fn timeout_territory_tiebreak_decides_when_both_alive() {
+        // Both alive at the timeout; player holds more territory → player wins (territory is the
+        // primary tiebreak, ahead of resources even though the enemy is richer here).
+        let out = evaluate_outcome(
+            forces(2, 1, 3, 100), // player: more territory, fewer resources
+            forces(2, 1, 1, 999), // enemy: less territory, more resources
+            3600,
+            3600,
+        );
+        assert_eq!(out, Some(MatchOutcome::Victory(Faction::Player)));
+
+        // Mirror: enemy holds more territory → enemy wins.
+        let out = evaluate_outcome(forces(2, 1, 1, 999), forces(2, 1, 3, 0), 3600, 3600);
+        assert_eq!(out, Some(MatchOutcome::Victory(Faction::Enemy)));
+    }
+
+    #[test]
+    fn timeout_resource_tiebreak_decides_on_equal_territory() {
+        // Equal territory at the timeout → fall through to resources; player banked more → wins.
+        let out = evaluate_outcome(forces(2, 1, 2, 500), forces(2, 1, 2, 200), 3600, 3600);
+        assert_eq!(out, Some(MatchOutcome::Victory(Faction::Player)));
+
+        // Mirror: equal territory, enemy richer → enemy wins.
+        let out = evaluate_outcome(forces(2, 1, 2, 200), forces(2, 1, 2, 500), 3600, 3600);
+        assert_eq!(out, Some(MatchOutcome::Victory(Faction::Enemy)));
+    }
+
+    #[test]
+    fn timeout_exact_tie_is_a_draw() {
+        // Dead-equal territory AND resources at the timeout → an honest Draw.
+        let out = evaluate_outcome(forces(2, 1, 2, 200), forces(3, 0, 2, 200), 3600, 3600);
+        assert_eq!(out, Some(MatchOutcome::Draw));
+    }
+
+    #[test]
+    fn timeout_boundary_is_inclusive() {
+        // The timeout fires at `elapsed == timeout` (>=), not only strictly past it. One tick
+        // earlier it is still ongoing.
+        assert_eq!(
+            evaluate_outcome(forces(1, 0, 1, 0), forces(1, 0, 0, 0), 3599, 3600),
+            None,
+            "one tick before the limit → ongoing"
+        );
+        assert_eq!(
+            evaluate_outcome(forces(1, 0, 1, 0), forces(1, 0, 0, 0), 3600, 3600),
+            Some(MatchOutcome::Victory(Faction::Player)),
+            "at the limit the tiebreak decides"
+        );
+    }
+
+    #[test]
+    fn elimination_beats_the_timeout_clock() {
+        // Even past the timeout, an elimination is a clean victory — not the territory tiebreak.
+        // Enemy is eliminated but would have LOST the territory tiebreak (player holds 0 vs 2);
+        // elimination must still hand the player the win.
+        let out = evaluate_outcome(forces(1, 0, 0, 0), forces(0, 0, 2, 999), 9000, 3600);
+        assert_eq!(
+            out,
+            Some(MatchOutcome::Victory(Faction::Player)),
+            "elimination wins outright; the clock/tiebreak never runs"
+        );
     }
 }
