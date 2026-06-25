@@ -7,7 +7,7 @@
 //! snapshot lists the territory control points. None of this is sim state — it is a copy
 //! taken for rendering, so it is not checksummed (invariant #7 covers the world itself).
 
-use crate::components::{EntityKind, Faction, InputSource, Vec2};
+use crate::components::{EntityKind, Faction, InputSource, UnitKind, Vec2};
 use crate::ecs::World;
 use crate::fixed::Fixed;
 use crate::territory::Territory;
@@ -27,6 +27,9 @@ pub struct UnitSnapshot {
     pub health: Fixed,
     /// True for buildings (drawn larger / distinctly), false for units.
     pub building: bool,
+    /// The producible archetype — renderer maps Heavy→tank, Rifleman→infantry; presentation only,
+    /// not checksummed.
+    pub unit_kind: UnitKind,
 }
 
 /// One control point's renderable state at a tick.
@@ -61,6 +64,7 @@ impl Snapshot {
                 faction: world.faction[i],
                 health: world.health[i].fraction(),
                 building: world.kind[i] == EntityKind::Building,
+                unit_kind: world.unit_kind[i],
             });
         }
         let control_points = territory

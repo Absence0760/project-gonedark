@@ -2328,3 +2328,78 @@ cross the PAL boundary; the engine consumes them through the pure, tested
 `command_view_production_commands` seam. When touch buttons or remappable keybinds land they
 **extend** (not replace) this entry. No `core`/sim change — the emitted commands already existed; this
 only adds an input path to them (invariants #1/#4/#7 untouched).
+
+---
+
+## D49 — A real LOD chain for the placeholder models: gltfpack decimation tiers + distance-picked runtime selection
+
+**Status:** decided + landed (`tools/models/gen_models.py` + `render/src/mesh.rs`); ASTC/atlas/pak
+half of the cook chain deferred to Phase 3.
+
+**Decision:** The cooked-mesh pipeline (D44) shipped a single full-detail tier per model. We now run every
+placeholder `.glb` through **gltfpack** in the cook step (`tools/models/gen_models.py`) to emit
+**three LOD tiers** per model — LOD0 (full), LOD1 (`-si 0.5`, ≈½ tris) and LOD2 (chained off LOD1,
+≈¼ tris) — each re-imported into Blender and re-cooked through the unchanged `export_mesh` so all
+tiers share the identical `GDM1` flat-shaded format. Files follow a fixed naming contract:
+`<name>.mesh` (LOD0), `<name>.lod1.mesh`, `<name>.lod2.mesh`. The manifest gained a per-asset `lods`
+array (level / ratio / tri-count / sha256) for license + provenance hygiene. At runtime the
+`MeshLibrary` loads all tiers (`render/src/mesh.rs`, `get_lod`) and a pure, tested
+`mesh::select_lod(distance)` picks a tier by eye distance — coarser scenery past 10 m / 22 m.
+
+```text
+ .glb (LOD0) ──gltfpack -si 0.5──▶ .lod1.glb ──gltfpack -si 0.5──▶ .lod2.glb
+     │                                  │                               │
+  export_mesh                       export_mesh                     export_mesh   (Blender re-cook)
+     ▼                                  ▼                               ▼
+ <name>.mesh                     <name>.lod1.mesh                <name>.lod2.mesh   (all GDM1)
+```
+
+**Why:** the 200-unit mobile budget (the honest Phase-3 caveat) wants distant geometry to cost
+fewer triangles; the content pipeline (`content-pipeline.md` §2) always named gltfpack for exactly
+this, and pulling it forward to the *placeholders* keeps the greybox tier on the same cook→LOD chain
+the hero tier will use, so the runtime LOD machinery is proven before any final art exists. LOD0
+bytes are held **byte-identical** to D44's committed meshes (the builder funcs + `export_mesh` were
+untouched), so the existing golden mesh tests and manifest shas are undisturbed.
+
+**Consequences:** render-only (invariants #1/#4 untouched — no sim sees a mesh). gltfpack's
+aggressive simplify (`-sa`) is required because the flat-shaded soup splits normals at every face;
+already-minimal props (crate/rock/barricade) "floor out" (LOD1 == LOD0 geometry) and still emit a
+valid tier so the loader stays uniform. A pre-existing non-determinism in Blender's UV-sphere
+tessellation (trooper/tree/rock) means a clean regen can perturb those three LOD0 files run-to-run;
+documented in `tools/models/README.md`, flagged for a follow-up that would need to touch the
+builders. The full ASTC/atlas/LZ4-pak half of the cook chain remains Phase-3 follow-on.
+
+---
+
+## D50 — Wire the placeholder model library to the sim: unit-kind tokens, the tank, and first-person world dressing
+
+**Status:** decided + landed (`core` unit_kind + `render`/`engine` token & prop wiring); cross-platform
+checksum stream verified byte-identical over 300 ticks.
+
+**Decision:** The mesh library held nine models but the game drew only three (infantry token, camp, weapon).
+This wires the rest. (1) A render-facing **`unit_kind`** component now rides the ECS (`core`,
+mirroring `EntityKind`) and the render snapshot (`UnitSnapshot.unit_kind`), set deterministically at
+the production spawn — kept **out of the per-tick checksum** (its gameplay effect is already in the
+spawned `health`/`weapon`; the save/resume codec carries it outside the `fold`, `SNAPSHOT_VERSION`
+1→2). (2) `render`'s `model_for_unit` maps the snapshot kind to a token mesh — **Heavy → tank**,
+Rifleman → infantry, building → camp — and the command-view token pass buckets by `ModelKind` so any
+model draws. (3) The embodied view gained **static world dressing** (`render_world_props` +
+`PROP_LAYOUT`): trees, boulders, crates, sandbag berms and turret emplacements scattered as cosmetic
+scenery/cover, drawn at the LOD picked by eye distance (D49), so "going dark" lands you in a *place*
+rather than a bare ground/sky void.
+
+**Why:** the placeholder roster (D41) only earns its keep once the sim actually selects between
+models; a per-entity unit-kind is the minimal honest seam (buildings already had `BuildingKind`,
+units discarded theirs after spawn). Keeping `unit_kind` out of the checksum preserves the committed
+cross-platform streams (verified byte-identical over 300 ticks) — it is a presentation label, not
+sim state, so it belongs on the render side of the snapshot (invariant #4). The world props are a
+**fixed compile-time layout with no sim entity behind them** — they reveal no unit/enemy/map intel,
+so they stay fair under "world goes dark" (invariant #6): scenery is terrain, not the strategic
+picture the dark frame is supposed to take away.
+
+**Consequences:** the `model: u32` token index is a trailing field on the Pod `UnitInstance`,
+unreferenced by the quad pipeline's instance attributes (offsets 0–31), so the GPU layout is
+unchanged. No float crosses into `core` (the LOD distance + placement math is render-only). When the
+roster or building set grows, `model_for_unit` and `PROP_LAYOUT` extend; if props ever need to be
+gameplay cover they must become sim entities and pass through the snapshot like any other unit
+(never a render-side back-channel to the sim — invariant #4).

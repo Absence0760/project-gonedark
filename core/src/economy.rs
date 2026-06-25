@@ -359,6 +359,7 @@ pub fn economy_system(
         let e = world.spawn();
         let ei = e.index as usize;
         world.kind[ei] = EntityKind::Unit;
+        world.unit_kind[ei] = unit_kind;
         world.faction[ei] = faction;
         world.pos[ei] = pos;
         world.health[ei] = health;
@@ -535,6 +536,56 @@ mod tests {
             }
         }
         assert!(found);
+    }
+
+    #[test]
+    fn production_spawns_unit_with_its_queued_kind() {
+        // The load-bearing render-metadata seam: a Heavy queued through production must spawn
+        // carrying `UnitKind::Heavy`, a Rifleman `UnitKind::Rifleman`. Set deterministically from
+        // the queue item, so it is identical on every peer (it is NOT in the checksum).
+        let mut world = World::new();
+        let mut res = Resources::new(CAMP_BUILD_COST + RIFLEMAN_COST + HEAVY_COST);
+        let camp = build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::ZERO,
+        )
+        .unwrap();
+        let terr = empty_terr();
+        for _ in 0..CAMP_BUILD_TICKS {
+            tick(&mut world, &mut res, &terr);
+        }
+
+        // Produce a Rifleman, then verify the single spawned unit carries Rifleman.
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+        for _ in 0..prod_time(UnitKind::Rifleman, 0) {
+            tick(&mut world, &mut res, &terr);
+        }
+        let rifle_idx = (0..world.capacity())
+            .find(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)
+            .expect("a rifleman should have spawned");
+        assert_eq!(world.unit_kind[rifle_idx], UnitKind::Rifleman);
+
+        // Produce a Heavy, then verify the new unit carries Heavy (and the rifleman is untouched).
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Heavy));
+        for _ in 0..prod_time(UnitKind::Heavy, 0) {
+            tick(&mut world, &mut res, &terr);
+        }
+        let heavy_idx = (0..world.capacity())
+            .find(|&i| {
+                world.is_index_alive(i)
+                    && world.kind[i] == EntityKind::Unit
+                    && i != rifle_idx
+            })
+            .expect("a heavy should have spawned");
+        assert_eq!(world.unit_kind[heavy_idx], UnitKind::Heavy);
+        assert_eq!(
+            world.unit_kind[rifle_idx],
+            UnitKind::Rifleman,
+            "spawning the heavy must not disturb the rifleman's kind"
+        );
     }
 
     #[test]

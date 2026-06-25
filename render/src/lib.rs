@@ -122,30 +122,106 @@ const UNIT_HALF: f32 = 0.5;
 const BUILDING_HALF: f32 = 1.6;
 const CONTROL_POINT_HALF: f32 = 2.2;
 
-/// Uniform scale applied to the 3D token mesh for a unit vs a building (D44), tuned so the greybox
-/// model roughly fills its command-view footprint marker (the infantry mesh is ~0.45 m wide, so
-/// ~2.2× brings it up to the ~1 m unit marker). Render-only cosmetic scale.
+/// Uniform scale applied to the 3D token mesh per model (D44), tuned so the greybox model roughly
+/// fills its command-view footprint marker. The infantry mesh is ~0.45 m wide, so ~2.2× brings it
+/// up to the ~1 m unit marker; the tank hull is ~3 m, so it scales *down* to read as a comparable
+/// (slightly heavier) token; the camp is already structure-sized. Render-only cosmetic scale.
 const UNIT_TOKEN_SCALE: f32 = 2.2;
+const TANK_TOKEN_SCALE: f32 = 0.42;
 const BUILDING_TOKEN_SCALE: f32 = 1.0;
 
+/// The 3D token mesh for a snapshot unit: buildings are the camp structure; units map by their
+/// producible archetype (`Heavy`→tank, `Rifleman`/default→infantry). This is the honest greybox
+/// wiring now that the sim carries a per-unit [`UnitKind`] (snapshot `unit_kind`). Pure + testable.
+pub(crate) fn model_for_unit(building: bool, kind: UnitKind) -> mesh::ModelKind {
+    if building {
+        mesh::ModelKind::CampHq
+    } else {
+        match kind {
+            UnitKind::Heavy => mesh::ModelKind::Tank,
+            UnitKind::Rifleman => mesh::ModelKind::Trooper,
+        }
+    }
+}
+
+/// The command-view token scale for a resolved [`mesh::ModelKind`].
+fn token_scale(kind: mesh::ModelKind) -> f32 {
+    match kind {
+        mesh::ModelKind::CampHq => BUILDING_TOKEN_SCALE,
+        mesh::ModelKind::Tank => TANK_TOKEN_SCALE,
+        _ => UNIT_TOKEN_SCALE,
+    }
+}
+
 /// Pick the 3D token mesh + scale for a command-view instance, or `None` for instances that are not
-/// drawn as a mesh (control-point rings keep their hollow-ring quad). Buildings get the structure
-/// mesh; everything else (units, the embodied avatar in command view) gets the infantry mesh — the
-/// sim snapshot only distinguishes building-vs-unit, so that's the honest greybox mapping until a
-/// unit-kind enters the sim. Pure + testable.
+/// drawn as a mesh (control-point rings keep their hollow-ring quad). The mesh kind was resolved
+/// from the snapshot's unit-kind/building flag into [`UnitInstance::model`] (see [`model_for_unit`])
+/// when the instance was built; here we just decode it and pick the cosmetic scale. Pure + testable.
 fn token_for(inst: &UnitInstance) -> Option<(mesh::ModelKind, f32)> {
     if inst.flags & FLAG_RING != 0 {
         return None; // control points stay hollow rings (no mesh for them yet)
     }
-    if inst.half_extent >= BUILDING_HALF {
-        Some((mesh::ModelKind::CampHq, BUILDING_TOKEN_SCALE))
-    } else {
-        Some((mesh::ModelKind::Trooper, UNIT_TOKEN_SCALE))
-    }
+    // `model` is always a valid ModelKind discriminant (written by `model_for_unit`); a direct
+    // index panics loudly in debug if some future path forgets to set it, rather than silently
+    // drawing the wrong mesh.
+    let kind = mesh::ModelKind::ALL[inst.model as usize];
+    Some((kind, token_scale(kind)))
 }
 
 /// Sentinel health value meaning "draw no health bar" (control points).
 const NO_HEALTH_BAR: f32 = -1.0;
+
+/// Static first-person world dressing (W5 follow-on): scenery + cover props placed around the
+/// battlefield so the embodied view reads as a *place*, not a bare ground/sky void. Each entry is
+/// `(kind, x, y, yaw_radians, scale)` in world metres. This is **render-only environment** — a
+/// fixed cosmetic layout with no sim entity behind it, so it reveals no map intel (it is terrain,
+/// not unit/enemy positions) and stays fair under "world goes dark" (invariant #6). Drawn at the
+/// LOD [`mesh::select_lod`] picks from the eye distance, so distant scenery costs fewer triangles.
+const PROP_LAYOUT: &[(mesh::ModelKind, f32, f32, f32, f32)] = &[
+    // Tree line / scenery (soft cover) — desaturated greens, varied scale.
+    (mesh::ModelKind::Tree, -19.0, 14.0, 0.4, 1.10),
+    (mesh::ModelKind::Tree, -22.0, 6.0, 1.9, 0.95),
+    (mesh::ModelKind::Tree, 17.0, 18.0, 2.7, 1.20),
+    (mesh::ModelKind::Tree, 24.0, -9.0, 0.9, 1.00),
+    (mesh::ModelKind::Tree, -6.0, 26.0, 3.5, 1.05),
+    // Boulders (hard cover) — grey, low.
+    (mesh::ModelKind::Rock, -12.0, -8.0, 0.2, 1.30),
+    (mesh::ModelKind::Rock, 9.0, 11.0, 2.2, 0.90),
+    (mesh::ModelKind::Rock, 20.0, 4.0, 4.0, 1.10),
+    (mesh::ModelKind::Rock, -2.0, -22.0, 1.1, 1.00),
+    // Supply crates (light cover) clustered near the centre.
+    (mesh::ModelKind::Crate, 3.0, 4.0, 0.3, 1.00),
+    (mesh::ModelKind::Crate, 4.2, 4.0, 0.3, 1.00),
+    (mesh::ModelKind::Crate, 3.6, 5.1, 0.8, 1.00),
+    (mesh::ModelKind::Crate, -8.0, 7.0, 1.4, 1.00),
+    // Sandbag berms (medium cover) — defensive lines.
+    (mesh::ModelKind::Barricade, -4.0, -3.0, 0.0, 1.20),
+    (mesh::ModelKind::Barricade, 2.0, -6.0, 1.57, 1.10),
+    (mesh::ModelKind::Barricade, 12.0, -2.0, 0.5, 1.00),
+    // Defensive turret emplacements — read as fortified points.
+    (mesh::ModelKind::Turret, -14.0, 2.0, 0.6, 1.00),
+    (mesh::ModelKind::Turret, 15.0, 9.0, 3.4, 1.00),
+];
+
+/// Map the static [`PROP_LAYOUT`] to concrete draw items for an `eye` position: each prop's kind,
+/// the LOD tier [`mesh::select_lod`] picks from its eye distance, and its world-space mesh instance
+/// (greybox base tint, no flash). Pure + GPU-free, so the LOD selection + placement is unit-tested
+/// without a device; [`Renderer::render_world_props`] just groups the result into batches.
+fn prop_draw_plan(eye: [f32; 3]) -> Vec<(mesh::ModelKind, usize, mesh::MeshInstance)> {
+    PROP_LAYOUT
+        .iter()
+        .map(|&(kind, x, y, yaw, scale)| {
+            let (dx, dy, dz) = (x - eye[0], y - eye[1], -eye[2]);
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+            let c = kind.base_color();
+            let inst = mesh::MeshInstance {
+                model: mesh::model_matrix([x, y, 0.0], scale, yaw),
+                color: [c[0], c[1], c[2], 0.0],
+            };
+            (kind, mesh::select_lod(dist), inst)
+        })
+        .collect()
+}
 
 /// The base RGB color for a faction (the embodied avatar overrides this to amber).
 pub fn faction_color(faction: Faction) -> [f32; 3] {
@@ -197,6 +273,8 @@ pub fn interpolate_instances(
         }
         let half_extent = if b.building { BUILDING_HALF } else { UNIT_HALF };
         let health = fixed_to_f32(b.health).clamp(0.0, 1.0);
+        // Resolve the 3D token mesh from the sim's unit-kind / building flag (Heavy→tank etc.).
+        let model = model_for_unit(b.building, b.unit_kind) as u32;
 
         out.push(UnitInstance {
             x: ax + (bx - ax) * alpha,
@@ -207,6 +285,7 @@ pub fn interpolate_instances(
             b: color[2],
             health,
             flags,
+            model,
         });
     }
 
@@ -223,6 +302,7 @@ pub fn interpolate_instances(
             b: color[2],
             health: NO_HEALTH_BAR,
             flags: FLAG_RING,
+            model: 0, // unused: FLAG_RING makes `token_for` return None (rings stay hollow quads)
         });
     }
 
@@ -277,6 +357,11 @@ pub struct UnitInstance {
     pub health: f32,
     /// [`FLAG_EMBODIED`] | [`FLAG_RING`] | [`FLAG_SELECTED`].
     pub flags: u32,
+    /// The 3D token mesh this instance draws as ([`mesh::ModelKind`] `as u32`), resolved from the
+    /// snapshot's unit-kind / building flag by [`model_for_unit`]. CPU-side only — [`token_for`]
+    /// reads it to bucket the mesh pass; it is the trailing field so the quad pipeline's instance
+    /// attributes (locations 1..=5, fixed offsets) are untouched and the GPU never reads it.
+    pub model: u32,
 }
 
 /// A unit-quad corner in local space. Two triangles cover `[-1, 1]^2` (the shader scales by
@@ -574,35 +659,32 @@ impl Renderer {
         // 1. Ground grid, which CLEARS the frame to the lit slate (under everything else).
         self.draw_terrain_clear(device, queue, view);
 
-        // 2. Build the 3D token batches (units → infantry, buildings → structure) and, in lockstep,
-        //    a quad set flagged FLAG_MESH so the quad shader draws only the UI decals over them.
+        // 2. Build the 3D token batches (units → infantry/tank by unit-kind, buildings → structure)
+        //    and, in lockstep, a quad set flagged FLAG_MESH so the quad shader draws only the UI
+        //    decals over them. One bucket per `ModelKind` so any token mesh (incl. the Heavy tank)
+        //    draws without special-casing. Command-view tokens use LOD0 — top-down close scrutiny.
         self.ensure_depth(device, width, height);
-        let mut trooper: Vec<mesh::MeshInstance> = Vec::new();
-        let mut camp: Vec<mesh::MeshInstance> = Vec::new();
+        let mut buckets: Vec<Vec<mesh::MeshInstance>> =
+            (0..mesh::ModelKind::ALL.len()).map(|_| Vec::new()).collect();
         let mut quad_set = draw_set.clone();
         for inst in &mut quad_set {
             if let Some((kind, scale)) = token_for(inst) {
                 inst.flags |= FLAG_MESH;
-                let token = mesh::MeshInstance {
+                buckets[kind as usize].push(mesh::MeshInstance {
                     model: mesh::model_matrix([inst.x, inst.y, 0.0], scale, 0.0),
                     color: [inst.r, inst.g, inst.b, 0.0], // faction tint; a=0 → no flash
-                };
-                match kind {
-                    mesh::ModelKind::CampHq => camp.push(token),
-                    _ => trooper.push(token),
-                }
+                });
             }
         }
-        let batches = [
-            mesh::MeshBatch {
-                mesh: self.mesh_lib.get(mesh::ModelKind::Trooper),
-                instances: trooper,
-            },
-            mesh::MeshBatch {
-                mesh: self.mesh_lib.get(mesh::ModelKind::CampHq),
-                instances: camp,
-            },
-        ];
+        let batches: Vec<mesh::MeshBatch> = mesh::ModelKind::ALL
+            .iter()
+            .zip(buckets)
+            .filter(|(_, instances)| !instances.is_empty())
+            .map(|(&kind, instances)| mesh::MeshBatch {
+                mesh: self.mesh_lib.get(kind),
+                instances,
+            })
+            .collect();
         self.mesh_pipeline.draw(
             device,
             queue,
@@ -860,6 +942,54 @@ impl Renderer {
         self.world.render_sky(device, queue, view, uniform);
     }
 
+    /// Draw the static first-person world dressing (scenery + cover props, [`PROP_LAYOUT`]) over the
+    /// embodied sky/ground. The host calls this in the embodied branch AFTER [`render_world_sky`]
+    /// (the clearing pass) and before [`Renderer::render`]'s avatar pass, so props composite onto
+    /// the real first-person space. `view_proj` is the embodied camera matrix and `eye` its world
+    /// position (so [`mesh::select_lod`] can pick a tier per prop by distance). Render-only
+    /// environment → reveals no map intel (invariant #6); `width`/`height` size the depth buffer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_world_props(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        view_proj: &[[f32; 4]; 4],
+        eye: [f32; 3],
+        width: u32,
+        height: u32,
+    ) {
+        self.ensure_depth(device, width, height);
+        let plan = prop_draw_plan(eye);
+        // One batch per (kind, lod) actually used, so each draws its own decimated mesh tier.
+        let mut batches: Vec<mesh::MeshBatch> = Vec::new();
+        for &kind in mesh::ModelKind::ALL.iter() {
+            for lod in 0..mesh::LOD_COUNT {
+                let instances: Vec<mesh::MeshInstance> = plan
+                    .iter()
+                    .filter(|(k, l, _)| *k == kind && *l == lod)
+                    .map(|(_, _, inst)| *inst)
+                    .collect();
+                if !instances.is_empty() {
+                    batches.push(mesh::MeshBatch {
+                        mesh: self.mesh_lib.get_lod(kind, lod),
+                        instances,
+                    });
+                }
+            }
+        }
+        self.mesh_pipeline.draw(
+            device,
+            queue,
+            view,
+            &self.depth_view,
+            view_proj,
+            mesh::MeshPipeline::DEFAULT_LIGHT,
+            wgpu::LoadOp::Load,
+            &batches,
+        );
+    }
+
     /// Draw the embodied weapon viewmodel (W5/D44) on top of the current frame (a LOAD colour pass —
     /// never clears colour; clears its own depth). The gun is the real `weapon_rifle` greybox **3D
     /// mesh** drawn through the shared [`mesh::MeshPipeline`], anchored in **view space** by
@@ -927,6 +1057,7 @@ mod tests {
             faction: Faction::Player,
             health: Fixed::ONE,
             building: false,
+            unit_kind: UnitKind::Rifleman,
         }
     }
 
@@ -1112,10 +1243,24 @@ mod tests {
     // ---- 3D token mapping (D44) ----
 
     #[test]
-    fn token_for_maps_unit_building_and_skips_rings() {
-        // A plain unit → infantry token at the unit scale.
+    fn model_for_unit_maps_archetype_and_building() {
+        assert_eq!(
+            model_for_unit(false, UnitKind::Rifleman),
+            mesh::ModelKind::Trooper
+        );
+        assert_eq!(model_for_unit(false, UnitKind::Heavy), mesh::ModelKind::Tank);
+        // A building is the camp structure regardless of the (irrelevant) unit-kind tag.
+        assert_eq!(
+            model_for_unit(true, UnitKind::Heavy),
+            mesh::ModelKind::CampHq
+        );
+    }
+
+    #[test]
+    fn token_for_decodes_model_scale_and_skips_rings() {
+        // A Rifleman token (model = Trooper) → infantry mesh at the unit scale.
         let mut u = UnitInstance {
-            half_extent: UNIT_HALF,
+            model: mesh::ModelKind::Trooper as u32,
             ..Default::default()
         };
         assert_eq!(
@@ -1123,8 +1268,12 @@ mod tests {
             Some((mesh::ModelKind::Trooper, UNIT_TOKEN_SCALE))
         );
 
-        // A building (larger half-extent) → structure token at the building scale.
-        u.half_extent = BUILDING_HALF;
+        // A Heavy token (model = Tank) → tank mesh at the (smaller) tank scale.
+        u.model = mesh::ModelKind::Tank as u32;
+        assert_eq!(token_for(&u), Some((mesh::ModelKind::Tank, TANK_TOKEN_SCALE)));
+
+        // A building token (model = CampHq) → structure mesh at the building scale.
+        u.model = mesh::ModelKind::CampHq as u32;
         assert_eq!(
             token_for(&u),
             Some((mesh::ModelKind::CampHq, BUILDING_TOKEN_SCALE))
@@ -1137,6 +1286,53 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(token_for(&ring), None);
+    }
+
+    /// `interpolate_instances` resolves each unit's token mesh from its snapshot `unit_kind`:
+    /// a Heavy carries the tank model index, a Rifleman the infantry model index.
+    #[test]
+    fn interpolate_sets_token_model_from_unit_kind() {
+        let mut heavy = unit(Fixed::ZERO, Fixed::ZERO, false);
+        heavy.unit_kind = UnitKind::Heavy;
+        let rifle = unit(Fixed::ONE, Fixed::ONE, false);
+        let s = snapshot(0, vec![heavy, rifle]);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        assert_eq!(out[0].model, mesh::ModelKind::Tank as u32, "Heavy → tank");
+        assert_eq!(
+            out[1].model,
+            mesh::ModelKind::Trooper as u32,
+            "Rifleman → infantry"
+        );
+        // Both decode back through token_for to their mesh.
+        assert_eq!(token_for(&out[0]).unwrap().0, mesh::ModelKind::Tank);
+        assert_eq!(token_for(&out[1]).unwrap().0, mesh::ModelKind::Trooper);
+    }
+
+    /// The FPS world-dressing plan covers every prop, picks coarser LODs as the eye recedes, and
+    /// never indexes past the library.
+    #[test]
+    fn prop_draw_plan_covers_layout_and_picks_lod_by_distance() {
+        // Eye on top of the crate cluster (~(3.6, 4.5)) at eye height: nearby props are LOD0,
+        // the far tree line drops to a coarser tier.
+        let plan = prop_draw_plan([3.6, 4.5, 1.5]);
+        assert_eq!(plan.len(), PROP_LAYOUT.len(), "every prop is planned");
+        for (_, lod, _) in &plan {
+            assert!(*lod < mesh::LOD_COUNT, "lod is a valid library index");
+        }
+        // A crate at the cluster centre is within LOD1_DISTANCE → full detail.
+        let crate_near = plan
+            .iter()
+            .find(|(k, _, _)| *k == mesh::ModelKind::Crate)
+            .unwrap();
+        assert_eq!(crate_near.1, 0, "the near crate cluster keeps LOD0");
+        // The far tree line (>22 m away) drops to the coarsest tier.
+        let far_tree = plan
+            .iter()
+            .filter(|(k, _, _)| *k == mesh::ModelKind::Tree)
+            .map(|(_, lod, _)| *lod)
+            .max()
+            .unwrap();
+        assert_eq!(far_tree, 2, "a distant tree uses LOD2");
     }
 
     /// Validate `shader.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression

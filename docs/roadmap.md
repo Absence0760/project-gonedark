@@ -282,17 +282,24 @@ in the in-match layer; the **settings surface that configures it** is.
 
 ### Art & assets — AI-generated placeholders (skip custom 3D for now)
 
-- [ ] **Adopt AI-generated placeholder models** for units, structures, and the embodied
+- [x] **Adopt AI-generated placeholder models** for units, structures, and the embodied
   weapon instead of commissioned art ([D41](decisions.md)) — this pulls the "AI-assisted"
   route that [`content-pipeline.md`](content-pipeline.md) §2 reserved for *hero* art forward
-  to *everything*, sitting at the greybox/low tier of the production ladder
-- [ ] One source `.glb` per unit/structure run through the existing cook → LOD chain so it
-  satisfies the two-view filter (top-down token *and* eye-level mesh — §4)
-- [ ] License-clean & logged — generated assets recorded in the asset manifest (§ license hygiene)
-- [ ] A consistent placeholder visual language across units/structures/world so the build
-  looks deliberate rather than unfinished
-- [ ] FPS-view world dressing beyond the existing ground/sky/cover ([D40](decisions.md)) —
-  enough to read as a *place*
+  to *everything*, sitting at the greybox/low tier of the production ladder. **Done:** nine
+  procedural greybox models, all now drawn — units (Rifleman→infantry, Heavy→tank), the camp,
+  the first-person weapon, and the scenery/cover props ([D50](decisions.md))
+- [x] One source `.glb` per unit/structure run through the cook → LOD chain so it
+  satisfies the two-view filter (top-down token *and* eye-level mesh — §4). **Done:** the cook
+  now emits a real **3-tier gltfpack LOD chain** per model, distance-selected at runtime
+  ([D49](decisions.md)); the ASTC/atlas/LZ4-pak half stays Phase-3 follow-on
+- [x] License-clean & logged — generated assets recorded in the asset manifest (§ license hygiene).
+  **Done:** every tier carries `source`/`license`/`sha256` in `assets/models/manifest.json`
+- [x] A consistent placeholder visual language across units/structures/world so the build
+  looks deliberate rather than unfinished. **Done:** one harmonized greybox palette
+  (units muted faction-neutral, structures warm/steel, scenery desaturated) in `gen_models.py`
+- [x] FPS-view world dressing beyond the existing ground/sky/cover ([D40](decisions.md)) —
+  enough to read as a *place*. **Done:** static scenery + cover props (trees, boulders, crates,
+  sandbag berms, turrets) drawn in the embodied view, LOD-by-distance ([D50](decisions.md))
 
 ### Release readiness — the store-facing layer
 

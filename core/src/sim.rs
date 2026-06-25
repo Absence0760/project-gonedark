@@ -334,6 +334,15 @@ impl Sim {
         for &idx in free {
             w.write_u32(idx);
         }
+        // Render-facing metadata that is NOT in the checksum (so it stays out of `fold`): each
+        // slot's `unit_kind` (the producible archetype the renderer maps to a mesh). It is set
+        // deterministically from the production queue, so a resume restores the same kind a
+        // never-interrupted run holds — but its gameplay effect is already captured by the spawned
+        // health/weapon stats, so it must never enter the checksum stream (invariant #7). One tag
+        // byte per slot, in `0..capacity()` order (mirrors `generation[]`).
+        for &k in &self.world.unit_kind {
+            w.write_u8(unit_kind_tag(k));
+        }
         w.into_bytes()
     }
 
@@ -440,6 +449,14 @@ impl Sim {
             free.push(r.read_u32()?);
         }
 
+        // Render-facing metadata (serialize-only; not in the checksum): one `unit_kind` tag per
+        // slot, in 0..cap order — the exact inverse of the block `serialize` writes after the
+        // free list.
+        let mut unit_kind = Vec::with_capacity(cap);
+        for _ in 0..cap {
+            unit_kind.push(read_unit_kind(&mut r)?);
+        }
+
         r.expect_end()?;
 
         let world = World::from_parts(
@@ -454,6 +471,7 @@ impl Sim {
                 input_source,
                 faction,
                 kind,
+                unit_kind,
                 health,
                 weapon,
                 suppression,
@@ -486,7 +504,7 @@ impl Sim {
 /// Authoritative-snapshot format version (D28). Bumped on any layout change so a stale snapshot is
 /// rejected ([`DeserializeError::BadVersion`]) rather than silently misparsed into a divergent
 /// world. Independent of the lockstep wire version — different codec, different evolution.
-const SNAPSHOT_VERSION: u8 = 1;
+const SNAPSHOT_VERSION: u8 = 2;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.

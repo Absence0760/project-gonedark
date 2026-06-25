@@ -6,7 +6,7 @@
 //! stale handle to a recycled slot is detected, with no pointers in sim state.
 
 use crate::components::{
-    Building, EntityKind, Faction, Health, InputSource, Order, Stance, Vec2, Weapon,
+    Building, EntityKind, Faction, Health, InputSource, Order, Stance, UnitKind, Vec2, Weapon,
 };
 use crate::fixed::Fixed;
 
@@ -40,6 +40,12 @@ pub struct World {
     pub faction: Vec<Faction>,
     /// Whether the entity is a unit or a building.
     pub kind: Vec<EntityKind>,
+    /// The producible archetype a unit was spawned as (render-facing metadata: the renderer maps
+    /// `Heavy` → tank, `Rifleman` → infantry). Set deterministically from the production queue, so
+    /// it is identical on every peer — but its *gameplay* effect is already captured by the spawned
+    /// `health`/`weapon` stats, so it is **NOT** folded into the per-tick checksum (invariant #7).
+    /// Defaults to `Rifleman`; meaningless for buildings.
+    pub unit_kind: Vec<UnitKind>,
     /// Hit points; an entity at/under zero is despawned by combat.
     pub health: Vec<Health>,
     /// Weapon (a default range-0 weapon never fires).
@@ -75,6 +81,7 @@ impl World {
             self.input_source[i] = InputSource::default();
             self.faction[i] = Faction::default();
             self.kind[i] = EntityKind::default();
+            self.unit_kind[i] = UnitKind::default();
             self.health[i] = Health::default();
             self.weapon[i] = Weapon::default();
             self.suppression[i] = Fixed::ZERO;
@@ -97,6 +104,7 @@ impl World {
             self.input_source.push(InputSource::default());
             self.faction.push(Faction::default());
             self.kind.push(EntityKind::default());
+            self.unit_kind.push(UnitKind::default());
             self.health.push(Health::default());
             self.weapon.push(Weapon::default());
             self.suppression.push(Fixed::ZERO);
@@ -212,6 +220,7 @@ impl World {
             input_source,
             faction,
             kind,
+            unit_kind,
             health,
             weapon,
             suppression,
@@ -229,6 +238,7 @@ impl World {
             || input_source.len() != cap
             || faction.len() != cap
             || kind.len() != cap
+            || unit_kind.len() != cap
             || health.len() != cap
             || weapon.len() != cap
             || suppression.len() != cap
@@ -266,6 +276,7 @@ impl World {
             input_source,
             faction,
             kind,
+            unit_kind,
             health,
             weapon,
             suppression,
@@ -288,6 +299,7 @@ pub struct WorldComponents {
     pub input_source: Vec<InputSource>,
     pub faction: Vec<Faction>,
     pub kind: Vec<EntityKind>,
+    pub unit_kind: Vec<UnitKind>,
     pub health: Vec<Health>,
     pub weapon: Vec<Weapon>,
     pub suppression: Vec<Fixed>,

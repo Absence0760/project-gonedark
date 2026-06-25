@@ -947,6 +947,27 @@ fn snapshot_skips_dead_units() {
 }
 
 #[test]
+fn snapshot_carries_each_units_kind() {
+    // The render snapshot must carry every unit's `unit_kind` so the renderer can pick a mesh
+    // (Heavy→tank, Rifleman→infantry). Presentation only — not checksummed.
+    let mut sim = Sim::new(9);
+    let a = sim.world.spawn();
+    let b = sim.world.spawn();
+    sim.world.unit_kind[a.index as usize] = UnitKind::Heavy;
+    sim.world.unit_kind[b.index as usize] = UnitKind::Rifleman;
+    let snap = sim.snapshot();
+    let kind_of = |idx: u32| {
+        snap.units
+            .iter()
+            .find(|u| u.entity_index == idx)
+            .map(|u| u.unit_kind)
+            .expect("unit present in snapshot")
+    };
+    assert_eq!(kind_of(a.index), UnitKind::Heavy);
+    assert_eq!(kind_of(b.index), UnitKind::Rifleman);
+}
+
+#[test]
 fn embody_stops_motion_surface_resumes_it() {
     // Embodying freezes order-driven motion; surfacing hands the unit back to its order.
     let mut sim = Sim::new(0xBEEF);
@@ -1206,6 +1227,35 @@ fn snapshot_round_trips_fresh_sim() {
     assert_eq!(restored.serialize(), bytes);
 }
 
+/// `unit_kind` is render-facing metadata kept OUT of the checksum, but it is still serialized in a
+/// dedicated block (outside the shared `fold` walk) so a resumed sim restores the same archetypes a
+/// never-interrupted run holds. This proves the round-trip preserves a mix of Heavy and Rifleman.
+#[test]
+fn snapshot_preserves_unit_kind_render_metadata() {
+    let mut sim = Sim::new(123);
+    let r0 = sim.world.spawn();
+    let h0 = sim.world.spawn();
+    let r1 = sim.world.spawn();
+    sim.world.unit_kind[r0.index as usize] = UnitKind::Rifleman;
+    sim.world.unit_kind[h0.index as usize] = UnitKind::Heavy;
+    sim.world.unit_kind[r1.index as usize] = UnitKind::Rifleman;
+
+    let restored = Sim::deserialize(&sim.serialize()).expect("round-trip deserialize");
+    assert_eq!(restored.world.unit_kind, sim.world.unit_kind);
+    assert_eq!(restored.world.unit_kind[r0.index as usize], UnitKind::Rifleman);
+    assert_eq!(restored.world.unit_kind[h0.index as usize], UnitKind::Heavy);
+    assert_eq!(restored.world.unit_kind[r1.index as usize], UnitKind::Rifleman);
+
+    // And `unit_kind` is NOT in the checksum: flipping it leaves the per-tick checksum unchanged.
+    let before = sim.checksum();
+    sim.world.unit_kind[h0.index as usize] = UnitKind::Rifleman;
+    assert_eq!(
+        before,
+        sim.checksum(),
+        "unit_kind must not affect the checksum (invariant #7)"
+    );
+}
+
 /// The free-list ORDER is load-bearing: it decides the next spawn's slot. A snapshot taken after
 /// despawns must resume with spawns landing on exactly the slots the uninterrupted run would use.
 #[test]
@@ -1269,7 +1319,7 @@ fn deserialize_rejects_malformed_input() {
 
     // A garbage capacity that overruns the buffer is caught before allocating.
     let mut w = Writer::new();
-    w.write_u8(1); // version
+    w.write_u8(2); // version (current SNAPSHOT_VERSION)
     w.write_u32(0); // map_id
     w.write_u32(0xFFFF_FFFF); // capacity claims ~4 billion slots
     assert_eq!(err(&w.into_bytes()), DeserializeError::LengthOverflow);

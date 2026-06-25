@@ -28,6 +28,33 @@ use wgpu::util::DeviceExt;
 /// Magic bytes at the head of a cooked `.mesh` file.
 pub const MESH_MAGIC: [u8; 4] = *b"GDM1";
 
+/// Number of LOD tiers the cook pipeline emits per model: LOD0 (full) + two gltfpack-decimated
+/// tiers (`<name>.lod1.mesh` ≈ ½ tris, `<name>.lod2.mesh` ≈ ¼). See `tools/models/gen_models.py`
+/// and `docs/content-pipeline.md`. The library loads all tiers; [`select_lod`] picks one by
+/// camera distance at draw time.
+pub const LOD_COUNT: usize = 3;
+
+/// Distance (world metres, eye→mesh) at/after which the renderer drops from LOD0→LOD1.
+pub const LOD1_DISTANCE: f32 = 10.0;
+/// Distance (world metres) at/after which the renderer drops from LOD1→LOD2.
+pub const LOD2_DISTANCE: f32 = 22.0;
+
+/// Pick a LOD tier (`0..LOD_COUNT`) for a mesh `distance` (world metres) from the camera. Coarser
+/// tiers kick in past [`LOD1_DISTANCE`]/[`LOD2_DISTANCE`]; nearer than that we keep full detail.
+/// Pure + testable; the renderer calls this per world-space prop so distant scenery costs fewer
+/// triangles on the 200-unit mobile budget (content-pipeline §2). Negative/NaN distances clamp to
+/// the nearest tier (0).
+#[inline]
+pub fn select_lod(distance: f32) -> usize {
+    if distance >= LOD2_DISTANCE {
+        2
+    } else if distance >= LOD1_DISTANCE {
+        1
+    } else {
+        0
+    }
+}
+
 /// Depth buffer format for the 3D mesh passes. `Depth32Float` is universally supported (incl.
 /// mobile/WebGPU) and gives plenty of precision for our small scenes.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -140,21 +167,64 @@ impl ModelKind {
         ModelKind::Barricade,
     ];
 
-    /// The cooked `.mesh` bytes, embedded at build time so they ride into the binary/APK with no
-    /// runtime file IO (no PAL storage round-trip, no Android asset-pack plumbing). The committed
-    /// files are the golden output of `pnpm assets:models`.
-    pub fn cooked_bytes(self) -> &'static [u8] {
+    /// The cooked `.mesh` bytes for every LOD tier, embedded at build time so they ride into the
+    /// binary/APK with no runtime file IO (no PAL storage round-trip, no Android asset-pack
+    /// plumbing). Index by LOD level (`0` = full detail, `1`/`2` = gltfpack-decimated). The
+    /// committed files are the golden output of `pnpm assets:models` (`tools/models/gen_models.py`).
+    pub fn cooked_lods(self) -> [&'static [u8]; LOD_COUNT] {
         match self {
-            ModelKind::Trooper => include_bytes!("../../assets/models/trooper.mesh"),
-            ModelKind::Tank => include_bytes!("../../assets/models/tank.mesh"),
-            ModelKind::CampHq => include_bytes!("../../assets/models/camp_hq.mesh"),
-            ModelKind::WeaponRifle => include_bytes!("../../assets/models/weapon_rifle.mesh"),
-            ModelKind::Crate => include_bytes!("../../assets/models/crate.mesh"),
-            ModelKind::Turret => include_bytes!("../../assets/models/turret.mesh"),
-            ModelKind::Tree => include_bytes!("../../assets/models/tree.mesh"),
-            ModelKind::Rock => include_bytes!("../../assets/models/rock.mesh"),
-            ModelKind::Barricade => include_bytes!("../../assets/models/barricade.mesh"),
+            ModelKind::Trooper => [
+                include_bytes!("../../assets/models/trooper.mesh"),
+                include_bytes!("../../assets/models/trooper.lod1.mesh"),
+                include_bytes!("../../assets/models/trooper.lod2.mesh"),
+            ],
+            ModelKind::Tank => [
+                include_bytes!("../../assets/models/tank.mesh"),
+                include_bytes!("../../assets/models/tank.lod1.mesh"),
+                include_bytes!("../../assets/models/tank.lod2.mesh"),
+            ],
+            ModelKind::CampHq => [
+                include_bytes!("../../assets/models/camp_hq.mesh"),
+                include_bytes!("../../assets/models/camp_hq.lod1.mesh"),
+                include_bytes!("../../assets/models/camp_hq.lod2.mesh"),
+            ],
+            ModelKind::WeaponRifle => [
+                include_bytes!("../../assets/models/weapon_rifle.mesh"),
+                include_bytes!("../../assets/models/weapon_rifle.lod1.mesh"),
+                include_bytes!("../../assets/models/weapon_rifle.lod2.mesh"),
+            ],
+            ModelKind::Crate => [
+                include_bytes!("../../assets/models/crate.mesh"),
+                include_bytes!("../../assets/models/crate.lod1.mesh"),
+                include_bytes!("../../assets/models/crate.lod2.mesh"),
+            ],
+            ModelKind::Turret => [
+                include_bytes!("../../assets/models/turret.mesh"),
+                include_bytes!("../../assets/models/turret.lod1.mesh"),
+                include_bytes!("../../assets/models/turret.lod2.mesh"),
+            ],
+            ModelKind::Tree => [
+                include_bytes!("../../assets/models/tree.mesh"),
+                include_bytes!("../../assets/models/tree.lod1.mesh"),
+                include_bytes!("../../assets/models/tree.lod2.mesh"),
+            ],
+            ModelKind::Rock => [
+                include_bytes!("../../assets/models/rock.mesh"),
+                include_bytes!("../../assets/models/rock.lod1.mesh"),
+                include_bytes!("../../assets/models/rock.lod2.mesh"),
+            ],
+            ModelKind::Barricade => [
+                include_bytes!("../../assets/models/barricade.mesh"),
+                include_bytes!("../../assets/models/barricade.lod1.mesh"),
+                include_bytes!("../../assets/models/barricade.lod2.mesh"),
+            ],
         }
+    }
+
+    /// The full-detail (LOD0) cooked `.mesh` bytes — the tier under closest scrutiny. Shorthand for
+    /// `self.cooked_lods()[0]`.
+    pub fn cooked_bytes(self) -> &'static [u8] {
+        self.cooked_lods()[0]
     }
 
     /// The model's greybox base tint. **Mirrors `COLORS` in `tools/models/gen_models.py`** (the
@@ -219,28 +289,40 @@ impl MeshGpu {
 /// Every greybox mesh, uploaded once and indexed by [`ModelKind`]. Built in `Renderer::new`; the
 /// weapon and unit-token passes borrow meshes out of it to draw.
 pub struct MeshLibrary {
-    meshes: Vec<MeshGpu>,
+    /// Indexed `[kind as usize][lod]`; every kind carries [`LOD_COUNT`] uploaded tiers.
+    meshes: Vec<[MeshGpu; LOD_COUNT]>,
 }
 
 impl MeshLibrary {
-    /// Parse + upload every [`ModelKind`] from its embedded cooked bytes. The committed `.mesh`
-    /// files are golden-tested, so `parse` cannot fail here in practice; an unexpected parse error
-    /// panics with the offending model name rather than silently dropping a mesh.
+    /// Parse + upload every [`ModelKind`]'s every LOD tier from its embedded cooked bytes. The
+    /// committed `.mesh` files are golden-tested, so `parse` cannot fail here in practice; an
+    /// unexpected parse error panics with the offending model + tier rather than silently dropping
+    /// a mesh.
     pub fn load(device: &wgpu::Device) -> Self {
         let meshes = ModelKind::ALL
             .iter()
             .map(|&kind| {
-                let cpu = MeshCpu::parse(kind.cooked_bytes())
-                    .unwrap_or_else(|e| panic!("cooked mesh for {kind:?} failed to parse: {e:?}"));
-                MeshGpu::upload(device, &cpu, "gonedark.mesh")
+                let tiers = kind.cooked_lods();
+                std::array::from_fn(|lod| {
+                    let cpu = MeshCpu::parse(tiers[lod]).unwrap_or_else(|e| {
+                        panic!("cooked mesh for {kind:?} LOD{lod} failed to parse: {e:?}")
+                    });
+                    MeshGpu::upload(device, &cpu, "gonedark.mesh")
+                })
             })
             .collect();
         MeshLibrary { meshes }
     }
 
-    /// Borrow the GPU mesh for a kind.
+    /// Borrow the full-detail (LOD0) GPU mesh for a kind.
     pub fn get(&self, kind: ModelKind) -> &MeshGpu {
-        &self.meshes[kind as usize]
+        self.get_lod(kind, 0)
+    }
+
+    /// Borrow a specific LOD tier's GPU mesh for a kind. `lod` is clamped into `0..LOD_COUNT`, so
+    /// a [`select_lod`] result is always safe to pass.
+    pub fn get_lod(&self, kind: ModelKind, lod: usize) -> &MeshGpu {
+        &self.meshes[kind as usize][lod.min(LOD_COUNT - 1)]
     }
 }
 
@@ -614,6 +696,44 @@ mod tests {
                 let n = (v.normal[0].powi(2) + v.normal[1].powi(2) + v.normal[2].powi(2)).sqrt();
                 assert!((n - 1.0).abs() < 1e-3, "{kind:?} normals are unit length, got {n}");
             }
+        }
+    }
+
+    /// Every LOD tier of every model parses + is a sane flat-shaded soup, and the tier triangle
+    /// counts are monotone non-increasing (LOD0 ≥ LOD1 ≥ LOD2) — the golden check that the gltfpack
+    /// LOD chain (`tools/models/gen_models.py`) and this loader agree.
+    #[test]
+    fn every_lod_tier_parses_and_is_monotone() {
+        for kind in ModelKind::ALL {
+            let mut prev_tris = usize::MAX;
+            for (lod, bytes) in kind.cooked_lods().iter().enumerate() {
+                let m = MeshCpu::parse(bytes)
+                    .unwrap_or_else(|e| panic!("{kind:?} LOD{lod} failed to parse: {e:?}"));
+                assert!(!m.vertices.is_empty(), "{kind:?} LOD{lod} has geometry");
+                assert_eq!(m.vertices.len() % 3, 0, "{kind:?} LOD{lod} is 3 verts/tri");
+                let tris = m.vertices.len() / 3;
+                assert!(
+                    tris <= prev_tris,
+                    "{kind:?} LOD{lod} has {tris} tris > previous tier {prev_tris}"
+                );
+                prev_tris = tris;
+            }
+        }
+    }
+
+    /// `select_lod` switches tiers at the documented distance thresholds and clamps the extremes.
+    #[test]
+    fn select_lod_switches_at_thresholds() {
+        assert_eq!(select_lod(0.0), 0);
+        assert_eq!(select_lod(-5.0), 0, "negative distance clamps to nearest tier");
+        assert_eq!(select_lod(LOD1_DISTANCE - 0.01), 0);
+        assert_eq!(select_lod(LOD1_DISTANCE), 1, "LOD1 threshold is inclusive");
+        assert_eq!(select_lod(LOD2_DISTANCE - 0.01), 1);
+        assert_eq!(select_lod(LOD2_DISTANCE), 2, "LOD2 threshold is inclusive");
+        assert_eq!(select_lod(1.0e6), 2);
+        // Every result is a valid library index.
+        for d in [0.0, LOD1_DISTANCE, LOD2_DISTANCE, 1.0e6] {
+            assert!(select_lod(d) < LOD_COUNT);
         }
     }
 

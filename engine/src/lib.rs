@@ -1288,6 +1288,22 @@ impl Game {
             );
             self.renderer
                 .render_world_sky(device, queue, view, &world_uniform);
+
+            // 6c. Static first-person world dressing (scenery + cover props): drawn over the
+            // sky/ground and before the avatar pass so the embodied view reads as a *place*, not a
+            // bare void. Render-only environment — a fixed cosmetic layout, no sim entity behind it,
+            // so it reveals no map intel and stays fair under "world goes dark" (invariant #6). The
+            // renderer picks a LOD tier per prop from the eye distance; we hand in the same eye +
+            // camera the sky used (matrix math stays host-side, D19 — render is glam-free).
+            self.renderer.render_world_props(
+                device,
+                queue,
+                view,
+                &view_proj.to_cols_array_2d(),
+                eye,
+                width,
+                height,
+            );
         }
 
         // Economy readout (the resource/income lines of the command readout): read banked credits +
