@@ -2169,49 +2169,6 @@ on top). Full suite + clippy + determinism + lockstep + viz all green.
 
 ---
 
-## D45 — The headless asset-tooling toolbox (one scriptable CLI per content lane)
-
-**Status:** decided + installed (machine-wide on the workstation; no repo code yet). Generalises
-D41 (the Blender method) and D44 (the cook) across the other content lanes.
-
-**Decision:**
-
-- Asset creation across **every** content lane uses a **headless, Claude-scriptable CLI** — the
-  D41 model (script the generator, commit the script + manifest, never an opaque binary blob)
-  extended from 3D to audio and 2D/UI. The chosen tools, all installed machine-wide and on PATH:
-  - **Blender** (`bpy`) — 3D author: meshes, geometry-nodes terrain, rig/anim, glTF export (D41).
-  - **gltfpack** — 3D cook: glTF mesh/texture compression (meshopt/Draco) for the mobile /
-    200-unit budget.
-  - **SoX** — SFX synthesis + processing.
-  - **Csound** — deterministic, **seed-scripted** SFX, regenerable + git-diffable: the audio
-    analogue of D41's procedural meshes (audio is a primary system, invariant #6).
-  - **Inkscape** (`--export-type=png`) — vector → PNG HUD / command-layer UI icons across DPIs.
-  - **ImageMagick** (`magick`) — scripted textures, atlases, noise / normal maps (already present).
-- Recorded as project convention in [`CLAUDE.md`](../CLAUDE.md) and as the can/can't toolbox table
-  in [`content-pipeline.md`](content-pipeline.md) §6, so **every session reaches for these first**
-  rather than requesting commissioned art or committing binaries.
-
-**Why:** tools existing on disk doesn't make sessions *use* them — awareness has to live in the
-always-loaded project conventions, not just the workstation `~/CLAUDE.md`. One scriptable CLI per
-lane keeps asset provenance uniform (script + `source`/`license`/`sha256` manifest, §3) and
-reproducible, and extends D41's "no external license to vet, output is CC0-able, owned" property
-from meshes to sound and UI. **Csound over SuperCollider** because it's the lighter "script a file
-from a seed" fit; **gltfpack** (native prebuilt binary) **over the `gltf-transform` npm tool**
-because this is a Cargo workspace with no Node manifest to pin a per-project dep into.
-
-**What this does NOT decide:** the **hero-tier** sourcing fork (commissioned vs CC0 vs AI-gen)
-stays open — [`open-questions.md`](open-questions.md) **Q11**; this is greybox/placeholder
-infrastructure, the same scope as D41. No sim / `core` / netcode is touched — these are offline
-authoring tools, so invariants #1 / #4 / #7 are untouched.
-
-**Consequences:** per-tool install provenance is recorded in the workstation `~/CLAUDE.md`
-("Specific tool decisions"); **Csound is a source build** (no Fedora package) so it is *not*
-auto-updated by `update-all` — bump manually. New content work (a Csound going-dark alert SFX, an
-Inkscape HUD icon set, a gltfpack pass over the D41/D44 greybox `.glb`s) now has a named tool and
-the §6 toolbox table to point at.
-
----
-
 ## D45 — Tilt the command camera (three-quarter RTS view) so the 3D tokens read
 
 **Status:** decided + landed (engine command camera + unprojection; viz-runner green). The
@@ -2258,3 +2215,46 @@ unchanged). The old hardcoded-ortho unproject test is replaced by a project→un
 plus a new test pinning axis-separability + that height reads up-screen (both fail if a yaw is ever
 introduced — the regression guard for the no-yaw invariant). Full suite + clippy + viz all green; the
 command/selected PNGs now show upright 3D figures with the selection-rim + health decals on top.
+
+---
+
+## D46 — The headless asset-tooling toolbox (one scriptable CLI per content lane)
+
+**Status:** decided + installed (machine-wide on the workstation; no repo code yet). Generalises
+D41 (the Blender method) and D44 (the cook) across the other content lanes.
+
+**Decision:**
+
+- Asset creation across **every** content lane uses a **headless, Claude-scriptable CLI** — the
+  D41 model (script the generator, commit the script + manifest, never an opaque binary blob)
+  extended from 3D to audio and 2D/UI. The chosen tools, all installed machine-wide and on PATH:
+  - **Blender** (`bpy`) — 3D author: meshes, geometry-nodes terrain, rig/anim, glTF export (D41).
+  - **gltfpack** — 3D cook: glTF mesh/texture compression (meshopt/Draco) for the mobile /
+    200-unit budget.
+  - **SoX** — SFX synthesis + processing.
+  - **Csound** — deterministic, **seed-scripted** SFX, regenerable + git-diffable: the audio
+    analogue of D41's procedural meshes (audio is a primary system, invariant #6).
+  - **Inkscape** (`--export-type=png`) — vector → PNG HUD / command-layer UI icons across DPIs.
+  - **ImageMagick** (`magick`) — scripted textures, atlases, noise / normal maps (already present).
+- Recorded as project convention in [`CLAUDE.md`](../CLAUDE.md) and as the can/can't toolbox table
+  in [`content-pipeline.md`](content-pipeline.md) §6, so **every session reaches for these first**
+  rather than requesting commissioned art or committing binaries.
+
+**Why:** tools existing on disk doesn't make sessions *use* them — awareness has to live in the
+always-loaded project conventions, not just the workstation `~/CLAUDE.md`. One scriptable CLI per
+lane keeps asset provenance uniform (script + `source`/`license`/`sha256` manifest, §3) and
+reproducible, and extends D41's "no external license to vet, output is CC0-able, owned" property
+from meshes to sound and UI. **Csound over SuperCollider** because it's the lighter "script a file
+from a seed" fit; **gltfpack** (native prebuilt binary) **over the `gltf-transform` npm tool**
+because this is a Cargo workspace with no Node manifest to pin a per-project dep into.
+
+**What this does NOT decide:** the **hero-tier** sourcing fork (commissioned vs CC0 vs AI-gen)
+stays open — [`open-questions.md`](open-questions.md) **Q11**; this is greybox/placeholder
+infrastructure, the same scope as D41. No sim / `core` / netcode is touched — these are offline
+authoring tools, so invariants #1 / #4 / #7 are untouched.
+
+**Consequences:** per-tool install provenance is recorded in the workstation `~/CLAUDE.md`
+("Specific tool decisions"); **Csound is a source build** (no Fedora package) so it is *not*
+auto-updated by `update-all` — bump manually. New content work (a Csound going-dark alert SFX, an
+Inkscape HUD icon set, a gltfpack pass over the D41/D44 greybox `.glb`s) now has a named tool and
+the §6 toolbox table to point at.

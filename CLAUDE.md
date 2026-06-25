@@ -180,7 +180,7 @@ art. All are installed machine-wide and on PATH:
 - **ImageMagick** (`magick`) — scripted textures, atlases, noise / normal maps
 
 Full rationale + the can/can't boundary: [`docs/content-pipeline.md`](docs/content-pipeline.md)
-§6 (**D45** logs the toolchain; **D41** the Blender method). Per-tool install provenance lives
+§6 (**D46** logs the toolchain; **D41** the Blender method). Per-tool install provenance lives
 in the workstation `~/CLAUDE.md` — note **Csound is a source build** and is *not* swept by
 `update-all` (bump manually).
 

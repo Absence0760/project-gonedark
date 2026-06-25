@@ -148,7 +148,7 @@ needs an asset; script the generator and commit the *script* + a manifest entry
 | **ImageMagick** (`magick`) | 2D | scripted textures, atlases, noise / normal maps |
 
 Install provenance + how each was added lives in the workstation conventions (`~/CLAUDE.md`);
-the toolchain choice is logged as **D45**.
+the toolchain choice is logged as **D46**.
 
 ## 7. Open fork
 
