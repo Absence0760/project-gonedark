@@ -31,7 +31,6 @@ use gonedark_core::sim::Command;
 
 /// The structure a build-palette slot places, or `None` for a slot outside the palette. Matches the
 /// module-level slot table exactly. Adding a building kind = one more arm here.
-#[cfg_attr(not(test), allow(dead_code))]
 fn slot_kind(slot: u8) -> Option<BuildingKind> {
     Some(match slot {
         0 => BuildingKind::Camp,
@@ -53,9 +52,10 @@ fn slot_kind(slot: u8) -> Option<BuildingKind> {
 /// this seam never checks resources.
 ///
 /// This is the tested, documented seam for the build-palette wiring (like [`command_ui`]'s
-/// `commands_for`); the live input loop does not call it yet — the integrator wires a chosen
-/// palette slot + placement tap into it — so it is `allow(dead_code)` outside tests.
-#[cfg_attr(not(test), allow(dead_code))]
+/// `commands_for`); the live command-view loop calls it through
+/// [`crate::command_view_production_commands`], which feeds it the armed palette slot
+/// ([`InputFrame::building_slot`](gonedark_pal::InputFrame::building_slot)) and the unprojected
+/// cursor ground point.
 pub fn build_commands(
     building_slot: Option<u8>,
     faction: Faction,

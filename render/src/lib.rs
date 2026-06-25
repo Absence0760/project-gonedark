@@ -34,7 +34,7 @@
 //! alert HUD.
 
 use gonedark_core::alerts::AlertChannel;
-use gonedark_core::components::Faction;
+use gonedark_core::components::{Faction, UnitKind};
 use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::Visibility;
 use gonedark_core::snapshot::Snapshot;
@@ -234,6 +234,30 @@ pub fn interpolate_instances(
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Camera {
     pub view_proj: [[f32; 4]; 4],
+}
+
+/// The player's currently-active camp, as the plain numbers the per-camp panels need. The host
+/// resolves *which* camp is active (deterministically, over the sim) and copies these out — the
+/// renderer never reads the sim. `queue` is the FIFO production queue as `(kind, ticks_remaining)`
+/// pairs, front = in-production.
+pub struct ActiveCamp<'a> {
+    /// Upgrade tier (0 = base) — drives production-speed + the upgrade panel's "next tier".
+    pub level: u8,
+    /// FIFO production queue: `(unit, ticks_remaining)`, front item in production.
+    pub queue: &'a [(UnitKind, u16)],
+}
+
+/// Plain sim-derived inputs for [`Renderer::render_command_panels`] — the command-view build/train/
+/// upgrade chrome. The host fills this from the (checksummed) sim each command frame; the renderer
+/// holds no sim read. `active_camp` is `None` when the player has no camp (only the build palette
+/// renders then).
+pub struct CommandPanels<'a> {
+    /// The player faction's banked credits — drives affordability across all three panels.
+    pub resources: i64,
+    /// Unit kinds the player can train (the train panel lists these). Order is the display order.
+    pub trainable: &'a [UnitKind],
+    /// The active camp's per-camp state, or `None` if the player has no built camp.
+    pub active_camp: Option<ActiveCamp<'a>>,
 }
 
 /// One renderable instance in float space (render-only). `repr(C)` + `Pod` so it uploads
@@ -531,6 +555,7 @@ impl Renderer {
         fog: &Visibility,
         width: u32,
         height: u32,
+        economy: Option<readout::EconomyReadout>,
     ) {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(camera));
 
@@ -595,13 +620,13 @@ impl Renderer {
 
         // Command-view readouts (W6): a unit/enemy/point tally derived from the SAME fog-filtered
         // draw set (the un-flagged copy) — no new sim read — laid out as corner labels and drawn via
-        // the W4 text pass over the command frame. Screen-space chrome only (invariant #6). This is
-        // the command frame (never the dark embodied frame), so `world_dark = false`. The economy
-        // seam is `None` here: the renderer has no economy read, so the resource/income lines stay
-        // out until the integrator plumbs an `EconomyReadout` from the sim into this pass — see
-        // `readout`.
+        // the W4 text pass over the command frame. Screen-space chrome only (invariant #6). The
+        // `economy` seam is the host-supplied `EconomyReadout` (banked credits + income; the renderer
+        // has no sim read, so the host reads it off the sim and hands it in). Both the tally and the
+        // economy lines are gated by the real `world_dark`: while embodied `readout_labels` returns an
+        // EMPTY set, so the command readout never draws over the dark frame (invariant #6).
         let t = readout::tally(&draw_set);
-        for label in readout::readout_labels(&t, None, false) {
+        for label in readout::readout_labels(&t, economy, world_dark) {
             self.text.queue(
                 label.text,
                 label.pos,
@@ -773,6 +798,50 @@ impl Renderer {
         marquee: &marquee::Marquee,
     ) {
         self.marquee.render(device, queue, view, marquee);
+    }
+
+    /// Draw the command-view **build / train / upgrade** panels — the "command and grow your camps"
+    /// chrome — on top of the current command frame (a LOAD text pass; never clears). The host calls
+    /// this ONLY in the command view (never embodied → never over the dark frame, invariant #6) and
+    /// supplies plain sim-derived numbers in [`CommandPanels`]; this method calls the pure layout
+    /// seams ([`build_menu`]/[`train_panel`]/[`upgrade_panel`]) and queues their labels through the
+    /// dedicated readout text pass. The build palette is always offered; the train + upgrade panels
+    /// only render when a camp is active ([`CommandPanels::active_camp`] is `Some`). Screen-space
+    /// chrome with no world position — it leaks no intel the (fog-filtered) command frame doesn't
+    /// already show.
+    pub fn render_command_panels(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        panels: &CommandPanels,
+    ) {
+        // Build palette — always offered in the command view (what you can place + cost + whether
+        // you can afford it). Static info, so it needs no active camp.
+        for e in build_menu::build_menu_entries(panels.resources) {
+            self.text
+                .queue(e.text, e.pos, e.px_size, e.anchor, e.color, e.alpha);
+        }
+
+        // Train + upgrade panels are per-camp — only when a camp is active.
+        if let Some(camp) = &panels.active_camp {
+            for l in train_panel::train_panel_labels(
+                panels.trainable,
+                camp.level,
+                panels.resources,
+                camp.queue,
+            ) {
+                self.text
+                    .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
+            }
+            let uview = upgrade_panel::upgrade_view(camp.level, panels.resources);
+            for l in upgrade_panel::upgrade_labels(&uview) {
+                self.text
+                    .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
+            }
+        }
+
+        self.text.render(device, queue, view);
     }
 
     /// Draw the embodied first-person world's sky + ground (W5), delegating to

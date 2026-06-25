@@ -2258,3 +2258,73 @@ authoring tools, so invariants #1 / #4 / #7 are untouched.
 auto-updated by `update-all` — bump manually. New content work (a Csound going-dark alert SFX, an
 Inkscape HUD icon set, a gltfpack pass over the D41/D44 greybox `.glb`s) now has a named tool and
 the §6 toolbox table to point at.
+
+---
+
+## D47 — The "active camp" model: production panels act on the lowest-index built player camp
+
+**Status:** decided + implemented (`engine::active_player_camp`, wired into the render panels and the
+command-view production input).
+
+**Decision:** the per-camp command UI (the train + upgrade panels, and the `train`/`upgrade` input
+intents) acts on a single **active camp**, resolved deterministically as the **lowest-index, built,
+operational `BuildingKind::Camp` owned by the player** (`build_ticks_left == 0`; a half-built camp is
+not offered). There is **no explicit camp-selection gesture** yet — the primary (lowest-index) camp is
+the implicit default. Build placement is the exception: it needs no camp (it *creates* one), placing
+at the unprojected cursor ground point.
+
+**Why:** Stage 2 needed *some* rule for "which camp does Train/Upgrade target," and the choice has to
+be **deterministic and identical on every peer** (invariants #1/#7) because it feeds the lockstep
+command stream. Entity-index order is the cheapest stable, peer-identical key — no sim state, no
+float, no RNG, no autonomy (invariant #3). A real per-camp *selection* (click a camp → it becomes
+active) is a genuine input-model feature with its own UI affordance and is deferred rather than
+silently half-built; until then the deterministic default keeps the feature usable and the seam
+(`active_player_camp`) is pure + unit-tested. Most early scenes have one camp, so the default is
+rarely surprising in practice.
+
+**Consequences:** `active_player_camp` is called twice per command frame (once pre-step to resolve the
+input target, once at render time for the panels) — two cheap pure reads, deliberately separate so
+input sees pre-step state and the panels see post-step state. When explicit camp selection lands it
+**supersedes** this default (a `selected_camp: Option<Entity>` overriding the lowest-index fallback),
+and the render/input call sites swap the resolver — the downstream seams
+(`train_commands`/`upgrade_commands`, which already take an `Option<Entity>`) don't change shape. A
+camp **rally** point is still a flagged follow-up (no `Command` for a building spawn-rally exists —
+see `train_ui::rally_point`).
+
+---
+
+## D48 — Desktop command-view production keybinds: B / R / H / U
+
+**Status:** decided + implemented (`pal-desktop`); touch bindings deferred.
+
+**Decision:** the desktop command view binds the Phase-2 "command and grow your camps" production
+intents to mnemonic letter keys, distinct from the `1`–`0` order/stance vocabulary (D25):
+
+| key | intent | seam → command |
+|-----|--------|----------------|
+| `B` | place a **Camp** at the cursor's ground point | `build_ui::build_commands` → `Command::Build` |
+| `R` | queue a **Rifleman** at the active camp | `train_ui::train_commands` (slot 0) → `Command::QueueProduction` |
+| `H` | queue a **Heavy** at the active camp | `train_ui::train_commands` (slot 1) → `Command::QueueProduction` |
+| `U` | **upgrade** the active camp one tier | `upgrade_ui::upgrade_commands` → `Command::Upgrade` |
+
+All four are **edge-latched** (fire once on the press, ignore OS key-repeat, clear on drain) like the
+vocabulary slot keys, and are **command-view only** — the engine ignores them while embodied
+(invariant #6: no command-layer production while the map is dark). Build places at wherever the cursor
+hovers, so it needs no separate "armed-then-click" mode.
+
+**Why:** the digit keys are already the order/stance vocabulary, so production needs its own keys;
+mnemonic letters (**B**uild, **R**ifleman, **H**eavy, **U**pgrade) are more memorable than another
+numeric bank and stay clear of the `WASD`/`E`/`Q`/`F`/`Space` embodied-combat cluster. A single key
+per unit type (rather than a "select-then-number" palette) keeps the desktop flow direct for the tiny
+current roster; if the roster grows past a handful, this moves to a palette + slot scheme without
+disturbing the `*_slot: Option<u8>` `InputFrame` fields (the backend just maps more keys onto the
+existing slots). These are **desktop** bindings; the **touch** equivalent is on-screen palette/panel
+buttons hit-tested onto the same `InputFrame` edges (`building_slot`/`train_slot`/`upgrade_pressed`),
+deferred with the rest of the on-screen command UI (the radial-menu slice, D43) and TODO-flagged in
+`pal-android`.
+
+**Consequences:** three new `InputFrame` edges (`building_slot`, `train_slot`, `upgrade_pressed`)
+cross the PAL boundary; the engine consumes them through the pure, tested
+`command_view_production_commands` seam. When touch buttons or remappable keybinds land they
+**extend** (not replace) this entry. No `core`/sim change — the emitted commands already existed; this
+only adds an input path to them (invariants #1/#4/#7 untouched).

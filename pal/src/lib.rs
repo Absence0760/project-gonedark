@@ -61,6 +61,24 @@ pub struct InputFrame {
     /// frame (it is a mode, not an edge); desktop leaves it `false` (it has the dedicated
     /// right-click). Ignored while embodied.
     pub command_tap: bool,
+    /// Command-view **build-palette** slot armed this frame, if any — a one-shot edge (like
+    /// [`command_slot`](Self::command_slot)). The chosen structure is **placed at**
+    /// [`pointer`](Self::pointer) (the cursor's ground point), so a build needs *both* this slot and
+    /// a pointer. The engine's build seam (`engine::build_ui::build_commands`) maps it → a
+    /// `Command::Build`, quantizing the placement point to `Fixed` at the boundary (invariant #1).
+    /// Command view only (ignored while embodied). Backends set it per-platform: desktop latches a
+    /// palette key; touch will latch an on-screen palette button (deferred with the rest of the
+    /// on-screen command UI, like [`command_slot`](Self::command_slot)).
+    pub building_slot: Option<u8>,
+    /// Command-view **troop-training** slot armed this frame, if any — a one-shot edge. Names the
+    /// unit archetype to queue at the player's active camp (the engine resolves *which* camp); the
+    /// train seam (`engine::train_ui::train_commands`) maps it → a `Command::QueueProduction`.
+    /// Command view only. No pointer needed — production targets the active camp, not a tapped point.
+    pub train_slot: Option<u8>,
+    /// Command-view **upgrade** intent — a one-shot edge: upgrade the player's active camp one tier.
+    /// The upgrade seam (`engine::upgrade_ui::upgrade_commands`) maps it → a `Command::Upgrade`.
+    /// Command view only; carries no pointer or slot (there is one upgrade action per camp today).
+    pub upgrade_pressed: bool,
     /// Embodied locomotion + look axes (left stick / right stick or WASD + mouse).
     pub move_axis: (f32, f32),
     pub look_axis: (f32, f32),

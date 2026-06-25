@@ -208,6 +208,8 @@ impl DesktopRenderSurface {
 /// mouse delta looks. **Left-click selects** (the command-layer pointer-down / band-select) and, when
 /// embodied, **fires**; **right-click commands** the current selection (move, or attack on an enemy);
 /// `Space` is the alternate fire. Number keys `1`–`0` pick the advanced order/stance vocabulary slots.
+/// Command-view production keys (Phase 2): `B` places a Camp at the cursor, `R`/`H` queue a Rifleman/
+/// Heavy at the active camp, `U` upgrades it.
 #[derive(Debug)]
 pub struct DesktopInput {
     // Accumulated (held / latest) state.
@@ -235,6 +237,12 @@ pub struct DesktopInput {
     // closes on release (an edge here would flash the menu for a single frame).
     long_press: bool,
     command_slot: Option<u8>,
+    // Command-view production edges (Phase 2 "command and grow your camps"), latched on press and
+    // cleared on drain like `command_slot`: B places a Camp at the cursor, R/H queue a Rifleman/
+    // Heavy at the active camp, U upgrades it. See `on_key` for the keymap rationale.
+    building_slot: Option<u8>,
+    train_slot: Option<u8>,
+    upgrade_latch: bool,
 }
 
 impl Default for DesktopInput {
@@ -256,6 +264,9 @@ impl Default for DesktopInput {
             release_latch: false,
             long_press: false,
             command_slot: None,
+            building_slot: None,
+            train_slot: None,
+            upgrade_latch: false,
         }
     }
 }
@@ -378,6 +389,15 @@ impl DesktopInput {
             KeyCode::Digit8 if pressed && !repeat => self.command_slot = Some(7),
             KeyCode::Digit9 if pressed && !repeat => self.command_slot = Some(8),
             KeyCode::Digit0 if pressed && !repeat => self.command_slot = Some(9),
+            // Command-view "command and grow your camps" production keys (Phase 2). Edge-latched
+            // (press, ignore key-repeat), command view only — the engine ignores them while embodied.
+            // Mnemonic letters, distinct from the 1–0 order/stance vocabulary: B(uild) places a Camp
+            // at the cursor's ground point; R(ifleman)/H(eavy) queue that unit at the active camp;
+            // U(pgrade) levels the active camp. (These bindings are recorded in docs/decisions.md.)
+            KeyCode::KeyB if pressed && !repeat => self.building_slot = Some(0),
+            KeyCode::KeyR if pressed && !repeat => self.train_slot = Some(0),
+            KeyCode::KeyH if pressed && !repeat => self.train_slot = Some(1),
+            KeyCode::KeyU if pressed && !repeat => self.upgrade_latch = true,
             _ => {}
         }
     }
@@ -413,6 +433,9 @@ impl DesktopInput {
             // Desktop uses the dedicated right-click command (above), not the single-pointer
             // contextual tap — so the "tap commands" touch mode (D43) stays off here.
             command_tap: false,
+            building_slot: self.building_slot,
+            train_slot: self.train_slot,
+            upgrade_pressed: self.upgrade_latch,
             move_axis: (mx, my),
             look_axis: (self.look_dx, self.look_dy),
             fire: self.fire,
@@ -427,6 +450,9 @@ impl DesktopInput {
         self.command_latch = false;
         self.release_latch = false;
         self.command_slot = None;
+        self.building_slot = None;
+        self.train_slot = None;
+        self.upgrade_latch = false;
         self.look_dx = 0.0;
         self.look_dy = 0.0;
 
@@ -674,8 +700,57 @@ mod input_tests {
         assert!(!f.embody_pressed && !f.surface_pressed);
         assert!(!f.long_press && !f.fire);
         assert_eq!(f.command_slot, None);
+        assert_eq!(f.building_slot, None);
+        assert_eq!(f.train_slot, None);
+        assert!(!f.upgrade_pressed);
         assert_eq!(f.move_axis, (0.0, 0.0));
         assert_eq!(f.look_axis, (0.0, 0.0));
+    }
+
+    #[test]
+    fn build_train_upgrade_keys_latch_one_shot_then_clear() {
+        // The Phase 2 production keys are edge-latched (one drain), exactly like command_slot:
+        // B → build-palette slot 0 (Camp), R/H → train slots 0/1 (Rifleman/Heavy), U → upgrade.
+        let mut input = DesktopInput::new();
+
+        input.on_key(KeyCode::KeyB, true, false);
+        let f = input.drain_frame();
+        assert_eq!(f.building_slot, Some(0), "B → build slot 0 (Camp)");
+        assert_eq!(
+            input.drain_frame().building_slot,
+            None,
+            "build slot is one-shot"
+        );
+
+        input.on_key(KeyCode::KeyR, true, false);
+        assert_eq!(input.drain_frame().train_slot, Some(0), "R → train Rifleman");
+        input.on_key(KeyCode::KeyH, true, false);
+        assert_eq!(input.drain_frame().train_slot, Some(1), "H → train Heavy");
+        assert_eq!(
+            input.drain_frame().train_slot,
+            None,
+            "train slot is one-shot"
+        );
+
+        input.on_key(KeyCode::KeyU, true, false);
+        assert!(input.drain_frame().upgrade_pressed, "U → upgrade edge");
+        assert!(
+            !input.drain_frame().upgrade_pressed,
+            "upgrade edge cleared after one drain"
+        );
+    }
+
+    #[test]
+    fn production_keys_ignore_key_repeat() {
+        // OS key-repeat must not re-fire a production edge (same rule as embody / command_slot).
+        let mut input = DesktopInput::new();
+        input.on_key(KeyCode::KeyB, true, true);
+        input.on_key(KeyCode::KeyR, true, true);
+        input.on_key(KeyCode::KeyU, true, true);
+        let f = input.drain_frame();
+        assert_eq!(f.building_slot, None, "repeat doesn't latch a build");
+        assert_eq!(f.train_slot, None, "repeat doesn't latch a train");
+        assert!(!f.upgrade_pressed, "repeat doesn't latch an upgrade");
     }
 }
 

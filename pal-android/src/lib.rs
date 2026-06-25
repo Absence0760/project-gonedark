@@ -378,6 +378,13 @@ impl AndroidInput {
         //   Those need on-screen UI + wedge hit-testing and are a separate slice (D43 "deferred").
         //   The stick-geometry -> axis mapping should be a pure free fn tested on the host (the seam
         //   pattern `engine::map_input_commands`/`Selection` already uses).
+        // TODO(phase2+): the command-view PRODUCTION intents — `building_slot` (place a Camp at the
+        //   tapped point), `train_slot` (queue a unit at the active camp), `upgrade_pressed` (upgrade
+        //   it) — join that deferred on-screen-UI slice: each is an on-screen palette/panel button +
+        //   hit-test latched onto the matching InputFrame edge, exactly as desktop binds B/R/H/U. The
+        //   engine already consumes these (`engine::{build_ui,train_ui,upgrade_ui}`); until the touch
+        //   buttons exist they stay default (`None`/`false`), so Android simply doesn't build/train/
+        //   upgrade yet — like `command_slot`, which is likewise unset here pending the radial UI.
     }
 
     /// Translate one key event (back button, gamepad face buttons) into the InputFrame.

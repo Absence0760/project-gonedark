@@ -252,12 +252,18 @@ in the in-match layer; the **settings surface that configures it** is.
 - [x] Camp building, production & economy exist in `core` ([D23](decisions.md))
 - [x] Win/lose evaluator + match end ([D38](decisions.md))
 - [x] Order/stance vocabulary reachable on the touch UI ([D25](decisions.md))
-- [ ] **Build menu UI** — place/queue structures from the command view (today it's sim-only,
-  no on-screen way to build)
-- [ ] **Troop-training UI** — pick a unit type, see cost + queue + ETA, set a rally point
-- [ ] **Upgrade trees** — per-structure and per-unit upgrades with cost, prerequisites, and
-  a readable tier display (the "growth" half of "command and grow your camps")
-- [ ] Resource/economy readout that makes cost and income legible at a glance
+- [x] **Build menu UI** — place/queue structures from the command view
+  (`engine::build_ui::build_commands` seam; B-key on desktop, [D48](decisions.md))
+- [x] **Troop-training UI** — pick a unit type, see cost + queue + ETA
+  (`engine::train_ui::train_commands` seam; R/H keys on desktop, [D48](decisions.md)). *Rally
+  point: the `rally_point` quantization seam exists, but emitting it awaits a camp-rally sim
+  command (flagged follow-up — there is no `Command` for a building's spawn rally yet).*
+- [x] **Camp upgrades** — a readable tier display + one-button level-up
+  (`engine::upgrade_ui::upgrade_commands` seam; U-key on desktop, [D48](decisions.md)). *Linear
+  camp-tier leveling today; a richer per-structure/per-unit prerequisite **tree** is a `core`
+  follow-up (new sim state + a `Command` variant), not a presentation change.*
+- [x] Resource/economy readout that makes cost and income legible at a glance
+  (`render::readout::EconomyReadout` — banked credits + income rate)
 - [ ] A full match a new player can complete start→finish unaided (loop closes; needs the
   UI above wrapped around the D38 evaluator)
 

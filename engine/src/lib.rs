@@ -371,6 +371,57 @@ fn map_input_commands(input: &InputFrame, embodied: bool, player: Entity) -> Vec
     commands
 }
 
+/// The player's **active camp** for the per-camp command panels (train + upgrade) — the lowest-index
+/// **built, operational** [`BuildingKind::Camp`] owned by `faction`, or `None` if it has none. A pure,
+/// deterministic read over the world (stable entity-index order, identical on every peer): no autonomy
+/// (invariant #3), no sim mutation, folds nothing into the checksum (invariants #1/#7). "Operational"
+/// means construction finished (`build_ticks_left == 0`) so a half-built camp isn't offered for
+/// production. Selecting a *specific* camp is a Stage-2 input concern; until then the primary camp is
+/// the deterministic default — documented and tested.
+fn active_player_camp(world: &gonedark_core::ecs::World, faction: Faction) -> Option<Entity> {
+    for i in 0..world.capacity() {
+        if !world.is_index_alive(i)
+            || world.faction[i] != faction
+            || world.kind[i] != EntityKind::Building
+        {
+            continue;
+        }
+        let b = &world.building[i];
+        if b.kind == BuildingKind::Camp && b.build_ticks_left == 0 {
+            return world.entity(i);
+        }
+    }
+    None
+}
+
+/// Map this frame's command-view **production** intents — build / train / upgrade (Phase 2's "command
+/// and grow your camps") — onto sim commands for `Faction::Player`. PURE (no `Game`/device), so it is
+/// host-testable: the device-bound [`Game::frame`] only resolves the two inputs (the unprojected
+/// cursor `pointer_world` and the deterministic `active_camp`) and calls this, gated on the command
+/// view. Delegates to the three tested intent seams, each of which no-ops on a missing slot/edge/camp:
+///  - [`build_ui::build_commands`]: `building_slot` + the cursor ground point → `Command::Build`
+///    (placement quantized to `Fixed` at the boundary, invariant #1);
+///  - [`train_ui::train_commands`]: `train_slot` + the active camp → `Command::QueueProduction`;
+///  - [`upgrade_ui::upgrade_commands`]: `upgrade_pressed` + the active camp → `Command::Upgrade`.
+///
+/// The caller restricts this to the command view (never embodied — invariant #6: no command-layer
+/// production while the map is dark); affordability/legality stays the sim's authoritative call.
+fn command_view_production_commands(
+    input: &InputFrame,
+    pointer_world: Option<(f32, f32)>,
+    active_camp: Option<Entity>,
+) -> Vec<Command> {
+    let mut commands = Vec::new();
+    commands.extend(build_ui::build_commands(
+        input.building_slot,
+        Faction::Player,
+        pointer_world,
+    ));
+    commands.extend(train_ui::train_commands(input.train_slot, active_camp));
+    commands.extend(upgrade_ui::upgrade_commands(input.upgrade_pressed, active_camp));
+    commands
+}
+
 /// Spawn one Rifleman of `faction` at integer world `(x, y)` with the given stance, taking its
 /// health + weapon from the shared [`economy::unit_stats`] table (so it matches a produced
 /// unit). Demo-scene setup only — the sim itself is seeded the same on every peer.
@@ -963,6 +1014,22 @@ impl Game {
             }
         }
 
+        // 1b'. Command-view PRODUCTION intents (Phase 2 "command and grow your camps"): the build /
+        // train / upgrade keys (desktop B/R/H/U; touch on-screen buttons are the deferred PAL slice).
+        // Command view only — never while embodied (invariant #6: no command-layer production with the
+        // map dark). The two inputs are resolved here (the unprojected cursor `pointer_world`, and the
+        // deterministic `active_player_camp` over the pre-step world) and handed to the pure, tested
+        // `command_view_production_commands`; the emitted Commands enter the SAME lockstep stream as
+        // taps, so a placement/queue/upgrade applies bit-identically on every peer (invariant #1/#7).
+        if !self.embodied {
+            let active_camp = active_player_camp(&self.sim.world, Faction::Player);
+            commands.extend(command_view_production_commands(
+                input,
+                pointer_world,
+                active_camp,
+            ));
+        }
+
         // Embodiment input-source swap (invariant #5): mirror the toggle the mapping resolved.
         for cmd in &commands {
             match cmd {
@@ -1223,6 +1290,27 @@ impl Game {
                 .render_world_sky(device, queue, view, &world_uniform);
         }
 
+        // Economy readout (the resource/income lines of the command readout): read banked credits +
+        // derive income from held control points off the (checksummed) sim — a pure read, folds
+        // nothing, so it can't desync (invariants #1/#7). Built ONLY in the command view (the readout
+        // never draws over the dark embodied frame — invariant #6), so the embodied branch passes
+        // `None` and skips the `territory.points` scan entirely. `resources.get` is `i64` (no float
+        // money — invariant #1); `clamp` into the `u32` the readout displays (truncating `as` would
+        // wrap a value past `u32::MAX`).
+        let economy = (!self.embodied).then(|| {
+            let held_points = self
+                .sim
+                .territory
+                .points
+                .iter()
+                .filter(|cp| cp.owner == Faction::Player)
+                .count() as u32;
+            gonedark_render::readout::EconomyReadout {
+                resources: self.sim.resources.get(Faction::Player).clamp(0, u32::MAX as i64) as u32,
+                income_per_tick: gonedark_render::readout::income_per_tick(held_points),
+            }
+        });
+
         // 7. Render the interpolated snapshot, fog-filtered (world goes dark while embodied). In the
         // embodied branch this LOADs over the world drawn in 6b; in command view it CLEARS.
         self.renderer.render(
@@ -1234,7 +1322,38 @@ impl Game {
             &visibility,
             width,
             height,
+            economy,
         );
+
+        // 7c. Command-view build / train / upgrade panels ("command and grow your camps"). Command
+        // view only — never over the dark embodied frame (invariant #6). Resolve the player's active
+        // camp deterministically (the unit-tested `active_player_camp`) and read its level + the
+        // production queue off the (checksummed) sim — a pure read that folds nothing, so it cannot
+        // perturb the per-tick checksum (invariants #1/#7). The build palette always renders; the
+        // train + upgrade panels render only when a camp is active.
+        if !self.embodied {
+            let camp = active_player_camp(&self.sim.world, Faction::Player);
+            let prod_queue: Vec<(UnitKind, u16)> = camp
+                .map(|e| {
+                    self.sim.world.building[e.index as usize]
+                        .queue
+                        .iter()
+                        .map(|item| (item.kind, item.ticks_left))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let active_camp = camp.map(|e| gonedark_render::ActiveCamp {
+                level: self.sim.world.building[e.index as usize].level,
+                queue: &prod_queue,
+            });
+            let panels = gonedark_render::CommandPanels {
+                resources: self.sim.resources.get(Faction::Player),
+                trainable: &[UnitKind::Rifleman, UnitKind::Heavy],
+                active_camp,
+            };
+            self.renderer
+                .render_command_panels(device, queue, view, &panels);
+        }
 
         // 7a. Embodied weapon viewmodel (W5/D44): the first-person gun — the real `weapon_rifle`
         // greybox 3D mesh — over the world + avatar, with a muzzle flash that flares + recoils for a
@@ -1412,6 +1531,150 @@ mod tests {
     fn test_player() -> Entity {
         let mut world = World::new();
         world.spawn()
+    }
+
+    /// `active_player_camp` returns the player's lowest-index built camp, skips a half-built one,
+    /// ignores enemy camps, and is `None` when the player has none.
+    #[test]
+    fn active_player_camp_picks_first_built_player_camp() {
+        let mut world = World::new();
+        let mut res = Resources::new(10_000);
+
+        // No camp yet → None.
+        assert!(active_player_camp(&world, Faction::Player).is_none());
+
+        // An ENEMY camp (built) must be ignored.
+        let enemy = economy::build(
+            &mut world,
+            &mut res,
+            Faction::Enemy,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(9), Fixed::from_int(9)),
+        )
+        .expect("enemy camp affordable");
+        world.building[enemy.index as usize].build_ticks_left = 0;
+        assert!(
+            active_player_camp(&world, Faction::Player).is_none(),
+            "enemy camps don't count"
+        );
+
+        // A still-CONSTRUCTING player camp must be skipped (build_ticks_left > 0 by default).
+        let building = economy::build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(1), Fixed::from_int(1)),
+        )
+        .expect("player camp affordable");
+        assert!(
+            active_player_camp(&world, Faction::Player).is_none(),
+            "a half-built camp is not operational"
+        );
+
+        // Finish it → now it's the active camp, and it's a Camp building owned by the player.
+        world.building[building.index as usize].build_ticks_left = 0;
+        let got = active_player_camp(&world, Faction::Player).expect("a built player camp exists");
+        assert_eq!(got, building);
+        let i = got.index as usize;
+        assert_eq!(world.faction[i], Faction::Player);
+        assert_eq!(world.kind[i], EntityKind::Building);
+        assert_eq!(world.building[i].kind, BuildingKind::Camp);
+
+        // A second built player camp doesn't displace the first (lowest-index is deterministic).
+        let second = economy::build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(5), Fixed::from_int(5)),
+        )
+        .expect("second player camp affordable");
+        world.building[second.index as usize].build_ticks_left = 0;
+        assert_eq!(
+            active_player_camp(&world, Faction::Player),
+            Some(building),
+            "the lowest-index built camp stays the deterministic active camp"
+        );
+    }
+
+    /// `command_view_production_commands` maps the InputFrame's build/train/upgrade edges onto the
+    /// matching sim commands: a build places at the (quantized) cursor for the player, train/upgrade
+    /// route at the active camp, an idle frame emits nothing, and without a camp only the build (which
+    /// needs none) survives.
+    #[test]
+    fn production_intents_map_to_build_train_upgrade_commands() {
+        let mut world = World::new();
+        let mut res = Resources::new(10_000);
+        let camp = economy::build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(2), Fixed::from_int(3)),
+        )
+        .expect("player camp affordable");
+        world.building[camp.index as usize].build_ticks_left = 0;
+
+        // Idle frame → nothing, even with a cursor + active camp available.
+        let idle = InputFrame::default();
+        assert!(command_view_production_commands(&idle, Some((1.0, 2.0)), Some(camp)).is_empty());
+
+        // Build: slot 0 + a cursor point → one Build at the quantized point, for the player.
+        let build = InputFrame {
+            building_slot: Some(0),
+            ..Default::default()
+        };
+        let cmds = command_view_production_commands(&build, Some((12.5, -4.25)), Some(camp));
+        assert_eq!(cmds.len(), 1, "exactly one Build");
+        match &cmds[0] {
+            Command::Build { faction, kind, pos } => {
+                assert_eq!(*faction, Faction::Player);
+                assert_eq!(*kind, BuildingKind::Camp);
+                assert_eq!(pos.x.to_bits(), world_to_fixed(12.5).to_bits());
+                assert_eq!(pos.y.to_bits(), world_to_fixed(-4.25).to_bits());
+            }
+            other => panic!("expected Build, got {other:?}"),
+        }
+
+        // Train: the slot routes a QueueProduction at the active camp (slot 1 = Heavy).
+        let train = InputFrame {
+            train_slot: Some(1),
+            ..Default::default()
+        };
+        let cmds = command_view_production_commands(&train, None, Some(camp));
+        assert_eq!(cmds.len(), 1);
+        match &cmds[0] {
+            Command::QueueProduction { camp: c, unit } => {
+                assert_eq!(*c, camp);
+                assert_eq!(*unit, UnitKind::Heavy);
+            }
+            other => panic!("expected QueueProduction, got {other:?}"),
+        }
+
+        // Upgrade: the edge upgrades the active camp.
+        let up = InputFrame {
+            upgrade_pressed: true,
+            ..Default::default()
+        };
+        let cmds = command_view_production_commands(&up, None, Some(camp));
+        assert_eq!(cmds.len(), 1);
+        assert!(
+            matches!(&cmds[0], Command::Upgrade { camp: c } if *c == camp),
+            "upgrade targets the active camp"
+        );
+
+        // No active camp: train + upgrade emit nothing (no camp to act on), but a build still places
+        // (a build needs only a slot + a point, not a camp).
+        let all = InputFrame {
+            building_slot: Some(0),
+            train_slot: Some(0),
+            upgrade_pressed: true,
+            ..Default::default()
+        };
+        let cmds = command_view_production_commands(&all, Some((0.0, 0.0)), None);
+        assert_eq!(cmds.len(), 1, "only the build survives without a camp");
+        assert!(matches!(&cmds[0], Command::Build { .. }));
     }
 
     /// `world_to_fixed` is the input-boundary quantizer; round-tripping a representable world
