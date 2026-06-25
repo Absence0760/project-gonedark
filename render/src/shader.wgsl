@@ -77,13 +77,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
 
     // Unit / building: body color, with a health bar across the top strip.
+    //
+    // Color literals here (selection rim above, health fill below) are hand-tuned to read against
+    // the faction body palette — keep them in step with the Rust source of truth in `lib.rs`
+    // (`faction_color` / `AVATAR_COLOR`); a designer retuning the palette in Rust must mirror it
+    // here, since WGSL has no shared constant with the CPU side.
     if in.health >= 0.0 && in.local.y > 0.55 {
         // Map local x in [-1,1] to [0,1]; fill up to `health`.
         let t = in.local.x * 0.5 + 0.5;
         if t <= in.health {
-            return vec4<f32>(0.2, 0.85, 0.25, 1.0); // remaining health — green
+            // Remaining health: green at full, ramping through amber to red as it drains, so a
+            // near-dead unit glows red even when the fill is a tiny left-edge sliver — the
+            // about-to-die state (embody/retreat decision) is the most legible, not the least.
+            let fill = mix(vec3<f32>(0.9, 0.2, 0.15), vec3<f32>(0.2, 0.85, 0.25), in.health);
+            return vec4<f32>(fill, 1.0);
         }
-        return vec4<f32>(0.35, 0.05, 0.05, 1.0); // lost health — dark red
+        // Lost health: a desaturated charcoal, deliberately off pure red so the empty segment
+        // can't be mistaken for the enemy-faction red body at small command-view sizes.
+        return vec4<f32>(0.18, 0.18, 0.2, 1.0);
     }
 
     return vec4<f32>(in.color, 1.0);

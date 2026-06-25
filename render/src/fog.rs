@@ -6,10 +6,11 @@
 //! unseen enemies vanish (command view) and the strategic map collapses to the avatar's sight
 //! (embodied "world goes dark"). Float boundary — `f32` math is fine here.
 //!
-//! IMPLEMENTATION OWNER: worker 1 (fog rendering). This stub reproduces the EXISTING Phase-1
-//! filter exactly (embodied → only the avatar; command view → everything), so the renderer's
-//! behavior is unchanged until you wire `_fog` in. Fill `visible_instances` (+ inline tests on
-//! the pure filter) and KEEP the signature intact.
+//! [`visible_instances`] is the shipped filter: a hard visibility cut over the frame's instances
+//! against the computed mask, with two always-keep carve-outs — the possessed avatar
+//! ([`FLAG_EMBODIED`], the camera anchor in both views) and, in command view only, control-point
+//! rings ([`FLAG_RING`], which are known map markers). It is exercised by the inline tests below
+//! and wired into `Renderer::render`, so the drawn set already honors invariant #6.
 //!
 //! Implementation notes:
 //! - Map an instance's `f32` world `(x, y)` to a `core` `Vec2` to query

@@ -58,8 +58,24 @@ pub enum QuadRole {
     Win,
     /// A defeat/draw accent on the summary.
     Loss,
-    /// A per-faction data bar in the summary (length encodes a count — chrome, not a map).
+    /// A per-faction data bar in the summary (length encodes a kill count — chrome, not a map).
     DataBar,
+    /// A per-faction territory bar in the summary (length encodes control points held).
+    TerritoryBar,
+    /// A per-faction resource bar in the summary (length encodes resources banked).
+    ResourceBar,
+    /// A faint full-width track behind a data bar, giving every row a shared reference length so
+    /// bars read as *relative*, not absolute.
+    BarTrack,
+    /// A slightly larger, lighter quad behind a [`Panel`](QuadRole::Panel) — a crisp rim/border so
+    /// the panel reads over the dim frame.
+    PanelRim,
+    /// A neutral actionable choice slot (e.g. Resume / Leave / dismiss). Hit-tested by the
+    /// native/touch layer at the quad's NDC rect.
+    Button,
+    /// The primary/affirmative actionable choice slot (e.g. Resume) — visually distinct from a
+    /// secondary [`Button`](QuadRole::Button).
+    ButtonPrimary,
 }
 
 /// One screen-space overlay quad in NDC, ready to upload. `repr(C)` + `Pod` so it streams straight
@@ -114,10 +130,30 @@ impl OverlayQuad {
 const SCRIM_ALPHA: f32 = 0.55;
 const PANEL_HW: f32 = 0.5;
 const PANEL_HH: f32 = 0.32;
+/// Half-height of the accent strip across the top of a panel (reconnect cause / match outcome).
+/// Named so tuning the strip moves the summary rows that sit below it (see `SUMMARY_ROWS_TOP`).
+const ACCENT_STRIP_HH: f32 = 0.04;
+/// Gap between the bottom of the accent strip and the first summary row.
+const ROW_TOP_GAP: f32 = 0.06;
+/// A faint track behind each bar reads at low alpha so it never competes with the data bar.
+const BAR_TRACK_ALPHA: f32 = 0.35;
+/// The rim quad extends this far past the panel half-extent to draw a thin border.
+const PANEL_RIM_PAD: f32 = 0.012;
 /// Per-faction summary bar geometry.
 const BAR_MAX_HW: f32 = 0.42; // a full bar spans most of the panel width
 const BAR_HH: f32 = 0.035;
 const BAR_GAP: f32 = 0.1; // vertical spacing between faction rows
+/// Top of the first summary bar row, derived from the accent strip so the rows always clear it.
+/// The accent strip occupies `[PANEL_HH - 2*ACCENT_STRIP_HH, PANEL_HH]`; rows start a gap below.
+const SUMMARY_ROWS_TOP: f32 = PANEL_HH - 2.0 * ACCENT_STRIP_HH - ROW_TOP_GAP;
+/// Within a faction row, the three bars (kills / territory / resources) stack at these sub-offsets
+/// so a row shows all three facts at once without overlapping the next row.
+const BAR_SUB_GAP: f32 = 0.025;
+/// Actionable-choice (button) slot geometry, laid out below the panel body.
+const BUTTON_HW: f32 = 0.18;
+const BUTTON_HH: f32 = 0.045;
+const BUTTON_GAP: f32 = 0.04; // horizontal spacing between adjacent slots
+const BUTTON_ROW_CY: f32 = -PANEL_HH + 0.09; // near the panel's lower edge
 
 fn color(role: QuadRole) -> [f32; 3] {
     match role {
@@ -127,7 +163,13 @@ fn color(role: QuadRole) -> [f32; 3] {
         QuadRole::Warning => [0.90, 0.25, 0.20], // red: a confirmed desync
         QuadRole::Win => [0.30, 0.80, 0.40],    // green: victory
         QuadRole::Loss => [0.70, 0.70, 0.75],   // grey: defeat/draw
-        QuadRole::DataBar => [0.45, 0.65, 0.85],
+        QuadRole::DataBar => [0.45, 0.65, 0.85], // blue: kills
+        QuadRole::TerritoryBar => [0.55, 0.80, 0.45], // green: territory held
+        QuadRole::ResourceBar => [0.90, 0.75, 0.35], // amber: resources banked
+        QuadRole::BarTrack => [0.20, 0.22, 0.28], // faint track behind a data bar
+        QuadRole::PanelRim => [0.16, 0.18, 0.24], // a lighter border behind the panel
+        QuadRole::Button => [0.22, 0.25, 0.32], // a neutral choice slot
+        QuadRole::ButtonPrimary => [0.30, 0.45, 0.70], // the affirmative choice slot
     }
 }
 
@@ -151,10 +193,83 @@ fn quad(cx: f32, cy: f32, hw: f32, hh: f32, alpha: f32, role: QuadRole) -> Overl
 /// float math). Here: units killed relative to the largest kill count in the match, so the
 /// best-performing side reads as a full bar. A zero-kill match yields zero-length bars (no NaN).
 fn bar_fraction(stats: &FactionStats, max_kills: u32) -> f32 {
-    if max_kills == 0 {
+    frac_of(stats.units_killed as i64, max_kills as i64)
+}
+
+/// Generic presentation ratio: an integer fact over the match-max of that fact, clamped to [0,1].
+/// Guarded against a zero (or negative) max so a stat that nobody scored yields a zero-length bar
+/// and never a NaN (mirrors [`bar_fraction`]). Render-side float math only (invariant #1).
+fn frac_of(value: i64, max: i64) -> f32 {
+    if max <= 0 {
         0.0
     } else {
-        (stats.units_killed as f32 / max_kills as f32).clamp(0.0, 1.0)
+        (value as f32 / max as f32).clamp(0.0, 1.0)
+    }
+}
+
+/// The actionable choices a surface offers, in vocabulary order, as the [`QuadRole`] each slot
+/// draws with ([`ButtonPrimary`](QuadRole::ButtonPrimary) is the affirmative slot). These are a
+/// fixed, deterministic per-surface vocabulary — `engine::session_shell` owns *which* actions are
+/// live; the renderer only lays out the slots. (Surfacing them as a derivation keeps the `Overlay`
+/// enum the host already constructs untouched.)
+fn surface_choices(overlay: &Overlay) -> &'static [QuadRole] {
+    match overlay {
+        Overlay::None => &[],
+        // Resume (primary) + Surrender.
+        Overlay::Paused => &[QuadRole::ButtonPrimary, QuadRole::Button],
+        // Resume (primary) + Leave.
+        Overlay::ReconnectPrompt { .. } => &[QuadRole::ButtonPrimary, QuadRole::Button],
+        // A single dismiss.
+        Overlay::Summary(_) => &[QuadRole::ButtonPrimary],
+    }
+}
+
+/// Emit a panel with its rim — the rim (a slightly larger, lighter quad) goes first so the panel
+/// composites over it, leaving a thin readable border ("border = outer quad first", the same
+/// pattern [`push_tracked_bar`] uses). `alpha` applies to the panel; the rim is opaque chrome.
+fn push_panel_with_rim(out: &mut Vec<OverlayQuad>, alpha: f32) {
+    out.push(quad(
+        0.0,
+        0.0,
+        PANEL_HW + PANEL_RIM_PAD,
+        PANEL_HH + PANEL_RIM_PAD,
+        1.0,
+        QuadRole::PanelRim,
+    ));
+    out.push(quad(0.0, 0.0, PANEL_HW, PANEL_HH, alpha, QuadRole::Panel));
+}
+
+/// Emit a faint full-width track at row `cy`, then a left-anchored data bar of fraction `frac` over
+/// it (track first, so the bar reads over a shared reference length). A zero-length bar is skipped
+/// but the track is always drawn so every row shows the same baseline.
+fn push_tracked_bar(out: &mut Vec<OverlayQuad>, cy: f32, frac: f32, role: QuadRole) {
+    out.push(quad(
+        0.0,
+        cy,
+        BAR_MAX_HW,
+        BAR_HH,
+        BAR_TRACK_ALPHA,
+        QuadRole::BarTrack,
+    ));
+    let hw = (BAR_MAX_HW * frac).max(0.0);
+    if hw > 0.0 {
+        out.push(quad(-BAR_MAX_HW + hw, cy, hw, BAR_HH, 1.0, role));
+    }
+}
+
+/// Lay out the surface's choice button slots in a centered row near the panel's lower edge, at
+/// deterministic NDC rects (left-to-right, in vocabulary order) the native/touch layer hit-tests.
+fn push_button_row(out: &mut Vec<OverlayQuad>, choices: &[QuadRole]) {
+    if choices.is_empty() {
+        return;
+    }
+    let n = choices.len() as f32;
+    // Total row half-width = n slots + (n-1) gaps; center it on x=0.
+    let total_hw = n * BUTTON_HW + (n - 1.0) * BUTTON_GAP * 0.5;
+    let mut cx = -total_hw + BUTTON_HW;
+    for role in choices {
+        out.push(quad(cx, BUTTON_ROW_CY, BUTTON_HW, BUTTON_HH, 1.0, *role));
+        cx += 2.0 * BUTTON_HW + BUTTON_GAP;
     }
 }
 
@@ -165,11 +280,11 @@ pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
     match overlay {
         Overlay::None => Vec::new(),
         Overlay::Paused => {
-            // A single dim scrim across the whole screen + a small "paused" panel.
-            vec![
-                quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim),
-                quad(0.0, 0.0, PANEL_HW, PANEL_HH, 0.92, QuadRole::Panel),
-            ]
+            // A single dim scrim across the whole screen + a small "paused" panel (rim first).
+            let mut out = vec![quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim)];
+            push_panel_with_rim(&mut out, 0.92);
+            push_button_row(&mut out, surface_choices(overlay));
+            out
         }
         Overlay::ReconnectPrompt { desynced } => {
             let accent = if *desynced {
@@ -177,18 +292,23 @@ pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
             } else {
                 QuadRole::Accent
             };
-            vec![
-                quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim),
-                quad(0.0, 0.0, PANEL_HW, PANEL_HH, 0.92, QuadRole::Panel),
-                // An accent strip across the top of the panel signals the cause (blue/red).
-                quad(0.0, PANEL_HH - 0.04, PANEL_HW, 0.04, 1.0, accent),
-            ]
+            let mut out = vec![quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim)];
+            push_panel_with_rim(&mut out, 0.92);
+            // An accent strip across the top of the panel signals the cause (blue/red).
+            out.push(quad(
+                0.0,
+                PANEL_HH - ACCENT_STRIP_HH,
+                PANEL_HW,
+                ACCENT_STRIP_HH,
+                1.0,
+                accent,
+            ));
+            push_button_row(&mut out, surface_choices(overlay));
+            out
         }
         Overlay::Summary(summary) => {
-            let mut out = vec![
-                quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim),
-                quad(0.0, 0.0, PANEL_HW, PANEL_HH, 0.95, QuadRole::Panel),
-            ];
+            let mut out = vec![quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim)];
+            push_panel_with_rim(&mut out, 0.95);
             // Outcome accent strip across the top of the panel.
             let outcome_role = match summary.outcome {
                 MatchOutcome::Victory(_) => QuadRole::Win,
@@ -196,34 +316,60 @@ pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
             };
             out.push(quad(
                 0.0,
-                PANEL_HH - 0.04,
+                PANEL_HH - ACCENT_STRIP_HH,
                 PANEL_HW,
-                0.04,
+                ACCENT_STRIP_HH,
                 1.0,
                 outcome_role,
             ));
 
-            // Per-faction kill bars, top-down inside the panel. Bar length encodes kills relative
-            // to the match max — a presentation ratio, never a spatial reveal.
+            // Per-faction bars, top-down inside the panel. Each row shows three facts — kills,
+            // territory, resources — each normalized by its own match-max (a presentation ratio,
+            // never a spatial reveal; territory/resources are integer counts, not positions, so
+            // invariant #6 holds). Each bar sits over a faint full-width track so the lengths read
+            // as relative against a shared reference.
             let max_kills = summary
                 .per_faction
                 .iter()
                 .map(|s| s.units_killed)
                 .max()
                 .unwrap_or(0);
-            // Start the rows below the accent strip and lay them out downward.
-            let top = PANEL_HH - 0.14;
+            let max_territory = summary
+                .per_faction
+                .iter()
+                .map(|s| s.territory_held)
+                .max()
+                .unwrap_or(0);
+            let max_resources = summary
+                .per_faction
+                .iter()
+                .map(|s| s.resources_total)
+                .max()
+                .unwrap_or(0);
+            // Start the rows below the accent strip (derived from it) and lay them out downward.
+            let top = SUMMARY_ROWS_TOP;
             for (row, stats) in summary.per_faction.iter().enumerate() {
-                let frac = bar_fraction(stats, max_kills);
-                let hw = (BAR_MAX_HW * frac).max(0.0);
-                let cy = top - row as f32 * BAR_GAP;
-                // Anchor bars to the panel's left edge so length reads left-to-right; a zero-length
-                // bar is skipped (nothing to draw) but the row slot is still consumed.
-                if hw > 0.0 {
-                    let left = -BAR_MAX_HW;
-                    out.push(quad(left + hw, cy, hw, BAR_HH, 1.0, QuadRole::DataBar));
-                }
+                let row_cy = top - row as f32 * BAR_GAP;
+                push_tracked_bar(
+                    &mut out,
+                    row_cy,
+                    bar_fraction(stats, max_kills),
+                    QuadRole::DataBar,
+                );
+                push_tracked_bar(
+                    &mut out,
+                    row_cy - BAR_SUB_GAP,
+                    frac_of(stats.territory_held as i64, max_territory as i64),
+                    QuadRole::TerritoryBar,
+                );
+                push_tracked_bar(
+                    &mut out,
+                    row_cy - 2.0 * BAR_SUB_GAP,
+                    frac_of(stats.resources_total, max_resources),
+                    QuadRole::ResourceBar,
+                );
             }
+            push_button_row(&mut out, surface_choices(overlay));
             out
         }
     }
@@ -433,19 +579,54 @@ mod tests {
         }
     }
 
+    /// Full builder so per-stat bar tests can set territory/resources independently of kills.
+    #[allow(clippy::too_many_arguments)]
+    fn summary_full(
+        outcome: MatchOutcome,
+        p_kills: u32,
+        e_kills: u32,
+        p_terr: u32,
+        e_terr: u32,
+        p_res: i64,
+        e_res: i64,
+    ) -> MatchSummary {
+        let mut per_faction: [FactionStats; FACTION_COUNT] = Default::default();
+        for f in Faction::ALL {
+            per_faction[f.index()].faction = f.into();
+        }
+        per_faction[Faction::Player.index()].units_killed = p_kills;
+        per_faction[Faction::Enemy.index()].units_killed = e_kills;
+        per_faction[Faction::Player.index()].territory_held = p_terr;
+        per_faction[Faction::Enemy.index()].territory_held = e_terr;
+        per_faction[Faction::Player.index()].resources_total = p_res;
+        per_faction[Faction::Enemy.index()].resources_total = e_res;
+        MatchSummary {
+            outcome,
+            end_tick: 3600,
+            per_faction,
+        }
+    }
+
     #[test]
     fn none_draws_nothing() {
         assert!(overlay_quads(&Overlay::None).is_empty());
     }
 
     #[test]
-    fn paused_is_scrim_plus_panel() {
+    fn paused_is_scrim_rim_panel() {
         let q = overlay_quads(&Overlay::Paused);
-        assert_eq!(roles(&q), vec![QuadRole::Scrim, QuadRole::Panel]);
-        // The scrim spans the whole screen; the panel is centered and smaller.
+        // Scrim, then the panel rim, then the panel itself (border = outer quad first).
+        assert_eq!(q[0].role, QuadRole::Scrim);
+        assert_eq!(q[1].role, QuadRole::PanelRim);
+        assert_eq!(q[2].role, QuadRole::Panel);
+        // The scrim spans the whole screen; the panel is centered and smaller, the rim larger.
         assert_eq!((q[0].hw, q[0].hh), (1.0, 1.0));
-        assert!(q[1].hw < 1.0 && q[1].hh < 1.0);
-        assert_eq!((q[1].cx, q[1].cy), (0.0, 0.0));
+        assert!(q[2].hw < 1.0 && q[2].hh < 1.0);
+        assert_eq!((q[2].cx, q[2].cy), (0.0, 0.0));
+        assert!(
+            q[1].hw > q[2].hw && q[1].hh > q[2].hh,
+            "rim is larger than the panel"
+        );
     }
 
     #[test]
@@ -489,7 +670,10 @@ mod tests {
         let bars: Vec<&OverlayQuad> = q.iter().filter(|q| q.role == QuadRole::DataBar).collect();
         assert_eq!(bars.len(), 2, "two non-zero faction bars (neutral has 0)");
         // Player row is first (rows are in Faction::ALL order). Its half-width is the max.
-        assert!((bars[0].hw - BAR_MAX_HW).abs() < 1e-5, "leader is a full bar");
+        assert!(
+            (bars[0].hw - BAR_MAX_HW).abs() < 1e-5,
+            "leader is a full bar"
+        );
         assert!(
             (bars[1].hw - BAR_MAX_HW * 0.5).abs() < 1e-5,
             "half the kills → half the bar"
@@ -534,7 +718,11 @@ mod tests {
             )),
         ] {
             let q = overlay_quads(&ov);
-            assert_eq!(q[0].role, QuadRole::Scrim, "first quad is the scrim for {ov:?}");
+            assert_eq!(
+                q[0].role,
+                QuadRole::Scrim,
+                "first quad is the scrim for {ov:?}"
+            );
             assert_eq!((q[0].hw, q[0].hh), (1.0, 1.0));
         }
     }
@@ -551,6 +739,295 @@ mod tests {
         for quad in &q {
             assert!(quad.cx >= -1.5 && quad.cx <= 1.5, "cx in NDC range");
             assert!(quad.cy >= -1.5 && quad.cy <= 1.5, "cy in NDC range");
+        }
+    }
+
+    #[test]
+    fn summary_territory_leader_gets_full_bar() {
+        // Player holds 3 territory, enemy 1 → player TerritoryBar is full, enemy's a third.
+        let q = overlay_quads(&Overlay::Summary(summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            0,
+            0,
+            3,
+            1,
+            0,
+            0,
+        )));
+        let terr: Vec<&OverlayQuad> = q
+            .iter()
+            .filter(|q| q.role == QuadRole::TerritoryBar)
+            .collect();
+        assert_eq!(terr.len(), 2, "two non-zero territory bars (neutral has 0)");
+        assert!(
+            (terr[0].hw - BAR_MAX_HW).abs() < 1e-5,
+            "territory leader is a full bar"
+        );
+        assert!(
+            (terr[1].hw - BAR_MAX_HW / 3.0).abs() < 1e-5,
+            "a third the territory → a third the bar"
+        );
+    }
+
+    #[test]
+    fn summary_zero_resource_match_draws_no_resource_bar_no_nan() {
+        // Nobody banked resources → no ResourceBar (no NaN from a zero match-max).
+        let q = overlay_quads(&Overlay::Summary(summary_full(
+            MatchOutcome::Draw,
+            2,
+            1,
+            0,
+            0,
+            0,
+            0,
+        )));
+        let res = q.iter().filter(|q| q.role == QuadRole::ResourceBar).count();
+        assert_eq!(
+            res, 0,
+            "no resources → no resource bars (and no division-by-zero NaN)"
+        );
+        for q in &q {
+            assert!(q.hw.is_finite() && q.hh.is_finite());
+        }
+    }
+
+    #[test]
+    fn resource_bars_render_when_nonzero() {
+        let q = overlay_quads(&Overlay::Summary(summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            0,
+            0,
+            0,
+            0,
+            1000,
+            500,
+        )));
+        let res: Vec<&OverlayQuad> = q
+            .iter()
+            .filter(|q| q.role == QuadRole::ResourceBar)
+            .collect();
+        assert_eq!(res.len(), 2, "two non-zero resource bars");
+        assert!(
+            (res[0].hw - BAR_MAX_HW).abs() < 1e-5,
+            "resource leader is a full bar"
+        );
+        assert!(
+            (res[1].hw - BAR_MAX_HW * 0.5).abs() < 1e-5,
+            "half the resources → half the bar"
+        );
+    }
+
+    /// Every data bar (kills / territory / resources) is immediately preceded by its faint track,
+    /// so each row shows a shared reference length and bars read as relative.
+    #[test]
+    fn each_data_bar_is_preceded_by_a_track() {
+        let q = overlay_quads(&Overlay::Summary(summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            4,
+            2,
+            3,
+            1,
+            1000,
+            500,
+        )));
+        let is_data_bar = |r: QuadRole| {
+            matches!(
+                r,
+                QuadRole::DataBar | QuadRole::TerritoryBar | QuadRole::ResourceBar
+            )
+        };
+        for (i, quad) in q.iter().enumerate() {
+            if is_data_bar(quad.role) {
+                assert!(i > 0, "a data bar is never the first quad");
+                assert_eq!(
+                    q[i - 1].role,
+                    QuadRole::BarTrack,
+                    "data bar at {i} must be preceded by its track"
+                );
+                // The track spans the full bar width as a shared reference.
+                assert_eq!(q[i - 1].hw, BAR_MAX_HW);
+            }
+        }
+        // A track is drawn for every faction row's three facts even when nothing scored.
+        let tracks = q.iter().filter(|q| q.role == QuadRole::BarTrack).count();
+        assert_eq!(
+            tracks,
+            3 * FACTION_COUNT,
+            "one track per stat per faction row"
+        );
+    }
+
+    /// The panel rim is drawn directly before the panel for every surface that has a panel — a
+    /// crisp border over the dim frame. The scrim still comes first (fairness guard intact).
+    #[test]
+    fn panel_rim_precedes_each_panel() {
+        for ov in [
+            Overlay::Paused,
+            Overlay::ReconnectPrompt { desynced: false },
+            Overlay::Summary(summary_with_kills(
+                1,
+                0,
+                MatchOutcome::Victory(Faction::Player),
+            )),
+        ] {
+            let q = overlay_quads(&ov);
+            let panel_i = q
+                .iter()
+                .position(|q| q.role == QuadRole::Panel)
+                .expect("surface has a panel");
+            assert!(panel_i > 0, "panel is not the first quad");
+            assert_eq!(
+                q[panel_i - 1].role,
+                QuadRole::PanelRim,
+                "the panel is preceded by its rim for {ov:?}"
+            );
+            assert_eq!(
+                q[0].role,
+                QuadRole::Scrim,
+                "scrim is still first for {ov:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn surfaces_lay_out_their_choice_buttons() {
+        // Paused: Resume (primary) + Surrender.
+        let paused = overlay_quads(&Overlay::Paused);
+        assert_eq!(
+            paused
+                .iter()
+                .filter(|q| q.role == QuadRole::ButtonPrimary)
+                .count(),
+            1,
+            "paused has one primary (Resume)"
+        );
+        assert_eq!(
+            paused.iter().filter(|q| q.role == QuadRole::Button).count(),
+            1,
+            "paused has one secondary (Surrender)"
+        );
+
+        // ReconnectPrompt: Resume (primary) + Leave.
+        let recon = overlay_quads(&Overlay::ReconnectPrompt { desynced: true });
+        assert_eq!(
+            recon
+                .iter()
+                .filter(|q| q.role == QuadRole::ButtonPrimary)
+                .count(),
+            1
+        );
+        assert_eq!(
+            recon.iter().filter(|q| q.role == QuadRole::Button).count(),
+            1
+        );
+
+        // Summary: a single dismiss (primary), no secondary.
+        let summary = overlay_quads(&Overlay::Summary(summary_with_kills(
+            1,
+            0,
+            MatchOutcome::Victory(Faction::Player),
+        )));
+        assert_eq!(
+            summary
+                .iter()
+                .filter(|q| q.role == QuadRole::ButtonPrimary)
+                .count(),
+            1,
+            "summary has one dismiss"
+        );
+        assert_eq!(
+            summary
+                .iter()
+                .filter(|q| q.role == QuadRole::Button)
+                .count(),
+            0,
+            "summary has no secondary button"
+        );
+    }
+
+    /// Button slots are laid out at deterministic, non-overlapping, in-bounds NDC rects so the
+    /// native/touch layer can hit-test them.
+    #[test]
+    fn button_slots_are_deterministic_and_disjoint() {
+        let q = overlay_quads(&Overlay::Paused);
+        let mut buttons: Vec<&OverlayQuad> = q
+            .iter()
+            .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
+            .collect();
+        assert_eq!(buttons.len(), 2);
+        buttons.sort_by(|a, b| a.cx.partial_cmp(&b.cx).unwrap());
+        // Adjacent slots do not overlap (left edge of the right >= right edge of the left).
+        let left_right = buttons[0].cx + buttons[0].hw;
+        let right_left = buttons[1].cx - buttons[1].hw;
+        assert!(right_left >= left_right - 1e-6, "button slots are disjoint");
+        // The row is centered on x=0.
+        assert!(
+            (buttons[0].cx + buttons[1].cx).abs() < 1e-5,
+            "button row is centered"
+        );
+        for b in &buttons {
+            assert!(
+                b.cx - b.hw >= -PANEL_HW && b.cx + b.hw <= PANEL_HW,
+                "in the panel"
+            );
+        }
+    }
+
+    /// The summary bar rows start strictly below the accent strip, derived from `ACCENT_STRIP_HH`
+    /// so tuning the strip moves the rows automatically (no magic 0.14 to hand-re-derive).
+    #[test]
+    fn summary_rows_start_below_accent_strip() {
+        let q = overlay_quads(&Overlay::Summary(summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            4,
+            2,
+            3,
+            1,
+            1000,
+            500,
+        )));
+        let accent_bottom = PANEL_HH - 2.0 * ACCENT_STRIP_HH;
+        for bar in q.iter().filter(|q| {
+            matches!(
+                q.role,
+                QuadRole::DataBar | QuadRole::TerritoryBar | QuadRole::ResourceBar
+            )
+        }) {
+            assert!(
+                bar.cy < accent_bottom,
+                "row cy {} must sit below the accent strip bottom {accent_bottom}",
+                bar.cy
+            );
+        }
+    }
+
+    /// Regression guard for the "longer = more, top-down" read: every DataBar shares the same left
+    /// anchor (cx - hw == -BAR_MAX_HW) and successive non-zero rows stack strictly downward.
+    #[test]
+    fn summary_bars_share_left_anchor_and_stack_downward() {
+        let q = overlay_quads(&Overlay::Summary(summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            4,
+            2,
+            0,
+            0,
+            0,
+            0,
+        )));
+        let bars: Vec<&OverlayQuad> = q.iter().filter(|q| q.role == QuadRole::DataBar).collect();
+        assert!(bars.len() >= 2, "need at least two non-zero kill bars");
+        for bar in &bars {
+            assert!(
+                (bar.cx - bar.hw - (-BAR_MAX_HW)).abs() < 1e-5,
+                "every data bar shares the left anchor -BAR_MAX_HW"
+            );
+        }
+        // Rows stack downward: each subsequent bar's cy is strictly less than the previous.
+        for pair in bars.windows(2) {
+            assert!(
+                pair[1].cy < pair[0].cy,
+                "successive rows stack downward (cy decreasing)"
+            );
         }
     }
 
