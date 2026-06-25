@@ -2041,3 +2041,56 @@ select/fire, right = command) and updates its input tests; `engine::command_ui` 
 `Game::frame`, and `map_input_commands` loses the legacy avatar-move. Covered by new unit tests
 (command-click move/attack/empty cases, the rebind, the no-bare-click-move guarantee); full suite +
 determinism + lockstep + viz all green.
+
+---
+
+## D43 — Touch command scheme: single-pointer contextual tap (the mobile sibling of D42)
+
+**Status:** decided + landed (Android command layer). The touchscreen counterpart of
+[D42](#d42--desktop-command-controls-the-classic-rts-split-left-click-selects-right-click-commands).
+This is the *shipping* touch command UI that [Q4](open-questions.md)/D14 explicitly deferred
+as "downstream design work" once the selection + order vocabulary existed — now built.
+
+**The constraint:** a touchscreen has no second button, so the D42 left-select / right-command split
+can't transfer directly. The select-vs-command decision must be made by *what was tapped*, which
+needs unit hit-testing — so it lives in the **engine**, not the PAL (the PAL has no sim access).
+
+**Decision (touch):**
+
+- **Tap a friendly unit → select it.** **Drag → band-select.** (Unchanged selection grammar.)
+- **Tap *off* any unit while a selection is active → issue the default order** to that selection —
+  `Move` onto empty ground, `AttackMove` onto an enemy — and **keep** the selection (so you can keep
+  ordering). This is the one-button expression of D42's right-click.
+- **Two-finger tap → toggle embodiment** (promoted from the provisional Phase-1 binding).
+- Mechanism: a new `pal::InputFrame::command_tap` **mode flag** (set every frame by touch backends,
+  `false` on desktop) tells the engine to resolve an off-unit tap as a command. `Selection::update_ex`
+  now returns a `GestureOutcome` and, in `tap_commands` mode, an empty-ground tap **keeps** the
+  selection instead of deselecting; the engine turns that outcome into the **same**
+  `command_ui::command_click_commands` emission D42 uses (Move / AttackMove, Fixed-quantized).
+- **Fixes a latent bug:** `pal-android` never latched `pointer_up`, so the `Selection` release branch
+  never fired — command-layer selection was entirely non-functional on touch. The backend now latches
+  the single-finger release edge (and suppresses it for the two-finger gesture).
+
+**Why:** It matches what a mobile RTS player expects ("tap my squad, tap where to go") and keeps one
+shared command path with desktop — both schemes funnel into the same `Move`/`AttackMove` emission, so
+the sim sees identical commands and there is **no sim or determinism change** (checksum + 2-peer
+lockstep byte-identical). Resolving select-vs-command in the engine (the only layer with unit
+positions) keeps the PAL thin and platform-agnostic per platforms.md §5.
+
+**What this does NOT decide / still owed (deliberately a separate slice):** the **advanced order
+vocabulary on touch** (the on-screen radial for attack-move-anywhere / stances / patrol / fall-back)
+needs a long-press signal **and** wedge hit-testing UI that doesn't exist yet — desktop reaches these
+via the number keys, touch will reach them via the radial later. **Embodied locomotion on touch**
+(on-screen twin-stick / gyro → `move_axis`/`look_axis`, and a fire control) is likewise unbuilt. And
+on-device feel is unverified here (the Android input path can't be host-unit-tested — `MotionEvent` is
+un-constructible — so the glue is covered only by the host-tested `Selection`/`command_ui` seams it
+feeds). [Q4](open-questions.md) stays **RESOLVED** (the feel risk was retired in D14); this is its
+implementation, not a reopening.
+
+**Consequences:** `pal::InputFrame` gains `command_tap`; `pal-android` latches `pointer_up`, sets the
+mode, and tracks a `multi_touch` flag for the two-finger gesture; `engine::selection` gains
+`GestureOutcome` + the `tap_commands` keep-on-empty behavior (and returns the outcome); `engine`
+adds the contextual-tap command wiring in `Game::frame`. New `Selection` unit tests (tap-select,
+empty-tap-keeps, desktop-empty-tap-still-clears, drag→Banded, no-release→None); the Android
+`MotionEvent` glue is exempt per CLAUDE.md (un-constructible-in-test). Full suite + determinism +
+lockstep + viz all green.
