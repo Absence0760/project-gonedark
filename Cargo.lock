@@ -812,6 +812,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gonedark-net-sim-runner"
+version = "0.0.0"
+dependencies = [
+ "gonedark-core",
+]
+
+[[package]]
 name = "gonedark-pal"
 version = "0.0.0"
 

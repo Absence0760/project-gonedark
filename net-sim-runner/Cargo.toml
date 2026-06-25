@@ -1,0 +1,13 @@
+[package]
+name = "gonedark-net-sim-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Headless 2-peer lockstep driver for netcode determinism CI (Phase 3 workstream B step 2,
+# D27). Drives two in-process `core::lockstep::Lockstep` instances over a deterministic
+# channel and emits the agreed per-tick checksum stream. Depends ONLY on core — no
+# platform, no transport — so the stream is pure sim output and bit-identical across arch.
+[dependencies]
+gonedark-core = { path = "../core" }

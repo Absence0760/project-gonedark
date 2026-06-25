@@ -65,12 +65,26 @@ jobs:
       # rust-toolchain.toml pins the exact compiler (a determinism input); rustup honors it.
       - name: Core determinism tests
         run: cargo test -p gonedark-core --release
+      # ADD-ONLY (Phase 3 workstream B step 2): the net-sim-runner's own tests ride the same
+      # arch matrix as core's. Additive — does not change the existing core test above.
+      - name: Net-sim-runner determinism tests
+        run: cargo test -p gonedark-net-sim-runner --release
       - name: Emit per-tick checksum stream
         run: cargo run -q -p gonedark-sim-runner --release -- 300 > "checksums-${{ matrix.target }}.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: checksums-${{ matrix.target }}
           path: checksums-${{ matrix.target }}.txt
+      # ADD-ONLY: the 2-peer lockstep agreed stream. A SEPARATELY-NAMED artifact so it is
+      # NOT swept into the `checksums-*.txt` glob the existing `compare` job diffs — the net
+      # stream is a distinct group, compared by its own `compare-net` job below (invariant #7,
+      # docs/phase-3-plan.md §"Workstream A" CI note on separately-grouped streams).
+      - name: Emit agreed 2-peer lockstep checksum stream
+        run: cargo run -q -p gonedark-net-sim-runner --release -- 300 > "net-checksums-${{ matrix.target }}.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: net-checksums-${{ matrix.target }}
+          path: net-checksums-${{ matrix.target }}.txt
 
   compare:
     name: cross-arch checksum diff
@@ -99,4 +113,38 @@ jobs:
             fi
           done
           [[ $fail -eq 0 ]] && echo "all streams identical — determinism holds across arch"
+          exit $fail
+
+  # ADD-ONLY (Phase 3 workstream B step 2): a SEPARATE cross-arch diff for the 2-peer
+  # lockstep stream. Mirrors `compare`'s logic but globs `net-checksums-*.txt` only, so the
+  # net stream is diffed across arch INDEPENDENTLY of the sim stream — and the existing
+  # `compare` job is left entirely untouched (invariant #7). A divergence here is a
+  # cross-client lockstep desync; never silence it by narrowing the matrix.
+  compare-net:
+    name: cross-arch net-checksum diff
+    needs: checksum
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: sums
+      - name: Diff all net streams (any divergence = lockstep desync = fail)
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          files=(sums/**/net-checksums-*.txt)
+          if [[ ${#files[@]} -lt 2 ]]; then
+            echo "::error::expected >=2 net-checksum streams, found ${#files[@]}"; exit 1
+          fi
+          echo "comparing ${#files[@]} net streams:"; printf '  %s\n' "${files[@]}"
+          ref="${files[0]}"
+          fail=0
+          for f in "${files[@]}"; do
+            if ! diff -q "$ref" "$f" >/dev/null; then
+              echo "::error::net-checksum divergence between $ref and $f — lockstep desync (invariant #7)"
+              diff "$ref" "$f" | head -20 || true
+              fail=1
+            fi
+          done
+          [[ $fail -eq 0 ]] && echo "all net streams identical — lockstep determinism holds across arch"
           exit $fail
