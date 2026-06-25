@@ -35,7 +35,7 @@ use gonedark_pal::{Audio, InputFrame, Transport};
 use gonedark_render::overlay::Overlay;
 use gonedark_render::{fixed_to_f32, Camera, Renderer};
 
-use selection::Selection;
+use selection::{GestureScale, Selection};
 use session_shell::{EndStateRead, InSessionShell, ShellSurface};
 
 /// Embodied audio mix (worker 3). Owns `mix_cues`: events + listener pose → positioned cues.
@@ -351,6 +351,12 @@ pub struct Game {
     /// Presentation state; drives the order vocabulary, never the sim directly.
     selection: Selection,
 
+    /// The radial command menu currently open on a held long-press: the action labels the player
+    /// is choosing from this frame, empty when no menu is open. Pure presentation intent — the
+    /// preview emits NO `Command`s (nothing reaches the sim until a slot is committed; invariant
+    /// #3). Exposed via [`Game::radial_menu`] for a future on-screen radial renderer.
+    radial_menu: Vec<&'static str>,
+
     /// The rolling embodied alert channel (worker 2's HUD reads this; `core::alerts` derives it).
     /// A presentation derivation from the event stream — never sim state (invariant #7).
     alerts: AlertChannel,
@@ -473,6 +479,7 @@ impl Game {
             yaw: 0.0,
             avatar: AvatarPrediction::default(),
             selection: Selection::new(),
+            radial_menu: Vec::new(),
             alerts: AlertChannel::new(),
             // Single-player lockstep: one peer (us), local id 0, zero input delay (D27 step 4).
             lockstep: Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY),
@@ -514,7 +521,8 @@ impl Game {
     /// outcome is left a `Draw` placeholder until a win-condition lands — the plumbing is what WS-B
     /// ships; the assembler itself is unit-tested in `session_shell`.
     fn assemble_summary(&self) -> gonedark_core::shell::MatchSummary {
-        let mut reads: [EndStateRead; gonedark_core::components::FACTION_COUNT] = Default::default();
+        let mut reads: [EndStateRead; gonedark_core::components::FACTION_COUNT] =
+            Default::default();
         for f in Faction::ALL {
             reads[f.index()] = EndStateRead {
                 territory_held: self
@@ -597,6 +605,14 @@ impl Game {
         out
     }
 
+    /// The radial command menu open this frame: the action labels a held long-press is offering for
+    /// the current selection, or empty when no menu is open. Presentation intent only — reading it
+    /// never mutates the sim, and a preview emits no `Command`s. A host's on-screen radial renderer
+    /// reads this to draw the wedges; it is recomputed every frame from input + selection.
+    pub fn radial_menu(&self) -> &[&'static str] {
+        &self.radial_menu
+    }
+
     /// The sim's current tick count — a read-only window onto the deterministic clock so a
     /// host can surface sim progress (e.g. the on-device heartbeat) without reaching into
     /// private sim state. Observation only: never mutates the sim, no determinism impact.
@@ -655,7 +671,8 @@ impl Game {
             Some(cap) if cap > 0 => 1.0 / cap as f32,
             _ => 1.0 / TICK_HZ as f32,
         };
-        self.tuning.observe_frame(dt_secs, self.thermal, budget_secs);
+        self.tuning
+            .observe_frame(dt_secs, self.thermal, budget_secs);
 
         // 1. Map input → sim commands (applied on the first step of this frame). The pure
         // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
@@ -667,20 +684,41 @@ impl Game {
         // presentation→intent layers; the float target is quantized to Fixed at the boundary
         // inside `command_ui` (invariant #1). With nothing selected they emit nothing and the
         // legacy single-avatar tap-to-move above still applies (back-compat).
-        let pointer_world = if !self.embodied {
-            input.pointer.and_then(|(px, py)| {
-                let vp = topdown_view_proj(width, height);
-                unproject_topdown(&vp, px, py, width, height)
-            })
+        // Zoom context for gesture thresholds: world units spanned by one screen pixel at the
+        // command-view center. Derived from the same top-down unprojection the pointer uses, so a
+        // fixed-pixel finger jitter reads as a tap (and the pick radius stays a usable hit target)
+        // regardless of camera zoom. Float geometry at the input boundary — never enters the sim.
+        let (pointer_world, gesture_scale) = if !self.embodied {
+            let vp = topdown_view_proj(width, height);
+            let pw = input
+                .pointer
+                .and_then(|(px, py)| unproject_topdown(&vp, px, py, width, height));
+            let cx = width as f32 / 2.0;
+            let cy = height as f32 / 2.0;
+            let scale = match (
+                unproject_topdown(&vp, cx, cy, width, height),
+                unproject_topdown(&vp, cx + 1.0, cy, width, height),
+            ) {
+                (Some((x0, y0)), Some((x1, y1))) => {
+                    GestureScale::new(((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt())
+                }
+                _ => GestureScale::world_floor(),
+            };
+            (pw, scale)
         } else {
-            None
+            (None, GestureScale::world_floor())
         };
         let candidates = self.selectable_player_units();
-        self.selection.update(
+        // `additive` (grow the selection instead of replacing it) has no PAL modifier plumbed yet,
+        // so it is `false` today — the legacy clear-then-select feel is preserved bit-for-bit while
+        // the zoom-stable thresholds take effect via `gesture_scale`.
+        self.selection.update_ex(
             pointer_world,
             input.pointer_down,
             input.pointer_up,
             self.embodied,
+            false,
+            gesture_scale,
             &candidates,
         );
         // Resolve the selection to live `(handle, world_pos)` pairs for the vocabulary layer
@@ -699,12 +737,36 @@ impl Game {
                 })
                 .collect()
         };
-        commands.extend(command_ui::commands_for(
+        // Long-press opens a radial menu over the vocabulary; a slot picked while it is held
+        // commits. This gate (invariant #3: depth in the vocabulary, never unit autonomy) leaves
+        // the direct quick-slot path — a slot tapped without a long-press — to `commands_for`, so
+        // the sim-visible commands are byte-identical to before in every case:
+        //   - no long-press            → RadialIntent::None  → direct quick-slot path runs as before
+        //   - long-press + a slot      → RadialIntent::Commit → same Commands as the quick-slot path
+        //   - long-press, no slot yet  → RadialIntent::Preview → menu captured, NO Commands emitted
+        match command_ui::radial_intent(
             input.command_slot,
             input.long_press,
             &selected,
             pointer_world,
-        ));
+        ) {
+            command_ui::RadialIntent::Commit(cmds) => {
+                self.radial_menu.clear();
+                commands.extend(cmds);
+            }
+            command_ui::RadialIntent::Preview(menu) => {
+                self.radial_menu = menu;
+            }
+            command_ui::RadialIntent::None => {
+                self.radial_menu.clear();
+                commands.extend(command_ui::commands_for(
+                    input.command_slot,
+                    input.long_press,
+                    &selected,
+                    pointer_world,
+                ));
+            }
+        }
 
         // Embodiment input-source swap (invariant #5): mirror the toggle the mapping resolved.
         for cmd in &commands {
@@ -1531,15 +1593,9 @@ mod tests {
     #[test]
     fn overlay_for_surface_maps_each_surface() {
         // Playing → no overlay.
-        assert_eq!(
-            overlay_for_surface(&ShellSurface::Playing),
-            Overlay::None
-        );
+        assert_eq!(overlay_for_surface(&ShellSurface::Playing), Overlay::None);
         // Paused → the pause overlay.
-        assert_eq!(
-            overlay_for_surface(&ShellSurface::Paused),
-            Overlay::Paused
-        );
+        assert_eq!(overlay_for_surface(&ShellSurface::Paused), Overlay::Paused);
         // Reconnect prompt: stalled vs desynced map to the prompt severity.
         assert_eq!(
             overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting)),
@@ -1569,7 +1625,10 @@ mod tests {
         use gonedark_core::lockstep::{Desync, Lockstep};
         // A lockstep (multi-peer) session, paused locally.
         let mut shell = InSessionShell::new(/* single_player = */ false);
-        shell.apply(SessionAction::Pause, &assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads()));
+        shell.apply(
+            SessionAction::Pause,
+            &assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads()),
+        );
         assert!(shell.is_paused());
 
         // Project a confirmed desync exactly as the call site does (the Desync stands in for what
