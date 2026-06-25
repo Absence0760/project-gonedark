@@ -25,6 +25,7 @@
 //! [`radial_quads`] so it is unit-testable without a GPU — the `overlay_quads` / `marker_for`
 //! pattern.
 
+use crate::text::{Anchor, TextRenderer};
 use std::f32::consts::{FRAC_PI_2, TAU};
 use wgpu::util::DeviceExt;
 
@@ -185,6 +186,68 @@ pub fn radial_quads(menu: &RadialMenu) -> Vec<RadialQuad> {
     out
 }
 
+/// Glyph cell height (NDC) of a wedge label — small, to sit inside a wedge slot.
+const WEDGE_LABEL_SIZE: f32 = 0.030;
+/// Light off-white the wedge labels draw in, so they read over the wedge chrome.
+const LABEL_COLOR: [f32; 3] = [0.92, 0.94, 0.98];
+
+/// A screen-space wedge label, computed alongside [`radial_quads`] (W4). Pure data: `pos` is NDC
+/// (the wedge center), `text` is the action name. Its own type so [`radial_labels`] is a GPU-free,
+/// testable seam — the same pattern as [`radial_quads`] / `overlay::overlay_labels`.
+#[derive(Clone, PartialEq, Debug)]
+pub struct WedgeLabel {
+    pub text: String,
+    pub pos: [f32; 2],
+    pub size: f32,
+    pub anchor: Anchor,
+    pub color: [f32; 3],
+}
+
+/// Placeholder label for wedge slot `i`: the 1-based slot number (so a 4-slot menu reads "1" "2"
+/// "3" "4"). The renderer has no real action-name strings yet — `engine::command_ui` owns the
+/// command vocabulary, and [`RadialMenu`] is a host struct this worker must not change (the host
+/// constructs it with a fixed set of fields). So labels are derived from the slot count for now.
+///
+/// **SEAM for a later host worker:** when the host can pass the action names, render them instead by
+/// calling [`RadialRenderer::render_with_labels`] with a per-slot string slice; that path bypasses
+/// these placeholders entirely. (Extending `RadialMenu` with a label list is the alternative once
+/// the host's struct-literal call site can be updated in the same change.)
+fn placeholder_slot_label(i: usize) -> String {
+    (i + 1).to_string()
+}
+
+/// Build the wedge labels for `menu`, one per slot, each anchored at the wedge center. Pure (no GPU,
+/// no sim) — the testable label seam. `names` optionally supplies real per-slot action strings (the
+/// host SEAM); when `None`, [`placeholder_slot_label`] fills each slot from its index. A slot with an
+/// empty/missing name is skipped (draws no label, but the wedge quad still shows the slot). Returns
+/// an empty vec when the menu has no slots.
+pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>) -> Vec<WedgeLabel> {
+    if menu.slots == 0 {
+        return Vec::new();
+    }
+    let (cx, cy) = (menu.center[0], menu.center[1]);
+    let n = menu.slots as f32;
+    let mut out = Vec::with_capacity(menu.slots);
+    for i in 0..menu.slots {
+        let angle = FRAC_PI_2 - (i as f32) * TAU / n;
+        let wx = cx + RING_RADIUS * angle.cos();
+        let wy = cy + RING_RADIUS * angle.sin();
+        let text = match names.and_then(|ns| ns.get(i)) {
+            Some(name) if !name.is_empty() => name.to_string(),
+            Some(_) => continue, // an explicit empty name → no label for this slot
+            None => placeholder_slot_label(i),
+        };
+        out.push(WedgeLabel {
+            text,
+            pos: [wx, wy],
+            size: WEDGE_LABEL_SIZE,
+            anchor: Anchor::Center,
+            color: LABEL_COLOR,
+        });
+    }
+    out
+}
+
 /// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-quad half-size).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -219,6 +282,9 @@ pub struct RadialRenderer {
     quad_buf: wgpu::Buffer,
     instance_buf: wgpu::Buffer,
     instance_cap: usize,
+    /// The shared text pass (W4) — the radial menu owns one so its wedges carry action labels.
+    /// Flushed at the end of [`RadialRenderer::render`].
+    text: TextRenderer,
 }
 
 impl RadialRenderer {
@@ -296,17 +362,20 @@ impl RadialRenderer {
             mapped_at_creation: false,
         });
 
+        let text = TextRenderer::new(device, surface_format);
+
         RadialRenderer {
             pipeline,
             quad_buf,
             instance_buf,
             instance_cap,
+            text,
         }
     }
 
-    /// Draw the radial menu on top of `view` (a LOAD pass — never clears). Builds the quad set via
-    /// [`radial_quads`], uploads it, and records one LOAD render pass so the menu composites over the
-    /// command frame. No-op when the menu has no slots.
+    /// Draw the radial menu on top of `view` (a LOAD pass — never clears), labelling each wedge with
+    /// a placeholder slot number (the host can't yet pass action names — see [`radial_labels`]).
+    /// No-op when the menu has no slots.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -314,11 +383,38 @@ impl RadialRenderer {
         view: &wgpu::TextureView,
         menu: &RadialMenu,
     ) {
+        self.render_with_labels(device, queue, view, menu, None);
+    }
+
+    /// Draw the radial menu with optional real per-slot action `names` (the host SEAM). When `names`
+    /// is `Some`, each wedge is labelled with its name (an empty name skips that slot's label); when
+    /// `None`, placeholder slot numbers are drawn. A later host worker calls this with the live
+    /// `engine::command_ui` vocabulary; `render` (the existing host call site) uses the placeholders.
+    pub fn render_with_labels(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        menu: &RadialMenu,
+        names: Option<&[&str]>,
+    ) {
         let quads = radial_quads(menu);
         if quads.is_empty() {
             return;
         }
         let instances: Vec<RadialInstance> = quads.iter().map(|q| q.instance()).collect();
+
+        // Queue the wedge labels (W4) — flushed after the wedge quads below so the glyphs sit on top.
+        for label in radial_labels(menu, names) {
+            self.text.queue(
+                label.text,
+                label.pos,
+                label.size,
+                label.anchor,
+                label.color,
+                1.0,
+            );
+        }
 
         if instances.len() > self.instance_cap {
             let new_cap = instances.len().next_power_of_two();
@@ -358,6 +454,9 @@ impl RadialRenderer {
             pass.draw(0..QUAD_VERTS.len() as u32, 0..instances.len() as u32);
         }
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Flush the queued wedge labels in their own LOAD pass, on top of the wedges just drawn.
+        self.text.render(device, queue, view);
     }
 }
 
@@ -510,6 +609,60 @@ mod tests {
                 "in NDC y"
             );
         }
+    }
+
+    // ---- wedge labels (W4) ----
+
+    #[test]
+    fn empty_menu_has_no_labels() {
+        assert!(radial_labels(&menu([0.0, 0.0], 0, None), None).is_empty());
+    }
+
+    #[test]
+    fn placeholder_labels_are_one_based_slot_numbers() {
+        let labels = radial_labels(&menu([0.0, 0.0], 4, None), None);
+        let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, vec!["1", "2", "3", "4"]);
+    }
+
+    #[test]
+    fn one_label_per_slot_at_the_wedge_center() {
+        let c = [0.1, -0.2];
+        let q = radial_quads(&menu(c, 6, None));
+        let labels = radial_labels(&menu(c, 6, None), None);
+        let w = wedges(&q);
+        assert_eq!(labels.len(), w.len(), "one label per wedge");
+        // Each label sits exactly at its wedge's center.
+        for (label, wedge) in labels.iter().zip(w.iter()) {
+            assert!((label.pos[0] - wedge.cx).abs() < 1e-5);
+            assert!((label.pos[1] - wedge.cy).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn explicit_names_override_placeholders() {
+        let names = ["MOVE", "STOP", "HOLD"];
+        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names));
+        let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, vec!["MOVE", "STOP", "HOLD"]);
+    }
+
+    #[test]
+    fn empty_name_skips_that_slots_label() {
+        // An explicit empty name draws no label for that slot (but the others still appear).
+        let names = ["MOVE", "", "HOLD"];
+        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names));
+        let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, vec!["MOVE", "HOLD"], "the empty slot is skipped");
+    }
+
+    #[test]
+    fn missing_name_falls_back_to_placeholder() {
+        // Fewer names than slots → the unfilled slots fall back to their placeholder numbers.
+        let names = ["MOVE"];
+        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names));
+        let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, vec!["MOVE", "2", "3"]);
     }
 
     #[test]

@@ -21,6 +21,7 @@
 //! the free [`overlay_quads`] so it is unit-testable without a GPU — exactly the `interpolate_
 //! instances` / `marker_for` pattern.
 
+use crate::text::{Anchor, TextRenderer};
 use gonedark_core::shell::{FactionStats, MatchOutcome, MatchSummary};
 use wgpu::util::DeviceExt;
 
@@ -375,6 +376,141 @@ pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
     }
 }
 
+/// A screen-space text label the overlay wants drawn, computed alongside [`overlay_quads`] so the
+/// summary panels carry real numeric/word labels (W4). Pure data — `pos`/`size` are NDC, mirroring
+/// the quads; the `text` is uppercase ASCII the [`text`](crate::text) pass renders. Kept as its own
+/// type (rather than reaching into `TextRenderer`) so [`overlay_labels`] stays a GPU-free, testable
+/// seam — the same pattern as [`overlay_quads`].
+#[derive(Clone, PartialEq, Debug)]
+pub struct TextLabel {
+    pub text: String,
+    pub pos: [f32; 2],
+    pub size: f32,
+    pub anchor: Anchor,
+    pub color: [f32; 3],
+}
+
+/// Glyph cell height (NDC) of the summary's bar-row numeric labels — sized to sit within a bar row.
+const LABEL_SIZE: f32 = 0.030;
+/// Glyph cell height (NDC) of the summary outcome title (VICTORY / DEFEAT / DRAW) — the largest.
+const TITLE_SIZE: f32 = 0.055;
+/// Glyph cell height (NDC) of a button's caption.
+const BUTTON_LABEL_SIZE: f32 = 0.034;
+/// Light off-white the labels draw in, so they read over the dim panels.
+const LABEL_COLOR: [f32; 3] = [0.92, 0.94, 0.98];
+
+/// A short human label for a faction, used as the per-row tag in the summary (uppercase: the font
+/// is all-caps). Neutral rows are tagged too so a three-row summary stays unambiguous.
+fn faction_label(faction: gonedark_core::shell::FactionTag) -> &'static str {
+    use gonedark_core::shell::FactionTag;
+    match faction {
+        FactionTag::Player => "YOU",
+        FactionTag::Enemy => "FOE",
+        FactionTag::Neutral => "NEU",
+    }
+}
+
+/// The outcome title for a summary, from the local player's perspective. Drawn large across the top.
+fn outcome_title(outcome: MatchOutcome) -> &'static str {
+    use gonedark_core::components::Faction;
+    match outcome {
+        MatchOutcome::Victory(Faction::Player) => "VICTORY",
+        MatchOutcome::Victory(_) => "DEFEAT",
+        MatchOutcome::Draw => "DRAW",
+    }
+}
+
+/// The caption a button slot draws, by surface position. The renderer owns the slot *layout*;
+/// `engine::session_shell` owns *which* actions are live, but the per-surface vocabulary is fixed
+/// and deterministic (mirrors [`surface_choices`]), so the captions are a safe render-side
+/// derivation. A later host worker can override these by queueing its own strings if it wants
+/// localized copy — the seam is the public [`TextRenderer::queue`].
+fn button_label(overlay: &Overlay, slot: usize) -> &'static str {
+    match (overlay, slot) {
+        (Overlay::Paused, 0) => "RESUME",
+        (Overlay::Paused, 1) => "QUIT",
+        (Overlay::ReconnectPrompt { .. }, 0) => "RESUME",
+        (Overlay::ReconnectPrompt { .. }, 1) => "LEAVE",
+        (Overlay::Summary(_), 0) => "DISMISS",
+        _ => "",
+    }
+}
+
+/// Build the screen-space text labels for `overlay`. Pure (no GPU, no sim) — the testable label
+/// seam (mirrors [`overlay_quads`]). Returns an empty vec for surfaces with no text. For the summary
+/// this is the W4 payload: the outcome title, a per-row faction tag, and the three NUMERIC readouts
+/// (kills / territory / resources) so the bars finally carry their actual counts. Button captions
+/// are emitted for every surface that has a button row.
+pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
+    let mut out: Vec<TextLabel> = Vec::new();
+
+    // Button captions, centered on each slot rect (shared by every surface with a button row).
+    let choices = surface_choices(overlay);
+    if !choices.is_empty() {
+        let n = choices.len() as f32;
+        let mut cx = -(n * BUTTON_HW + (n - 1.0) * BUTTON_GAP * 0.5) + BUTTON_HW;
+        for (slot, _role) in choices.iter().enumerate() {
+            let caption = button_label(overlay, slot);
+            if !caption.is_empty() {
+                out.push(TextLabel {
+                    text: caption.to_string(),
+                    pos: [cx, BUTTON_ROW_CY],
+                    size: BUTTON_LABEL_SIZE,
+                    anchor: Anchor::Center,
+                    color: LABEL_COLOR,
+                });
+            }
+            cx += 2.0 * BUTTON_HW + BUTTON_GAP;
+        }
+    }
+
+    if let Overlay::Summary(summary) = overlay {
+        // The outcome title, large, centered just above the panel body.
+        out.push(TextLabel {
+            text: outcome_title(summary.outcome).to_string(),
+            pos: [0.0, PANEL_HH + 0.06],
+            size: TITLE_SIZE,
+            anchor: Anchor::BottomCenter,
+            color: LABEL_COLOR,
+        });
+
+        // Per-faction numeric readouts, one row per faction, aligned with the bar rows in
+        // `overlay_quads` (same `SUMMARY_ROWS_TOP` / `BAR_GAP` geometry). The number is drawn at the
+        // RIGHT end of the bar track so it never overlaps the bar fill, and the faction tag at the
+        // left. These are the literal integer counts — chrome, not intel (invariant #6).
+        let top = SUMMARY_ROWS_TOP;
+        for (row, stats) in summary.per_faction.iter().enumerate() {
+            let row_cy = top - row as f32 * BAR_GAP;
+            // Faction tag at the far left of the row, vertically centered on the kill bar.
+            out.push(TextLabel {
+                text: faction_label(stats.faction).to_string(),
+                pos: [-BAR_MAX_HW - 0.02, row_cy],
+                size: LABEL_SIZE,
+                anchor: Anchor::Center,
+                color: LABEL_COLOR,
+            });
+            // Three numbers, each right-anchored past its bar track (kills / territory / resources),
+            // stacked on the same sub-offsets the bars use.
+            let nums = [
+                (row_cy, stats.units_killed as i64),
+                (row_cy - BAR_SUB_GAP, stats.territory_held as i64),
+                (row_cy - 2.0 * BAR_SUB_GAP, stats.resources_total),
+            ];
+            for (cy, value) in nums {
+                out.push(TextLabel {
+                    text: value.to_string(),
+                    pos: [BAR_MAX_HW + 0.03, cy],
+                    size: LABEL_SIZE,
+                    anchor: Anchor::Center,
+                    color: LABEL_COLOR,
+                });
+            }
+        }
+    }
+
+    out
+}
+
 /// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-quad half-size).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -409,6 +545,9 @@ pub struct OverlayRenderer {
     quad_buf: wgpu::Buffer,
     instance_buf: wgpu::Buffer,
     instance_cap: usize,
+    /// The shared text pass (W4) — the overlay owns one so its panels carry real labels/numbers
+    /// without the host wiring a separate call. Flushed at the end of [`OverlayRenderer::render`].
+    text: TextRenderer,
 }
 
 impl OverlayRenderer {
@@ -486,11 +625,14 @@ impl OverlayRenderer {
             mapped_at_creation: false,
         });
 
+        let text = TextRenderer::new(device, surface_format);
+
         OverlayRenderer {
             pipeline,
             quad_buf,
             instance_buf,
             instance_cap,
+            text,
         }
     }
 
@@ -509,6 +651,19 @@ impl OverlayRenderer {
             return;
         }
         let instances: Vec<OverlayInstance> = quads.iter().map(|q| q.instance()).collect();
+
+        // Queue this surface's text labels (W4): summary numbers/title + button captions. Flushed
+        // after the panel quads below so the glyphs composite on top of the chrome.
+        for label in overlay_labels(overlay) {
+            self.text.queue(
+                label.text,
+                label.pos,
+                label.size,
+                label.anchor,
+                label.color,
+                1.0,
+            );
+        }
 
         if instances.len() > self.instance_cap {
             let new_cap = instances.len().next_power_of_two();
@@ -548,6 +703,9 @@ impl OverlayRenderer {
             pass.draw(0..QUAD_VERTS.len() as u32, 0..instances.len() as u32);
         }
         queue.submit(std::iter::once(encoder.finish()));
+
+        // Flush the queued labels in their own LOAD pass, on top of the panels just drawn.
+        self.text.render(device, queue, view);
     }
 }
 
@@ -1028,6 +1186,114 @@ mod tests {
                 pair[1].cy < pair[0].cy,
                 "successive rows stack downward (cy decreasing)"
             );
+        }
+    }
+
+    // ---- text labels (W4) ----
+
+    #[test]
+    fn none_has_no_labels() {
+        assert!(overlay_labels(&Overlay::None).is_empty());
+    }
+
+    #[test]
+    fn paused_labels_its_buttons() {
+        let labels = overlay_labels(&Overlay::Paused);
+        let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
+        assert!(texts.contains(&"RESUME"), "paused labels Resume");
+        assert!(texts.contains(&"QUIT"), "paused labels its secondary");
+    }
+
+    #[test]
+    fn summary_labels_outcome_title() {
+        let win = overlay_labels(&Overlay::Summary(summary_with_kills(
+            5,
+            2,
+            MatchOutcome::Victory(Faction::Player),
+        )));
+        assert!(
+            win.iter().any(|l| l.text == "VICTORY"),
+            "player victory titles VICTORY"
+        );
+
+        let loss = overlay_labels(&Overlay::Summary(summary_with_kills(
+            2,
+            5,
+            MatchOutcome::Victory(Faction::Enemy),
+        )));
+        assert!(
+            loss.iter().any(|l| l.text == "DEFEAT"),
+            "enemy victory titles DEFEAT for the local player"
+        );
+
+        let draw = overlay_labels(&Overlay::Summary(summary_with_kills(
+            0,
+            0,
+            MatchOutcome::Draw,
+        )));
+        assert!(draw.iter().any(|l| l.text == "DRAW"), "a draw titles DRAW");
+    }
+
+    #[test]
+    fn summary_labels_the_numeric_counts() {
+        // The W4 payload: the bars get their actual numbers. Player 7 kills, 3 territory, 1234
+        // resources must all appear as label strings.
+        let q = overlay_labels(&Overlay::Summary(summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            7,
+            2,
+            3,
+            1,
+            1234,
+            500,
+        )));
+        let texts: Vec<&str> = q.iter().map(|l| l.text.as_str()).collect();
+        assert!(texts.contains(&"7"), "kills count labelled");
+        assert!(texts.contains(&"3"), "territory count labelled");
+        assert!(texts.contains(&"1234"), "resources count labelled");
+        assert!(texts.contains(&"DISMISS"), "summary dismiss button labelled");
+    }
+
+    #[test]
+    fn summary_labels_a_number_per_faction_stat() {
+        // Three stats (kills/territory/resources) per faction row, plus a faction tag per row, plus
+        // the title and the dismiss button. The numeric labels alone must be 3 * FACTION_COUNT.
+        let q = overlay_labels(&Overlay::Summary(summary_full(
+            MatchOutcome::Draw,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+        )));
+        let numeric = q
+            .iter()
+            .filter(|l| l.text.chars().all(|c| c.is_ascii_digit()))
+            .count();
+        assert_eq!(
+            numeric,
+            3 * FACTION_COUNT,
+            "one number per stat per faction row"
+        );
+    }
+
+    /// Fairness guard (invariant #6): every label is NDC chrome, never a world position.
+    #[test]
+    fn labels_are_screen_space_only() {
+        let q = overlay_labels(&Overlay::Summary(summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            3,
+            1,
+            2,
+            0,
+            900,
+            100,
+        )));
+        for l in &q {
+            assert!(l.pos[0] >= -1.5 && l.pos[0] <= 1.5, "label x in NDC range");
+            assert!(l.pos[1] >= -1.5 && l.pos[1] <= 1.5, "label y in NDC range");
+            assert!(l.size > 0.0, "label has a positive size");
         }
     }
 
