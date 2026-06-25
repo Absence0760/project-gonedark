@@ -86,7 +86,10 @@ mod tests {
         a.send(b"second");
         a.send(b"third");
         let got = b.poll();
-        assert_eq!(got, vec![b"first".to_vec(), b"second".to_vec(), b"third".to_vec()]);
+        assert_eq!(
+            got,
+            vec![b"first".to_vec(), b"second".to_vec(), b"third".to_vec()]
+        );
 
         // Reverse direction is independent and equally FIFO.
         b.send(b"reply-1");
@@ -112,7 +115,10 @@ mod tests {
 
         let first = b.poll();
         assert_eq!(first.len(), 3);
-        assert_eq!(first, vec![b"one".to_vec(), b"two".to_vec(), b"three".to_vec()]);
+        assert_eq!(
+            first,
+            vec![b"one".to_vec(), b"two".to_vec(), b"three".to_vec()]
+        );
 
         // A second poll with nothing new returns empty — drain consumed the queue.
         assert!(b.poll().is_empty());
