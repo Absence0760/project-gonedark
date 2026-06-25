@@ -962,13 +962,22 @@ documented no-op. Q1/Q2/Q3 remain open.
 
 ## D27 — Netcode topology: deterministic lockstep in `core`, transport behind a PAL trait
 
-**Status:** the **topology is decided** to unblock Phase 3 workstream B
-([`phase-3-plan.md`](phase-3-plan.md)). **No netcode code has landed yet** — this entry fixes
-*where each piece lives* before any wire code is written, exactly as [D19](#d19--the-gpu-device-crosses-into-the-renderer-at-the-concrete-wiring-layer-not-through-the-abstract-pal-trait)/[D20](#d20--the-platform-agnostic-game-loop-is-a-shared-engine-crate-both-hosts-drive)
+**Status:** topology decided, and the **first slice has landed** — `core::lockstep` (the
+in-process deterministic 2-client loop + wire codec, no sockets;
+[`phase-3-plan.md`](phase-3-plan.md) §"Workstream B" step 1). This entry fixed *where each piece
+lives* before the wire code, exactly as [D19](#d19--the-gpu-device-crosses-into-the-renderer-at-the-concrete-wiring-layer-not-through-the-abstract-pal-trait)/[D20](#d20--the-platform-agnostic-game-loop-is-a-shared-engine-crate-both-hosts-drive)
 fixed the PAL boundary before the renderer. The deterministic substrate it builds on already
 exists: `core::sim::Command` is the lockstep "order" unit (`Copy`, float-free), `Sim::step(&[Command])`
 already applies a per-tick command set in stable order, and `Sim::checksum` already folds all sim
 state incl. the RNG ([D23](#d23--phase-2-game-systems-the-deterministic-model-and-its-module-decomposition)).
+
+**Refinement from the implementation (qualifies bullet 2 below):** `core::lockstep` is
+**sans-I/O** — it *produces* opaque byte frames (`Lockstep::drain_outbound`) and *consumes*
+received ones (`Lockstep::deliver`), but does no transport and holds **no** `&mut dyn Transport`.
+The host (a `pal::Transport` impl) moves the bytes. This is strictly better than a trait object in
+`core`: it keeps `core` from depending on `pal` at all (the empty-dep tripwire stays armed), and
+makes the whole protocol testable in-process against a simulated lossy channel with zero sockets —
+which is exactly how the landed slice is verified.
 
 **Decision:**
 

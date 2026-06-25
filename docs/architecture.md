@@ -207,13 +207,16 @@ spread cost.
 
 ## Netcode — deterministic lockstep
 
-> **Topology decided ([`decisions.md`](decisions.md) D27), implementation in progress
-> ([`phase-3-plan.md`](phase-3-plan.md) §"Workstream B").** The lockstep loop + wire codec live
-> in a new platform-free `core::lockstep`; transport is abstracted behind a `pal::Transport` trait
-> (opaque byte frames, no socket type), with concrete sockets/relay in `pal-desktop`/`server` —
-> the same abstract-in-`pal`, concrete-in-the-backend split as D19/D20. `core` never names a
-> socket; the transport never names a `Command`. Avatar-local prediction (D15) stays in the
-> `engine` presentation path, never touching sim state.
+> **Topology decided ([`decisions.md`](decisions.md) D27); first slice landed
+> ([`phase-3-plan.md`](phase-3-plan.md) §"Workstream B").** The lockstep loop + wire codec live in
+> a new platform-free, **sans-I/O** `core::lockstep`: it produces/consumes opaque byte frames but
+> does no transport. The host moves the bytes via a `pal::Transport` trait (no socket type),
+> concrete sockets/relay in `pal-desktop`/`server` — the same abstract-in-`pal`,
+> concrete-in-the-backend split as D19/D20. `core` never names a socket (nor depends on `pal`); the
+> transport never names a `Command`. The in-process 2-client loop is done and verified against a
+> simulated lossy/jittery/reordering channel (per-tick checksums agree + match a no-network
+> reference). Avatar-local prediction (D15) stays in the `engine` presentation path, never touching
+> sim state.
 
 Because the sim is deterministic, clients exchange only **orders**, not world state.
 Bandwidth scales with players, not the hundreds of units on the field.

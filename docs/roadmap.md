@@ -147,10 +147,12 @@ model.
 > units running **~2× over the 16.6 ms 60 Hz budget on desktop**, pinpointing the per-unit
 > flow-field rebuild (not threading) as the #1 cost. **Flow-field caching then landed** (one field
 > per distinct goal per tick, bit-identical) → **~8× faster, ~3.7 ms/tick median, comfortably under
-> budget** — which also makes sim-side parallelism likely unnecessary for Phase 3. **D27 (netcode
-> topology) is now decided** — `core::lockstep` + `pal::Transport` placement locked, code not yet
-> landed. Still owed before the remaining net/PvP workstreams: a snapshot-format Dn, and **Q2**
-> (enemy detection of "gone dark") via `/decision`.
+> budget** — which also makes sim-side parallelism likely unnecessary for Phase 3. Workstream B
+> opened: **D27 (netcode topology) is decided and its first slice landed** — `core::lockstep`, a
+> platform-free **sans-I/O** deterministic 2-client loop + wire codec, verified in-process over a
+> lossy/jittery/reordering channel (peers' checksums agree + match a no-network reference; no
+> sockets yet). Still owed before the remaining net/PvP workstreams: a snapshot-format Dn, and
+> **Q2** (enemy detection of "gone dark") via `/decision`.
 
 **Goal:** make it hold up at size and (if pursued) in multiplayer.
 

@@ -123,11 +123,17 @@ checksum byte-identical with prediction on vs off."*
 
 **Sequence (every step `/safe-edit`; sim/netcode/embodiment blast radius):**
 1. **Smallest first slice — in-process deterministic 2-client lockstep, NO sockets.**
-   `core::lockstep`: `Command`/tick wire codec, `DelayBuffer` (stamp input at `T+D`,
-   merge peers in fixed peer order, gate-clears-only-when-all-present, empty set is the
-   "proceed" signal, stall on missing), a **seeded** `SimTransport` test double
-   (RNG-driven delay/jitter/reorder/loss — itself deterministic). Two-instance lockstep
-   test asserts both sims agree per-tick and match a no-net single run. `/decision` D27.
+   ✅ **DONE** — `core::lockstep` (D27): the `Command`/tick **wire codec** (LE +
+   `Fixed::to_bits`, mirrors the checksum; decode never panics, rejects bad
+   version/tag/peer/trailing-bytes) and the **sans-I/O** `Lockstep` state machine (input
+   stamped at `T+delay`, peers merged in fixed peer order, gate-clears-only-when-all-present,
+   empty set is the explicit "proceed" signal, warmup `[0,delay)`, pruned retransmit window).
+   It produces/consumes byte frames — no transport, no `pal` dep. Tests (9, dev+release, on
+   the determinism matrix): codec round-trip over all variants, malformed-frame rejection, the
+   gate/merge logic, and the **two-instance lockstep run over a seeded lossy+jittery+reordering
+   in-process channel** asserting both peers' checksum streams agree *and* match a no-network
+   reference, across several delays. `phase2` sim-runner stream byte-identical. (Refines D27:
+   `core::lockstep` is sans-I/O, not a `&mut dyn Transport` consumer — keeps `core` off `pal`.)
 2. **CI: `net-sim-runner` + a new ADD-ONLY job** running it across the matrix.
 3. **`pal::Transport` trait** + loopback impl in `pal-desktop`.
 4. **Wire lockstep into `engine::Game::frame`** — source the per-tick command set from
