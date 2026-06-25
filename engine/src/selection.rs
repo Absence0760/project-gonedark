@@ -137,7 +137,12 @@ mod tests {
     }
 
     /// Run a press frame at `down`, then a release frame at `up`, against `candidates`.
-    fn tap(sel: &mut Selection, down: (f32, f32), up: (f32, f32), candidates: &[(Entity, (f32, f32))]) {
+    fn tap(
+        sel: &mut Selection,
+        down: (f32, f32),
+        up: (f32, f32),
+        candidates: &[(Entity, (f32, f32))],
+    ) {
         sel.update(Some(down), true, false, false, candidates);
         sel.update(Some(up), false, true, false, candidates);
     }

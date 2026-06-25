@@ -39,7 +39,6 @@ pub const SUPPRESSION_DECAY: Fixed = Fixed::from_ratio(1, 64);
 /// Suppression added to a target per shot that lands.
 pub const SUPPRESSION_PER_HIT: Fixed = Fixed::from_ratio(1, 8);
 
-
 /// Is `(attacker, defender)` a hostile pair? Combat engages only across distinct factions and
 /// never involves `Neutral` on either side (invariant #3 keeps it literal — no friendly fire,
 /// no neutral aggression).
@@ -292,10 +291,7 @@ mod tests {
             .filter(|e| matches!(e, SimEvent::Damaged { .. }))
             .collect();
         assert_eq!(damaged.len(), 3);
-        if let SimEvent::Damaged {
-            amount, source, ..
-        } = damaged[0]
-        {
+        if let SimEvent::Damaged { amount, source, .. } = damaged[0] {
             assert_eq!(*amount, fx(25), "open terrain = full damage");
             assert_eq!(*source, shooter);
         }
@@ -308,7 +304,13 @@ mod tests {
             .filter(|e| matches!(e, SimEvent::Killed { .. }))
             .collect();
         assert_eq!(kills.len(), 1);
-        if let SimEvent::Killed { entity, source, faction, .. } = kills[0] {
+        if let SimEvent::Killed {
+            entity,
+            source,
+            faction,
+            ..
+        } = kills[0]
+        {
             assert_eq!(*entity, enemy);
             assert_eq!(*source, shooter);
             assert_eq!(*faction, Faction::Enemy);
@@ -363,10 +365,7 @@ mod tests {
         // Now the attacker opens fire: it hits the defender, recording last_attacker.
         world.stance[attacker.index as usize] = Stance::FireAtWill;
         run(&mut world, &terrain, &mut events);
-        assert_eq!(
-            world.last_attacker[defender.index as usize],
-            Some(attacker)
-        );
+        assert_eq!(world.last_attacker[defender.index as usize], Some(attacker));
 
         // Next tick the defender returns fire against its recorded attacker.
         run(&mut world, &terrain, &mut events);

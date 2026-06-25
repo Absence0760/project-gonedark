@@ -443,8 +443,16 @@ impl Renderer {
         viewport: (u32, u32),
         tick: u64,
     ) {
-        self.hud
-            .render(device, queue, view, alerts, avatar_world, yaw, viewport, tick);
+        self.hud.render(
+            device,
+            queue,
+            view,
+            alerts,
+            avatar_world,
+            yaw,
+            viewport,
+            tick,
+        );
     }
 }
 
@@ -564,7 +572,10 @@ mod tests {
         enemy.faction = Faction::Enemy;
         let s = snapshot(0, vec![enemy]);
         let out = interpolate_instances(&s, &s, 0.0, &[]);
-        assert_eq!([out[0].r, out[0].g, out[0].b], faction_color(Faction::Enemy));
+        assert_eq!(
+            [out[0].r, out[0].g, out[0].b],
+            faction_color(Faction::Enemy)
+        );
         assert_eq!(out[0].flags & FLAG_EMBODIED, 0);
     }
 
@@ -624,7 +635,11 @@ mod tests {
         );
         let out = interpolate_instances(&s, &s, 0.0, &[7]);
         assert_eq!(out[0].flags & FLAG_SELECTED, 0, "index 3 not selected");
-        assert_eq!(out[1].flags & FLAG_SELECTED, FLAG_SELECTED, "index 7 selected");
+        assert_eq!(
+            out[1].flags & FLAG_SELECTED,
+            FLAG_SELECTED,
+            "index 7 selected"
+        );
     }
 
     /// An empty selection (the embodied case) flags nothing.

@@ -383,7 +383,11 @@ mod tests {
     fn try_spend_rejects_when_poor_and_debits_when_affordable() {
         let mut res = Resources::new(40);
         assert!(!res.try_spend(Faction::Player, 50));
-        assert_eq!(res.get(Faction::Player), 40, "rejected spend must not debit");
+        assert_eq!(
+            res.get(Faction::Player),
+            40,
+            "rejected spend must not debit"
+        );
         assert!(res.try_spend(Faction::Player, 30));
         assert_eq!(res.get(Faction::Player), 10);
         // Exact-balance spend succeeds.

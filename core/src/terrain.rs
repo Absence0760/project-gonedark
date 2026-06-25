@@ -275,14 +275,20 @@ mod tests {
         let t = Terrain::open();
         // A spread of segments across the open field, including reversed pairs.
         let pairs = [
-            (cell_center(0, 0), cell_center(GRID as i32 - 1, GRID as i32 - 1)),
+            (
+                cell_center(0, 0),
+                cell_center(GRID as i32 - 1, GRID as i32 - 1),
+            ),
             (cell_center(10, 20), cell_center(100, 30)),
             (cell_center(64, 0), cell_center(64, 127)),
             (cell_center(5, 60), cell_center(120, 60)),
         ];
         for (a, b) in pairs {
             assert!(t.line_of_sight(a, b), "open field must always have LoS");
-            assert!(t.line_of_sight(b, a), "open field must always have LoS (reversed)");
+            assert!(
+                t.line_of_sight(b, a),
+                "open field must always have LoS (reversed)"
+            );
         }
     }
 
@@ -313,7 +319,10 @@ mod tests {
         assert!(t.line_of_sight(a, b), "cleared cell again has LoS");
 
         t.set_cover(mid.0, mid.1, Cover::Heavy);
-        assert!(!t.line_of_sight(a, b), "heavy cover between endpoints blocks sight");
+        assert!(
+            !t.line_of_sight(a, b),
+            "heavy cover between endpoints blocks sight"
+        );
     }
 
     #[test]

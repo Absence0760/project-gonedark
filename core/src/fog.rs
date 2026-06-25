@@ -255,7 +255,12 @@ mod tests {
         // Two friendly units far apart. Embodying one must light ONLY its area; the other unit's
         // area stays dark (the strategic map goes dark — invariant #6).
         let mut world = World::new();
-        let avatar = spawn_unit(&mut world, Faction::Player, at(-30, -30), Fixed::from_int(12));
+        let avatar = spawn_unit(
+            &mut world,
+            Faction::Player,
+            at(-30, -30),
+            Fixed::from_int(12),
+        );
         let _far = spawn_unit(&mut world, Faction::Player, at(30, 30), Fixed::from_int(12));
         let terrain = Terrain::open();
 
@@ -293,7 +298,13 @@ mod tests {
         // Wall a vertical column at cell x = 70 (world x ~6). Cell of world x: x+64 floored.
         // World x=6 → cell 70. Put a wall column there spanning the relevant rows.
         let wall_cx = terrain.cell_of(at(6, 0)).0;
-        terrain.fill_rect(wall_cx, 0, wall_cx, GRID as i32 - 1, crate::terrain::Cover::Heavy);
+        terrain.fill_rect(
+            wall_cx,
+            0,
+            wall_cx,
+            GRID as i32 - 1,
+            crate::terrain::Cover::Heavy,
+        );
 
         let vis = command_visibility(&world, &terrain, Faction::Player);
         // Near side (before the wall) is lit.

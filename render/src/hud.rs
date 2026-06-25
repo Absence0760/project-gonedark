@@ -41,10 +41,10 @@ const INITIAL_CAP: usize = 16;
 /// The RGB color for an alert kind. Hostile-warm for fire, dim for losses, urgent for base.
 fn alert_color(kind: AlertKind) -> [f32; 3] {
     match kind {
-        AlertKind::TakingFire => [1.0, 0.35, 0.2],      // hot orange-red
-        AlertKind::UnitLost => [0.85, 0.85, 0.9],       // pale grey (a death)
+        AlertKind::TakingFire => [1.0, 0.35, 0.2], // hot orange-red
+        AlertKind::UnitLost => [0.85, 0.85, 0.9],  // pale grey (a death)
         AlertKind::BaseUnderAttack => [1.0, 0.15, 0.15], // urgent red
-        AlertKind::TerritoryLost => [0.9, 0.7, 0.2],    // amber
+        AlertKind::TerritoryLost => [0.9, 0.7, 0.2], // amber
     }
 }
 
@@ -131,12 +131,20 @@ struct QuadVertex {
 
 /// The two triangles of a unit quad.
 const QUAD_VERTS: [QuadVertex; 6] = [
-    QuadVertex { corner: [-1.0, -1.0] },
-    QuadVertex { corner: [1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
+    QuadVertex {
+        corner: [1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, 1.0] },
+    QuadVertex {
+        corner: [-1.0, 1.0],
+    },
 ];
 
 /// Screen-space directional-alert overlay for the embodied view. Owns its own pipeline +
@@ -376,7 +384,11 @@ mod tests {
         // to the avatar's right → ndc_x > 0.
         let a = alert(AlertKind::TakingFire, 10, 0, 0);
         let m = marker_for(&a, (0.0, 0.0), std::f32::consts::FRAC_PI_2, VIEWPORT, 0).unwrap();
-        assert!(m.ndc_x > 0.0, "ndc_x={} should swing right under yaw", m.ndc_x);
+        assert!(
+            m.ndc_x > 0.0,
+            "ndc_x={} should swing right under yaw",
+            m.ndc_x
+        );
     }
 
     // ---- fade by age ----
@@ -385,7 +397,11 @@ mod tests {
     fn fresh_alert_is_full_alpha() {
         let a = alert(AlertKind::UnitLost, 5, 5, 100);
         let m = marker_for(&a, (0.0, 0.0), 0.0, VIEWPORT, 100).unwrap();
-        assert!((m.alpha - 1.0).abs() < 1e-4, "alpha={} should be ~1", m.alpha);
+        assert!(
+            (m.alpha - 1.0).abs() < 1e-4,
+            "alpha={} should be ~1",
+            m.alpha
+        );
     }
 
     #[test]
@@ -415,10 +431,19 @@ mod tests {
     fn color_tracks_kind() {
         let p = (0.0, 0.0);
         let fire = marker_for(&alert(AlertKind::TakingFire, 1, 0, 0), p, 0.0, VIEWPORT, 0).unwrap();
-        let base = marker_for(&alert(AlertKind::BaseUnderAttack, 1, 0, 0), p, 0.0, VIEWPORT, 0)
-            .unwrap();
+        let base = marker_for(
+            &alert(AlertKind::BaseUnderAttack, 1, 0, 0),
+            p,
+            0.0,
+            VIEWPORT,
+            0,
+        )
+        .unwrap();
         assert_eq!([fire.r, fire.g, fire.b], alert_color(AlertKind::TakingFire));
-        assert_eq!([base.r, base.g, base.b], alert_color(AlertKind::BaseUnderAttack));
+        assert_eq!(
+            [base.r, base.g, base.b],
+            alert_color(AlertKind::BaseUnderAttack)
+        );
         assert_ne!([fire.r, fire.g, fire.b], [base.r, base.g, base.b]);
     }
 

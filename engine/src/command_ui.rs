@@ -73,7 +73,8 @@ pub fn commands_for(
     };
 
     // Quantize the tapped world point to exact fixed-point bits at the input boundary.
-    let target = target_world.map(|(x, y)| Vec2::new(crate::world_to_fixed(x), crate::world_to_fixed(y)));
+    let target =
+        target_world.map(|(x, y)| Vec2::new(crate::world_to_fixed(x), crate::world_to_fixed(y)));
 
     let mut out = Vec::with_capacity(selected.len());
     match slot {

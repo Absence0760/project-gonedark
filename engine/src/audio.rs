@@ -53,8 +53,7 @@ pub fn mix_cues(
                 // The target may have been despawned the same tick — guard the index, exactly
                 // as alerts.rs does. Out-of-range → treat as a unit (Gunfire), never panic.
                 let idx = entity.index as usize;
-                let is_building =
-                    idx < world.capacity() && world.kind[idx] == EntityKind::Building;
+                let is_building = idx < world.capacity() && world.kind[idx] == EntityKind::Building;
                 let sound = if is_building {
                     SoundId::BaseHit
                 } else {
@@ -239,7 +238,11 @@ mod tests {
             PI / 2.0,
             &w,
         );
-        assert!((cues[0].azimuth - PI / 2.0).abs() < EPS, "azimuth {}", cues[0].azimuth);
+        assert!(
+            (cues[0].azimuth - PI / 2.0).abs() < EPS,
+            "azimuth {}",
+            cues[0].azimuth
+        );
     }
 
     // --- gain -------------------------------------------------------------------------------
@@ -269,7 +272,10 @@ mod tests {
             to: Faction::Enemy,
         };
         let embodied = mix_cues(&[captured], true, (0.0, 0.0), 0.0, &w);
-        assert!(embodied[0].muffled, "strategic cue should bleed in muffled while embodied");
+        assert!(
+            embodied[0].muffled,
+            "strategic cue should bleed in muffled while embodied"
+        );
 
         let commanding = mix_cues(&[captured], false, (0.0, 0.0), 0.0, &w);
         assert!(!commanding[0].muffled, "no bleed concept while commanding");

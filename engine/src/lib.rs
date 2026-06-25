@@ -21,8 +21,8 @@
 use glam::{Mat4, Vec3, Vec4};
 use gonedark_core::alerts::AlertChannel;
 use gonedark_core::components::{BuildingKind, EntityKind, Faction, Stance, UnitKind, Vec2};
-use gonedark_core::ecs::Entity;
 use gonedark_core::economy::{self, Resources};
+use gonedark_core::ecs::Entity;
 use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::{self, Visibility};
@@ -326,7 +326,9 @@ impl Game {
         let w = &self.sim.world;
         let mut out = Vec::new();
         for i in 0..w.capacity() {
-            if !w.is_index_alive(i) || w.faction[i] != Faction::Player || w.kind[i] != EntityKind::Unit
+            if !w.is_index_alive(i)
+                || w.faction[i] != Faction::Player
+                || w.kind[i] != EntityKind::Unit
             {
                 continue;
             }
@@ -499,7 +501,13 @@ impl Game {
             let p = self.player_pos();
             (fixed_to_f32(p.x), fixed_to_f32(p.y))
         };
-        let cues = audio::mix_cues(&frame_events, self.embodied, listener, self.yaw, &self.sim.world);
+        let cues = audio::mix_cues(
+            &frame_events,
+            self.embodied,
+            listener,
+            self.yaw,
+            &self.sim.world,
+        );
         audio.submit_mix(&cues);
 
         // 3. Interpolation factor for the renderer (invariant #4).
@@ -549,8 +557,16 @@ impl Game {
         // 8. While embodied, draw the directional alert HUD over the dark frame (worker 2) — the
         // only thread back to command (invariant #6).
         if self.embodied {
-            self.renderer
-                .render_hud(device, queue, view, &self.alerts, listener, self.yaw, viewport, tick);
+            self.renderer.render_hud(
+                device,
+                queue,
+                view,
+                &self.alerts,
+                listener,
+                self.yaw,
+                viewport,
+                tick,
+            );
         }
 
         // 9. Avatar-local prediction seam (D15): presentation-only, NEVER writes sim state.

@@ -93,7 +93,11 @@ pub enum Order {
     Idle,
     MoveTo(Vec2),
     AttackMove(Vec2),
-    Patrol { a: Vec2, b: Vec2, toward_b: bool },
+    Patrol {
+        a: Vec2,
+        b: Vec2,
+        toward_b: bool,
+    },
     HoldPosition,
     FallBack(Vec2),
 }

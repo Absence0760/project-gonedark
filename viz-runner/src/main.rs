@@ -190,8 +190,20 @@ fn dark_fraction(rgba: &[u8]) -> f32 {
 /// nothing thereafter; each frame advances ~one 60 Hz tick and renders into `view`.
 fn advance(game: &mut Game, n: u32, first: InputFrame, gpu: &Gpu, view: &wgpu::TextureView) {
     for i in 0..n {
-        let input = if i == 0 { first.clone() } else { InputFrame::default() };
-        game.frame(&input, TICK_DT, (W, H), &gpu.device, &gpu.queue, view, &mut NullAudio);
+        let input = if i == 0 {
+            first.clone()
+        } else {
+            InputFrame::default()
+        };
+        game.frame(
+            &input,
+            TICK_DT,
+            (W, H),
+            &gpu.device,
+            &gpu.queue,
+            view,
+            &mut NullAudio,
+        );
     }
 }
 
@@ -229,16 +241,33 @@ fn main() {
         count(&cmd, is_enemy_red),
         dark_fraction(&cmd),
     );
-    check(&mut failures, "command_not_dark", dark < 0.5, format!("dark fraction {dark:.3} (<0.5 — the lit field is not black)"));
-    check(&mut failures, "command_has_player_units", blue > 50, format!("{blue} player-blue px (>50)"));
-    check(&mut failures, "command_has_enemy_units", red > 50, format!("{red} enemy-red px (>50)"));
+    check(
+        &mut failures,
+        "command_not_dark",
+        dark < 0.5,
+        format!("dark fraction {dark:.3} (<0.5 — the lit field is not black)"),
+    );
+    check(
+        &mut failures,
+        "command_has_player_units",
+        blue > 50,
+        format!("{blue} player-blue px (>50)"),
+    );
+    check(
+        &mut failures,
+        "command_has_enemy_units",
+        red > 50,
+        format!("{red} enemy-red px (>50)"),
+    );
     // Baseline: with nothing selected the command frame draws no bright selection rim.
     let baseline_rim = count(&cmd, is_select_rim);
 
     // --- Scenario 1b: command-layer selection highlight ----------------------------------------
     // Band-select the player squad (a pointer-down at one corner, pointer-up at the opposite),
     // then render: the selected units must gain a bright rim the un-selected command frame lacks.
-    println!("[selected] band-selecting the player squad rims the selected units (presentation #4)");
+    println!(
+        "[selected] band-selecting the player squad rims the selected units (presentation #4)"
+    );
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     // The player squad sits at world x≈[-9,-7], y≈[-7,4]. With the square 512² viewport framing
     // ±40 world units, these pixel corners bracket the whole squad (top-left ≈ (-13,6),
@@ -254,8 +283,24 @@ fn main() {
         ..Default::default()
     };
     // Frame 1: press (anchor). Frame 2: release at the opposite corner (commit the band).
-    g.frame(&band_down, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio);
-    g.frame(&band_up, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio);
+    g.frame(
+        &band_down,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
+    g.frame(
+        &band_up,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
     // Settle a few frames so the highlighted units render steadily, then read back.
     advance(&mut g, 4, InputFrame::default(), &gpu, &view);
     let sel = read_pixels(&gpu.device, &gpu.queue, &target);
@@ -271,24 +316,52 @@ fn main() {
     // --- Scenario 2: embodied — world goes dark ------------------------------------------------
     println!("[embodied_dark] possessing a unit collapses vision to the avatar (invariant #6)");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
-    g.frame(&embody, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio);
+    g.frame(
+        &embody,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
     advance(&mut g, 2, InputFrame::default(), &gpu, &view); // settle, before combat raises alerts
     let dark_frame = read_pixels(&gpu.device, &gpu.queue, &target);
     save_png("target/viz/embodied_dark.png", &dark_frame);
     let dark_dk = dark_fraction(&dark_frame);
     let dark_nondark = (dark_frame.len() / 4) - count(&dark_frame, is_dark);
-    check(&mut failures, "embodied_world_went_dark", dark_dk > 0.95, format!("dark fraction {dark_dk:.4} (>0.95 — the strategic map is gone)"));
+    check(
+        &mut failures,
+        "embodied_world_went_dark",
+        dark_dk > 0.95,
+        format!("dark fraction {dark_dk:.4} (>0.95 — the strategic map is gone)"),
+    );
 
     // --- Scenario 3: embodied + combat → alert HUD ---------------------------------------------
     println!("[embodied_hud] after combat, the directional alert HUD draws markers over the dark");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
-    g.frame(&embody, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio);
+    g.frame(
+        &embody,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
     advance(&mut g, 220, InputFrame::default(), &gpu, &view); // allies take fire → alerts accrue
     let hud_frame = read_pixels(&gpu.device, &gpu.queue, &target);
     save_png("target/viz/embodied_hud.png", &hud_frame);
     let hud_dk = dark_fraction(&hud_frame);
     let hud_nondark = (hud_frame.len() / 4) - count(&hud_frame, is_dark);
-    check(&mut failures, "hud_still_mostly_dark", hud_dk > 0.80, format!("dark fraction {hud_dk:.4} (>0.80 — markers are a thin overlay, the world stays dark)"));
+    check(
+        &mut failures,
+        "hud_still_mostly_dark",
+        hud_dk > 0.80,
+        format!(
+            "dark fraction {hud_dk:.4} (>0.80 — markers are a thin overlay, the world stays dark)"
+        ),
+    );
     check(
         &mut failures,
         "hud_markers_drawn",

@@ -16,8 +16,8 @@ use crate::combat;
 use crate::components::{
     Building, BuildingKind, EntityKind, Faction, InputSource, Order, Stance, UnitKind, Vec2,
 };
-use crate::ecs::{Entity, World};
 use crate::economy::{self, Resources};
+use crate::ecs::{Entity, World};
 use crate::event::SimEvent;
 use crate::fixed::Fixed;
 use crate::orders;
@@ -114,7 +114,12 @@ impl Sim {
         }
         // Fixed system order (deterministic): move → fight → capture → economy.
         orders::order_system(&mut self.world, &self.terrain);
-        combat::combat_system(&mut self.world, &self.terrain, &mut self.rng, &mut self.events);
+        combat::combat_system(
+            &mut self.world,
+            &self.terrain,
+            &mut self.rng,
+            &mut self.events,
+        );
         territory::territory_system(&self.world, &mut self.territory, &mut self.events);
         economy::economy_system(
             &mut self.world,
@@ -163,11 +168,7 @@ impl Sim {
                     self.world.input_source[entity.index as usize] = InputSource::Orders;
                 }
             }
-            Command::Build {
-                faction,
-                kind,
-                pos,
-            } => {
+            Command::Build { faction, kind, pos } => {
                 economy::build(&mut self.world, &mut self.resources, faction, kind, pos);
             }
             Command::Upgrade { camp } => {

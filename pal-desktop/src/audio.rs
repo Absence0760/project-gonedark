@@ -116,7 +116,9 @@ mod backend {
     impl DesktopAudio {
         pub fn new() -> Self {
             match Active::open() {
-                Ok(active) => DesktopAudio { inner: Some(active) },
+                Ok(active) => DesktopAudio {
+                    inner: Some(active),
+                },
                 Err(e) => {
                     eprintln!("[audio] disabled (silent): {e}");
                     DesktopAudio { inner: None }
@@ -128,7 +130,9 @@ mod backend {
         /// `gain`, low-passed when `muffled`.
         fn queue(&self, sound: SoundId, azimuth: f32, gain: f32, muffled: bool) {
             let Some(active) = &self.inner else { return };
-            let Some(samples) = active.bank.get(&sound) else { return };
+            let Some(samples) = active.bank.get(&sound) else {
+                return;
+            };
             // Equal-power pan: map azimuth's lateral component to [0, PI/2].
             let pan = azimuth.sin().clamp(-1.0, 1.0);
             let angle = (pan + 1.0) * 0.25 * PI;

@@ -40,8 +40,5 @@ pub enum SimEvent {
         to: Faction,
     },
     /// `faction` finished producing a unit at `pos` (it now exists in the world).
-    UnitProduced {
-        faction: Faction,
-        pos: Vec2,
-    },
+    UnitProduced { faction: Faction, pos: Vec2 },
 }
