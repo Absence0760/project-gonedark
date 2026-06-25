@@ -136,7 +136,12 @@ model.
 > human/device confirmation layer (on-device audio by ear, balance feel by hand, the on-device
 > `adb` checksum leg), carried forward not faked. Open forks Q1/Q2/Q3 are deliberately left open —
 > fog and alerts ship as a *mechanism*, not a lock; each lean was reaffirmed at Phase-2 close (D31)
-> but locking depends on real audio / live PvP that doesn't exist yet.
+> but locking depends on real audio / live PvP that doesn't exist yet. **A later
+> [playability push](playability-plan.md) (D37–D40) then closed the remaining *functional* gaps
+> the systems sign-off left** — embodied firing ([D37](decisions.md)), a win/lose evaluator
+> ([D38](decisions.md)), the enemy commander AI ([D39](decisions.md)), and a real first-person
+> world ([D40](decisions.md)), plus in-match text — without disturbing the signed-off systems;
+> by-hand feel and the art pass are still owed.
 
 **Goal:** the actual game.
 
