@@ -38,6 +38,10 @@ mod fog;
 /// Embodied directional alert HUD (worker 2). Owns `HudRenderer`: the screen-space alert overlay
 /// drawn on top of the embodied frame.
 mod hud;
+/// In-session shell overlay (Phase 4 WS-B). Owns `OverlayRenderer`: the pause / reconnect-prompt /
+/// post-match-summary chrome, drawn on top of the (possibly dark) match frame. Public so the host
+/// can describe which surface to draw via [`overlay::Overlay`].
+pub mod overlay;
 
 /// Convert a Q16.16 fixed value to `f32` for the GPU. The ONLY sanctioned fixed→float hop.
 #[inline]
@@ -222,6 +226,9 @@ pub struct Renderer {
     /// The embodied directional-alert overlay (worker 2). Drawn as a second LOAD pass by
     /// [`Renderer::render_hud`] when the local player is embodied.
     hud: hud::HudRenderer,
+    /// The in-session shell overlay (Phase 4 WS-B). Drawn as a LOAD pass by
+    /// [`Renderer::render_overlay`] when an in-session surface (pause/reconnect/summary) is up.
+    overlay: overlay::OverlayRenderer,
 }
 
 impl Renderer {
@@ -331,6 +338,7 @@ impl Renderer {
         });
 
         let hud = hud::HudRenderer::new(device, surface_format);
+        let overlay = overlay::OverlayRenderer::new(device, surface_format);
 
         Renderer {
             pipeline,
@@ -341,6 +349,7 @@ impl Renderer {
             instance_cap,
             instances: Vec::new(),
             hud,
+            overlay,
         }
     }
 
@@ -453,6 +462,21 @@ impl Renderer {
             viewport,
             tick,
         );
+    }
+
+    /// Draw the in-session shell overlay (pause / reconnect prompt / post-match summary) on top of
+    /// the current frame (a LOAD pass — it never clears), delegating to [`overlay::OverlayRenderer`]
+    /// (Phase 4 WS-B). The host hands an [`overlay::Overlay`] describing which surface is up;
+    /// [`overlay::Overlay::None`] is a no-op. The overlay is screen-space chrome only — it carries
+    /// no world position and never widens the avatar-only fog beneath it (invariant #6).
+    pub fn render_overlay(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        overlay: &overlay::Overlay,
+    ) {
+        self.overlay.render(device, queue, view, overlay);
     }
 }
 

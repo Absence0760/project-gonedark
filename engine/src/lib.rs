@@ -27,13 +27,16 @@ use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::{self, Visibility};
 use gonedark_core::lockstep::Lockstep;
+use gonedark_core::shell::{ConnectionStatus, LinkState, MatchOutcome};
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
 use gonedark_core::territory::ControlPoint;
 use gonedark_pal::{Audio, InputFrame, Transport};
+use gonedark_render::overlay::Overlay;
 use gonedark_render::{fixed_to_f32, Camera, Renderer};
 
 use selection::Selection;
+use session_shell::{EndStateRead, InSessionShell, ShellSurface};
 
 /// Embodied audio mix (worker 3). Owns `mix_cues`: events + listener pose → positioned cues.
 mod audio;
@@ -41,6 +44,10 @@ mod audio;
 mod command_ui;
 /// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
 mod selection;
+/// In-session shell (Phase 4 WS-B): the in-engine pause / surrender / post-match-summary /
+/// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
+/// session state — never mutates sim state. Public so a host (and tests) can drive it.
+pub mod session_shell;
 
 /// The seed both hosts start the sim with, so desktop and Android run the bit-identical
 /// deterministic scene (invariant #1 / #7).
@@ -356,6 +363,16 @@ pub struct Game {
     /// no change to the drive loop. Boxed `dyn` so `engine` stays free of any concrete backend
     /// (the layering is `engine -> {core, render, pal}`, invariant #2).
     transport: Option<Box<dyn Transport>>,
+
+    /// The in-session shell (Phase 4 WS-B): pause / surrender / post-match summary / reconnect
+    /// prompt. Pure presentation/session state — it never mutates the sim. It drives the pause-
+    /// halts-tick rule (single-player only) and which overlay `render` composites over the frame.
+    shell: InSessionShell,
+
+    /// This frame's accumulated sim events, kept on `Game` so the post-match summary assembler can
+    /// count produced/lost/killed over the match. Presentation derivation only (the event stream is
+    /// already-checksummed state copied out — never re-folded; invariant #7).
+    match_events: Vec<SimEvent>,
 }
 
 impl Game {
@@ -445,7 +462,57 @@ impl Game {
             lockstep: Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY),
             // No remote → no real transport needed; the one-peer gate clears on local input alone.
             transport: None,
+            // Single-player session (one peer), so a pause may halt the local tick accumulator.
+            shell: InSessionShell::new(SP_PEER_COUNT == 1),
+            match_events: Vec::new(),
         }
+    }
+
+    /// The current in-session shell surface (pause / surrender-ended / reconnect / playing) — a
+    /// read-only window for a host or test (e.g. to confirm a pause overlay is up). Presentation
+    /// state only; no sim impact.
+    pub fn shell_surface(&self) -> &ShellSurface {
+        self.shell.surface()
+    }
+
+    /// Apply a resolved in-session [`SessionAction`](gonedark_core::shell::SessionAction) to the
+    /// shell — the host calls this after `core::shell::resolve_intent` returns the
+    /// `ResolvedIntent::Session` arm. Pause/Resume flip the overlay (and, single-player, the tick
+    /// halt); Surrender ends the session with a freshly-assembled summary (invariant #5: no sim
+    /// mutation — it never enters the lockstep stream). This is the only place the shell consumes a
+    /// session action; it never touches `&mut Sim`.
+    pub fn apply_session_action(&mut self, action: gonedark_core::shell::SessionAction) {
+        let summary = self.assemble_summary();
+        self.shell.apply(action, &summary);
+    }
+
+    /// Build the post-match [`MatchSummary`](gonedark_core::shell::MatchSummary) from the match's
+    /// accumulated events + end-of-match reads of checksummed sim state (territory held, resource
+    /// purse). Float-free, host-side (D34: there is no win-condition evaluator in `core`). The
+    /// outcome is left a `Draw` placeholder until a win-condition lands — the plumbing is what WS-B
+    /// ships; the assembler itself is unit-tested in `session_shell`.
+    fn assemble_summary(&self) -> gonedark_core::shell::MatchSummary {
+        let mut reads: [EndStateRead; gonedark_core::components::FACTION_COUNT] = Default::default();
+        for f in Faction::ALL {
+            reads[f.index()] = EndStateRead {
+                territory_held: self
+                    .sim
+                    .territory
+                    .points
+                    .iter()
+                    .filter(|cp| cp.owner == f)
+                    .count() as u32,
+                // The per-faction banked purse (economy `amounts` is `[i64; FACTION_COUNT]`) — no
+                // float money (invariant #1).
+                resources_total: self.sim.resources.get(f),
+            };
+        }
+        session_shell::assemble_summary(
+            &self.match_events,
+            self.sim.tick_count(),
+            MatchOutcome::Draw,
+            &reads,
+        )
     }
 
     /// The player's authoritative world position, read straight from the sim world (read
@@ -607,6 +674,16 @@ impl Game {
         // below — both pure presentation derivations, neither touches sim state (invariant #7).
         let mut frame_events: Vec<SimEvent> = Vec::new();
 
+        // THE pause rule (WS-B): in SINGLE-PLAYER a pause halts the local tick — we hold the
+        // accumulator (don't grow it) and advance zero ticks, so the sim stops and resumes bit-
+        // identically (pause mutates no sim state). In LOCKSTEP a local pause is overlay-only and
+        // `halts_local_tick` is false, so the sim keeps stepping from the shared gate (the protocol
+        // has no peer-agreed pause). `halts_local_tick` is the single point that encodes this.
+        if self.shell.halts_local_tick() {
+            self.acc = 0.0;
+            commands.clear();
+        }
+
         // Drain the accumulator into a whole-tick budget (clamped). Each whole tick consumes
         // exactly `tick_dt`; the excess past the clamp is dropped so the sim can't spiral.
         let mut budget = 0u32;
@@ -631,7 +708,7 @@ impl Game {
         let prev = &mut self.prev;
         let curr = &mut self.curr;
         let events = &mut frame_events;
-        drive_lockstep(
+        let advanced = drive_lockstep(
             &mut self.sim,
             &mut self.lockstep,
             self.transport.as_deref_mut(),
@@ -644,6 +721,10 @@ impl Game {
                 *curr = sim.snapshot();
             },
         );
+        // The lockstep gate stalled this frame iff we couldn't advance the whole budget — a ready
+        // tick's per-peer input wasn't in hand (the seam's `stalled` observation; single-player at
+        // delay 0 never stalls, so this is always false there). Feeds the reconnect prompt below.
+        let lockstep_stalled = advanced < budget;
 
         // Interpolation factor for this frame (invariant #4): how far into the next tick the
         // render clock sits. Drives both the avatar-prediction lead just below and the renderer.
@@ -677,6 +758,31 @@ impl Game {
         let tick = self.sim.tick_count();
         self.alerts
             .ingest(&frame_events, &self.sim.world, Faction::Player, tick);
+        // Accumulate this frame's events over the match so the post-match summary assembler can
+        // tally produced/lost/killed (a presentation derivation; the events are already-checksummed
+        // state copied out — never re-folded, invariant #7).
+        self.match_events.extend_from_slice(&frame_events);
+
+        // Surface the reconnect prompt when the lockstep link is unhealthy (D28 reconnect path).
+        // Pure: a `core::shell::ConnectionStatus` projection of the lockstep state + the WS-B
+        // `should_prompt_reconnect` predicate; no I/O, no sim mutation. Single-player (one peer,
+        // null transport) never stalls or desyncs, so this only fires in a real multiplayer session.
+        //
+        // We DRAIN any confirmed cross-client desync each frame (invariant #7): an undrained desync
+        // queue would let the most-severe link signal go unseen and accumulate unchecked. A drained
+        // desync dominates a stall in the projection (the more severe signal wins → the warning-
+        // accented prompt). We surface the prompt over ANY non-ended overlay — a lockstep pause is
+        // a local-only overlay while the shared clock keeps ticking, so a stall/desync while the
+        // pause menu is open must still reach the player (`request_reconnect` already transitions
+        // Paused → ReconnectPrompt; it only refuses an ended match).
+        if !self.shell.is_ended() {
+            let recent_desync = self.lockstep.take_desyncs().into_iter().next();
+            let status: ConnectionStatus =
+                ConnectionStatus::project(&self.lockstep, lockstep_stalled, recent_desync);
+            if session_shell::should_prompt_reconnect(&status) {
+                self.shell.request_reconnect(status.state);
+            }
+        }
         // The listener follows the PREDICTED eye while embodied (so the positioned mix lines up
         // with the first-person camera), else the raw authoritative position.
         let listener = if self.embodied && self.avatar.valid {
@@ -749,6 +855,28 @@ impl Game {
                 tick,
             );
         }
+
+        // 9. Draw the in-session shell overlay (Phase 4 WS-B) LAST, over everything else — so the
+        // pause / reconnect prompt / post-match summary dims and sits above the (possibly dark)
+        // frame and the alert HUD. It is screen-space chrome with no world position, so it never
+        // widens the avatar-only fog beneath it (invariant #6). `Overlay::None` is a no-op.
+        let overlay = overlay_for_surface(self.shell.surface());
+        self.renderer.render_overlay(device, queue, view, &overlay);
+    }
+}
+
+/// Map the in-session shell surface to the render-side [`Overlay`] description (Phase 4 WS-B). Pure
+/// (no `Game`, no GPU) so it is unit-testable: `Playing` → nothing; `Paused` → the pause overlay;
+/// `ReconnectPrompt` → the prompt (severity from the [`LinkState`]); `Ended` → the post-match
+/// summary panel (the integer-only `MatchSummary`, full-info — shown only once the match is over).
+fn overlay_for_surface(surface: &ShellSurface) -> Overlay {
+    match surface {
+        ShellSurface::Playing => Overlay::None,
+        ShellSurface::Paused => Overlay::Paused,
+        ShellSurface::ReconnectPrompt(state) => Overlay::ReconnectPrompt {
+            desynced: *state == LinkState::Desynced,
+        },
+        ShellSurface::Ended(summary) => Overlay::Summary(summary.clone()),
     }
 }
 
@@ -1322,6 +1450,135 @@ mod tests {
             run(true),
             run(false),
             "avatar prediction must not perturb the deterministic sim"
+        );
+    }
+
+    // --- in-session shell overlay mapping (Phase 4 WS-B) ---
+
+    use gonedark_core::shell::{MatchOutcome, SessionAction};
+    use session_shell::{assemble_summary, EndStateRead};
+
+    fn empty_reads() -> [EndStateRead; gonedark_core::components::FACTION_COUNT] {
+        Default::default()
+    }
+
+    #[test]
+    fn overlay_for_surface_maps_each_surface() {
+        // Playing → no overlay.
+        assert_eq!(
+            overlay_for_surface(&ShellSurface::Playing),
+            Overlay::None
+        );
+        // Paused → the pause overlay.
+        assert_eq!(
+            overlay_for_surface(&ShellSurface::Paused),
+            Overlay::Paused
+        );
+        // Reconnect prompt: stalled vs desynced map to the prompt severity.
+        assert_eq!(
+            overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting)),
+            Overlay::ReconnectPrompt { desynced: false }
+        );
+        assert_eq!(
+            overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Desynced)),
+            Overlay::ReconnectPrompt { desynced: true }
+        );
+    }
+
+    #[test]
+    fn overlay_for_surface_ended_carries_the_summary() {
+        let summary = assemble_summary(&[], 1234, MatchOutcome::Draw, &empty_reads());
+        match overlay_for_surface(&ShellSurface::Ended(summary.clone())) {
+            Overlay::Summary(s) => assert_eq!(s, summary),
+            other => panic!("Ended must map to Overlay::Summary, got {other:?}"),
+        }
+    }
+
+    /// End-to-end the reconnect wire-up as `frame` runs it (minus the GPU glue): a confirmed desync
+    /// drained from the lockstep handle → projected to `LinkState::Desynced` → raised over a PAUSED
+    /// overlay → mapped to the warning-accented overlay. Locks both review fixes: the desync is
+    /// drained/projected (invariant #7) and the prompt supersedes a lockstep pause.
+    #[test]
+    fn desync_supersedes_pause_and_maps_to_warning_overlay() {
+        use gonedark_core::lockstep::{Desync, Lockstep};
+        // A lockstep (multi-peer) session, paused locally.
+        let mut shell = InSessionShell::new(/* single_player = */ false);
+        shell.apply(SessionAction::Pause, &assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads()));
+        assert!(shell.is_paused());
+
+        // Project a confirmed desync exactly as the call site does (the Desync stands in for what
+        // `take_desyncs().into_iter().next()` yields on a real cross-client divergence).
+        let ls = Lockstep::new(2, 0, 4);
+        let recent_desync = Some(Desync {
+            tick: 7,
+            peer: 1,
+            local: 0x1111,
+            remote: 0x2222,
+        });
+        let status = ConnectionStatus::project(&ls, /* stalled = */ false, recent_desync);
+        assert_eq!(status.state, LinkState::Desynced);
+        assert!(session_shell::should_prompt_reconnect(&status));
+
+        // The call-site guard is `!is_ended()`, so a paused session still surfaces the prompt.
+        assert!(!shell.is_ended());
+        shell.request_reconnect(status.state);
+        assert_eq!(
+            *shell.surface(),
+            ShellSurface::ReconnectPrompt(LinkState::Desynced)
+        );
+        assert_eq!(
+            overlay_for_surface(shell.surface()),
+            Overlay::ReconnectPrompt { desynced: true },
+            "a desync over a pause must read as the warning-accented prompt"
+        );
+    }
+
+    /// THE shell-determinism guard (invariant #1/#7): driving the in-session shell state machine
+    /// AND assembling the post-match summary every tick — exactly the work `frame` does — must
+    /// leave the sim's per-tick checksum stream byte-identical to a run that never touches the
+    /// shell. The shell holds no `Sim` and can't be handed one, so this fails loudly only if that
+    /// ever regresses. Mirrors `avatar_prediction_never_perturbs_the_sim_checksum`.
+    #[test]
+    fn shell_and_summary_never_perturb_the_sim_checksum() {
+        fn run(with_shell: bool) -> Vec<u64> {
+            let mut sim = Sim::new(DRIVE_SEED);
+            let _player = drive_scene(&mut sim);
+            let mut shell = InSessionShell::new(true);
+            let mut events: Vec<SimEvent> = Vec::new();
+            let mut stream = vec![sim.checksum()];
+            for t in 0..120u64 {
+                sim.step(&[]);
+                if with_shell {
+                    events.extend_from_slice(sim.events());
+                    // Exercise the state machine and the assembler against live sim reads.
+                    let reads = [
+                        EndStateRead {
+                            territory_held: sim.territory.points.len() as u32,
+                            resources_total: sim.resources.get(Faction::Player),
+                        },
+                        EndStateRead::default(),
+                        EndStateRead::default(),
+                    ];
+                    let summary =
+                        assemble_summary(&events, sim.tick_count(), MatchOutcome::Draw, &reads);
+                    // Toggle pause/resume to walk transitions; surrender near the end.
+                    if t == 10 {
+                        shell.apply(SessionAction::Pause, &summary);
+                    } else if t == 20 {
+                        shell.apply(SessionAction::Resume, &summary);
+                    } else if t == 110 {
+                        shell.apply(SessionAction::Surrender, &summary);
+                    }
+                    let _ = overlay_for_surface(shell.surface());
+                }
+                stream.push(sim.checksum());
+            }
+            stream
+        }
+        assert_eq!(
+            run(true),
+            run(false),
+            "the in-session shell + summary assembler must not perturb the deterministic sim"
         );
     }
 }
