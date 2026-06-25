@@ -19,11 +19,19 @@
 //! owners read at a glance.
 //!
 //! ## "World goes dark" (invariant #6)
-//! When `world_dark` is set (the local player is embodied) the frame clears to near-black and
-//! **only embodied instances are uploaded** — the strategic map (other units, buildings, and
-//! the territory control points, which are all map intel) genuinely disappears, leaving just
-//! the avatar. Filtering happens at upload time in [`Renderer::render`]; [`Renderer::prepare`]
-//! still builds the full set so a single un-embodied frame can light the whole map again.
+//! When `world_dark` is set (the local player is embodied) **only embodied instances are uploaded**
+//! — the strategic map (other units, buildings, and the territory control points, which are all map
+//! intel) genuinely disappears, leaving just the avatar. Filtering happens at upload time in
+//! [`Renderer::render`]; [`Renderer::prepare`] still builds the full set so a single un-embodied
+//! frame can light the whole map again.
+//!
+//! "Goes dark" means losing *intel*, not staring at a black void: the host paints a real
+//! first-person space underneath — a sky gradient, a gridded ground, and a weapon viewmodel (W5,
+//! [`world::WorldRenderer`]) — BEFORE this unit pass loads. That world is a pure function of the
+//! *camera* (it has no access to sim entities), so no enemy/building/control-point intel can leak
+//! through it; the fairness boundary stays exactly where the [`fog`] filter draws it. The embodied
+//! frame is therefore: `world sky/ground (clears)` → this avatar pass (LOADs) → weapon viewmodel →
+//! alert HUD.
 
 use gonedark_core::alerts::AlertChannel;
 use gonedark_core::components::Faction;
@@ -54,6 +62,12 @@ pub mod radial;
 /// labels/numbers at an NDC position with a size + color. Public so the host and other render passes
 /// can `queue` strings (e.g. radial action names, summary numbers, button labels) and flush them.
 pub mod text;
+
+/// Embodied first-person world (W5). Owns `WorldRenderer`: the sky/ground + weapon-viewmodel passes
+/// that replace the bare near-black embodied void with a real first-person space while keeping the
+/// strategic map dark (invariant #6 — it draws ONLY the camera-derived environment + a screen-space
+/// gun, never any sim entity). Public so the host can build the [`world::WorldUniform`].
+pub mod world;
 
 /// Device quality tiers + dynamic-resolution + thermal-backoff policy (Phase 4 WS-C). Pure,
 /// host-testable RENDER decisions (invariant #1/#4: never a sim input) — see the module docs.
@@ -221,14 +235,6 @@ const CLEAR_LIT: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
-/// Dark-frame clear (embodied "world goes dark"): near-black. The map is gone.
-const CLEAR_DARK: wgpu::Color = wgpu::Color {
-    r: 0.0,
-    g: 0.0,
-    b: 0.0,
-    a: 1.0,
-};
-
 /// The renderer: an instanced pipeline plus its GPU buffers and camera uniform.
 pub struct Renderer {
     pipeline: wgpu::RenderPipeline,
@@ -253,6 +259,10 @@ pub struct Renderer {
     /// The band-select marquee. Drawn as a LOAD pass by [`Renderer::render_marquee`] in the command
     /// view while a band-drag is in flight.
     marquee: marquee::MarqueeRenderer,
+    /// The embodied first-person world (W5). The host calls [`Renderer::render_world_sky`] FIRST in
+    /// the embodied branch (it clears to a sky/ground) and [`Renderer::render_world_weapon`] after
+    /// the avatar pass (the gun viewmodel). Draws only the camera-derived environment — no intel.
+    world: world::WorldRenderer,
 }
 
 impl Renderer {
@@ -365,6 +375,7 @@ impl Renderer {
         let overlay = overlay::OverlayRenderer::new(device, surface_format);
         let radial = radial::RadialRenderer::new(device, surface_format);
         let marquee = marquee::MarqueeRenderer::new(device, surface_format);
+        let world = world::WorldRenderer::new(device, surface_format);
 
         Renderer {
             pipeline,
@@ -378,6 +389,7 @@ impl Renderer {
             overlay,
             radial,
             marquee,
+            world,
         }
     }
 
@@ -394,12 +406,16 @@ impl Renderer {
         &self.instances
     }
 
-    /// Upload instances + camera, clear, record one render pass into `view`, and submit.
+    /// Upload instances + camera, record one render pass into `view`, and submit.
     ///
-    /// `world_dark` is the embodied "world goes dark" state: when set, the frame clears to
-    /// near-black (invariant #6). `fog` is the computed visibility mask for the local viewpoint;
-    /// the drawn set is chosen by [`fog::visible_instances`] (worker 1) so unseen enemies vanish
-    /// in command view and the map collapses to the avatar's sight while embodied.
+    /// `world_dark` is the embodied "world goes dark" state (invariant #6). In **command view**
+    /// (`!world_dark`) this pass CLEARS to the lit slate the units read against. While **embodied**
+    /// (`world_dark`) the host has already drawn the first-person world ([`Renderer::render_world_sky`]
+    /// cleared the frame to a sky/ground), so this pass LOADs instead of clearing — the avatar quad
+    /// composites over that world rather than over a black void. Either way [`fog::visible_instances`]
+    /// (worker 1) chooses the draw set, so unseen enemies vanish in command view and the map
+    /// collapses to the avatar's sight (only the avatar survives) while embodied — the fairness
+    /// boundary is unchanged; the world underneath carries no intel.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -429,7 +445,15 @@ impl Renderer {
             queue.write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(&draw_set));
         }
 
-        let clear = if world_dark { CLEAR_DARK } else { CLEAR_LIT };
+        // Command view CLEARS to the lit slate; the embodied view LOADs over the first-person world
+        // the host already drew (`render_world_sky` cleared it). The avatar composites onto that
+        // world instead of a void, while the fog filter still collapses the embodied draw set to the
+        // avatar alone (invariant #6).
+        let load = if world_dark {
+            wgpu::LoadOp::Load
+        } else {
+            wgpu::LoadOp::Clear(CLEAR_LIT)
+        };
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gonedark.frame_encoder"),
@@ -442,7 +466,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -533,6 +557,37 @@ impl Renderer {
         marquee: &marquee::Marquee,
     ) {
         self.marquee.render(device, queue, view, marquee);
+    }
+
+    /// Draw the embodied first-person world's sky + ground (W5), delegating to
+    /// [`world::WorldRenderer`]. This is the CLEARING pass of the embodied frame — the host calls it
+    /// FIRST in the embodied branch (before [`Renderer::render`]'s now-LOADing avatar pass), so the
+    /// avatar composites onto a real first-person space instead of a black void. The world is a pure
+    /// function of the camera (no sim entities), so it reveals **no** map intel (invariant #6 stays
+    /// intact — the fog filter is the fairness boundary, and this only paints the environment).
+    pub fn render_world_sky(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        uniform: &world::WorldUniform,
+    ) {
+        self.world.render_sky(device, queue, view, uniform);
+    }
+
+    /// Draw the embodied weapon viewmodel (W5) on top of the current frame (a LOAD pass — never
+    /// clears), delegating to [`world::WorldRenderer`]. The host calls this AFTER [`Renderer::render`]
+    /// (so the gun sits over the world + avatar) and before the alert HUD. The muzzle flash is driven
+    /// by the `flash` already uploaded in [`Renderer::render_world_sky`]'s uniform. Screen-space
+    /// chrome with no world position; reveals no intel. `aspect` is `width / height`.
+    pub fn render_world_weapon(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        aspect: f32,
+    ) {
+        self.world.render_weapon(device, queue, view, aspect);
     }
 }
 
