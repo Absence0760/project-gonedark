@@ -1176,6 +1176,8 @@ impl Game {
             &camera,
             /* world_dark = */ self.embodied,
             &visibility,
+            width,
+            height,
         );
 
         // 7a. Embodied weapon viewmodel (W5/D44): the first-person gun — the real `weapon_rifle`

@@ -11,6 +11,7 @@
 
 const FLAG_RING: u32 = 2u;     // a territory control point — drawn as a hollow ring
 const FLAG_SELECTED: u32 = 4u; // command-layer selected — bright rim around the quad
+const FLAG_MESH: u32 = 8u;     // a 3D token mesh draws this body — the quad is UI decals only
 
 // Column-major 4x4 view-projection, uploaded by the wiring layer (glam Mat4).
 struct Camera {
@@ -80,6 +81,15 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (in.flags & FLAG_SELECTED) != 0u
         && (abs(in.local.x) > RIM || abs(in.local.y) > RIM) {
         return vec4<f32>(0.98, 0.98, 1.0, 1.0); // bright cool-white selection rim
+    }
+
+    // 3D-token units/buildings (FLAG_MESH): the body is drawn by the mesh pass underneath, so the
+    // quad contributes only the UI decals that must read on top — the selection rim (handled above)
+    // and the health bar (below). Everything else discards, letting the 3D mesh show through. Placed
+    // after the rim/ring checks so those still win, but before the opaque body fill + outline.
+    let is_mesh_token = (in.flags & FLAG_MESH) != 0u;
+    if is_mesh_token && !(in.health >= 0.0 && in.local.y > 0.55) {
+        discard;
     }
 
     // Unit / building: body color, with a health bar across the top strip and a thin dark outline

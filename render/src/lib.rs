@@ -100,11 +100,34 @@ pub fn fixed_to_f32(v: Fixed) -> f32 {
 pub const FLAG_EMBODIED: u32 = 1; // the possessed avatar — survives the dark-frame filter
 pub const FLAG_RING: u32 = 2; // a territory control point — drawn as a hollow ring
 pub const FLAG_SELECTED: u32 = 4; // command-layer selected — drawn with a bright rim (presentation)
+pub const FLAG_MESH: u32 = 8; // a 3D token mesh draws this body — the quad is UI decals only (D44)
 
 /// Drawn half-extent (world units) per kind. Render-only cosmetic scale.
 const UNIT_HALF: f32 = 0.5;
 const BUILDING_HALF: f32 = 1.6;
 const CONTROL_POINT_HALF: f32 = 2.2;
+
+/// Uniform scale applied to the 3D token mesh for a unit vs a building (D44), tuned so the greybox
+/// model roughly fills its command-view footprint marker (the infantry mesh is ~0.45 m wide, so
+/// ~2.2× brings it up to the ~1 m unit marker). Render-only cosmetic scale.
+const UNIT_TOKEN_SCALE: f32 = 2.2;
+const BUILDING_TOKEN_SCALE: f32 = 1.0;
+
+/// Pick the 3D token mesh + scale for a command-view instance, or `None` for instances that are not
+/// drawn as a mesh (control-point rings keep their hollow-ring quad). Buildings get the structure
+/// mesh; everything else (units, the embodied avatar in command view) gets the infantry mesh — the
+/// sim snapshot only distinguishes building-vs-unit, so that's the honest greybox mapping until a
+/// unit-kind enters the sim. Pure + testable.
+fn token_for(inst: &UnitInstance) -> Option<(mesh::ModelKind, f32)> {
+    if inst.flags & FLAG_RING != 0 {
+        return None; // control points stay hollow rings (no mesh for them yet)
+    }
+    if inst.half_extent >= BUILDING_HALF {
+        Some((mesh::ModelKind::CampHq, BUILDING_TOKEN_SCALE))
+    } else {
+        Some((mesh::ModelKind::Trooper, UNIT_TOKEN_SCALE))
+    }
+}
 
 /// Sentinel health value meaning "draw no health bar" (control points).
 const NO_HEALTH_BAR: f32 = -1.0;
@@ -465,16 +488,24 @@ impl Renderer {
         &self.instances
     }
 
-    /// Upload instances + camera, record one render pass into `view`, and submit.
+    /// Upload the camera + fog-filtered draw set and render the frame (invariant #4/#6).
     ///
-    /// `world_dark` is the embodied "world goes dark" state (invariant #6). In **command view**
-    /// (`!world_dark`) this pass CLEARS to the lit slate the units read against. While **embodied**
-    /// (`world_dark`) the host has already drawn the first-person world ([`Renderer::render_world_sky`]
-    /// cleared the frame to a sky/ground), so this pass LOADs instead of clearing — the avatar quad
-    /// composites over that world rather than over a black void. Either way [`fog::visible_instances`]
-    /// (worker 1) chooses the draw set, so unseen enemies vanish in command view and the map
-    /// collapses to the avatar's sight (only the avatar survives) while embodied — the fairness
-    /// boundary is unchanged; the world underneath carries no intel.
+    /// `world_dark` is the embodied "world goes dark" state. While **embodied** the host has already
+    /// cleared the frame to the first-person world ([`Renderer::render_world_sky`]); this LOADs the
+    /// avatar quad over it — no ground grid, no 3D tokens, just the one instance the fog filter
+    /// leaves (invariant #6). In **command view** the frame is composited in three passes so the 3D
+    /// greybox tokens (D44) sit between the ground and the UI:
+    ///  1. **ground grid** — CLEARS to the lit slate the field reads against (W6);
+    ///  2. **3D unit/structure tokens** — depth-tested meshes ([`token_for`] picks infantry vs
+    ///     structure) LOADed over the grid;
+    ///  3. **2D quad UI** — health bars, selection rims, control-point rings — LOADed on top, with
+    ///     each token's body fill suppressed ([`FLAG_MESH`]) so the mesh shows through.
+    ///
+    /// Either way [`fog::visible_instances`] (worker 1) chooses the draw set, so unseen enemies
+    /// vanish in command view and the map collapses to the avatar alone while embodied — the
+    /// fairness boundary is unchanged; the 3D tokens are drawn only from that already-fogged set.
+    /// `width`/`height` size the depth buffer for the token pass.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -483,6 +514,8 @@ impl Renderer {
         camera: &Camera,
         world_dark: bool,
         fog: &Visibility,
+        width: u32,
+        height: u32,
     ) {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(camera));
 
@@ -490,8 +523,126 @@ impl Renderer {
         // rule) — see `render/src/fog.rs` (worker 1).
         let draw_set: Vec<UnitInstance> = fog::visible_instances(&self.instances, fog, world_dark);
 
-        if draw_set.len() > self.instance_cap {
-            let new_cap = draw_set.len().next_power_of_two();
+        if world_dark {
+            // Embodied: LOAD the avatar over the first-person world the host already drew. No grid,
+            // no tokens — the map is dark and only the avatar survives the fog filter (invariant #6).
+            self.draw_quads(device, queue, view, &draw_set, wgpu::LoadOp::Load);
+            return;
+        }
+
+        // --- Command view ---------------------------------------------------------------------
+        // 1. Ground grid, which CLEARS the frame to the lit slate (under everything else).
+        self.draw_terrain_clear(device, queue, view);
+
+        // 2. Build the 3D token batches (units → infantry, buildings → structure) and, in lockstep,
+        //    a quad set flagged FLAG_MESH so the quad shader draws only the UI decals over them.
+        self.ensure_depth(device, width, height);
+        let mut trooper: Vec<mesh::MeshInstance> = Vec::new();
+        let mut camp: Vec<mesh::MeshInstance> = Vec::new();
+        let mut quad_set = draw_set.clone();
+        for inst in &mut quad_set {
+            if let Some((kind, scale)) = token_for(inst) {
+                inst.flags |= FLAG_MESH;
+                let token = mesh::MeshInstance {
+                    model: mesh::model_matrix([inst.x, inst.y, 0.0], scale, 0.0),
+                    color: [inst.r, inst.g, inst.b, 0.0], // faction tint; a=0 → no flash
+                };
+                match kind {
+                    mesh::ModelKind::CampHq => camp.push(token),
+                    _ => trooper.push(token),
+                }
+            }
+        }
+        let batches = [
+            mesh::MeshBatch {
+                mesh: self.mesh_lib.get(mesh::ModelKind::Trooper),
+                instances: trooper,
+            },
+            mesh::MeshBatch {
+                mesh: self.mesh_lib.get(mesh::ModelKind::CampHq),
+                instances: camp,
+            },
+        ];
+        self.mesh_pipeline.draw(
+            device,
+            queue,
+            view,
+            &self.depth_view,
+            &camera.view_proj,
+            mesh::MeshPipeline::DEFAULT_LIGHT,
+            wgpu::LoadOp::Load,
+            &batches,
+        );
+        drop(batches); // release the &self.mesh_lib borrow before the &mut self quad pass
+
+        // 3. The 2D quad UI (LOAD), with token bodies suppressed so the meshes show through.
+        self.draw_quads(device, queue, view, &quad_set, wgpu::LoadOp::Load);
+
+        // Command-view readouts (W6): a unit/enemy/point tally derived from the SAME fog-filtered
+        // draw set (the un-flagged copy) — no new sim read — laid out as corner labels and drawn via
+        // the W4 text pass over the command frame. Screen-space chrome only (invariant #6). The
+        // resource line is a placeholder seam (the renderer has no economy read) — see `readout`.
+        let t = readout::tally(&draw_set);
+        for label in readout::readout_labels(&t, None) {
+            self.text.queue(
+                label.text,
+                label.pos,
+                label.px_size,
+                label.anchor,
+                label.color,
+                label.alpha,
+            );
+        }
+        self.text.render(device, queue, view);
+    }
+
+    /// Clear the frame to the lit command-view slate and draw the ground grid (W6) — the command
+    /// view's clearing pass, drawn under the 3D tokens and the quad UI.
+    fn draw_terrain_clear(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+    ) {
+        // The grid uses the camera uniform already uploaded at the top of `render()` — no per-pass
+        // upload needed here, so nothing writes to `queue` until the final submit.
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gonedark.terrain_encoder"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("gonedark.terrain_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(CLEAR_LIT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                multiview_mask: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            self.terrain.draw(&mut pass, &self.camera_bind_group);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Upload `instances` and draw them through the 2D quad pipeline into `view` with `load`. Grows
+    /// the instance buffer as needed; the pass still runs when empty so `load` (clear/load) applies.
+    fn draw_quads(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        instances: &[UnitInstance],
+        load: wgpu::LoadOp<wgpu::Color>,
+    ) {
+        if instances.len() > self.instance_cap {
+            let new_cap = instances.len().next_power_of_two();
             self.instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gonedark.instance_vbo"),
                 size: (new_cap * std::mem::size_of::<UnitInstance>()) as u64,
@@ -500,22 +651,12 @@ impl Renderer {
             });
             self.instance_cap = new_cap;
         }
-        if !draw_set.is_empty() {
-            queue.write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(&draw_set));
+        if !instances.is_empty() {
+            queue.write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(instances));
         }
 
-        // Command view CLEARS to the lit slate; the embodied view LOADs over the first-person world
-        // the host already drew (`render_world_sky` cleared it). The avatar composites onto that
-        // world instead of a void, while the fog filter still collapses the embodied draw set to the
-        // avatar alone (invariant #6).
-        let load = if world_dark {
-            wgpu::LoadOp::Load
-        } else {
-            wgpu::LoadOp::Clear(CLEAR_LIT)
-        };
-
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("gonedark.frame_encoder"),
+            label: Some("gonedark.quad_encoder"),
         });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -534,47 +675,15 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-
-            // Command view: draw the ground grid FIRST (under the units) so position/motion read
-            // against a fixed world reference instead of flat slate (W6). It shares the unit pass's
-            // camera bind group (same top-down view-projection) and is world-space, fog-free cosmetic
-            // terrain — so it is gated to `!world_dark` and never paints the dark embodied frame
-            // (invariant #6).
-            if !world_dark {
-                self.terrain.draw(&mut pass, &self.camera_bind_group);
-            }
-
-            if !draw_set.is_empty() {
+            if !instances.is_empty() {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.quad_buf.slice(..));
                 pass.set_vertex_buffer(1, self.instance_buf.slice(..));
-                pass.draw(0..QUAD_VERTS.len() as u32, 0..draw_set.len() as u32);
+                pass.draw(0..QUAD_VERTS.len() as u32, 0..instances.len() as u32);
             }
         }
-
         queue.submit(std::iter::once(encoder.finish()));
-
-        // Command-view readouts (W6): a unit/enemy/point tally derived from the SAME fog-filtered
-        // draw set — no new sim read — laid out as top-left corner labels and drawn via the W4 text
-        // pass as a final LOAD pass over the command frame. Screen-space chrome only (invariant #6);
-        // gated to `!world_dark` so it never draws over the dark embodied frame. The resource line is
-        // a placeholder seam (the renderer has no economy read) and stays absent until a host plumbs
-        // one in — see `readout`.
-        if !world_dark {
-            let t = readout::tally(&draw_set);
-            for label in readout::readout_labels(&t, None) {
-                self.text.queue(
-                    label.text,
-                    label.pos,
-                    label.px_size,
-                    label.anchor,
-                    label.color,
-                    label.alpha,
-                );
-            }
-            self.text.render(device, queue, view);
-        }
     }
 
     /// Draw the embodied directional-alert HUD on top of the current frame (a LOAD pass — it
@@ -911,6 +1020,36 @@ mod tests {
         let out = interpolate_instances(&s, &s, 0.0, &[5]);
         assert_eq!(out[0].flags & FLAG_EMBODIED, FLAG_EMBODIED);
         assert_eq!(out[0].flags & FLAG_SELECTED, FLAG_SELECTED);
+    }
+
+    // ---- 3D token mapping (D44) ----
+
+    #[test]
+    fn token_for_maps_unit_building_and_skips_rings() {
+        // A plain unit → infantry token at the unit scale.
+        let mut u = UnitInstance {
+            half_extent: UNIT_HALF,
+            ..Default::default()
+        };
+        assert_eq!(
+            token_for(&u),
+            Some((mesh::ModelKind::Trooper, UNIT_TOKEN_SCALE))
+        );
+
+        // A building (larger half-extent) → structure token at the building scale.
+        u.half_extent = BUILDING_HALF;
+        assert_eq!(
+            token_for(&u),
+            Some((mesh::ModelKind::CampHq, BUILDING_TOKEN_SCALE))
+        );
+
+        // A control-point ring gets no mesh (it stays a hollow-ring quad).
+        let ring = UnitInstance {
+            half_extent: CONTROL_POINT_HALF,
+            flags: FLAG_RING,
+            ..Default::default()
+        };
+        assert_eq!(token_for(&ring), None);
     }
 
     /// Validate `shader.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression
