@@ -134,8 +134,19 @@ checksum byte-identical with prediction on vs off."*
    in-process channel** asserting both peers' checksum streams agree *and* match a no-network
    reference, across several delays. `phase2` sim-runner stream byte-identical. (Refines D27:
    `core::lockstep` is sans-I/O, not a `&mut dyn Transport` consumer — keeps `core` off `pal`.)
-2. **CI: `net-sim-runner` + a new ADD-ONLY job** running it across the matrix.
-3. **`pal::Transport` trait** + loopback impl in `pal-desktop`.
+2. **CI: `net-sim-runner` + a new ADD-ONLY job** ✅ **DONE** — the headless
+   `net-sim-runner` crate drives **two** in-process `core::lockstep` peers over a seeded
+   deterministic channel (peer 0 = player commands, peer 1 = enemy, so the fixed-peer-order
+   merge is exercised), asserts both peers agree on every per-tick checksum *and* match a
+   no-network single-`Sim` reference (exit 1 on any desync), and emits the agreed
+   `<tick> <checksum>` stream (`pnpm desktop:sim:net`). `determinism.yml` gains an **ADD-ONLY**
+   `net-checksums-<target>` artifact + a separate `compare-net` job — the existing single-client
+   `checksum`/`compare` jobs are untouched (invariant #7). 6 tests, dev + release.
+3. **`pal::Transport` trait** + loopback impl in `pal-desktop` ✅ **DONE** — `pal::Transport`
+   (opaque byte frames: `send(&[u8])` / `poll() -> Vec<Vec<u8>>`, object-safe, names no socket
+   type; mirrors `pal::Audio`, [D27](decisions.md)) plus an in-process `LoopbackTransport::pair()`
+   in `pal-desktop` (per-direction FIFO, byte-exact framing). Trait + impl + 6 tests only — wiring
+   into `engine::Game` is step 4.
 4. **Wire lockstep into `engine::Game::frame`** — source the per-tick command set from
    `core::lockstep` instead of local input; single-player path keeps working via a
    trivial local-only transport.
