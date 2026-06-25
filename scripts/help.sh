@@ -28,7 +28,7 @@ ANDROID — cross-compiled arm64, run on a phone/emulator over adb
   pnpm android:logcat       Tail the app's on-device logs (tag `gonedark`)
   pnpm android:checksum     Prove on-device arm64 determinism vs the host (300 ticks default)
 
-ASSETS — content tooling on this machine (needs Blender: sudo dnf install -y blender)
+ASSETS — content tooling on this machine (needs Blender 5.x on PATH)
   pnpm assets:models        Generate greybox placeholder .glb models + manifest (D41)
 
 QUALITY — run on this machine

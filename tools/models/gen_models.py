@@ -46,7 +46,8 @@ def reset_scene():
 
 def make_material(name, rgba):
     m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    m.use_nodes = True
+    if getattr(m, "node_tree", None) is None:  # 5.x materials already node-backed
+        m.use_nodes = True
     bsdf = m.node_tree.nodes.get("Principled BSDF")
     bsdf.inputs["Base Color"].default_value = rgba
     bsdf.inputs["Roughness"].default_value = 0.85
@@ -94,7 +95,8 @@ def weld(name, parts, material):
     for o in parts:
         o.select_set(True)
     bpy.context.view_layer.objects.active = parts[0]
-    bpy.ops.object.join()
+    if len(parts) > 1:  # join() warns "No mesh data to join" on a single object
+        bpy.ops.object.join()
     obj = bpy.context.active_object
     obj.name = name
     obj.data.materials.clear()

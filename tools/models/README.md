@@ -12,13 +12,8 @@ by the mid/hero art pass.
 
 ## Run it
 
-Needs Blender (headless `bpy`). Install once on this Fedora workstation:
-
-```
-sudo dnf install -y blender
-```
-
-Then generate (or regenerate) every model + the manifest:
+Needs **Blender 5.x** on your `PATH` (the script targets the `bpy` 5.x API; verified on
+5.1.2). Generate (or regenerate) every model + the manifest:
 
 ```
 pnpm assets:models
