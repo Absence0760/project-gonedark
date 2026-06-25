@@ -1,0 +1,2 @@
+# Generated .glb placeholder models + manifest.json land here.
+# Run `pnpm assets:models` (needs Blender). See ../../tools/models/README.md and D41.

@@ -27,6 +27,8 @@
     "android:logcat": "scripts/android.sh logcat",
     "android:checksum": "scripts/android-checksum.sh",
 
+    "assets:models": "blender --background --python tools/models/gen_models.py",
+
     "test": "cargo test --workspace --exclude gonedark-pal-android",
     "lint": "cargo clippy --workspace --exclude gonedark-pal-android -- -D warnings",
     "fmt": "cargo fmt",
