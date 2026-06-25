@@ -595,7 +595,15 @@ impl Lockstep {
                 // Only compare ticks we have a recorded checksum for. Unknown ticks (not yet
                 // executed locally, or pruned out of the window) are ignored — see the doc above.
                 if let Some(&local) = self.checksums.get(&tick) {
-                    if local != remote {
+                    // Report each genuine `(tick, peer)` divergence ONCE. Checksum frames are
+                    // re-sent every pump (loss-tolerant resend), so without this guard a single
+                    // desync would push one entry per retransmit (up to a window's worth),
+                    // flooding `take_desyncs` callers. Detection is per-divergence, not per-frame.
+                    let already = self
+                        .desyncs
+                        .iter()
+                        .any(|d| d.tick == tick && d.peer == peer);
+                    if local != remote && !already {
                         self.desyncs.push(Desync {
                             tick,
                             peer,
@@ -923,6 +931,23 @@ mod tests {
         );
         // Draining clears the queue.
         assert!(ls.take_desyncs().is_empty(), "desyncs drained once");
+    }
+
+    #[test]
+    fn repeated_mismatch_reports_yield_one_desync() {
+        // Checksum frames are re-sent every pump (loss-tolerant resend), so a single genuine
+        // divergence arrives many times. It must be reported ONCE per `(tick, peer)`, not flood
+        // `take_desyncs` with a window's worth of duplicates.
+        let mut ls = Lockstep::new(2, 0, 0);
+        ls.record_checksum(7, 0xABCD);
+        for _ in 0..5 {
+            ls.deliver(&encode_checksum_frame(1, 7, 0x9999)).unwrap();
+        }
+        assert_eq!(
+            ls.take_desyncs().len(),
+            1,
+            "a re-sent divergence is one desync, not one per frame"
+        );
     }
 
     #[test]
