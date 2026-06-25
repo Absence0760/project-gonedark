@@ -32,18 +32,22 @@ use crate::fixed::Fixed;
 use crate::sim::Command;
 
 /// Wire format version. Bumped on any codec change so a mismatched build is rejected, not
-/// silently misparsed. Bumped to 2 for the frame-kind tag (command vs. checksum report).
-const WIRE_VERSION: u8 = 2;
+/// silently misparsed. 2 added the frame-kind tag (command vs. checksum report); 3 added the
+/// `DelayChange` frame (the agreed RTT-adaptive input-delay change).
+const WIRE_VERSION: u8 = 3;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
-/// carry both command sets and checksum reports over the one wire format. Kept loud (a bad tag
-/// is a [`DecodeError::BadTag`]) so codec/version skew is rejected, never silently misparsed.
+/// carry command sets, checksum reports, and delay-change proposals over the one wire format.
+/// Kept loud (a bad tag is a [`DecodeError::BadTag`]) so codec/version skew is rejected, never
+/// silently misparsed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FrameKind {
     /// A peer's per-tick command set (the original frame; layout unchanged after the tag).
     Command = 0,
     /// A peer's post-tick sim checksum report for cross-client agreement verification.
     Checksum = 1,
+    /// An agreed input-delay change, to take effect at a shipped execution tick (B7).
+    DelayChange = 2,
 }
 
 impl FrameKind {
@@ -51,6 +55,7 @@ impl FrameKind {
         match v {
             0 => Ok(FrameKind::Command),
             1 => Ok(FrameKind::Checksum),
+            2 => Ok(FrameKind::DelayChange),
             t => Err(DecodeError::BadTag(t)),
         }
     }
@@ -360,8 +365,11 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
     })
 }
 
-/// A decoded wire frame: either a command set for a tick, or a peer's checksum report for a
-/// tick. The codec is a tagged union (version, kind, then the kind's payload).
+/// A decoded wire frame: a command set for a tick, a peer's checksum report for a tick, or an
+/// agreed delay-change proposal. The codec is a tagged union (version, kind, then the kind's
+/// payload). All three carry `peer` then `tick` right after the kind tag, so the shared decode
+/// reads those before dispatching — for [`DelayChange`](Frame::DelayChange) the `tick` slot *is*
+/// the effective tick.
 #[derive(Clone, Debug)]
 enum Frame {
     /// `(peer, tick, commands)` — one peer's command set for one execution tick.
@@ -369,6 +377,12 @@ enum Frame {
     /// `(peer, tick, checksum)` — one peer's post-tick sim checksum for that tick. The checksum
     /// rides the wire as raw `u64` LE bytes (no float) — pure verification, no sim effect.
     Checksum(PeerId, u64, u64),
+    /// `(proposer, effective_tick, seq, new_delay)` — a proposal to switch the session input
+    /// delay to `new_delay`, taking effect at `effective_tick` (shipped as data so every peer
+    /// applies the identical change at the identical tick). `seq` is the proposer-local proposal
+    /// counter, used only to break ties between concurrent proposals deterministically. All
+    /// integers — no float touches the wire (invariant #1).
+    DelayChange(PeerId, u64, u64, u64),
 }
 
 /// Encode one peer's command set for one execution tick into a wire frame.
@@ -397,6 +411,19 @@ fn encode_checksum_frame(peer: PeerId, tick: u64, checksum: u64) -> Vec<u8> {
     w.buf
 }
 
+/// Encode an agreed delay-change proposal. `effective_tick` rides the shared `tick` slot; `seq`
+/// and `new_delay` follow. All integers — no float on the wire (invariant #1).
+fn encode_delay_change(proposer: PeerId, effective_tick: u64, seq: u64, new_delay: u64) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.u8(WIRE_VERSION);
+    w.u8(FrameKind::DelayChange as u8);
+    w.u32(proposer);
+    w.u64(effective_tick);
+    w.u64(seq);
+    w.u64(new_delay);
+    w.buf
+}
+
 /// Decode a wire frame back into a [`Frame`]. Never panics on malformed input — a bad version,
 /// kind tag, command tag, short buffer, or trailing byte is a [`DecodeError`], not a crash.
 fn decode_frame(bytes: &[u8]) -> Result<Frame, DecodeError> {
@@ -420,6 +447,8 @@ fn decode_frame(bytes: &[u8]) -> Result<Frame, DecodeError> {
             Frame::Command(peer, tick, commands)
         }
         FrameKind::Checksum => Frame::Checksum(peer, tick, r.u64()?),
+        // `peer` = proposer, `tick` = effective_tick; then seq, new_delay.
+        FrameKind::DelayChange => Frame::DelayChange(peer, tick, r.u64()?, r.u64()?),
     };
     if r.pos != r.buf.len() {
         return Err(DecodeError::TrailingBytes);
@@ -446,20 +475,50 @@ pub struct Desync {
     pub remote: u64,
 }
 
+/// Why a proposed delay change could not be scheduled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProposeError {
+    /// A delay change is already pending; the host must wait for it to commit before proposing
+    /// another (keeps at most one change in flight, so the apply tick is unambiguous).
+    AlreadyPending,
+}
+
 /// A single peer's view of a deterministic lockstep session: it buffers per-tick command sets
-/// (its own, stamped at `submit_tick = delay + submits`, and peers' as they arrive), gates the
-/// sim on having every peer's set for the next tick, and hands the host the merged set to apply.
+/// (its own, stamped at a monotonic `submit_tick`, and peers' as they arrive), gates the sim on
+/// having every peer's set for the next tick, and hands the host the merged set to apply.
 ///
 /// Sans-I/O: feed it bytes with [`deliver`](Self::deliver), take bytes to send with
 /// [`drain_outbound`](Self::drain_outbound); it never touches a socket.
 pub struct Lockstep {
     peer_count: u32,
     local: PeerId,
+    /// The active input delay. **Mutable** via the agreed [`propose_delay`](Self::propose_delay)
+    /// protocol (B7); after the `submit_tick`/`warmup_until` refactor below it influences ONLY
+    /// the prune/retention window, so changing it mid-session (identically on every peer, at a
+    /// shipped effective tick) never perturbs which command executes at which tick.
     delay: u64,
     /// The next tick to execute (the gate target).
     next_tick: u64,
-    /// How many local sets have been submitted; the next stamps at `delay + submitted`.
-    submitted: u64,
+    /// The next tick a local [`submit`](Self::submit) will stamp. Starts at the initial delay and
+    /// increments by one per submit — a monotonic cursor **independent of `delay`**, so an
+    /// adaptive delay change can never make it jump backward (re-stamp) or forward (open a stall
+    /// gap). This decoupling is what makes the delay change safe (B7).
+    next_submit_tick: u64,
+    /// The warmup boundary: ticks `[0, warmup_until)` execute empty (no input can exist that
+    /// early). Fixed at the *initial* delay and **never** changed — a later adaptive delay change
+    /// must not retroactively turn an executing tick back into warmup.
+    warmup_until: u64,
+    /// A pending agreed delay change `(effective_tick, new_delay, proposer, seq)`, applied in
+    /// [`try_advance`](Self::try_advance) exactly when `next_tick == effective_tick`. `None` when
+    /// no change is in flight. At most one at a time ([`ProposeError::AlreadyPending`]).
+    pending_delay: Option<(u64, u64, PeerId, u64)>,
+    /// Our own encoded `DelayChange` frame while a change we proposed is pending, re-sent every
+    /// pump (loss-tolerant, like command/checksum frames) until it commits. `None` unless we are
+    /// the proposer of the in-flight change.
+    pending_frame: Option<Vec<u8>>,
+    /// Monotonic proposal counter, stamped into our `DelayChange` frames so concurrent proposals
+    /// break ties deterministically on `(effective_tick, proposer, seq)`.
+    delay_seq: u64,
     /// `tick -> [per-peer command set]`; a `None` slot is a peer we are still waiting on.
     slots: BTreeMap<u64, Vec<Option<Vec<Command>>>>,
     /// Our own encoded frames, kept for (re)transmission until they fall out of the active
@@ -491,7 +550,11 @@ impl Lockstep {
             local,
             delay,
             next_tick: 0,
-            submitted: 0,
+            next_submit_tick: delay,
+            warmup_until: delay,
+            pending_delay: None,
+            pending_frame: None,
+            delay_seq: 0,
             slots: BTreeMap::new(),
             retained: BTreeMap::new(),
             checksums: BTreeMap::new(),
@@ -499,11 +562,39 @@ impl Lockstep {
         }
     }
 
-    /// The session's input delay (in ticks). Read-only accessor; a later slice wires RTT-driven
-    /// adaptive delay through here. (No adaptive/renegotiated delay yet — that is a separate,
-    /// determinism-sensitive follow-up.)
+    /// The session's current input delay (in ticks). Adaptive via the agreed
+    /// [`propose_delay`](Self::propose_delay) protocol (B7).
     pub fn delay(&self) -> u64 {
         self.delay
+    }
+
+    /// The pending agreed delay change as `(effective_tick, new_delay)`, or `None` if no change
+    /// is scheduled. Lets the host/tests observe a change between proposal and commit.
+    pub fn pending_delay(&self) -> Option<(u64, u64)> {
+        self.pending_delay.map(|(eff, nd, _, _)| (eff, nd))
+    }
+
+    /// Propose switching the session input delay to `new_delay`, taking effect `guard` ticks
+    /// (clamped to at least `current_delay + 1`) beyond the current frontier. Returns the agreed
+    /// `effective_tick` and queues a `DelayChange` frame for broadcast; it does **not** change
+    /// `delay` now — the switch happens in [`try_advance`](Self::try_advance) at `effective_tick`,
+    /// identically on every peer that receives the frame.
+    ///
+    /// RTT lives entirely host-side: `core` reads no clock and sees only the integer `new_delay`
+    /// and `guard` the host chose (invariants #1/#2). The host should pick `guard` larger than the
+    /// worst-case one-way latency in ticks so every peer receives the frame before `effective_tick`.
+    pub fn propose_delay(&mut self, new_delay: u64, guard: u64) -> Result<u64, ProposeError> {
+        if self.pending_delay.is_some() {
+            return Err(ProposeError::AlreadyPending);
+        }
+        let frontier = self.submit_tick().max(self.next_tick);
+        let lead = guard.max(self.delay + 1);
+        let effective_tick = frontier + lead;
+        self.delay_seq += 1;
+        let seq = self.delay_seq;
+        self.pending_delay = Some((effective_tick, new_delay, self.local, seq));
+        self.pending_frame = Some(encode_delay_change(self.local, effective_tick, seq, new_delay));
+        Ok(effective_tick)
     }
 
     /// The next tick the sim will execute (None of it has run yet at `next_tick`).
@@ -511,16 +602,17 @@ impl Lockstep {
         self.next_tick
     }
 
-    /// The execution tick the next [`submit`](Self::submit) will stamp its input onto.
+    /// The execution tick the next [`submit`](Self::submit) will stamp its input onto. A monotonic
+    /// cursor independent of `delay`, so an adaptive delay change never perturbs it.
     pub fn submit_tick(&self) -> u64 {
-        self.delay + self.submitted
+        self.next_submit_tick
     }
 
     /// Stamp this peer's local input for the next submit tick, record it locally, and retain it
     /// for sending. Call once per tick you intend to advance.
     pub fn submit(&mut self, commands: Vec<Command>) {
         let tick = self.submit_tick();
-        self.submitted += 1;
+        self.next_submit_tick += 1;
         self.retained
             .insert(tick, encode_frame(self.local, tick, &commands));
         let slot = self
@@ -549,6 +641,11 @@ impl Lockstep {
         let mut frames: Vec<Vec<u8>> = self.retained.values().cloned().collect();
         for (&tick, &sum) in &self.checksums {
             frames.push(encode_checksum_frame(self.local, tick, sum));
+        }
+        // Re-send our in-flight delay-change proposal until it commits (loss-tolerant resend,
+        // same posture as command/checksum frames).
+        if let Some(frame) = &self.pending_frame {
+            frames.push(frame.clone());
         }
         frames
     }
@@ -613,6 +710,28 @@ impl Lockstep {
                     }
                 }
             }
+            Frame::DelayChange(proposer, effective_tick, seq, new_delay) => {
+                if proposer >= self.peer_count {
+                    return Err(DecodeError::PeerOutOfRange(proposer));
+                }
+                if proposer == self.local {
+                    return Ok(()); // our own echo; we set the pending change in propose_delay
+                }
+                if effective_tick <= self.next_tick {
+                    return Ok(()); // already at/past the switch point — too late to apply safely
+                }
+                // Deterministic tiebreak: a strictly-"earlier" proposal (lower
+                // (effective_tick, proposer, seq)) replaces a pending one; an equal key is a
+                // no-op resend. Both peers see both broadcasts and converge on the same winner.
+                let incoming = (effective_tick, proposer, seq);
+                let replace = match self.pending_delay {
+                    None => true,
+                    Some((e, _, p, s)) => incoming < (e, p, s),
+                };
+                if replace {
+                    self.pending_delay = Some((effective_tick, new_delay, proposer, seq));
+                }
+            }
         }
         Ok(())
     }
@@ -622,7 +741,22 @@ impl Lockstep {
     /// waiting on a peer (stall). Warmup ticks `[0, delay)` advance immediately with an empty set.
     pub fn try_advance(&mut self) -> Option<Vec<Command>> {
         let t = self.next_tick;
-        if t < self.delay {
+        // Apply an agreed delay change exactly at its effective tick — identically on every peer,
+        // since `effective_tick`/`new_delay` are shipped as data, never recomputed locally. This
+        // touches only `delay` (and thus the prune window), never the monotonic submit cursor or
+        // the fixed warmup boundary, so no command is re-stamped or dropped (B7).
+        if let Some((eff, new_delay, _, _)) = self.pending_delay {
+            if t >= eff {
+                // Apply at the effective tick — or, if a post-stall catch-up loop galloped past
+                // it in one burst, immediately after. `delay`'s only live effect is the prune
+                // window size, so a late apply is idempotent and still converges every peer to the
+                // identical value; it can never re-stamp/drop a command or desync the stream.
+                self.delay = new_delay;
+                self.pending_delay = None;
+                self.pending_frame = None;
+            }
+        }
+        if t < self.warmup_until {
             self.next_tick += 1;
             self.prune();
             return Some(Vec::new());
@@ -989,7 +1123,7 @@ mod tests {
                     assert_eq!(peer, 0, "we emit reports under our own peer id");
                     Some((tick, sum))
                 }
-                Frame::Command(..) => None,
+                Frame::Command(..) | Frame::DelayChange(..) => None,
             })
             .collect();
         reports.sort_unstable();
@@ -1297,5 +1431,219 @@ mod tests {
             assert_eq!(sums[0], sums[1], "peers diverged at delay {delay}");
             assert_eq!(sums[0], refsums, "reference mismatch at delay {delay}");
         }
+    }
+
+    // ----- B7: agreed RTT-adaptive delay change -----
+
+    #[test]
+    fn delay_change_frame_roundtrips() {
+        let bytes = encode_delay_change(1, 200, 7, 5);
+        match decode_frame(&bytes).expect("decode") {
+            Frame::DelayChange(proposer, eff, seq, nd) => {
+                assert_eq!((proposer, eff, seq, nd), (1, 200, 7, 5));
+            }
+            other => panic!("expected a DelayChange frame, got {other:?}"),
+        }
+        // Re-encoding the decoded proposal reproduces the bytes (catches a dropped/reordered field).
+        assert_eq!(bytes, encode_delay_change(1, 200, 7, 5));
+    }
+
+    #[test]
+    fn delay_change_decode_rejects_malformed() {
+        // Ends mid `new_delay` (4 of the 8 LE bytes present).
+        let mut w = Writer::new();
+        w.u8(WIRE_VERSION);
+        w.u8(FrameKind::DelayChange as u8);
+        w.u32(0);
+        w.u64(10);
+        w.u64(1);
+        w.u32(0);
+        assert_eq!(
+            decode_frame(&w.buf).unwrap_err(),
+            DecodeError::UnexpectedEof
+        );
+        // A valid proposal then an unexpected trailing byte (codec/version skew).
+        let mut w = Writer::new();
+        w.u8(WIRE_VERSION);
+        w.u8(FrameKind::DelayChange as u8);
+        w.u32(0);
+        w.u64(10);
+        w.u64(1);
+        w.u64(5);
+        w.u8(0xAB);
+        assert_eq!(
+            decode_frame(&w.buf).unwrap_err(),
+            DecodeError::TrailingBytes
+        );
+    }
+
+    #[test]
+    fn wire_version_2_frame_now_rejected() {
+        // The bump to WIRE_VERSION 3 must be enforced: a frame written under the old version is
+        // rejected loudly, never silently misparsed against the new layout.
+        let mut w = Writer::new();
+        w.u8(2); // the previous WIRE_VERSION
+        w.u8(FrameKind::Command as u8);
+        w.u32(0);
+        w.u64(0);
+        w.u32(0);
+        assert_eq!(decode_frame(&w.buf).unwrap_err(), DecodeError::BadVersion(2));
+    }
+
+    #[test]
+    fn propose_delay_rejects_a_second_pending_change() {
+        let mut ls = Lockstep::new(2, 0, 2);
+        ls.propose_delay(5, 3).unwrap();
+        assert_eq!(
+            ls.propose_delay(7, 3),
+            Err(ProposeError::AlreadyPending),
+            "only one delay change may be in flight"
+        );
+    }
+
+    #[test]
+    fn delay_change_applies_exactly_at_effective_tick() {
+        // Single-peer session: the gate never stalls, so we can watch `delay()` cross `eff`.
+        let mut ls = Lockstep::new(1, 0, 2);
+        for _ in 0..10 {
+            ls.submit(Vec::new());
+        }
+        let eff = ls.propose_delay(5, 3).unwrap();
+        assert_eq!(ls.delay(), 2, "delay must not change at proposal time");
+        assert_eq!(ls.pending_delay(), Some((eff, 5)));
+        // Cover the slots through `eff` so the gate can reach it.
+        while ls.submit_tick() <= eff + 2 {
+            ls.submit(Vec::new());
+        }
+        while ls.next_tick() < eff {
+            assert_eq!(ls.delay(), 2, "delay must hold until the effective tick {eff}");
+            ls.try_advance().expect("single-peer session always advances");
+        }
+        assert_eq!(ls.next_tick(), eff);
+        ls.try_advance().expect("advance across the effective tick");
+        assert_eq!(ls.delay(), 5, "delay switches exactly at the effective tick");
+        assert_eq!(ls.pending_delay(), None, "the pending change is cleared once applied");
+    }
+
+    /// Like [`run_two_client`] but optionally proposes an agreed delay change mid-run, submitting
+    /// per-pump (so `submit_tick` stays a small lead ahead of execution and the effective tick is
+    /// actually reached). The script stays keyed to the *initial* delay, so a correct delay change
+    /// — which only resizes the prune window, never re-stamps a command — leaves the agreed stream
+    /// bit-identical to the no-change reference. Returns each peer's checksum stream, the
+    /// reference, and each peer's final delay.
+    #[allow(clippy::too_many_arguments)]
+    fn run_two_client_adaptive(
+        initial_delay: u64,
+        base_delay: u64,
+        jitter: u32,
+        loss_num: u32,
+        loss_den: u32,
+        net_seed: u64,
+        target: u64,
+        change: Option<(u64, PeerId, u64, u64)>, // (at_tick, proposer, new_delay, guard)
+    ) -> ([Vec<u64>; 2], Vec<u64>, [u64; 2]) {
+        let mut sims = [Sim::new(SCENE_SEED), Sim::new(SCENE_SEED)];
+        let h = scene(&mut sims[0]);
+        let _ = scene(&mut sims[1]);
+
+        let mut refsim = Sim::new(SCENE_SEED);
+        let _ = scene(&mut refsim);
+        let mut refsums = Vec::with_capacity(target as usize);
+        for t in 0..target {
+            let mut merged = Vec::new();
+            if t >= initial_delay {
+                merged.extend(script(&h, 0, t, initial_delay));
+                merged.extend(script(&h, 1, t, initial_delay));
+            }
+            refsim.step(&merged);
+            refsums.push(refsim.checksum());
+        }
+
+        let mut sessions = [
+            Lockstep::new(2, 0, initial_delay),
+            Lockstep::new(2, 1, initial_delay),
+        ];
+        let mut net = Net::new(net_seed, base_delay, jitter, loss_num, loss_den);
+        let mut sums = [
+            Vec::with_capacity(target as usize),
+            Vec::with_capacity(target as usize),
+        ];
+        let lead_bound = initial_delay + 2;
+        let mut proposed = false;
+        let mut it = 0u64;
+        loop {
+            for i in 0..2 {
+                while sessions[i].submit_tick() < target
+                    && sessions[i].submit_tick() <= sessions[i].next_tick() + lead_bound
+                {
+                    let t = sessions[i].submit_tick();
+                    let cmds = script(&h, i as PeerId, t, initial_delay);
+                    sessions[i].submit(cmds);
+                }
+            }
+            if let Some((at, proposer, nd, guard)) = change {
+                if !proposed && sessions[proposer as usize].next_tick() >= at {
+                    sessions[proposer as usize]
+                        .propose_delay(nd, guard)
+                        .expect("first proposal");
+                    proposed = true;
+                }
+            }
+            let f0 = sessions[0].drain_outbound();
+            net.send(it, 1, f0);
+            let f1 = sessions[1].drain_outbound();
+            net.send(it, 0, f1);
+            net.deliver_due(it, &mut sessions);
+
+            for i in 0..2 {
+                while let Some(cmds) = sessions[i].try_advance() {
+                    sims[i].step(&cmds);
+                    sums[i].push(sims[i].checksum());
+                }
+            }
+            if sessions[0].next_tick() >= target && sessions[1].next_tick() >= target {
+                break;
+            }
+            it += 1;
+            assert!(
+                it < 1_000_000,
+                "adaptive lockstep failed to converge (change={change:?})"
+            );
+        }
+        let finals = [sessions[0].delay(), sessions[1].delay()];
+        (sums, refsums, finals)
+    }
+
+    #[test]
+    fn delay_change_clean_channel_applies_and_stays_in_sync() {
+        let (sums, refsums, finals) =
+            run_two_client_adaptive(3, 0, 0, 0, 1, 0xC0FFEE, 120, Some((40, 0, 6, 4)));
+        assert_eq!(sums[0].len(), 120);
+        assert_eq!(sums[0], sums[1], "peers diverged across a delay change");
+        assert_eq!(
+            sums[0], refsums,
+            "a delay change must not alter which command executes at which tick"
+        );
+        assert_eq!(finals, [6, 6], "both peers applied the agreed new delay");
+    }
+
+    #[test]
+    fn delay_change_increase_under_loss_stays_in_sync() {
+        // Peer 1 proposes raising the delay 3 → 7 mid-run, over a lossy/jittery/reordering channel.
+        let (sums, refsums, finals) =
+            run_two_client_adaptive(3, 1, 2, 1, 4, 0x1234567, 140, Some((45, 1, 7, 5)));
+        assert_eq!(sums[0], sums[1], "peers diverged on a delay increase under loss");
+        assert_eq!(sums[0], refsums, "reference mismatch on a delay increase");
+        assert_eq!(finals, [7, 7], "both peers applied the increased delay");
+    }
+
+    #[test]
+    fn delay_change_decrease_stays_in_sync() {
+        // Peer 0 proposes lowering the delay 6 → 2 mid-run, over a lossy channel.
+        let (sums, refsums, finals) =
+            run_two_client_adaptive(6, 1, 2, 1, 5, 0x9999, 140, Some((50, 0, 2, 4)));
+        assert_eq!(sums[0], sums[1], "peers diverged on a delay decrease");
+        assert_eq!(sums[0], refsums, "reference mismatch on a delay decrease");
+        assert_eq!(finals, [2, 2], "both peers applied the decreased delay");
     }
 }
