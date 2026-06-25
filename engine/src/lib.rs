@@ -38,7 +38,9 @@ use gonedark_render::radial::RadialMenu;
 use gonedark_render::{fixed_to_f32, Camera, Renderer};
 
 use selection::{GestureScale, Selection};
-use session_shell::{EndStateRead, InSessionShell, ShellSurface};
+use session_shell::{
+    evaluate_outcome, EndStateRead, FactionForces, InSessionShell, ShellSurface,
+};
 
 /// Embodied audio mix (worker 3). Owns `mix_cues`: events + listener pose → positioned cues.
 mod audio;
@@ -95,6 +97,13 @@ const MAX_CATCHUP_STEPS: u32 = 8;
 const SP_PEER_COUNT: u32 = 1;
 const SP_LOCAL: gonedark_core::lockstep::PeerId = 0;
 const SP_DELAY: u64 = 0;
+
+/// Hard match-length cap, in sim ticks. Past this the win-condition evaluator decides the match on
+/// the territory/resource tiebreak rather than letting it run forever (a stalemate where neither
+/// side can finish the other still has to end). 15 real minutes at the locked 60 Hz tick
+/// (`TICK_HZ`). Host-side presentation policy only — the sim has no clock and this never folds into
+/// the checksum (invariants #1/#4/#7).
+const MATCH_TIMEOUT_TICKS: u64 = 15 * 60 * TICK_HZ as u64;
 
 /// A transport that goes nowhere: `send` drops the frame, `poll` is always empty. This is the
 /// single-player wiring — `peer_count == 1` means the lockstep gate never waits on a remote, so
@@ -517,11 +526,59 @@ impl Game {
         self.shell.apply(action, &summary);
     }
 
+    /// One faction's standing [`FactionForces`] — alive units/buildings + territory + purse — read
+    /// off the checksummed sim world in the stable [`Faction::ALL`] index space. A read-only scan of
+    /// already-checksummed state: it folds nothing new, so deriving it can never perturb the per-tick
+    /// checksum or desync (invariants #1/#7). The inputs the host-side win-condition evaluator reads.
+    fn faction_forces(&self, faction: Faction) -> FactionForces {
+        let w = &self.sim.world;
+        let mut alive_units = 0u32;
+        let mut buildings = 0u32;
+        for i in 0..w.capacity() {
+            if !w.is_index_alive(i) || w.faction[i] != faction {
+                continue;
+            }
+            match w.kind[i] {
+                EntityKind::Unit => alive_units += 1,
+                EntityKind::Building => buildings += 1,
+            }
+        }
+        FactionForces {
+            alive_units,
+            buildings,
+            // Territory points this faction holds (the timeout primary tiebreak).
+            territory_held: self
+                .sim
+                .territory
+                .points
+                .iter()
+                .filter(|cp| cp.owner == faction)
+                .count() as u32,
+            // The per-faction banked purse (economy `amounts` is `[i64; FACTION_COUNT]`) — no float
+            // money (invariant #1). The timeout secondary tiebreak.
+            resources_total: self.sim.resources.get(faction),
+        }
+    }
+
+    /// The match outcome *right now*, or `None` while the match is still ongoing. A pure host-side
+    /// read: derives each combatant's [`FactionForces`] from checksummed sim state and hands them to
+    /// the unit-tested [`evaluate_outcome`] (elimination, then a territory/resource timeout
+    /// tiebreak). No sim mutation, nothing folded — it cannot desync (invariants #1/#7).
+    fn match_outcome(&self) -> Option<MatchOutcome> {
+        evaluate_outcome(
+            self.faction_forces(Faction::Player),
+            self.faction_forces(Faction::Enemy),
+            self.sim.tick_count(),
+            MATCH_TIMEOUT_TICKS,
+        )
+    }
+
     /// Build the post-match [`MatchSummary`](gonedark_core::shell::MatchSummary) from the match's
     /// accumulated events + end-of-match reads of checksummed sim state (territory held, resource
-    /// purse). Float-free, host-side (D34: there is no win-condition evaluator in `core`). The
-    /// outcome is left a `Draw` placeholder until a win-condition lands — the plumbing is what WS-B
-    /// ships; the assembler itself is unit-tested in `session_shell`.
+    /// purse), stamped with the real [`MatchOutcome`] from [`Self::match_outcome`] (elimination /
+    /// timeout tiebreak; D34 keeps the evaluator host-side, not in `core`). Float-free, host-side;
+    /// the assembler and the evaluator are each unit-tested in `session_shell`. `outcome` falls back
+    /// to `Draw` only on a surrender before either side is eliminated (the match was not won).
     fn assemble_summary(&self) -> gonedark_core::shell::MatchSummary {
         let mut reads: [EndStateRead; gonedark_core::components::FACTION_COUNT] =
             Default::default();
@@ -539,10 +596,11 @@ impl Game {
                 resources_total: self.sim.resources.get(f),
             };
         }
+        let outcome = self.match_outcome().unwrap_or(MatchOutcome::Draw);
         session_shell::assemble_summary(
             &self.match_events,
             self.sim.tick_count(),
-            MatchOutcome::Draw,
+            outcome,
             &reads,
         )
     }
@@ -892,6 +950,18 @@ impl Game {
         // tally produced/lost/killed (a presentation derivation; the events are already-checksummed
         // state copied out — never re-folded, invariant #7).
         self.match_events.extend_from_slice(&frame_events);
+
+        // Evaluate the win/lose condition from the (already-checksummed) end-state this frame and,
+        // once it is decided, end the match into the post-match summary surface. `match_outcome` is
+        // a pure read — derives each combatant's forces and runs the unit-tested `evaluate_outcome`
+        // (elimination, then a territory/resource timeout tiebreak); it folds nothing and so cannot
+        // desync (invariants #1/#7). `end_match` is idempotent, so the first decided outcome sticks
+        // (a later tick can't overwrite the summary), and it is skipped once any overlay has already
+        // ended the match (e.g. a surrender).
+        if !self.shell.is_ended() && self.match_outcome().is_some() {
+            let summary = self.assemble_summary();
+            self.shell.end_match(summary);
+        }
 
         // Surface the reconnect prompt when the lockstep link is unhealthy (D28 reconnect path).
         // Pure: a `core::shell::ConnectionStatus` projection of the lockstep state + the WS-B
