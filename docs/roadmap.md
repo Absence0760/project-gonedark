@@ -183,10 +183,12 @@ model.
 > [D34](decisions.md). **The four buildable-now Rust workstreams have all landed** — A (seam ✅) · B
 > (in-engine in-session shell ✅) · C (device tiers / dynamic-res / thermal ✅) · D (telemetry +
 > consent gate ✅); full suite green dev+release. The **native out-of-match shells** are next —
-> the first has landed: the **Android "Boot & title" Compose landing screen** ([D35](decisions.md)),
-> the first native surface buildable once the seam landed. The other six remain pending (desktop +
-> iOS shells not built — no iOS target at all), deferred behind missing per-platform UI projects and
-> the [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
+> **"Boot & title" has now landed on both Android and desktop** — the **Android Compose landing
+> screen** ([D35](decisions.md)) and the **desktop egui title screen** ([D36](decisions.md)), each
+> the first native surface buildable once the seam landed; only the **iOS** Boot & title shell is
+> still pending (no iOS target at all). The remaining surfaces stay pending — Settings, onboarding,
+> match setup, lobby, store, and consent — deferred behind missing per-platform UI projects and the
+> [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
 
 **Goal:** wrap the game in everything that ships *around* the match — the app shell, the
 storefront, the first-run teach — and tune it to mid-range silicon.
@@ -204,7 +206,7 @@ in the in-match layer; the **settings surface that configures it** is.
 
 | Surface | What it covers | Depends on |
 |---|---|---|
-| **Boot & title** | Splash, title/attract screen, build-channel + version stamp. **Landed (Android) — [D35](decisions.md):** a native Jetpack Compose title/landing screen (the launcher); desktop + iOS shells still pending | — |
+| **Boot & title** | Splash, title/attract screen, build-channel + version stamp. **Landed (Android [D35](decisions.md) + desktop [D36](decisions.md)):** a native Jetpack Compose title/landing screen on Android (the launcher) and a native egui title screen on desktop (`app` now opens here, Start enters the match); only the iOS shell still pending (no iOS target) | — |
 | **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a new player reads a loss as *"I stayed too long"* | [Q5](open-questions.md) (PvE-first is the natural teach surface); invariant #6 |
 | **Settings** | Graphics tiers (↔ device quality tiers above), audio-mix levels, the touch-layout / rebind editor (configures the D14 scheme), desktop key/gamepad rebinds, **accessibility** | invariant #6 (see accessibility note) |
 | **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry | order/stance vocab (D25) |

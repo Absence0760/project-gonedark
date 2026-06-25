@@ -54,7 +54,7 @@ is named explicitly.
 
 | # | Surface | Covers | Depends on | Verdict |
 |---|---|---|---|---|
-| 1 | **Boot & title** | Splash, title/attract, build-channel + version stamp | — | **LANDED (Android) — [D35](decisions.md).** First native surface built once the seam landed: a Jetpack Compose title/landing screen (`MainActivity` is now the launcher; engine `NativeActivity` is Start-launched). **Android only** — the desktop/iOS native shells are still pending. "Start" launches the engine's *default* match; match-config handoff stays deferred with match-setup ([Q5](open-questions.md)), and Settings is a placeholder until surface 3. |
+| 1 | **Boot & title** | Splash, title/attract, build-channel + version stamp | — | **LANDED (Android [D35](decisions.md) + desktop [D36](decisions.md)).** First native surface built once the seam landed: a Jetpack Compose title/landing screen on Android (`MainActivity` is now the launcher; engine `NativeActivity` is Start-launched) and an **egui** title screen on desktop (`app` boots a `Title`↔`InMatch` state machine instead of straight into a match; egui binds to the app's single shared wgpu 29/winit 0.30). **iOS** is the only platform still pending (no iOS build target at all). "Start" launches the engine's *default* match; match-config handoff stays deferred with match-setup ([Q5](open-questions.md)), and Settings is a placeholder until surface 3. |
 | 2 | **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a loss reads as *"I stayed too long."* | **[Q5](open-questions.md)** (PvE is the natural teach surface); invariant #6 | **BLOCKED — [Q5](open-questions.md).** The teach surface *is* the PvE-vs-PvP-first call; can't author the first-run beat before Q5 picks the first shippable mode. |
 | 3 | **Settings** | Graphics tiers (↔ device quality tiers, §4 WS-C), audio-mix levels, the touch-layout/rebind editor (configures the D14 scheme), desktop key/gamepad rebinds, **accessibility** | invariant #6 (accessibility) | **BLOCKED — native scaffold (D32).** Buildable in design terms (it configures shipped systems), but it is native UI on the seam, and it **owns the accessibility cues** (§5) that the going-dark channel's fairness depends on — so it can't be a thin afterthought. |
 | 4 | **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry | order/stance vocab (D25); **[Q5](open-questions.md)** | **BLOCKED — [Q5](open-questions.md) (PvP half).** The skirmish/PvE half rides shipped order/stance vocab (D25), but "PvP entry" depends on Q5 *and* Phase 3 net; mode select is undefined until Q5. |
@@ -256,7 +256,7 @@ carries its own blocker from §2:
 
 | Surface | Blocker (beyond the WS-A seam + missing native project) |
 |---|---|
-| Boot & title | **LANDED (Android) — [D35](decisions.md)** (Compose title/landing screen); desktop + iOS native shells still pending |
+| Boot & title | **LANDED (Android [D35](decisions.md) + desktop [D36](decisions.md))** (Compose title/landing screen on Android; egui title screen on desktop); only the **iOS** native shell still pending (no iOS target) |
 | Onboarding / tutorial | **[Q5](open-questions.md)** (PvE-vs-PvP-first defines the teach surface) |
 | Settings | owns the accessibility cues (§5) — must ship *with* them, not after |
 | Match setup | **[Q5](open-questions.md)** (PvP half + mode select) |
@@ -315,9 +315,11 @@ Do **not** resolve the open questions here — leans only; each lock needs the i
 **Phase 4's four buildable-now Rust workstreams have all landed** (A: the `core::shell` seam,
 [D34](decisions.md); B: the in-engine in-session shell; C: device tiers / dyn-res / thermal; D:
 telemetry + consent gate) — full suite green dev+release, `code-reviewer` CLEAN on each. What remains
-in Phase 4 is the **native out-of-match shells** — and the first of these has now landed: the **Android
-"Boot & title" Compose landing screen** ([D35](decisions.md)), the first native surface buildable once
-the WS-A seam landed (surface 1). The rest are still pending: deferred behind the per-platform UI
-projects the repo still lacks (desktop shell, no iOS target at all), and the Q5/Q9/Q11/Phase-3/backend
-blockers in §2 — Settings, onboarding, match setup, lobby, store, consent all remain blocked. See
-[`roadmap.md`](roadmap.md) §"Phase 4 — Polish & ship", [D32](decisions.md), and [D35](decisions.md).
+in Phase 4 is the **native out-of-match shells** — and "Boot & title" (surface 1) has now landed on
+**both** platforms with a native shell: the **Android Compose landing screen** ([D35](decisions.md))
+and the **desktop egui title screen** ([D36](decisions.md)), each the first native surface buildable
+once the WS-A seam landed. Only the **iOS** Boot & title shell is still pending (no iOS build target at
+all). The rest of the surfaces are still pending: deferred behind the per-platform UI projects the repo
+still lacks and the Q5/Q9/Q11/Phase-3/backend blockers in §2 — Settings, onboarding, match setup,
+lobby, store, consent all remain blocked. See [`roadmap.md`](roadmap.md) §"Phase 4 — Polish & ship",
+[D32](decisions.md), [D35](decisions.md), and [D36](decisions.md).

@@ -27,6 +27,17 @@ wgpu = "29"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 gonedark-pal-desktop = { path = "../pal-desktop" }
 
+# The desktop app shell (D32: out-of-match surfaces are native per-platform; D36 picks egui as the
+# desktop toolkit — the call D32 left open). egui renders through the SAME wgpu 29 device + winit 0.30
+# window this binary already owns (one wgpu in the dep tree — verified), so the title screen is
+# host-side chrome with no second window/event path. Desktop-only (the app bin is never built for
+# android — its entry is `android_main`), so these sit under the not-android target alongside
+# pal-desktop. The shell holds no game logic; it drives the shared engine the same way the Android
+# Compose shell (D35) does (invariant #2).
+egui = "0.34"
+egui-wgpu = "0.34"
+egui-winit = "0.34"
+
 # Android does NOT share this desktop run loop: its entry point is `android_main` in
 # `pal-android`, built directly by cargo-ndk into a `.so`. The shared android run-loop
 # wiring is Phase 2; for now `app` stays a desktop binary and this dep is only here so a

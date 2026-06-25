@@ -1704,3 +1704,84 @@ any **iOS** surface (no iOS build target exists at all per Phase 3). **Onboardin
   onboarding (Q5) — each tracked against its own blocker in [`phase-4-plan.md`](phase-4-plan.md) §2.
 - The in-engine in-session shell (Phase 4 workstream B) and the native out-of-match shells now have
   a fixed contract to build against.
+
+---
+
+## D36 — The desktop app shell: an egui "Boot & title" title screen (desktop sibling of D35)
+
+**Status:** decided + landed (desktop). The **desktop** counterpart of
+[D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen): the
+"Boot & title" surface ([`phase-4-plan.md`](phase-4-plan.md) §2 surface 1) now also ships on the
+desktop host — an **egui** title screen in the `app` crate. The desktop binary previously booted
+straight into a match (`Game::new`); it now boots into a native title screen, and **Start** enters
+the match. This realizes
+[D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session) (native
+per-platform out-of-match shells), consumes the
+[D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out) `core::shell`
+seam, and — decisively — **makes the desktop-toolkit call D32 explicitly left open**.
+
+**Decision:**
+
+- **The desktop launcher is now an egui shell, not the engine.** `app/src/main.rs` becomes a
+  host-level `Screen` state machine — `Title` (the egui shell) ↔ `InMatch(Game)`. The window,
+  surface, and egui shell are created in `resumed`; `Game` is created **lazily on Start**. Input is
+  routed *by screen* (egui on `Title`, the game input accumulator in-match), so nothing leaks
+  between the shell and the sim. **Quit** exits; **Settings** is a no-op placeholder.
+- **The title screen is egui, bound to the app's existing single wgpu/winit stack.** `egui` /
+  `egui-wgpu` / `egui-winit` (all 0.34) are added to `app/Cargo.toml` under the **not-android**
+  target. They bind to the **same single `wgpu 29.0.3` + `winit 0.30.13`** the app already pins (one
+  `wgpu` in the dep tree — no conflict), so egui renders through the **same device + window** the
+  engine uses: **no second window, no second event path.** New `app/src/shell.rs` draws the title
+  screen — the **GOING DARK** title, the **COMMAND · EMBODY** tagline, **START / SETTINGS / QUIT**
+  buttons, and a build/version stamp, in the same dark "going-dark" palette as the Android shell
+  ([D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen)) — and
+  reports the clicked action.
+- **The shell holds NO game/sim logic.** Per
+  [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)/[D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)
+  it reaches `core` only through `core::shell` — exactly like the PAL holds no game logic. The real
+  logic is pushed into a **pure, unit-tested seam** (`resolve_title_action` / `build_stamp` /
+  `build_channel`); the egui glue (`EguiShell`) is device-gated host chrome, exempt from unit tests
+  per CLAUDE.md (thin, un-constructible glue). Today **Start** creates the engine's **default**
+  match; match-configuration handoff (army / map / mode) is **deferred** with match-setup, itself
+  **[Q5](open-questions.md)**-blocked.
+
+**Why:**
+[D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session) chose
+native shells for the out-of-match surfaces but **explicitly did not pick the desktop toolkit** —
+"it does not pick the desktop toolkit concretely (native-vs-egui is a Phase-4 implementation call)."
+This change makes that call: **egui**. egui is the **Rust-native immediate-mode GUI** that
+integrates with the app's existing wgpu/winit stack through a **single shared wgpu device** — no
+second window, and no per-OS native-desktop UI fork (GTK on Linux, WinUI on Windows) to build and
+maintain. It keeps the shell **above the `core::shell` seam** (invariant #2): the fork is *chrome*,
+not game logic; the sim/netcode/order vocab stay single-sourced in `core`. It mirrors the Android
+Compose shell
+([D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen)): native
+out-of-match chrome, host-side, through the seam — and like that landing, **Start is one-way** (the
+in-engine Surrender/leave flow is how you leave a match, the
+[D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
+carve-out), so no return-to-title path is added here.
+
+**What this does NOT decide:** it does **not** settle the match-config handoff (army/map/mode) across
+the seam — that ships with **match-setup**, **[Q5](open-questions.md)**-blocked (surface 4).
+**Settings** is a no-op placeholder until the Settings surface (surface 3) lands. It adds **no**
+return-to-title path (leaving a match is the in-session shell's Surrender/leave flow, the
+[D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
+carve-out under avatar-only fog, not this screen) and does **not** change the in-session shell (still
+in-engine — D32 carve-out). It builds **no iOS** shell (no iOS build target exists at all, per Phase 3).
+
+**Consequences:**
+- `app/Cargo.toml` gains desktop-only (not-android target) `egui`/`egui-wgpu`/`egui-winit` 0.34 deps,
+  bound to the already-pinned `wgpu 29` / `winit 0.30` (a single `wgpu` in the dep tree); `app/src`
+  gains `shell.rs` and a `Title`↔`InMatch` host loop in `main.rs`.
+- `pnpm play` now opens on the title screen instead of booting straight into a match; **Start** enters
+  the engine's default match.
+- **Tested where it has logic:** the pure `resolve_title_action`/`build_stamp`/`build_channel` seam is
+  covered by `app` unit tests; the egui chrome is device-gated host chrome
+  ([D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)) and
+  exempt per CLAUDE.md. The shell compiles against the pinned wgpu 29 / winit 0.30 with one `wgpu` in
+  the dep tree; egui is desktop-only host chrome.
+- **"Boot & title" is now landed on BOTH Android ([D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen))
+  and desktop (D36)**; **iOS** still has no build target. [`phase-4-plan.md`](phase-4-plan.md) §2
+  surface 1 + the §"LATER" table and [`roadmap.md`](roadmap.md) §"Meta-UI / app shell" "Boot & title"
+  row note both. The deeper menu behind it — match setup / lobby — stays blocked per its own rows
+  (**[Q5](open-questions.md)** / Phase-3).
