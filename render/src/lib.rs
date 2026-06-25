@@ -38,6 +38,9 @@ mod fog;
 /// Embodied directional alert HUD (worker 2). Owns `HudRenderer`: the screen-space alert overlay
 /// drawn on top of the embodied frame.
 mod hud;
+/// Band-select marquee. Owns `MarqueeRenderer`: the selection rectangle drawn in the command view
+/// while a band-drag is in flight. Public so the host can describe the box via [`marquee::Marquee`].
+pub mod marquee;
 /// In-session shell overlay (Phase 4 WS-B). Owns `OverlayRenderer`: the pause / reconnect-prompt /
 /// post-match-summary chrome, drawn on top of the (possibly dark) match frame. Public so the host
 /// can describe which surface to draw via [`overlay::Overlay`].
@@ -242,6 +245,9 @@ pub struct Renderer {
     /// The radial command menu. Drawn as a LOAD pass by [`Renderer::render_radial`] in the command
     /// view when a held long-press has a menu open.
     radial: radial::RadialRenderer,
+    /// The band-select marquee. Drawn as a LOAD pass by [`Renderer::render_marquee`] in the command
+    /// view while a band-drag is in flight.
+    marquee: marquee::MarqueeRenderer,
 }
 
 impl Renderer {
@@ -353,6 +359,7 @@ impl Renderer {
         let hud = hud::HudRenderer::new(device, surface_format);
         let overlay = overlay::OverlayRenderer::new(device, surface_format);
         let radial = radial::RadialRenderer::new(device, surface_format);
+        let marquee = marquee::MarqueeRenderer::new(device, surface_format);
 
         Renderer {
             pipeline,
@@ -365,6 +372,7 @@ impl Renderer {
             hud,
             overlay,
             radial,
+            marquee,
         }
     }
 
@@ -506,6 +514,20 @@ impl Renderer {
         menu: &radial::RadialMenu,
     ) {
         self.radial.render(device, queue, view, menu);
+    }
+
+    /// Draw the band-select marquee on top of the current frame (a LOAD pass — never clears),
+    /// delegating to [`marquee::MarqueeRenderer`]. The host calls this only in the command view while
+    /// a band-drag is in flight. Screen-space chrome with no world position; never over the dark
+    /// embodied frame (invariant #6).
+    pub fn render_marquee(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        marquee: &marquee::Marquee,
+    ) {
+        self.marquee.render(device, queue, view, marquee);
     }
 }
 

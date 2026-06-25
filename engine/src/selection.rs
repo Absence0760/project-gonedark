@@ -173,6 +173,13 @@ impl Selection {
         self.units.is_empty()
     }
 
+    /// The world-space anchor of the band-drag currently in flight, or `None` between gestures. Set
+    /// on the press edge and cleared on release — the host pairs it with the live pointer to draw the
+    /// selection marquee while dragging. Presentation only; reading it never changes the selection.
+    pub fn drag_anchor(&self) -> Option<(f32, f32)> {
+        self.anchor
+    }
+
     /// Fold pointer activity into the selection with the full gesture grammar.
     ///
     /// The single command-view selection entry point. Two presentation knobs the PAL carries ride
@@ -697,5 +704,51 @@ mod tests {
         assert_eq!(s, vec![a, b]);
         toggle(&mut s, a);
         assert_eq!(s, vec![b]);
+    }
+
+    #[test]
+    fn drag_anchor_tracks_the_in_flight_gesture() {
+        let a = ent(0);
+        let candidates = vec![(a, (0.0, 0.0))];
+        let floor = GestureScale::world_floor();
+        let mut sel = Selection::new();
+        assert_eq!(sel.drag_anchor(), None, "no gesture in flight");
+        // Press: the anchor is recorded so the host can draw the marquee from it.
+        sel.update_ex(
+            Some((2.0, 3.0)),
+            true,
+            false,
+            false,
+            false,
+            floor,
+            &candidates,
+        );
+        assert_eq!(sel.drag_anchor(), Some((2.0, 3.0)), "anchor set on press");
+        // Still held (pointer moves, no release): the anchor persists across drag frames.
+        sel.update_ex(
+            Some((5.0, 6.0)),
+            true,
+            false,
+            false,
+            false,
+            floor,
+            &candidates,
+        );
+        assert_eq!(
+            sel.drag_anchor(),
+            Some((2.0, 3.0)),
+            "anchor held during the drag"
+        );
+        // Release: the gesture resolves and the anchor clears (marquee stops drawing).
+        sel.update_ex(
+            Some((5.0, 6.0)),
+            false,
+            true,
+            false,
+            false,
+            floor,
+            &candidates,
+        );
+        assert_eq!(sel.drag_anchor(), None, "anchor cleared on release");
     }
 }

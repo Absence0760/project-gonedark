@@ -381,6 +381,54 @@ fn main() {
         ),
     );
 
+    // --- Scenario 1d: band-select marquee ------------------------------------------------------
+    // While a band-drag is IN FLIGHT (pointer held, not yet released) the selection box is drawn.
+    // The bright box edge reads as `is_select_rim`; mid-drag nothing is selected yet, so the only
+    // such pixels are the marquee itself.
+    println!("[marquee] a band-drag in progress draws the selection box (command-view affordance)");
+    let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
+    advance(&mut g, 2, InputFrame::default(), &gpu, &view);
+    let pre_drag = read_pixels(&gpu.device, &gpu.queue, &target);
+    let pre_rim = count(&pre_drag, is_select_rim); // no box, nothing selected → 0
+                                                   // Press at one corner, then a second frame still HELD at the opposite corner (no pointer_up).
+    let press = InputFrame {
+        pointer: Some((150.0, 150.0)),
+        pointer_down: true,
+        ..Default::default()
+    };
+    let hold = InputFrame {
+        pointer: Some((380.0, 380.0)),
+        pointer_down: true,
+        ..Default::default()
+    };
+    g.frame(
+        &press,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
+    g.frame(
+        &hold,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+    );
+    let drag = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/marquee.png", &drag);
+    let drag_rim = count(&drag, is_select_rim);
+    check(
+        &mut failures,
+        "marquee_box_drawn",
+        drag_rim > pre_rim + 100,
+        format!("{drag_rim} bright box-edge px mid-drag vs {pre_rim} before (selection box drawn)"),
+    );
+
     // --- Scenario 2: embodied — world goes dark ------------------------------------------------
     println!("[embodied_dark] possessing a unit collapses vision to the avatar (invariant #6)");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
@@ -437,7 +485,9 @@ fn main() {
         format!("{hud_nondark} non-dark px vs {dark_nondark} with no alerts (alert markers added)"),
     );
 
-    println!("\nPNGs: target/viz/{{command,selected,radial,embodied_dark,embodied_hud}}.png");
+    println!(
+        "\nPNGs: target/viz/{{command,selected,radial,marquee,embodied_dark,embodied_hud}}.png"
+    );
     if failures == 0 {
         println!("RESULT: all visual assertions passed ✓");
     } else {

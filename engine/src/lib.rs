@@ -32,6 +32,7 @@ use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
 use gonedark_core::territory::ControlPoint;
 use gonedark_pal::{Audio, InputFrame, Transport};
+use gonedark_render::marquee::Marquee;
 use gonedark_render::overlay::Overlay;
 use gonedark_render::radial::RadialMenu;
 use gonedark_render::{fixed_to_f32, Camera, Renderer};
@@ -969,6 +970,24 @@ impl Game {
             /* world_dark = */ self.embodied,
             &visibility,
         );
+
+        // 7b. Command-view band-select marquee: while a drag is in flight, draw the selection box
+        // the player is sweeping. Project the world-space drag anchor and the live pointer through
+        // the active view to NDC (the top-down camera is axis-aligned, so the world band maps to an
+        // axis-aligned screen rect). Presentation only — screen-space chrome, no sim mutation, and
+        // gated to the command view so it never paints over the dark embodied frame (invariant #6).
+        if !self.embodied {
+            if let (Some((ax, ay)), Some((px, py))) = (self.selection.drag_anchor(), pointer_world)
+            {
+                let a = view_proj.project_point3(Vec3::new(ax, ay, 0.0));
+                let b = view_proj.project_point3(Vec3::new(px, py, 0.0));
+                let marquee = Marquee {
+                    min: [a.x, a.y],
+                    max: [b.x, b.y],
+                };
+                self.renderer.render_marquee(device, queue, view, &marquee);
+            }
+        }
 
         // 8. While embodied, draw the directional alert HUD over the dark frame (worker 2) — the
         // only thread back to command (invariant #6).
