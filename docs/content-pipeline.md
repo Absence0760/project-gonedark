@@ -132,6 +132,24 @@ AI-asset generators (Meshy, Tripo, etc.) can sit in the pipeline as a *stage* Cl
 scripts — but their **license terms and output quality are yours to own**, and generated
 meshes still pass §4's filter and §1's cook like any other source.
 
+**The installed toolbox (machine-wide, headless-scriptable).** The "can" column is backed
+by concrete CLIs on the workstation that Claude drives the way D41 drives Blender —
+`--background` / `--export` / a script file, no GUI. **Reach for these first** when a task
+needs an asset; script the generator and commit the *script* + a manifest entry
+(`source` / `license` / `sha256`, §3), never an opaque binary blob.
+
+| Tool | Lane | Used for |
+|---|---|---|
+| **Blender** (`bpy`) | 3D author | procedural/greybox meshes, geometry-nodes terrain, rig/anim, glTF export (`tools/models/gen_models.py`, D41) |
+| **gltfpack** | 3D cook | glTF mesh/texture compression (meshopt/Draco) for the mobile / 200-unit budget |
+| **SoX** | audio | SFX synthesis + processing |
+| **Csound** | audio | deterministic, **seed-scripted** SFX — regenerable + git-diffable, the audio analogue of D41 (audio is a primary system, invariant #6) |
+| **Inkscape** (`--export-type=png`) | 2D / UI | vector → PNG HUD / command-layer icons across DPIs |
+| **ImageMagick** (`magick`) | 2D | scripted textures, atlases, noise / normal maps |
+
+Install provenance + how each was added lives in the workstation conventions (`~/CLAUDE.md`);
+the toolchain choice is logged as **D45**.
+
 ## 7. Open fork
 
 How far to lean **CC0-curated** vs **commissioned** vs **AI-generated** for the hero
