@@ -319,6 +319,16 @@ asset is graded into the low/mid/flagship device tiers and the top-down/eye-leve
 chain — see [`content-pipeline.md`](content-pipeline.md) for sourcing, quality tiers,
 and license hygiene.
 
+**What's actually wired today (greybox tier, [D44](decisions.md)).** The pak/mmap/stream
+pipeline above is the target for the eventual mid/hero art; it is not built yet. For the
+greybox tier, the cook step emits a dead-simple cooked `.mesh` (`GDM1`: a Z-up, flat-shaded
+triangle soup of position + face normal) next to each `.glb`, and the renderer
+(`render::mesh`) `include_bytes!`s those files straight into the binary/APK — no pak, no
+mmap, no decode-on-load, no PAL storage round-trip. One shared depth-tested instanced mesh
+pipeline (`mesh.wgsl`) draws them: the embodied first-person weapon viewmodel and the
+command-view 3D unit/structure tokens. This is render-only (invariant #1/#4) and keeps the
+crate `glam`/windowing-free (D19).
+
 ## Mobile realities
 
 - **Frame pacing** via Swappy; cap to 30/60 by device class. Smoothness > peak FPS.

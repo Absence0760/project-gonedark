@@ -55,7 +55,8 @@ in both views.
   **For the push to a publishable build (D41), this is the *default* tier for every visible
   object** — units, structures, environment props, and the embodied weapon — built by a
   Claude-authored headless **Blender (`bpy`) script** (`tools/models/gen_models.py` → one `.glb`
-  and one cooked `.mesh` per object), not pulled from an external text-to-3D service. That keeps it license-clean by construction: code-authored
+  and one cooked `.mesh` per object; the `.mesh` is the runtime format the renderer loads,
+  [`decisions.md`](decisions.md) D44), not pulled from an external text-to-3D service. That keeps it license-clean by construction: code-authored
   geometry from primitives has no third-party tool terms to vet, so each asset's manifest reads
   `source: procedural (Blender bpy)`, `license: CC0-1.0` — license hygiene (§3) is *satisfied*,
   not a question. These ride the *same* pipeline as anything else (cook → LOD §1, two-view filter

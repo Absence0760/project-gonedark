@@ -2094,3 +2094,75 @@ adds the contextual-tap command wiring in `Game::frame`. New `Selection` unit te
 empty-tap-keeps, desktop-empty-tap-still-clears, drag→Banded, no-release→None); the Android
 `MotionEvent` glue is exempt per CLAUDE.md (un-constructible-in-test). Full suite + determinism +
 lockstep + viz all green.
+
+---
+
+## D44 — Cooked greybox meshes: the .glb-to-runtime pipeline + 3D mesh rendering
+
+**Status:** decided + landed (render + engine, desktop & Android via the shared `engine` loop;
+viz-runner smoke test green). The runtime half of [D41](#d41--ai-generated-placeholder-models-for-all-render-content-skip-commissioned-art-for-now)
+— it **resolves D41's explicit "no mesh loader / separate follow-on work" note**: the Blender `.glb`
+models now actually *show up* in the apps instead of sitting unused on disk.
+
+**The gap it closes:** D41 generated `.glb` models, but nothing loaded them. Units were flat colored
+quads, the embodied weapon was hand-built 2D screen-space geometry, and the sky/ground was a procedural
+shader — the `.glb` files rendered in **zero** apps, and there was no glTF parser anywhere.
+
+**Decision:**
+
+- **A cooked `.mesh` runtime format (the cook step of `content-pipeline.md` §1, greybox tier).**
+  `gen_models.py` now emits, per model, a `.glb` (interchange / source-of-record, for the two-view
+  harness §4 and external tools) **and** a cooked `.mesh` — a dead-simple, little-endian, Z-up,
+  flat-shaded triangle soup (magic `GDM1`, position + face normal per corner). The engine consumes the
+  `.mesh`; the `.glb` stays "the thing we're using" in Blender. Chosen over parsing `.glb` on-device so
+  there is **no glTF/JSON parser and no extra crate dependency** in the renderer — the format is ~15
+  lines to parse and golden-tested against every committed file. Flat normals are computed from each
+  triangle's own vertices (cross product, normalized), immune to the skew the non-uniform `dimensions`
+  scale bakes into Blender's cached polygon normal.
+- **Embedded, not streamed.** `render::mesh` `include_bytes!`s the committed `.mesh` files, so they ride
+  into the binary/APK with **no on-device file IO, no PAL storage round-trip, no Android asset-pack
+  plumbing**. Right for the small greybox tier; the heavyweight pak/mmap pipeline (`architecture.md`)
+  stays the target for the eventual mid/hero art.
+- **One shared 3D mesh pipeline (`render::mesh` + `mesh.wgsl`):** instanced, depth-tested, lit by a
+  single directional key light + ambient over the flat facets. Both consumers draw through it:
+  - **Embodied weapon viewmodel** — the real `weapon_rifle` mesh, anchored in *view space*
+    (`world::weapon_view_model`, fed the projection alone) so it stays glued to the lower-right under
+    camera yaw, with a muzzle-flash flare + recoil kick. Replaces the old 2D gun.
+  - **Command-view unit tokens** — each fog-visible unit/building is its 3D mesh (infantry → `trooper`,
+    building → `camp_hq`), composited under the 2D UI: ground grid clears, tokens draw (depth-tested),
+    then the quad pass loads on top with the token body fill suppressed (`FLAG_MESH`) so the mesh shows
+    through while health bars / selection rims / control-point rings still read.
+- **Four new models** so units/structures/scenery/cover are all covered: `turret`, `tree`, `rock`,
+  `barricade` (nine total).
+
+**Why:** the models existing but rendering nowhere was the whole point of D41 left undone. A trivially-
+parseable cooked format keeps the renderer dependency-light and bullet-proof (vs. a full glTF reader for
+greybox cubes), embedding sidesteps the entire cross-platform asset-loading problem for the small
+greybox set, and one shared depth-tested pipeline serves both the FPS viewmodel and the RTS tokens
+without forking. It is **render-only** (invariant #1/#4): no `core`/sim/netcode touched, so the lockstep
+checksum matrix is untouched; the crate stays `glam`/windowing-free (D19) — the host hands matrices in
+as plain `[[f32;4];4]`, and the small transform math (`model_matrix`, `weapon_view_model`) is hand-rolled
+scalar `f32`. Embodiment fairness (invariant #6) is intact: tokens are built **only** from the already-
+fog-filtered draw set and **only** in the command branch (embodied returns before any token work), so the
+3D pass leaks no map intel — the viz-runner dark/fairness assertions stay green.
+
+**What this does NOT decide / honest caveats:** **command-camera framing** — the top-down ortho is kept
+straight-down (a tilt would read the 3D forms better but breaks the ground-plane unproject used for
+picking/marquee, so it's out of scope); at the ±40-unit command zoom infantry tokens are small (their
+real ~1 m footprint), scaled up to fill their selection marker but no larger. **Unit facing** — tokens
+don't yet yaw to face their velocity (greybox stand-upright). **Tank/crate placement in-game** — the sim
+snapshot only distinguishes unit-vs-building, so those meshes exist + load + are golden-tested but aren't
+placed in a match until a unit-kind enters the sim. **Q11 (hero-tier sourcing) stays open** — this is
+greybox infrastructure, not a hero-art decision. The cooked `.mesh` is a greybox shortcut past the full
+LOD/ASTC/atlas/pak cook, which remains the mid/hero target.
+
+**Consequences:** `gen_models.py` emits `.glb` + `.mesh` and the manifest tracks both (`cooked`,
+`cooked_bytes`, `cooked_sha256`) plus each model's `base_color` (mirrored in `render::mesh::ModelKind`);
+new `render/src/mesh.rs` + `mesh.wgsl` (parser, GPU upload, `MeshLibrary`, the shared `MeshPipeline`, a
+depth-texture helper, `model_matrix`); `render/src/world.rs` weapon viewmodel goes 2D→3D; `Renderer`
+owns the mesh library/pipeline/depth and composites the command view in three passes; `shader.wgsl` gains
+`FLAG_MESH`; `engine` shares one `embodied_proj` between the world camera and the viewmodel and threads
+viewport size into `render()`. Pure seams unit-tested (parser + all error variants, golden-parse of every
+committed `.mesh`, `model_matrix`, `weapon_view_model`, `token_for`, `embodied_proj`); the GPU path is
+covered by viz-runner (all visual assertions pass; the PNGs show the 3D weapon + 3D tokens with UI decals
+on top). Full suite + clippy + determinism + lockstep + viz all green.

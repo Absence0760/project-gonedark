@@ -29,7 +29,7 @@ ANDROID — cross-compiled arm64, run on a phone/emulator over adb
   pnpm android:checksum     Prove on-device arm64 determinism vs the host (300 ticks default)
 
 ASSETS — content tooling on this machine (needs Blender 5.x on PATH)
-  pnpm assets:models        Generate greybox placeholder .glb models + manifest (D41)
+  pnpm assets:models        Generate greybox .glb + cooked .mesh models + manifest (D41/D44)
 
 QUALITY — run on this machine
   pnpm test                 cargo test across the workspace
