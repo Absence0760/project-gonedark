@@ -807,12 +807,13 @@ impl Game {
         // `additive` (grow the selection instead of replacing it) has no PAL modifier plumbed yet,
         // so it is `false` today — the legacy clear-then-select feel is preserved bit-for-bit while
         // the zoom-stable thresholds take effect via `gesture_scale`.
-        self.selection.update_ex(
+        let gesture = self.selection.update_ex(
             pointer_world,
             input.pointer_down,
             input.pointer_up,
             self.embodied,
             false,
+            input.command_tap,
             gesture_scale,
             &candidates,
         );
@@ -873,6 +874,24 @@ impl Game {
                 pointer_world,
                 on_enemy,
             ));
+        }
+
+        // Single-pointer "tap commands" (the touch scheme, D43): on a one-button screen there is no
+        // right-click, so a TAP that lands OFF any friendly unit — while a selection is active —
+        // issues the same default order to the kept selection (the selection layer left it intact
+        // in `tap_commands` mode). A tap ON a unit selected it instead (outcome carries the hit), so
+        // it never doubles as a command. Mirrors the D42 emission exactly (Move / AttackMove).
+        if input.command_tap && !self.embodied {
+            if let selection::GestureOutcome::Tapped { hit: None, at } = gesture {
+                if !selected.is_empty() {
+                    let on_enemy = self.enemy_unit_at(at);
+                    commands.extend(command_ui::command_click_commands(
+                        &selected,
+                        Some(at),
+                        on_enemy,
+                    ));
+                }
+            }
         }
 
         // Embodiment input-source swap (invariant #5): mirror the toggle the mapping resolved.

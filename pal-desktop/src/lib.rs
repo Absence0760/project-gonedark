@@ -410,6 +410,9 @@ impl DesktopInput {
             long_press: self.long_press,
             command_slot: self.command_slot,
             command_click: self.command_latch,
+            // Desktop uses the dedicated right-click command (above), not the single-pointer
+            // contextual tap — so the "tap commands" touch mode (D43) stays off here.
+            command_tap: false,
             move_axis: (mx, my),
             look_axis: (self.look_dx, self.look_dy),
             fire: self.fire,

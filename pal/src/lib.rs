@@ -51,6 +51,16 @@ pub struct InputFrame {
     /// the per-platform scheme maps its own gesture here (Q4); the desktop backend latches it from
     /// the right mouse button.
     pub command_click: bool,
+    /// **Single-pointer "tap commands" mode** (the touch scheme, D43). When set, a primary tap that
+    /// lands *off* any friendly unit while a selection is active issues the default order
+    /// (Move / Attack) to the selection — and **keeps** the selection — instead of deselecting.
+    /// Tapping a friendly unit still *selects* it; a drag still band-selects. This is how a
+    /// one-button touchscreen expresses what desktop splits across left-click (select) and
+    /// right-click ([`command_click`](Self::command_click), command): there is no second button, so
+    /// the engine resolves select-vs-command by *what was tapped*. Touch backends set this every
+    /// frame (it is a mode, not an edge); desktop leaves it `false` (it has the dedicated
+    /// right-click). Ignored while embodied.
+    pub command_tap: bool,
     /// Embodied locomotion + look axes (left stick / right stick or WASD + mouse).
     pub move_axis: (f32, f32),
     pub look_axis: (f32, f32),

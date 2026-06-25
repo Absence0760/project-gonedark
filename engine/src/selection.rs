@@ -152,6 +152,26 @@ fn toggle(existing: &mut Vec<Entity>, entity: Entity) {
     }
 }
 
+/// What a pointer-release resolved to this frame — returned by [`Selection::update_ex`] so the
+/// engine can layer the **touch contextual command** on top (D43) without re-deriving the
+/// tap/drag/hit decision. Pure presentation: it describes the gesture, it issues no `Command`s.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub enum GestureOutcome {
+    /// No release this frame (a press or in-flight drag), or a release that cancelled (no world
+    /// point). Nothing for the engine to act on.
+    #[default]
+    None,
+    /// A TAP resolved at `at`. `hit` is the unit it selected, or `None` when it landed on empty
+    /// ground. In `tap_commands` mode an empty-ground tap is the engine's cue to issue the default
+    /// order to the (kept) selection; a `hit` tap is a plain selection change.
+    Tapped {
+        hit: Option<Entity>,
+        at: (f32, f32),
+    },
+    /// A DRAG resolved into a band-selection. Never a command (you were selecting, not ordering).
+    Banded,
+}
+
 /// The set of player units the next command targets. Empty = nothing selected (the engine falls
 /// back to its legacy single-avatar tap-to-move so existing behavior is preserved).
 #[derive(Clone, Debug, Default)]
@@ -189,10 +209,17 @@ impl Selection {
     ///   instead of replacing it — a TAP toggles the nearest candidate's membership (in then out
     ///   on a re-tap) and a DRAG unions its rectangle into the existing set (dedup by `Entity`,
     ///   preserving stable candidate order). When false the result is the legacy clear-then-select.
+    /// - `tap_commands`: the single-pointer touch mode (D43). When true, a TAP on **empty ground**
+    ///   does NOT clear the selection — it leaves it intact and is reported as `Tapped { hit: None }`
+    ///   so the engine can turn it into a Move/Attack on the kept selection. (A TAP on a unit still
+    ///   selects it; a DRAG still band-selects.) When false, an empty tap clears (the desktop /
+    ///   legacy deselect). Orthogonal to `additive`.
     /// - `scale`: the zoom context (world-units-per-pixel) used to derive the effective TAP_SLOP /
     ///   PICK_RADIUS so the gesture feel is stable across zoom (see [`GestureScale`]).
     ///
-    /// Still pure presentation geometry: no sim mutation, no GPU dependency.
+    /// Returns what the release resolved to ([`GestureOutcome`]) so the engine can layer the touch
+    /// command on top without re-deriving tap/drag/hit. Still pure presentation geometry: no sim
+    /// mutation, no GPU dependency.
     #[allow(clippy::too_many_arguments)]
     pub fn update_ex(
         &mut self,
@@ -201,14 +228,15 @@ impl Selection {
         pointer_up: bool,
         embodied: bool,
         additive: bool,
+        tap_commands: bool,
         scale: GestureScale,
         candidates: &[(Entity, (f32, f32))],
-    ) {
+    ) -> GestureOutcome {
         // Command layer hidden while embodied (invariant #5): leave selection untouched. We also
         // drop any in-flight anchor so a gesture interrupted by embodiment can't resolve later.
         if embodied {
             self.anchor = None;
-            return;
+            return GestureOutcome::None;
         }
 
         // Press edge: begin a gesture by recording where the pointer went down. We only arm a new
@@ -220,52 +248,58 @@ impl Selection {
         }
 
         // Release edge: resolve the gesture (if one was armed) into a new selection.
-        if pointer_up {
-            let anchor = self.anchor.take();
-            // A release with no known world point (pointer left the window mid-drag) just cancels
-            // the gesture — anchor already taken above, nothing else to do.
-            if let (Some(anchor), Some(release)) = (anchor, pointer_world) {
-                let (ax, ay) = anchor;
-                let (rx, ry) = release;
-                let dx = rx - ax;
-                let dy = ry - ay;
-                let moved = (dx * dx + dy * dy).sqrt();
+        if !pointer_up {
+            return GestureOutcome::None;
+        }
+        let anchor = self.anchor.take();
+        // A release with no known world point (pointer left the window mid-drag) just cancels
+        // the gesture — anchor already taken above, nothing else to do.
+        let (Some(anchor), Some(release)) = (anchor, pointer_world) else {
+            return GestureOutcome::None;
+        };
+        let (ax, ay) = anchor;
+        let (rx, ry) = release;
+        let dx = rx - ax;
+        let dy = ry - ay;
+        let moved = (dx * dx + dy * dy).sqrt();
 
-                // Zoom-aware effective thresholds (floor in world units, grown by the px term when
-                // zoomed out). At `world_floor()` these are exactly TAP_SLOP / PICK_RADIUS.
-                let tap_slop = scale.tap_slop();
-                let pick_radius = scale.pick_radius();
+        // Zoom-aware effective thresholds (floor in world units, grown by the px term when
+        // zoomed out). At `world_floor()` these are exactly TAP_SLOP / PICK_RADIUS.
+        let tap_slop = scale.tap_slop();
+        let pick_radius = scale.pick_radius();
 
-                if moved < tap_slop {
-                    // TAP: the single nearest candidate within the pick radius of the release.
-                    let hit = nearest_within(release, pick_radius, candidates);
-                    if additive {
-                        // Additive tap toggles that unit's membership; a tap on empty ground (no
-                        // hit) leaves the existing set alone rather than clearing it.
-                        if let Some(entity) = hit {
-                            toggle(&mut self.units, entity);
-                        }
-                    } else {
-                        // Legacy: clear, then select the nearest (or nothing on empty ground).
-                        self.units.clear();
-                        if let Some(entity) = hit {
-                            self.units.push(entity);
-                        }
-                    }
-                } else {
-                    // DRAG: band-select inside the axis-aligned anchor→release rectangle, in
-                    // stable candidate order.
-                    let rect = within_rect((ax, ay), (rx, ry), candidates);
-                    if additive {
-                        // Additive drag unions the rectangle into the existing set (dedup, order
-                        // preserved).
-                        union_into(&mut self.units, &rect);
-                    } else {
-                        // Legacy: replace the set with the rectangle's contents.
-                        self.units = rect;
-                    }
+        if moved < tap_slop {
+            // TAP: the single nearest candidate within the pick radius of the release.
+            let hit = nearest_within(release, pick_radius, candidates);
+            if additive {
+                // Additive tap toggles that unit's membership; a tap on empty ground (no
+                // hit) leaves the existing set alone rather than clearing it.
+                if let Some(entity) = hit {
+                    toggle(&mut self.units, entity);
                 }
+            } else if let Some(entity) = hit {
+                // Replace the selection with the tapped unit.
+                self.units.clear();
+                self.units.push(entity);
+            } else if !tap_commands {
+                // Empty ground, legacy/desktop: deselect. In `tap_commands` (touch) mode we KEEP
+                // the selection instead — the engine issues the default order at `release` to it.
+                self.units.clear();
             }
+            GestureOutcome::Tapped { hit, at: release }
+        } else {
+            // DRAG: band-select inside the axis-aligned anchor→release rectangle, in
+            // stable candidate order.
+            let rect = within_rect((ax, ay), (rx, ry), candidates);
+            if additive {
+                // Additive drag unions the rectangle into the existing set (dedup, order
+                // preserved).
+                union_into(&mut self.units, &rect);
+            } else {
+                // Legacy: replace the set with the rectangle's contents.
+                self.units = rect;
+            }
+            GestureOutcome::Banded
         }
     }
 }
@@ -294,6 +328,7 @@ mod tests {
             false,
             false,
             false,
+            false,
             GestureScale::world_floor(),
             candidates,
         );
@@ -303,12 +338,13 @@ mod tests {
             true,
             false,
             false,
+            false,
             GestureScale::world_floor(),
             candidates,
         );
     }
 
-    /// A press→release gesture with explicit `additive` and `scale`.
+    /// A press→release gesture with explicit `additive` and `scale` (tap_commands off).
     fn gesture_ex(
         sel: &mut Selection,
         down: (f32, f32),
@@ -317,8 +353,19 @@ mod tests {
         scale: GestureScale,
         candidates: &[(Entity, (f32, f32))],
     ) {
-        sel.update_ex(Some(down), true, false, false, additive, scale, candidates);
-        sel.update_ex(Some(up), false, true, false, additive, scale, candidates);
+        sel.update_ex(Some(down), true, false, false, additive, false, scale, candidates);
+        sel.update_ex(Some(up), false, true, false, additive, false, scale, candidates);
+    }
+
+    /// A press→release TAP in `tap_commands` (touch) mode, returning the release outcome.
+    fn touch_tap(
+        sel: &mut Selection,
+        at: (f32, f32),
+        candidates: &[(Entity, (f32, f32))],
+    ) -> GestureOutcome {
+        let s = GestureScale::world_floor();
+        sel.update_ex(Some(at), true, false, false, false, true, s, candidates);
+        sel.update_ex(Some(at), false, true, false, false, true, s, candidates)
     }
 
     #[test]
@@ -377,6 +424,7 @@ mod tests {
             false,
             false,
             false,
+            false,
             GestureScale::world_floor(),
             &candidates,
         );
@@ -384,6 +432,7 @@ mod tests {
             Some((5.0, 5.0)),
             false,
             true,
+            false,
             false,
             false,
             GestureScale::world_floor(),
@@ -406,6 +455,7 @@ mod tests {
             false,
             false,
             false,
+            false,
             GestureScale::world_floor(),
             &candidates,
         );
@@ -413,6 +463,7 @@ mod tests {
             Some((5.0, 5.0)),
             false,
             true,
+            false,
             false,
             false,
             GestureScale::world_floor(),
@@ -437,6 +488,7 @@ mod tests {
             false,
             true,
             false,
+            false,
             GestureScale::world_floor(),
             &candidates,
         );
@@ -445,6 +497,7 @@ mod tests {
             false,
             true,
             true,
+            false,
             false,
             GestureScale::world_floor(),
             &candidates,
@@ -457,6 +510,7 @@ mod tests {
             false,
             true,
             false,
+            false,
             GestureScale::world_floor(),
             &candidates,
         );
@@ -465,6 +519,7 @@ mod tests {
             false,
             true,
             true,
+            false,
             false,
             GestureScale::world_floor(),
             &candidates,
@@ -488,6 +543,7 @@ mod tests {
             false,
             false,
             false,
+            false,
             GestureScale::world_floor(),
             &candidates,
         );
@@ -495,6 +551,7 @@ mod tests {
             None,
             false,
             true,
+            false,
             false,
             false,
             GestureScale::world_floor(),
@@ -720,6 +777,7 @@ mod tests {
             false,
             false,
             false,
+            false,
             floor,
             &candidates,
         );
@@ -728,6 +786,7 @@ mod tests {
         sel.update_ex(
             Some((5.0, 6.0)),
             true,
+            false,
             false,
             false,
             false,
@@ -746,9 +805,81 @@ mod tests {
             true,
             false,
             false,
+            false,
             floor,
             &candidates,
         );
         assert_eq!(sel.drag_anchor(), None, "anchor cleared on release");
+    }
+
+    // ----- touch contextual commands (tap_commands mode, D43) -----
+
+    #[test]
+    fn touch_tap_on_unit_selects_it_and_reports_the_hit() {
+        let a = ent(0);
+        let b = ent(1);
+        let candidates = vec![(a, (0.0, 0.0)), (b, (10.0, 10.0))];
+        let mut sel = Selection::new();
+        let out = touch_tap(&mut sel, (0.1, 0.1), &candidates);
+        assert_eq!(sel.units, vec![a], "tapping a unit selects it");
+        assert_eq!(
+            out,
+            GestureOutcome::Tapped {
+                hit: Some(a),
+                at: (0.1, 0.1)
+            },
+            "outcome carries the hit so the engine does NOT also command"
+        );
+    }
+
+    #[test]
+    fn touch_tap_on_empty_ground_keeps_selection_and_reports_no_hit() {
+        let a = ent(0);
+        let candidates = vec![(a, (0.0, 0.0))];
+        let mut sel = Selection::new();
+        // Select `a` first (tap on it).
+        touch_tap(&mut sel, (0.0, 0.0), &candidates);
+        assert_eq!(sel.units, vec![a]);
+        // Now tap far away on empty ground: in tap_commands mode this KEEPS the selection (so the
+        // engine can order it there) and reports an empty-ground tap.
+        let out = touch_tap(&mut sel, (40.0, 40.0), &candidates);
+        assert_eq!(sel.units, vec![a], "empty-ground tap keeps the selection (it's a command)");
+        assert_eq!(out, GestureOutcome::Tapped { hit: None, at: (40.0, 40.0) });
+    }
+
+    #[test]
+    fn desktop_empty_tap_still_clears_when_not_in_tap_commands_mode() {
+        // The same empty tap with tap_commands=false (desktop/legacy) must still DESELECT.
+        let a = ent(0);
+        let candidates = vec![(a, (0.0, 0.0))];
+        let mut sel = Selection::new();
+        tap(&mut sel, (0.0, 0.0), (0.0, 0.0), &candidates);
+        assert_eq!(sel.units, vec![a]);
+        tap(&mut sel, (40.0, 40.0), (40.0, 40.0), &candidates);
+        assert!(sel.is_empty(), "non-tap_commands empty tap clears (deselect)");
+    }
+
+    #[test]
+    fn touch_drag_reports_banded_not_a_command() {
+        let a = ent(0);
+        let b = ent(1);
+        let candidates = vec![(a, (1.0, 1.0)), (b, (2.0, 2.0))];
+        let mut sel = Selection::new();
+        let s = GestureScale::world_floor();
+        sel.update_ex(Some((0.0, 0.0)), true, false, false, false, true, s, &candidates);
+        let out = sel.update_ex(Some((5.0, 5.0)), false, true, false, false, true, s, &candidates);
+        assert_eq!(sel.units, vec![a, b], "drag band-selects even in tap_commands mode");
+        assert_eq!(out, GestureOutcome::Banded, "a drag is a selection, never a command");
+    }
+
+    #[test]
+    fn no_release_reports_none() {
+        let a = ent(0);
+        let candidates = vec![(a, (0.0, 0.0))];
+        let mut sel = Selection::new();
+        let s = GestureScale::world_floor();
+        // Press only (no pointer_up) → nothing resolved this frame.
+        let out = sel.update_ex(Some((0.0, 0.0)), true, false, false, false, true, s, &candidates);
+        assert_eq!(out, GestureOutcome::None);
     }
 }

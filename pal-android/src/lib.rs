@@ -306,6 +306,10 @@ impl Window for AndroidWindow {
 pub struct AndroidInput {
     app: AndroidApp,
     frame: InputFrame,
+    /// True between the down and up of a MULTI-finger gesture (the two-finger embody tap, D43). It
+    /// suppresses the single-finger tap's `pointer_up` release latch on lift, so lifting from a
+    /// two-finger gesture doesn't also resolve a spurious empty-ground command/selection.
+    multi_touch: bool,
 }
 
 impl AndroidInput {
@@ -313,11 +317,20 @@ impl AndroidInput {
         AndroidInput {
             app,
             frame: InputFrame::default(),
+            multi_touch: false,
         }
     }
 
-    /// Translate one motion (touch) event into the running InputFrame.
-    fn apply_motion(frame: &mut InputFrame, motion: &MotionEvent) {
+    /// Translate one motion (touch) event into the running InputFrame (the command-layer touch
+    /// scheme, D43). `multi_touch` tracks whether a multi-finger gesture is in flight so its lift
+    /// doesn't latch a spurious single-finger release.
+    ///
+    /// Gesture grammar (mirrors the desktop classic-RTS split via the shared intent vocabulary):
+    /// one finger down/move/up drives `pointer_down` + the `pointer_up` release edge — the engine's
+    /// `Selection` then resolves it to a tap-select, a band-select, or (off a unit, with a
+    /// selection) a Move/Attack via the `command_tap` mode (set in [`Self::poll`]). A two-finger tap
+    /// toggles embodiment.
+    fn apply_motion(frame: &mut InputFrame, multi_touch: &mut bool, motion: &MotionEvent) {
         // android-activity 0.6 exposes pointers via `motion.pointers()`; the primary pointer
         // drives the command-layer tap position.
         let action = motion.action();
@@ -329,33 +342,42 @@ impl AndroidInput {
         match action {
             MotionAction::Down | MotionAction::PointerDown => {
                 if pointer_count >= 2 {
-                    // PROVISIONAL Phase-1 binding (the real mobile control scheme is a Phase 2
-                    // design call — open-questions / roadmap): a TWO-FINGER TAP toggles
-                    // embodiment. We raise BOTH edge intents and let `engine::Game` resolve to
-                    // embody-or-surface by the current state (embody while commanding, surface
-                    // while embodied) — the same resolution the desktop E/Q keys get. Suppress
-                    // the single-finger tap-to-move so the gesture doesn't also order a move.
+                    // TWO-FINGER TAP toggles embodiment (D43): raise BOTH edge intents and let
+                    // `engine::Game` resolve to embody-or-surface by the current state (the same
+                    // resolution the desktop E/Q keys get). Mark the gesture multi-finger and drop
+                    // the single-finger down so it neither selects nor commands.
                     frame.embody_pressed = true;
                     frame.surface_pressed = true;
                     frame.pointer_down = false;
+                    *multi_touch = true;
                 } else {
                     frame.pointer_down = true;
                 }
             }
-            MotionAction::Up | MotionAction::PointerUp | MotionAction::Cancel => {
+            // The last finger lifted (Up), or the gesture was cancelled. Drop the held state and —
+            // for a genuine SINGLE-finger gesture — latch the `pointer_up` release so `Selection`
+            // resolves the tap/drag this frame. (Without this latch the command layer never
+            // resolves on touch at all.) A multi-finger gesture suppresses the latch and resets.
+            MotionAction::Up | MotionAction::Cancel => {
                 frame.pointer_down = false;
+                if *multi_touch {
+                    *multi_touch = false;
+                } else {
+                    frame.pointer_up = true;
+                }
             }
+            // A secondary finger lifted while others remain: still part of the multi-finger gesture,
+            // so no single-tap release. Keep `multi_touch` set until the final Up.
+            MotionAction::PointerUp => {}
             // Move keeps the current down-state; pointer position already updated above.
             _ => {}
         }
-        // TODO(phase2): the shipped mobile scheme — on-screen virtual sticks -> move_axis /
-        //   look_axis while embodied, gyro (ndk Sensor API) -> look_axis. The two-finger
-        //   embody toggle above is a provisional dev binding, not the final control design.
-        //   Deliberately NOT done in the audio workstream: the control scheme is an UNSETTLED
-        //   DESIGN decision (open-questions / roadmap Phase 2) and must not be silently decided.
-        //   When built, the stick-geometry -> axis mapping should be a pure free fn tested on the
-        //   host (the same seam pattern `engine::map_input_commands` already uses), so the
-        //   `MotionEvent` glue here stays thin and the math is covered.
+        // TODO(phase2+): embodied locomotion — on-screen virtual sticks -> move_axis / look_axis
+        //   while embodied, gyro (ndk Sensor API) -> look_axis; and the on-screen radial for the
+        //   ADVANCED order vocabulary (long-press -> long_press + wedge hit-test -> command_slot).
+        //   Those need on-screen UI + wedge hit-testing and are a separate slice (D43 "deferred").
+        //   The stick-geometry -> axis mapping should be a pure free fn tested on the host (the seam
+        //   pattern `engine::map_input_commands`/`Selection` already uses).
     }
 
     /// Translate one key event (back button, gamepad face buttons) into the InputFrame.
@@ -377,6 +399,12 @@ impl Input for AndroidInput {
         self.frame.embody_pressed = false;
         self.frame.surface_pressed = false;
         self.frame.fire = false;
+        // The pointer-release is an EDGE (one frame), like the *_pressed intents — clear it each
+        // poll so a single lift resolves exactly one selection/command (D43).
+        self.frame.pointer_up = false;
+        // Touch is the single-pointer "tap commands" scheme (D43): a tap off a unit, with a
+        // selection, issues the default order rather than deselecting. It's a mode, set every poll.
+        self.frame.command_tap = true;
 
         // Drain the current native input batch. android-activity 0.6 hands input via an
         // iterator obtained from the app; we fold each event into `self.frame`.
@@ -385,11 +413,15 @@ impl Input for AndroidInput {
         // toolchain — older 0.5 used the `input_events(|e| ...)` closure form.
         if let Ok(mut iter) = self.app.input_events_iter() {
             // `next(&mut self, callback)`-style draining: process until the iterator is
-            // exhausted, returning Handled so android-activity advances the queue.
+            // exhausted, returning Handled so android-activity advances the queue. Split-borrow the
+            // two fields the motion path mutates so the closure holds them disjointly from `app`.
             let frame = &mut self.frame;
+            let multi_touch = &mut self.multi_touch;
             while iter.next(|event| {
                 match event {
-                    InputEvent::MotionEvent(motion) => Self::apply_motion(frame, motion),
+                    InputEvent::MotionEvent(motion) => {
+                        Self::apply_motion(frame, multi_touch, motion)
+                    }
                     InputEvent::KeyEvent(key) => Self::apply_key(frame, key),
                     // TextEvent and any future variants: ignored for the game input path.
                     _ => {}
