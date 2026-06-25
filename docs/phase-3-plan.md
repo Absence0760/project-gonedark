@@ -1,7 +1,7 @@
 # Phase 3 plan — Scale & net
 
 > **Status: IN PROGRESS.** Phase 1 (vertical slice, D22) and Phase 2 (game systems,
-> D23–D26) are done. Phase 3 makes the game hold up *at size* and *over the wire*. This
+> D23–D26 + D29–D30, signed off systems-complete in D31) are done. Phase 3 makes the game hold up *at size* and *over the wire*. This
 > doc is the synthesis of a four-way scouting pass over the four roadmap bullets; it is
 > the product-of-record plan, sequenced by blast radius. Like the Phase 1 / Phase 0.5
 > plans, it is updated as slices land and signed off at the end.

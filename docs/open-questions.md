@@ -16,7 +16,9 @@ The "world goes dark" rule is locked (D7), but *how much* gets through is not.
 | **Minimap survives** — blips/fog on a corner map | Softest, most strategic | Bleeds away the dread; may undercut the whole point |
 
 **Current lean:** *alerts-only with killer audio.* Keeps it fair without killing the
-tension.
+tension. **Reaffirmed at Phase-2 close ([decisions.md](decisions.md) D31, high confidence):** the
+only option satisfying both pillar 2 and invariant #6, and already the shipped mechanism — but the
+lock is gated on a *real-audio* playtest (the load-bearing half has never been validated by ear).
 
 ---
 
@@ -38,7 +40,11 @@ undefended angles when you've overstayed (but should NOT be omnisciently "you're
 embodied, attack now" — that feels cheap).
 
 **Current lean:** undecided. The "soft tell / marked hero unit" option is the most
-interesting risk/reward but needs playtesting.
+interesting risk/reward but needs playtesting. **Reviewed at Phase-2 close ([decisions.md](decisions.md)
+D31, medium confidence):** lean toward *no-signal / pure inference* as the default + ship target
+(purest expression of pillars 1–2, lowest invariant-#6 risk, and already how the shipped code
+behaves), keeping the *soft-tell marker* as a cheap, deferred knob (D13 reserves the engine-owned
+marker). Locking needs live PvP to confirm the inference is actually readable.
 
 ---
 
@@ -52,7 +58,10 @@ Can you drop into *any* living unit *anywhere*, instantly?
   near a camp you control. More tactical, less god-like.
 
 **Current lean:** start unconstrained; add a leash *only* if it feels too slippery in
-testing.
+testing. **Reaffirmed at Phase-2 close ([decisions.md](decisions.md) D31, medium confidence):** ship
+unconstrained — the D7 blindness cost is already the leash, and a cooldown would fight D4/D5's
+"no artificial friction" stance. If testing proves it too slippery, prefer a *camp-proximity* leash
+(diegetic, ties to territory) over a cooldown. Locking needs the loop played at speed (ideally PvP).
 
 ---
 

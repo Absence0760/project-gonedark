@@ -101,8 +101,9 @@ model.
 
 ## Phase 2 — Game systems
 
-> **Status: IN PROGRESS — systems spine ([`decisions.md`](decisions.md) D23) + host wiring
-> ([D24](decisions.md)) landed.** A first,
+> **Status: SIGNED OFF — systems-complete ([`decisions.md`](decisions.md) D31), device-audio +
+> feel-playtests carried forward.** Systems spine ([D23](decisions.md)) + host wiring
+> ([D24](decisions.md)) landed. A first,
 > fully-deterministic implementation of every bullet below lives in `core` as eight new modules
 > (`terrain, combat, economy, territory, fog, orders, alerts, event`): fixed-point combat with
 > suppression/cover/line-of-sight, territory capture, resources/economy/camps + production, fog
@@ -126,10 +127,16 @@ model.
 > **offscreen render harness** (`viz-runner`, `pnpm desktop:viz`) now asserts these behaviors with
 > real pixels. **Honest caveats (still NOT done):** balance is a *measured baseline*, not final
 > feel (the numbers — incl. the 30% retreat default — still expect to move from human playtests);
-> audio sounds are *procedural placeholders* (no
-> asset/design pass) and Android's AAudio sink is still a no-op; and the netcode/lockstep layer is
-> Phase 3. Open forks Q1/Q2/Q3 are deliberately left open — fog and alerts ship as a *mechanism*,
-> not a lock.
+> audio sounds are *procedural placeholders* (no asset/design pass); and the netcode/lockstep layer
+> is Phase 3. **The Android AAudio sink is now real** — `oboe`/AAudio via the shared host-tested
+> `pal::mix` seam, for-target-built but with on-device audibility still owed ([D29](decisions.md)).
+> **Phase 2 is signed off systems-complete ([D31](decisions.md))**: everything above is built,
+> tested, and verified by automation (full suite dev+release, the CI cross-arch checksum matrix,
+> the `viz-runner` real-pixel assertions, the `--metrics` balance digest); what remains is a
+> human/device confirmation layer (on-device audio by ear, balance feel by hand, the on-device
+> `adb` checksum leg), carried forward not faked. Open forks Q1/Q2/Q3 are deliberately left open —
+> fog and alerts ship as a *mechanism*, not a lock; each lean was reaffirmed at Phase-2 close (D31)
+> but locking depends on real audio / live PvP that doesn't exist yet.
 
 **Goal:** the actual game.
 
@@ -203,8 +210,8 @@ phone. Iterate logic on the emulator; **profile performance on real target devic
 
 | Risk | Why it's dangerous | Mitigation |
 |---|---|---|
-| **Touch controls** | CoH controls were built for mouse+keyboard; layering FPS + instant swap on a touchscreen is harder than any engine problem here | **Phase 0 — PASSED (D14):** prototype felt good in hand on a Galaxy S24. Shipping touch UI still a Phase 2 design task |
-| **Embodied combat feels laggy** | Lockstep + input delay is RTS-optimal but adds fixed input latency with no prediction/rollback — wrong for twitch FPS aim (Q7/Q8) | **Phase 0.5 — PASSED (D15):** avatar-local prediction makes it feel good across conditions. Tick rate (Q8) still to confirm early in Phase 1 |
+| **Touch controls** | CoH controls were built for mouse+keyboard; layering FPS + instant swap on a touchscreen is harder than any engine problem here | **Phase 0 — PASSED (D14):** prototype felt good in hand on a Galaxy S24. Shipping touch UI landed in Phase 2 (D24/D25) |
+| **Embodied combat feels laggy** | Lockstep + input delay is RTS-optimal but adds fixed input latency with no prediction/rollback — wrong for twitch FPS aim (Q7/Q8) | **Phase 0.5 — PASSED (D15):** avatar-local prediction makes it feel good across conditions. Tick rate (Q8) resolved D16/D21: global 60 Hz |
 | **One world, two views** | The same battlefield must work top-down as an RTS map *and* at eye level as an FPS space — double the asset/collision/LoD cost | Prove one space in both views in the **Phase 1** slice before scaling content; production-side answer (sourcing, tiers, two-view filter) in [`content-pipeline.md`](content-pipeline.md) |
 | **Build cost** | A custom native engine is a real investment | **Phase 1 PASSED (D22):** vertical slice validated on Galaxy S24; Unity/Godot fallback retired |
 | **Determinism bugs** | Any float leaking into the sim breaks lockstep silently | Enforce fixed-point in the sim layer; per-tick checksum diffing in CI from day one |

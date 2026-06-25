@@ -65,7 +65,8 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 
 ## Status
 
-**Phase 1 — DONE (D22). Phase 2 (game systems) is active.** Phase 0 (D14) and Phase 0.5
+**Phase 1 — DONE (D22). Phase 2 (game systems) — SIGNED OFF systems-complete (D31); Phase 3
+(scale & net) is active.** Phase 0 (D14) and Phase 0.5
 (D15) both passed (2026-06-23): touch-feel and embodied-combat-over-lockstep risks retired.
 **Phase 1 exit criterion met on Galaxy S24, Adreno 750:** `pnpm android:checksum` confirmed
 the device sim-runner checksum stream **bit-identical** to desktop over 300 ticks

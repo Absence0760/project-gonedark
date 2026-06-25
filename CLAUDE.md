@@ -5,11 +5,12 @@ grow camps from a top-down view like *Company of Heroes*, then **possess a singl
 and fight it in first person — while the strategic map goes dark.** One player does
 both jobs; the tension is divided attention.
 
-**Current state: Phase 1 COMPLETE — validated on real arm64 (D22). Phase 2 (game systems)
-is active.** The custom Rust engine ([D10]) is committed; the Unity/Godot fallback ([D8]) is
-retired. The design corpus in `docs/` is the product of record; engine code now exists in the
+**Current state: Phase 1 COMPLETE — validated on real arm64 (D22). Phase 2 (game systems) —
+SIGNED OFF systems-complete (D31); Phase 3 (scale & net) is active.** The custom Rust engine
+([D10]) is committed; the Unity/Godot fallback ([D8]) is retired. The design corpus in `docs/`
+is the product of record; engine code now exists in the
 Cargo workspace (`core/ pal/ render/ engine/ pal-desktop/ pal-android/ app/ sim-runner/
-server/`) with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]).
+net-sim-runner/ viz-runner/ server/`) with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]).
 A real deterministic **flow field** (`core::flow_field`) drives unit movement (the literal-executor
 `core::orders::order_system` via `core::systems::step_toward`); a real
 `wgpu` 29 + `winit` 0.30 desktop renderer and PAL backend interpolate prev→curr snapshots

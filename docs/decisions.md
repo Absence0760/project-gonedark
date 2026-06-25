@@ -817,7 +817,9 @@ none mutates the sim.
    flag for strategic sound bleeding into the embodied view. The **mix** (which sounds, where, how
    loud, what's ducked) is the system and is platform-free + tested; the actual output path stays a
    per-backend no-op sink for now (real AAudio / desktop output is plumbing, not the system, and is
-   left without pulling an audio crate).
+   left without pulling an audio crate). **(Superseded — desktop `cpal` output landed in
+   [D26](#d26--phase-2-polish-round-real-opt-in-audio-output-a-selection-highlight-and-a-first-pass-balance-baseline),
+   the Android `oboe`/AAudio sink in [D29](#d29--android-audio-sink-oboe-low-latency-aaudio-mixing-through-a-shared-host-tested-seam).)**
 
 5. **Touch UI** is two pure layers: `engine::selection` (command-view tap-pick / drag-band select;
    presentation state only, a no-op while embodied) and `engine::command_ui` (the on-screen
@@ -945,7 +947,9 @@ actual pixels, not just unit tests (it needs a GPU, so it is local-only, not CI)
 
 **What this does NOT decide:** the procedural sounds are placeholders (real audio assets/design
 are later); the balance numbers are a baseline, not tuned; Android's AAudio sink is still a
-documented no-op. Q1/Q2/Q3 remain open.
+documented no-op. Q1/Q2/Q3 remain open. **(Superseded in part: the AAudio sink is now real —
+[D29](#d29--android-audio-sink-oboe-low-latency-aaudio-mixing-through-a-shared-host-tested-seam);
+the balance baseline was measured into [D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness).)**
 
 **Consequences:**
 - `pal-desktop` gains an optional `cpal` dep behind the `audio` feature; `app` forwards it; the
@@ -1341,3 +1345,81 @@ stances; the touch-UI retreat default (30%, `engine::command_ui`) is unchanged.
   and human playtests for final feel — neither is doable in this environment.
 - [`README.md`](../README.md) repo-map notes the `sim-runner` `--metrics` harness;
   [`roadmap.md`](roadmap.md) Phase 2 balance note updated (baseline is now measured, not first-pass).
+
+---
+
+## D31 — Phase 2 sign-off: game systems complete, automated-verified; device-audio + feel-playtests carried forward
+
+**Status:** Phase 2 (game systems) is **signed off as systems-complete**. Every roadmap Phase 2
+bullet is implemented, deterministic, and verified by every means available without a human or a
+physical device. The items that remain are **not unbuilt systems** — they are a human/device
+*confirmation* layer (audio audibility by ear, balance feel by hand) that by nature cannot be
+discharged in this environment; they are carried forward explicitly rather than faked.
+
+**What Phase 2 delivered (the body of work this entry signs off):**
+
+1. **Systems spine** ([D23](#d23--phase-2-game-systems-the-deterministic-model-and-its-module-decomposition)) — the eight fixed-point `core` modules (`terrain, combat,
+   economy, territory, fog, orders, alerts, event`): combat with suppression/cover/line-of-sight,
+   territory capture, resources/economy/camps + production, fog of war (client-side derivation),
+   the widened literal-executor order/stance vocabulary + retreat trigger, and the alert channel.
+2. **Host/presentation wiring** ([D24](#d24--phase-2-host-wiring-foghudaudiotouch-ui-behind-a-frozen-presentation-contract)) + the reachable full order/stance vocabulary
+   ([D25](#d25--the-orderstance-command-vocabulary-was-already-in-the-sim-touch-ui-now-reaches-it-corrects-d24)) — fog render, the embodied alert HUD, the embodied audio mix, multi-unit
+   selection + on-screen order/stance UI; all pure presentation derivations (checksum-neutral).
+3. **Polish made it real and checkable** ([D26](#d26--phase-2-polish-round-real-opt-in-audio-output-a-selection-highlight-and-a-first-pass-balance-baseline)) — desktop `cpal` audio output, the drawn
+   selection rim, and the `viz-runner` offscreen render harness.
+4. **The two Phase-2-close engineering gaps, now closed:** the Android **AAudio sink** via `oboe`
+   + the shared host-tested `pal::mix` seam ([D29](#d29--android-audio-sink-oboe-low-latency-aaudio-mixing-through-a-shared-host-tested-seam)), and a **measured** combat/economy
+   **balance baseline** backed by a deterministic `sim-runner --metrics` harness that fixed two
+   degeneracies the first pass hid (a strictly-dominated Heavy, cosmetic suppression)
+   ([D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness)).
+
+**Verified here, by automation (the ceiling of in-environment testing):**
+- Full workspace test suite green **dev + release** — `core` 162 + `sim-runner` 12 (incl. 7 new
+  metrics tests) + the new `pal::mix` 16, plus the rest of the workspace.
+- **Determinism:** the changed sim files are float-free (invariant #1); the 300-tick `sim-runner`
+  stream is single-arch stable at the new `41e4d81992787504`; the **cross-arch checksum matrix**
+  (`determinism.yml`: `x86_64-linux`, `x86_64-windows-msvc`, `aarch64-apple-darwin`,
+  `aarch64-unknown-linux-gnu`) runs **automatically in CI on push** — this is the invariant-#7
+  net, and it is not manual.
+- **Real-pixel behavior:** `viz-runner` asserts all Phase 2 presentation behaviors offscreen —
+  command view draws units, band-select rims the squad, embodiment collapses the map to **96.6%
+  dark** (invariant #6), and the alert HUD draws markers as a thin overlay over the dark.
+- **Balance signal:** the `--metrics` digest confirms the D30 targets — ~8 s rifle TTK,
+  range-dependent rifle/heavy rock-paper-scissors (close-range heavies win, at-range rifles win),
+  and focus-fire pinning before the kill while a lone shooter never pins.
+
+**Explicitly OWED — needs a human or a physical device, deliberately not faked or skipped silently
+(carried into Phase 3/4, not Phase-2 blockers):**
+- **On-device audio audibility** — the AAudio sink builds for arm64 (NDK 28.2, dev+release) but
+  audible/low-latency output must be confirmed by ear with `pnpm android:dev` (listen for
+  panned/muffled cues while embodied; confirm logcat does *not* print `[audio] disabled (silent)`).
+- **On-device arm64 checksum re-confirmation** — `pnpm android:checksum` should now agree on
+  `41e4d81992787504`. (The *cross-arch* equality is already covered by the CI matrix above; only
+  the on-device `adb` leg is device-specific.)
+- **Human balance/feel playtests** — D30 is a *measured* baseline, not final tuning; the numbers
+  (incl. the 30% retreat default) still expect to move from play. The audio asset/design pass
+  (sounds are procedural placeholders) is likewise a creative task, not an engineering gap.
+
+**Open design forks Q1/Q2/Q3 stay deliberately open.** A Phase-2-close analysis of each reaffirmed
+its lean — Q1 *alerts-only with killer audio* (high confidence), Q2 *no-signal/pure-inference as
+default with the soft-tell marker held as a cheap deferred knob*, Q3 *ship unconstrained, leash
+deferred (camp-proximity over a cooldown)* — but each lock genuinely depends on something that does
+not yet exist (real designed audio for Q1; live PvP for Q2/Q3). They ship as a **mechanism, not a
+lock** (matching the roadmap), and remain in [`open-questions.md`](open-questions.md) with the lean
+reaffirmed; reopening them is a playtest-driven Phase 3+ task. This is consistent with not deciding
+open questions without the evidence the decision needs.
+
+**Why:** Phase 2's goal was "the actual game" — the systems — and those are built, tested,
+deterministic, and demonstrated with real pixels and objective balance metrics. Holding the phase
+open indefinitely for confirmation that *requires* a tester's ears, a player's hands, or a live PvP
+opponent would conflate "systems complete" with "tuned and shipped," which are different
+milestones (Phase 4 is polish/ship). Signing off the systems while naming the owed
+human/device confirmation honestly — rather than faking a pass or silently dropping it — keeps the
+decision log truthful and lets Phase 3 (scale & net) proceed on a complete systems base. Unlike
+[D22](#d22--phase-1-vertical-slice-passed-on-real-arm64-custom-rust-engine-validated-fallback-retired)
+(Phase 1, which *was* validated live on a Galaxy S24), this sign-off is explicitly
+"automated-verified, device/feel confirmation owed" — the honest state.
+
+**What this does NOT decide:** it does not declare the balance tuned, the audio designed, or the
+forks locked; it does not claim on-device audio or the on-device checksum leg has run. Those are
+named above as owed.
