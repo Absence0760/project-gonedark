@@ -63,6 +63,11 @@ pub mod radial;
 /// can `queue` strings (e.g. radial action names, summary numbers, button labels) and flush them.
 pub mod text;
 
+/// Cooked greybox mesh loading + GPU upload (D44). Owns the cooked-`.mesh` parser, the embedded
+/// model library ([`mesh::MeshLibrary`]), the depth-texture helper, and the pure `model_matrix`
+/// transform math the 3D mesh passes (weapon viewmodel + command-view unit tokens) build on.
+pub mod mesh;
+
 /// Embodied first-person world (W5). Owns `WorldRenderer`: the sky/ground + weapon-viewmodel passes
 /// that replace the bare near-black embodied void with a real first-person space while keeping the
 /// strategic map dark (invariant #6 — it draws ONLY the camera-derived environment + a screen-space
@@ -282,6 +287,17 @@ pub struct Renderer {
     /// (unit/enemy/point counts) as a final LOAD pass over the command frame. Other hosts still own
     /// their own `TextRenderer` for menus/summaries; this one is dedicated to the command readouts.
     text: text::TextRenderer,
+    /// Embedded greybox mesh library (D44): the cooked `.mesh` for every [`mesh::ModelKind`],
+    /// parsed + uploaded once. The weapon viewmodel and command-view unit tokens draw from it.
+    mesh_lib: mesh::MeshLibrary,
+    /// The shared instanced, depth-tested 3D mesh pipeline (D44) — drives both the weapon viewmodel
+    /// and the unit tokens.
+    mesh_pipeline: mesh::MeshPipeline,
+    /// Depth buffer for the 3D mesh passes, lazily (re)created to match the surface size
+    /// ([`Renderer::ensure_depth`]). Render-only — depth never touches the sim (invariant #1/#4).
+    depth_view: wgpu::TextureView,
+    /// The `(width, height)` `depth_view` is currently sized for.
+    depth_size: (u32, u32),
 }
 
 impl Renderer {
@@ -398,6 +414,11 @@ impl Renderer {
         // The ground grid shares the unit pass's camera layout so it uses the same view-projection.
         let terrain = terrain::TerrainRenderer::new(device, surface_format, &camera_layout);
         let text = text::TextRenderer::new(device, surface_format);
+        // Cooked greybox meshes + the shared 3D mesh pipeline + an initial (placeholder) depth
+        // buffer; the depth buffer is resized to the surface on the first mesh pass (D44).
+        let mesh_lib = mesh::MeshLibrary::load(device);
+        let mesh_pipeline = mesh::MeshPipeline::new(device, surface_format);
+        let depth_view = mesh::create_depth_view(device, 1, 1);
 
         Renderer {
             pipeline,
@@ -414,6 +435,20 @@ impl Renderer {
             world,
             terrain,
             text,
+            mesh_lib,
+            mesh_pipeline,
+            depth_view,
+            depth_size: (1, 1),
+        }
+    }
+
+    /// Ensure the mesh-pass depth buffer matches `(width, height)`, recreating it only when the
+    /// surface size changes. Cheap — a no-op on an unchanged size.
+    fn ensure_depth(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        let size = (width.max(1), height.max(1));
+        if self.depth_size != size {
+            self.depth_view = mesh::create_depth_view(device, size.0, size.1);
+            self.depth_size = size;
         }
     }
 
@@ -629,19 +664,47 @@ impl Renderer {
         self.world.render_sky(device, queue, view, uniform);
     }
 
-    /// Draw the embodied weapon viewmodel (W5) on top of the current frame (a LOAD pass — never
-    /// clears), delegating to [`world::WorldRenderer`]. The host calls this AFTER [`Renderer::render`]
-    /// (so the gun sits over the world + avatar) and before the alert HUD. The muzzle flash is driven
-    /// by the `flash` already uploaded in [`Renderer::render_world_sky`]'s uniform. Screen-space
-    /// chrome with no world position; reveals no intel. `aspect` is `width / height`.
+    /// Draw the embodied weapon viewmodel (W5/D44) on top of the current frame (a LOAD colour pass —
+    /// never clears colour; clears its own depth). The gun is the real `weapon_rifle` greybox **3D
+    /// mesh** drawn through the shared [`mesh::MeshPipeline`], anchored in **view space** by
+    /// [`world::weapon_view_model`] so it stays glued to the lower-right under camera yaw. The host
+    /// hands in the **projection alone** (`proj`, column-major) as the camera matrix — the model
+    /// matrix is the view-space placement — plus the muzzle-`flash` intensity (clamped `[0,1]`),
+    /// which both flares the gun and kicks it back as recoil. `width`/`height` size the depth buffer.
+    /// The host calls this AFTER [`Renderer::render`] (so the gun sits over the world + avatar) and
+    /// before the alert HUD. It has no world position → reveals no intel (invariant #6).
+    #[allow(clippy::too_many_arguments)]
     pub fn render_world_weapon(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
-        aspect: f32,
+        proj: &[[f32; 4]; 4],
+        flash: f32,
+        width: u32,
+        height: u32,
     ) {
-        self.world.render_weapon(device, queue, view, aspect);
+        self.ensure_depth(device, width, height);
+        let f = flash.clamp(0.0, 1.0);
+        let c = mesh::ModelKind::WeaponRifle.base_color();
+        let batch = mesh::MeshBatch {
+            mesh: self.mesh_lib.get(mesh::ModelKind::WeaponRifle),
+            // color.a carries the flash so the shader adds a warm emissive flare on fire.
+            instances: vec![mesh::MeshInstance {
+                model: world::weapon_view_model(f),
+                color: [c[0], c[1], c[2], f],
+            }],
+        };
+        self.mesh_pipeline.draw(
+            device,
+            queue,
+            view,
+            &self.depth_view,
+            proj,
+            mesh::MeshPipeline::DEFAULT_LIGHT,
+            wgpu::LoadOp::Load,
+            &[batch],
+        );
     }
 }
 

@@ -236,6 +236,20 @@ fn topdown_view_proj(width: u32, height: u32) -> Mat4 {
     proj * view
 }
 
+/// The embodied camera's perspective parameters. Shared by [`embodied_view_proj`] (the world
+/// camera) and [`embodied_proj`] (handed to the weapon viewmodel pass) so the gun's projection can
+/// never drift from the world it sits in.
+const EMBODIED_FOV_DEG: f32 = 60.0;
+const EMBODIED_NEAR: f32 = 0.05;
+const EMBODIED_FAR: f32 = 500.0;
+
+/// The embodied perspective projection alone (no view), for the viewport. The weapon viewmodel is
+/// placed in *view space*, so it needs the projection by itself (D44).
+fn embodied_proj(width: u32, height: u32) -> Mat4 {
+    let aspect = width.max(1) as f32 / height.max(1) as f32;
+    Mat4::perspective_rh(EMBODIED_FOV_DEG.to_radians(), aspect, EMBODIED_NEAR, EMBODIED_FAR)
+}
+
 /// Embodied perspective view-projection (free fn — eye position + yaw + viewport only, no
 /// `Game`/device needed): eye at the possessed unit's position, raised by `EYE_HEIGHT`,
 /// looking out across the ground plane along the current yaw.
@@ -244,8 +258,7 @@ fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, width: u32, height: u32)
     let dir = Vec3::new(yaw.cos(), yaw.sin(), -0.15).normalize();
     let target = eye + dir;
 
-    let aspect = width.max(1) as f32 / height.max(1) as f32;
-    let proj = Mat4::perspective_rh(60_f32.to_radians(), aspect, 0.05, 500.0);
+    let proj = embodied_proj(width, height);
     let view = Mat4::look_at_rh(eye, target, Vec3::Z);
     proj * view
 }
@@ -1165,13 +1178,16 @@ impl Game {
             &visibility,
         );
 
-        // 7a. Embodied weapon viewmodel (W5): the first-person gun over the world + avatar, with a
-        // muzzle flash that flares for a few ticks after the player fires (driven by the `flash`
-        // already in the world uniform). Screen-space chrome, no world position → reveals no intel.
+        // 7a. Embodied weapon viewmodel (W5/D44): the first-person gun — the real `weapon_rifle`
+        // greybox 3D mesh — over the world + avatar, with a muzzle flash that flares + recoils for a
+        // few ticks after the player fires. Anchored in view space, so the host hands in the
+        // projection ALONE (the model matrix is the view-space placement). No world position →
+        // reveals no intel (invariant #6).
         if self.embodied {
-            let aspect = width.max(1) as f32 / height.max(1) as f32;
+            let proj = embodied_proj(width, height).to_cols_array_2d();
+            let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
             self.renderer
-                .render_world_weapon(device, queue, view, aspect);
+                .render_world_weapon(device, queue, view, &proj, flash, width, height);
         }
 
         // 7b. Command-view band-select marquee: while a drag is in flight, draw the selection box
@@ -1364,6 +1380,36 @@ mod tests {
         let py = (1.0 - (ndc_y * 0.5 + 0.5)) * height as f32;
         assert!((px - width as f32 / 2.0).abs() < 1e-2, "center x = {px}");
         assert!((py - height as f32 / 2.0).abs() < 1e-2, "center y = {py}");
+    }
+
+    /// `embodied_proj` is the single source of the embodied perspective constants (D44 shares it
+    /// with the weapon viewmodel pass), so pin it: it must equal a direct `perspective_rh` with the
+    /// documented FOV/near/far, and produce a sane 4:3 frustum. Guards the constants against drift —
+    /// if they ever diverge, the gun's projection silently stops matching the world it sits in.
+    #[test]
+    fn embodied_proj_matches_documented_constants() {
+        let (width, height) = (800u32, 600u32); // 4:3
+        let got = embodied_proj(width, height);
+        let expected = Mat4::perspective_rh(
+            EMBODIED_FOV_DEG.to_radians(),
+            width as f32 / height as f32,
+            EMBODIED_NEAR,
+            EMBODIED_FAR,
+        );
+        assert_eq!(
+            got.to_cols_array(),
+            expected.to_cols_array(),
+            "embodied_proj must be the documented perspective verbatim"
+        );
+        // Sanity on the diagonal: m11 = 1/tan(fov/2); m00 = m11 / aspect.
+        let m = got.to_cols_array_2d();
+        let m11 = 1.0 / (EMBODIED_FOV_DEG.to_radians() / 2.0).tan();
+        assert!((m[1][1] - m11).abs() < 1e-4, "m11 = {}", m[1][1]);
+        assert!(
+            (m[0][0] - m11 / (width as f32 / height as f32)).abs() < 1e-4,
+            "m00 = {}",
+            m[0][0]
+        );
     }
 
     /// Unprojecting the center pixel returns ~`(0,0)`.

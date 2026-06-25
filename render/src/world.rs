@@ -11,13 +11,16 @@
 //!    plane (`z = 0`) get a gridded floor (so motion + heading read); rays above the horizon get a
 //!    sky gradient. This replaces the bare near-black `CLEAR_DARK` void with a real space while
 //!    staying a pure function of the *camera* — it has no access to sim entities, so it cannot leak
-//!    intel even in principle.
-//! 2. **Weapon viewmodel** — a simple first-person gun shape anchored to the lower-centre of the
-//!    screen (screen-space NDC, like `hud.rs`), with a muzzle-flash cue that flares for a few ticks
-//!    after the player fires. The flash is driven by a host-fed "last fire tick", NOT by reaching
-//!    into sim state.
+//!    intel even in principle. This module owns that pass ([`WorldRenderer`]).
+//! 2. **Weapon viewmodel** — the first-person gun. As of D44 this is the real `weapon_rifle`
+//!    greybox **3D mesh** drawn through the shared [`crate::mesh::MeshPipeline`] (the
+//!    [`crate::Renderer`] owns that pipeline + the mesh library + the depth buffer and drives the
+//!    pass — see `Renderer::render_world_weapon`), anchored in *view space* by
+//!    [`weapon_view_model`] so it stays glued to the lower-right of the screen regardless of camera
+//!    yaw. A muzzle-flash term flares the gun for a few ticks after the player fires; this module
+//!    still owns the flash *intensity* curve ([`muzzle_flash_intensity`]) and the placement math.
 //!
-//! The float boundary lives here (invariant #1/#4): every value is already `f32`; the renderer
+//! The float boundary lives here (invariant #1/#4): every value is already `f32`, the renderer
 //! never mutates sim state and never calls back into `core`. Like the rest of this crate it takes
 //! **no `glam`/windowing dep** (D19) — the host (which owns glam) hands matrices in as plain
 //! column-major `[[f32; 4]; 4]` arrays; this module only does scalar `f32` math.
@@ -43,6 +46,33 @@ pub fn muzzle_flash_intensity(last_fire_tick: Option<u64>, tick: u64) -> f32 {
     }
     let t = age as f32 / MUZZLE_FLASH_TICKS as f32; // 0 fresh → 1 at cutoff
     1.0 - t
+}
+
+/// Build the column-major **view-space** model matrix that places the weapon viewmodel in the
+/// avatar's hands — anchored to the lower-right of the screen and pointing into the world. Because
+/// the host hands the mesh pipeline the *projection alone* as its camera matrix for this pass (not
+/// `view * proj`), the gun lives in view space and stays put under camera yaw/pitch, exactly like a
+/// real FPS viewmodel. Pure scalar `f32` (no `glam`, D19) so it is unit-testable.
+///
+/// View space is camera-at-origin looking down `-Z`, `+Y` up, `+X` right. The rifle mesh is modelled
+/// Z-up with its barrel along local `+X`, so we re-base its axes: local `+X` (barrel) → view `-Z`
+/// (forward, into the screen), local `+Z` (up) → view `+Y` (up). `flash` adds a small recoil kick
+/// back toward the camera so firing reads as a jolt, not just a colour flare.
+pub fn weapon_view_model(flash: f32) -> [[f32; 4]; 4] {
+    let s = 0.42; // gun size in view units
+                  // Lower-right anchor, a little in front of the near plane. Recoil kicks it back/up.
+    let tx = 0.16;
+    let ty = -0.20 + flash * 0.03;
+    let tz = -0.62 + flash * 0.07;
+
+    // Columns = images of the scaled local axes in view space, then the translation column.
+    //   local +X (barrel) → view -Z;  local +Y → view -X;  local +Z (up) → view +Y.
+    [
+        [0.0, 0.0, -s, 0.0], // s * (0,0,-1)
+        [-s, 0.0, 0.0, 0.0], // s * (-1,0,0)
+        [0.0, s, 0.0, 0.0],  // s * (0,1,0)
+        [tx, ty, tz, 1.0],
+    ]
 }
 
 /// Parameters for the embodied world pass, handed in by the host each frame. All `f32` — the
@@ -76,93 +106,20 @@ impl WorldUniform {
     }
 }
 
-/// One screen-space NDC vertex of the weapon viewmodel, carrying a per-vertex shade so the gun has
-/// simple form (a darker grip, a lighter slide) without a texture. `repr(C)` so it uploads as the
-/// viewmodel vertex stream; field order/offsets MUST match `world.wgsl`'s `vs_weapon` attributes.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ViewmodelVertex {
-    /// Position in NDC ([-1,1], +y up).
-    pub ndc: [f32; 2],
-    /// Greyscale shade in `[0,1]` for this vertex (flat-ish gun metal).
-    pub shade: f32,
-    /// 0 = gun body, 1 = muzzle-flash quad (lit by the flash uniform).
-    pub kind: f32,
-}
-
-/// Build the weapon-viewmodel geometry in screen-space NDC for the given viewport aspect. A simple
-/// low-poly pistol: a grip block rooted at the lower-centre, a raised slide, and a small muzzle
-/// quad at the barrel tip that the muzzle flash lights. The shape is **aspect-corrected** so it
-/// keeps its proportions on wide vs tall surfaces — the horizontal extents are scaled by `1/aspect`
-/// when wider than tall (so the gun doesn't stretch). Pure float math, returned as a flat triangle
-/// list, so it is unit-testable without a GPU.
-pub fn viewmodel_vertices(aspect: f32) -> Vec<ViewmodelVertex> {
-    // Horizontal squash so the gun reads the same width on any aspect (>1 wide, <1 tall).
-    let sx = if aspect >= 1.0 { 1.0 / aspect } else { 1.0 };
-
-    // Anchor: lower-centre, offset slightly right (a right-handed hold). NDC y is up.
-    let cx = 0.18 * sx;
-    let floor = -1.0; // bottom of the screen
-
-    let mut out: Vec<ViewmodelVertex> = Vec::new();
-    let mut quad = |x0: f32, y0: f32, x1: f32, y1: f32, shade: f32, kind: f32| {
-        let v = |x: f32, y: f32| ViewmodelVertex {
-            ndc: [x, y],
-            shade,
-            kind,
-        };
-        out.push(v(x0, y0));
-        out.push(v(x1, y0));
-        out.push(v(x1, y1));
-        out.push(v(x0, y0));
-        out.push(v(x1, y1));
-        out.push(v(x0, y1));
-    };
-
-    // Grip: a tall darker block rooted at the bottom edge.
-    let grip_w = 0.16 * sx;
-    quad(cx - grip_w, floor, cx + grip_w, floor + 0.42, 0.22, 0.0);
-    // Body/slide: a lighter horizontal block extending left (toward screen centre — the barrel
-    // points "into" the world ahead of the avatar).
-    let body_left = cx - 0.46 * sx;
-    quad(body_left, floor + 0.30, cx + grip_w, floor + 0.50, 0.40, 0.0);
-    // Muzzle quad: a small block at the barrel tip; `kind = 1` so the shader can flare it.
-    let muzzle_w = 0.07 * sx;
-    quad(
-        body_left - muzzle_w,
-        floor + 0.32,
-        body_left,
-        floor + 0.48,
-        0.30,
-        1.0,
-    );
-
-    out
-}
-
-/// Sky + ground + weapon-viewmodel pass for the embodied (first-person) view. Owns two pipelines:
-/// a fullscreen sky/ground pass (which CLEARS the frame) and a screen-space weapon-viewmodel pass
-/// (a LOAD pass drawn after the avatar). Separate pipelines/shaders so neither contends with the
-/// unit or HUD passes.
+/// Sky + ground pass for the embodied (first-person) view. Owns the fullscreen sky/ground pipeline
+/// (which CLEARS the frame). The weapon viewmodel is no longer drawn here — it is a 3D mesh drawn by
+/// the [`crate::Renderer`] through the shared [`crate::mesh::MeshPipeline`] (D44).
 pub struct WorldRenderer {
     /// Fullscreen sky/ground pipeline (clears the frame to the world).
     sky_pipeline: wgpu::RenderPipeline,
     /// The world uniform (inverse view-proj, eye, flash).
     uniform_buf: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
-    /// Weapon-viewmodel pipeline (screen-space LOAD pass).
-    weapon_pipeline: wgpu::RenderPipeline,
-    /// Per-vertex GPU buffer for the viewmodel; reallocated only when it must grow.
-    weapon_buf: wgpu::Buffer,
-    /// Capacity (in vertices) currently allocated in `weapon_buf`.
-    weapon_cap: usize,
-    /// Bind group for the weapon pass (reuses `uniform_buf` for the flash intensity).
-    weapon_bind_group: wgpu::BindGroup,
 }
 
 impl WorldRenderer {
-    /// Build the sky/ground + weapon pipelines against the swapchain `surface_format`. The `device`
-    /// is borrowed (D19).
+    /// Build the sky/ground pipeline against the swapchain `surface_format`. The `device` is
+    /// borrowed (D19).
     pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gonedark.world_shader"),
@@ -192,14 +149,6 @@ impl WorldRenderer {
 
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gonedark.world_uniform_bind_group"),
-            layout: &uniform_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            }],
-        });
-        let weapon_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("gonedark.world_weapon_bind_group"),
             layout: &uniform_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -243,58 +192,10 @@ impl WorldRenderer {
             cache: None,
         });
 
-        let weapon_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<ViewmodelVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            // 0=ndc(vec2), 1=shade(f32), 2=kind(f32).
-            attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32, 2 => Float32],
-        };
-
-        let weapon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("gonedark.world_weapon_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_weapon"),
-                buffers: &[weapon_layout],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_weapon"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let weapon_cap = 64;
-        let weapon_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gonedark.world_weapon_vbo"),
-            size: (weapon_cap * std::mem::size_of::<ViewmodelVertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         WorldRenderer {
             sky_pipeline,
             uniform_buf,
             uniform_bind_group,
-            weapon_pipeline,
-            weapon_buf,
-            weapon_cap,
-            weapon_bind_group,
         }
     }
 
@@ -340,58 +241,6 @@ impl WorldRenderer {
         }
         queue.submit(std::iter::once(encoder.finish()));
     }
-
-    /// Draw the weapon viewmodel on top of the embodied frame (a LOAD pass — never clears),
-    /// flaring the muzzle by the `flash` already in the uniform (uploaded by [`Self::render_sky`]).
-    /// The host calls this AFTER the avatar pass and before the HUD. `aspect` is `width / height`
-    /// for proportion correction. Screen-space chrome with no world position — reveals no intel.
-    pub fn render_weapon(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        view: &wgpu::TextureView,
-        aspect: f32,
-    ) {
-        let verts = viewmodel_vertices(aspect);
-        if verts.len() > self.weapon_cap {
-            let new_cap = verts.len().next_power_of_two();
-            self.weapon_buf = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("gonedark.world_weapon_vbo"),
-                size: (new_cap * std::mem::size_of::<ViewmodelVertex>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.weapon_cap = new_cap;
-        }
-        queue.write_buffer(&self.weapon_buf, 0, bytemuck::cast_slice(&verts));
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("gonedark.world_weapon_encoder"),
-        });
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("gonedark.world_weapon_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load, // draw over the world + avatar
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                multiview_mask: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-            pass.set_pipeline(&self.weapon_pipeline);
-            pass.set_bind_group(0, &self.weapon_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.weapon_buf.slice(..));
-            pass.draw(0..verts.len() as u32, 0..1);
-        }
-        queue.submit(std::iter::once(encoder.finish()));
-    }
 }
 
 #[cfg(test)]
@@ -399,7 +248,7 @@ mod tests {
     //! `render` is the float boundary (invariant #1: floats live only in rendering), so `f32` math
     //! is fair game here. The pipelines need a real `wgpu::Device` (no display in CI), so the GPU
     //! path is untested; the testable math is factored into [`muzzle_flash_intensity`],
-    //! [`WorldUniform::new`], and [`viewmodel_vertices`].
+    //! [`WorldUniform::new`], and [`weapon_view_model`].
 
     use super::*;
 
@@ -474,54 +323,53 @@ mod tests {
         );
     }
 
-    // ---- weapon viewmodel placement ----
+    // ---- weapon viewmodel placement (view space) ----
 
-    #[test]
-    fn viewmodel_is_a_nonempty_triangle_list() {
-        let v = viewmodel_vertices(1.0);
-        assert!(!v.is_empty(), "the gun draws some geometry");
-        assert_eq!(v.len() % 3, 0, "a flat triangle list");
+    /// Apply a column-major model matrix to a point (w = 1).
+    fn xform(m: &[[f32; 4]; 4], p: [f32; 3]) -> [f32; 3] {
+        let mut out = [m[3][0], m[3][1], m[3][2]];
+        for j in 0..3 {
+            for r in 0..3 {
+                out[r] += m[j][r] * p[j];
+            }
+        }
+        out
     }
 
     #[test]
-    fn viewmodel_anchors_to_the_lower_screen() {
-        // Every vertex sits in the lower half of the screen (NDC y < 0 region) and inside the NDC
-        // box — the gun is a lower-screen overlay, never floating in the sky or off-screen.
-        let v = viewmodel_vertices(1.6);
-        assert!(
-            v.iter().all(|p| p.ndc[1] < 0.0),
-            "the whole gun stays in the lower half of the screen"
-        );
-        assert!(
-            v.iter()
-                .all(|p| p.ndc[0].abs() <= 1.0 && p.ndc[1].abs() <= 1.0),
-            "the gun stays inside the NDC viewport"
-        );
+    fn weapon_sits_in_front_lower_right() {
+        // The gun's local origin lands in front of the camera (view -Z), to the right (+X) and
+        // below centre (-Y) — a right-handed lower-screen hold.
+        let m = weapon_view_model(0.0);
+        let o = xform(&m, [0.0, 0.0, 0.0]);
+        assert!(o[2] < 0.0, "in front of the camera (−Z), got {o:?}");
+        assert!(o[0] > 0.0, "to the right");
+        assert!(o[1] < 0.0, "below centre");
+        assert_eq!(m[3], [0.16, -0.20, -0.62, 1.0], "affine translation column");
     }
 
     #[test]
-    fn viewmodel_has_a_muzzle_quad() {
-        // Exactly one of the three quads is the muzzle (kind == 1) — the flash-lit barrel tip.
-        let v = viewmodel_vertices(1.0);
-        let muzzle = v.iter().filter(|p| p.kind == 1.0).count();
-        assert_eq!(muzzle, 6, "the muzzle is one quad (6 verts) tagged kind=1");
-        let body = v.iter().filter(|p| p.kind == 0.0).count();
-        assert_eq!(body, 12, "two body quads (grip + slide) tagged kind=0");
+    fn weapon_barrel_points_into_the_screen() {
+        // The barrel tip (local +X) projects further from the camera (more negative view Z) than
+        // the stock (local −X): the gun points forward, into the world.
+        let m = weapon_view_model(0.0);
+        let tip = xform(&m, [0.6, 0.0, 0.0]);
+        let stock = xform(&m, [-0.3, 0.0, 0.0]);
+        assert!(tip[2] < stock[2], "barrel tip is deeper into the scene");
+        // Local up (+Z) maps to view up (+Y).
+        let up = xform(&m, [0.0, 0.0, 1.0]);
+        let base = xform(&m, [0.0, 0.0, 0.0]);
+        assert!(up[1] > base[1], "the sights point up the screen");
     }
 
     #[test]
-    fn viewmodel_is_aspect_corrected() {
-        // On a wide surface the gun is squashed horizontally (sx = 1/aspect) so it keeps its
-        // proportions — the max |x| at aspect 2.0 is half the max |x| at aspect 1.0.
-        let wide = viewmodel_vertices(2.0);
-        let square = viewmodel_vertices(1.0);
-        let max_x =
-            |vs: &[ViewmodelVertex]| vs.iter().map(|p| p.ndc[0].abs()).fold(0.0_f32, f32::max);
-        let (mw, ms) = (max_x(&wide), max_x(&square));
-        assert!(
-            (mw - ms * 0.5).abs() < 1e-3,
-            "wide-aspect gun is half the NDC width of the square one"
-        );
+    fn weapon_recoils_on_fire() {
+        // A live flash kicks the gun back toward the camera (less negative Z) and up vs the rest
+        // pose, so firing reads as a jolt.
+        let rest = weapon_view_model(0.0);
+        let fired = weapon_view_model(1.0);
+        assert!(fired[3][2] > rest[3][2], "recoils back toward the camera");
+        assert!(fired[3][1] > rest[3][1], "and kicks up");
     }
 
     /// Validate `world.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails

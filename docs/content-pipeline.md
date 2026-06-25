@@ -53,9 +53,9 @@ in both views.
   D41). Purpose: *play* the Phase 1 slice and prove the "one world, two views" thesis
   ([`architecture.md`](architecture.md)) before spending a cent on art. Disposable.
   **For the push to a publishable build (D41), this is the *default* tier for every visible
-  object** — units, structures, and the embodied weapon — built by a Claude-authored headless
-  **Blender (`bpy`) script** (`tools/models/gen_models.py` → one `.glb` per object), not pulled
-  from an external text-to-3D service. That keeps it license-clean by construction: code-authored
+  object** — units, structures, environment props, and the embodied weapon — built by a
+  Claude-authored headless **Blender (`bpy`) script** (`tools/models/gen_models.py` → one `.glb`
+  and one cooked `.mesh` per object), not pulled from an external text-to-3D service. That keeps it license-clean by construction: code-authored
   geometry from primitives has no third-party tool terms to vet, so each asset's manifest reads
   `source: procedural (Blender bpy)`, `license: CC0-1.0` — license hygiene (§3) is *satisfied*,
   not a question. These ride the *same* pipeline as anything else (cook → LOD §1, two-view filter
@@ -120,7 +120,7 @@ Honest boundary: **Claude owns the pipeline and the curation, not the art.**
 
 | Claude **can** | Claude **cannot** |
 |---|---|
-| Build & own the **cook step** (glb → LOD + ASTC + atlas + LZ4 pak; tier derivation) | Sculpt hero meshes to a final-art bar |
+| Build & own the **cook step** (glb → cooked `.mesh` (greybox) + LOD + ASTC + atlas + LZ4 pak; tier derivation) | Sculpt hero meshes to a final-art bar |
 | Enforce **license/provenance** in CI; generate `CREDITS` | Paint textures, rig/animate characters |
 | Generate **procedural & greybox** content (terrain, kit-bash, collision proxies) | Make art-direction calls |
 | Write & maintain the **sourcing guide**; vet licenses | Own a EULA legal decision (flags it, you decide) |
