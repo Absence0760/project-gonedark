@@ -1,10 +1,23 @@
 # Phase 3 plan — Scale & net
 
-> **Status: IN PROGRESS.** Phase 1 (vertical slice, D22) and Phase 2 (game systems,
-> D23–D26 + D29–D30, signed off systems-complete in D31) are done. Phase 3 makes the game hold up *at size* and *over the wire*. This
-> doc is the synthesis of a four-way scouting pass over the four roadmap bullets; it is
-> the product-of-record plan, sequenced by blast radius. Like the Phase 1 / Phase 0.5
-> plans, it is updated as slices land and signed off at the end.
+> **Status: IN PROGRESS — most of the codeable surface has landed.** Phase 1 (vertical slice,
+> D22) and Phase 2 (game systems, D23–D26 + D29–D30, signed off systems-complete in D31) are done.
+> Phase 3 makes the game hold up *at size* and *over the wire*. This doc is the synthesis of a
+> four-way scouting pass over the four roadmap bullets; it is the product-of-record plan, sequenced
+> by blast radius, updated as slices land and signed off at the end.
+>
+> **Landed so far:** **A** — stress harness, timing, flow-field caching (~8× → ~3.7 ms/tick),
+> spatial-hash target acquisition, and the cross-arch stress-determinism CI job. **B** — the full
+> in-process→wire lockstep stack (`core::lockstep`, `net-sim-runner` + `compare-net` CI,
+> `pal::Transport` + loopback, engine wiring, avatar prediction, checksum-agreement broadcast, the
+> **UDP** transport, and **RTT-adaptive delay** via the agreed `DelayChange` protocol). **C** — the
+> authoritative snapshot (D28) and the **reconnect policy** (snapshot + buffered-command replay).
+> **Still open:** **A** — rayon-into-`core` (needs a decision *and* is unjustified at ~3.7 ms) and
+> the dual-rate re-eval (D21, needs on-device thermal numbers); **B** — the host-side RTT
+> estimator wiring + relay/matchmaking ([Q9](open-questions.md)); **C** — the Wi-Fi↔cellular
+> **handoff** (blocked on a QUIC transport); **D** — the PvP detection mechanism (blocked on a
+> **Q2** `/decision`). The remaining items are gated on decisions or a physical device, not on more
+> code.
 
 Phase 3 has four workstreams (`roadmap.md` §"Phase 3 — Scale & net"):
 
@@ -74,10 +87,15 @@ loops at scale, both **algorithmic, not parallelism** problems:
    (phase2 stream byte-identical; equivalence test; determinism-auditor + code-reviewer
    clear). **Re-measured: ~30.4 ms → ~3.7 ms median (~8×), p99 ~3.9 ms — under budget.**
    This likely removes the need for sim-side parallelism (step 6) in Phase 3.
-5. **Spatial hash for target acquisition** (`combat` + new `core::spatial`) — only if a
-   re-profile shows combat is now the wall (with the flow-field fixed, the tick is now
-   ~3.7 ms, so this may be unnecessary). Equivalence + lowest-index-tie-break test.
-   `/safe-edit`.
+5. **Spatial hash for target acquisition** ✅ **DONE** (`combat` + new `core::spatial`) — a
+   deterministic `GRID`×`GRID` bucket grid reusing `flow_field`'s exact integer cell mapping
+   (no floats, `core` deps stay empty) replaces the O(n²) `FireAtWill` scan. **Bit-identical to
+   the brute-force pick** — the query's `(dist_sq, idx)` lexicographic comparator reproduces the
+   same min-distance/lowest-index target independent of cell-visit order, and `can_engage` stays
+   the sole range/LoS filter (phase2 `41e4d81992787504` + stress streams byte-identical;
+   equivalence test vs a brute-force oracle over a seeded field + cross-bucket tie-break test).
+   Rebuilt per tick, not sim state. Pure-perf structure (the ~3.7 ms tick didn't require it, but
+   it's the right shape for the 200-unit/mid-range-arm64 target and reusable by fog/alerts/D).
 6. **rayon parallelism** — **only if still over budget on mid-range arm64.** Pattern:
    *parallel pure-read phase → deterministic serial ordered-write phase* (never
    `par_iter_mut` a system that writes other entities' slots — combat damage application
@@ -89,11 +107,12 @@ loops at scale, both **algorithmic, not parallelism** problems:
    confirming global-60 (close the re-eval). If over budget after 4–5 → quantify the
    RTS-bulk vs embodied-combat split before adopting dual-rate's two-clock complexity.
 
-**CI:** the stress scene wants cross-arch determinism coverage, but the `compare` job in
-`determinism.yml` currently requires **all** `checksums-*.txt` to be identical — so the
-stress stream must be a **separately-grouped** comparison, not dumped beside the phase2
-stream. That's an ADD-ONLY edit to the diff logic (invariant #7) and is its own careful,
-`/safe-edit`-gated step — **not** bundled with the harness commit.
+**CI:** ✅ **DONE** — the stress scene now has cross-arch determinism coverage. Because the
+`compare` job requires **all** `checksums-*.txt` to be identical, the stress stream rides a
+**separately-grouped** `stress-checksums-<target>` artifact + a `compare-stress` job (mirroring
+the net `compare-net` pattern), so it is diffed across arch independently of the phase2 and net
+groups. ADD-ONLY (invariant #7): the existing `compare`/`compare-net` jobs are untouched, and the
+`stress-` prefix is excluded from the `checksums-*` glob.
 
 ---
 
@@ -154,8 +173,8 @@ checksum byte-identical with prediction on vs off."*
    1-peer, **delay-0** session with a `None`/`NullTransport` (no input latency, no socket);
    `Game::new`/`frame` signatures unchanged so `app`/`pal-android` need no edits. The
    load-bearing guard test asserts the lockstep-driven single-player checksum stream is
-   identical to direct stepping. (Multiplayer per-frame submit *pacing* for `delay > 0` is
-   left to step 7.) `engine` tests 33 → 43, dev + release.
+   identical to direct stepping. (Multiplayer per-frame submit *pacing* for `delay > 0` is part of
+   the step 8 host-RTT wiring still owed.) `engine` tests 33 → 43, dev + release.
 5. **Fill in `engine::predict_avatar`** ✅ **DONE** — replaced the stub with an `AvatarPrediction`
    (presentation-only): the embodied eye **leads** the authoritative ticks (`extrapolate_avatar`,
    by the avatar's authoritative velocity) and **reconciles** toward each tick (`reconcile_avatar`,
@@ -188,11 +207,20 @@ checksum byte-identical with prediction on vs off."*
    in-process `LoopbackTransport`): one frame ↔ one datagram, non-blocking drain, never-panic on
    socket errors (UDP loss is the lockstep retransmit window's job). `UdpTransport::pair()` gives a
    connected localhost pair for tests (13 tests, dev+release). **UDP first** per the plan (swappable
-   behind the trait); **QUIC stays the documented future** (D27's Wi-Fi↔cellular lean). **Still owed
-   for step 7:** **RTT-driven adaptive delay `D`** — deferred as a separate, determinism-sensitive
-   follow-up because a mid-session delay change must be a *deterministic, agreed* protocol event or
-   peers desync silently; the `delay()` accessor (step 6) is the seam it will build on. Relay /
-   matchmaking ([Q9](open-questions.md)) untouched.
+   behind the trait); **QUIC stays the documented future** (D27's Wi-Fi↔cellular lean).
+8. **RTT-adaptive delay `D`** ✅ **DONE** — the mid-session delay change is now a *deterministic,
+   agreed* protocol event, not a local decision. A new `DelayChange` wire frame (`FrameKind=2`,
+   `WIRE_VERSION` 2→3) ships `(effective_tick, seq, new_delay)`; every peer applies the identical
+   change at the identical tick. `propose_delay(new_delay, guard)` is the host API — `core` reads no
+   clock, sees only integers (RTT proposes; the protocol commits). The load-bearing refactor
+   decouples `submit_tick` (now a monotonic `next_submit_tick`) and warmup (an immutable
+   `warmup_until`) from `delay`, so a change touches **only** the prune-window size — it can never
+   re-stamp/drop a command or stall. The no-change path is byte-identical (net stream
+   `2684f7afb6e334e5` unchanged); headline tests drive a mid-run increase (under loss) + decrease,
+   asserting both peers stay checksum-identical to each other *and* to a no-change reference;
+   determinism-auditor clean (no float/clock, no command-stream desync). **Still owed:** the
+   host-side RTT estimator + hysteresis that *calls* `propose_delay` (thin `pal-desktop`/`engine`
+   wiring, low determinism risk); relay / matchmaking ([Q9](open-questions.md)) untouched.
 
 ---
 
@@ -235,8 +263,18 @@ terrain by `map_id` (unknown ids rejected **loudly**, not silently defaulted), a
 round-trip-replay determinism test (serialize@T → deserialize → replay `cmds[T..L]` bit-identical to
 the uninterrupted run, riding the arch matrix). `core` deps stay empty, float-free. A
 `determinism-auditor` pass confirmed no Critical/High hazards. `core` tests 141 → 151, dev + release.
-**Still owed for workstream C:** the reconnect *policy* + Wi-Fi↔cellular handoff (consumes this
-slice + `core::lockstep`'s command buffer); these are net-facing and follow workstream B.
+**Reconnect policy** ✅ **DONE** — `core::lockstep` gained an `executed` merged-command buffer
+(captured in `try_advance`), a `retain_floor` + `retain_from(tick)` (the host installs it when it
+snapshots), and `replay_range(from, to)` (returns `None` **loudly** if any tick was pruned, never a
+silent short replay). `core::reconnect::resume_from_snapshot` drives `Sim::deserialize` + the replay
+loop, rejecting a malformed/wrong-base snapshot, a pruned range, or an invalid `[from, to)` at the
+boundary. Correct by construction over the D28 round-trip invariant; the buffer is pure side state
+(phase2/stress/net streams byte-identical). Headline test resumes bit-identically across a
+production spawn + a `Build` (non-trivial free list) and keeps stepping in lockstep;
+`determinism-auditor` clean. `core` tests 177 → 184. **Still owed:** the **Wi-Fi↔cellular handoff**
+half — it needs **QUIC connection migration** to survive a network switch without a full reconnect,
+and only the UDP transport has landed, so it is **deferred until a QUIC `pal::Transport` exists**
+(D28). The reconnect policy itself is transport-agnostic and ready for it.
 
 ---
 
