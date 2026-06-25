@@ -19,7 +19,7 @@
 //! shooter/target (needed by `last_attacker` and the `SimEvent`s) comes from the O(1)
 //! [`World::entity`] accessor.
 
-use crate::components::{EntityKind, Faction, InputSource, Stance};
+use crate::components::{EntityKind, Faction, InputSource, Stance, Vec2};
 use crate::ecs::World;
 use crate::event::SimEvent;
 use crate::fixed::Fixed;
@@ -234,6 +234,124 @@ pub fn combat_system(
         });
         world.despawn(dead);
     }
+}
+
+/// Cosine of the embodied weapon's half-cone angle, as a Fixed in `[0, 1]`. `cos(30°) ≈
+/// 0.8660` — a 60°-wide aim cone, generous enough that a hip-fired shot reads as "I pointed at
+/// him and hit," tight enough that you must actually face the target. Stored as the exact
+/// rational `866/1000` so it is float-free and bit-identical on every peer (invariant #1). The
+/// cone test squares this (never a sqrt), so only `cos²` ever enters the comparison.
+pub const FIRE_CONE_COS_HALF: Fixed = Fixed::from_ratio(866, 1000);
+
+/// Resolve one embodied shot from `shooter_idx` aimed along `dir` (a unit aim vector in Fixed
+/// world space — quantized at the host boundary, invariant #1). A fixed-point **cone hitscan**:
+/// the lowest-index living hostile unit that lies inside the aim cone, within weapon range, and
+/// in line of sight takes the same cover-mitigated damage + suppression the auto-resolver applies,
+/// and the weapon goes on cooldown. Returns silently (no shot, no cooldown) if the weapon is
+/// disarmed, still cooling down, or no target qualifies.
+///
+/// Determinism (the guard greps this file): fixed-point only, no sqrt/normalize. The cone test
+/// `dir·(t−p) ≥ cos_half·|t−p|` is evaluated by **squaring both non-negative sides** —
+/// `proj·proj ≥ cos_half²·|t−p|²` — after rejecting any target behind the aim (`proj < 0`), so a
+/// transcendental never enters. Targets are scanned in stable index order; the first qualifier
+/// (lowest index) wins ties. Only already-checksummed fields are written, so the per-tick
+/// `fold()`/checksum stream is untouched (invariant #7).
+pub fn resolve_fire(
+    world: &mut World,
+    terrain: &Terrain,
+    shooter_idx: usize,
+    dir: Vec2,
+    events: &mut Vec<SimEvent>,
+) {
+    if !world.is_index_alive(shooter_idx) {
+        return;
+    }
+    // A disarmed (range 0) weapon never fires; a hot weapon must finish its cooldown first. Both
+    // mirror the auto-resolver's gates so embodied fire obeys the same rate-of-fire contract.
+    if world.weapon[shooter_idx].range <= Fixed::ZERO {
+        return;
+    }
+    if world.weapon[shooter_idx].cooldown_left != 0 {
+        return;
+    }
+
+    let my_pos = world.pos[shooter_idx];
+    let range = world.weapon[shooter_idx].range;
+    let range_sq = range * range;
+    let cos_half = FIRE_CONE_COS_HALF;
+    let cos_half_sq = cos_half * cos_half;
+
+    // Pick the lowest-index hostile, living unit inside the cone, in range, with LoS.
+    let mut chosen: Option<usize> = None;
+    for t in 0..world.capacity() {
+        if t == shooter_idx || !world.is_index_alive(t) {
+            continue;
+        }
+        if world.kind[t] != EntityKind::Unit {
+            continue;
+        }
+        if world.health[t].is_dead() {
+            continue;
+        }
+        if !is_enemy(world.faction[shooter_idx], world.faction[t]) {
+            continue;
+        }
+        let to_target = world.pos[t] - my_pos;
+        let dist_sq = to_target.len_sq();
+        // Exclude a target sitting exactly on the muzzle (zero range): the cone test divides the
+        // half-space by direction, and a zero vector has no direction. Treat it as out of arc.
+        if dist_sq <= Fixed::ZERO || dist_sq > range_sq {
+            continue;
+        }
+        // Cone test without a sqrt. `proj = dir·to_target`; reject anything behind the aim, then
+        // compare squared: `proj² ≥ cos_half² · |to_target|²`.
+        let proj = dir.dot(to_target);
+        if proj < Fixed::ZERO {
+            continue;
+        }
+        if proj * proj < cos_half_sq * dist_sq {
+            continue;
+        }
+        if !terrain.line_of_sight(my_pos, world.pos[t]) {
+            continue;
+        }
+        chosen = Some(t);
+        break;
+    }
+
+    let target_idx = match chosen {
+        Some(t) => t,
+        None => return,
+    };
+
+    // Same writes the auto-resolver's engage pass performs: cover-mitigated damage, last-attacker,
+    // suppression, and the weapon cooldown. Reusing them keeps embodied and AI fire identical
+    // (and keeps every touched field already in the checksum fold).
+    let shooter = match world.entity(shooter_idx) {
+        Some(e) => e,
+        None => return,
+    };
+    let target = match world.entity(target_idx) {
+        Some(e) => e,
+        None => return,
+    };
+
+    let mult = terrain.cover_at(world.pos[target_idx]).damage_multiplier();
+    let damage = world.weapon[shooter_idx].damage * mult;
+
+    world.health[target_idx].cur -= damage;
+    world.last_attacker[target_idx] = Some(shooter);
+    world.suppression[target_idx] =
+        (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
+    world.weapon[shooter_idx].cooldown_left = world.weapon[shooter_idx].cooldown_ticks;
+
+    events.push(SimEvent::Damaged {
+        entity: target,
+        faction: world.faction[target_idx],
+        source: shooter,
+        amount: damage,
+        pos: world.pos[target_idx],
+    });
 }
 
 #[cfg(test)]
@@ -601,6 +719,177 @@ mod tests {
         assert_eq!(world.health[near_low.index as usize].cur, fx(75), "lowest index hit");
         assert_eq!(world.health[near_mid.index as usize].cur, fx(100));
         assert_eq!(world.health[near_high.index as usize].cur, fx(100));
+    }
+
+    // --- Embodied fire: Command::Fire cone hitscan (resolve_fire) -----------------------------
+
+    /// Aim straight along +X as a Fixed unit vector — no float ever constructed (invariant #1).
+    fn aim_pos_x() -> Vec2 {
+        Vec2::new(Fixed::ONE, Fixed::ZERO)
+    }
+
+    fn fire(world: &mut World, terrain: &Terrain, shooter: Entity, dir: Vec2, events: &mut Vec<SimEvent>) {
+        resolve_fire(world, terrain, shooter.index as usize, dir, events);
+    }
+
+    #[test]
+    fn fire_hits_target_inside_cone_in_range() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        // Directly ahead on +X, distance 5 (< range 10) — squarely inside the aim cone.
+        let enemy = spawn_unit(&mut world, 5, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(75), "open terrain = full damage");
+        assert_eq!(world.last_attacker[enemy.index as usize], Some(shooter));
+        assert_eq!(events.len(), 1, "one Damaged event for the hit");
+    }
+
+    #[test]
+    fn fire_misses_target_outside_the_cone() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        // Aim +X, but the enemy is at +Y (90° off-axis) — well outside the ~30° half-cone.
+        let enemy = spawn_unit(&mut world, 0, 5, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "off-axis target not hit");
+        assert!(events.is_empty());
+        // A clean miss must NOT spend the weapon's cooldown — you can re-aim and fire again.
+        assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 0);
+    }
+
+    #[test]
+    fn fire_misses_target_behind_the_shooter() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        // Enemy directly BEHIND (−X) the +X aim: proj < 0, rejected before any squaring.
+        let enemy = spawn_unit(&mut world, -5, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(100));
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn fire_misses_out_of_range_target() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(5, 25, 0));
+        // On-axis and centered in the cone, but distance 6 > range 5.
+        let enemy = spawn_unit(&mut world, 6, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "out of range = no hit");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn fire_blocked_by_line_of_sight() {
+        let mut world = World::new();
+        let mut terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        let enemy = spawn_unit(&mut world, 6, 0, Faction::Enemy, 100, Weapon::default());
+        // Wall the cell strictly between the two (world (3,0)) with Heavy cover → blocks sight.
+        let (wx, wy) = terrain.cell_of(Vec2::new(fx(3), fx(0)));
+        terrain.set_cover(wx, wy, Cover::Heavy);
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "LoS-blocked shot misses");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn fire_respects_weapon_cooldown() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 10, 5));
+        let enemy = spawn_unit(&mut world, 5, 0, Faction::Enemy, 1000, Weapon::default());
+
+        let mut events = Vec::new();
+        // First shot lands and sets cooldown_left = 5.
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(990));
+        assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 5);
+        // A second pull while hot does nothing (no damage, no event, cooldown unchanged).
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(990), "no fire while on cooldown");
+        assert_eq!(events.len(), 1);
+        assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 5);
+    }
+
+    #[test]
+    fn fire_skips_dead_and_finds_next_living_target() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        // Lower-index enemy already at zero health (dead but not yet despawned this tick) must be
+        // skipped; the live higher-index enemy on-axis is hit instead.
+        let dead = spawn_unit(&mut world, 4, 0, Faction::Enemy, 100, Weapon::default());
+        world.health[dead.index as usize].cur = Fixed::ZERO;
+        let live = spawn_unit(&mut world, 5, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[live.index as usize].cur, fx(75), "the living target takes the hit");
+        assert_eq!(world.last_attacker[live.index as usize], Some(shooter));
+    }
+
+    #[test]
+    fn fire_breaks_ties_to_lowest_index() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        // Two equidistant on-axis enemies; the lowest slot index must take the shot.
+        let low = spawn_unit(&mut world, 5, 0, Faction::Enemy, 100, Weapon::default());
+        let high = spawn_unit(&mut world, 5, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[low.index as usize].cur, fx(75), "lowest-index target hit");
+        assert_eq!(world.health[high.index as usize].cur, fx(100));
+    }
+
+    #[test]
+    fn fire_never_hits_same_faction() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        let friendly = spawn_unit(&mut world, 5, 0, Faction::Player, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[friendly.index as usize].cur, fx(100), "no friendly fire");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn fire_kills_then_combat_death_pass_despawns() {
+        // Command::Fire applies BEFORE combat_system in a tick: a lethal embodied shot drops the
+        // target to 0 health, and the same tick's death pass emits Killed + despawns it.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 100, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        let enemy = spawn_unit(&mut world, 5, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert!(world.health[enemy.index as usize].is_dead());
+        // Now run the auto-resolver's death pass (as Sim::step would, right after apply).
+        let mut rng = Rng::new(1);
+        combat_system(&mut world, &terrain, &mut rng, &mut events);
+        assert!(!world.is_alive(enemy), "lethal embodied shot despawns the target this tick");
+        assert!(events.iter().any(|e| matches!(e, SimEvent::Killed { .. })));
     }
 
     #[test]
