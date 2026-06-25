@@ -180,10 +180,11 @@ model.
 > **native per-platform** (reached through a narrow shell↔sim seam), with the **in-session** shell
 > in-engine. **The seam prerequisite has landed:** `core::shell` — a GPU-free, logic-free façade
 > (intent in, presentation-safe view out; fairness structural via no `&World`), recorded in
-> [D34](decisions.md). The four buildable-now Rust workstreams are A (seam ✅) · B (in-engine
-> in-session shell) · C (device tiers / dynamic-res / thermal) · D (telemetry + consent gate); the
-> seven native out-of-match shells are deferred behind the seam, missing per-platform UI projects,
-> and the [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
+> [D34](decisions.md). **The four buildable-now Rust workstreams have all landed** — A (seam ✅) · B
+> (in-engine in-session shell ✅) · C (device tiers / dynamic-res / thermal ✅) · D (telemetry +
+> consent gate ✅); full suite green dev+release. What remains is the seven **native out-of-match
+> shells**, deferred behind the seam, missing per-platform UI projects, and the
+> [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
 
 **Goal:** wrap the game in everything that ships *around* the match — the app shell, the
 storefront, the first-run teach — and tune it to mid-range silicon.

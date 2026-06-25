@@ -141,7 +141,18 @@ shells, several of those blocked on [Q5](open-questions.md)/[Q9](open-questions.
 and no win-condition evaluator (the host fills `MatchSummary` today — a single-sourced win condition,
 if wanted, is a `core` *system*, not this boundary).
 
-### Workstream B — In-session shell (in-engine) — ☐ not started (unblocked)
+### Workstream B — In-session shell (in-engine) — ✅ DONE (landed)
+
+> **Landed:** `engine::session_shell` (the pause / surrender / post-match-summary / reconnect-prompt
+> state machine + the host-side `MatchSummary` assembler) and `render::overlay` (the screen-space
+> chrome drawn over the — possibly dark — match frame). Consumes the WS-A seam (`SessionAction`,
+> `MatchSummary`, `ConnectionStatus`/`LinkState`); checksum-neutral (a guard test proves driving the
+> shell + assembler every tick leaves the sim stream byte-identical); fairness held (the overlay is
+> screen-space only, the full-info summary appears only once `Ended`, and a desync drained from
+> lockstep supersedes a local pause). Engine 81 / render 52 tests; `code-reviewer` CLEAN after fixing
+> the desync-drain + pause-guard wire-up. **Owed:** a real win-condition evaluator (outcome is a
+> `Draw` placeholder today, per [D34](decisions.md)); the Wi-Fi↔cellular reconnect *handoff* half
+> stays QUIC-blocked (Phase 3 C).
 
 **Goal:** pause, surrender/leave, post-match summary, and the reconnect prompt — rendered
 **in-engine** (`engine`/`render`) under the same avatar-only fog as the match (invariant #6,
@@ -167,7 +178,20 @@ and **leaks no strategic intel** — no minimap, no off-screen unit state in a s
 mid-match. Render-side logic extracted to testable seams like `interpolate_instances` (CLAUDE.md
 testing rule). `/safe-edit` (embodiment/fairness blast radius).
 
-### Workstream C — Device quality tiers + dynamic resolution + thermal/battery tuning (`engine`/`render`) — ☐ not started (unblocked)
+### Workstream C — Device quality tiers + dynamic resolution + thermal/battery tuning (`engine`/`render`) — ✅ DONE (landed)
+
+> **Landed:** `render::tiers` (the `QualityTier` Low/Mid/High enum → `TierParams`, plus the pure
+> `next_resolution_scale` dyn-res and `thermal_backoff` policy fns) and `engine::tuning`
+> (`RenderTuning`, the controller `Game` owns). The thermal/power signal crosses a new **PAL** seam
+> (`pal::ThermalSensor` → `ThermalState`/`PowerState`), implemented as a synthetic stub in
+> `pal-desktop` — **owed:** a real `pal-android` reader (`PowerManager.getThermalStatus()` /
+> `BatteryManager`), which is where the on-device 200-unit numbers that may reopen the
+> **[D21](decisions.md) dual-rate** question come from (record via `/decision` when measured). The
+> load-bearing guard test steps the same scripted sim across Low/Mid/High × {Nominal,Fair,Serious,
+> Critical} and asserts a byte-identical checksum stream — a tier is a *rendering* choice, never a
+> sim input (invariant #1/#4). `core` untouched + float-free; `code-reviewer` CLEAN. **Owed glue:**
+> wiring `resolution_scale` to an actual intermediate render target (the decision logic is done +
+> tested; only the wgpu plumbing is deferred).
 
 **Goal:** make the game hold frame rate and thermal budget on **mid-range arm64**, retiring the
 Phase 1/3 flagship-only caveat (D22/D21: validated on S24 only; mid-range frame-rate/thermal and
@@ -190,7 +214,18 @@ the 200-unit power budget were explicitly deferred here).
 **Guard:** all render-side; the determinism matrix must stay green across every tier (a tier is a
 *rendering* choice, never a *sim* choice — invariant #1/#4). `/check` before each commit.
 
-### Workstream D — Telemetry + consent-gated live-ops scaffolding (`server` + consent-gate seam) — ☐ not started (unblocked)
+### Workstream D — Telemetry + consent-gated live-ops scaffolding (`server` + consent-gate seam) — ✅ DONE (landed)
+
+> **Landed:** in `server` — `consent` (a `ConsentGate` whose `guard`/`guard_with` *move* the payload
+> in and return it only on consent, so a non-consenting path holds nothing to send — consent is
+> structural, default-deny), `telemetry` (a typed event schema + `ingest` that can only reach the
+> `TelemetrySink` through the gate), `liveops` (public-always / personalized-gated config), and an
+> axum `http` router (`POST /v1/telemetry`, `GET /v1/liveops/config`) with a 64 KiB body cap on the
+> ingest route. Consent rides the `X-Consent-Analytics` header (default-deny). Invariant #8 held — no
+> secret added; tests use an in-memory sink so the suite is green **without Docker/Postgres** (CI +
+> clone-and-run stay green). 18 unit + 7 HTTP + 1 doctest; `code-reviewer` CLEAN after making the
+> validation-ordering test load-bearing + adding the body cap. **Deferred:** the native consent
+> *screen* (D32 chrome), the accounts backend, and the real Postgres `TelemetrySink`.
 
 **Goal:** stand up telemetry + live-ops scaffolding that is **consent-respecting by construction**,
 per [`infrastructure.md`](infrastructure.md) — built so a player who hasn't consented emits
@@ -277,8 +312,9 @@ Do **not** resolve the open questions here — leans only; each lock needs the i
 
 ---
 
-**Phase 4 opens with the four Rust workstreams above** (A: the seam — ✅ landed this run, [D34](decisions.md);
-B: the in-engine in-session shell; C: device tiers / dyn-res / thermal; D: telemetry + consent gate). The
-seven native out-of-match shells are **deferred** behind the seam, the missing per-platform UI
+**Phase 4's four buildable-now Rust workstreams have all landed** (A: the `core::shell` seam,
+[D34](decisions.md); B: the in-engine in-session shell; C: device tiers / dyn-res / thermal; D:
+telemetry + consent gate) — full suite green dev+release, `code-reviewer` CLEAN on each. What remains
+in Phase 4 is the **native out-of-match shells**: deferred behind the seam, the missing per-platform UI
 projects, and the Q5/Q9/Q11/Phase-3/backend blockers in §2 — see [`roadmap.md`](roadmap.md)
 §"Phase 4 — Polish & ship" and [D32](decisions.md).
