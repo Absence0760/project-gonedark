@@ -28,23 +28,31 @@ use crate::territory::Territory;
 // are the single source of truth every peer reads, so the same action costs and
 // the same unit spawns identically everywhere (lockstep).
 //
-// FIRST-PASS BALANCE BASELINE — UNTUNED (playtest only, NOT a locked design).
+// MEASURED BALANCE BASELINE (D30 — supersedes the D26 first pass).
 // ---------------------------------------------------------------------------
-// Goal: an internally-coherent starting point, reasoned in *seconds* (the sim
-// runs at 60 Hz, so `seconds * 60 = ticks`) and against the demo's seed purse
-// of `Resources::new(500)` (see sim-runner / engine). Every number below is a
-// believable RTS placeholder, not a precision-tuned final value — expect to
-// move all of them once real playtests exist. The economy must remain
+// Still a *playtest baseline*, NOT a locked design — but every combat/cost
+// number here was moved against an objective, deterministic metric (the
+// sim-runner `--metrics` harness: open 1v1 time-to-kill, equal-cost army
+// trades, suppression pin-vs-kill timing, the economy ramp curve), so the
+// shape is justified by measurement rather than vibe. Final *feel* still
+// awaits human playtests. Reasoned in *seconds* (the sim runs at 60 Hz, so
+// `seconds * 60 = ticks`) and against the demo's seed purse of
+// `Resources::new(500)` (see sim-runner / engine). The economy must remain
 // integer/fixed-point (invariant #1) and bit-identical dev==release.
 //
 // The shape of the design:
 //   * Income drips per-tick. With base 1/tick that is 60 resources/second of
 //     hands-off income; each held point adds 2/tick = 120/second. So holding
-//     territory roughly *triples* your income — territory genuinely matters.
+//     one point roughly *triples* your income — territory genuinely matters.
 //   * Costs are sized in that 60/s frame so they read in seconds of saving:
-//     a Rifleman (~1.7 s of base income) is cheap and spammable; a Heavy
-//     (~4 s) is a real investment that buys ~2.2x HP and ~2x burst; a camp
+//     a Rifleman (~1.7 s of base income) is cheap, spammable, long-ranged; a
+//     Heavy (~3.7 s) is a real investment that buys 2.8x HP and 3x burst at
+//     SHORTER range — a short-range bruiser, not a strict upgrade; a camp
 //     (~4 s, half the seed purse) is a commitment but affordable turn-one.
+//   * The Rifleman↔Heavy matchup is range-dependent by design: at point-blank
+//     the cost-equal Heavy blob out-trades the rifles; at rifle range the
+//     cheaper, longer-reaching rifles kite and win (harness-verified — the old
+//     Heavy was strictly dominated and lost every equal-cost trade).
 //   * Build/production times read in seconds: Rifleman a handful of seconds,
 //     Heavy notably longer, camp construction longer still.
 //   * A camp + one held point pays its 250 cost back in ~2 s of holding, so
@@ -62,10 +70,13 @@ pub const CAMP_BUILD_COST: i64 = 250;
 /// body you mass.
 pub const RIFLEMAN_COST: i64 = 100;
 /// Resource cost to produce one [`Heavy`](UnitKind::Heavy).
-/// 250 = 2.5x a Rifleman for ~2.2x HP (220 vs 100) and ~2x burst (11 vs 4 dmg):
-/// a deliberate investment, so massing Heavies is a real economic choice, not a
-/// strict upgrade.
-pub const HEAVY_COST: i64 = 250;
+/// 220 = 2.2x a Rifleman. The Heavy is a short-range *bruiser*: 2.8x HP (280 vs 100)
+/// and 3x burst (18 vs 6 dmg) at *shorter* range (11 vs 14). The 2.2x cost is tuned
+/// (D30) so the equal-cost trade is genuinely range-dependent — at point-blank the
+/// Heavy mass trades up, at rifle range the cheaper, longer-reaching Rifleman mass
+/// wins — instead of the old strictly-dominated Heavy (measured rifle-mass-wipes-
+/// heavy under D26's numbers).
+pub const HEAVY_COST: i64 = 220;
 
 /// Ticks to finish a freshly-placed camp's construction. 1200 ticks = 20 s — a
 /// camp is a slow, deliberate structural commitment, far longer than any unit.
@@ -75,9 +86,11 @@ pub const CAMP_BUILD_TICKS: u16 = 1200;
 /// speedup). 300 ticks = 5 s: a handful of seconds, fast enough to reinforce.
 pub const RIFLEMAN_BASE_TICKS: u16 = 300;
 /// Base ticks to produce one [`Heavy`](UnitKind::Heavy) (before level speedup).
-/// 720 ticks = 12 s: notably longer than a Rifleman, matching its higher cost
-/// and battlefield value.
-pub const HEAVY_BASE_TICKS: u16 = 720;
+/// 660 ticks = 11 s: notably longer than a Rifleman, matching its higher cost
+/// (2.2x) and battlefield value. Kept proportional to the 220 cost (3x the Rifleman
+/// production time for 2.2x the cost) so producing Heavies stays a deliberate, slow
+/// commitment rather than a spam option (D30).
+pub const HEAVY_BASE_TICKS: u16 = 660;
 
 /// Each upgrade level shaves this many ticks off production time...
 /// 60 ticks = 1 s faster per level — a tangible, readable reward for investing
@@ -147,26 +160,32 @@ pub const fn build_cost(kind: BuildingKind) -> i64 {
 /// spawns the bit-identical unit (determinism).
 pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
     match kind {
-        // Damage is a deliberately-low playtest pass (balance is untuned — D24): at 60 Hz a
-        // Rifleman now deals 4 dmg every 30 ticks (8 DPS), so a 1v1 takes ~12.5 s and focus-fire
-        // still resolves quickly — but troops no longer delete each other on contact, and
-        // suppression (pins after 6 hits, ~3 s) gets to matter before a unit dies. Halving the
-        // old damage keeps the Rifleman↔Heavy ratio intact; dial to taste.
+        // Measured re-tune (D30 — supersedes the D24/D26 first pass). Numbers chosen against the
+        // deterministic balance harness (sim-runner `--metrics`), not feel:
+        //   * Rifleman: 6 dmg / 30 ticks = 12 DPS → a symmetric open 1v1 resolves in ~8.0 s
+        //     (down from the old ~12 s — combat is decisive without being a contact-delete), and
+        //     long-reaching (range 14) so rifle MASS wins at range.
+        //   * Heavy: a short-range BRUISER — 280 HP, 18 dmg / 48 ticks (~22.5 DPS) at range 11.
+        //     It out-trades a cost-equal Rifleman blob at point-blank but is kited by the longer-
+        //     ranged Rifleman, so neither strictly dominates (the old 220/11/range-12 Heavy lost
+        //     every equal-cost trade; harness confirmed rifle-mass wiped heavy-mass 0-for).
+        // These remain a *playtest baseline* (measured targets, not final feel — D30 keeps D26's
+        // "baseline, not locked" framing); dial against fresh `--metrics` runs.
         UnitKind::Rifleman => (
             Health::full(Fixed::from_int(100)),
             Weapon {
-                range: Fixed::from_int(15),
-                damage: Fixed::from_int(4),
+                range: Fixed::from_int(14),
+                damage: Fixed::from_int(6),
                 cooldown_ticks: 30,
                 cooldown_left: 0,
             },
         ),
         UnitKind::Heavy => (
-            Health::full(Fixed::from_int(220)),
+            Health::full(Fixed::from_int(280)),
             Weapon {
-                range: Fixed::from_int(12),
-                damage: Fixed::from_int(11),
-                cooldown_ticks: 60,
+                range: Fixed::from_int(11),
+                damage: Fixed::from_int(18),
+                cooldown_ticks: 48,
                 cooldown_left: 0,
             },
         ),
@@ -654,16 +673,16 @@ mod tests {
         assert_eq!(prod_time(UnitKind::Heavy, 255), PROD_TICKS_FLOOR);
     }
 
-    /// Anchor the playtest baseline in seconds (60 Hz) so an accidental edit that
-    /// breaks the intended "reads in seconds" shape trips a test. Untuned — these
-    /// assertions are expected to move when the numbers are next rebalanced.
+    /// Anchor the measured baseline (D30) in seconds (60 Hz) so an accidental edit that
+    /// breaks the intended "reads in seconds" shape trips a test. These assertions are
+    /// expected to move when the numbers are next rebalanced.
     #[test]
     fn balance_baseline_reads_in_seconds() {
         const HZ: u16 = 60;
         // Camp build is the slowest action; units are a handful of seconds.
         assert_eq!(CAMP_BUILD_TICKS, 20 * HZ, "camp construction is 20 s");
         assert_eq!(RIFLEMAN_BASE_TICKS, 5 * HZ, "rifleman is 5 s");
-        assert_eq!(HEAVY_BASE_TICKS, 12 * HZ, "heavy is 12 s");
+        assert_eq!(HEAVY_BASE_TICKS, 11 * HZ, "heavy is 11 s (D30)");
         // A camp is buildable turn-one from the 500-resource demo purse, with
         // resources to spare. (Bound to locals so the check is on values, not a
         // const expression — clippy flags `assert!` on a constant condition.)
@@ -671,7 +690,34 @@ mod tests {
         assert!(camp_cost < 500, "camp affordable at the seed purse");
         // Holding one point ~doubles base income (territory matters).
         assert_eq!(PER_POINT_INCOME, 2 * BASE_INCOME);
-        // Heavy is a real investment over the spammable Rifleman.
+        // Heavy is a real investment over the spammable Rifleman (220 vs 100 cost — D30).
         assert!(heavy_cost > rifle_cost, "heavy costs more than a rifleman");
+        assert_eq!(heavy_cost, 220, "heavy costs 220 = 11/5 of a rifleman (D30)");
+    }
+
+    /// Lock the measured D30 combat stats so a stray edit that re-breaks the tuned
+    /// Rifleman/Heavy relationship (TTK band, Heavy-as-bruiser) trips a test. These are
+    /// the values the `--metrics` harness was tuned against; expected to move on the next
+    /// measured re-tune.
+    #[test]
+    fn unit_stats_match_measured_d30_baseline() {
+        let (rh, rw) = unit_stats(UnitKind::Rifleman);
+        assert_eq!(rh, Health::full(Fixed::from_int(100)), "rifleman 100 HP");
+        assert_eq!(rw.range, Fixed::from_int(14), "rifleman range 14");
+        assert_eq!(rw.damage, Fixed::from_int(6), "rifleman 6 dmg");
+        assert_eq!(rw.cooldown_ticks, 30, "rifleman 30-tick cooldown -> 12 DPS, ~8 s 1v1");
+
+        let (hh, hw) = unit_stats(UnitKind::Heavy);
+        assert_eq!(hh, Health::full(Fixed::from_int(280)), "heavy 280 HP (280 vs 100 rifle)");
+        assert_eq!(hw.range, Fixed::from_int(11), "heavy range 11 (shorter than rifle -> kiteable)");
+        assert_eq!(hw.damage, Fixed::from_int(18), "heavy 18 dmg (3x rifle burst)");
+        assert_eq!(hw.cooldown_ticks, 48, "heavy 48-tick cooldown -> 18 dmg per 48 ticks");
+
+        // The Heavy is a bruiser, not a strict upgrade: shorter range than the Rifleman is the
+        // load-bearing weakness that makes the matchup range-dependent (the old Heavy was
+        // strictly dominated). Guard that relationship explicitly.
+        assert!(hw.range < rw.range, "heavy must out-range LESS than the rifleman");
+        assert!(hh.max > rh.max, "heavy is tankier");
+        assert!(hw.damage > rw.damage, "heavy hits harder per shot");
     }
 }

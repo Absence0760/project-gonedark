@@ -27,8 +27,15 @@ use crate::rng::Rng;
 use crate::terrain::Terrain;
 
 /// Suppression at or above this fraction of [`SUPPRESSION_MAX`] pins a unit: it may not fire
-/// and (per `orders`) moves at reduced speed. (Tunable; worker 2 may refine.)
-pub const SUPPRESSION_PIN: Fixed = Fixed::from_ratio(3, 4);
+/// and (per `orders`) moves at reduced speed.
+///
+/// 1/2 (D30, lowered from 3/4). At [`SUPPRESSION_PER_HIT`] = 1/8 this means a unit pins once
+/// **four** shots land before they decay — i.e. *concentrated* fire pins, but a lone shooter
+/// (one hit per cooldown, decaying 1/64 a tick) never accumulates enough, so a clean 1v1 still
+/// resolves by damage. The harness confirmed the old 3/4 pin never triggered before a kill in
+/// focus-fire (suppression was cosmetic); at 1/2 a 4-shooter focus pins the target on the first
+/// burst, *before* it dies — making suppression a real "concentrate fire to pin" lever (D26 goal).
+pub const SUPPRESSION_PIN: Fixed = Fixed::from_ratio(1, 2);
 
 /// Ceiling for accumulated suppression; it decays toward zero each tick.
 pub const SUPPRESSION_MAX: Fixed = Fixed::ONE;

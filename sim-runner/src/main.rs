@@ -17,10 +17,19 @@
 //!   embodied. Exercises the per-tick systems at size so profiling (`--time`) reflects the real
 //!   200-unit cost and the determinism gate covers the sim at scale.
 //!
-//! Usage: `gonedark-sim-runner [ticks] [scenario] [--time]`  (defaults: 300 ticks, `phase2`)
+//! Usage: `gonedark-sim-runner [ticks] [scenario] [--time] [--metrics[=<which>]]`
+//!   (defaults: 300 ticks, `phase2`)
 //!   - `--time` prints per-tick wall-clock stats (min/median/p99/max ms) to **stderr**; the
 //!     `<tick> <checksum>` stream on stdout is unchanged. Timing is host-side only (`Instant`)
 //!     and never touches sim state, so it cannot move the checksum.
+//!   - `--metrics[=<which>]` runs the deterministic balance-metrics harness ([`metrics`]) and
+//!     prints the metric series (or, with `summary`, the headline digest) to **stderr** — the
+//!     objective signal the D30 combat/economy re-tune was tuned against. `<which>` is one of
+//!     `open-duel` / `cover-duel` / `equal-cost` / `economy` / `summary` (default `summary`).
+//!     Like `--time`, it touches stdout not at all, so determinism is unaffected; it runs its own
+//!     canonical fights instead of the `phase2`/`stress` scenario and then exits.
+
+mod metrics;
 
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -294,6 +303,18 @@ fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(300);
 
+    // `--metrics[=<which>]` is a self-contained balance-harness mode: it runs its own canonical
+    // fights, prints the metric series/digest to stderr, and exits without touching the stdout
+    // checksum stream (so it can never affect determinism — like `--time`).
+    if let Some(metric_arg) = args.iter().find(|a| a.starts_with("--metrics")) {
+        let which = metric_arg
+            .strip_prefix("--metrics=")
+            .map(|w| metrics::Metric::parse(w).unwrap_or_else(|| fatal_metric(w)))
+            .unwrap_or(metrics::Metric::Summary);
+        metrics::report(which, ticks);
+        return;
+    }
+
     let which = positional
         .get(1)
         .map(|s| s.as_str())
@@ -310,6 +331,13 @@ fn main() {
 
 fn fatal_scenario(s: &str) -> ! {
     eprintln!("unknown scenario {s:?}; expected `phase2`, `stress`, or `stress:<n>`");
+    std::process::exit(2);
+}
+
+fn fatal_metric(s: &str) -> ! {
+    eprintln!(
+        "unknown metric {s:?}; expected `open-duel`, `cover-duel`, `equal-cost`, `economy`, or `summary`"
+    );
     std::process::exit(2);
 }
 

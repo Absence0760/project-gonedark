@@ -337,8 +337,14 @@ mod tests {
         let target = Vec2::new(Fixed::from_int(50), Fixed::ZERO);
         w.order[ci] = Order::MoveTo(target);
         w.order[si] = Order::MoveTo(target);
-        // A suppression between 0 and PIN → half speed.
-        w.suppression[si] = Fixed::HALF;
+        // A suppression strictly between 0 and PIN → half speed. Use a value comfortably
+        // below SUPPRESSION_PIN (now 1/2 — D30) so this exercises the "slowed but not pinned"
+        // path regardless of small pin-threshold moves.
+        w.suppression[si] = Fixed::from_ratio(1, 4);
+        assert!(
+            w.suppression[si] < combat::SUPPRESSION_PIN && w.suppression[si] > Fixed::ZERO,
+            "test fixture must be slowed-but-not-pinned"
+        );
         run(&mut w, 5);
         assert!(
             w.pos[ci].x > w.pos[si].x,
