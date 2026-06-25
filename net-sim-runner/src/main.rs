@@ -271,14 +271,7 @@ fn run(cfg: Config) -> Outcome {
         refsums.push(refsim.checksum());
     }
 
-    // Both peers submit their full script up front (the host would submit once per tick;
-    // submitting ahead is equivalent and keeps the pump loop purely about delivery/advance).
     let mut sessions = [Lockstep::new(2, 0, delay), Lockstep::new(2, 1, delay)];
-    for k in 0..(ticks - delay) {
-        let t = delay + k;
-        sessions[0].submit(script(&h, 0, t, delay));
-        sessions[1].submit(script(&h, 1, t, delay));
-    }
 
     let mut net = Net::new(
         cfg.net_seed,
@@ -294,6 +287,22 @@ fn run(cfg: Config) -> Outcome {
 
     let mut it = 0u64;
     loop {
+        // Faithful live-host drive (the shape `engine::Game::frame` takes in step 4, D27):
+        // each pump every peer samples + submits its local input, kept at most `delay` ticks
+        // ahead of execution — the input-delay buffer's whole purpose — and never past the
+        // run's end. Pacing submission to advancement (vs. dumping the whole script up front)
+        // is what makes this a true reference for the live loop and exercises the gate the way
+        // production will; the emitted stream is identical either way (`submit` stamps to a
+        // fixed execution tick regardless of when it is called).
+        for (i, session) in sessions.iter_mut().enumerate() {
+            while session.submit_tick() < ticks
+                && session.submit_tick() <= session.next_tick() + delay
+            {
+                let t = session.submit_tick();
+                session.submit(script(&h, i as PeerId, t, delay));
+            }
+        }
+
         let f0 = sessions[0].drain_outbound();
         net.send(it, 1, f0);
         let f1 = sessions[1].drain_outbound();
