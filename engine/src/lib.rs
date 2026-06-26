@@ -2312,6 +2312,118 @@ mod tests {
         assert!(!embodied.iter().any(|c| matches!(c, Command::Embody { .. })));
     }
 
+    /// An embody press with NO live unit to take (`embody_target == None`) drops the edge — it must
+    /// not emit a possession over nothing (the corpse-guard: a dead avatar never re-possesses).
+    #[test]
+    fn map_input_drops_embody_with_no_target() {
+        let player = test_player();
+        let input = InputFrame {
+            embody_pressed: true,
+            ..Default::default()
+        };
+        let cmds = map_input_commands(&input, false, player, None);
+        assert!(
+            cmds.is_empty(),
+            "no live target → no Embody command, got {cmds:?}"
+        );
+    }
+
+    /// The embody command carries the RESOLVED target, not the current avatar — possessing the unit
+    /// the player picked, not the hard-wired original.
+    #[test]
+    fn map_input_embody_targets_the_resolved_unit() {
+        let avatar = Entity { index: 1, generation: 0 };
+        let picked = Entity { index: 7, generation: 3 };
+        let input = InputFrame {
+            embody_pressed: true,
+            ..Default::default()
+        };
+        let cmds = map_input_commands(&input, false, avatar, Some(picked));
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::Embody { entity } if *entity == picked)),
+            "Embody must carry the resolved target {picked:?}, got {cmds:?}"
+        );
+    }
+
+    /// Spawn `n` live Player units into a fresh `World`, returning their handles in index order.
+    fn world_with_player_units(n: usize) -> (gonedark_core::ecs::World, Vec<Entity>) {
+        let mut world = World::new();
+        let es = (0..n)
+            .map(|_| {
+                let e = world.spawn();
+                world.faction[e.index as usize] = Faction::Player;
+                world.kind[e.index as usize] = EntityKind::Unit;
+                e
+            })
+            .collect();
+        (world, es)
+    }
+
+    fn selection_of(units: &[Entity]) -> Selection {
+        let mut sel = Selection::new();
+        sel.units.extend_from_slice(units);
+        sel
+    }
+
+    /// Rule 1: the first LIVE selected Player unit wins (the RTS "select, then possess" path) over
+    /// the current avatar.
+    #[test]
+    fn embody_target_prefers_first_live_selected_unit() {
+        let (world, e) = world_with_player_units(3);
+        let sel = selection_of(&[e[1], e[2]]);
+        assert_eq!(embody_target(&sel, &world, e[0]), Some(e[1]));
+    }
+
+    /// A dead selected handle and an enemy selected unit are both skipped; the first *live Player*
+    /// selection is taken.
+    #[test]
+    fn embody_target_skips_dead_and_non_player_selections() {
+        let (mut world, e) = world_with_player_units(3);
+        world.despawn(e[0]); // dead selected handle
+        world.faction[e[1].index as usize] = Faction::Enemy; // enemy selected unit
+        let sel = selection_of(&[e[0], e[1], e[2]]);
+        assert_eq!(
+            embody_target(&sel, &world, e[2]),
+            Some(e[2]),
+            "skip the corpse and the enemy, take the live player unit"
+        );
+    }
+
+    /// Rule 2: with nothing selected, re-possess the current avatar while it is still alive.
+    #[test]
+    fn embody_target_keeps_live_current_when_nothing_selected() {
+        let (world, e) = world_with_player_units(2);
+        let empty = Selection::new();
+        assert_eq!(embody_target(&empty, &world, e[1]), Some(e[1]));
+    }
+
+    /// Rule 3 — the bug fix: when the avatar has DIED and nothing is selected, fall back to any live
+    /// Player unit (stable index order) so embodiment is never permanently stranded.
+    #[test]
+    fn embody_target_falls_back_to_a_live_unit_after_avatar_death() {
+        let (mut world, e) = world_with_player_units(3);
+        world.despawn(e[0]); // the original avatar died
+        let empty = Selection::new();
+        assert_eq!(
+            embody_target(&empty, &world, e[0]),
+            Some(e[1]),
+            "a dead avatar must not strand embodiment — take the next live player unit"
+        );
+    }
+
+    /// `None` only when the player has no live unit at all (an enemy-only / empty world): every
+    /// possession path is then a correct no-op.
+    #[test]
+    fn embody_target_is_none_without_a_live_player_unit() {
+        let mut world = World::new();
+        let enemy = world.spawn();
+        world.faction[enemy.index as usize] = Faction::Enemy;
+        world.kind[enemy.index as usize] = EntityKind::Unit;
+        let empty = Selection::new();
+        assert_eq!(embody_target(&empty, &world, enemy), None);
+    }
+
     /// Embodied suppresses tap-to-move: a pointer-down while embodied produces no `Move`.
     #[test]
     fn map_input_embodied_suppresses_tap_to_move() {
