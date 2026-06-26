@@ -921,6 +921,32 @@ impl Game {
         self.shell.apply(action, &summary);
     }
 
+    /// Toggle the in-session pause overlay from the host (desktop **Esc**; the natural Android
+    /// back-gesture binding too): open the pause menu while playing, dismiss it while paused. A
+    /// no-op once the match has ended or a reconnect prompt owns the screen — those surfaces are
+    /// dismissed by their own buttons, not the pause key (see [`pause_toggle_action`]). Once the
+    /// pause overlay is up, the existing `overlay_click` seam reaches its **Resume** / **Surrender**
+    /// buttons, so this trigger is all that was missing for the pause + in-match surrender loop.
+    ///
+    /// Pure session state: it routes through [`Self::apply_session_action`] and so never touches
+    /// `&mut Sim` — a pause is host/session state that never enters the lockstep input stream, so
+    /// the per-tick checksum is untouched (invariants #1/#4). The single-player tick halt follows
+    /// from [`InSessionShell::halts_local_tick`], which `frame` reads.
+    pub fn toggle_pause(&mut self) {
+        if let Some(action) = pause_toggle_action(self.shell.surface()) {
+            self.apply_session_action(action);
+        }
+    }
+
+    /// Whether any in-session shell overlay (pause / reconnect prompt / post-match summary) is
+    /// currently up — i.e. the match is *not* in the plain `Playing` surface. The host reads this
+    /// to free the OS cursor (so the overlay's buttons are clickable) and to stop feeding
+    /// world-driving input to the match frozen underneath. Read-only presentation state; the
+    /// decision is the pure [`overlay_active`] seam.
+    pub fn shell_overlay_active(&self) -> bool {
+        overlay_active(self.shell.surface())
+    }
+
     /// Hit-test a pointer click (given in normalized device coordinates — `x` rightward, `y` upward,
     /// the same screen space the overlay is drawn in) against the current in-session shell overlay's
     /// buttons, and resolve it to a host action. Returns `None` when no overlay is up or the click
@@ -1924,6 +1950,27 @@ fn overlay_click_action(overlay: &Overlay, slot: usize) -> Option<OverlayClick> 
         }
         (Overlay::Summary(_), 0) => Some(OverlayClick::Dismiss),
         _ => None,
+    }
+}
+
+/// Whether a shell `surface` warrants an overlay — anything but the plain `Playing` surface. Pure
+/// seam behind [`Game::shell_overlay_active`], so the host's cursor-freeing / input-freezing
+/// predicate is unit-tested without constructing a GPU `Game`.
+fn overlay_active(surface: &ShellSurface) -> bool {
+    !matches!(surface, ShellSurface::Playing)
+}
+
+/// Map the current shell surface to the host pause-toggle action: **Playing → Pause** (open the
+/// menu), **Paused → Resume** (close it), and `None` on the terminal/blocking surfaces
+/// (`Ended` / `ReconnectPrompt`), which own the screen and are dismissed by their own buttons
+/// rather than by the pause key. Pure (no `Game`, no GPU) so it is unit-tested below — this toggle
+/// *decision* is the only logic in [`Game::toggle_pause`], the rest being thin host glue.
+fn pause_toggle_action(surface: &ShellSurface) -> Option<gonedark_core::shell::SessionAction> {
+    use gonedark_core::shell::SessionAction;
+    match surface {
+        ShellSurface::Playing => Some(SessionAction::Pause),
+        ShellSurface::Paused => Some(SessionAction::Resume),
+        ShellSurface::Ended(_) | ShellSurface::ReconnectPrompt(_) => None,
     }
 }
 
@@ -3120,6 +3167,49 @@ mod tests {
             overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Desynced)),
             Overlay::ReconnectPrompt { desynced: true }
         );
+    }
+
+    /// The pause-key trigger (`Game::toggle_pause`'s only logic): Playing opens the menu, Paused
+    /// closes it, and the terminal/blocking surfaces refuse — they own the screen and are dismissed
+    /// by their own buttons, not Esc. This is the seam that closes "pause + in-match surrender" —
+    /// once Paused is reachable, the existing `overlay_click_action` slots already reach Surrender.
+    #[test]
+    fn pause_toggle_action_maps_each_surface() {
+        assert_eq!(
+            pause_toggle_action(&ShellSurface::Playing),
+            Some(SessionAction::Pause),
+            "the pause key opens the menu while playing"
+        );
+        assert_eq!(
+            pause_toggle_action(&ShellSurface::Paused),
+            Some(SessionAction::Resume),
+            "the pause key closes the menu while paused"
+        );
+        // An ended match: its summary owns the screen (Dismiss-only), never re-pausable.
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        assert_eq!(pause_toggle_action(&ShellSurface::Ended(summary)), None);
+        // A reconnect prompt is dismissed by its own Resume/leave buttons, not the pause key.
+        assert_eq!(
+            pause_toggle_action(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting)),
+            None
+        );
+        assert_eq!(
+            pause_toggle_action(&ShellSurface::ReconnectPrompt(LinkState::Desynced)),
+            None
+        );
+    }
+
+    /// The host's overlay-active predicate (cursor-freeing + world-input-freezing): false only on
+    /// the plain `Playing` surface, true on every overlay. The negation + every discriminant matters
+    /// because the host frees the cursor / freezes input on the truthy branch.
+    #[test]
+    fn overlay_active_is_true_for_every_non_playing_surface() {
+        assert!(!overlay_active(&ShellSurface::Playing), "playing has no overlay");
+        assert!(overlay_active(&ShellSurface::Paused));
+        assert!(overlay_active(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting)));
+        assert!(overlay_active(&ShellSurface::ReconnectPrompt(LinkState::Desynced)));
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        assert!(overlay_active(&ShellSurface::Ended(summary)));
     }
 
     #[test]

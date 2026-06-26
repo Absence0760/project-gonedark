@@ -150,9 +150,10 @@ if wanted, is a `core` *system*, not this boundary).
 > shell + assembler every tick leaves the sim stream byte-identical); fairness held (the overlay is
 > screen-space only, the full-info summary appears only once `Ended`, and a desync drained from
 > lockstep supersedes a local pause). Engine 81 / render 52 tests; `code-reviewer` CLEAN after fixing
-> the desync-drain + pause-guard wire-up. **Owed:** a real win-condition evaluator (outcome is a
-> `Draw` placeholder today, per [D34](decisions.md)); the Wi-Fi↔cellular reconnect *handoff* half
-> stays QUIC-blocked (Phase 3 C).
+> the desync-drain + pause-guard wire-up. **Also landed:** post-match DISMISS → title transition
+> ([D52](decisions.md)); pause overlay (Esc) + in-match surrender are now wired ([D53](decisions.md))
+> — the in-session shell goal is fully satisfied. **Owed:** the Wi-Fi↔cellular reconnect *handoff*
+> half stays QUIC-blocked (Phase 3 C).
 
 **Goal:** pause, surrender/leave, post-match summary, and the reconnect prompt — rendered
 **in-engine** (`engine`/`render`) under the same avatar-only fog as the match (invariant #6,

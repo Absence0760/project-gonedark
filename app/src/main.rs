@@ -50,11 +50,9 @@ struct App {
     /// costly) winit grab/visibility setters on a *change*, not every frame. Cursor capture is a
     /// pure desktop-host concern — it never touches the sim — so it lives here, not in the engine.
     cursor_captured: bool,
-    /// Sticky "free the cursor for UI" request, toggled by **Esc**. While embodied this hands the
-    /// pointer back so the player can work menus / inventory; pressing Esc again recaptures.
-    cursor_free_toggle: bool,
     /// Momentary "free the cursor" request — true while **Left Alt** is held (released on key-up).
-    /// The held-key alternative to the Esc toggle; either one frees the pointer.
+    /// Lets an embodied player hand the pointer back transiently (e.g. to alt-tab) without opening
+    /// the pause menu. A shell overlay (pause / reconnect / summary) frees the cursor on its own.
     alt_held: bool,
     /// Whether the window is currently in borderless fullscreen. Toggled by **F11** on any screen.
     /// A pure window concern — it never touches the sim — so it lives on the host like cursor state.
@@ -71,7 +69,6 @@ impl App {
             audio: DesktopAudio::new(),
             last_frame: Instant::now(),
             cursor_captured: false,
-            cursor_free_toggle: false,
             alt_held: false,
             fullscreen: false,
         }
@@ -106,8 +103,8 @@ impl App {
 
     /// Lock+hide the OS cursor while embodied so mouse motion drives the FPS look (raw device
     /// deltas) instead of the pointer drifting across on-screen items — and hand it back the moment
-    /// the player surfaces or asks for it (Esc toggle / held Left-Alt). Idempotent: it only calls
-    /// the winit setters when the desired state differs from the last applied one.
+    /// the player surfaces, opens a shell overlay (pause / reconnect / summary), or holds Left-Alt.
+    /// Idempotent: it only calls the winit setters when the desired state differs from the last one.
     ///
     /// `CursorGrabMode::Locked` (pointer pinned in place) is the Wayland/macOS path; X11 only
     /// supports `Confined`, so we fall back to it there. Either way the cursor is hidden and look
@@ -117,12 +114,10 @@ impl App {
             return;
         };
         let embodied = matches!(&self.screen, Screen::InMatch(game) if game.is_embodied());
-        // Once the player surfaces (or the match ends), forget any leftover free-cursor toggle so the
-        // next embodiment starts captured rather than silently free.
-        if !embodied {
-            self.cursor_free_toggle = false;
-        }
-        let cursor_free = self.cursor_free_toggle || self.alt_held;
+        // A shell overlay (pause / reconnect / post-match summary) must free the cursor so the
+        // player can click its buttons — even though they may have opened it while embodied.
+        let overlay_up = matches!(&self.screen, Screen::InMatch(game) if game.shell_overlay_active());
+        let cursor_free = self.alt_held || overlay_up;
         let want = want_cursor_capture(embodied, cursor_free);
         if want == self.cursor_captured {
             return;
@@ -140,17 +135,21 @@ impl App {
         self.cursor_captured = want;
     }
 
-    /// Desktop-host-only key handling for a running match: the cursor-capture controls. **Esc**
-    /// toggles the sticky free-cursor mode; **Left Alt** frees it only while held. These never reach
-    /// the sim (they're not in the keymap `DesktopInput` decodes), so handling them here keeps the
-    /// deterministic input frame untouched.
+    /// Desktop-host-only key handling for a running match: the pause/surrender entry + cursor
+    /// controls. **Esc** toggles the in-session pause overlay (`Game::toggle_pause` — open the menu
+    /// while playing, close it while paused; the menu's own **Surrender** button ends the match);
+    /// **Left Alt** transiently frees the cursor while held. Neither reaches the sim (they're not in
+    /// the keymap `DesktopInput` decodes) — pause is a host-side `SessionAction` that never enters
+    /// the deterministic input frame, so the checksum stream is untouched.
     fn handle_host_keys(&mut self, event: &WindowEvent) {
         if let WindowEvent::KeyboardInput { event: key, .. } = event {
             let pressed = key.state == ElementState::Pressed;
             match key.physical_key {
                 PhysicalKey::Code(KeyCode::Escape) => {
                     if pressed && !key.repeat {
-                        self.cursor_free_toggle = !self.cursor_free_toggle;
+                        if let Screen::InMatch(game) = &mut self.screen {
+                            game.toggle_pause();
+                        }
                     }
                 }
                 PhysicalKey::Code(KeyCode::AltLeft) => self.alt_held = pressed,
@@ -204,6 +203,14 @@ impl App {
                             None => {}
                         }
                     }
+                }
+                // While a shell overlay is up the match is frozen underneath it: drop the rest of
+                // this frame's input so a click that missed an overlay button (or a held key) can't
+                // drive selection / fire the weapon / pan the camera behind the menu. The overlay's
+                // own buttons were already resolved above, before this blanking. (Single-player also
+                // halts the tick via `halts_local_tick`; this stops *world input*, not the clock.)
+                if game.shell_overlay_active() {
+                    input = Default::default();
                 }
                 // Skip the match frame entirely when we're leaving it this turn; the title screen
                 // draws next frame.
@@ -299,8 +306,9 @@ impl ApplicationHandler for App {
                 }
             }
             Screen::InMatch(_) => {
-                // Host-level cursor-capture keys (Esc / Left-Alt) are consumed here, then the event
-                // also feeds the sim input accumulator (they're not in its keymap, so no double-use).
+                // Host-level keys (Esc → pause toggle, Left-Alt → free cursor) are consumed here,
+                // then the event also feeds the sim input accumulator (they're not in its keymap, so
+                // no double-use).
                 self.handle_host_keys(&event);
                 self.input.handle_window_event(&event);
             }

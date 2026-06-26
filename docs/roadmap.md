@@ -275,9 +275,10 @@ in the in-match layer; the **settings surface that configures it** is.
   spacing, colour language (so it looks intentional, not greybox)
 - [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface)
 - [ ] Onboarding / first-possession tutorial (teach the going-dark cost — invariant #6 lives here)
-- [~] In-session shell — pause, surrender/leave, post-match summary. **Partly landed:** the
-  post-match summary surface + its DISMISS button → leave-match → return-to-title transition are
-  wired ([D52](decisions.md), phase-4-plan WS-E); pause + in-match surrender remain.
+- [x] In-session shell — pause, surrender/leave, post-match summary. **Fully landed:** the
+  post-match summary surface + its DISMISS button → leave-match → return-to-title transition
+  ([D52](decisions.md)); pause overlay (Esc) + in-match surrender are now wired
+  ([D53](decisions.md), [phase-4-plan WS-B](phase-4-plan.md)).
 - [ ] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
   cue for the directional-flash + audio alert channel)
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions

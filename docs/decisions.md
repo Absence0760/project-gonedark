@@ -2500,3 +2500,41 @@ The embodied view's correctness now depends on `visible_instances` being exactly
 sight — the viz-runner strategic-map-collapse fairness assertion still guards this. The DISMISS path adds
 a host-level `ExitToTitle` transition; the hit-test is a pure function (host-tested), per the standing
 seam rule.
+
+## D53 — Wire the pause-overlay trigger: Esc opens pause; in-match surrender becomes reachable
+
+**Status:** decided + landed. Closes the in-session shell ([phase-4-plan WS-B](phase-4-plan.md)), the
+sibling of the post-match DISMISS wiring ([D52](#d52--embodied-view-draws-fog-filtered-avatar-visible-units-post-match-dismiss-wiring)).
+
+**Decision:**
+
+- **The pause overlay finally has a trigger.** `engine::session_shell`'s pause/surrender state machine
+  and `render::overlay`'s chrome were already built and tested ([D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)), but nothing *opened* the
+  pause menu in a live match — it was unreachable. A new pure seam `pause_toggle_action(surface) ->
+  Option<SessionAction>` (Playing → Pause, Paused → Resume, `None` on Ended/ReconnectPrompt) plus thin
+  `Game::toggle_pause` / `Game::shell_overlay_active` (over the pure `overlay_active` seam) close that.
+- **Desktop binds the pause toggle to Esc.** Esc was the sticky free-cursor toggle; it is now the
+  conventional pause key. The transient **Left-Alt** free-cursor (e.g. to alt-tab) stays; opening any
+  shell overlay frees the cursor on its own so the menu's buttons are clickable.
+- **In-match surrender is reachable through the existing path.** Once Paused is on screen, the
+  already-wired `overlay_click` slots reach **Resume** (slot 0) and **Surrender** (slot 1) → the
+  host-side summary → DISMISS → return-to-title (D52). No new surrender plumbing — the trigger was the
+  only missing link.
+- **The match freezes under any overlay.** While a shell overlay is up the host feeds a neutral input
+  frame, so a click that misses an overlay button (or a held key) can't drive selection / fire the
+  weapon / pan the camera behind the menu. The overlay's own buttons resolve *before* the blanking.
+
+**Why:** every downstream piece — the state machine, the overlay render, the Resume/Surrender slot map,
+the summary assembler, the DISMISS→title transition — was built and green, but a pause menu you cannot
+open is a dead feature; surrender rode on it being reachable. The fix is host-side input wiring, not new
+design: pause is a host/session `SessionAction` that never enters the lockstep input stream, so the
+per-tick checksum is byte-identical (invariants #1/#4) and the single-player tick halt stays the existing
+`halts_local_tick` rule (lockstep keeps stepping — a local pause is an overlay, never a peer-agreed sim
+pause).
+
+**Consequences:** the roadmap's in-session-shell checklist item is now fully done (pause + surrender +
+post-match summary). Esc no longer toggles the sticky free-cursor mode (subsumed by overlay-frees-cursor
++ Left-Alt). The pause *decision* logic is pure and unit-tested (`pause_toggle_action`, `overlay_active`);
+the winit/Esc host glue is the only un-constructible seam, exempt per the standing testing rule. Android
+back-gesture → `toggle_pause` is the natural follow-up (the engine seam is platform-neutral); only the
+desktop binding landed here.
