@@ -1718,18 +1718,22 @@ impl Game {
             self.renderer
                 .render_world_sky(device, queue, view, &world_uniform);
 
-            // 6c. Static first-person world dressing (scenery + cover props): drawn over the
-            // sky/ground and before the avatar pass so the embodied view reads as a *place*, not a
-            // bare void. Render-only environment — a fixed cosmetic layout, no sim entity behind it,
-            // so it reveals no map intel and stays fair under "world goes dark" (invariant #6). The
-            // renderer picks a LOD tier per prop from the eye distance; we hand in the same eye +
-            // camera the sky used (matrix math stays host-side, D19 — render is glam-free).
-            self.renderer.render_world_props(
+            // 6c. First-person world meshes: the static scenery/cover props AND the dynamic sim
+            // units the avatar can SEE, drawn over the sky/ground (one shared depth pass so they
+            // occlude each other) and before the avatar pass so the embodied view reads as a *place*
+            // with the enemies actually in it. Fairness (invariant #6): "world goes dark" strips the
+            // strategic MAP, not the soldier in your line of sight — the renderer applies the
+            // avatar-only `visibility` mask, so only units the avatar can physically see are drawn
+            // (the avatar's own body is dropped); props are a fixed cosmetic layout and carry no
+            // intel. The renderer picks a LOD tier per mesh from the eye distance; we hand in the same
+            // eye + camera the sky used (matrix math stays host-side, D19 — render is glam-free).
+            self.renderer.render_world_meshes(
                 device,
                 queue,
                 view,
                 &view_proj.to_cols_array_2d(),
                 eye,
+                &visibility,
                 width,
                 height,
             );

@@ -210,7 +210,7 @@ const PROP_LAYOUT: &[(mesh::ModelKind, f32, f32, f32, f32)] = &[
 /// Map the static [`PROP_LAYOUT`] to concrete draw items for an `eye` position: each prop's kind,
 /// the LOD tier [`mesh::select_lod`] picks from its eye distance, and its world-space mesh instance
 /// (greybox base tint, no flash). Pure + GPU-free, so the LOD selection + placement is unit-tested
-/// without a device; [`Renderer::render_world_props`] just groups the result into batches.
+/// without a device; [`Renderer::render_world_meshes`] just groups the result into batches.
 fn prop_draw_plan(eye: [f32; 3]) -> Vec<(mesh::ModelKind, usize, mesh::MeshInstance)> {
     PROP_LAYOUT
         .iter()
@@ -223,6 +223,38 @@ fn prop_draw_plan(eye: [f32; 3]) -> Vec<(mesh::ModelKind, usize, mesh::MeshInsta
                 color: [c[0], c[1], c[2], 0.0],
             };
             (kind, mesh::select_lod(dist), inst)
+        })
+        .collect()
+}
+
+/// Build the embodied first-person draw plan for the dynamic sim units the avatar can SEE — the
+/// allies and enemies standing in its line of sight (the missing half of the dark frame: losing the
+/// strategic MAP is intel loss, but the soldier in front of your rifle is a fair physical target —
+/// invariant #6). `instances` is the ALREADY fog-filtered draw set, so only units inside the
+/// avatar's vision survive upstream ([`fog::visible_instances`]) and this never re-checks intel. It
+/// drops the avatar's own body ([`FLAG_EMBODIED`] — you don't render yourself in first person) and
+/// any non-mesh instance ([`token_for`] returns `None` for control-point rings, which are map intel
+/// and never appear in the dark frame anyway), then stands each remaining unit on the ground
+/// (`z = 0`) as a 3D token at the LOD its eye distance warrants — exactly mirroring [`prop_draw_plan`]
+/// so distant units cost fewer triangles on the 200-unit budget. Facing is fixed (yaw 0), matching
+/// the command-view tokens; the snapshot carries no per-unit heading yet. Pure + GPU-free, so the
+/// visibility/placement is unit-tested without a device.
+fn unit_draw_plan(
+    instances: &[UnitInstance],
+    eye: [f32; 3],
+) -> Vec<(mesh::ModelKind, usize, mesh::MeshInstance)> {
+    instances
+        .iter()
+        .filter(|inst| inst.flags & FLAG_EMBODIED == 0) // never draw the possessed avatar's own body
+        .filter_map(|inst| {
+            let (kind, scale) = token_for(inst)?; // None → control-point ring (map intel); skip
+            let (dx, dy, dz) = (inst.x - eye[0], inst.y - eye[1], -eye[2]);
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+            let mesh_inst = mesh::MeshInstance {
+                model: mesh::model_matrix([inst.x, inst.y, 0.0], scale, 0.0),
+                color: [inst.r, inst.g, inst.b, 0.0], // faction tint; a=0 → no muzzle flash
+            };
+            Some((kind, mesh::select_lod(dist), mesh_inst))
         })
         .collect()
 }
@@ -965,26 +997,41 @@ impl Renderer {
         self.world.render_sky(device, queue, view, uniform);
     }
 
-    /// Draw the static first-person world dressing (scenery + cover props, [`PROP_LAYOUT`]) over the
-    /// embodied sky/ground. The host calls this in the embodied branch AFTER [`render_world_sky`]
-    /// (the clearing pass) and before [`Renderer::render`]'s avatar pass, so props composite onto
-    /// the real first-person space. `view_proj` is the embodied camera matrix and `eye` its world
-    /// position (so [`mesh::select_lod`] can pick a tier per prop by distance). Render-only
-    /// environment → reveals no map intel (invariant #6); `width`/`height` size the depth buffer.
+    /// Draw the embodied first-person WORLD MESHES — the static scenery/cover props
+    /// ([`PROP_LAYOUT`]) **and** the dynamic sim units the avatar can SEE — over the embodied
+    /// sky/ground. Both are drawn in a SINGLE mesh pass (one shared depth clear) so they occlude each
+    /// other correctly: a unit standing behind a rock is hidden by it, rather than punching through.
+    ///
+    /// Fairness (invariant #6): "world goes dark" strips the strategic MAP — the overview, the
+    /// control points, off-screen intel — NOT the enemy physically in your avatar's line of sight.
+    /// `fog` is the avatar's vision mask; [`fog::visible_instances`] keeps only the units it actually
+    /// sees (plus the avatar, which [`unit_draw_plan`] then drops — you don't render your own body in
+    /// first person), so nothing beyond direct sight leaks in. The props are a fixed cosmetic layout
+    /// and carry zero intel. The host calls this in the embodied branch AFTER [`render_world_sky`]
+    /// (the clearing pass) and before [`Renderer::render`]'s avatar pass. `view_proj` is the embodied
+    /// camera matrix and `eye` its world position (so [`mesh::select_lod`] can pick a tier per mesh by
+    /// distance); `width`/`height` size the depth buffer.
     #[allow(clippy::too_many_arguments)]
-    pub fn render_world_props(
+    pub fn render_world_meshes(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         view_proj: &[[f32; 4]; 4],
         eye: [f32; 3],
+        fog: &Visibility,
         width: u32,
         height: u32,
     ) {
         self.ensure_depth(device, width, height);
-        let plan = prop_draw_plan(eye);
-        // One batch per (kind, lod) actually used, so each draws its own decimated mesh tier.
+        // Static scenery + the avatar-visible dynamic units, in one combined LOD plan. The fog filter
+        // (avatar-only mask, world_dark = true) keeps only units the avatar can see; the avatar's own
+        // body is dropped inside `unit_draw_plan`.
+        let mut plan = prop_draw_plan(eye);
+        let visible = fog::visible_instances(&self.instances, fog, true);
+        plan.extend(unit_draw_plan(&visible, eye));
+        // One batch per (kind, lod) actually used, so each draws its own decimated mesh tier; the
+        // whole set shares the single depth clear inside `mesh_pipeline.draw` (correct occlusion).
         let mut batches: Vec<mesh::MeshBatch> = Vec::new();
         for &kind in mesh::ModelKind::ALL.iter() {
             for lod in 0..mesh::LOD_COUNT {
@@ -1356,6 +1403,66 @@ mod tests {
             .max()
             .unwrap();
         assert_eq!(far_tree, 2, "a distant tree uses LOD2");
+    }
+
+    // ---- unit_draw_plan: embodied first-person dynamic units ----
+
+    /// Build a bare [`UnitInstance`] for the embodied-unit-plan tests. `model` is the snapshot's
+    /// resolved [`mesh::ModelKind`] (as `token_for` decodes it); `rgb` the faction tint.
+    fn uinst(x: f32, y: f32, flags: u32, model: mesh::ModelKind, rgb: [f32; 3]) -> UnitInstance {
+        UnitInstance {
+            x,
+            y,
+            half_extent: UNIT_HALF,
+            r: rgb[0],
+            g: rgb[1],
+            b: rgb[2],
+            health: 1.0,
+            flags,
+            model: model as u32,
+        }
+    }
+
+    #[test]
+    fn unit_draw_plan_drops_avatar_and_rings_keeps_visible_units() {
+        // The fog-filtered set the embodied pass sees: the avatar's own body (FLAG_EMBODIED), a
+        // control-point ring (FLAG_RING — map intel), and an in-sight enemy. Only the enemy is drawn.
+        let avatar = uinst(0.0, 0.0, FLAG_EMBODIED, mesh::ModelKind::Trooper, AVATAR_COLOR);
+        let ring = uinst(1.0, 0.0, FLAG_RING, mesh::ModelKind::Trooper, [0.5, 0.5, 0.6]);
+        let enemy = uinst(5.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Enemy));
+        let plan = unit_draw_plan(&[avatar, ring, enemy], [0.0, 0.0, 1.6]);
+        assert_eq!(plan.len(), 1, "only the visible non-avatar, non-ring unit is drawn");
+        assert_eq!(plan[0].0, mesh::ModelKind::Trooper);
+    }
+
+    #[test]
+    fn unit_draw_plan_picks_lod_by_eye_distance() {
+        // Near unit keeps full detail; a distant one drops to the coarsest tier (200-unit budget).
+        let near = uinst(2.0, 0.0, 0, mesh::ModelKind::Trooper, [0.0, 0.0, 0.0]);
+        let far = uinst(40.0, 0.0, 0, mesh::ModelKind::Trooper, [0.0, 0.0, 0.0]);
+        let plan = unit_draw_plan(&[near, far], [0.0, 0.0, 0.0]);
+        assert_eq!(plan.len(), 2);
+        assert_eq!(plan[0].1, 0, "the near unit keeps LOD0");
+        assert_eq!(plan[1].1, 2, "the distant unit drops to LOD2");
+    }
+
+    #[test]
+    fn unit_draw_plan_carries_faction_tint_kind_and_grounds_at_z0() {
+        // A Heavy → tank token, tinted by faction with no flash (a=0), standing on the ground (z=0).
+        let tank = uinst(3.0, -1.0, 0, mesh::ModelKind::Tank, faction_color(Faction::Enemy));
+        let plan = unit_draw_plan(&[tank], [0.0, 0.0, 1.6]);
+        assert_eq!(plan.len(), 1);
+        let (kind, _lod, inst) = &plan[0];
+        assert_eq!(*kind, mesh::ModelKind::Tank, "Heavy snapshot → tank token");
+        let c = faction_color(Faction::Enemy);
+        assert_eq!(
+            [inst.color[0], inst.color[1], inst.color[2]],
+            c,
+            "faction tint carried through"
+        );
+        assert_eq!(inst.color[3], 0.0, "no muzzle flash on a unit body");
+        // model_matrix's translation column places the token at its world (x, y) on the ground.
+        assert_eq!(inst.model[3], [3.0, -1.0, 0.0, 1.0]);
     }
 
     /// Validate `shader.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression
