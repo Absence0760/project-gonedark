@@ -46,6 +46,10 @@ mod fog;
 /// Embodied directional alert HUD (worker 2). Owns `HudRenderer`: the screen-space alert overlay
 /// drawn on top of the embodied frame.
 mod hud;
+/// On-screen FPS touch controls (the COD-style embodied HUD, Android only). Owns
+/// `TouchControlsRenderer`: the move stick + Fire/Crouch/Reload/Surface buttons, drawn as a LOAD
+/// pass over the dark embodied frame. Public so the host describes them via [`touch_controls::TouchControlsHud`].
+pub mod touch_controls;
 /// Band-select marquee. Owns `MarqueeRenderer`: the selection rectangle drawn in the command view
 /// while a band-drag is in flight. Public so the host can describe the box via [`marquee::Marquee`].
 pub mod marquee;
@@ -413,6 +417,9 @@ pub struct Renderer {
     /// The embodied directional-alert overlay (worker 2). Drawn as a second LOAD pass by
     /// [`Renderer::render_hud`] when the local player is embodied.
     hud: hud::HudRenderer,
+    /// The on-screen FPS touch-control HUD (Android). Drawn as a LOAD pass by
+    /// [`Renderer::render_touch_controls`] when the local player is embodied on a touch device.
+    touch_controls: touch_controls::TouchControlsRenderer,
     /// The in-session shell overlay (Phase 4 WS-B). Drawn as a LOAD pass by
     /// [`Renderer::render_overlay`] when an in-session surface (pause/reconnect/summary) is up.
     overlay: overlay::OverlayRenderer,
@@ -554,6 +561,7 @@ impl Renderer {
         });
 
         let hud = hud::HudRenderer::new(device, surface_format);
+        let touch_controls = touch_controls::TouchControlsRenderer::new(device, surface_format);
         let overlay = overlay::OverlayRenderer::new(device, surface_format);
         let radial = radial::RadialRenderer::new(device, surface_format);
         let marquee = marquee::MarqueeRenderer::new(device, surface_format);
@@ -576,6 +584,7 @@ impl Renderer {
             instance_cap,
             instances: Vec::new(),
             hud,
+            touch_controls,
             overlay,
             radial,
             marquee,
@@ -837,6 +846,20 @@ impl Renderer {
             viewport,
             tick,
         );
+    }
+
+    /// Draw the on-screen FPS touch-control HUD (move stick + Fire/Crouch/Reload/Surface) on top of
+    /// the current frame (a LOAD pass — never clears), delegating to
+    /// [`touch_controls::TouchControlsRenderer`]. The host calls this only while embodied on a touch
+    /// device (the GUI is Android-only); `hud` describes the controls to draw this frame.
+    pub fn render_touch_controls(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        hud: &touch_controls::TouchControlsHud,
+    ) {
+        self.touch_controls.render(device, queue, view, hud);
     }
 
     /// Draw the in-session shell overlay (pause / reconnect prompt / post-match summary) on top of

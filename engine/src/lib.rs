@@ -500,6 +500,42 @@ fn crouch_toggle_command(
     })
 }
 
+/// Translate the engine-side touch layout + per-frame HUD state into the renderer's own
+/// [`TouchControlsHud`](gonedark_render::touch_controls::TouchControlsHud) description (px circles +
+/// pressed flags). PURE → host-testable. Keeps the layering one-way (`engine -> render`, invariant
+/// #2): the engine fills render's struct, render never sees `engine::touch_controls`. `crouched`
+/// (authoritative sim posture) lights the Crouch button's sticky toggle highlight.
+fn render_touch_hud(
+    layout: &touch_controls::TouchLayout,
+    hud: &touch_controls::TouchHud,
+    viewport: (u32, u32),
+    crouched: bool,
+) -> gonedark_render::touch_controls::TouchControlsHud {
+    use gonedark_render::touch_controls as r;
+    let button = |c: &touch_controls::Circle, glyph, pressed, active| r::TouchButton {
+        cx: c.cx,
+        cy: c.cy,
+        r: c.r,
+        glyph,
+        pressed,
+        active,
+    };
+    r::TouchControlsHud {
+        viewport,
+        stick: hud.stick_active.then_some(r::StickView {
+            base_x: hud.stick_origin.0,
+            base_y: hud.stick_origin.1,
+            radius: layout.stick_radius,
+            thumb_x: hud.stick_thumb.0,
+            thumb_y: hud.stick_thumb.1,
+        }),
+        fire: button(&layout.fire, r::TouchGlyph::Fire, hud.fire_pressed, false),
+        crouch: button(&layout.crouch, r::TouchGlyph::Crouch, hud.crouch_pressed, crouched),
+        reload: button(&layout.reload, r::TouchGlyph::Reload, hud.reload_pressed, false),
+        surface: button(&layout.surface, r::TouchGlyph::Surface, hud.surface_pressed, false),
+    }
+}
+
 /// Is `c` a ONE-SHOT/edge command — an intent that fires for a single input frame (embody, surface,
 /// a tap-order, build/train/upgrade, a stance change) — as opposed to a HELD/continuous command
 /// re-emitted every frame while a control is held ([`Command::Locomote`], [`Command::Fire`])?
@@ -1809,6 +1845,22 @@ impl Game {
             );
         }
 
+        // 8a'. On a touch device, draw the on-screen FPS controls over the dark frame (the COD-style
+        // move stick + Fire/Crouch/Reload/Surface). Gated to embodied AND `touch_hud.is_some()` —
+        // set only when this frame's input came through `input.touches` — so the desktop keyboard/
+        // mouse path never draws a GUI (the controls are Android-only). The Crouch button lights from
+        // authoritative sim posture. Screen-space chrome with no world position (invariant #6).
+        if self.embodied {
+            if let Some(hud_state) = self.touch_hud {
+                let layout = touch_controls::TouchLayout::new(width, height);
+                let crouched = self.sim.world.is_alive(self.player)
+                    && self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
+                let rhud = render_touch_hud(&layout, &hud_state, viewport, crouched);
+                self.renderer
+                    .render_touch_controls(device, queue, view, &rhud);
+            }
+        }
+
         // 8b. In the command view, draw the radial command menu when a held long-press has one open
         // (engine::command_ui's radial preview). It is NDC chrome with no world position and is
         // gated to `!embodied`, so it never paints over the dark frame (invariant #6). The menu
@@ -2480,6 +2532,38 @@ mod tests {
             Some(Command::Crouch { crouched, .. }) => assert!(!crouched, "crouched → stand"),
             other => panic!("expected a Crouch command, got {other:?}"),
         }
+    }
+
+    /// The engine→render touch-HUD mapping: an active stick + a crouched avatar produce a stick view
+    /// and a lit Crouch toggle, and the button circles carry over from the layout in pixels.
+    #[test]
+    fn render_touch_hud_maps_layout_state_and_crouch_highlight() {
+        let layout = touch_controls::TouchLayout::new(1280, 720);
+        let hud = touch_controls::TouchHud {
+            stick_active: true,
+            stick_origin: (120.0, 600.0),
+            stick_thumb: (150.0, 580.0),
+            fire_pressed: true,
+            crouch_pressed: false,
+            reload_pressed: false,
+            surface_pressed: false,
+        };
+        let r = render_touch_hud(&layout, &hud, (1280, 720), /* crouched = */ true);
+        assert!(r.stick.is_some(), "active stick → a stick view");
+        let s = r.stick.unwrap();
+        assert_eq!((s.base_x, s.base_y), (120.0, 600.0));
+        assert_eq!(s.radius, layout.stick_radius);
+        assert!(r.fire.pressed, "held fire carries the pressed flash");
+        assert!(r.crouch.active, "crouched avatar lights the Crouch toggle");
+        assert!(!r.crouch.pressed);
+        // Button circles pass straight through from the layout (pixels).
+        assert_eq!((r.fire.cx, r.fire.cy, r.fire.r), (layout.fire.cx, layout.fire.cy, layout.fire.r));
+
+        // No active stick → no stick view drawn.
+        let hud2 = touch_controls::TouchHud::default();
+        let r2 = render_touch_hud(&layout, &hud2, (1280, 720), false);
+        assert!(r2.stick.is_none());
+        assert!(!r2.crouch.active);
     }
 
     /// One-shot/edge commands force a sub-tick catch-up; held/continuous ones (locomote, fire) do
