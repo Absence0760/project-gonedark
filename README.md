@@ -50,7 +50,9 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | Path | What's in it |
 |---|---|
 | [`docs/game-design.md`](docs/game-design.md) | The game design doc — concept, mechanics, the going-dark rule, unit AI philosophy |
-| [`docs/positioning.md`](docs/positioning.md) | Competitive positioning — vs. Delta Force / CoD Mobile, the FPS/RTS-hybrid graveyard, and the CoH lineage; the moat, the honest exposure, the feature scorecard, and the **CP-n** parity plan |
+| [`docs/positioning.md`](docs/positioning.md) | Competitive positioning (overview + **mobile / storefront** fight) — vs. Delta Force / CoD Mobile, the FPS/RTS-hybrid graveyard, and the CoH lineage; the moat, the honest exposure, the feature scorecard, and the **CP-n** parity plan |
+| [`docs/positioning-pc.md`](docs/positioning-pc.md) | Positioning on **PC** — vs. Company of Heroes 3 / StarCraft / Total War (command), Call of Duty / Battlefield 6 / Halo (shooting), Destiny 2 (longevity), and the Hell Let Loose / Squad "so close" hybrids; the **PC-n** parity items |
+| [`docs/positioning-cross-platform.md`](docs/positioning-cross-platform.md) | Positioning **across platforms** — one game everywhere (vs. Fortnite / Warzone / Genshin); why the deterministic core makes us cross-play-native, and the thumb-vs-mouse fairness problem ([Q17](docs/open-questions.md)); the **XP-n** parity items |
 | [`docs/architecture.md`](docs/architecture.md) | Engine & systems architecture (native core, deterministic sim, Vulkan, netcode) |
 | [`docs/platforms.md`](docs/platforms.md) | Cross-platform plan — Windows/Linux/Android/iOS, one shared core with platform-optimized backends |
 | [`docs/content-pipeline.md`](docs/content-pipeline.md) | Asset production — quality tiers, open-source sourcing, license hygiene, the two-view filter, what Claude can/can't build |

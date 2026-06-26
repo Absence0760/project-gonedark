@@ -433,6 +433,34 @@ narrative depth ([Q16](open-questions.md)).
   sustainable post-launch cadence — **modifiers and content, never balance-number or power hacks**
   (#1/#6).
 
+**PC-facing parity** — meeting a seated, genre-literate player's expectations without forking the
+game (full analysis: [`positioning-pc.md`](positioning-pc.md)):
+
+- [ ] **PC-1 — Mouse-and-keyboard combat feel.** The embodied layer must feel right with a *mouse*,
+  not just thumbs — precise aim, sensible defaults, FOV control. PC players notice instantly.
+  (Pairs with CP-2.)
+- [ ] **PC-2 — PC control & options surface.** Full rebinds, graphics options, ultrawide /
+  high-refresh / high-DPI support — the settings depth a PC player expects.
+- [ ] **PC-3 — Replays & spectating (a determinism freebie).** A match is a seed + an input log
+  (invariant #1), so replay + spectator view are *cheap* and a real PC / e-sports differentiator.
+- [ ] **PC-4 — Mods / data-driven content.** Missions/scenarios are already data
+  ([Q15](open-questions.md)); exposing them as moddable content is how StarCraft/Total War lasted
+  decades — a PC-only longevity lever.
+
+**Cross-platform parity** — keeping *one game* fair and coherent across phone/PC/console (full
+analysis: [`positioning-cross-platform.md`](positioning-cross-platform.md)):
+
+- [ ] **XP-1 — Cross-save & handoff.** Match/campaign/progress state lives server-side so you stop on
+  one device and resume on another ("commute on your phone, finish on PC").
+- [ ] **XP-2 — Input-based matchmaking policy.** For embodied PvP, decide the thumb-vs-mouse fairness
+  model — **resolve [Q17](open-questions.md) *before* building PvP, not after.** PvE needs none of this.
+- [ ] **XP-3 — Unified entitlement / one wallet** *(= CP-5)*. One account; unlocks/cosmetics follow the
+  player; per-platform purchases ([Q9](open-questions.md)) all resolve into it. (Same work as CP-5,
+  viewed cross-platform — not a separate build.)
+- [ ] **XP-4 — Control parity without forking.** Each platform gets a native-feeling control scheme
+  (touch / mouse+kbd / controller) over the **same shared core** (invariant #2) — controls differ, the
+  game does not.
+
 > **Protect the LEAD (no new work, but do not let it erode):** the determinism gates
 > (`determinism.yml` cross-arch matrix, per-tick checksum diffing) and the **symmetric** hybrid
 > PvP shape — each player is their own commander-and-avatar, never the asymmetric

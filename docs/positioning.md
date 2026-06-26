@@ -8,6 +8,14 @@
 > (literal-executor AI), #5 (embodiment is not a character system), and #6 (the dark
 > stays fair).
 
+> **This doc leans mobile / storefront** (Delta Force, CoD Mobile, the gunsmith,
+> free-to-play) — that's the most crowded fight. Two companion docs cover the other fronts:
+> [`positioning-pc.md`](positioning-pc.md) (the PC fight — Company of Heroes, Battlefield,
+> Halo, Destiny, the strategy lineage) and
+> [`positioning-cross-platform.md`](positioning-cross-platform.md) (keeping *one game* fair
+> across phone/PC/console). The moat thesis (§3) and the scorecard (§6) below are
+> platform-agnostic and hold across all three.
+
 ---
 
 ## 1. The one-paragraph thesis

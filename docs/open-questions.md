@@ -367,3 +367,33 @@ former into the latter **without restructuring**, so this can stay deferred safe
 
 **Current lean:** light framing for the first shippable campaign; revisit an authored arc once the
 core loop and difficulty curve are validated by play.
+
+---
+
+## Q17 — Cross-play input fairness: how does embodied PvP handle a thumb vs. a mouse? <a id="q17--crossplay-input-fairness"></a>
+
+The engine is cross-play-native by construction — the deterministic core runs bit-identically on
+phone and PC ([D22](decisions.md), invariants #1/#2), so a touch player and a mouse player in the
+**same** match is technically the normal case, not a bolt-on. The *command* layer is naturally fair
+across inputs (issuing orders isn't a twitch contest). The **embodied** (FPS) layer is not: a mouse
+out-aims a thumb. How embodied **PvP** handles that mismatch is open. (Full framing:
+[`positioning-cross-platform.md`](positioning-cross-platform.md) §4.)
+
+| Option | Upside | Cost / risk |
+|---|---|---|
+| **Input-based matchmaking** (Warzone-style pools — match by *how you hold the game*, not device) | The cleanest fairness story; mouse-vs-mouse, touch-vs-touch | Splits the matchmaking population; needs enough players per pool to keep queues healthy |
+| **Aim assist for the slower input**, tuned per mode | Keeps one shared pool; industry-standard | A perennial balance headache; the "is aim-assist unfair?" argument never ends |
+| **Lean on the command-heavy balance** (accept some embodied asymmetry because most of the match is input-fair commanding) | No population split; plays to our structural difference | Leaves a real edge on the table during the embodied beats; may feel unfair in close PvP |
+
+**Why it matters:** get it wrong and cross-play PvP feels rigged to whoever lost the aim duel — a
+direct hit to pillar 4 (*the cost must always feel fair*) extended to input. Designing it in up front
+is far cheaper than patching it after it has already alienated a platform's players (the way it bit
+Destiny and others). **Crucially, this blocks nothing now:** the first shippable product is
+single-player PvE ([D58](decisions.md)), where there's no opponent to be unfair to and cross-play is
+pure upside. The question only switches on when **embodied PvP** does (Phase 3 netcode / the PvP
+fast-follow).
+
+**Current lean:** **input-based matchmaking** for embodied PvP (the cleanest fairness model), with the
+command-heavy balance as a natural cushion and aim assist held in reserve for casual modes. Defer the
+lock until embodied PvP is actually being built — but decide it *before* that, not after. Tracked as
+build item **XP-2** ([`roadmap.md`](roadmap.md)).
