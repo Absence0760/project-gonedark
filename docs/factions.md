@@ -2,7 +2,9 @@
 
 **Status: DESIGN-ONLY ([D68](decisions.md)).** This doc records the *direction* and the model. No
 engine code implements per-faction rosters yet — the game still fights with one shared `UnitKind`
-roster across `Faction::Player`/`Faction::Enemy`. The unresolved specifics are [Q19](open-questions.md).
+roster across `Faction::Player`/`Faction::Enemy`. The unresolved specifics are [Q19](open-questions.md);
+the build sequencing is [`plans/factions-plan.md`](plans/factions-plan.md) (gated on the
+shared-archetype rebalance, [`plans/combat-rebalance-plan.md`](plans/combat-rebalance-plan.md)).
 
 > *"the goal is to have a USA army vs the French army."* — the north star this doc serves.
 

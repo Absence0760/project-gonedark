@@ -3178,3 +3178,7 @@ the unresolved specifics — exact rosters, *how* asymmetric, how it interacts w
 [Q19](open-questions.md). No engine code changes in this decision. The `Faction` enum stays an
 allegiance tag (`Player`/`Enemy`/`Neutral`); a *faction identity* (US/FR) is a separate, future
 component layered over `UnitKind` rosters, not a rename of `Faction`.
+
+**Plan:** the build sequencing is [`factions-plan.md`](plans/factions-plan.md) (gated on the
+shared-archetype rebalance, [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md), landing
+first).

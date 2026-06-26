@@ -421,6 +421,9 @@ stat re-tune *and* a per-near-miss suppression rework, measured against the harn
 balance pass, not blocking the lethality/ammo changes that shipped. Likely bundled with the
 [faction rosters](#q19--faction-roster-specifics) (re-tune once, against the real armies).
 
+**Plan:** [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md) (WS-A restores the RPS, WS-B
+adds area suppression) — faction-independent and shippable now.
+
 ---
 
 ## Q19 — Faction roster specifics: how asymmetric is US Army vs French Army? <a id="q19--faction-roster-specifics"></a>
@@ -442,3 +445,7 @@ faction a **cosmetic** choice or a **strategic** one? **Current lean:** **soft a
 archetypes (rifleman/heavy/vehicle/support) with per-faction tilts inside a measured fairness band,
 campaign played US-side first. Defer the lock until after the [lethal-speed re-tune](#q18--lethal-speed-retune)
 (balance the shared archetypes first, *then* tilt them per faction).
+
+**Plan:** [`factions-plan.md`](plans/factions-plan.md) (WS-0 = the rebalance prerequisite; WS-A
+identity tag + codecs; WS-B per-faction rosters; C/D/E cosmetics, selection + PvE OPFOR, gunsmith
+pools). The asymmetry fork above is the design gate on WS-B.
