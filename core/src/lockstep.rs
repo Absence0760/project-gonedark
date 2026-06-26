@@ -35,8 +35,9 @@ use crate::sim::Command;
 /// silently misparsed. 2 added the frame-kind tag (command vs. checksum report); 3 added the
 /// `DelayChange` frame (the agreed RTT-adaptive input-delay change); 4 added the
 /// `Command::Locomote` vocabulary (tag 11) — a build without it would only choke on `BadTag(11)`
-/// mid-session, so the bump fails the skew loudly at the connection handshake instead.
-const WIRE_VERSION: u8 = 4;
+/// mid-session, so the bump fails the skew loudly at the connection handshake instead; 5 added
+/// the embodied `Command::Reload` (tag 12) + `Command::Crouch` (tag 13) vocabulary.
+const WIRE_VERSION: u8 = 5;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
 /// carry command sets, checksum reports, and delay-change proposals over the one wire format.
@@ -330,6 +331,15 @@ fn put_command(w: &mut Writer, c: &Command) {
             put_entity(w, entity);
             put_vec2(w, dir);
         }
+        Command::Reload { entity } => {
+            w.u8(12);
+            put_entity(w, entity);
+        }
+        Command::Crouch { entity, crouched } => {
+            w.u8(13);
+            put_entity(w, entity);
+            w.u8(crouched as u8);
+        }
     }
 }
 
@@ -380,6 +390,13 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
         11 => Command::Locomote {
             entity: get_entity(r)?,
             dir: get_vec2(r)?,
+        },
+        12 => Command::Reload {
+            entity: get_entity(r)?,
+        },
+        13 => Command::Crouch {
+            entity: get_entity(r)?,
+            crouched: r.u8()? != 0,
         },
         t => return Err(DecodeError::BadTag(t)),
     })
@@ -934,6 +951,15 @@ mod tests {
             Command::Locomote {
                 entity: ent(9, 1),
                 dir: v(0, 1),
+            },
+            Command::Reload { entity: ent(9, 1) },
+            Command::Crouch {
+                entity: ent(9, 1),
+                crouched: true,
+            },
+            Command::Crouch {
+                entity: ent(9, 1),
+                crouched: false,
             },
             // Cover the remaining Order variants too.
             Command::SetOrder {

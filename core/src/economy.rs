@@ -178,6 +178,13 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 damage: Fixed::from_int(6),
                 cooldown_ticks: 30,
                 cooldown_left: 0,
+                // Magazine gates only the embodied fire path (auto-combat ignores it — see
+                // `Weapon`/`combat::resolve_fire`): a 30-round mag, 90-tick reload (≈1500 ms
+                // at 60 Hz).
+                mag_size: 30,
+                ammo: 30,
+                reload_ticks: 90,
+                reload_left: 0,
             },
         ),
         UnitKind::Heavy => (
@@ -187,6 +194,12 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 damage: Fixed::from_int(18),
                 cooldown_ticks: 48,
                 cooldown_left: 0,
+                // Bigger belt, slower 138-tick reload (≈2300 ms) — the bruiser sustains fire
+                // longer but is punished harder for running dry while embodied.
+                mag_size: 50,
+                ammo: 50,
+                reload_ticks: 138,
+                reload_left: 0,
             },
         ),
     }
@@ -770,5 +783,17 @@ mod tests {
         assert!(hw.range < rw.range, "heavy must out-range LESS than the rifleman");
         assert!(hh.max > rh.max, "heavy is tankier");
         assert!(hw.damage > rw.damage, "heavy hits harder per shot");
+
+        // Magazines are armed + start full so a freshly possessed unit can fire (embodied-only
+        // gate). The bruiser carries the bigger belt and the longer reload.
+        assert_eq!(rw.mag_size, 30, "rifleman 30-round mag");
+        assert_eq!(rw.ammo, rw.mag_size, "spawns with a full magazine");
+        assert_eq!(rw.reload_ticks, 90, "rifleman 90-tick reload");
+        assert_eq!(hw.mag_size, 50, "heavy 50-round belt");
+        assert_eq!(hw.ammo, hw.mag_size, "spawns with a full magazine");
+        assert!(hw.mag_size > rw.mag_size, "heavy sustains fire longer");
+        assert!(hw.reload_ticks > rw.reload_ticks, "heavy reload is slower");
+        assert_eq!(rw.reload_left, 0, "not reloading at spawn");
+        assert_eq!(hw.reload_left, 0, "not reloading at spawn");
     }
 }

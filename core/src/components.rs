@@ -221,6 +221,14 @@ impl Default for Health {
 
 /// A weapon: how far it reaches, how hard it hits, and how often. A default (range 0) weapon
 /// never fires, so non-combatants and the Phase 1 mover are inert in `combat_system`.
+///
+/// The magazine fields drive the **embodied** reload mechanic (the first-person Reload button)
+/// and are deliberately **opt-in**: a weapon with `mag_size == 0` has *no* magazine and fires
+/// without an ammo gate — this is what every AI / auto-combat unit and every Phase-1/2 test
+/// uses, so the existing `combat_system` engage pass is untouched. Only weapons produced with a
+/// real `mag_size` (the playable archetypes in `economy::unit_stats`) ration ammo, and only the
+/// embodied fire path ([`combat::resolve_fire`]) enforces it (AI units are literal executors —
+/// they never reload, invariant #3). All `u16`/`Fixed`, no float (invariant #1).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Weapon {
     /// Maximum engagement distance in world units.
@@ -231,6 +239,28 @@ pub struct Weapon {
     pub cooldown_ticks: u16,
     /// Ticks left until the weapon may fire again (0 = ready).
     pub cooldown_left: u16,
+    /// Magazine capacity. `0` = no magazine system (infinite ammo, no reload) — the default for
+    /// AI/auto units and tests. `> 0` enables the embodied ammo+reload gate.
+    pub mag_size: u16,
+    /// Rounds left in the current magazine (only meaningful when `mag_size > 0`).
+    pub ammo: u16,
+    /// How many ticks a reload takes once started (config; only meaningful when `mag_size > 0`).
+    pub reload_ticks: u16,
+    /// Ticks left in an in-progress reload (`0` = not reloading). Set by `Command::Reload`,
+    /// counted down in combat upkeep; on reaching zero the magazine refills to `mag_size`.
+    pub reload_left: u16,
+}
+
+/// A unit's body posture (the embodied crouch toggle). Crouching trades mobility for accuracy:
+/// it moves at [`systems::CROUCH_MOVE_SPEED`](crate::systems::CROUCH_MOVE_SPEED) and fires through
+/// the tighter [`combat::FIRE_CONE_COS_HALF_CROUCHED`](crate::combat::FIRE_CONE_COS_HALF_CROUCHED)
+/// aim cone. Player-only sim state (set by `Command::Crouch`); AI units stay `Standing`
+/// (literal executor — invariant #3). A plain `repr`-stable tag like [`Stance`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Posture {
+    #[default]
+    Standing,
+    Crouched,
 }
 
 /// One queued unit at a production building, counting down to completion.

@@ -14,8 +14,8 @@
 use crate::checksum::Checksum;
 use crate::combat;
 use crate::components::{
-    Building, BuildingKind, EntityKind, Faction, Health, InputSource, Order, ProductionItem,
-    Stance, UnitKind, Vec2, Weapon,
+    Building, BuildingKind, EntityKind, Faction, Health, InputSource, Order, Posture,
+    ProductionItem, Stance, UnitKind, Vec2, Weapon,
 };
 use crate::economy::{self, Resources};
 use crate::ecs::{Entity, World, WorldComponents};
@@ -81,6 +81,19 @@ pub enum Command {
     /// stick is live; it enters the same lockstep stream as taps/fire and so stays bit-identical
     /// across peers (invariant #7).
     Locomote { entity: Entity, dir: Vec2 },
+    /// An embodied unit starts reloading its weapon (the first-person Reload button). A no-op
+    /// unless the unit is alive, has a magazine (`mag_size > 0`), is not already reloading, and
+    /// its magazine is not already full — so a spurious tap costs nothing. Sets `reload_left`;
+    /// `combat`'s upkeep counts it down and refills the magazine when it hits zero. Like
+    /// [`Fire`](Self::Fire)/[`Locomote`](Self::Locomote) it rides the lockstep stream and is
+    /// applied identically on every peer (invariant #7).
+    Reload { entity: Entity },
+    /// Set an embodied unit's body posture (the first-person Crouch toggle). The host carries the
+    /// toggle state and emits this only on a change; the sim just writes `posture[entity]`.
+    /// Crouching slows movement and tightens/extends the embodied aim (`combat`/`systems`). A
+    /// no-op for a dead unit; harmless for an order-driven one (posture only affects the embodied
+    /// fire/move paths). Lockstep-streamed like the other embodied intents.
+    Crouch { entity: Entity, crouched: bool },
 }
 
 /// The simulation: the deterministic world, the static terrain, per-faction resources, the
@@ -221,7 +234,34 @@ impl Sim {
                 if self.world.is_alive(entity)
                     && self.world.input_source[i] == InputSource::Embodied
                 {
-                    systems::step_along(&mut self.world, i, dir, systems::MOVE_SPEED);
+                    // Crouch slows the avatar (the mobility cost of the marksman stance); standing
+                    // moves at the base speed. Posture is a deterministic per-unit field, so the
+                    // chosen speed is identical on every peer (invariant #1/#7).
+                    let speed = if self.world.posture[i] == Posture::Crouched {
+                        systems::CROUCH_MOVE_SPEED
+                    } else {
+                        systems::MOVE_SPEED
+                    };
+                    systems::step_along(&mut self.world, i, dir, speed);
+                }
+            }
+            Command::Reload { entity } => {
+                // Begin a reload on a live, magazine-armed unit that is not already reloading and
+                // not already topped up. Combat's upkeep counts `reload_left` down and refills.
+                if self.world.is_alive(entity) {
+                    let w = &mut self.world.weapon[entity.index as usize];
+                    if w.mag_size > 0 && w.reload_left == 0 && w.ammo < w.mag_size {
+                        w.reload_left = w.reload_ticks;
+                    }
+                }
+            }
+            Command::Crouch { entity, crouched } => {
+                if self.world.is_alive(entity) {
+                    self.world.posture[entity.index as usize] = if crouched {
+                        Posture::Crouched
+                    } else {
+                        Posture::Standing
+                    };
                 }
             }
         }
@@ -262,6 +302,7 @@ impl Sim {
             write_order(sink, self.world.order[i]);
             sink.write_u8(stance_tag(self.world.stance[i]));
             sink.write_u8(input_tag(self.world.input_source[i]));
+            sink.write_u8(posture_tag(self.world.posture[i]));
             sink.write_u8(faction_tag(self.world.faction[i]));
             sink.write_u8(kind_tag(self.world.kind[i]));
             let h = self.world.health[i];
@@ -272,6 +313,10 @@ impl Sim {
             sink.write_i32(w.damage.to_bits());
             sink.write_u32(w.cooldown_ticks as u32);
             sink.write_u32(w.cooldown_left as u32);
+            sink.write_u32(w.mag_size as u32);
+            sink.write_u32(w.ammo as u32);
+            sink.write_u32(w.reload_ticks as u32);
+            sink.write_u32(w.reload_left as u32);
             sink.write_i32(self.world.suppression[i].to_bits());
             match self.world.last_attacker[i] {
                 Some(e) => {
@@ -379,6 +424,7 @@ impl Sim {
         let mut order = Vec::with_capacity(cap);
         let mut stance = Vec::with_capacity(cap);
         let mut input_source = Vec::with_capacity(cap);
+        let mut posture = Vec::with_capacity(cap);
         let mut faction = Vec::with_capacity(cap);
         let mut kind = Vec::with_capacity(cap);
         let mut health = Vec::with_capacity(cap);
@@ -396,6 +442,7 @@ impl Sim {
             order.push(read_order(&mut r)?);
             stance.push(read_stance(&mut r)?);
             input_source.push(read_input(&mut r)?);
+            posture.push(read_posture(&mut r)?);
             faction.push(read_faction(&mut r)?);
             kind.push(read_kind(&mut r)?);
             health.push(Health {
@@ -407,6 +454,10 @@ impl Sim {
                 damage: Fixed::from_bits(r.read_i32()?),
                 cooldown_ticks: read_u16(&mut r)?,
                 cooldown_left: read_u16(&mut r)?,
+                mag_size: read_u16(&mut r)?,
+                ammo: read_u16(&mut r)?,
+                reload_ticks: read_u16(&mut r)?,
+                reload_left: read_u16(&mut r)?,
             });
             suppression.push(Fixed::from_bits(r.read_i32()?));
             last_attacker.push(read_opt_entity(&mut r)?);
@@ -469,6 +520,7 @@ impl Sim {
                 order,
                 stance,
                 input_source,
+                posture,
                 faction,
                 kind,
                 unit_kind,
@@ -504,7 +556,7 @@ impl Sim {
 /// Authoritative-snapshot format version (D28). Bumped on any layout change so a stale snapshot is
 /// rejected ([`DeserializeError::BadVersion`]) rather than silently misparsed into a divergent
 /// world. Independent of the lockstep wire version — different codec, different evolution.
-const SNAPSHOT_VERSION: u8 = 2;
+const SNAPSHOT_VERSION: u8 = 3;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.
@@ -610,6 +662,14 @@ fn read_input(r: &mut Reader) -> Result<InputSource, DeserializeError> {
     })
 }
 
+fn read_posture(r: &mut Reader) -> Result<Posture, DeserializeError> {
+    Ok(match r.read_u8()? {
+        0 => Posture::Standing,
+        1 => Posture::Crouched,
+        t => return Err(DeserializeError::BadTag(t)),
+    })
+}
+
 fn read_faction(r: &mut Reader) -> Result<Faction, DeserializeError> {
     Ok(match r.read_u8()? {
         0 => Faction::Player,
@@ -678,6 +738,13 @@ fn input_tag(s: InputSource) -> u8 {
     match s {
         InputSource::Orders => 0,
         InputSource::Embodied => 1,
+    }
+}
+
+fn posture_tag(p: Posture) -> u8 {
+    match p {
+        Posture::Standing => 0,
+        Posture::Crouched => 1,
     }
 }
 

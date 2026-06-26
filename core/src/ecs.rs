@@ -6,7 +6,8 @@
 //! stale handle to a recycled slot is detected, with no pointers in sim state.
 
 use crate::components::{
-    Building, EntityKind, Faction, Health, InputSource, Order, Stance, UnitKind, Vec2, Weapon,
+    Building, EntityKind, Faction, Health, InputSource, Order, Posture, Stance, UnitKind, Vec2,
+    Weapon,
 };
 use crate::fixed::Fixed;
 
@@ -34,6 +35,9 @@ pub struct World {
     pub order: Vec<Order>,
     pub stance: Vec<Stance>,
     pub input_source: Vec<InputSource>,
+    /// Body posture (the embodied crouch toggle). Player-only sim state; AI units stay
+    /// `Standing` (invariant #3). Folded into the checksum — it affects movement speed + aim.
+    pub posture: Vec<Posture>,
 
     // --- Phase 2 components (D23) ---
     /// Which side the entity is on (combat engages only across factions).
@@ -79,6 +83,7 @@ impl World {
             self.order[i] = Order::default();
             self.stance[i] = Stance::default();
             self.input_source[i] = InputSource::default();
+            self.posture[i] = Posture::default();
             self.faction[i] = Faction::default();
             self.kind[i] = EntityKind::default();
             self.unit_kind[i] = UnitKind::default();
@@ -102,6 +107,7 @@ impl World {
             self.order.push(Order::default());
             self.stance.push(Stance::default());
             self.input_source.push(InputSource::default());
+            self.posture.push(Posture::default());
             self.faction.push(Faction::default());
             self.kind.push(EntityKind::default());
             self.unit_kind.push(UnitKind::default());
@@ -218,6 +224,7 @@ impl World {
             order,
             stance,
             input_source,
+            posture,
             faction,
             kind,
             unit_kind,
@@ -236,6 +243,7 @@ impl World {
             || order.len() != cap
             || stance.len() != cap
             || input_source.len() != cap
+            || posture.len() != cap
             || faction.len() != cap
             || kind.len() != cap
             || unit_kind.len() != cap
@@ -274,6 +282,7 @@ impl World {
             order,
             stance,
             input_source,
+            posture,
             faction,
             kind,
             unit_kind,
@@ -297,6 +306,7 @@ pub struct WorldComponents {
     pub order: Vec<Order>,
     pub stance: Vec<Stance>,
     pub input_source: Vec<InputSource>,
+    pub posture: Vec<Posture>,
     pub faction: Vec<Faction>,
     pub kind: Vec<EntityKind>,
     pub unit_kind: Vec<UnitKind>,

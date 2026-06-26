@@ -19,7 +19,7 @@
 //! shooter/target (needed by `last_attacker` and the `SimEvent`s) comes from the O(1)
 //! [`World::entity`] accessor.
 
-use crate::components::{EntityKind, Faction, InputSource, Stance, Vec2};
+use crate::components::{EntityKind, Faction, InputSource, Posture, Stance, Vec2};
 use crate::ecs::World;
 use crate::event::SimEvent;
 use crate::fixed::Fixed;
@@ -150,6 +150,17 @@ pub fn combat_system(
         if world.weapon[i].cooldown_left > 0 {
             world.weapon[i].cooldown_left -= 1;
         }
+        // Reload upkeep (embodied magazine mechanic): count an in-progress reload down; when it
+        // reaches zero the magazine refills. `reload_left` is only ever set by `Command::Reload`
+        // (player input) so AI/auto units — whose `reload_left` stays 0 — are unaffected, and a
+        // `mag_size == 0` weapon never reloads. Index-ordered with the cooldown tick above, so
+        // the pass stays peer-identical (invariant #7).
+        if world.weapon[i].reload_left > 0 {
+            world.weapon[i].reload_left -= 1;
+            if world.weapon[i].reload_left == 0 {
+                world.weapon[i].ammo = world.weapon[i].mag_size;
+            }
+        }
     }
 
     // --- Build the per-tick spatial index for target acquisition (A5) ---
@@ -250,6 +261,21 @@ pub fn combat_system(
 /// cone test squares this (never a sqrt), so only `cos²` ever enters the comparison.
 pub const FIRE_CONE_COS_HALF: Fixed = Fixed::from_ratio(866, 1000);
 
+/// Cosine of the half-cone angle while **crouched** — `cos(18°) ≈ 0.951`, a ~36°-wide cone
+/// (tighter than the ~60° standing cone). Crouch is a *marksman* stance: the narrower cone
+/// **demands more precise aim** (an off-axis target a standing hip-fire would clip is now a miss),
+/// which together with the extended [`CROUCH_RANGE_BONUS`] range and the slower
+/// [`systems::CROUCH_MOVE_SPEED`](crate::systems::CROUCH_MOVE_SPEED) makes crouch a deliberate
+/// "aim true, reach further, can't reposition" trade. The exact rational `951/1000` keeps it
+/// float-free (invariant #1); the cone test squares it, so only `cos²` ever enters the compare.
+pub const FIRE_CONE_COS_HALF_CROUCHED: Fixed = Fixed::from_ratio(951, 1000);
+
+/// Weapon-range multiplier while **crouched** — a steady stance reaches `5/4` (25%) further.
+/// This is the tangible upside that pays for the crouch movement penalty
+/// ([`systems::CROUCH_MOVE_SPEED`](crate::systems::CROUCH_MOVE_SPEED)): crouch to set up a
+/// precise, longer shot; stand to reposition. Exact rational keeps it float-free (invariant #1).
+pub const CROUCH_RANGE_BONUS: Fixed = Fixed::from_ratio(5, 4);
+
 /// Resolve one embodied shot from `shooter_idx` aimed along `dir` (a unit aim vector in Fixed
 /// world space — quantized at the host boundary, invariant #1). A fixed-point **cone hitscan**:
 /// the lowest-index living hostile entity — a unit **or** a building — that lies inside the aim
@@ -283,11 +309,35 @@ pub fn resolve_fire(
     if world.weapon[shooter_idx].cooldown_left != 0 {
         return;
     }
+    // Embodied magazine gate (opt-in: `mag_size == 0` = no magazine, fires freely). An empty
+    // mag or an in-progress reload is a silent no-op — a dry click, no cooldown spent, exactly
+    // like an out-of-cone miss — so the player can reload and try again. AI/auto fire never
+    // reaches here (combat skips embodied units; this is the embodied-only path), so the
+    // mechanic is first-person-only by construction (invariant #3).
+    {
+        let w = world.weapon[shooter_idx];
+        if w.mag_size > 0 && (w.reload_left > 0 || w.ammo == 0) {
+            return;
+        }
+    }
 
+    // Crouch (player posture) tightens the aim cone and extends range — the marksman stance that
+    // pays for its slower movement. Posture is `Standing` for every non-embodied unit, so this
+    // only ever shifts an embodied player's shot.
+    let crouched = world.posture[shooter_idx] == Posture::Crouched;
     let my_pos = world.pos[shooter_idx];
-    let range = world.weapon[shooter_idx].range;
+    let base_range = world.weapon[shooter_idx].range;
+    let range = if crouched {
+        base_range * CROUCH_RANGE_BONUS
+    } else {
+        base_range
+    };
     let range_sq = range * range;
-    let cos_half = FIRE_CONE_COS_HALF;
+    let cos_half = if crouched {
+        FIRE_CONE_COS_HALF_CROUCHED
+    } else {
+        FIRE_CONE_COS_HALF
+    };
     let cos_half_sq = cos_half * cos_half;
 
     // Pick the lowest-index hostile, living target inside the cone, in range, with LoS. A target
@@ -352,6 +402,11 @@ pub fn resolve_fire(
     world.suppression[target_idx] =
         (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
     world.weapon[shooter_idx].cooldown_left = world.weapon[shooter_idx].cooldown_ticks;
+    // Spend a round (magazine weapons only). The pre-fire gate guarantees `ammo > 0` here, so the
+    // subtraction never underflows. A miss spends nothing (we returned before this point).
+    if world.weapon[shooter_idx].mag_size > 0 {
+        world.weapon[shooter_idx].ammo -= 1;
+    }
 
     events.push(SimEvent::Damaged {
         entity: target,
@@ -409,6 +464,27 @@ mod tests {
             damage: fx(damage),
             cooldown_ticks: cooldown,
             cooldown_left: 0,
+            // No magazine by default — these AI/auto-combat tests fire with infinite ammo, so the
+            // embodied reload gate stays out of their way (it is `mag_size > 0`-gated).
+            mag_size: 0,
+            ammo: 0,
+            reload_ticks: 0,
+            reload_left: 0,
+        }
+    }
+
+    /// A magazine-armed rifle for the embodied ammo/reload tests: `mag` rounds, `reload` ticks to
+    /// refill, no cooldown so successive shots are limited only by ammo.
+    fn mag_rifle(range: i32, damage: i32, mag: u16, reload: u16) -> Weapon {
+        Weapon {
+            range: fx(range),
+            damage: fx(damage),
+            cooldown_ticks: 0,
+            cooldown_left: 0,
+            mag_size: mag,
+            ammo: mag,
+            reload_ticks: reload,
+            reload_left: 0,
         }
     }
 
@@ -1070,5 +1146,131 @@ mod tests {
         assert_eq!(world.entity(c.index as usize), Some(c));
         world.despawn(c);
         assert_eq!(world.entity(0), None);
+    }
+
+    // --- Embodied magazine: ammo + reload (resolve_fire, mag_size > 0) -------------------------
+
+    /// Spawn an embodied shooter with a magazine-armed weapon at the origin, plus a fat enemy
+    /// dead ahead on +X so each pull either lands a `Damaged` or is a silent dry/blocked click.
+    fn mag_scene(range: i32, mag: u16, reload: u16) -> (World, Terrain, Entity, Entity) {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(range, 5, mag, reload));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        let enemy = spawn_unit(&mut world, 4, 0, Faction::Enemy, 10_000, Weapon::default());
+        (world, terrain, shooter, enemy)
+    }
+
+    #[test]
+    fn embodied_fire_decrements_ammo_per_shot() {
+        let (mut world, terrain, shooter, _enemy) = mag_scene(10, 3, 90);
+        let mut events = Vec::new();
+        assert_eq!(world.weapon[shooter.index as usize].ammo, 3);
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.weapon[shooter.index as usize].ammo, 2, "one round spent per hit");
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.weapon[shooter.index as usize].ammo, 1);
+        assert_eq!(events.len(), 2, "both shots landed while ammo remained");
+    }
+
+    #[test]
+    fn empty_magazine_blocks_fire_no_damage_no_event() {
+        let (mut world, terrain, shooter, enemy) = mag_scene(10, 1, 90);
+        let mut events = Vec::new();
+        // First (and only) round lands.
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.weapon[shooter.index as usize].ammo, 0);
+        let hp_after_first = world.health[enemy.index as usize].cur;
+        // Dry click: no hit, no event, ammo stays 0 (and no cooldown was spent — cooldown is 0).
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(events.len(), 1, "the empty pull emits nothing");
+        assert_eq!(world.health[enemy.index as usize].cur, hp_after_first, "no damage on empty");
+    }
+
+    #[test]
+    fn reload_refills_magazine_after_reload_ticks_in_upkeep() {
+        // No enemy needed: drive only the upkeep timer. Start an empty mag with a 3-tick reload
+        // in progress (as `Command::Reload` would set), then run combat upkeep three times.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 8, 3));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        let i = shooter.index as usize;
+        world.weapon[i].ammo = 0;
+        world.weapon[i].reload_left = 3;
+
+        let mut events = Vec::new();
+        run(&mut world, &terrain, &mut events); // 3 -> 2
+        assert_eq!(world.weapon[i].reload_left, 2);
+        assert_eq!(world.weapon[i].ammo, 0, "no refill until the timer expires");
+        run(&mut world, &terrain, &mut events); // 2 -> 1
+        assert_eq!(world.weapon[i].ammo, 0);
+        run(&mut world, &terrain, &mut events); // 1 -> 0: refill
+        assert_eq!(world.weapon[i].reload_left, 0);
+        assert_eq!(world.weapon[i].ammo, 8, "magazine refilled to mag_size");
+    }
+
+    #[test]
+    fn cannot_fire_while_reloading_even_with_ammo() {
+        let (mut world, terrain, shooter, enemy) = mag_scene(10, 8, 4);
+        let i = shooter.index as usize;
+        world.weapon[i].reload_left = 4; // reload in progress despite rounds left
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert!(events.is_empty(), "a reloading weapon cannot fire");
+        assert_eq!(world.health[enemy.index as usize].cur, Fixed::from_int(10_000));
+        // Finish the reload (4 upkeep ticks), then the same pull lands.
+        for _ in 0..4 {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert_eq!(world.weapon[i].reload_left, 0);
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert!(!events.is_empty(), "fire resumes once the reload completes");
+    }
+
+    // --- Crouch posture: tighter cone + extended range (resolve_fire) --------------------------
+
+    #[test]
+    fn crouched_cone_is_tighter_a_standing_shot_lands_a_crouched_one_misses() {
+        // Target ~26.6° off the +X aim — inside the ~30° standing half-cone, outside the ~18°
+        // crouched one. Same world, only posture differs.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(15, 25, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        let enemy = spawn_unit(&mut world, 10, 5, Faction::Enemy, 100, Weapon::default());
+
+        // Standing: the off-axis target is within the wider cone -> hit.
+        let mut events = Vec::new();
+        world.posture[shooter.index as usize] = Posture::Standing;
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(75), "standing hip-fire clips it");
+
+        // Reset health; crouch tightens the cone past the target's bearing -> miss.
+        world.health[enemy.index as usize].cur = fx(100);
+        events.clear();
+        world.posture[shooter.index as usize] = Posture::Crouched;
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "crouch demands tighter aim");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn crouched_extends_weapon_range() {
+        // On-axis target at distance 12: beyond the base range 10, inside the crouched 12.5.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        let enemy = spawn_unit(&mut world, 12, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        world.posture[shooter.index as usize] = Posture::Standing;
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "out of base range standing");
+
+        world.posture[shooter.index as usize] = Posture::Crouched;
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[enemy.index as usize].cur, fx(75), "crouch reaches the further target");
     }
 }

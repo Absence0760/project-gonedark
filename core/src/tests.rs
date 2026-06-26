@@ -646,7 +646,12 @@ fn ecs_respawn_resets_component_arrays() {
         damage: Fixed::from_int(2),
         cooldown_ticks: 7,
         cooldown_left: 4,
+        mag_size: 24,
+        ammo: 11,
+        reload_ticks: 60,
+        reload_left: 17,
     };
+    w.posture[i] = crate::components::Posture::Crouched;
     w.suppression[i] = Fixed::HALF;
     w.last_attacker[i] = Some(a);
     w.retreat_below[i] = Fixed::from_ratio(1, 3);
@@ -668,6 +673,7 @@ fn ecs_respawn_resets_component_arrays() {
     assert_eq!(w.order[j], Order::Idle);
     assert_eq!(w.stance[j], Stance::ReturnFire);
     assert_eq!(w.input_source[j], InputSource::Orders);
+    assert_eq!(w.posture[j], crate::components::Posture::Standing);
     // Phase 2 fields must reset to their defaults too.
     assert_eq!(w.faction[j], Faction::Player);
     assert_eq!(w.kind[j], EntityKind::Unit);
@@ -997,6 +1003,63 @@ fn embody_stops_motion_surface_resumes_it() {
 }
 
 #[test]
+fn crouch_command_sets_posture_and_halves_embodied_locomotion() {
+    use crate::components::Posture;
+    use crate::systems::{CROUCH_MOVE_SPEED, MOVE_SPEED};
+
+    let mut sim = Sim::new(0xC0FFEE);
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    sim.step(&[Command::Embody { entity: e }]);
+
+    // Standing: one locomotion tick advances by the base move speed along +X.
+    let dir = Vec2::new(Fixed::ONE, Fixed::ZERO);
+    let start = sim.world.pos[i];
+    sim.step(&[Command::Locomote { entity: e, dir }]);
+    assert_eq!(sim.world.pos[i].x - start.x, MOVE_SPEED, "standing walks at base speed");
+
+    // Crouch, then a locomotion tick advances by only the crouched (half) speed.
+    sim.step(&[Command::Crouch { entity: e, crouched: true }]);
+    assert_eq!(sim.world.posture[i], Posture::Crouched, "crouch command set posture");
+    let before = sim.world.pos[i];
+    sim.step(&[Command::Locomote { entity: e, dir }]);
+    assert_eq!(sim.world.pos[i].x - before.x, CROUCH_MOVE_SPEED, "crouch walks at half speed");
+    assert!(CROUCH_MOVE_SPEED < MOVE_SPEED);
+
+    // Standing again restores full speed.
+    sim.step(&[Command::Crouch { entity: e, crouched: false }]);
+    assert_eq!(sim.world.posture[i], Posture::Standing);
+}
+
+#[test]
+fn reload_command_starts_reload_then_upkeep_refills_the_magazine() {
+    let mut sim = Sim::new(7);
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    // Arm a magazine and run it dry, embodied (so auto-combat never touches it).
+    sim.step(&[Command::Embody { entity: e }]);
+    sim.world.weapon[i].mag_size = 30;
+    sim.world.weapon[i].ammo = 0;
+    sim.world.weapon[i].reload_ticks = 4;
+
+    // `step` applies the command THEN runs combat upkeep, so the timer is armed to 4 and
+    // immediately ticked to 3 within this same step.
+    sim.step(&[Command::Reload { entity: e }]);
+    assert_eq!(sim.world.weapon[i].reload_left, 3, "reload armed (4) then upkeep ticked it to 3");
+    // A second Reload while one is in flight is ignored (no restart); it only ticks 3 -> 2.
+    sim.step(&[Command::Reload { entity: e }]);
+    assert_eq!(sim.world.weapon[i].reload_left, 2, "in-flight reload not restarted");
+    sim.step(&[]); // 2 -> 1
+    sim.step(&[]); // 1 -> 0: refill
+    assert_eq!(sim.world.weapon[i].reload_left, 0);
+    assert_eq!(sim.world.weapon[i].ammo, 30, "magazine refilled to capacity");
+
+    // Reloading a full magazine is a no-op (no wasted reload).
+    sim.step(&[Command::Reload { entity: e }]);
+    assert_eq!(sim.world.weapon[i].reload_left, 0, "no reload starts on a full mag");
+}
+
+#[test]
 fn idle_unit_has_zero_velocity_and_stays_put() {
     // A unit with no order holds position and reports zero velocity every tick.
     let mut sim = Sim::new(3);
@@ -1256,6 +1319,43 @@ fn snapshot_preserves_unit_kind_render_metadata() {
     );
 }
 
+/// The embodied magazine + crouch state is REAL sim state: it must survive serialize/deserialize
+/// AND be folded into the per-tick checksum (the opposite of `unit_kind`), or a resumed peer would
+/// silently diverge on the next embodied shot/step (invariant #7).
+#[test]
+fn snapshot_preserves_posture_and_magazine_and_they_are_checksummed() {
+    use crate::components::Posture;
+
+    let mut sim = Sim::new(7);
+    let u = sim.world.spawn();
+    let i = u.index as usize;
+    sim.world.posture[i] = Posture::Crouched;
+    sim.world.weapon[i].mag_size = 30;
+    sim.world.weapon[i].ammo = 12;
+    sim.world.weapon[i].reload_ticks = 90;
+    sim.world.weapon[i].reload_left = 44;
+
+    let restored = Sim::deserialize(&sim.serialize()).expect("round-trip deserialize");
+    assert_eq!(restored.world.posture[i], Posture::Crouched, "posture round-trips");
+    assert_eq!(restored.world.weapon[i].ammo, 12, "ammo round-trips");
+    assert_eq!(restored.world.weapon[i].mag_size, 30);
+    assert_eq!(restored.world.weapon[i].reload_ticks, 90);
+    assert_eq!(restored.world.weapon[i].reload_left, 44, "reload timer round-trips");
+    assert_eq!(restored.checksum(), sim.checksum(), "restored state checksums identically");
+
+    // Each new field perturbs the checksum — it is genuinely folded (unlike `unit_kind`).
+    let base = sim.checksum();
+    sim.world.posture[i] = Posture::Standing;
+    assert_ne!(base, sim.checksum(), "posture is checksummed");
+    sim.world.posture[i] = Posture::Crouched; // restore
+    assert_eq!(base, sim.checksum());
+    sim.world.weapon[i].ammo = 11;
+    assert_ne!(base, sim.checksum(), "ammo is checksummed");
+    sim.world.weapon[i].ammo = 12; // restore
+    sim.world.weapon[i].reload_left = 43;
+    assert_ne!(base, sim.checksum(), "reload timer is checksummed");
+}
+
 /// The free-list ORDER is load-bearing: it decides the next spawn's slot. A snapshot taken after
 /// despawns must resume with spawns landing on exactly the slots the uninterrupted run would use.
 #[test]
@@ -1317,9 +1417,11 @@ fn deserialize_rejects_malformed_input() {
         DeserializeError::UnexpectedEof | DeserializeError::TrailingBytes
     ));
 
-    // A garbage capacity that overruns the buffer is caught before allocating.
+    // A garbage capacity that overruns the buffer is caught before allocating. Take the current
+    // snapshot-version byte from a real serialize so this stays correct across version bumps.
+    let cur_version = sim.serialize()[0];
     let mut w = Writer::new();
-    w.write_u8(2); // version (current SNAPSHOT_VERSION)
+    w.write_u8(cur_version); // version (current SNAPSHOT_VERSION)
     w.write_u32(0); // map_id
     w.write_u32(0xFFFF_FFFF); // capacity claims ~4 billion slots
     assert_eq!(err(&w.into_bytes()), DeserializeError::LengthOverflow);

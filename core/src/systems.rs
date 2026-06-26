@@ -21,6 +21,12 @@ use crate::flow_field::FlowFieldCache;
 /// Base move speed in world units per tick (1/8). Tune via data later.
 pub const MOVE_SPEED: Fixed = Fixed::from_ratio(1, 8);
 
+/// Embodied move speed while **crouched** (1/16 = half [`MOVE_SPEED`]). The mobility cost of the
+/// marksman stance — crouching halves your walking speed in exchange for the tighter, longer-
+/// ranged shot (`combat`). Exact ratio keeps it float-free (invariant #1). Applied only to the
+/// embodied `Command::Locomote` path (AI units never crouch — invariant #3).
+pub const CROUCH_MOVE_SPEED: Fixed = Fixed::from_ratio(1, 16);
+
 /// Squared arrival epsilon: snap to the target when closer than this (1/256 units²).
 pub const ARRIVE_EPS_SQ: Fixed = Fixed::from_ratio(1, 256);
 
