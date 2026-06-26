@@ -37,6 +37,9 @@ pub enum HostTransition {
     OpenSettings,
     /// Tear down and exit the app.
     Exit,
+    /// Leave the current match and return to the title screen — the post-match summary's DISMISS,
+    /// and any other in-match "give up the match without quitting the app" path. Drops the `Game`.
+    ExitToTitle,
 }
 
 /// Map a title action to the host transition it triggers (the pure run-loop decision).

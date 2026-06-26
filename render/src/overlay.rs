@@ -274,6 +274,32 @@ fn push_button_row(out: &mut Vec<OverlayQuad>, choices: &[QuadRole]) {
     }
 }
 
+/// Hit-test a point in NDC (`x` rightward, `y` upward — the same screen space [`overlay_quads`]
+/// lays the chrome out in) against the overlay's choice-button row, returning the 0-based slot
+/// index of the button under the point, or `None` if it misses every button (or the overlay has
+/// none). The geometry mirrors [`push_button_row`] exactly, so a hit here corresponds 1:1 to a
+/// drawn button — this is the seam the native/touch layer calls to turn a tap into a slot.
+pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize> {
+    // Reject anything outside the button row's vertical band before walking the slots.
+    if (ndc_y - BUTTON_ROW_CY).abs() > BUTTON_HH {
+        return None;
+    }
+    let choices = surface_choices(overlay);
+    let n = choices.len();
+    if n == 0 {
+        return None;
+    }
+    let total_hw = n as f32 * BUTTON_HW + (n as f32 - 1.0) * BUTTON_GAP * 0.5;
+    let mut cx = -total_hw + BUTTON_HW;
+    for slot in 0..n {
+        if (ndc_x - cx).abs() <= BUTTON_HW {
+            return Some(slot);
+        }
+        cx += 2.0 * BUTTON_HW + BUTTON_GAP;
+    }
+    None
+}
+
 /// Build the screen-space overlay quads for `overlay`. Pure (no GPU, no sim) — the testable layout
 /// seam. Returns an empty vec for [`Overlay::None`]. Quads are returned back-to-front (scrim first,
 /// then panel, then accents/bars) so an alpha-blended LOAD pass composites correctly.
@@ -1129,6 +1155,55 @@ mod tests {
                 "in the panel"
             );
         }
+    }
+
+    /// `button_slot_at` agrees 1:1 with the drawn button quads: each drawn slot center hit-tests to
+    /// its own index, the gap between two slots misses, a point above the row misses, and an overlay
+    /// with no buttons always misses.
+    #[test]
+    fn button_slot_at_matches_drawn_quads() {
+        // Two-button surface (Resume / Surrender): every drawn slot center maps to its own index.
+        let overlay = Overlay::Paused;
+        let mut buttons: Vec<OverlayQuad> = overlay_quads(&overlay)
+            .into_iter()
+            .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
+            .collect();
+        buttons.sort_by(|a, b| a.cx.partial_cmp(&b.cx).unwrap());
+        for (i, b) in buttons.iter().enumerate() {
+            assert_eq!(
+                button_slot_at(&overlay, b.cx, b.cy),
+                Some(i),
+                "slot {i} center hits its own button"
+            );
+        }
+        // The gap between the two slots misses both.
+        let gap_x = (buttons[0].cx + buttons[1].cx) / 2.0;
+        assert_eq!(
+            button_slot_at(&overlay, gap_x, BUTTON_ROW_CY),
+            None,
+            "the inter-button gap misses"
+        );
+        // A point on a button's x but well above the row band misses.
+        assert_eq!(
+            button_slot_at(&overlay, buttons[0].cx, BUTTON_ROW_CY + 2.0 * BUTTON_HH),
+            None,
+            "above the row band misses"
+        );
+
+        // Single-button surface (the post-match DISMISS): its center hits slot 0.
+        let summary = Overlay::Summary(summary_with_kills(
+            1,
+            0,
+            MatchOutcome::Victory(Faction::Player),
+        ));
+        assert_eq!(
+            button_slot_at(&summary, 0.0, BUTTON_ROW_CY),
+            Some(0),
+            "the lone DISMISS button hit-tests at the row center"
+        );
+
+        // An overlay with no choices (None) never reports a hit.
+        assert_eq!(button_slot_at(&Overlay::None, 0.0, BUTTON_ROW_CY), None);
     }
 
     /// The summary bar rows start strictly below the accent strip, derived from `ACCENT_STRIP_HH`
