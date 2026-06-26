@@ -151,16 +151,24 @@ pub fn combat_system(
         if world.weapon[i].cooldown_left > 0 {
             world.weapon[i].cooldown_left -= 1;
         }
-        // Reload upkeep (embodied magazine mechanic): count an in-progress reload down; when it
-        // reaches zero the magazine refills. `reload_left` is only ever set by `Command::Reload`
-        // (player input) so AI/auto units — whose `reload_left` stays 0 — are unaffected, and a
-        // `mag_size == 0` weapon never reloads. Index-ordered with the cooldown tick above, so
-        // the pass stays peer-identical (invariant #7).
-        if world.weapon[i].reload_left > 0 {
-            world.weapon[i].reload_left -= 1;
-            if world.weapon[i].reload_left == 0 {
-                world.weapon[i].ammo = world.weapon[i].mag_size;
+        // Reload upkeep (all-unit ammo, D67). Count an in-progress reload down; on completion draw
+        // a fresh magazine from carried `reserve` (a partial reserve tops the mag only as far as it
+        // reaches; an empty reserve loads nothing). When no reload is running, an AI unit whose
+        // magazine has run dry *auto-starts* one if rounds remain in reserve — the embodied player
+        // instead reloads manually via `Command::Reload`. A `mag_size == 0` weapon never reloads.
+        // Index-ordered with the cooldown tick above, so the pass stays peer-identical (invariant #7).
+        let is_embodied = world.input_source[i] == InputSource::Embodied;
+        let w = &mut world.weapon[i];
+        if w.reload_left > 0 {
+            w.reload_left -= 1;
+            if w.reload_left == 0 {
+                let draw = w.mag_size.saturating_sub(w.ammo).min(w.reserve);
+                w.ammo += draw;
+                w.reserve -= draw;
             }
+        } else if w.mag_size > 0 && w.ammo == 0 && w.reserve > 0 && !is_embodied {
+            // Literal-executor auto-reload (invariant #3): reloads the held weapon, never strategy.
+            w.reload_left = w.reload_ticks;
         }
     }
 
@@ -201,6 +209,16 @@ pub fn combat_system(
             continue;
         }
 
+        // All-unit ammo gate (D67), mirroring `resolve_fire`: a magazine weapon cannot fire while
+        // reloading or with an empty magazine. Upkeep auto-starts the reload, so a dry unit simply
+        // holds here until it finishes (or stays silent if its reserve is also spent).
+        {
+            let w = world.weapon[i];
+            if w.mag_size > 0 && (w.reload_left > 0 || w.ammo == 0) {
+                continue;
+            }
+        }
+
         let shooter = match world.entity(i) {
             Some(e) => e,
             None => continue,
@@ -226,6 +244,11 @@ pub fn combat_system(
         world.suppression[target_idx] =
             (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
         world.weapon[i].cooldown_left = world.weapon[i].cooldown_ticks;
+        // Spend a round (magazine weapons only); the gate above guarantees ammo > 0 here, so the
+        // subtraction never underflows. AI auto-reload (upkeep) refills from reserve when it empties.
+        if world.weapon[i].mag_size > 0 {
+            world.weapon[i].ammo -= 1;
+        }
 
         events.push(SimEvent::Damaged {
             entity: target,
@@ -583,19 +606,22 @@ mod tests {
             cooldown_ticks: cooldown,
             cooldown_left: 0,
             // No magazine by default — these AI/auto-combat tests fire with infinite ammo, so the
-            // embodied reload gate stays out of their way (it is `mag_size > 0`-gated).
+            // ammo gate stays out of their way (it is `mag_size > 0`-gated).
             mag_size: 0,
             ammo: 0,
             reload_ticks: 0,
             reload_left: 0,
+            reserve: 0,
+            reserve_max: 0,
             turret_speed: 0,
             muzzle_vel: Fixed::ZERO,
             penetration: Fixed::ZERO,
         }
     }
 
-    /// A magazine-armed rifle for the embodied ammo/reload tests: `mag` rounds, `reload` ticks to
-    /// refill, no cooldown so successive shots are limited only by ammo.
+    /// A magazine-armed rifle for the ammo/reload tests: `mag` rounds, `reload` ticks to refill,
+    /// no cooldown so successive shots are limited only by ammo. Carries three spare mags in
+    /// reserve (D67) so a reload has rounds to draw from.
     fn mag_rifle(range: i32, damage: i32, mag: u16, reload: u16) -> Weapon {
         Weapon {
             range: fx(range),
@@ -606,6 +632,8 @@ mod tests {
             ammo: mag,
             reload_ticks: reload,
             reload_left: 0,
+            reserve: mag * 3,
+            reserve_max: mag * 3,
             turret_speed: 0,
             muzzle_vel: Fixed::ZERO,
             penetration: Fixed::ZERO,
@@ -1352,6 +1380,95 @@ mod tests {
         assert_eq!(world.weapon[i].reload_left, 0);
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert!(!events.is_empty(), "fire resumes once the reload completes");
+    }
+
+    // --- All-unit ammo: AI auto-combat rations rounds, auto-reloads, runs dry (D67) -----------
+
+    #[test]
+    fn ai_auto_combat_spends_a_round_per_shot() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        // mag_rifle has cooldown 0, so the only limit on the rate of fire is ammo.
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 3, 4));
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        let si = shooter.index as usize;
+        spawn_unit(&mut world, 4, 0, Faction::Enemy, 10_000, Weapon::default());
+
+        let mut events = Vec::new();
+        assert_eq!(world.weapon[si].ammo, 3, "spawns with a full magazine");
+        run(&mut world, &terrain, &mut events);
+        assert_eq!(world.weapon[si].ammo, 2, "AI auto-combat spends a round per shot (not infinite)");
+        run(&mut world, &terrain, &mut events);
+        assert_eq!(world.weapon[si].ammo, 1);
+    }
+
+    #[test]
+    fn ai_dry_magazine_auto_reloads_from_reserve() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        // mag 2, 3-tick reload, reserve = mag*3 = 6. No enemy: isolate the upkeep auto-reload from
+        // any firing so the timing is unambiguous. Empty the magazine by hand.
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 2, 3));
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        let si = shooter.index as usize;
+        world.weapon[si].ammo = 0;
+
+        let mut events = Vec::new();
+        // Tick 1 upkeep sees AI + dry + reserve > 0 → auto-arms the reload (does not also tick it).
+        run(&mut world, &terrain, &mut events);
+        assert_eq!(world.weapon[si].reload_left, 3, "AI auto-starts a reload when dry with reserve");
+        assert_eq!(world.weapon[si].ammo, 0, "still empty mid-reload");
+        // Drive the 3-tick reload to completion: 3 -> 2 -> 1 -> 0, then the magazine refills.
+        run(&mut world, &terrain, &mut events); // 3 -> 2
+        run(&mut world, &terrain, &mut events); // 2 -> 1
+        run(&mut world, &terrain, &mut events); // 1 -> 0: draw from reserve
+        assert_eq!(world.weapon[si].reload_left, 0, "reload complete");
+        assert_eq!(world.weapon[si].ammo, 2, "magazine refilled from reserve");
+        assert_eq!(world.weapon[si].reserve, 4, "two rounds drawn from the reserve of 6");
+    }
+
+    #[test]
+    fn ai_unit_with_empty_reserve_goes_combat_ineffective() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        // One round loaded, NOTHING in reserve: it shoots once, then can never reload or fire again.
+        let mut weapon = mag_rifle(10, 5, 1, 3);
+        weapon.reserve = 0;
+        weapon.reserve_max = 0;
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, weapon);
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        let si = shooter.index as usize;
+        let enemy = spawn_unit(&mut world, 4, 0, Faction::Enemy, 10_000, Weapon::default());
+
+        let mut events = Vec::new();
+        run(&mut world, &terrain, &mut events); // fires its one round
+        assert_eq!(world.weapon[si].ammo, 0);
+        let hp_after_one = world.health[enemy.index as usize].cur;
+        assert!(hp_after_one < Fixed::from_int(10_000), "the one loaded round landed");
+        for _ in 0..30 {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert_eq!(world.weapon[si].reload_left, 0, "no reload can start with an empty reserve");
+        assert_eq!(
+            world.health[enemy.index as usize].cur, hp_after_one,
+            "a fully dry unit deals no further damage (combat-ineffective until resupply)"
+        );
+    }
+
+    #[test]
+    fn embodied_unit_never_auto_reloads() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 2, 3));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        let si = shooter.index as usize;
+        world.weapon[si].ammo = 0; // empty mag, reserve still full
+        let mut events = Vec::new();
+        for _ in 0..10 {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert_eq!(world.weapon[si].reload_left, 0, "the embodied player reloads manually, never auto");
+        assert_eq!(world.weapon[si].ammo, 0, "no auto-refill for the embodied unit");
     }
 
     // --- Crouch posture: tighter cone + extended range (resolve_fire) --------------------------

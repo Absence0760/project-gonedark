@@ -273,7 +273,8 @@ mod tests {
         assert_eq!(simulate(200).checksums, simulate(200).checksums);
         assert_eq!(
             simulate(200).checksums.last().copied(),
-            Some(0x0290_a3ba_9a18_64fe),
+            // D67: re-pinned after the Weapon fold grew reserve + reserve_max (two more u32/slot).
+            Some(0xef4b_32dc_9f7d_973e),
         );
     }
 

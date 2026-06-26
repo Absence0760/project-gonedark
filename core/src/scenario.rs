@@ -99,6 +99,8 @@ fn duel_gun() -> Weapon {
         ammo: 0,
         reload_ticks: 0,
         reload_left: 0,
+        reserve: 0,
+        reserve_max: 0,
         turret_speed: 0,
         muzzle_vel: DUEL_GUN_MUZZLE_VEL,
         penetration: DUEL_GUN_PENETRATION,
@@ -734,8 +736,9 @@ mod tests {
         let sum = run_ballistic_duel(130);
         // Stable on every arch (fixed-point only). Recompute + re-pin only on an *intended* change
         // to the duel scene/gun/armour or the ballistic/facet math; an *unexpected* change here is a
-        // desync, not a value to bless.
-        assert_eq!(sum, 0x287d_a2da_8990_2e31);
+        // desync, not a value to bless. (D67: re-pinned after the Weapon fold grew reserve +
+        // reserve_max — every slot now folds two more u32, so the stream shifted by design.)
+        assert_eq!(sum, 0x9ce4_c890_207f_57f1);
         // And it is reproducible run-to-run on this arch.
         assert_eq!(run_ballistic_duel(130), sum);
     }

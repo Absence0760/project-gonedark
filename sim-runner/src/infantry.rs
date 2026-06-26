@@ -477,7 +477,8 @@ mod tests {
         assert_eq!(
             simulate_scene(300).checksums.last().copied(),
             // D66: rifleman damage ×5 (6→30) moved the embodied-scene golden.
-            Some(0xcead_40f4_566a_ab82),
+            // D67: re-pinned again after the Weapon fold grew reserve + reserve_max (two u32/slot).
+            Some(0x15a9_474e_f9aa_5402),
         );
     }
 

@@ -241,13 +241,15 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 damage: Fixed::from_int(30),
                 cooldown_ticks: 30,
                 cooldown_left: 0,
-                // Magazine gates only the embodied fire path (auto-combat ignores it — see
-                // `Weapon`/`combat::resolve_fire`): a 30-round mag, 90-tick reload (≈1500 ms
-                // at 60 Hz).
+                // All-unit ammo (D67): a 30-round mag, 90-tick reload (≈1500 ms at 60 Hz), and six
+                // spare mags carried (reserve 180 ≈ a real ~210-round rifle loadout). Rations both
+                // the embodied player and AI units; rearmed at a friendly camp by `crate::resupply`.
                 mag_size: 30,
                 ammo: 30,
                 reload_ticks: 90,
                 reload_left: 0,
+                reserve: 180,
+                reserve_max: 180,
                 // Infantry rifle: fixed mount, no independent turret (P2 default).
                 turret_speed: 0,
                 // Hitscan infantry weapon (P3 default): no shell flight, resolves instantly.
@@ -265,11 +267,13 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 cooldown_ticks: 48,
                 cooldown_left: 0,
                 // Bigger belt, slower 138-tick reload (≈2300 ms) — the bruiser sustains fire
-                // longer but is punished harder for running dry while embodied.
+                // longer but is punished harder for running dry. Four spare belts in reserve (200).
                 mag_size: 50,
                 ammo: 50,
                 reload_ticks: 138,
                 reload_left: 0,
+                reserve: 200,
+                reserve_max: 200,
                 // Heavy infantry bruiser: still a fixed mount (the playable tank is the new
                 // dedicated kind, plan §3). No independent turret here.
                 turret_speed: 0,
@@ -291,10 +295,14 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 damage: Fixed::from_int(120),
                 cooldown_ticks: 75,
                 cooldown_left: 0,
-                mag_size: 0,
-                ammo: 0,
-                reload_ticks: 0,
+                // The main gun stows finite shells too (D67): 6 ready, a slow 240-tick (≈4 s) reload,
+                // 24 in reserve = 30 rounds before it must pull back to a camp to rearm.
+                mag_size: 6,
+                ammo: 6,
+                reload_ticks: 240,
                 reload_left: 0,
+                reserve: 24,
+                reserve_max: 24,
                 turret_speed: 180,
                 muzzle_vel: Fixed::ZERO,
                 penetration: Fixed::ZERO,
@@ -314,6 +322,8 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 ammo: 0,
                 reload_ticks: 0,
                 reload_left: 0,
+                reserve: 0,
+                reserve_max: 0,
                 turret_speed: 0,
                 muzzle_vel: Fixed::ZERO,
                 penetration: Fixed::ZERO,
@@ -973,6 +983,13 @@ mod tests {
         assert!(hw.reload_ticks > rw.reload_ticks, "heavy reload is slower");
         assert_eq!(rw.reload_left, 0, "not reloading at spawn");
         assert_eq!(hw.reload_left, 0, "not reloading at spawn");
+
+        // All-unit ammo loadouts (D67): a full reserve at spawn; the rifle carries six spare mags
+        // (~210-round loadout), the bruiser four spare belts. Drawn on reload, rearmed at a camp.
+        assert_eq!(rw.reserve, 180, "rifleman carries 6 spare mags");
+        assert_eq!(rw.reserve, rw.reserve_max, "spawns with a full reserve loadout");
+        assert_eq!(hw.reserve, 200, "heavy carries 4 spare belts");
+        assert_eq!(hw.reserve, hw.reserve_max, "spawns with a full reserve loadout");
     }
 
     // --- New content (D65): Tank, Medic, Barracks ------------------------------------------------
@@ -997,6 +1014,10 @@ mod tests {
         assert!(tw.damage > Fixed::ZERO && tw.range > Fixed::ZERO, "tank has a gun");
         assert!(tw.turret_speed > 0, "tank has an independent turret slew");
         assert_eq!(tw.penetration, Fixed::ZERO, "produced tank is unarmoured (balance, D65)");
+        // The tank's main gun stows finite shells too (D67) — no more infinite ammo.
+        assert!(tw.mag_size > 0, "tank rations its main-gun shells");
+        assert_eq!(tw.ammo, tw.mag_size, "tank spawns with a loaded gun");
+        assert!(tw.reserve > 0 && tw.reserve == tw.reserve_max, "tank carries a full shell reserve");
 
         let (mh, mw) = unit_stats(UnitKind::Medic);
         assert!(mh.max > Fixed::ZERO, "medic is alive");

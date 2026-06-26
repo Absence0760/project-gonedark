@@ -428,6 +428,10 @@ impl Sim {
             sink.write_u32(w.ammo as u32);
             sink.write_u32(w.reload_ticks as u32);
             sink.write_u32(w.reload_left as u32);
+            // All-unit ammo logistics (D67): carried reserve + its resupply cap. Both drive who can
+            // fire (auto-reload + resupply), so they are sim state that folds into the checksum.
+            sink.write_u32(w.reserve as u32);
+            sink.write_u32(w.reserve_max as u32);
             sink.write_u32(w.turret_speed as u32);
             sink.write_i32(w.muzzle_vel.to_bits());
             // Tank embodiment P4 (D55): weapon armour penetration (sim state — drives the facing
@@ -614,6 +618,9 @@ impl Sim {
                 ammo: read_u16(&mut r)?,
                 reload_ticks: read_u16(&mut r)?,
                 reload_left: read_u16(&mut r)?,
+                // All-unit ammo logistics (D67): mirror fold()'s reserve + reserve_max, same order.
+                reserve: read_u16(&mut r)?,
+                reserve_max: read_u16(&mut r)?,
                 turret_speed: read_u16(&mut r)?,
                 muzzle_vel: Fixed::from_bits(r.read_i32()?),
                 penetration: Fixed::from_bits(r.read_i32()?),

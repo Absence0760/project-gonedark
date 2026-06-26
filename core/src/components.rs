@@ -247,13 +247,15 @@ impl Default for Health {
 /// A weapon: how far it reaches, how hard it hits, and how often. A default (range 0) weapon
 /// never fires, so non-combatants and the Phase 1 mover are inert in `combat_system`.
 ///
-/// The magazine fields drive the **embodied** reload mechanic (the first-person Reload button)
-/// and are deliberately **opt-in**: a weapon with `mag_size == 0` has *no* magazine and fires
-/// without an ammo gate — this is what every AI / auto-combat unit and every Phase-1/2 test
-/// uses, so the existing `combat_system` engage pass is untouched. Only weapons produced with a
-/// real `mag_size` (the playable archetypes in `economy::unit_stats`) ration ammo, and only the
-/// embodied fire path ([`combat::resolve_fire`]) enforces it (AI units are literal executors —
-/// they never reload, invariant #3). All `u16`/`Fixed`, no float (invariant #1).
+/// **Ammo is all-unit logistics (D67), not an embodied-only toggle.** A weapon with `mag_size > 0`
+/// rations rounds for *both* the embodied player ([`combat::resolve_fire`]) **and** every
+/// AI/auto-combat unit ([`combat::combat_system`]): firing spends a round, an empty magazine can't
+/// fire, and a depleted unit must rearm (`reserve` → magazine via reload; an empty `reserve` is
+/// refilled at a friendly camp by `crate::resupply`). `mag_size == 0` still means *no* magazine —
+/// infinite ammo, no reload — which is what the Medic (disarmed) and the float-free combat unit
+/// tests use, so a zero-mag weapon keeps the old engage pass exactly. AI auto-reload stays inside
+/// the literal-executor rule (invariant #3): it reloads the gun it already holds, it does not pick
+/// targets or maneuver. All `u16`/`Fixed`, no float (invariant #1).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Weapon {
     /// Maximum engagement distance in world units.
@@ -271,9 +273,20 @@ pub struct Weapon {
     pub ammo: u16,
     /// How many ticks a reload takes once started (config; only meaningful when `mag_size > 0`).
     pub reload_ticks: u16,
-    /// Ticks left in an in-progress reload (`0` = not reloading). Set by `Command::Reload`,
-    /// counted down in combat upkeep; on reaching zero the magazine refills to `mag_size`.
+    /// Ticks left in an in-progress reload (`0` = not reloading). Started by `Command::Reload`
+    /// (embodied) or auto-started in combat upkeep when an AI unit's magazine runs dry; counted
+    /// down in combat upkeep; on reaching zero the magazine draws up to `mag_size` rounds from
+    /// `reserve`.
     pub reload_left: u16,
+    /// Rounds carried in reserve, drawn into the magazine on each reload (D67 logistics). `0` means
+    /// the unit is out of carried ammo — once the loaded magazine is also spent it is combat-
+    /// ineffective until `crate::resupply` rearms it at a friendly camp. Only meaningful when
+    /// `mag_size > 0`.
+    pub reserve: u16,
+    /// The reserve loadout cap — what `crate::resupply` refills `reserve` toward at a friendly camp
+    /// (D67). A unit spawns with `reserve == reserve_max` (a full loadout). Only meaningful when
+    /// `mag_size > 0`.
+    pub reserve_max: u16,
     /// Maximum turret slew in angle-units per tick (tank embodiment P2, D55). `0` = a fixed mount
     /// locked to the hull — the default for infantry and every existing unit, so their
     /// `turret_yaw` never moves and the new field costs the checksum nothing. A real tank gun has

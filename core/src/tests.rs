@@ -650,6 +650,8 @@ fn ecs_respawn_resets_component_arrays() {
         ammo: 11,
         reload_ticks: 60,
         reload_left: 17,
+        reserve: 13,
+        reserve_max: 19,
         turret_speed: 9,
         muzzle_vel: Fixed::from_ratio(1, 4),
         penetration: Fixed::from_ratio(1, 5),
@@ -1083,11 +1085,13 @@ fn reload_command_starts_reload_then_upkeep_refills_the_magazine() {
     let mut sim = Sim::new(7);
     let e = sim.world.spawn();
     let i = e.index as usize;
-    // Arm a magazine and run it dry, embodied (so auto-combat never touches it).
+    // Arm a magazine and run it dry, embodied (so auto-combat never touches it). Carry reserve
+    // rounds for the reload to draw from (D67 — a reload pulls from carried reserve, not thin air).
     sim.step(&[Command::Embody { entity: e }]);
     sim.world.weapon[i].mag_size = 30;
     sim.world.weapon[i].ammo = 0;
     sim.world.weapon[i].reload_ticks = 4;
+    sim.world.weapon[i].reserve = 90;
 
     // `step` applies the command THEN runs combat upkeep, so the timer is armed to 4 and
     // immediately ticked to 3 within this same step.
@@ -1100,6 +1104,7 @@ fn reload_command_starts_reload_then_upkeep_refills_the_magazine() {
     sim.step(&[]); // 1 -> 0: refill
     assert_eq!(sim.world.weapon[i].reload_left, 0);
     assert_eq!(sim.world.weapon[i].ammo, 30, "magazine refilled to capacity");
+    assert_eq!(sim.world.weapon[i].reserve, 60, "the loaded magazine came out of reserve");
 
     // Reloading a full magazine is a no-op (no wasted reload).
     sim.step(&[Command::Reload { entity: e }]);
@@ -1608,6 +1613,8 @@ fn embodied_tank(sim: &mut Sim, x: i32, y: i32, muzzle_vel: i32, damage: i32, ra
         ammo: 0,
         reload_ticks: 0,
         reload_left: 0,
+        reserve: 0,
+        reserve_max: 0,
         turret_speed: 200,
         muzzle_vel: Fixed::from_int(muzzle_vel),
         penetration: Fixed::ZERO,
