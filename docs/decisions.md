@@ -3023,3 +3023,63 @@ that the loop is live (the commander captures a post, funds production, and rein
 the income-period gate + a non-default-period snapshot round-trip are unit-tested. Barracks, a real
 `UnitKind::Tank`, and a Medic/healing system remain follow-ups; this lands the *match*, not new
 content.
+
+## D65 — First content beyond the rifle squad: Tank, Medic (+ a heal system), Barracks
+
+**Status:** decided. The skirmish ([D64](decisions.md)) shipped with only Rifleman/Heavy from a
+Camp. This adds the first new producible content and the production structure to gate it — and the
+first genuinely new *system* since the economy: healing.
+
+**Decision:**
+
+- **`UnitKind::Tank`** — a produced armoured vehicle: high HP (300), a hard, slow gun, and an
+  independently-slewing turret (cosmetic, reusing the D55 hull/turret split + the existing tank
+  mesh). It is **unarmoured** (`penetration == 0`, no `Armor`) and **hitscan** (`muzzle_vel == 0`).
+  The full armoured + ballistic tank — which a penetration-0 Rifleman cannot crack frontally — stays
+  the **duel scene's** domain ([D63](decisions.md)) until an anti-tank counter exists: fielding it as
+  a produced unit in the rifle-centric skirmish, with no AT answer, would make one tank unkillable
+  and the match a stalemate. Hitscan also means auto-combat resolves it exactly like every other
+  produced unit (no new combat path).
+- **`UnitKind::Medic` + a new `core::heal` system** — a support unit with **no offensive weapon**
+  (range/damage 0, so `combat` never engages it) that, each tick, heals friendly **units** within
+  `HEAL_RADIUS` (6) by `HEAL_PER_TICK` (1/8 HP/tick = 7.5 HP/s), capped at max. `heal_system` runs in
+  `Sim::step` *after* combat/projectiles settle damage and despawn the dead (so a Medic never heals a
+  corpse) and before territory/economy. It is fixed-point, index-ordered, RNG-free, and writes only
+  `health` (which is checksum-folded), so it is deterministic (invariant #1/#7); a Medic-free world
+  is a no-op, so every existing scene's checksum is byte-unchanged.
+- **`BuildingKind::Barracks` + a production-routing rule (`economy::can_produce`)** — a cheaper
+  (150), faster (10 s), lower-HP (600) forward building. The **Camp** (base) fields infantry +
+  vehicles (Rifleman / Heavy / Tank); the **Barracks** is infantry-only and the **sole source of the
+  Medic**. `queue_production` enforces the routing (a mismatched request is rejected without
+  spending), and `economy_system` now serves *any* operational building's queue, not just a Camp's.
+  Per-kind building HP / build-time come from `building_hp` / `build_ticks`. Desktop slots: `B`/build
+  slot 1 = Barracks; train slots 2/3 = Tank/Medic.
+
+**Why:**
+
+- The Medic is the smallest addition that introduces a *new mechanic* (heal-over-time) rather than
+  another stat block — the thing the skirmish lacked. Keeping it as its own `core::heal` system (not
+  bolted into `combat`) keeps the tick pipeline legible and the mechanic independently testable.
+- The Tank is high-value but mostly *reuses* existing machinery (armour/ballistic/turret from D55,
+  the tank mesh); shipping it **unarmoured** is the honest balance call for a rifle-only roster with
+  no AT counter — the armoured/ballistic version is already demonstrated in the duel, so nothing is
+  lost, and the upgrade path (armour + an AT answer) is a clean future step.
+- Routing (`can_produce`) gives the buildings *distinct purpose* (the user's "build a barracks to
+  make medics") without a heavy tech-tree: one table, enforced at the single `queue_production`
+  choke point. New `UnitKind`/`BuildingKind` tags were added identically across the **three** codecs
+  that encode them — the checksum/persist fold (`sim.rs`) **and** the lockstep wire codec
+  (`lockstep.rs`) — so a `Build`/`QueueProduction` command decodes to the same kind on every peer
+  (invariant #7).
+
+**Consequences:** `components` gains the variants + `Health::heal`; `economy` gains the Tank/Medic
+stats + cost/time tables, `build_ticks`/`building_hp`/`can_produce`, and per-kind build/produce;
+`core::heal` is a new module wired into `Sim::step`; the unit/building tags grew in `sim.rs` (persist)
+and `lockstep.rs` (wire). `render` maps Tank→tank mesh, Medic→trooper; `engine`/UI gain the train
+slots (Tank/Medic), build slot (Barracks), display names, and composition readout. Determinism-
+audited clean (heal float-free + index-ordered; tags agree across codecs; Medic-free scenes
+byte-unchanged). **Deliberately deferred:** an armoured/ballistic produced tank + an anti-tank
+infantry counter; a dedicated vehicle Factory (Tank currently comes from the Camp); teaching the
+enemy `commander` to build Barracks and field Tanks/Medics (today it still masses Rifleman/Heavy from
+its Camp, so the new content is player-only until the commander is extended); and a `SimEvent`/audio
+cue for healing. Stats are a **playtest baseline**, not `--metrics`-measured (D30 covers only
+Rifleman/Heavy).

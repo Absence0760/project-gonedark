@@ -171,14 +171,27 @@ pub enum UnitKind {
     #[default]
     Rifleman,
     Heavy,
+    /// A produced armoured vehicle — high HP, a hard-hitting gun, and an independently-slewing
+    /// turret (cosmetic, reusing the D55 hull/turret split + tank mesh). For balance in the
+    /// rifle-centric skirmish it is **unarmoured** (no facet immunity): the full armoured + ballistic
+    /// tank, which infantry cannot pen frontally, remains the duel scene's domain until an anti-tank
+    /// counter exists ([D65](../docs/decisions.md)).
+    Tank,
+    /// A support unit: it carries no offensive weapon and instead **heals** nearby friendly units
+    /// each tick (`crate::heal`). Built from a [`Barracks`](BuildingKind::Barracks).
+    Medic,
 }
 
 /// A constructable building archetype.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BuildingKind {
-    /// Produces units and projects territory income; the upgradable core (game-design §3).
+    /// Produces units and projects territory income; the upgradable core (game-design §3). The base
+    /// fields infantry and vehicles (Rifleman / Heavy / Tank).
     #[default]
     Camp,
+    /// A cheaper, faster forward production building for **infantry** — the only source of the
+    /// [`Medic`](UnitKind::Medic). Cannot build vehicles ([D65](../docs/decisions.md)).
+    Barracks,
 }
 
 /// Hit points. `cur <= max`; an entity with `cur <= 0` is dead and gets despawned by combat.
@@ -208,6 +221,18 @@ impl Health {
     #[inline]
     pub fn is_dead(self) -> bool {
         self.cur.to_bits() <= 0
+    }
+
+    /// Restore `amount` HP, never above `max`. A no-op on a dead entity (you cannot heal a corpse —
+    /// only `combat`'s despawn handles death, and `heal` must never revive). Fixed-point only
+    /// (invariant #1), so it is deterministic and folds into the checksum via `cur`.
+    #[inline]
+    pub fn heal(&mut self, amount: Fixed) {
+        if self.is_dead() {
+            return;
+        }
+        let healed = self.cur + amount;
+        self.cur = if healed > self.max { self.max } else { healed };
     }
 }
 

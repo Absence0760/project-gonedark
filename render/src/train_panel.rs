@@ -41,6 +41,8 @@ fn kind_label(kind: UnitKind) -> &'static str {
     match kind {
         UnitKind::Rifleman => "Rifleman",
         UnitKind::Heavy => "Heavy",
+        UnitKind::Tank => "Tank",
+        UnitKind::Medic => "Medic",
     }
 }
 

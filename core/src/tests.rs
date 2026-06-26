@@ -1357,6 +1357,45 @@ fn snapshot_round_trips_a_non_default_income_period() {
     assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
 }
 
+/// The D65 kinds (Tank, Medic, Barracks) survive the snapshot round-trip: their serialize tags
+/// (sim.rs `unit_kind_tag`/`building_kind_tag` + the deserialize readers) must be symmetric, or a
+/// resume would `BadTag` or restore the wrong archetype. The Barracks kind is folded (the Building
+/// block); `unit_kind` is render metadata serialized outside the fold — both must come back intact.
+#[test]
+fn snapshot_round_trips_the_new_d65_kinds() {
+    use crate::components::{BuildingKind, EntityKind, Faction, UnitKind};
+    use crate::economy::{self, Resources};
+
+    let mut sim = Sim::new(99);
+    let tank = sim.world.spawn();
+    sim.world.kind[tank.index as usize] = EntityKind::Unit;
+    sim.world.unit_kind[tank.index as usize] = UnitKind::Tank;
+    let medic = sim.world.spawn();
+    sim.world.kind[medic.index as usize] = EntityKind::Unit;
+    sim.world.unit_kind[medic.index as usize] = UnitKind::Medic;
+    let mut res = Resources::new(10_000);
+    let bar = economy::build(
+        &mut sim.world,
+        &mut res,
+        Faction::Player,
+        BuildingKind::Barracks,
+        Vec2::ZERO,
+    )
+    .unwrap();
+    sim.resources = res;
+
+    let bytes = sim.serialize();
+    let restored = Sim::deserialize(&bytes).expect("the new kinds round-trip");
+    assert_eq!(restored.checksum(), sim.checksum());
+    assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
+    assert_eq!(restored.world.unit_kind[tank.index as usize], UnitKind::Tank);
+    assert_eq!(restored.world.unit_kind[medic.index as usize], UnitKind::Medic);
+    assert_eq!(
+        restored.world.building[bar.index as usize].kind,
+        BuildingKind::Barracks
+    );
+}
+
 /// `unit_kind` is render-facing metadata kept OUT of the checksum, but it is still serialized in a
 /// dedicated block (outside the shared `fold` walk) so a resumed sim restores the same archetypes a
 /// never-interrupted run holds. This proves the round-trip preserves a mix of Heavy and Rifleman.

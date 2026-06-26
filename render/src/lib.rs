@@ -171,8 +171,10 @@ pub(crate) fn model_for_unit(building: bool, kind: UnitKind) -> mesh::ModelKind 
         mesh::ModelKind::CampHq
     } else {
         match kind {
-            UnitKind::Heavy => mesh::ModelKind::Tank,
-            UnitKind::Rifleman => mesh::ModelKind::Trooper,
+            // The produced Tank reuses the same tank mesh (hull + independent turret) as the Heavy
+            // chassis token; the Medic is infantry, so it draws the trooper mesh (D65).
+            UnitKind::Heavy | UnitKind::Tank => mesh::ModelKind::Tank,
+            UnitKind::Rifleman | UnitKind::Medic => mesh::ModelKind::Trooper,
         }
     }
 }
@@ -1441,6 +1443,9 @@ mod tests {
             mesh::ModelKind::Trooper
         );
         assert_eq!(model_for_unit(false, UnitKind::Heavy), mesh::ModelKind::Tank);
+        // D65: the produced Tank reuses the tank mesh; the Medic is infantry (trooper mesh).
+        assert_eq!(model_for_unit(false, UnitKind::Tank), mesh::ModelKind::Tank);
+        assert_eq!(model_for_unit(false, UnitKind::Medic), mesh::ModelKind::Trooper);
         // A building is the camp structure regardless of the (irrelevant) unit-kind tag.
         assert_eq!(
             model_for_unit(true, UnitKind::Heavy),

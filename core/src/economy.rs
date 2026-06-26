@@ -113,6 +113,29 @@ pub const PER_POINT_INCOME: i64 = 2;
 /// raze, not something a stray squad deletes in passing.
 const CAMP_HP: i32 = 1000;
 
+// --- New content (D65): Tank, Medic, Barracks. A playtest BASELINE only — NOT D30-measured (D30
+// covers Rifleman/Heavy); dial against a future `--metrics` pass. Same integer/fixed-point rules. ---
+
+/// Cost to produce a [`Tank`](UnitKind::Tank) — a heavy vehicle, the priciest unit. 360 ≈ 3.6
+/// Riflemen (~6 s of base income): massing armour is a real commitment.
+pub const TANK_COST: i64 = 360;
+/// Base ticks to produce a [`Tank`](UnitKind::Tank). 840 = 14 s — slow, deliberate armour.
+pub const TANK_BASE_TICKS: u16 = 840;
+
+/// Cost to produce a [`Medic`](UnitKind::Medic) — a cheap support body. 120 ≈ 1.2 Riflemen.
+pub const MEDIC_COST: i64 = 120;
+/// Base ticks to produce a [`Medic`](UnitKind::Medic). 360 = 6 s.
+pub const MEDIC_BASE_TICKS: u16 = 360;
+
+/// Cost to start building a [`Barracks`](BuildingKind::Barracks). 150 — cheaper than a Camp (250):
+/// an affordable forward infantry / medic hub.
+pub const BARRACKS_BUILD_COST: i64 = 150;
+/// Ticks to finish a [`Barracks`](BuildingKind::Barracks). 600 = 10 s (faster than a Camp's 20 s).
+pub const BARRACKS_BUILD_TICKS: u16 = 600;
+/// Starting HP of a [`Barracks`](BuildingKind::Barracks). 600 — sturdier than a unit, softer than a
+/// Camp (1000).
+const BARRACKS_HP: i32 = 600;
+
 /// Cost to upgrade a camp currently at `level` to the next tier: `200 * (level + 1)`.
 /// Level 0→1 costs 200 (≈ two Riflemen), and each tier costs more (200, 400,
 /// 600, …) so deep upgrades are a real resource sink competing with army size.
@@ -127,6 +150,8 @@ pub const fn unit_cost(kind: UnitKind) -> i64 {
     match kind {
         UnitKind::Rifleman => RIFLEMAN_COST,
         UnitKind::Heavy => HEAVY_COST,
+        UnitKind::Tank => TANK_COST,
+        UnitKind::Medic => MEDIC_COST,
     }
 }
 
@@ -137,6 +162,8 @@ pub const fn prod_time(kind: UnitKind, level: u8) -> u16 {
     let base = match kind {
         UnitKind::Rifleman => RIFLEMAN_BASE_TICKS,
         UnitKind::Heavy => HEAVY_BASE_TICKS,
+        UnitKind::Tank => TANK_BASE_TICKS,
+        UnitKind::Medic => MEDIC_BASE_TICKS,
     };
     let speedup = LEVEL_PROD_SPEEDUP.saturating_mul(level as u16);
     let reduced = base.saturating_sub(speedup);
@@ -152,7 +179,38 @@ pub const fn prod_time(kind: UnitKind, level: u8) -> u16 {
 pub const fn build_cost(kind: BuildingKind) -> i64 {
     match kind {
         BuildingKind::Camp => CAMP_BUILD_COST,
+        BuildingKind::Barracks => BARRACKS_BUILD_COST,
     }
+}
+
+/// Construction time (ticks) for a `kind` building.
+#[inline]
+pub const fn build_ticks(kind: BuildingKind) -> u16 {
+    match kind {
+        BuildingKind::Camp => CAMP_BUILD_TICKS,
+        BuildingKind::Barracks => BARRACKS_BUILD_TICKS,
+    }
+}
+
+/// Starting HP for a `kind` building.
+#[inline]
+const fn building_hp(kind: BuildingKind) -> i32 {
+    match kind {
+        BuildingKind::Camp => CAMP_HP,
+        BuildingKind::Barracks => BARRACKS_HP,
+    }
+}
+
+/// Whether a `building` kind can produce a `unit` kind (the production-routing rule, D65). The Camp
+/// (base) fields infantry and vehicles; the Barracks is infantry-only and is the **sole source of
+/// the Medic**. `queue_production` enforces this, so a mismatched request is simply rejected.
+#[inline]
+pub const fn can_produce(building: BuildingKind, unit: UnitKind) -> bool {
+    matches!(
+        (building, unit),
+        (BuildingKind::Camp, UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Tank)
+            | (BuildingKind::Barracks, UnitKind::Rifleman | UnitKind::Medic)
+    )
 }
 
 /// Fixed combat stats a produced unit spawns with — looked up from [`UnitKind`] so every peer
@@ -215,6 +273,46 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 penetration: Fixed::ZERO,
             },
         ),
+        // A produced armoured vehicle (D65). High HP + a hard, slow gun + an independent turret slew
+        // (cosmetic). UNARMOURED on purpose: with `penetration == 0` an armoured tank would bounce
+        // every Rifleman shot (no anti-tank counter exists yet), which would break the rifle-centric
+        // skirmish — the full armoured/ballistic tank stays the duel scene's. `muzzle_vel == 0` keeps
+        // it hitscan, so auto-combat resolves it exactly like the other produced units.
+        UnitKind::Tank => (
+            Health::full(Fixed::from_int(300)),
+            Weapon {
+                range: Fixed::from_int(13),
+                damage: Fixed::from_int(24),
+                cooldown_ticks: 75,
+                cooldown_left: 0,
+                mag_size: 0,
+                ammo: 0,
+                reload_ticks: 0,
+                reload_left: 0,
+                turret_speed: 180,
+                muzzle_vel: Fixed::ZERO,
+                penetration: Fixed::ZERO,
+            },
+        ),
+        // A support unit (D65): NO offensive weapon (range 0 ⇒ combat never acquires a target for
+        // it), modest HP. It contributes through `crate::heal` (heals nearby friendlies), never
+        // `combat`.
+        UnitKind::Medic => (
+            Health::full(Fixed::from_int(90)),
+            Weapon {
+                range: Fixed::ZERO,
+                damage: Fixed::ZERO,
+                cooldown_ticks: 0,
+                cooldown_left: 0,
+                mag_size: 0,
+                ammo: 0,
+                reload_ticks: 0,
+                reload_left: 0,
+                turret_speed: 0,
+                muzzle_vel: Fixed::ZERO,
+                penetration: Fixed::ZERO,
+            },
+        ),
     }
 }
 
@@ -273,12 +371,12 @@ pub fn build(
     world.kind[i] = EntityKind::Building;
     world.faction[i] = faction;
     world.pos[i] = pos;
-    world.health[i] = Health::full(Fixed::from_int(CAMP_HP));
+    world.health[i] = Health::full(Fixed::from_int(building_hp(kind)));
     world.order[i] = Order::Idle;
     world.building[i] = Building {
         kind,
         level: 0,
-        build_ticks_left: CAMP_BUILD_TICKS,
+        build_ticks_left: build_ticks(kind),
         queue: Vec::new(),
     };
     Some(e)
@@ -315,6 +413,11 @@ pub fn queue_production(
     }
     let i = camp.index as usize;
     if world.kind[i] != EntityKind::Building || world.building[i].build_ticks_left != 0 {
+        return false;
+    }
+    // Production routing (D65): the building must be able to make this unit (Camp = infantry +
+    // vehicles; Barracks = infantry + Medic). A mismatched request is rejected without spending.
+    if !can_produce(world.building[i].kind, unit) {
         return false;
     }
     if !resources.try_spend(world.faction[i], unit_cost(unit)) {
@@ -374,9 +477,8 @@ pub fn economy_system(
             world.building[i].build_ticks_left -= 1;
             continue;
         }
-        if world.building[i].kind != BuildingKind::Camp {
-            continue;
-        }
+        // Any operational building serves its production queue (Camp or Barracks, D65); what may be
+        // queued at each is gated upstream by `can_produce` in `queue_production`.
         if let Some(front) = world.building[i].queue.first_mut() {
             if front.ticks_left > 0 {
                 front.ticks_left -= 1;
@@ -864,5 +966,112 @@ mod tests {
         assert!(hw.reload_ticks > rw.reload_ticks, "heavy reload is slower");
         assert_eq!(rw.reload_left, 0, "not reloading at spawn");
         assert_eq!(hw.reload_left, 0, "not reloading at spawn");
+    }
+
+    // --- New content (D65): Tank, Medic, Barracks ------------------------------------------------
+
+    #[test]
+    fn d65_costs_times_and_stats_are_defined() {
+        // Tables answer for the new kinds (the exhaustive matches would not compile otherwise, but
+        // pin the intended shape: tank = priciest, medic = cheap, barracks = cheaper/faster camp).
+        assert_eq!(unit_cost(UnitKind::Tank), TANK_COST);
+        assert_eq!(unit_cost(UnitKind::Medic), MEDIC_COST);
+        assert_eq!(prod_time(UnitKind::Tank, 0), TANK_BASE_TICKS);
+        assert_eq!(prod_time(UnitKind::Medic, 0), MEDIC_BASE_TICKS);
+        assert_eq!(build_cost(BuildingKind::Barracks), BARRACKS_BUILD_COST);
+        assert_eq!(build_ticks(BuildingKind::Barracks), BARRACKS_BUILD_TICKS);
+        assert!(unit_cost(UnitKind::Tank) > unit_cost(UnitKind::Heavy), "tank is the priciest unit");
+        assert!(unit_cost(UnitKind::Medic) < unit_cost(UnitKind::Heavy), "medic is cheap");
+        assert!(build_cost(BuildingKind::Barracks) < build_cost(BuildingKind::Camp), "barracks cheaper");
+        assert!(build_ticks(BuildingKind::Barracks) < build_ticks(BuildingKind::Camp), "barracks faster");
+
+        let (th, tw) = unit_stats(UnitKind::Tank);
+        assert!(th.max > unit_stats(UnitKind::Rifleman).0.max, "tank out-HPs a rifleman");
+        assert!(tw.damage > Fixed::ZERO && tw.range > Fixed::ZERO, "tank has a gun");
+        assert!(tw.turret_speed > 0, "tank has an independent turret slew");
+        assert_eq!(tw.penetration, Fixed::ZERO, "produced tank is unarmoured (balance, D65)");
+
+        let (mh, mw) = unit_stats(UnitKind::Medic);
+        assert!(mh.max > Fixed::ZERO, "medic is alive");
+        assert_eq!(mw.range, Fixed::ZERO, "medic has no weapon range → combat never engages it");
+        assert_eq!(mw.damage, Fixed::ZERO, "medic deals no damage (it heals, via crate::heal)");
+    }
+
+    #[test]
+    fn can_produce_routes_units_to_the_right_building() {
+        use BuildingKind::{Barracks, Camp};
+        use UnitKind::{Heavy, Medic, Rifleman, Tank};
+        // Camp (base): infantry + vehicles, but NOT the Medic.
+        assert!(can_produce(Camp, Rifleman));
+        assert!(can_produce(Camp, Heavy));
+        assert!(can_produce(Camp, Tank));
+        assert!(!can_produce(Camp, Medic), "the Medic comes only from a Barracks");
+        // Barracks: infantry + Medic, but NOT vehicles.
+        assert!(can_produce(Barracks, Rifleman));
+        assert!(can_produce(Barracks, Medic));
+        assert!(!can_produce(Barracks, Tank), "the Barracks cannot build vehicles");
+        assert!(!can_produce(Barracks, Heavy));
+    }
+
+    #[test]
+    fn queue_production_enforces_routing_without_spending_on_a_reject() {
+        let mut world = World::new();
+        let mut res = Resources::new(100_000);
+        let camp = build(&mut world, &mut res, Faction::Player, BuildingKind::Camp, Vec2::ZERO)
+            .unwrap();
+        let barracks = build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Barracks,
+            Vec2::new(Fixed::from_int(8), Fixed::ZERO),
+        )
+        .unwrap();
+        world.building[camp.index as usize].build_ticks_left = 0;
+        world.building[barracks.index as usize].build_ticks_left = 0;
+
+        let before = res.get(Faction::Player);
+        assert!(
+            !queue_production(&mut world, &mut res, camp, UnitKind::Medic),
+            "a Camp cannot make a Medic"
+        );
+        assert!(
+            !queue_production(&mut world, &mut res, barracks, UnitKind::Tank),
+            "a Barracks cannot make a Tank"
+        );
+        assert_eq!(res.get(Faction::Player), before, "a rejected queue never spends");
+
+        // The valid routes succeed and spend exactly their cost.
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank));
+        assert!(queue_production(&mut world, &mut res, barracks, UnitKind::Medic));
+        assert_eq!(res.get(Faction::Player), before - TANK_COST - MEDIC_COST);
+    }
+
+    #[test]
+    fn barracks_builds_with_its_own_hp_and_produces_a_medic() {
+        let mut world = World::new();
+        let mut res = Resources::new(BARRACKS_BUILD_COST + MEDIC_COST);
+        let bar = build(&mut world, &mut res, Faction::Player, BuildingKind::Barracks, Vec2::ZERO)
+            .unwrap();
+        let i = bar.index as usize;
+        assert_eq!(world.building[i].kind, BuildingKind::Barracks);
+        assert_eq!(world.building[i].build_ticks_left, BARRACKS_BUILD_TICKS);
+        assert_eq!(world.health[i], Health::full(Fixed::from_int(600)), "barracks HP is its own");
+
+        let terr = empty_terr();
+        for _ in 0..BARRACKS_BUILD_TICKS {
+            tick(&mut world, &mut res, &terr);
+        }
+        assert_eq!(world.building[i].build_ticks_left, 0, "barracks finished constructing");
+        assert!(queue_production(&mut world, &mut res, bar, UnitKind::Medic));
+        for _ in 0..prod_time(UnitKind::Medic, 0) {
+            tick(&mut world, &mut res, &terr);
+        }
+        let medic = (0..world.capacity()).find(|&j| {
+            world.is_index_alive(j)
+                && world.kind[j] == EntityKind::Unit
+                && world.unit_kind[j] == UnitKind::Medic
+        });
+        assert!(medic.is_some(), "the Barracks produced a Medic into the world");
     }
 }

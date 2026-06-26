@@ -34,6 +34,7 @@ use gonedark_core::sim::Command;
 fn slot_kind(slot: u8) -> Option<BuildingKind> {
     Some(match slot {
         0 => BuildingKind::Camp,
+        1 => BuildingKind::Barracks,
         _ => return None,
     })
 }
@@ -128,7 +129,7 @@ mod tests {
     #[test]
     fn unknown_slot_emits_nothing() {
         // A slot outside the palette is not a structure → no command, even with a valid point.
-        for slot in [1u8, 2, 99, 255] {
+        for slot in [2u8, 3, 99, 255] {
             assert!(
                 build_commands(Some(slot), Faction::Player, Some((3.0, 4.0))).is_empty(),
                 "slot {slot} is outside the palette and should emit nothing"
@@ -138,8 +139,10 @@ mod tests {
 
     #[test]
     fn slot_kind_table_matches_the_palette() {
-        // Guard the slot→kind lookup directly so the documented table can't silently drift.
+        // Guard the slot→kind lookup directly so the documented table can't silently drift (D65
+        // added the Barracks at slot 1).
         assert_eq!(slot_kind(0), Some(BuildingKind::Camp));
-        assert_eq!(slot_kind(1), None, "no second structure yet");
+        assert_eq!(slot_kind(1), Some(BuildingKind::Barracks));
+        assert_eq!(slot_kind(2), None, "no third structure yet");
     }
 }

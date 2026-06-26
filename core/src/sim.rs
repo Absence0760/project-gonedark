@@ -227,6 +227,10 @@ impl Sim {
             &mut self.events,
             projectile::GRAVITY,
         );
+        // Medic healing (D65), AFTER combat/projectiles have settled this tick's damage and
+        // despawned the dead (so a Medic never heals a corpse), before territory/economy. A no-op
+        // when no Medic is present, so Medic-free scenes are byte-unchanged.
+        crate::heal::heal_system(&mut self.world);
         territory::territory_system(&self.world, &mut self.territory, &mut self.events);
         economy::economy_system(
             &mut self.world,
@@ -888,6 +892,7 @@ fn read_kind(r: &mut Reader) -> Result<EntityKind, DeserializeError> {
 fn read_building_kind(r: &mut Reader) -> Result<BuildingKind, DeserializeError> {
     Ok(match r.read_u8()? {
         0 => BuildingKind::Camp,
+        1 => BuildingKind::Barracks,
         t => return Err(DeserializeError::BadTag(t)),
     })
 }
@@ -896,6 +901,8 @@ fn read_unit_kind(r: &mut Reader) -> Result<UnitKind, DeserializeError> {
     Ok(match r.read_u8()? {
         0 => UnitKind::Rifleman,
         1 => UnitKind::Heavy,
+        2 => UnitKind::Tank,
+        3 => UnitKind::Medic,
         t => return Err(DeserializeError::BadTag(t)),
     })
 }
@@ -964,6 +971,7 @@ fn kind_tag(k: EntityKind) -> u8 {
 fn building_kind_tag(k: BuildingKind) -> u8 {
     match k {
         BuildingKind::Camp => 0,
+        BuildingKind::Barracks => 1,
     }
 }
 
@@ -971,6 +979,8 @@ fn unit_kind_tag(k: UnitKind) -> u8 {
     match k {
         UnitKind::Rifleman => 0,
         UnitKind::Heavy => 1,
+        UnitKind::Tank => 2,
+        UnitKind::Medic => 3,
     }
 }
 

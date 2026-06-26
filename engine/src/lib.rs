@@ -333,7 +333,9 @@ fn embodied_proj(width: u32, height: u32) -> Mat4 {
 fn embodied_shows_rifle_viewmodel(kind: UnitKind) -> bool {
     match kind {
         UnitKind::Rifleman => true,
-        UnitKind::Heavy => false,
+        // Vehicles have no handheld weapon; the Medic carries no offensive weapon at all (D65) — so
+        // none of these show the rifle viewmodel.
+        UnitKind::Heavy | UnitKind::Tank | UnitKind::Medic => false,
     }
 }
 
@@ -522,8 +524,11 @@ fn embody_picker_view(
 /// Friendly display name for a unit kind, shared by the embody picker and the command panel.
 fn unit_kind_name(k: UnitKind) -> &'static str {
     match k {
-        UnitKind::Heavy => "Tank",
         UnitKind::Rifleman => "Rifleman",
+        // Heavy was labelled "Tank" before a real Tank existed; now it reads as itself (D65).
+        UnitKind::Heavy => "Heavy",
+        UnitKind::Tank => "Tank",
+        UnitKind::Medic => "Medic",
     }
 }
 
@@ -625,12 +630,16 @@ fn command_panel_view(
         .collect();
     if !units.is_empty() {
         let mut riflemen = 0usize;
+        let mut heavies = 0usize;
         let mut tanks = 0usize;
+        let mut medics = 0usize;
         let mut hp_sum = 0.0f32;
         for &e in &units {
             match world.unit_kind[e.index as usize] {
                 UnitKind::Rifleman => riflemen += 1,
-                UnitKind::Heavy => tanks += 1,
+                UnitKind::Heavy => heavies += 1,
+                UnitKind::Tank => tanks += 1,
+                UnitKind::Medic => medics += 1,
             }
             hp_sum += fixed_to_f32(world.health[e.index as usize].fraction());
         }
@@ -643,14 +652,15 @@ fn command_panel_view(
             .all(|&e| world.stance[e.index as usize] == first_stance);
 
         let mut lines = Vec::new();
-        if riflemen > 0 {
-            lines.push(PanelLine::new(
-                format!("{riflemen}x Rifleman"),
-                LineStyle::Normal,
-            ));
-        }
-        if tanks > 0 {
-            lines.push(PanelLine::new(format!("{tanks}x Tank"), LineStyle::Normal));
+        for (count, label) in [
+            (riflemen, "Rifleman"),
+            (heavies, "Heavy"),
+            (tanks, "Tank"),
+            (medics, "Medic"),
+        ] {
+            if count > 0 {
+                lines.push(PanelLine::new(format!("{count}x {label}"), LineStyle::Normal));
+            }
         }
         lines.push(PanelLine::new(format!("Avg HP: {avg_hp}%"), LineStyle::Normal));
         lines.push(PanelLine::new(
@@ -1244,7 +1254,10 @@ fn debug_overlay_lines(
     let tanks: Vec<dbg::DebugUnit> = curr
         .units
         .iter()
-        .filter(|u| !u.building && u.unit_kind == UnitKind::Heavy)
+        .filter(|u| {
+            // Vehicle tokens (Heavy + the produced Tank, D65) get the hull/turret hitbox ring.
+            !u.building && matches!(u.unit_kind, UnitKind::Heavy | UnitKind::Tank)
+        })
         .map(|u| dbg::DebugUnit {
             x: fx(u.pos.x),
             y: fx(u.pos.y),
@@ -3348,7 +3361,8 @@ mod tests {
         );
     }
 
-    /// The picker view labels each row by unit kind (Heavy→"Tank", Rifleman→"Rifleman").
+    /// The picker view labels each row by unit kind (Heavy→"Heavy", Rifleman→"Rifleman"; D65 added
+    /// the real Tank/Medic, so Heavy reads as itself now).
     #[test]
     fn embody_picker_view_labels_rows_by_kind() {
         let (mut world, e) = world_with_player_units(2);
@@ -3356,7 +3370,7 @@ mod tests {
         world.unit_kind[e[1].index as usize] = UnitKind::Rifleman;
         let view = embody_picker_view(&e, &world);
         assert_eq!(view.rows.len(), 2);
-        assert_eq!(view.rows[0].label, "Tank");
+        assert_eq!(view.rows[0].label, "Heavy");
         assert_eq!(view.rows[1].label, "Rifleman");
         assert!(view.rows.iter().all(|r| r.embodiable));
     }
@@ -3404,7 +3418,8 @@ mod tests {
         let sel = selection_of(&[e[0], e[1]]);
         let view = command_panel_view(&world, &sel, 500, &[UnitKind::Rifleman, UnitKind::Heavy]);
         assert_eq!(view.title, "SELECTED — 2 units");
-        assert!(has_line(&view, "1x Tank"));
+        // Heavy now reads as itself; a real Tank/Medic reads "Tank"/"Medic" (D65).
+        assert!(has_line(&view, "1x Heavy"));
         assert!(has_line(&view, "1x Rifleman"));
         assert!(has_line(&view, "Stance:"));
         assert!(has_line(&view, "Avg HP:"));

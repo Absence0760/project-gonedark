@@ -247,27 +247,37 @@ fn get_faction(r: &mut Reader) -> Result<Faction, DecodeError> {
 }
 
 fn put_building_kind(w: &mut Writer, k: BuildingKind) {
+    // Tags MUST match sim.rs's building_kind_tag (and the persist codec): a Build command encoded on
+    // one peer has to decode to the identical kind on every other (invariant #7).
     w.u8(match k {
         BuildingKind::Camp => 0,
+        BuildingKind::Barracks => 1,
     });
 }
 fn get_building_kind(r: &mut Reader) -> Result<BuildingKind, DecodeError> {
     Ok(match r.u8()? {
         0 => BuildingKind::Camp,
+        1 => BuildingKind::Barracks,
         t => return Err(DecodeError::BadTag(t)),
     })
 }
 
 fn put_unit_kind(w: &mut Writer, k: UnitKind) {
+    // Tags MUST match sim.rs's unit_kind_tag: a QueueProduction command must decode to the same unit
+    // on every peer (invariant #7).
     w.u8(match k {
         UnitKind::Rifleman => 0,
         UnitKind::Heavy => 1,
+        UnitKind::Tank => 2,
+        UnitKind::Medic => 3,
     });
 }
 fn get_unit_kind(r: &mut Reader) -> Result<UnitKind, DecodeError> {
     Ok(match r.u8()? {
         0 => UnitKind::Rifleman,
         1 => UnitKind::Heavy,
+        2 => UnitKind::Tank,
+        3 => UnitKind::Medic,
         t => return Err(DecodeError::BadTag(t)),
     })
 }
@@ -958,10 +968,26 @@ mod tests {
                 kind: BuildingKind::Camp,
                 pos: v(-30, 30),
             },
+            // D65: the Barracks building kind + the Tank/Medic unit kinds must survive the wire codec
+            // (their tags match sim.rs / the persist codec, so a command decodes identically on every
+            // peer — invariant #7).
+            Command::Build {
+                faction: Faction::Player,
+                kind: BuildingKind::Barracks,
+                pos: v(12, -5),
+            },
             Command::Upgrade { camp: ent(7, 3) },
             Command::QueueProduction {
                 camp: ent(7, 3),
                 unit: UnitKind::Heavy,
+            },
+            Command::QueueProduction {
+                camp: ent(7, 3),
+                unit: UnitKind::Tank,
+            },
+            Command::QueueProduction {
+                camp: ent(8, 1),
+                unit: UnitKind::Medic,
             },
             Command::Fire {
                 entity: ent(9, 1),
