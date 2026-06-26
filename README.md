@@ -58,6 +58,7 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/content-pipeline.md`](docs/content-pipeline.md) | Asset production — quality tiers, open-source sourcing, license hygiene, the two-view filter, what Claude can/can't build |
 | [`docs/pve-campaign.md`](docs/pve-campaign.md) | The PvE pillar — the Operations-hub campaign, mission archetypes, the host-side objective system, honest-AI difficulty ([D58](docs/decisions.md)/[D59](docs/decisions.md); first shippable product) |
 | [`docs/customization.md`](docs/customization.md) | Customization — the horizontal gunsmith (fixed-point sidegrades), cosmetics (presentation-only), the mobile HUD layout editor ([D60](docs/decisions.md)/[D61](docs/decisions.md)) |
+| [`docs/factions.md`](docs/factions.md) | Factions — real-army asymmetry, **US Army vs French Army** ([D68](docs/decisions.md), design-only); the fairness-bounded roster model layered over `UnitKind` |
 | [`docs/infrastructure.md`](docs/infrastructure.md) | Local dev (clone-and-run via Docker), config/env files, Terraform infra, sops secrets |
 | [`docs/roadmap.md`](docs/roadmap.md) | Build phases, milestones, and the top risks |
 | [`docs/plans/phase-0.5-plan.md`](docs/plans/phase-0.5-plan.md) | Plan + record of the embodiment-over-network latency spike (resolved Q7/Q8 → D15/D16) |

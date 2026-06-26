@@ -3083,3 +3083,98 @@ enemy `commander` to build Barracks and field Tanks/Medics (today it still masse
 its Camp, so the new content is player-only until the commander is extended); and a `SimEvent`/audio
 cue for healing. Stats are a **playtest baseline**, not `--metrics`-measured (D30 covers only
 Rifleman/Heavy).
+
+---
+
+## D66 — Modern lethality: ×5 weapon damage (a hit kills, not chips)
+
+**Decision:** Scale per-shot `damage` **×5** across every produced weapon in `economy::unit_stats`
+(Rifleman 6→30, Heavy 18→90, Tank 24→120; **HP, cooldown, and range unchanged**). A symmetric open
+rifle 1v1 now resolves in **~1.5 s / 4 hits** (measured 91 ticks at 60 Hz), down from the D30 ~8 s
+attrition. This supersedes D30's *time-to-kill* targets; D30's cost/economy numbers stand.
+
+**Why:** the D30 baseline made a soldier a ~17-round bullet sponge — the player's words, *"why do
+infantry take so long to die."* That attrition feel is wrong for the **modern-army fantasy** the player set as the
+north star (a real rifle round is decisive) — the same framing later given a destination in
+[D68](decisions.md). Scaling **every** weapon
+by the same factor was deliberate: it preserves the whole D30 DPS-*ratio* lattice exactly (the
+range-trade relationships are unchanged on paper) while compressing the clock 5×. Scaling damage (not
+cutting HP) keeps `Health`/`heal`/retreat-threshold semantics and the HP numbers the UI shows intact.
+
+**Consequences:** two *emergent* balance properties the `--metrics` suite guarded shift at lethal
+speed, because combat resolves in 1–2 near-simultaneous volleys where body-count + cadence quantize
+the outcome:
+- the equal-cost Rifleman-vs-Heavy **rock-paper-scissors collapses** — rifle mass now wins at *every*
+  range (heavies wiped 0-for), not just at range;
+- per-*hit* **suppression no longer pins before the kill** — the target dies first, so the
+  fire-and-maneuver lever is vestigial.
+
+Both are genuine regressions of *inter-unit* balance, not of the lethality goal, and both need a
+**re-tune at lethal speed** (a measurement loop) — tracked as [Q18](open-questions.md). The metrics
+tests were **re-pinned to lock the measured reality** (honest names: `rifle_ttk_in_lethal_band`,
+`equal_cost_outcomes_locked_at_lethal_baseline`, `suppression_no_longer_pins_before_kill_at_lethal_speed`)
+rather than assert the now-false properties — so the numbers can't drift *silently* before the
+re-tune. One golden checksum (embodied infantry scene) regenerated. Stats remain a playtest baseline.
+
+---
+
+## D67 — All-unit ammo + resupply: finite carried rounds, rearm at base (logistics)
+
+**Decision:** Ammo is **all-unit logistics**, not an embodied-only toggle. Every magazine weapon
+(`mag_size > 0`) now rations rounds in **auto-combat** as well as embodied fire:
+
+- `combat::combat_system`'s engage pass gains the same ammo gate `resolve_fire` already had (no fire
+  while reloading or empty) and **spends a round per shot**; upkeep **auto-starts a reload** for an
+  AI unit whose magazine runs dry while `reserve` remains (the embodied player still reloads manually
+  via `Command::Reload` — invariant #3: auto-reload loads the held gun, it never picks targets).
+- A reload now **draws from carried `reserve`** (new `Weapon` field) up to `mag_size` instead of
+  refilling from nothing; an empty reserve = **combat-ineffective** until rearmed.
+- New `core::resupply` system: a unit within `RESUPPLY_RANGE` (8) of a friendly **finished** Camp or
+  Barracks tops `reserve` back up by `RESUPPLY_PER_TICK` (2/tick) toward `reserve_max` (new `Weapon`
+  field). Wired into `Sim::step` after `heal`, before `territory`.
+
+Loadouts: Rifleman 30 mag + 180 reserve (~210-round real loadout), Heavy 50 + 200, **Tank now finite**
+(6 + 24 shells, was infinite), Medic unarmed.
+
+**Why:** the player's second ask — *"there shouldn't be unlimited ammo… realistic to how modern armies
+operate."* The old model was backwards: AI-commanded units fired **forever**; only the embodied player
+ever ran dry. Making ammo bind everyone, with a reserve that depletes and a base you must pull back to,
+turns logistics into a real pressure (you can't park an army on the front indefinitely) without a
+heavy supply-chain system — resupply is one boolean "near a friendly depot?" check.
+
+**Consequences:** `Weapon` gains `reserve` + `reserve_max` (u16), folded into the checksum **and**
+mirrored in `deserialize` (same field order — verified) — so the Weapon fold grew two u32/slot and
+**three golden checksums** were re-pinned (ballistic_pipeline, duel, infantry scene; the streams
+shifted by design, not desync). `core::resupply` is a new module; a building-free or ammo-free scene
+is a no-op, so those goldens are byte-unchanged. Determinism-audited clean (float-free, index-ordered,
+all u16 arithmetic proven over/underflow-safe, reserve folded so a divergence is caught — invariant
+#1/#7). Covered by four combat ammo tests + seven resupply tests; loadouts locked in the economy
+tests. **Deliberately deferred:** dropped-ammo pickup / ammo crates in the field; teaching the enemy
+`commander` and the Medic-less forward economy about resupply logistics; an out-of-ammo HUD/audio cue;
+ammo as a *cost* (resupply is currently free at a depot). Loadout numbers are a playtest baseline.
+
+---
+
+## D68 — Factions are modelled on real modern armies (USA vs France first); design now, build later
+
+**Decision:** The game's two sides will be **asymmetric factions modelled on real modern armies**, the
+first matchup **US Army vs French Army** — replacing the generic `Player`/`Enemy` `UnitKind` roster
+with **per-faction rosters** (each army's own infantry / vehicles / support, distinct silhouettes and
+stats) under a strict **fairness bound** (asymmetry of *flavour and feel*, never of *power* — pillar 4:
+the cost must always feel fair; cross-play parity, [Q17](open-questions.md)). **This decision records
+the direction and is design-only for now:** the design lives in [`factions.md`](factions.md); the
+build is **not** started. Lethality ([D66](decisions.md)) and all-unit ammo ([D67](decisions.md))
+land first on the existing shared roster.
+
+**Why:** the player set the north star — *"the goal is to have a USA army vs the French army."* It is a
+large structural change (today there is only `UnitKind`, no faction identity beyond the `Faction`
+enum's allegiance tag), so committing the **direction** now — and capturing the hard questions before
+writing code — is worth more than a half-built roster. It also gives D66/D67's "modern-army" framing a
+concrete destination.
+
+**Consequences:** a new design doc [`factions.md`](factions.md) (the roster/asymmetry/fairness model);
+the unresolved specifics — exact rosters, *how* asymmetric, how it interacts with the gunsmith
+([D60](decisions.md)) and the PvE campaign ([D58](decisions.md)) — are tracked as
+[Q19](open-questions.md). No engine code changes in this decision. The `Faction` enum stays an
+allegiance tag (`Player`/`Enemy`/`Neutral`); a *faction identity* (US/FR) is a separate, future
+component layered over `UnitKind` rosters, not a rename of `Faction`.

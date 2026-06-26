@@ -397,3 +397,48 @@ fast-follow).
 command-heavy balance as a natural cushion and aim assist held in reserve for casual modes. Defer the
 lock until embodied PvP is actually being built — but decide it *before* that, not after. Tracked as
 build item **XP-2** ([`roadmap.md`](roadmap.md)).
+
+---
+
+## Q18 — Inter-unit balance at lethal speed: how do we restore RPS + suppression? <a id="q18--lethal-speed-retune"></a>
+
+[D66](decisions.md) scaled damage ×5 for modern lethality (~1.5 s rifle TTK). Uniform scaling keeps
+the D30 DPS *ratios* on paper, but at 1–2-volley kill speed the *emergent* balance collapses: the
+equal-cost **Rifleman-vs-Heavy rock-paper-scissors** flattens (rifle mass wins at every range), and
+per-*hit* **suppression stops pinning before the kill** (the target dies first). Both are measured
+facts now locked in the `--metrics` tests, not predictions.
+
+| Fork | For the RPS | For suppression |
+|---|---|---|
+| **Re-tune unit stats at lethal speed** (buff Heavy durability/close-range punch until it wins close again; iterate against `--metrics`) | Restores the intended matchup with no model change | Doesn't address suppression |
+| **Rework suppression to per-near-miss** (fire *near* a unit suppresses it, not only hits that land) | — | Makes suppression the *modern* fire-and-maneuver lever it should be — you're pinned by rounds that *miss*, exactly the doctrine the US-vs-France fantasy wants |
+| **Accept faster, deadlier, less-tactical combat** (lethality over depth) | No work; embrace the new feel | No work |
+
+**Why it matters:** suppression + maneuver *is* modern infantry doctrine — leaning into it ([D68](decisions.md))
+while it's currently vestigial is a missed pillar. And a flat "rifles always win" roster undercuts the
+army-building depth (pillar: *Company of Heroes* economy/composition). **Current lean:** do **both** the
+stat re-tune *and* a per-near-miss suppression rework, measured against the harness — but as a focused
+balance pass, not blocking the lethality/ammo changes that shipped. Likely bundled with the
+[faction rosters](#q19--faction-roster-specifics) (re-tune once, against the real armies).
+
+---
+
+## Q19 — Faction roster specifics: how asymmetric is US Army vs French Army? <a id="q19--faction-roster-specifics"></a>
+
+[D68](decisions.md) locks the **direction** — asymmetric factions modelled on real modern armies, US
+vs FR first, fairness-bounded — and [`factions.md`](factions.md) holds the design. The *specifics* are
+open:
+
+| Fork | Upside | Risk |
+|---|---|---|
+| **Reskin parity** (same roster, different art/names/voicelines) | Trivially fair; cheap; ships fast | Barely a "faction" — wastes the fantasy |
+| **Soft asymmetry** (shared archetypes, per-faction stat/ability *tilts* within a fairness band) | Distinct feel, tractable balance, cross-play-safe | Needs a real balance budget; the band is a judgement call |
+| **Hard asymmetry** (genuinely different rosters/mechanics per army, à la StarCraft races) | Deepest identity; highest replay | Balance + cross-play fairness ([Q17](#q17--crossplay-input-fairness)) get much harder; large build |
+
+Sub-questions: which real platforms map to which `UnitKind` slots (M1 Abrams vs Leclerc; M4/HK416 vs
+FAMAS/HK416F)? How does a faction roster interact with the horizontal **gunsmith** ([D60](decisions.md))
+and the **PvE campaign** ([D58](decisions.md): is the campaign US-side, with France as the OPFOR)? Is
+faction a **cosmetic** choice or a **strategic** one? **Current lean:** **soft asymmetry** — shared
+archetypes (rifleman/heavy/vehicle/support) with per-faction tilts inside a measured fairness band,
+campaign played US-side first. Defer the lock until after the [lethal-speed re-tune](#q18--lethal-speed-retune)
+(balance the shared archetypes first, *then* tilt them per faction).
