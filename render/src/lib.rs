@@ -38,6 +38,7 @@ use gonedark_core::components::{Faction, UnitKind};
 use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::Visibility;
 use gonedark_core::snapshot::Snapshot;
+use gonedark_core::trig::{Angle, ANGLE_FULL};
 use wgpu::util::DeviceExt;
 
 /// Fog-of-war application (worker 1). Owns `visible_instances`: the visibility → drawn-instances
@@ -115,6 +116,21 @@ pub fn fixed_to_f32(v: Fixed) -> f32 {
     v.to_bits() as f32 / Fixed::SCALE as f32
 }
 
+/// Interpolate two binary-radian [`Angle`]s by `alpha ∈ [0,1]` and return the result in **f32
+/// radians** for the mesh-yaw transform (invariant #4 — angle interpolation lives in the renderer,
+/// not the sim). Crosses the wrap seam the **shortest way around**, mirroring
+/// [`gonedark_core::trig::rotate_toward`]'s signed delta, so a turret slewing 359°→1° sweeps 2°
+/// forward instead of spinning 358° back. The binary-radian convention matches the sim's `sin`/`cos`
+/// and the renderer's [`mesh::model_matrix`] yaw: `+X = 0`, increasing counter-clockwise toward `+Y`.
+#[inline]
+pub fn interp_angle(prev: Angle, curr: Angle, alpha: f32) -> f32 {
+    // Signed shortest delta in (−ANGLE_FULL/2, ANGLE_FULL/2], as in `trig::rotate_toward`.
+    let raw = (curr.0 - prev.0) & (ANGLE_FULL - 1);
+    let delta = if raw > ANGLE_FULL / 2 { raw - ANGLE_FULL } else { raw };
+    let units = prev.0 as f32 + delta as f32 * alpha;
+    units * (std::f32::consts::TAU / ANGLE_FULL as f32)
+}
+
 /// Instance flag bits.
 pub const FLAG_EMBODIED: u32 = 1; // the possessed avatar — survives the dark-frame filter
 pub const FLAG_RING: u32 = 2; // a territory control point — drawn as a hollow ring
@@ -148,28 +164,38 @@ pub(crate) fn model_for_unit(building: bool, kind: UnitKind) -> mesh::ModelKind 
     }
 }
 
-/// The command-view token scale for a resolved [`mesh::ModelKind`].
+/// The command-view token scale for a resolved [`mesh::ModelKind`]. The tank hull and its turret
+/// share one scale so the turret seats correctly on the hull (P7).
 fn token_scale(kind: mesh::ModelKind) -> f32 {
     match kind {
         mesh::ModelKind::CampHq => BUILDING_TOKEN_SCALE,
-        mesh::ModelKind::Tank => TANK_TOKEN_SCALE,
+        mesh::ModelKind::Tank | mesh::ModelKind::TankTurret => TANK_TOKEN_SCALE,
         _ => UNIT_TOKEN_SCALE,
     }
 }
 
-/// Pick the 3D token mesh + scale for a command-view instance, or `None` for instances that are not
-/// drawn as a mesh (control-point rings keep their hollow-ring quad). The mesh kind was resolved
-/// from the snapshot's unit-kind/building flag into [`UnitInstance::model`] (see [`model_for_unit`])
-/// when the instance was built; here we just decode it and pick the cosmetic scale. Pure + testable.
-fn token_for(inst: &UnitInstance) -> Option<(mesh::ModelKind, f32)> {
+/// The 3D mesh sub-parts that compose a unit/structure token: `(kind, scale, yaw_radians)` for each
+/// mesh to draw, all placed at the instance's world `(x, y)` on the ground. Most tokens are a single
+/// body mesh oriented by the unit's [`hull_yaw`](UnitInstance::hull_yaw); a **tank** is two parts —
+/// the hull at `hull_yaw` plus the turret ([`mesh::ModelKind::TankTurret`]) at
+/// [`turret_yaw`](UnitInstance::turret_yaw), slewed independently (tank embodiment P7, D55). The
+/// turret mesh carries the hull's turret-ring pivot (local origin) and its real height, so drawing it
+/// at the same `(x, y)` + scale yaws it about the ring and seats it on the hull. A control-point ring
+/// (or any non-mesh instance) returns an empty list. Pure + testable (no device).
+fn token_meshes(inst: &UnitInstance) -> Vec<(mesh::ModelKind, f32, f32)> {
     if inst.flags & FLAG_RING != 0 {
-        return None; // control points stay hollow rings (no mesh for them yet)
+        return Vec::new(); // control points stay hollow rings (no mesh for them yet)
     }
     // `model` is always a valid ModelKind discriminant (written by `model_for_unit`); a direct
     // index panics loudly in debug if some future path forgets to set it, rather than silently
     // drawing the wrong mesh.
     let kind = mesh::ModelKind::ALL[inst.model as usize];
-    Some((kind, token_scale(kind)))
+    let scale = token_scale(kind);
+    let mut parts = vec![(kind, scale, inst.hull_yaw)];
+    if kind == mesh::ModelKind::Tank {
+        parts.push((mesh::ModelKind::TankTurret, scale, inst.turret_yaw));
+    }
+    parts
 }
 
 /// Sentinel health value meaning "draw no health bar" (control points).
@@ -233,12 +259,13 @@ fn prop_draw_plan(eye: [f32; 3]) -> Vec<(mesh::ModelKind, usize, mesh::MeshInsta
 /// invariant #6). `instances` is the ALREADY fog-filtered draw set, so only units inside the
 /// avatar's vision survive upstream ([`fog::visible_instances`]) and this never re-checks intel. It
 /// drops the avatar's own body ([`FLAG_EMBODIED`] — you don't render yourself in first person) and
-/// any non-mesh instance ([`token_for`] returns `None` for control-point rings, which are map intel
+/// any non-mesh instance ([`token_meshes`] is empty for control-point rings, which are map intel
 /// and never appear in the dark frame anyway), then stands each remaining unit on the ground
 /// (`z = 0`) as a 3D token at the LOD its eye distance warrants — exactly mirroring [`prop_draw_plan`]
-/// so distant units cost fewer triangles on the 200-unit budget. Facing is fixed (yaw 0), matching
-/// the command-view tokens; the snapshot carries no per-unit heading yet. Pure + GPU-free, so the
-/// visibility/placement is unit-tested without a device.
+/// so distant units cost fewer triangles on the 200-unit budget. Each unit's body is oriented by its
+/// [`hull_yaw`](UnitInstance::hull_yaw); a tank also emits its turret at
+/// [`turret_yaw`](UnitInstance::turret_yaw) ([`token_meshes`], P7) — so a unit faces the way it moves
+/// and a tank's gun tracks independently. Pure + GPU-free, so it is unit-tested without a device.
 fn unit_draw_plan(
     instances: &[UnitInstance],
     eye: [f32; 3],
@@ -246,15 +273,20 @@ fn unit_draw_plan(
     instances
         .iter()
         .filter(|inst| inst.flags & FLAG_EMBODIED == 0) // never draw the possessed avatar's own body
-        .filter_map(|inst| {
-            let (kind, scale) = token_for(inst)?; // None → control-point ring (map intel); skip
+        .flat_map(|inst| {
+            // One LOD + colour per unit; each body part (the hull, plus a tank's turret) shares them.
             let (dx, dy, dz) = (inst.x - eye[0], inst.y - eye[1], -eye[2]);
-            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-            let mesh_inst = mesh::MeshInstance {
-                model: mesh::model_matrix([inst.x, inst.y, 0.0], scale, 0.0),
-                color: [inst.r, inst.g, inst.b, 0.0], // faction tint; a=0 → no muzzle flash
-            };
-            Some((kind, mesh::select_lod(dist), mesh_inst))
+            let lod = mesh::select_lod((dx * dx + dy * dy + dz * dz).sqrt());
+            let color = [inst.r, inst.g, inst.b, 0.0]; // faction tint; a=0 → no muzzle flash
+            let pos = [inst.x, inst.y, 0.0];
+            // token_meshes is empty for a control-point ring (map intel), so it is skipped here.
+            token_meshes(inst).into_iter().map(move |(kind, scale, yaw)| {
+                let mesh_inst = mesh::MeshInstance {
+                    model: mesh::model_matrix(pos, scale, yaw),
+                    color,
+                };
+                (kind, lod, mesh_inst)
+            })
         })
         .collect()
 }
@@ -311,6 +343,10 @@ pub fn interpolate_instances(
         let health = fixed_to_f32(b.health).clamp(0.0, 1.0);
         // Resolve the 3D token mesh from the sim's unit-kind / building flag (Heavy→tank etc.).
         let model = model_for_unit(b.building, b.unit_kind) as u32;
+        // Hull + turret facing, interpolated shortest-arc across the wrap seam (P7). Read from both
+        // snapshots so a slewing turret tweens smoothly between ticks (invariant #4).
+        let hull_yaw = interp_angle(a.hull_heading, b.hull_heading, alpha);
+        let turret_yaw = interp_angle(a.turret_yaw, b.turret_yaw, alpha);
 
         out.push(UnitInstance {
             x: ax + (bx - ax) * alpha,
@@ -322,6 +358,8 @@ pub fn interpolate_instances(
             health,
             flags,
             model,
+            hull_yaw,
+            turret_yaw,
         });
     }
 
@@ -338,7 +376,9 @@ pub fn interpolate_instances(
             b: color[2],
             health: NO_HEALTH_BAR,
             flags: FLAG_RING,
-            model: 0, // unused: FLAG_RING makes `token_for` return None (rings stay hollow quads)
+            model: 0, // unused: FLAG_RING makes `token_meshes` empty (rings stay hollow quads)
+            hull_yaw: 0.0,    // unused for rings (no mesh)
+            turret_yaw: 0.0,
         });
     }
 
@@ -394,10 +434,18 @@ pub struct UnitInstance {
     /// [`FLAG_EMBODIED`] | [`FLAG_RING`] | [`FLAG_SELECTED`].
     pub flags: u32,
     /// The 3D token mesh this instance draws as ([`mesh::ModelKind`] `as u32`), resolved from the
-    /// snapshot's unit-kind / building flag by [`model_for_unit`]. CPU-side only — [`token_for`]
-    /// reads it to bucket the mesh pass; it is the trailing field so the quad pipeline's instance
+    /// snapshot's unit-kind / building flag by [`model_for_unit`]. CPU-side only — [`token_meshes`]
+    /// reads it to bucket the mesh pass; it is a trailing field so the quad pipeline's instance
     /// attributes (locations 1..=5, fixed offsets) are untouched and the GPU never reads it.
     pub model: u32,
+    /// Hull/body facing in **radians** (interpolated from the snapshot's `hull_heading`, shortest-arc
+    /// — [`interp_angle`]). The mesh pass yaws the body about Z by this (tank embodiment P7, D55).
+    /// CPU-side only, like [`model`](Self::model) — the GPU quad pipeline never reads it.
+    pub hull_yaw: f32,
+    /// Turret bearing in **radians** (interpolated from the snapshot's `turret_yaw`, shortest-arc).
+    /// Only meaningful for a tank, whose turret mesh ([`mesh::ModelKind::TankTurret`]) is yawed by it
+    /// independently of the hull (P7). CPU-side only — the GPU quad pipeline never reads it.
+    pub turret_yaw: f32,
 }
 
 /// A unit-quad corner in local space. Two triangles cover `[-1, 1]^2` (the shader scales by
@@ -661,8 +709,8 @@ impl Renderer {
     /// leaves (invariant #6). In **command view** the frame is composited in three passes so the 3D
     /// greybox tokens (D44) sit between the ground and the UI:
     ///  1. **ground grid** — CLEARS to the lit slate the field reads against (W6);
-    ///  2. **3D unit/structure tokens** — depth-tested meshes ([`token_for`] picks infantry vs
-    ///     structure) LOADed over the grid;
+    ///  2. **3D unit/structure tokens** — depth-tested meshes ([`token_meshes`] picks infantry vs
+    ///     structure, and a tank's hull + turret) LOADed over the grid;
     ///  3. **2D quad UI** — health bars, selection rims, control-point rings — LOADed on top, with
     ///     each token's body fill suppressed ([`FLAG_MESH`]) so the mesh shows through.
     ///
@@ -709,10 +757,16 @@ impl Renderer {
             (0..mesh::ModelKind::ALL.len()).map(|_| Vec::new()).collect();
         let mut quad_set = draw_set.clone();
         for inst in &mut quad_set {
-            if let Some((kind, scale)) = token_for(inst) {
-                inst.flags |= FLAG_MESH;
+            // Each token's body mesh(es): one per unit, two for a tank (hull + independently-yawed
+            // turret, P7). An empty list is a control-point ring — it keeps its hollow-ring quad.
+            let parts = token_meshes(inst);
+            if parts.is_empty() {
+                continue;
+            }
+            inst.flags |= FLAG_MESH;
+            for (kind, scale, yaw) in parts {
                 buckets[kind as usize].push(mesh::MeshInstance {
-                    model: mesh::model_matrix([inst.x, inst.y, 0.0], scale, 0.0),
+                    model: mesh::model_matrix([inst.x, inst.y, 0.0], scale, yaw),
                     color: [inst.r, inst.g, inst.b, 0.0], // faction tint; a=0 → no flash
                 });
             }
@@ -1128,6 +1182,8 @@ mod tests {
             health: Fixed::ONE,
             building: false,
             unit_kind: UnitKind::Rifleman,
+            hull_heading: Angle(0),
+            turret_yaw: Angle(0),
         }
     }
 
@@ -1327,26 +1383,37 @@ mod tests {
     }
 
     #[test]
-    fn token_for_decodes_model_scale_and_skips_rings() {
-        // A Rifleman token (model = Trooper) → infantry mesh at the unit scale.
+    fn token_meshes_decodes_parts_scale_yaw_and_skips_rings() {
+        // A Rifleman token (model = Trooper) → one infantry mesh at the unit scale, yawed by hull.
         let mut u = UnitInstance {
             model: mesh::ModelKind::Trooper as u32,
+            hull_yaw: 0.7,
+            turret_yaw: 1.3,
             ..Default::default()
         };
         assert_eq!(
-            token_for(&u),
-            Some((mesh::ModelKind::Trooper, UNIT_TOKEN_SCALE))
+            token_meshes(&u),
+            vec![(mesh::ModelKind::Trooper, UNIT_TOKEN_SCALE, 0.7)],
+            "infantry is a single body part oriented by hull_yaw (turret_yaw ignored)"
         );
 
-        // A Heavy token (model = Tank) → tank mesh at the (smaller) tank scale.
+        // A Heavy token (model = Tank) → TWO parts: hull at hull_yaw + turret at turret_yaw, both at
+        // the (smaller) tank scale so the turret seats on the hull (P7).
         u.model = mesh::ModelKind::Tank as u32;
-        assert_eq!(token_for(&u), Some((mesh::ModelKind::Tank, TANK_TOKEN_SCALE)));
+        assert_eq!(
+            token_meshes(&u),
+            vec![
+                (mesh::ModelKind::Tank, TANK_TOKEN_SCALE, 0.7),
+                (mesh::ModelKind::TankTurret, TANK_TOKEN_SCALE, 1.3),
+            ],
+            "a tank emits hull (hull_yaw) + independently-slewed turret (turret_yaw)"
+        );
 
-        // A building token (model = CampHq) → structure mesh at the building scale.
+        // A building token (model = CampHq) → one structure mesh at the building scale.
         u.model = mesh::ModelKind::CampHq as u32;
         assert_eq!(
-            token_for(&u),
-            Some((mesh::ModelKind::CampHq, BUILDING_TOKEN_SCALE))
+            token_meshes(&u),
+            vec![(mesh::ModelKind::CampHq, BUILDING_TOKEN_SCALE, 0.7)]
         );
 
         // A control-point ring gets no mesh (it stays a hollow-ring quad).
@@ -1355,7 +1422,7 @@ mod tests {
             flags: FLAG_RING,
             ..Default::default()
         };
-        assert_eq!(token_for(&ring), None);
+        assert!(token_meshes(&ring).is_empty());
     }
 
     /// `interpolate_instances` resolves each unit's token mesh from its snapshot `unit_kind`:
@@ -1373,9 +1440,9 @@ mod tests {
             mesh::ModelKind::Trooper as u32,
             "Rifleman → infantry"
         );
-        // Both decode back through token_for to their mesh.
-        assert_eq!(token_for(&out[0]).unwrap().0, mesh::ModelKind::Tank);
-        assert_eq!(token_for(&out[1]).unwrap().0, mesh::ModelKind::Trooper);
+        // Both decode back through token_meshes to their body mesh.
+        assert_eq!(token_meshes(&out[0])[0].0, mesh::ModelKind::Tank);
+        assert_eq!(token_meshes(&out[1])[0].0, mesh::ModelKind::Trooper);
     }
 
     /// The FPS world-dressing plan covers every prop, picks coarser LODs as the eye recedes, and
@@ -1420,6 +1487,8 @@ mod tests {
             health: 1.0,
             flags,
             model: model as u32,
+            hull_yaw: 0.0,
+            turret_yaw: 0.0,
         }
     }
 
@@ -1448,21 +1517,71 @@ mod tests {
 
     #[test]
     fn unit_draw_plan_carries_faction_tint_kind_and_grounds_at_z0() {
-        // A Heavy → tank token, tinted by faction with no flash (a=0), standing on the ground (z=0).
+        // A Heavy → tank token: hull + turret (P7), tinted by faction with no flash (a=0), both
+        // standing on the ground (z=0) at the unit's world (x, y).
         let tank = uinst(3.0, -1.0, 0, mesh::ModelKind::Tank, faction_color(Faction::Enemy));
         let plan = unit_draw_plan(&[tank], [0.0, 0.0, 1.6]);
-        assert_eq!(plan.len(), 1);
-        let (kind, _lod, inst) = &plan[0];
-        assert_eq!(*kind, mesh::ModelKind::Tank, "Heavy snapshot → tank token");
+        assert_eq!(plan.len(), 2, "a tank draws as hull + turret");
+        assert_eq!(plan[0].0, mesh::ModelKind::Tank, "first part is the hull");
+        assert_eq!(plan[1].0, mesh::ModelKind::TankTurret, "second part is the turret");
         let c = faction_color(Faction::Enemy);
-        assert_eq!(
-            [inst.color[0], inst.color[1], inst.color[2]],
-            c,
-            "faction tint carried through"
+        for (_kind, _lod, inst) in &plan {
+            assert_eq!(
+                [inst.color[0], inst.color[1], inst.color[2]],
+                c,
+                "faction tint carried through to every part"
+            );
+            assert_eq!(inst.color[3], 0.0, "no muzzle flash on a unit body");
+            // model_matrix's translation column places each part at the world (x, y) on the ground.
+            assert_eq!(inst.model[3], [3.0, -1.0, 0.0, 1.0]);
+        }
+    }
+
+    /// `interp_angle` tweens binary-radian angles the SHORT way across the wrap seam and matches the
+    /// `model_matrix`/sim `+X = 0`, CCW convention. (render is the float boundary — f32 math is fair.)
+    #[test]
+    fn interp_angle_is_shortest_arc_and_matches_convention() {
+        use std::f32::consts::{FRAC_PI_2, PI, TAU};
+        let q = ANGLE_FULL / 4; // a quarter turn in binary radians
+        // alpha endpoints return the endpoints (mod TAU).
+        assert!((interp_angle(Angle(0), Angle(q), 0.0)).abs() < 1e-5);
+        assert!((interp_angle(Angle(0), Angle(q), 1.0) - FRAC_PI_2).abs() < 1e-5);
+        // Half-way from 0 → 90° is 45°.
+        assert!((interp_angle(Angle(0), Angle(q), 0.5) - FRAC_PI_2 / 2.0).abs() < 1e-5);
+        // Shortest arc across the seam: 350° → 10° sweeps +20° FORWARD through 360°/0°, not −340°.
+        let a350 = Angle(ANGLE_FULL * 35 / 36); // 350°
+        let a10 = Angle(ANGLE_FULL / 36); // 10°
+        let mid = interp_angle(a350, a10, 0.5); // expect ≈ 360° ≡ 0 (mod TAU)
+        let wrapped = mid.rem_euclid(TAU);
+        assert!(
+            wrapped < 1e-3 || (wrapped - TAU).abs() < 1e-3,
+            "midpoint of 350°→10° is ~0°, got {wrapped} rad"
         );
-        assert_eq!(inst.color[3], 0.0, "no muzzle flash on a unit body");
-        // model_matrix's translation column places the token at its world (x, y) on the ground.
-        assert_eq!(inst.model[3], [3.0, -1.0, 0.0, 1.0]);
+        // A binary-radian half-turn maps to π.
+        assert!((interp_angle(Angle(0), Angle(ANGLE_FULL / 2), 1.0) - PI).abs() < 1e-5);
+    }
+
+    /// `interpolate_instances` carries each unit's hull/turret facing into the instance, tweened
+    /// shortest-arc from the two snapshots (a Heavy's turret slews independently of its hull).
+    #[test]
+    fn interpolate_carries_hull_and_turret_yaw() {
+        let q = ANGLE_FULL / 4;
+        let mut prev_u = unit(Fixed::ZERO, Fixed::ZERO, false);
+        prev_u.unit_kind = UnitKind::Heavy;
+        let mut curr_u = prev_u.clone();
+        curr_u.hull_heading = Angle(q); // hull turns 0 → 90°
+        curr_u.turret_yaw = Angle(ANGLE_FULL / 2); // turret turns 0 → 180°
+        let prev = snapshot(0, vec![prev_u]);
+        let curr = snapshot(1, vec![curr_u]);
+        let out = interpolate_instances(&prev, &curr, 0.5, &[]);
+        assert!(
+            (out[0].hull_yaw - std::f32::consts::FRAC_PI_2 / 2.0).abs() < 1e-5,
+            "hull tweens to 45°"
+        );
+        assert!(
+            (out[0].turret_yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+            "turret tweens to 90° (independent of the hull)"
+        );
     }
 
     /// Validate `shader.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression

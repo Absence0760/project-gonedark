@@ -61,7 +61,7 @@
       "name": "tank",
       "file": "tank.glb",
       "cooked": "tank.mesh",
-      "description": "Greybox vehicle unit \u2014 hull, tracks, turret, barrel.",
+      "description": "Greybox vehicle hull \u2014 chassis + tracks (turret is a separate model so it slews independently).",
       "base_color": [
         0.18,
         0.22,
@@ -72,43 +72,98 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 8000,
-      "sha256": "ae737b53e891078203c4773f06073b4e8c26c3e468c01b7024ccb4a475afd631",
-      "cooked_bytes": 9084,
-      "cooked_sha256": "2dc328abd78db1f10d7fb9346948e496c6578772ab2d1feef7878b79d5e44be9",
+      "bytes": 3740,
+      "sha256": "7393bd88307bd752cca669420a5437c0451badcb5b7396fcb6967c01b1c92f40",
+      "cooked_bytes": 3036,
+      "cooked_sha256": "cbf7d5b904fac47cd2916e9d7fb1fcb902402b32f8b7d9b76b1a7f1e4af488cb",
       "lods": [
         {
           "level": 0,
           "file": "tank.glb",
           "cooked": "tank.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 108,
-          "bytes": 8000,
-          "sha256": "ae737b53e891078203c4773f06073b4e8c26c3e468c01b7024ccb4a475afd631",
-          "cooked_bytes": 9084,
-          "cooked_sha256": "2dc328abd78db1f10d7fb9346948e496c6578772ab2d1feef7878b79d5e44be9"
+          "tri_count": 36,
+          "bytes": 3740,
+          "sha256": "7393bd88307bd752cca669420a5437c0451badcb5b7396fcb6967c01b1c92f40",
+          "cooked_bytes": 3036,
+          "cooked_sha256": "cbf7d5b904fac47cd2916e9d7fb1fcb902402b32f8b7d9b76b1a7f1e4af488cb"
         },
         {
           "level": 1,
           "file": "tank.lod1.glb",
           "cooked": "tank.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 56,
-          "bytes": 2172,
-          "sha256": "eb9cacaf3c17fb083fdbdf605b4fe2631bf1925f6fc5a57ab3d17e9be43be578",
-          "cooked_bytes": 4716,
-          "cooked_sha256": "f4cea59111237872881942878b8c178e48e31c9fbe324c6171f2fd4125dbd3e0"
+          "tri_count": 36,
+          "bytes": 1724,
+          "sha256": "7b776c9b70c2a06d48130063fbfef3adbd8fb5fc7ac4fde29a369aae2fa72c4a",
+          "cooked_bytes": 3036,
+          "cooked_sha256": "202302285f82ae33469f87fd68e34980cfcb08c892f9c8e9948918adeb5cec2f"
         },
         {
           "level": 2,
           "file": "tank.lod2.glb",
           "cooked": "tank.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 56,
-          "bytes": 2172,
-          "sha256": "c42689cdb184a48601c3b58aebe513131dccd2bd8feeb8ec5ff8fc95ff24c676",
-          "cooked_bytes": 4716,
-          "cooked_sha256": "b27346475c73c5dd400d1355a5d7d52148caad5ebfb93feb53935068e26c27d3"
+          "tri_count": 36,
+          "bytes": 1724,
+          "sha256": "4600bcf6eb2a5ce4d6dd4edc807c0bb0bb82dd168fb68cf8d8b9c35bea942b08",
+          "cooked_bytes": 3036,
+          "cooked_sha256": "f02fcfa640c1063fb5fe5b8ad83b3a7fd7cee693e0257c3c9dc18e2c6fdc2273"
+        }
+      ]
+    },
+    {
+      "name": "tank_turret",
+      "file": "tank_turret.glb",
+      "cooked": "tank_turret.mesh",
+      "description": "Greybox tank turret \u2014 gun mantlet + barrel, pivoting about the hull's turret ring (P7).",
+      "base_color": [
+        0.18,
+        0.22,
+        0.14
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 5496,
+      "sha256": "cde3870aed1101bd19c1535ded22fa803cf71aa8e41d93151393897da8e5c771",
+      "cooked_bytes": 6060,
+      "cooked_sha256": "a7a4c51182071fdefd6e6ce56d1e1220fa1e8e9268e5834d746faba01b27ab96",
+      "lods": [
+        {
+          "level": 0,
+          "file": "tank_turret.glb",
+          "cooked": "tank_turret.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 72,
+          "bytes": 5496,
+          "sha256": "cde3870aed1101bd19c1535ded22fa803cf71aa8e41d93151393897da8e5c771",
+          "cooked_bytes": 6060,
+          "cooked_sha256": "a7a4c51182071fdefd6e6ce56d1e1220fa1e8e9268e5834d746faba01b27ab96"
+        },
+        {
+          "level": 1,
+          "file": "tank_turret.lod1.glb",
+          "cooked": "tank_turret.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 32,
+          "bytes": 1700,
+          "sha256": "44d92ea23ef38f88eaf91a2e10af521db01d10f3a338993baab3a55c63e2ea18",
+          "cooked_bytes": 2700,
+          "cooked_sha256": "5c30a9b42e954143b0bb45cb0a4e712d095b26496a85928d4adb55a91cb4a280"
+        },
+        {
+          "level": 2,
+          "file": "tank_turret.lod2.glb",
+          "cooked": "tank_turret.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 14,
+          "bytes": 1412,
+          "sha256": "b4854c5333200d6d23d19d998ccc1481f85306b55a92d02fb28a32c0e7657a53",
+          "cooked_bytes": 1188,
+          "cooked_sha256": "1754136d37049509d80792bab7ee0161ddc7124b01b38f498906b10904240433"
         }
       ]
     },

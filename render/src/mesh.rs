@@ -144,6 +144,9 @@ impl MeshCpu {
 pub enum ModelKind {
     Trooper,
     Tank,
+    /// The tank's turret + barrel as its own mesh node, drawn atop the [`Tank`] hull and yawed
+    /// independently by the sim's `turret_yaw` (tank embodiment P7, D55).
+    TankTurret,
     CampHq,
     WeaponRifle,
     Crate,
@@ -155,9 +158,10 @@ pub enum ModelKind {
 
 impl ModelKind {
     /// Every kind, in canonical (enum-discriminant) order.
-    pub const ALL: [ModelKind; 9] = [
+    pub const ALL: [ModelKind; 10] = [
         ModelKind::Trooper,
         ModelKind::Tank,
+        ModelKind::TankTurret,
         ModelKind::CampHq,
         ModelKind::WeaponRifle,
         ModelKind::Crate,
@@ -182,6 +186,11 @@ impl ModelKind {
                 include_bytes!("../../assets/models/tank.mesh"),
                 include_bytes!("../../assets/models/tank.lod1.mesh"),
                 include_bytes!("../../assets/models/tank.lod2.mesh"),
+            ],
+            ModelKind::TankTurret => [
+                include_bytes!("../../assets/models/tank_turret.mesh"),
+                include_bytes!("../../assets/models/tank_turret.lod1.mesh"),
+                include_bytes!("../../assets/models/tank_turret.lod2.mesh"),
             ],
             ModelKind::CampHq => [
                 include_bytes!("../../assets/models/camp_hq.mesh"),
@@ -235,6 +244,7 @@ impl ModelKind {
         match self {
             ModelKind::Trooper => [0.30, 0.34, 0.18],
             ModelKind::Tank => [0.18, 0.22, 0.14],
+            ModelKind::TankTurret => [0.18, 0.22, 0.14], // matches the hull
             ModelKind::CampHq => [0.45, 0.40, 0.30],
             ModelKind::WeaponRifle => [0.12, 0.12, 0.13],
             ModelKind::Crate => [0.40, 0.28, 0.16],

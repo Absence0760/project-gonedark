@@ -172,7 +172,8 @@ P3  ballistic projectile pool: flight + drop + impact detection (muzzle_vel > 0)
 P4  Armor + Weapon.penetration + facing multiplier, resolved AT IMPACT (ALL-UNIT rewrite)   ── DONE (dc8ce4e)
 P5  dispersion / aim-time bloom: settle-to-center scatter on Fire
 P6  ShellKind AP/APHE/HE + SelectShell + per-shell pen/damage/splash
-P7  render: turret mesh node + shortest-arc angle interp + tracer/projectile draw (inv #4)
+P7  render: turret mesh node + shortest-arc angle interp ── DONE (turret mesh + hull/turret
+    yaw in snapshot, shortest-arc interp); tracer/projectile draw still pending (inv #4)
 P8  HUD: hull-relative turret indicator, dispersion reticle, LEAD pip, shell selector, reload ring
 P9  tank UnitKind archetype + economy stats + sniper/zoom view
 ─────────────────────────────────────────────────────────────────────────
@@ -185,7 +186,9 @@ order is why ballistics-first avoids hitscan-then-projectile rework). P5–P6 ar
 P7–P9 make it legible and playable. Each lands with unit tests in the same commit; **P3 and P4
 must keep `determinism.yml`'s arch matrix green** (invariant #7 — projectiles and the damage
 rewrite are both checksummed sim state). High-blast-radius phases (P2, P3, P4, P6) run through
-`/safe-edit`. **P1–P4 done; P5 is next.**
+`/safe-edit`. **P1–P4 done; P7's render half (turret mesh node + shortest-arc yaw interp) landed
+early** — it is a pure render seam with no dependency on P5/P6, so the already-simulated hull/turret
+slew is now actually visible. **P5 is next** (and P7's tracer/projectile draw remains).
 
 ---
 

@@ -263,7 +263,8 @@ def import_glb(filename):
 # faction colour can still override its model tint at draw time (player blue / enemy red).
 COLORS = {
     "trooper": (0.30, 0.34, 0.18),     # olive infantry
-    "tank": (0.18, 0.22, 0.14),        # dark green armour
+    "tank": (0.18, 0.22, 0.14),        # dark green armour (hull)
+    "tank_turret": (0.18, 0.22, 0.14), # dark green armour (turret — matches the hull)
     "camp_hq": (0.45, 0.40, 0.30),     # tan structure
     "weapon_rifle": (0.12, 0.12, 0.13),  # gunmetal
     "crate": (0.40, 0.28, 0.16),       # wood cover prop
@@ -294,15 +295,32 @@ def build_trooper():
 
 
 def build_tank():
+    # The tank HULL (chassis + tracks) only — the turret is a SEPARATE model
+    # (`build_tank_turret`) so the renderer can slew it independently of the hull (tank
+    # embodiment P7, D55). Both keep the dark-green armour tint. The turret-ring pivot sits at
+    # the hull's local origin (x=0, y=0), so a turret drawn at the same world (x, y) and lifted
+    # to z≈hull-top rotates about that ring exactly.
     mat = make_material("tank", rgba("tank"))  # dark green
     parts = [
         box((3.0, 1.6, 0.70), (0, 0, 0.60)),                   # hull
         box((3.2, 0.45, 0.50), (0, 0.85, 0.35)),               # track R
         box((3.2, 0.45, 0.50), (0, -0.85, 0.35)),              # track L
-        box((1.4, 1.2, 0.50), (-0.2, 0, 1.05)),                # turret
-        cyl(0.10, 1.60, (1.2, 0, 1.05), rot=(0, math.radians(90), 0)),  # barrel
     ]
     return weld("tank", parts, mat)
+
+
+def build_tank_turret():
+    # The tank TURRET (gun mantlet + barrel) as its own model so it can yaw independently of the
+    # hull (P7). Modelled in the hull's local frame: the turret-ring pivot is the local origin
+    # (x=0, y=0) about which the renderer rotates by `turret_yaw`, and the geometry keeps its real
+    # height (z≈1.05, sitting on the hull top at z≈0.95). Drawing it at the hull's world (x, y) with
+    # yaw = turret_yaw therefore slews it about the ring. Barrel points +X (turret_yaw 0 == hull 0).
+    mat = make_material("tank_turret", rgba("tank_turret"))  # dark green (matches the hull)
+    parts = [
+        box((1.4, 1.2, 0.50), (-0.2, 0, 1.05)),                # turret box (centred behind the ring)
+        cyl(0.10, 1.60, (1.2, 0, 1.05), rot=(0, math.radians(90), 0)),  # barrel, forward along +X
+    ]
+    return weld("tank_turret", parts, mat)
 
 
 def build_camp_hq():
@@ -375,7 +393,9 @@ MODELS = [
     ("trooper", build_trooper,
      "Greybox infantry unit — boxy humanoid (hips/torso/head/limbs)."),
     ("tank", build_tank,
-     "Greybox vehicle unit — hull, tracks, turret, barrel."),
+     "Greybox vehicle hull — chassis + tracks (turret is a separate model so it slews independently)."),
+    ("tank_turret", build_tank_turret,
+     "Greybox tank turret — gun mantlet + barrel, pivoting about the hull's turret ring (P7)."),
     ("camp_hq", build_camp_hq,
      "Greybox structure — walled building with a pyramid roof + antenna."),
     ("weapon_rifle", build_weapon_rifle,

@@ -11,6 +11,7 @@ use crate::components::{EntityKind, Faction, InputSource, UnitKind, Vec2};
 use crate::ecs::World;
 use crate::fixed::Fixed;
 use crate::territory::Territory;
+use crate::trig::Angle;
 
 /// One unit's renderable state at a tick.
 #[derive(Clone, Debug)]
@@ -30,6 +31,16 @@ pub struct UnitSnapshot {
     /// The producible archetype — renderer maps Heavy→tank, Rifleman→infantry; presentation only,
     /// not checksummed.
     pub unit_kind: UnitKind,
+    /// Chassis facing (binary-radian [`Angle`]) — the direction the hull/tracks point. The sim slews
+    /// it toward the unit's velocity (`heading_system`) or the embodied stick (`drive_hull`); the
+    /// renderer orients the body mesh by it (tank embodiment P7, D55). Presentation copy — the real
+    /// sim state is checksummed at its source, this snapshot is not (invariant #4/#7).
+    pub hull_heading: Angle,
+    /// Gun bearing (binary-radian [`Angle`]) — for a tank, the turret yaws independently of the hull
+    /// (`turret_speed > 0`); for turret-less units it tracks the hull and is cosmetically irrelevant
+    /// (no separate turret mesh). Same absolute frame as `hull_heading` (`+X = 0`, CCW). The renderer
+    /// yaws the tank's turret mesh by it (P7). Presentation copy, not checksummed.
+    pub turret_yaw: Angle,
 }
 
 /// One control point's renderable state at a tick.
@@ -65,6 +76,8 @@ impl Snapshot {
                 health: world.health[i].fraction(),
                 building: world.kind[i] == EntityKind::Building,
                 unit_kind: world.unit_kind[i],
+                hull_heading: world.hull_heading[i],
+                turret_yaw: world.turret_yaw[i],
             });
         }
         let control_points = territory
