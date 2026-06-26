@@ -336,16 +336,27 @@ pub fn economy_system(
     territory: &Territory,
     events: &mut Vec<SimEvent>,
     rng: &mut Rng,
+    tick: u64,
+    income_period: u32,
 ) {
     let _ = rng;
 
-    // --- INCOME (per-tick integer accrual; Neutral never earns) ---
-    for &faction in Faction::ALL.iter() {
-        if faction == Faction::Neutral {
-            continue;
+    // --- INCOME (integer accrual; Neutral never earns) ---
+    // Income accrues once every `income_period` ticks (default 1 = every tick, the full D30 rate).
+    // A larger period is the scenario-local pace lever (the skirmish slows the drip without touching
+    // the D30 cost/stat constants): the per-accrual amount is unchanged, so a held point still
+    // ~triples income — only the cadence stretches. `tick` is the pre-increment counter (folded into
+    // the checksum), so the gate fires identically on every peer (invariant #7). Clamp 0 → 1 so a
+    // malformed period can never divide by zero.
+    let period = income_period.max(1) as u64;
+    if tick % period == 0 {
+        for &faction in Faction::ALL.iter() {
+            if faction == Faction::Neutral {
+                continue;
+            }
+            let count = territory.controlled_count(faction) as i64;
+            resources.add(faction, BASE_INCOME + PER_POINT_INCOME * count);
         }
-        let count = territory.controlled_count(faction) as i64;
-        resources.add(faction, BASE_INCOME + PER_POINT_INCOME * count);
     }
 
     // --- BUILDINGS: construction + production countdown ---
@@ -408,7 +419,9 @@ mod tests {
     fn tick(world: &mut World, res: &mut Resources, terr: &Territory) -> Vec<SimEvent> {
         let mut events = Vec::new();
         let mut rng = Rng::new(1);
-        economy_system(world, res, terr, &mut events, &mut rng);
+        // Full income rate (tick 0, period 1 ⇒ accrue every call), the pre-lever behaviour these
+        // tests were written against. The income-period gate is covered separately.
+        economy_system(world, res, terr, &mut events, &mut rng, 0, 1);
         events
     }
 
@@ -708,6 +721,49 @@ mod tests {
             UnitKind::Heavy
         ));
         assert!(world.building[camp.index as usize].queue.is_empty());
+    }
+
+    /// The income-period gate: with `income_period = N` income accrues once every `N` ticks (on
+    /// `tick % N == 0`) at the unchanged per-accrual amount, so the effective drip is `1/N` the full
+    /// rate. This is the scenario-local pace lever; the D30 constants are untouched.
+    #[test]
+    fn income_accrues_only_on_period_boundaries() {
+        let mut world = World::new();
+        let mut res = Resources::new(0);
+        // One held point so each accrual is BASE_INCOME + PER_POINT_INCOME (a non-trivial amount).
+        let terr = Territory {
+            points: vec![ControlPoint {
+                pos: Vec2::ZERO,
+                owner: Faction::Player,
+                progress: Fixed::ZERO,
+            }],
+        };
+        let per_accrual = BASE_INCOME + PER_POINT_INCOME;
+        let period: u32 = 18;
+        let mut rng = Rng::new(1);
+
+        // Drive ticks 0..(3*period). Income lands only on ticks 0, period, 2*period → 3 accruals.
+        let mut accruals = 0i64;
+        for t in 0..(3 * period as u64) {
+            let before = res.get(Faction::Player);
+            let mut events = Vec::new();
+            economy_system(&mut world, &mut res, &terr, &mut events, &mut rng, t, period);
+            let gained = res.get(Faction::Player) - before;
+            if t % period as u64 == 0 {
+                assert_eq!(gained, per_accrual, "tick {t} is a boundary → full accrual");
+                accruals += 1;
+            } else {
+                assert_eq!(gained, 0, "tick {t} is off-boundary → no income");
+            }
+        }
+        assert_eq!(accruals, 3);
+        assert_eq!(res.get(Faction::Player), per_accrual * 3);
+
+        // A period of 0 is clamped to 1 (every tick), and never panics on the modulo.
+        let mut r2 = Resources::new(0);
+        let mut ev = Vec::new();
+        economy_system(&mut world, &mut r2, &terr, &mut ev, &mut rng, 7, 0);
+        assert_eq!(r2.get(Faction::Player), per_accrual, "period 0 clamps to full rate");
     }
 
     #[test]

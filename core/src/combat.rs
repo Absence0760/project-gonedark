@@ -1243,6 +1243,8 @@ mod tests {
             &territory,
             &mut eco_events,
             &mut rng,
+            0,
+            1,
         );
         let units = (0..world.capacity())
             .filter(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)

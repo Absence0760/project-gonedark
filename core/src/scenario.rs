@@ -296,12 +296,21 @@ pub const SKIRMISH_TROOP_GAP: i32 = 4;
 /// `14` keeps the posts more than a capture diameter apart (`2·CAPTURE_RADIUS = 12`), so a single
 /// unit can't contest two at once.
 pub const SKIRMISH_POST_FLANK_Y: i32 = 14;
-/// The skirmish's deliberately small starting purse — the **scenario-local** economy lever (it does
-/// NOT touch the locked D30 balance constants). With only this much banked, a faction cannot mass an
-/// army turn-one; funding real production means *capturing posts* (each held point ~triples income —
-/// [`economy::PER_POINT_INCOME`]), which is the whole "take a post to earn gold faster" loop.
-/// `100` = one Rifleman ([`economy::RIFLEMAN_COST`]): enough for a single opening choice, no flood.
+/// The skirmish's deliberately small starting purse — one of the two **scenario-local** economy
+/// levers (neither touches the locked D30 balance constants). With only this much banked, a faction
+/// cannot mass an army turn-one. `100` = one Rifleman ([`economy::RIFLEMAN_COST`]): enough for a
+/// single opening choice, no flood.
 pub const SKIRMISH_START_PURSE: i64 = 100;
+
+/// The skirmish's income **accrual period** (ticks between income accruals) — the second
+/// scenario-local economy lever ([`Sim::set_income_period`](crate::sim::Sim::set_income_period)),
+/// and the one that sets the *pace*. At the global 60 Hz, base income is `BASE_INCOME` (= 1) per
+/// accrual, so accruing every `18` ticks gives `60/18 ≈ 3.3` gold/s → a Rifleman (`100`) roughly
+/// **every 30 s** from base income alone, exactly the intended "slow by default" feel. It does NOT
+/// touch the D30 constants — only the cadence stretches, so a held post still ~triples income
+/// ([`economy::PER_POINT_INCOME`]): one post ⇒ ~10 s/Rifleman, all three ⇒ ~4 s. Capturing posts is
+/// the whole "take a post to earn gold faster" loop, made literal.
+pub const SKIRMISH_INCOME_PERIOD: u32 = 18;
 
 /// The handles a seeded skirmish hands back: each side's operational base camp and its single
 /// starting troop. The host embodies / selects `player_troop`; the enemy commander tasks
@@ -327,6 +336,10 @@ pub struct Skirmish {
 /// then both troops) and every value is integer / `Fixed`, so two seeds of a fresh `Sim` are
 /// bit-identical — the property the single-sourced `app`/harness correspondence rests on.
 pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
+    // Slow the income drip to the skirmish's pace (scenario-local; the D30 constants are untouched).
+    // Base income now reads as ~1 Rifleman / 30 s, and capturing posts is how you speed it up.
+    sim.set_income_period(SKIRMISH_INCOME_PERIOD);
+
     // Three neutral posts strung across the no-man's-land: dead centre plus the two flanks. Holding
     // one ~triples a faction's income, so taking posts is how you out-produce the enemy.
     for post in [
@@ -640,10 +653,12 @@ mod tests {
     fn skirmish_starts_with_the_small_scenario_purse() {
         let mut sim = fresh();
         seed_skirmish(&mut sim);
-        // The scenario-local economy lever: a small purse, identical for both combatants. (The
-        // build-cost dance is fully reset — neither base build leaves the purse skewed.)
+        // The scenario-local economy levers: a small purse, identical for both combatants (the
+        // build-cost dance is fully reset — neither base build leaves the purse skewed)...
         assert_eq!(sim.resources.get(Faction::Player), SKIRMISH_START_PURSE);
         assert_eq!(sim.resources.get(Faction::Enemy), SKIRMISH_START_PURSE);
+        // ...and the slow income drip (≈1 Rifleman / 30 s from base income).
+        assert_eq!(sim.income_period(), SKIRMISH_INCOME_PERIOD);
     }
 
     #[test]

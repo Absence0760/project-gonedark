@@ -1337,6 +1337,26 @@ fn snapshot_round_trips_fresh_sim() {
     assert_eq!(restored.serialize(), bytes);
 }
 
+/// A non-default `income_period` (the scenario-local economy pace lever) survives the snapshot
+/// round-trip, so a reconnecting peer resumes a slow-economy match at the *same* pace — not silently
+/// reset to the full per-tick rate. The period is serialized in the wrapper (like `map_id`), not the
+/// checksum fold; this pins that it is actually carried.
+#[test]
+fn snapshot_round_trips_a_non_default_income_period() {
+    let mut sim = Sim::new(7);
+    sim.set_income_period(18); // the skirmish pace
+    assert_eq!(sim.income_period(), 18);
+    // Step a few ticks so resources/tick are non-trivial too.
+    for _ in 0..40 {
+        sim.step(&[]);
+    }
+    let bytes = sim.serialize();
+    let restored = Sim::deserialize(&bytes).expect("slow-economy sim round-trips");
+    assert_eq!(restored.income_period(), 18, "the pace lever must survive resume");
+    assert_eq!(restored.checksum(), sim.checksum());
+    assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
+}
+
 /// `unit_kind` is render-facing metadata kept OUT of the checksum, but it is still serialized in a
 /// dedicated block (outside the shared `fold` walk) so a resumed sim restores the same archetypes a
 /// never-interrupted run holds. This proves the round-trip preserves a mix of Heavy and Rifleman.
@@ -1508,6 +1528,7 @@ fn deserialize_rejects_malformed_input() {
     let mut w = Writer::new();
     w.write_u8(cur_version); // version (current SNAPSHOT_VERSION)
     w.write_u32(0); // map_id
+    w.write_u32(1); // income_period (wrapper field after map_id, before capacity)
     w.write_u32(0xFFFF_FFFF); // capacity claims ~4 billion slots
     assert_eq!(err(&w.into_bytes()), DeserializeError::LengthOverflow);
 

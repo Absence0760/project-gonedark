@@ -134,6 +134,16 @@ pub struct Sim {
     /// checksummed), so the authoritative snapshot (D28) serializes this small id and re-derives
     /// `terrain` from it on resume, never the `GRID×GRID` grid. The scene is map id 0.
     map_id: MapId,
+    /// Ticks between income accruals — the scenario-local economy **pace lever** (the skirmish slows
+    /// it; default `1` = accrue every tick, the unchanged full rate). Like [`map_id`](Self::map_id)
+    /// it is static *per-match config*, not per-tick state: it is set at seed / deserialize time and
+    /// never mutated by a system. So — exactly like `map_id` — it is serialized in the snapshot
+    /// WRAPPER but **not** folded into the per-tick checksum. Its *effect* (the resource purse) IS
+    /// folded, so two peers running different periods diverge in resources and the desync is caught
+    /// on the next tick (invariant #7). A larger period stretches only the cadence, not the
+    /// per-accrual amount, so a held point still ~triples income — the D30 cost/stat constants are
+    /// untouched.
+    income_period: u32,
     rng: Rng,
     tick: u64,
 }
@@ -148,9 +158,27 @@ impl Sim {
             events: Vec::new(),
             projectiles: Vec::new(),
             map_id: Terrain::SCENE_MAP_ID,
+            // Default full rate (accrue every tick) — identical income to before this lever existed,
+            // so every existing scene's resources (and thus checksum) are byte-unchanged.
+            income_period: 1,
             rng: Rng::new(seed),
             tick: 0,
         }
+    }
+
+    /// Set the income accrual **period** (ticks between income accruals) — the scenario-local economy
+    /// pace lever. `1` (the default) accrues every tick (the full D30 rate); a larger value stretches
+    /// the cadence proportionally, slowing the drip *without* touching the D30 cost/stat constants
+    /// (the per-accrual amount is unchanged, so a held point still ~triples income). A scene seeder
+    /// calls this; clamped to at least `1` so income always eventually accrues.
+    pub fn set_income_period(&mut self, period: u32) {
+        self.income_period = period.max(1);
+    }
+
+    /// The current income accrual period (ticks between accruals). `1` = the full per-tick rate.
+    #[inline]
+    pub fn income_period(&self) -> u32 {
+        self.income_period
     }
 
     #[inline]
@@ -206,6 +234,8 @@ impl Sim {
             &self.territory,
             &mut self.events,
             &mut self.rng,
+            self.tick,
+            self.income_period,
         );
         self.tick += 1;
     }
@@ -472,6 +502,9 @@ impl Sim {
         let mut w = Writer::new();
         w.write_u8(SNAPSHOT_VERSION);
         w.write_u32(self.map_id as u32);
+        // Income pace — scenario-local config, NOT in the fold (like map_id). Written here in the
+        // wrapper so the order is: version, map_id, income_period, capacity, fold(...).
+        w.write_u32(self.income_period);
         // Slot capacity, written in the wrapper (NOT in `fold`, so the checksum stream is
         // untouched). It is the number of slots `fold` emits and the length of `generation[]`;
         // deserialize needs it up front to drive the slot loop, since the fold's per-slot data is
@@ -517,6 +550,10 @@ impl Sim {
         // Re-derive terrain from the id now, rejecting an unknown map loudly (a newer build's
         // snapshot must not silently fall back to the wrong terrain — invariant #7).
         let terrain = Terrain::from_map_id(map_id).ok_or(DeserializeError::UnknownMapId(map_id))?;
+        // Income pace — mirror serialize's wrapper order (after map_id, before capacity). Kept a
+        // pure inverse (no clamp here, so re-serialize is byte-identical); economy_system clamps
+        // 0 → 1 at the use site so a malformed period can never divide by zero.
+        let income_period = r.read_u32()?;
 
         // Slot capacity (written by `serialize` before the fold). Bound it against the remaining
         // bytes so a garbage value can't drive a huge pre-allocation; the smallest possible slot
@@ -696,6 +733,7 @@ impl Sim {
             events: Vec::new(),
             projectiles,
             map_id,
+            income_period,
             rng,
             tick,
         })
@@ -710,7 +748,7 @@ impl Sim {
 /// Authoritative-snapshot format version (D28). Bumped on any layout change so a stale snapshot is
 /// rejected ([`DeserializeError::BadVersion`]) rather than silently misparsed into a divergent
 /// world. Independent of the lockstep wire version — different codec, different evolution.
-const SNAPSHOT_VERSION: u8 = 6;
+const SNAPSHOT_VERSION: u8 = 7;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.

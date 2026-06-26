@@ -2965,3 +2965,61 @@ scene dispatch. `render::debug` was generalized — `render_debug` now takes a f
 composed by the host-tested `engine::debug_overlay_lines` (tanks → hitbox rings; infantry →
 range-ring + firing-cone wedge; all → Player→Enemy LoS connectors, green clear / red blocked) — so
 the overlay reads each scene's mechanic, not just the tank's.
+
+## D64 — The playable skirmish + a scenario-local income-pace lever
+
+**Status:** decided. The first *real* (non-debug) match, and the economy knob that gives it its
+"slow by default, faster when you hold ground" feel — without reopening the measured [D30](decisions.md)
+balance.
+
+**Decision:**
+
+- **`core::scenario::seed_skirmish` is the first playable match**, alongside the [D63](decisions.md)
+  debug seeders (`seed_duel`/`seed_infantry`) and single-sourced the same way: two operational base
+  camps at `(∓30, 0)`, **exactly one starting Rifleman troop each**, and **three neutral capture
+  posts** (centre + two flanks). It is pure fixed-point (invariant #1/#2), so the played match is
+  bit-identical to anything a harness drives. The Enemy carries no scripted opening order — the
+  existing `commander` ([D39](decisions.md)) plays it; match-end is the existing host-side
+  `evaluate_outcome` (elimination, then a 15-min territory/resource timeout, [D34](decisions.md)).
+  It is wired as `Scene::Skirmish` (`app --scene skirmish`/`match`) and is the **desktop default
+  boot** (no flag), so launching the game drops you into it; `--scene default` keeps the old demo.
+- **Economy pace is two scenario-local levers, neither touching the D30 constants:** (a) a small
+  starting purse (`SKIRMISH_START_PURSE = 100`, one Rifleman) so no turn-one flood; and (b) a new
+  per-`Sim` **income accrual period** (`Sim::set_income_period`). Income in `economy_system` accrues
+  the *unchanged* per-accrual amount only on `tick % income_period == 0`, so the period stretches the
+  *cadence*, not the amount. The skirmish uses `SKIRMISH_INCOME_PERIOD = 18`: base income ≈ 1
+  Rifleman / 30 s, and since a held post still adds `PER_POINT_INCOME` per accrual, one post ⇒
+  ~10 s/Rifleman and all three ⇒ ~4 s. "Take a post to earn gold faster", made literal.
+- **`income_period` follows the `map_id` pattern:** it is static per-match config, so it is
+  serialized in the snapshot **wrapper** (SNAPSHOT_VERSION 6 → 7) but **NOT folded into the per-tick
+  checksum**. Its *effect* (the resource purse) is folded, so two peers on different periods diverge
+  in resources and the desync is caught on the next tick (invariant #7). Default `1` = accrue every
+  tick = the unchanged full rate, so every pre-existing scene's checksum stream is byte-identical
+  (the determinism goldens are untouched).
+
+**Why:**
+
+- The machinery for a real match already existed and was generic over the seeded world (economy,
+  capture, literal-executor units, the scripted commander, the win-condition evaluator); what was
+  missing was a *scene* shaped like the game we describe (the old `Scene::Default` demo opens with
+  3-unit squads already in contact, no clean opening). One `core::scenario` entry closes that with
+  no structural change — exactly the expandability [D63](decisions.md) predicted.
+- The measured D30 economy (~1 Rifleman / 1.7 s at base) is far faster than the intended skirmish
+  feel. Re-tuning D30 globally would discard a harness-measured baseline; instead the income period
+  is a *scenario-local* dial, so the skirmish can be slow-and-deliberate while D30 stays the locked
+  reference every balance metric was measured against. Pacing by *cadence* (not by shrinking the
+  amount) keeps territory's relative value intact — a post always ~triples income — and avoids the
+  integer-truncation trap of dividing a `BASE_INCOME` of 1 (which would floor to 0).
+- Keeping the period out of the checksum (the `map_id` precedent) means the lever costs the
+  determinism CI surface nothing: no golden re-bless, no widened fold, while a mismatched period is
+  still caught immediately through its resource effect.
+
+**Consequences:** `core::scenario` gains `seed_skirmish` + the `Skirmish` handle and the skirmish
+constants; `Sim` gains the `income_period` field + `set_income_period`/`income_period` accessors;
+`economy_system` takes `(tick, income_period)` and gates income on the period; `serialize`/
+`deserialize` carry the field in the wrapper (version 7). `engine` gains `Scene::Skirmish` +
+`seed_skirmish_scene`; `app` boots the skirmish by default. A scenario-local match driver test pins
+that the loop is live (the commander captures a post, funds production, and reinforces in 30 s), and
+the income-period gate + a non-default-period snapshot round-trip are unit-tested. Barracks, a real
+`UnitKind::Tank`, and a Medic/healing system remain follow-ups; this lands the *match*, not new
+content.
