@@ -1038,75 +1038,145 @@ pub struct Game {
     touch_hud: Option<touch_controls::TouchHud>,
 }
 
+/// Which world [`Game::new_scene`] seeds. The default match is the Phase 2 demo skirmish; the
+/// debug scenes are tiny, fully-deterministic sandboxes for exercising one mechanic — the
+/// in-engine, *playable* counterpart to the headless `sim-runner` scenes, seeded from the SAME
+/// `core::scenario` source so the thing you drive is the thing the harness validates.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Scene {
+    /// The Phase 2 demo skirmish: two rifle squads, producing camps, two neutral control points.
+    /// The normal match the title screen's **Start** boots into.
+    #[default]
+    Default,
+    /// The two-tank hitbox duel ([`gonedark_core::scenario::seed_duel`]), booted **embodied** in
+    /// the player tank so you drop straight into first person, drive it, and fire the gun — the
+    /// "load two tanks and see the hitboxes work" sandbox. A debug scene, not a real match.
+    Duel,
+}
+
+impl Scene {
+    /// Parse a scene name (e.g. an `app --scene <name>` CLI token). `None` for an unknown name so
+    /// the host can report it. Pure + host-tested (no GPU), unlike `Game::new_scene` itself.
+    pub fn parse(name: &str) -> Option<Scene> {
+        match name {
+            "default" | "demo" => Some(Scene::Default),
+            "duel" => Some(Scene::Duel),
+            _ => None,
+        }
+    }
+}
+
+/// Seed the **Phase 2 demo skirmish** and return `(player, start_embodied)`: two rifle squads, a
+/// producing player + enemy camp, two neutral control points. GPU-free (mutates only the `Sim`), so
+/// it is host-tested directly — the renderer-bearing `Game::new_scene` stays the thin glue. Starts
+/// in the command view (`start_embodied == false`).
+fn seed_default_scene(sim: &mut Sim) -> (Entity, bool) {
+    sim.resources = Resources::new(500);
+
+    // Two neutral control points to fight over.
+    sim.territory
+        .points
+        .push(ControlPoint::neutral(Vec2::new(Fixed::ZERO, Fixed::ZERO)));
+    sim.territory.points.push(ControlPoint::neutral(Vec2::new(
+        Fixed::from_int(-16),
+        Fixed::from_int(10),
+    )));
+
+    // Player squad (left). The first is the embodiable avatar; it holds and returns fire
+    // (Idle order + FireAtWill stance), the allies attack-move into the enemy line.
+    let player = spawn_unit(sim, -7, -2, Faction::Player, Stance::FireAtWill);
+    let ally_a = spawn_unit(sim, -9, 4, Faction::Player, Stance::FireAtWill);
+    let ally_b = spawn_unit(sim, -9, -7, Faction::Player, Stance::FireAtWill);
+
+    // Enemy squad (right). They start IDLE (Stance::FireAtWill) — the enemy commander (W3)
+    // takes over from the first commander tick and drives them: capture points, press the
+    // player line, and reinforce from its camp. No one-shot spawn order; the AI is in charge
+    // the whole match (the previous single AttackMove left the enemy inert forever).
+    spawn_unit(sim, 8, 0, Faction::Enemy, Stance::FireAtWill);
+    spawn_unit(sim, 10, 6, Faction::Enemy, Stance::FireAtWill);
+    spawn_unit(sim, 9, -6, Faction::Enemy, Stance::FireAtWill);
+
+    // A player camp, pre-built for the demo, producing reinforcements you can watch spawn.
+    if let Some(camp) = economy::build(
+        &mut sim.world,
+        &mut sim.resources,
+        Faction::Player,
+        BuildingKind::Camp,
+        Vec2::new(Fixed::from_int(-22), Fixed::ZERO),
+    ) {
+        sim.world.building[camp.index as usize].build_ticks_left = 0; // skip construction
+        economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
+        economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
+    }
+
+    // An enemy camp too, so the commander has somewhere to reinforce from — making the
+    // opponent a real economic actor, not just three units that trade and vanish.
+    if let Some(camp) = economy::build(
+        &mut sim.world,
+        &mut sim.resources,
+        Faction::Enemy,
+        BuildingKind::Camp,
+        Vec2::new(Fixed::from_int(22), Fixed::ZERO),
+    ) {
+        sim.world.building[camp.index as usize].build_ticks_left = 0; // skip construction
+    }
+
+    // Kick off the player squad's advance into contact (combat fires en route). The enemy is
+    // NOT scripted here — its first move comes from the commander on the next 1 s gate.
+    sim.step(&[
+        Command::AttackMove {
+            entity: ally_a,
+            target: Vec2::new(Fixed::from_int(6), Fixed::from_int(2)),
+        },
+        Command::AttackMove {
+            entity: ally_b,
+            target: Vec2::new(Fixed::from_int(6), Fixed::from_int(-4)),
+        },
+    ]);
+
+    (player, false)
+}
+
+/// Seed the **two-tank hitbox duel** and return `(player, start_embodied)`. Seeds the shared
+/// `core::scenario::seed_duel` scene, then possesses the player tank so the sandbox boots in first
+/// person (`start_embodied == true`) — the input-source swap (invariant #5) is the `Command::Embody`
+/// stepped here, and the matching host-side `embodied`/camera state is set by the caller from the
+/// returned flag. GPU-free, so it is host-tested directly.
+fn seed_duel_scene(sim: &mut Sim) -> (Entity, bool) {
+    let duel = gonedark_core::scenario::seed_duel(sim);
+    // Drop straight into the tank: the embodied input-source swap a ballistic `Fire` needs.
+    sim.step(&[Command::Embody {
+        entity: duel.player,
+    }]);
+    // Mirror the telemetry the normal Command::Embody handler logs, so the embodiment event still
+    // shows in the trace at duel launch (the host-side flag is set by the caller, not that handler).
+    log::info!("[tick {}] EMBODY (duel boot) — world goes dark", sim.tick_count());
+    (duel.player, true)
+}
+
 impl Game {
-    /// Build the game against a live GPU device and set up the Phase 2 demo scene: two rifle
-    /// squads skirmishing, a player camp producing reinforcements, and two neutral control
-    /// points to capture. The returned `player` is a Player-faction unit you can embody.
-    /// `seed` drives the deterministic sim — pass [`DEFAULT_SEED`] for the shared scene.
+    /// Build the game against a live GPU device into the default [`Scene`] (the Phase 2 demo
+    /// skirmish). The returned `player` is a Player-faction unit you can embody. `seed` drives the
+    /// deterministic sim — pass [`DEFAULT_SEED`] for the shared scene.
     pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat, seed: u64) -> Self {
+        Self::new_scene(device, surface_format, seed, Scene::Default)
+    }
+
+    /// Build the game against a live GPU device into a chosen [`Scene`]. The world seeding is the
+    /// only thing that varies; everything else (renderer, interpolation snapshots, lockstep,
+    /// shell, tuning) is identical across scenes. A debug scene may boot **embodied** (the duel
+    /// sandbox does), which this reflects in the initial `embodied`/`camera` state.
+    pub fn new_scene(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        seed: u64,
+        scene: Scene,
+    ) -> Self {
         let mut sim = Sim::new(seed);
-        sim.resources = Resources::new(500);
-
-        // Two neutral control points to fight over.
-        sim.territory
-            .points
-            .push(ControlPoint::neutral(Vec2::new(Fixed::ZERO, Fixed::ZERO)));
-        sim.territory.points.push(ControlPoint::neutral(Vec2::new(
-            Fixed::from_int(-16),
-            Fixed::from_int(10),
-        )));
-
-        // Player squad (left). The first is the embodiable avatar; it holds and returns fire
-        // (Idle order + FireAtWill stance), the allies attack-move into the enemy line.
-        let player = spawn_unit(&mut sim, -7, -2, Faction::Player, Stance::FireAtWill);
-        let ally_a = spawn_unit(&mut sim, -9, 4, Faction::Player, Stance::FireAtWill);
-        let ally_b = spawn_unit(&mut sim, -9, -7, Faction::Player, Stance::FireAtWill);
-
-        // Enemy squad (right). They start IDLE (Stance::FireAtWill) — the enemy commander (W3)
-        // takes over from the first commander tick and drives them: capture points, press the
-        // player line, and reinforce from its camp. No one-shot spawn order; the AI is in charge
-        // the whole match (the previous single AttackMove left the enemy inert forever).
-        spawn_unit(&mut sim, 8, 0, Faction::Enemy, Stance::FireAtWill);
-        spawn_unit(&mut sim, 10, 6, Faction::Enemy, Stance::FireAtWill);
-        spawn_unit(&mut sim, 9, -6, Faction::Enemy, Stance::FireAtWill);
-
-        // A player camp, pre-built for the demo, producing reinforcements you can watch spawn.
-        if let Some(camp) = economy::build(
-            &mut sim.world,
-            &mut sim.resources,
-            Faction::Player,
-            BuildingKind::Camp,
-            Vec2::new(Fixed::from_int(-22), Fixed::ZERO),
-        ) {
-            sim.world.building[camp.index as usize].build_ticks_left = 0; // skip construction
-            economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
-            economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
-        }
-
-        // An enemy camp too, so the commander has somewhere to reinforce from — making the
-        // opponent a real economic actor, not just three units that trade and vanish.
-        if let Some(camp) = economy::build(
-            &mut sim.world,
-            &mut sim.resources,
-            Faction::Enemy,
-            BuildingKind::Camp,
-            Vec2::new(Fixed::from_int(22), Fixed::ZERO),
-        ) {
-            sim.world.building[camp.index as usize].build_ticks_left = 0; // skip construction
-        }
-
-        // Kick off the player squad's advance into contact (combat fires en route). The enemy is
-        // NOT scripted here — its first move comes from the commander on the next 1 s gate.
-        sim.step(&[
-            Command::AttackMove {
-                entity: ally_a,
-                target: Vec2::new(Fixed::from_int(6), Fixed::from_int(2)),
-            },
-            Command::AttackMove {
-                entity: ally_b,
-                target: Vec2::new(Fixed::from_int(6), Fixed::from_int(-4)),
-            },
-        ]);
+        let (player, start_embodied) = match scene {
+            Scene::Default => seed_default_scene(&mut sim),
+            Scene::Duel => seed_duel_scene(&mut sim),
+        };
 
         let curr = sim.snapshot();
         let prev = curr.clone();
@@ -1119,8 +1189,14 @@ impl Game {
             prev,
             curr,
             acc: 0.0,
-            embodied: false,
-            camera: CameraMode::TopDown,
+            // A debug scene may boot already possessing a unit (the duel sandbox does); the camera
+            // follows that initial embodiment so first person is live from frame one.
+            embodied: start_embodied,
+            camera: if start_embodied {
+                CameraMode::Embodied
+            } else {
+                CameraMode::TopDown
+            },
             yaw: 0.0,
             pitch: EMBODIED_PITCH_DEFAULT,
             cam_focus_x: 0.0,
@@ -2399,6 +2475,49 @@ mod tests {
     use gonedark_core::economy::{self, Resources};
     use gonedark_core::ecs::World;
     use gonedark_render::fixed_to_f32;
+
+    /// Scene-name parsing for the `app --scene <name>` host flag — pure, GPU-free.
+    #[test]
+    fn scene_parse_known_and_unknown() {
+        assert_eq!(Scene::parse("default"), Some(Scene::Default));
+        assert_eq!(Scene::parse("demo"), Some(Scene::Default));
+        assert_eq!(Scene::parse("duel"), Some(Scene::Duel));
+        assert_eq!(Scene::parse("nope"), None);
+        assert_eq!(Scene::default(), Scene::Default);
+    }
+
+    /// The duel sandbox boots **embodied** in a Player Heavy tank, with the sim input-source already
+    /// swapped to `Embodied` (invariant #5) — the state a ballistic `Fire` needs. This is the
+    /// GPU-free seam under `Game::new_scene`, so it covers the new logic without a device.
+    #[test]
+    fn duel_scene_boots_embodied_in_a_player_tank() {
+        let mut sim = Sim::new(DEFAULT_SEED);
+        let (player, start_embodied) = seed_duel_scene(&mut sim);
+        assert!(start_embodied, "the duel sandbox boots in first person");
+        let i = player.index as usize;
+        assert_eq!(sim.world.faction[i], Faction::Player);
+        assert_eq!(sim.world.unit_kind[i], UnitKind::Heavy);
+        assert_eq!(
+            sim.world.input_source[i],
+            gonedark_core::components::InputSource::Embodied,
+            "the Embody step swapped the input source",
+        );
+    }
+
+    /// The default demo skirmish starts in the command view (not embodied) and hands back a live
+    /// Player unit to possess.
+    #[test]
+    fn default_scene_starts_in_command_view() {
+        let mut sim = Sim::new(DEFAULT_SEED);
+        let (player, start_embodied) = seed_default_scene(&mut sim);
+        assert!(!start_embodied, "the demo skirmish starts in command view");
+        assert_eq!(sim.world.faction[player.index as usize], Faction::Player);
+        assert_eq!(
+            sim.world.input_source[player.index as usize],
+            gonedark_core::components::InputSource::Orders,
+            "an unembodied avatar is still order-driven",
+        );
+    }
 
     /// A throwaway player handle for the command-mapping tests — a real generational handle
     /// from a `World`, so the produced commands carry a valid entity.

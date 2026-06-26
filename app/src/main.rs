@@ -12,7 +12,7 @@
 //! This binary owns only the desktop concerns: the window, the wgpu surface, input plumbing, the
 //! egui shell, and the wall clock that feeds per-frame `dt` into the engine's fixed-tick accumulator.
 
-use gonedark_engine::{Game, OverlayClick, DEFAULT_SEED};
+use gonedark_engine::{Game, OverlayClick, Scene, DEFAULT_SEED};
 use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface};
 use std::sync::Arc;
 use std::time::Instant;
@@ -57,10 +57,15 @@ struct App {
     /// Whether the window is currently in borderless fullscreen. Toggled by **F11** on any screen.
     /// A pure window concern — it never touches the sim — so it lives on the host like cursor state.
     fullscreen: bool,
+
+    /// Which [`Scene`] a **Start** boots into — `Scene::Default` (the demo skirmish) unless the
+    /// `--scene <name>` launch flag selected a debug sandbox (e.g. `--scene duel`). A pure host
+    /// launch choice; it only picks which `Game::new_scene` seeding runs.
+    scene: Scene,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(scene: Scene) -> Self {
         App {
             surface: None,
             shell: None,
@@ -71,6 +76,7 @@ impl App {
             cursor_captured: false,
             alt_held: false,
             fullscreen: false,
+            scene,
         }
     }
 
@@ -234,7 +240,12 @@ impl App {
         match transition {
             Some(HostTransition::EnterMatch) => {
                 let surface = self.surface.as_ref().expect("surface exists in resumed");
-                let game = Game::new(surface.device(), surface.format(), DEFAULT_SEED);
+                let game = Game::new_scene(
+                    surface.device(),
+                    surface.format(),
+                    DEFAULT_SEED,
+                    self.scene,
+                );
                 self.screen = Screen::InMatch(Box::new(game));
                 // Don't charge the time spent on the title screen to the first sim tick.
                 self.last_frame = Instant::now();
@@ -350,9 +361,34 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Extract the `--scene <name>` / `--scene=<name>` launch token from CLI args, if present. Pure
+/// (no env / no `Scene::parse`), so it's host-tested without a window; `main` resolves the token to
+/// a [`Scene`] and warns on an unknown name.
+fn scene_token(args: &[String]) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if let Some(name) = a.strip_prefix("--scene=") {
+            return Some(name.to_string());
+        }
+        if a == "--scene" {
+            return it.next().cloned();
+        }
+    }
+    None
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let scene = match scene_token(&args) {
+        Some(tok) => Scene::parse(&tok).unwrap_or_else(|| {
+            eprintln!("unknown --scene {tok:?}; using default (known scenes: default, duel)");
+            Scene::Default
+        }),
+        None => Scene::Default,
+    };
+
     let event_loop = EventLoop::new().expect("create winit event loop");
-    let mut app = App::new();
+    let mut app = App::new(scene);
     event_loop.run_app(&mut app).expect("run winit app");
 }
 
@@ -378,5 +414,33 @@ mod cursor_tests {
         // regardless of the free-cursor request.
         assert!(!want_cursor_capture(false, false));
         assert!(!want_cursor_capture(false, true));
+    }
+}
+
+#[cfg(test)]
+mod scene_arg_tests {
+    use super::scene_token;
+
+    fn args(xs: &[&str]) -> Vec<String> {
+        xs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn extracts_scene_token_in_both_forms() {
+        assert_eq!(scene_token(&args(&["--scene", "duel"])).as_deref(), Some("duel"));
+        assert_eq!(scene_token(&args(&["--scene=duel"])).as_deref(), Some("duel"));
+        // Other flags around it don't interfere.
+        assert_eq!(
+            scene_token(&args(&["--foo", "--scene", "default", "--bar"])).as_deref(),
+            Some("default"),
+        );
+    }
+
+    #[test]
+    fn absent_or_dangling_scene_flag_is_none() {
+        assert_eq!(scene_token(&args(&[])), None);
+        assert_eq!(scene_token(&args(&["--fullscreen"])), None);
+        // `--scene` with no following value: nothing to take.
+        assert_eq!(scene_token(&args(&["--scene"])), None);
     }
 }
