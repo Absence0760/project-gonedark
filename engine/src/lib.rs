@@ -95,6 +95,13 @@ const EYE_HEIGHT: f32 = 1.5;
 /// Mouse-look sensitivity (radians of yaw per accumulated raw look-delta unit).
 const LOOK_SENSITIVITY: f32 = 0.0025;
 
+/// Default embodied pitch (radians): a slight downward tilt so the weapon viewmodel and the near
+/// ground are framed the instant you possess a unit. Vertical look adjusts up/down from here.
+const EMBODIED_PITCH_DEFAULT: f32 = -0.15;
+/// Pitch clamp (radians, ~80°): how far the embodied look can tilt up/down before it would gimbal-
+/// flip past straight-up/down. Keeps `look_at` well-conditioned (the up vector never collinear).
+const EMBODIED_PITCH_MAX: f32 = 1.4;
+
 /// Command-camera zoom bounds (half-extent in world units). Floor = closest framing (read a single
 /// skirmish), ceiling = widest (survey the whole playfield). [`TOPDOWN_HALF_EXTENT`] is the default
 /// inside this band.
@@ -313,12 +320,15 @@ fn embodied_proj(width: u32, height: u32) -> Mat4 {
     Mat4::perspective_rh(EMBODIED_FOV_DEG.to_radians(), aspect, EMBODIED_NEAR, EMBODIED_FAR)
 }
 
-/// Embodied perspective view-projection (free fn — eye position + yaw + viewport only, no
-/// `Game`/device needed): eye at the possessed unit's position, raised by `EYE_HEIGHT`,
-/// looking out across the ground plane along the current yaw.
-fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, width: u32, height: u32) -> Mat4 {
+/// Embodied perspective view-projection (free fn — eye position + yaw/pitch + viewport only, no
+/// `Game`/device needed): eye at the possessed unit's position, raised by `EYE_HEIGHT`, looking out
+/// along the current `yaw` (heading) and `pitch` (up/down tilt, radians; +up, −down).
+fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, pitch: f32, width: u32, height: u32) -> Mat4 {
     let eye = Vec3::new(eye_x, eye_y, EYE_HEIGHT);
-    let dir = Vec3::new(yaw.cos(), yaw.sin(), -0.15).normalize();
+    // Spherical look direction: pitch tilts the (yaw) heading up/down about the horizon. Already
+    // unit-length (cos²+sin² folds to 1), but normalize defensively against fp drift.
+    let (cp, sp) = (pitch.cos(), pitch.sin());
+    let dir = Vec3::new(yaw.cos() * cp, yaw.sin() * cp, sp).normalize();
     let target = eye + dir;
 
     let proj = embodied_proj(width, height);
@@ -428,6 +438,15 @@ fn is_oneshot_command(c: &Command) -> bool {
 #[inline]
 fn integrate_look_yaw(yaw: f32, look_dx: f32) -> f32 {
     yaw - look_dx * LOOK_SENSITIVITY
+}
+
+/// Integrate one frame's vertical mouse-look into the embodied pitch (radians), clamped to
+/// ±[`EMBODIED_PITCH_MAX`] so the view can't flip past vertical. The delta is **subtracted** (winit
+/// screen +Y points down, so moving the mouse UP gives a negative `look_dy` → pitch increases → the
+/// view looks UP): non-inverted, consistent with [`integrate_look_yaw`]. PURE → unit-testable.
+#[inline]
+fn integrate_look_pitch(pitch: f32, look_dy: f32) -> f32 {
+    (pitch - look_dy * LOOK_SENSITIVITY).clamp(-EMBODIED_PITCH_MAX, EMBODIED_PITCH_MAX)
 }
 
 /// Advance the command camera's ground focus (PAN) from the WASD / stick `move_axis` over `dt`
@@ -547,6 +566,11 @@ pub struct Game {
     /// Accumulated embodied yaw (radians), integrated from raw look deltas. Presentation
     /// only — never written into the sim (D15). The aim half of the predicted avatar transform.
     yaw: f32,
+
+    /// Accumulated embodied pitch (radians, +up/−down), integrated from the vertical look delta and
+    /// clamped to ±[`EMBODIED_PITCH_MAX`]. Presentation only (camera tilt) — the sim aim is 2D, so
+    /// pitch never enters fire/locomote, only the first-person view direction.
+    pitch: f32,
 
     /// Command-camera ground focus (the world point centered on screen) and framed half-extent
     /// (zoom). Presentation only — the RTS camera pans (`cam_focus_*`) and zooms (`cam_half_extent`)
@@ -709,6 +733,7 @@ impl Game {
             embodied: false,
             camera: CameraMode::TopDown,
             yaw: 0.0,
+            pitch: EMBODIED_PITCH_DEFAULT,
             cam_focus_x: 0.0,
             cam_focus_y: 0.0,
             cam_half_extent: TOPDOWN_HALF_EXTENT,
@@ -951,7 +976,7 @@ impl Game {
             let p = self.player_pos();
             (fixed_to_f32(p.x), fixed_to_f32(p.y))
         };
-        embodied_view_proj(px, py, self.yaw, width, height)
+        embodied_view_proj(px, py, self.yaw, self.pitch, width, height)
     }
 
     /// Command-view orthographic view-projection at the current pan focus + zoom — thin wrapper
@@ -1177,9 +1202,11 @@ impl Game {
             }
         }
 
-        // Integrate look into presentation-only yaw (D15: never into the sim). Subtracted, not
-        // added, so a rightward mouse turns the view right (see `integrate_look_yaw`).
+        // Integrate look into presentation-only yaw + pitch (D15: never into the sim). Both
+        // subtract the delta so the view is non-inverted (mouse right → look right, mouse up → look
+        // up); pitch is clamped shy of vertical (see `integrate_look_*`).
         self.yaw = integrate_look_yaw(self.yaw, input.look_axis.0);
+        self.pitch = integrate_look_pitch(self.pitch, input.look_axis.1);
 
         // Embodied fire (W1, invariant #5/#1): while possessed, a pressed trigger emits a
         // `Command::Fire` whose aim direction is the host yaw quantized to `Fixed` AT THE BOUNDARY
@@ -2176,6 +2203,43 @@ mod tests {
         assert!(left.sin() > 0.0, "view heading turns toward world +Y (screen left)");
 
         assert_eq!(integrate_look_yaw(1.234, 0.0), 1.234, "no delta → yaw unchanged");
+    }
+
+    /// Vertical look must work, be non-inverted, and clamp shy of vertical. winit screen +Y is down,
+    /// so a mouse-UP delta is negative `look_dy` → pitch increases (look up); down mirrors.
+    #[test]
+    fn pitch_look_is_non_inverted_and_clamped() {
+        let up = integrate_look_pitch(0.0, -10.0);
+        assert!(up > 0.0, "mouse up tilts the view up (pitch +): {up}");
+        let down = integrate_look_pitch(0.0, 10.0);
+        assert!(down < 0.0, "mouse down tilts the view down (pitch −): {down}");
+        assert_eq!(integrate_look_pitch(0.3, 0.0), 0.3, "no delta → pitch unchanged");
+        // Clamp: a huge up/down delta saturates at ±MAX, never flipping past vertical.
+        assert_eq!(integrate_look_pitch(0.0, -100_000.0), EMBODIED_PITCH_MAX);
+        assert_eq!(integrate_look_pitch(0.0, 100_000.0), -EMBODIED_PITCH_MAX);
+    }
+
+    /// Pitch actually steers the embodied camera: a point straight ahead at EYE LEVEL sits at screen
+    /// centre when looking level, drops below centre when you pitch UP, and rises above it when you
+    /// pitch DOWN — so its NDC y strictly decreases as pitch increases.
+    #[test]
+    fn embodied_pitch_changes_the_view_direction() {
+        let (w, h) = (800u32, 600u32);
+        // Straight ahead (+x) at eye height — dead centre at pitch 0.
+        let ahead = Vec3::new(10.0, 0.0, EYE_HEIGHT);
+        let clip_y = |pitch: f32| {
+            let vp = embodied_view_proj(0.0, 0.0, 0.0, pitch, w, h);
+            let c = vp * Vec4::new(ahead.x, ahead.y, ahead.z, 1.0);
+            c.y / c.w
+        };
+        assert!(clip_y(0.0).abs() < 1e-4, "level look centres an eye-level point ahead");
+        assert!(
+            clip_y(0.6) < clip_y(0.0) && clip_y(0.0) < clip_y(-0.6),
+            "pitch up drops the point below centre, pitch down raises it: up={} level={} down={}",
+            clip_y(0.6),
+            clip_y(0.0),
+            clip_y(-0.6)
+        );
     }
 
     /// Command pan maps the screen stick to world ground motion: `D` (+mx) pans +X, `W` (−my) pans
