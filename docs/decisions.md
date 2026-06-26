@@ -2908,3 +2908,50 @@ shared `overlay` quad pipeline + the text pass) and the engine gains the pure `c
 derivation; the per-corner `render_command_panels` / `CommandPanels` / `ActiveCamp` API and the
 orphaned `train_panel_labels` / `upgrade_labels` layout fns are removed. The contextual panel
 becomes one of the controls the [D61](decisions.md) HUD-layout editor can later reposition.
+
+---
+
+## D63 — Debug scenes: one shared `core::scenario` seeder, driven both headlessly and live
+
+**Status:** decided. A "debug version" methodology for exercising one mechanic in isolation —
+load two tanks into a tiny world, fire, and validate the hitboxes work. First scene: the tank
+hitbox duel.
+
+**Decision:**
+
+- **A debug scene is seeded from a single source in `core`** — `core::scenario` (first entry
+  `seed_duel`: two armoured, ballistic-gun `Heavy` chassis facing off on the X axis). The seeder is
+  pure fixed-point (invariant #1/#2), so the world is bit-identical everywhere it is built.
+- **It is consumed two ways from that one seed.** (a) Headless — the `sim-runner duel` scenario
+  embodies the player, fires on cadence, flips the enemy hull to expose its flank, and drives the
+  **real** ballistic pipeline (`fire_ballistic` → `projectile_system` → `apply_impact`), printing a
+  per-event report to stderr and the determinism-covered `<tick> <checksum>` stream to stdout. (b)
+  Playable — `engine::Game::new_scene(.., Scene::Duel)`, launched by `app --scene duel`, boots
+  **embodied** in the player tank; a **command-view** `render::debug` overlay (F3) draws each unit's
+  shell hit-radius ring coloured by armour facet (red front / yellow side / green rear), a
+  hull-heading spoke, and shell tracers.
+- **The duel re-dresses the existing `Heavy` chassis locally** (tank-like `Armor` + a
+  `muzzle_vel`/`penetration` gun) rather than introducing a `UnitKind::Tank`; it touches neither
+  `economy::unit_stats` nor the shipping balance.
+
+**Why:**
+
+- The [D55](decisions.md) all-unit armour-facet + ballistic-shell machinery shipped, but **no
+  produced unit carried it** — so it had no focused validation surface, and the cross-arch
+  determinism matrix never exercised it (`phase2`/`stress` are rifle squads: `muzzle_vel == 0`,
+  unarmoured). The duel closes that gap with a golden-checksum `core` test that runs the ballistic
+  path under `cargo test -p gonedark-core` (invariant #7).
+- **Single-sourcing the seed makes the scene you *drive* bit-identical to the scene CI *checks*** —
+  a screenshot corresponds to an assertion. It also separates two independent verification axes:
+  "can I *see* which facet got hit?" (the overlay) from "does the *checksum* agree?" (the harness).
+- The pattern is **expandable**: a new debug scene is one `core::scenario` entry, picked up by the
+  runners and `Scene`/`--scene` with no structural change.
+
+**Consequences:** new `core::scenario` module + a `sim-runner duel` mode; `engine` gains
+`Game::new_scene(.., Scene)` (the old `Game::new` becomes `new_scene(.., Scene::Default)` — the demo
+skirmish is byte-unchanged) and a presentation-only `debug_hitboxes` toggle; `render` gains the
+`debug` line pass (a GPU-free `hitbox_lines`/`tracer_lines` geometry seam + a `DebugRenderer`
+reusing the unit pass's camera bind group); `app` gains the `--scene <name>` flag + the **F3**
+overlay key. The overlay is **command-view only** and folds nothing into the sim, so it cannot move
+the checksum or reveal intel while embodied (invariants #4/#6). A real `UnitKind::Tank` (with its own
+`economy::unit_stats` armour/gun) remains a later step; the duel proves the *systems* first.
