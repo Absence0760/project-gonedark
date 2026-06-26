@@ -64,7 +64,7 @@ B (lockstep netcode) ──┬───────┼──> C (reconnect/snaps
 the algorithmic bottlenecks before reaching for threads.
 
 Grounding (read from the code): the sim is single-threaded, fixed-order
-(`core::sim::Sim::step`: orders → combat → territory → economy). Two predicted hot
+(`core::sim::Sim::step`: move → collide → orient → fight → capture → economy). Two predicted hot
 loops at scale, both **algorithmic, not parallelism** problems:
 - `core::flow_field::FlowField::build` is rebuilt **per moving unit per tick** (a full
   128×128 integer Dijkstra). At ~200 movers this is the #1 cost — the module doc already

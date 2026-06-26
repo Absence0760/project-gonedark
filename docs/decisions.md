@@ -697,7 +697,10 @@ game-systems *spine*, not the balanced/host-wired finished game (see **Deferred*
 2. **Each system is a pure function over the `World`, run in one fixed order per tick**
    (`Sim::step`): **orders → combat → territory → economy**. The order is arbitrary but
    *fixed* (determinism), and chosen so movement resolves before fire, capture is counted on
-   post-combat survivors, and production/income closes the tick. New modules:
+   post-combat survivors, and production/income closes the tick. (Later widened to **move →
+   collide → orient → fight → capture → economy** as D55 added `orient` and
+   [D57](#d57--buildings-are-solid-a-fixed-point-footprint-push-out-in-the-sim-step) added
+   `collide`; see those entries for the canonical order.) New modules:
    `core::{terrain, combat, economy, territory, fog, orders, alerts, event}`.
 
 3. **Combat is fixed-point hitscan with cover, suppression, and literal stances.** Units
@@ -2157,7 +2160,9 @@ fog-filtered draw set and **only** in the command branch (embodied returns befor
 **What this does NOT decide / honest caveats:** **command-camera framing** — the top-down ortho is kept
 straight-down (a tilt would read the 3D forms better but breaks the ground-plane unproject used for
 picking/marquee, so it's out of scope); at the ±40-unit command zoom infantry tokens are small (their
-real ~1 m footprint), scaled up to fill their selection marker but no larger. **Unit facing** — tokens
+real ~1 m footprint), scaled up to fill their selection marker but no larger. *(Superseded by
+[D56](#d56--true-scale-token-meshes-drop-the-per-kind-command-view-exaggeration): tokens now draw at
+true 1.0 m scale in both views, not scaled up to the marker.)* **Unit facing** — tokens
 don't yet yaw to face their velocity (greybox stand-upright). **Tank/crate placement in-game** — the sim
 snapshot only distinguishes unit-vs-building, so those meshes exist + load + are golden-tested but aren't
 placed in a match until a unit-kind enters the sim. **Q11 (hero-tier sourcing) stays open** — this is
@@ -2650,3 +2655,67 @@ cross-arch checksum coverage and runs through `/safe-edit`. Until P4 lands, comb
 unchanged. The embodied tank HUD diverges from the infantry HUD (hull-relative turret indicator,
 dispersion reticle, **lead pip**, shell selector) — a render/`engine` follow-up, not a sim change.
 A tank gun reuses D51's magazine as `mag_size = 1` + a long reload (no new reload code).
+
+## D56 — True-scale token meshes: drop the per-kind command-view exaggeration
+
+**Status:** decided + landed. Settles the token-scale hedge [D44](#d44--cooked-greybox-meshes-the-glb-to-runtime-pipeline--3d-mesh-rendering)
+left open ("scaled up to fill their selection marker") now that the embodied first-person view puts
+the meshes next to metre-scale scenery.
+
+**Decision:**
+
+- **Every 3D token mesh draws at true 1.0 metre scale, in both views.** The greybox models are
+  authored in real-world metres (`tools/models/gen_models.py`: a trooper ~1.74 m tall, a tank
+  ~3.2 m long, the camp ~3.5 m across), so a single `render::TOKEN_SCALE = 1.0` is honest scale —
+  relative sizes are truthful and a unit stands at its real height beside the metre-scale
+  `PROP_LAYOUT` scenery in the embodied view.
+- **This replaces the per-kind cosmetic exaggeration** (infantry ×2.2, tank ×0.42, building ×2.2)
+  that D44 introduced to make top-down tokens read as map markers. That distorted relative size —
+  a trooper drawn *larger* than a tank, and a 3.8 m soldier towering over the 1.5 m embodied eye —
+  which is exactly what reads as "wrong scale / buildings don't look like buildings" in first
+  person. Map-marker readability is now a *camera/zoom* concern, not a per-mesh fudge.
+
+**Why:** the user asked for models to be to scale everywhere. The exaggeration was a command-view
+readability hack that leaked into the shared `token_meshes` seam and therefore into the embodied
+view, where it has no business — the FPS view wants physical truth. Render-only (invariant #4): no
+sim state touched, no determinism impact.
+
+**Consequences:** top-down tokens are now physically sized (smaller at the ±40-unit command zoom);
+if that proves too small to click, the dial is the command camera (zoom / a future tilt), not the
+mesh scale. The tank hull + turret still share one scale, so the turret still seats on the ring
+(P7). The 2D command-view footprint quad (`BUILDING_HALF`) is unchanged and is a separate marker
+from the 3D mesh.
+
+## D57 — Buildings are solid: a fixed-point footprint push-out in the sim step
+
+**Status:** decided + landed. Adds the first real movement obstacle, which
+[`flow_field`](../core/src/flow_field.rs) had explicitly deferred ("Phase 1 has no obstacles").
+
+**Decision:**
+
+- **Buildings block movement via a circular footprint, resolved as a post-movement push-out.**
+  A new `core::systems::resolve_building_collisions` runs in `Sim::step` **after all movement**
+  (the embodied avatar moved in the command phase, AI units in `order_system`) and **before** the
+  cosmetic slew / combat: any non-building entity whose centre is within
+  `BUILDING_RADIUS (1.75 m) + UNIT_RADIUS (0.25 m)` of a building centre is snapped radially back
+  onto that boundary circle. A unit exactly on the centre (no defined normal) is ejected along `+X`
+  — a fixed, peer-identical choice.
+- **It is push-out, not flow-field obstacle cost.** The flow field still degenerates to "point at
+  the goal"; solidity is a cheap positional correction layered on top, not a re-route. Local
+  steering/avoidance remains the deferred Layer-3 design target (`architecture.md`).
+- **It applies to the embodied player and AI units alike** — this is physics, not autonomy, so it
+  does **not** touch invariant #3: an ordered unit still walks where it was told, it just can't
+  occupy a wall.
+
+**Why:** the user reported walking straight through camps. All-integer fixed-point (`len_sq`,
+`normalized` over the deterministic fixed `sqrt`, `scale`), iterated in stable index order, with a
+deterministic degenerate-case eject, keeps it bit-identical across the lockstep matrix
+(invariants #1/#7). The truncating fixed `sqrt` makes the normalize overshoot slightly, so a pushed
+unit lands *on or just outside* the boundary — never inside — which makes the pass idempotent.
+
+**Consequences:** the deterministic step order is now **move → collide → orient → fight → capture →
+economy** (extends [D23](#d23--phase-2-game-systems-the-deterministic-model-and-its-module-decomposition)
+and D55's `orient` step). Ships with unit tests for the resolver and a `Sim::step`-level integration
+test (a unit driven into a building) so the collide step's wiring rides the `determinism.yml`
+cross-arch run. **Deferred:** non-circular footprints, building-vs-building placement rules, and
+flow-field re-routing around structures.

@@ -142,13 +142,14 @@ const UNIT_HALF: f32 = 0.5;
 const BUILDING_HALF: f32 = 1.6;
 const CONTROL_POINT_HALF: f32 = 2.2;
 
-/// Uniform scale applied to the 3D token mesh per model (D44), tuned so the greybox model roughly
-/// fills its command-view footprint marker. The infantry mesh is ~0.45 m wide, so ~2.2× brings it
-/// up to the ~1 m unit marker; the tank hull is ~3 m, so it scales *down* to read as a comparable
-/// (slightly heavier) token; the camp is already structure-sized. Render-only cosmetic scale.
-const UNIT_TOKEN_SCALE: f32 = 2.2;
-const TANK_TOKEN_SCALE: f32 = 0.42;
-const BUILDING_TOKEN_SCALE: f32 = 2.2;
+/// Uniform scale applied to every 3D token mesh. The greybox models are authored **in real-world
+/// metres** by `tools/models/gen_models.py` (a trooper ~1.74 m tall, a tank ~3.2 m long, the camp
+/// ~3.5 m across), so drawing them at `1.0` is **true scale** — relative sizes are honest and a unit
+/// stands at its real height against the metre-scale scenery props in the embodied first-person view.
+/// (Earlier this was per-kind cosmetic exaggeration so top-down tokens read as map markers — a
+/// trooper ×2.2, a tank ×0.42 — but that distorted relative size, e.g. a trooper drawn bigger than a
+/// tank and a 3.8 m soldier towering over the 1.5 m eye. True scale everywhere replaces it.)
+const TOKEN_SCALE: f32 = 1.0;
 
 /// The 3D token mesh for a snapshot unit: buildings are the camp structure; units map by their
 /// producible archetype (`Heavy`→tank, `Rifleman`/default→infantry). This is the honest greybox
@@ -161,16 +162,6 @@ pub(crate) fn model_for_unit(building: bool, kind: UnitKind) -> mesh::ModelKind 
             UnitKind::Heavy => mesh::ModelKind::Tank,
             UnitKind::Rifleman => mesh::ModelKind::Trooper,
         }
-    }
-}
-
-/// The command-view token scale for a resolved [`mesh::ModelKind`]. The tank hull and its turret
-/// share one scale so the turret seats correctly on the hull (P7).
-fn token_scale(kind: mesh::ModelKind) -> f32 {
-    match kind {
-        mesh::ModelKind::CampHq => BUILDING_TOKEN_SCALE,
-        mesh::ModelKind::Tank | mesh::ModelKind::TankTurret => TANK_TOKEN_SCALE,
-        _ => UNIT_TOKEN_SCALE,
     }
 }
 
@@ -190,10 +181,11 @@ fn token_meshes(inst: &UnitInstance) -> Vec<(mesh::ModelKind, f32, f32)> {
     // index panics loudly in debug if some future path forgets to set it, rather than silently
     // drawing the wrong mesh.
     let kind = mesh::ModelKind::ALL[inst.model as usize];
-    let scale = token_scale(kind);
-    let mut parts = vec![(kind, scale, inst.hull_yaw)];
+    // True metre scale for every part. The tank hull and its turret therefore share one scale, so
+    // the turret (authored to seat on the hull at 1:1) sits correctly on the ring (P7).
+    let mut parts = vec![(kind, TOKEN_SCALE, inst.hull_yaw)];
     if kind == mesh::ModelKind::Tank {
-        parts.push((mesh::ModelKind::TankTurret, scale, inst.turret_yaw));
+        parts.push((mesh::ModelKind::TankTurret, TOKEN_SCALE, inst.turret_yaw));
     }
     parts
 }
@@ -1384,7 +1376,7 @@ mod tests {
 
     #[test]
     fn token_meshes_decodes_parts_scale_yaw_and_skips_rings() {
-        // A Rifleman token (model = Trooper) → one infantry mesh at the unit scale, yawed by hull.
+        // A Rifleman token (model = Trooper) → one infantry mesh at true scale, yawed by hull.
         let mut u = UnitInstance {
             model: mesh::ModelKind::Trooper as u32,
             hull_yaw: 0.7,
@@ -1393,27 +1385,27 @@ mod tests {
         };
         assert_eq!(
             token_meshes(&u),
-            vec![(mesh::ModelKind::Trooper, UNIT_TOKEN_SCALE, 0.7)],
+            vec![(mesh::ModelKind::Trooper, TOKEN_SCALE, 0.7)],
             "infantry is a single body part oriented by hull_yaw (turret_yaw ignored)"
         );
 
         // A Heavy token (model = Tank) → TWO parts: hull at hull_yaw + turret at turret_yaw, both at
-        // the (smaller) tank scale so the turret seats on the hull (P7).
+        // the same (true) scale so the turret seats on the hull (P7).
         u.model = mesh::ModelKind::Tank as u32;
         assert_eq!(
             token_meshes(&u),
             vec![
-                (mesh::ModelKind::Tank, TANK_TOKEN_SCALE, 0.7),
-                (mesh::ModelKind::TankTurret, TANK_TOKEN_SCALE, 1.3),
+                (mesh::ModelKind::Tank, TOKEN_SCALE, 0.7),
+                (mesh::ModelKind::TankTurret, TOKEN_SCALE, 1.3),
             ],
             "a tank emits hull (hull_yaw) + independently-slewed turret (turret_yaw)"
         );
 
-        // A building token (model = CampHq) → one structure mesh at the building scale.
+        // A building token (model = CampHq) → one structure mesh at true scale.
         u.model = mesh::ModelKind::CampHq as u32;
         assert_eq!(
             token_meshes(&u),
-            vec![(mesh::ModelKind::CampHq, BUILDING_TOKEN_SCALE, 0.7)]
+            vec![(mesh::ModelKind::CampHq, TOKEN_SCALE, 0.7)]
         );
 
         // A control-point ring gets no mesh (it stays a hollow-ring quad).

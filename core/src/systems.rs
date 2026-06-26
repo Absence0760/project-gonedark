@@ -45,6 +45,18 @@ pub const CROUCH_MOVE_SPEED: Fixed = Fixed::from_ratio(1, 16);
 /// Squared arrival epsilon: snap to the target when closer than this (1/256 units²).
 pub const ARRIVE_EPS_SQ: Fixed = Fixed::from_ratio(1, 256);
 
+/// Collision radius of a building footprint, world units (metres). The camp greybox is ~3.5 × 3.0 m
+/// (`tools/models/gen_models.py` `build_camp_hq`); `7/4 = 1.75 m` is half its long side, so the
+/// circular footprint hugs the walls — you stop *at* the structure, not a step short or a step
+/// inside. Exact ratio keeps it float-free (invariant #1).
+pub const BUILDING_RADIUS: Fixed = Fixed::from_ratio(7, 4);
+
+/// Body radius of a mover (unit/avatar) for building collision, world units. A trooper is ~0.45 m
+/// wide (`build_trooper`), so `1/4 = 0.25 m` is a touch over its half-width — enough that the body
+/// keeps its skin out of the wall rather than clipping it. Added to [`BUILDING_RADIUS`] for the
+/// push-out distance. Exact ratio keeps it float-free (invariant #1).
+pub const UNIT_RADIUS: Fixed = Fixed::from_ratio(1, 4);
+
 /// Step a single unit toward `target` via the flow field at an explicit `speed` (world units
 /// per tick). The field is fetched from `cache` (built once per distinct goal per tick), so the
 /// sampled direction is bit-identical to building a fresh field here. Returns `true` once it has
@@ -139,6 +151,57 @@ pub fn drive_hull(world: &mut World, i: usize, dir: Vec2) {
     let h = world.hull_heading[i];
     let fwd = Vec2::new(trig::cos(h), trig::sin(h));
     step_along(world, i, fwd, world.hull_speed[i]);
+}
+
+/// Resolve mover-vs-building overlap by pushing any non-building entity out of every building's
+/// circular footprint — the "you can't walk through a building" rule. Run AFTER all movement for the
+/// tick (the embodied avatar's `step_along`/`drive_hull` in the command phase, and AI units in
+/// [`order_system`](crate::orders::order_system)), so it corrects the final positions before the
+/// snapshot. Applies to the embodied player and AI units alike (invariant #3 untouched — this is
+/// physics, not a decision: a unit that was *ordered* to walk somewhere still walks, it just can't
+/// occupy a wall).
+///
+/// For each alive building (centre `c`, radius [`BUILDING_RADIUS`]) and each alive non-building
+/// entity (centre `p`, radius [`UNIT_RADIUS`]): if `|p − c| < BUILDING_RADIUS + UNIT_RADIUS` the
+/// entity sits inside the footprint, so it is moved radially out onto the boundary circle at exactly
+/// that sum distance. A unit sitting *exactly* on the centre (zero delta — no defined push
+/// direction) is ejected along `+X` deterministically, so every peer resolves the degenerate case
+/// identically. Velocity is left untouched (next tick's input/order re-drives it); the position
+/// correction alone keeps the body out of the structure.
+///
+/// All-integer fixed-point (`len_sq`/`normalized` use the deterministic fixed sqrt — invariant #1),
+/// iterated in stable index order, so it is bit-identical across the lockstep matrix (invariant #7).
+/// Buildings never push each other (they are static and placed non-overlapping). Idempotent: a
+/// second pass on an already-resolved world is a no-op (the entity sits *on* the boundary, where the
+/// strict `<` test no longer fires).
+pub fn resolve_building_collisions(world: &mut World) {
+    let n = world.capacity();
+    let min_dist = BUILDING_RADIUS + UNIT_RADIUS;
+    let min_sq = min_dist * min_dist;
+    for b in 0..n {
+        if !world.is_index_alive(b) || world.kind[b] != EntityKind::Building {
+            continue;
+        }
+        let center = world.pos[b];
+        for e in 0..n {
+            if e == b || !world.is_index_alive(e) || world.kind[e] == EntityKind::Building {
+                continue;
+            }
+            let delta = world.pos[e] - center;
+            if delta.len_sq() >= min_sq {
+                continue; // outside (or exactly on) the footprint — nothing to correct
+            }
+            // Inside: snap the entity onto the boundary along the outward normal. A zero delta has
+            // no direction, so eject along +X (a fixed, peer-identical choice).
+            let dir = delta.normalized();
+            let out = if dir == Vec2::ZERO {
+                Vec2::new(min_dist, Fixed::ZERO)
+            } else {
+                dir.scale(min_dist)
+            };
+            world.pos[e] = center + out;
+        }
+    }
 }
 
 /// Cosmetic AI heading slew (tank embodiment P2, D55): point every living, **non-embodied** unit's
@@ -360,5 +423,135 @@ mod tests {
         w2.hull_heading[j] = crate::trig::Angle(1_000);
         heading_system(&mut w2);
         assert_eq!(w2.turret_yaw[j], crate::trig::Angle(0), "fixed mount stays put");
+    }
+
+    // ---- building collision (a building is solid — you can't walk through it) ----
+
+    /// A building at `(bx, by)` plus a unit at `(ux, uy)`; returns `(world, building_idx, unit_idx)`.
+    fn world_with_building_and_unit(
+        bx: Fixed,
+        by: Fixed,
+        ux: Fixed,
+        uy: Fixed,
+    ) -> (World, usize, usize) {
+        let mut w = World::new();
+        let b = w.spawn().index as usize;
+        let u = w.spawn().index as usize;
+        w.kind[b] = EntityKind::Building;
+        w.pos[b] = Vec2::new(bx, by);
+        w.pos[u] = Vec2::new(ux, uy);
+        (w, b, u)
+    }
+
+    /// The boundary distance the resolver snaps an overlapping unit to (exactly 2.0 m: 1.75 + 0.25).
+    const MIN_DIST: Fixed = Fixed::from_int(2);
+
+    #[test]
+    fn building_radii_sum_to_a_clean_two_metres() {
+        // The push-out distance is BUILDING_RADIUS + UNIT_RADIUS; the tests below assert exact
+        // positions, which rely on that sum being exactly representable.
+        assert_eq!(BUILDING_RADIUS + UNIT_RADIUS, MIN_DIST);
+    }
+
+    #[test]
+    fn building_pushes_an_overlapping_unit_out_to_its_boundary() {
+        // Unit half a metre off the centre along +X — deep inside the footprint. It is ejected
+        // straight out along +X onto the boundary, exactly MIN_DIST away (the (1,0) normalize is
+        // exact in fixed-point, so no rounding drift).
+        let (mut w, _b, u) =
+            world_with_building_and_unit(Fixed::ZERO, Fixed::ZERO, Fixed::HALF, Fixed::ZERO);
+        resolve_building_collisions(&mut w);
+        assert_eq!(w.pos[u], Vec2::new(MIN_DIST, Fixed::ZERO));
+    }
+
+    #[test]
+    fn building_off_origin_pushes_relative_to_its_centre() {
+        // The push is radial about the building's actual centre, not the world origin.
+        let c = Vec2::new(Fixed::from_int(10), Fixed::from_int(-4));
+        let (mut w, _b, u) = world_with_building_and_unit(
+            c.x,
+            c.y,
+            c.x + Fixed::HALF, // just east of the centre, inside the footprint
+            c.y,
+        );
+        resolve_building_collisions(&mut w);
+        assert_eq!(w.pos[u], Vec2::new(c.x + MIN_DIST, c.y));
+    }
+
+    #[test]
+    fn unit_clear_of_the_footprint_is_untouched() {
+        // Distance 3.0 m > MIN_DIST (2.0) → no overlap, position unchanged.
+        let start = Vec2::new(Fixed::from_int(3), Fixed::ZERO);
+        let (mut w, _b, u) =
+            world_with_building_and_unit(Fixed::ZERO, Fixed::ZERO, start.x, start.y);
+        resolve_building_collisions(&mut w);
+        assert_eq!(w.pos[u], start, "outside the footprint, the unit does not move");
+    }
+
+    #[test]
+    fn unit_exactly_on_the_centre_is_ejected_along_plus_x() {
+        // Zero delta has no defined outward direction; the resolver ejects along +X so every peer
+        // resolves this degenerate case identically (determinism).
+        let (mut w, _b, u) =
+            world_with_building_and_unit(Fixed::ZERO, Fixed::ZERO, Fixed::ZERO, Fixed::ZERO);
+        resolve_building_collisions(&mut w);
+        assert_eq!(w.pos[u], Vec2::new(MIN_DIST, Fixed::ZERO));
+    }
+
+    #[test]
+    fn diagonal_overlap_is_pushed_to_the_boundary_along_the_normal() {
+        // A unit inside on a diagonal is pushed out along that same diagonal to ~MIN_DIST away.
+        // The normalize→scale round-trip rounds in fixed-point, so this checks within a small eps.
+        let (mut w, _b, u) =
+            world_with_building_and_unit(Fixed::ZERO, Fixed::ZERO, Fixed::ONE, Fixed::ONE);
+        resolve_building_collisions(&mut w);
+        let p = w.pos[u];
+        assert_eq!(p.x, p.y, "stayed on the (1,1) diagonal it was pushed along");
+        let drift = (p.len() - MIN_DIST).abs();
+        assert!(drift <= Fixed::from_ratio(1, 64), "on the boundary, got len {:?}", p.len());
+        // The fixed-point sqrt truncates, so normalize overshoots slightly: the unit lands ON or
+        // just OUTSIDE the boundary, never inside — which is what makes the push idempotent (a
+        // second pass sees `len_sq >= min_sq` and does nothing). Prove it rather than tolerate it.
+        let min_sq = MIN_DIST * MIN_DIST;
+        assert!(p.len_sq() >= min_sq, "must not land inside the footprint");
+    }
+
+    #[test]
+    fn resolve_is_idempotent() {
+        // A second pass on an already-resolved world is a no-op: the unit sits exactly on the
+        // boundary, where the strict inside-test no longer fires.
+        let (mut w, _b, u) =
+            world_with_building_and_unit(Fixed::ZERO, Fixed::ZERO, Fixed::HALF, Fixed::ZERO);
+        resolve_building_collisions(&mut w);
+        let once = w.pos[u];
+        resolve_building_collisions(&mut w);
+        assert_eq!(w.pos[u], once, "settled position is stable under re-resolution");
+    }
+
+    #[test]
+    fn the_embodied_avatar_collides_too() {
+        // Collision is physics, not a decision (invariant #3): it applies to the embodied player
+        // exactly as to AI units — the input source is irrelevant.
+        let (mut w, _b, u) =
+            world_with_building_and_unit(Fixed::ZERO, Fixed::ZERO, Fixed::HALF, Fixed::ZERO);
+        w.input_source[u] = InputSource::Embodied;
+        resolve_building_collisions(&mut w);
+        assert_eq!(w.pos[u], Vec2::new(MIN_DIST, Fixed::ZERO));
+    }
+
+    #[test]
+    fn buildings_do_not_push_each_other() {
+        // Two overlapping buildings (placement should never do this, but the rule must hold): both
+        // are static, so neither is moved by the resolver.
+        let mut w = World::new();
+        let a = w.spawn().index as usize;
+        let b = w.spawn().index as usize;
+        w.kind[a] = EntityKind::Building;
+        w.kind[b] = EntityKind::Building;
+        w.pos[a] = Vec2::new(Fixed::ZERO, Fixed::ZERO);
+        w.pos[b] = Vec2::new(Fixed::HALF, Fixed::ZERO);
+        resolve_building_collisions(&mut w);
+        assert_eq!(w.pos[a], Vec2::new(Fixed::ZERO, Fixed::ZERO));
+        assert_eq!(w.pos[b], Vec2::new(Fixed::HALF, Fixed::ZERO));
     }
 }

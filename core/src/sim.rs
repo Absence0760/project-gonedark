@@ -175,8 +175,12 @@ impl Sim {
         for c in commands {
             self.apply(*c);
         }
-        // Fixed system order (deterministic): move → orient → fight → capture → economy.
+        // Fixed system order (deterministic): move → collide → orient → fight → capture → economy.
         orders::order_system(&mut self.world, &self.terrain);
+        // Push movers (the embodied avatar moved in `apply`, AI units in `order_system`) out of any
+        // building footprint — buildings are solid (you can't walk through them). Runs after ALL
+        // movement, before the cosmetic slew/combat so positions are settled for the snapshot.
+        systems::resolve_building_collisions(&mut self.world);
         // Cosmetic AI hull/turret slew, AFTER movement sets this tick's velocity (D55 P2).
         systems::heading_system(&mut self.world);
         combat::combat_system(
@@ -1012,6 +1016,38 @@ mod tests {
             sim.world.pos[e.index as usize],
             reference.pos[r.index as usize]
         );
+    }
+
+    #[test]
+    fn step_pushes_a_unit_out_of_a_building_it_walked_into() {
+        // Integration: building collision must resolve *through the full `Sim::step` pipeline*, not
+        // just the unit-tested `resolve_building_collisions` in isolation. The lockstep determinism
+        // scenes never sit a unit on a building, so this is the only cross-arch coverage that the
+        // collide step is wired into `step` in the right order (after movement, before the snapshot)
+        // — it rides `determinism.yml`'s `cargo test -p gonedark-core --release` on every arch.
+        //
+        // The avatar starts ON the building centre (the zero-delta degenerate case → the most
+        // determinism-sensitive path: `normalized()` returns zero, so the resolver must eject along
+        // +X identically on every peer) and locomotes straight into it. One tick must leave it on
+        // the footprint boundary at exactly BUILDING_RADIUS + UNIT_RADIUS = 2 m along +X.
+        let mut sim = Sim::new(0);
+        let bldg = sim.world.spawn();
+        sim.world.kind[bldg.index as usize] = EntityKind::Building;
+        sim.world.pos[bldg.index as usize] = Vec2::ZERO;
+        let unit = sim.world.spawn();
+        sim.world.input_source[unit.index as usize] = InputSource::Embodied;
+        sim.world.pos[unit.index as usize] = Vec2::ZERO;
+
+        sim.step(&[Command::Locomote {
+            entity: unit,
+            dir: Vec2::new(Fixed::ONE, Fixed::ZERO),
+        }]);
+        let pushed = sim.world.pos[unit.index as usize];
+        assert_eq!(pushed, Vec2::new(Fixed::from_int(2), Fixed::ZERO));
+
+        // A second tick standing still keeps it on the boundary (idempotent through the pipeline).
+        sim.step(&[]);
+        assert_eq!(sim.world.pos[unit.index as usize], pushed);
     }
 
     // --- tank embodiment P2 (D55): AimTurret / DriveHull command routing --------------------
