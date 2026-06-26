@@ -66,6 +66,10 @@ mod selection;
 /// Embodied-fire input seam (W1). Owns `fire_command`: host yaw + trigger → `Command::Fire`,
 /// quantizing the aim direction to `Fixed` at the boundary (invariant #1).
 mod fire;
+/// Embodied-locomotion input seam. Owns `locomote_command`: host `move_axis` + look yaw →
+/// `Command::Locomote` (camera-relative twin-stick), quantizing the world heading to `Fixed` at
+/// the boundary (invariant #1, exactly like `fire`).
+mod locomote;
 /// In-session shell (Phase 4 WS-B): the in-engine pause / surrender / post-match-summary /
 /// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
 /// session state — never mutates sim state. Public so a host (and tests) can drive it.
@@ -369,6 +373,17 @@ fn map_input_commands(input: &InputFrame, embodied: bool, player: Entity) -> Vec
     }
 
     commands
+}
+
+/// Whether the host should auto-surface this frame: the player is embodied but their avatar entity
+/// is no longer present in the freshly-stepped snapshot (it died and the sim despawned it). PURE
+/// (no `Game`/device) so it is unit-testable. This is local UI/camera state only — surfacing a
+/// dead avatar emits NO sim `Command` (the entity is already gone; a `Surface` for it would be a
+/// sim no-op and must not be double-emitted). `embodied` short-circuits so a never-embodied player
+/// is never auto-surfaced by an unrelated absence.
+#[inline]
+fn should_auto_surface(embodied: bool, avatar_present: bool) -> bool {
+    embodied && !avatar_present
 }
 
 /// The player's **active camp** for the per-camp command panels (train + upgrade) — the lowest-index
@@ -1063,6 +1078,16 @@ impl Game {
                 // alongside the authoritative `Command::Fire`, not in place of it (invariant #4/#6).
                 self.last_fire_tick = Some(self.sim.tick_count());
             }
+
+            // Embodied locomotion (twin-stick): the WASD / virtual-stick `move_axis` becomes a
+            // camera-relative `Command::Locomote` whose world heading is quantized to `Fixed` AT
+            // THE BOUNDARY (pure seam `locomote::locomote_command`, exactly like the fire aim).
+            // Emitted only while possessed and only when the stick is off-neutral; it enters the
+            // SAME lockstep command stream as taps/fire, so the avatar advances bit-identically on
+            // every peer (the sim ignores it for any non-`Embodied` unit — invariant #1/#7).
+            if let Some(cmd) = locomote::locomote_command(self.player, self.yaw, input.move_axis) {
+                commands.push(cmd);
+            }
         }
 
         // 1c. Enemy commander (W3). On a once-per-second gate (`tick % COMMANDER_PERIOD == 0`) the
@@ -1151,6 +1176,29 @@ impl Game {
         // tick's per-peer input wasn't in hand (the seam's `stalled` observation; single-player at
         // delay 0 never stalls, so this is always false there). Feeds the reconnect prompt below.
         let lockstep_stalled = advanced < budget;
+
+        // Auto-surface on avatar death (invariant #5): if the possessed unit died this frame the
+        // sim despawned it, so it is gone from the freshly-stepped snapshot (`self.curr`, refreshed
+        // inside `drive_lockstep`'s step closure). Eject back to command rather than stranding the
+        // first-person camera staring at a corpse — mirroring the manual Surface path's local state
+        // flip EXACTLY (embodied off + camera TopDown; the fog reverts to `command_visibility`
+        // automatically in the visibility step below, which keys off `self.embodied`). This is
+        // host UI/camera state only: the entity is already gone, so we emit NO `Command::Surface`
+        // (it would be a sim no-op and must never be double-emitted). Liveness is read against the
+        // same snapshot the avatar prediction below probes.
+        let avatar_present = self
+            .curr
+            .units
+            .iter()
+            .any(|u| u.entity_index == self.player.index);
+        if should_auto_surface(self.embodied, avatar_present) {
+            self.embodied = false;
+            self.camera = CameraMode::TopDown;
+            log::info!(
+                "[tick {}] AUTO-SURFACE — embodied avatar died, back to command",
+                self.sim.tick_count()
+            );
+        }
 
         // Interpolation factor for this frame (invariant #4): how far into the next tick the
         // render clock sits. Drives both the avatar-prediction lead just below and the renderer.
@@ -1900,6 +1948,28 @@ mod tests {
         };
         let cmds = map_input_commands(&input, true, player);
         assert!(!cmds.iter().any(|c| matches!(c, Command::Move { .. })));
+    }
+
+    /// Auto-surface fires only when embodied AND the avatar is gone from the snapshot — never
+    /// otherwise. A surfaced player, or a live embodied avatar, must stay put.
+    #[test]
+    fn should_auto_surface_only_when_embodied_avatar_is_absent() {
+        assert!(
+            should_auto_surface(true, false),
+            "embodied + avatar despawned → eject to command"
+        );
+        assert!(
+            !should_auto_surface(true, true),
+            "embodied + avatar alive → stay embodied"
+        );
+        assert!(
+            !should_auto_surface(false, false),
+            "not embodied → an unrelated absence never surfaces"
+        );
+        assert!(
+            !should_auto_surface(false, true),
+            "not embodied + present → nothing to do"
+        );
     }
 
     // ---- lockstep drive seam (D27 step 4) ----
