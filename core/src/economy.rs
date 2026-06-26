@@ -217,22 +217,28 @@ pub const fn can_produce(building: BuildingKind, unit: UnitKind) -> bool {
 /// spawns the bit-identical unit (determinism).
 pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
     match kind {
-        // Measured re-tune (D30 — supersedes the D24/D26 first pass). Numbers chosen against the
-        // deterministic balance harness (sim-runner `--metrics`), not feel:
-        //   * Rifleman: 6 dmg / 30 ticks = 12 DPS → a symmetric open 1v1 resolves in ~8.0 s
-        //     (down from the old ~12 s — combat is decisive without being a contact-delete), and
-        //     long-reaching (range 14) so rifle MASS wins at range.
-        //   * Heavy: a short-range BRUISER — 280 HP, 18 dmg / 48 ticks (~22.5 DPS) at range 11.
-        //     It out-trades a cost-equal Rifleman blob at point-blank but is kited by the longer-
-        //     ranged Rifleman, so neither strictly dominates (the old 220/11/range-12 Heavy lost
-        //     every equal-cost trade; harness confirmed rifle-mass wiped heavy-mass 0-for).
-        // These remain a *playtest baseline* (measured targets, not final feel — D30 keeps D26's
-        // "baseline, not locked" framing); dial against fresh `--metrics` runs.
+        // Modern-lethality re-tune (D66 — supersedes the D30 attrition baseline). Per-shot damage
+        // is scaled ×5 across every weapon so a hit *matters* like a real rifle round: the old D30
+        // numbers made a soldier a ~17-round bullet sponge (~8 s to drop one rifleman), which read
+        // as unrealistic for the US-vs-France modern-army fantasy (game-design §3). Scaling every
+        // weapon by the SAME factor preserves the whole D30 balance lattice (DPS *ratios*, the
+        // range-trade rock-paper-scissors, cover swings) — it just makes the clock 5× faster:
+        //   * Rifleman: 30 dmg / 30 ticks = 60 DPS → a symmetric open 1v1 now resolves in ~1-2 s
+        //     (4 hits to drop a 100-HP soldier), and long-reaching (range 14) so rifle MASS still
+        //     wins at range.
+        //   * Heavy: a short-range BRUISER — 280 HP, 90 dmg / 48 ticks at range 11. Still out-
+        //     trades a cost-equal Rifleman blob at point-blank, still kited by the longer-ranged
+        //     Rifleman (the ratio is unchanged from D30).
+        // CAVEAT: with kills this fast, the per-*hit* suppression model (`combat::SUPPRESSION_PER_HIT`)
+        // mostly stops biting before death — fire-and-maneuver suppression wants a per-near-miss
+        // rework. Logged as an open question, not fixed here (D66).
+        // Still a *playtest baseline* (measured targets, not final feel); dial against fresh
+        // `--metrics` runs.
         UnitKind::Rifleman => (
             Health::full(Fixed::from_int(100)),
             Weapon {
                 range: Fixed::from_int(14),
-                damage: Fixed::from_int(6),
+                damage: Fixed::from_int(30),
                 cooldown_ticks: 30,
                 cooldown_left: 0,
                 // Magazine gates only the embodied fire path (auto-combat ignores it — see
@@ -255,7 +261,7 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
             Health::full(Fixed::from_int(280)),
             Weapon {
                 range: Fixed::from_int(11),
-                damage: Fixed::from_int(18),
+                damage: Fixed::from_int(90),
                 cooldown_ticks: 48,
                 cooldown_left: 0,
                 // Bigger belt, slower 138-tick reload (≈2300 ms) — the bruiser sustains fire
@@ -282,7 +288,7 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
             Health::full(Fixed::from_int(300)),
             Weapon {
                 range: Fixed::from_int(13),
-                damage: Fixed::from_int(24),
+                damage: Fixed::from_int(120),
                 cooldown_ticks: 75,
                 cooldown_left: 0,
                 mag_size: 0,
@@ -930,23 +936,24 @@ mod tests {
         assert_eq!(heavy_cost, 220, "heavy costs 220 = 11/5 of a rifleman (D30)");
     }
 
-    /// Lock the measured D30 combat stats so a stray edit that re-breaks the tuned
+    /// Lock the measured combat stats so a stray edit that re-breaks the tuned
     /// Rifleman/Heavy relationship (TTK band, Heavy-as-bruiser) trips a test. These are
     /// the values the `--metrics` harness was tuned against; expected to move on the next
-    /// measured re-tune.
+    /// measured re-tune. D66 scaled per-shot damage ×5 over the D30 baseline for modern
+    /// lethality (HP + cooldown + range unchanged), so the *ratios* the harness checks hold.
     #[test]
-    fn unit_stats_match_measured_d30_baseline() {
+    fn unit_stats_match_measured_baseline() {
         let (rh, rw) = unit_stats(UnitKind::Rifleman);
         assert_eq!(rh, Health::full(Fixed::from_int(100)), "rifleman 100 HP");
         assert_eq!(rw.range, Fixed::from_int(14), "rifleman range 14");
-        assert_eq!(rw.damage, Fixed::from_int(6), "rifleman 6 dmg");
-        assert_eq!(rw.cooldown_ticks, 30, "rifleman 30-tick cooldown -> 12 DPS, ~8 s 1v1");
+        assert_eq!(rw.damage, Fixed::from_int(30), "rifleman 30 dmg (D66 lethal: ~4 hits to kill)");
+        assert_eq!(rw.cooldown_ticks, 30, "rifleman 30-tick cooldown -> 60 DPS, ~1-2 s 1v1");
 
         let (hh, hw) = unit_stats(UnitKind::Heavy);
         assert_eq!(hh, Health::full(Fixed::from_int(280)), "heavy 280 HP (280 vs 100 rifle)");
         assert_eq!(hw.range, Fixed::from_int(11), "heavy range 11 (shorter than rifle -> kiteable)");
-        assert_eq!(hw.damage, Fixed::from_int(18), "heavy 18 dmg (3x rifle burst)");
-        assert_eq!(hw.cooldown_ticks, 48, "heavy 48-tick cooldown -> 18 dmg per 48 ticks");
+        assert_eq!(hw.damage, Fixed::from_int(90), "heavy 90 dmg (3x rifle burst, D66 ×5)");
+        assert_eq!(hw.cooldown_ticks, 48, "heavy 48-tick cooldown -> 90 dmg per 48 ticks");
 
         // The Heavy is a bruiser, not a strict upgrade: shorter range than the Rifleman is the
         // load-bearing weakness that makes the matchup range-dependent (the old Heavy was

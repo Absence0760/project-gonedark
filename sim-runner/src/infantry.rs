@@ -476,7 +476,8 @@ mod tests {
         assert_eq!(simulate_scene(300).checksums, simulate_scene(300).checksums);
         assert_eq!(
             simulate_scene(300).checksums.last().copied(),
-            Some(0x3e7d_2d36_bea0_ac0d),
+            // D66: rifleman damage ×5 (6→30) moved the embodied-scene golden.
+            Some(0xcead_40f4_566a_ab82),
         );
     }
 
