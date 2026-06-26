@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use gonedark_engine::{Game, DEFAULT_SEED};
 use gonedark_pal::mix::{oneshot_sound, synth_bank, voice_from_cue, Mixer};
-use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, Window};
+use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Window, MAX_TOUCHES};
 
 // Bring oboe's stream-control traits into scope for the methods used below (`get_sample_rate`
 // lives on `AudioStreamBase`, `request_start` on `AudioStream`).
@@ -300,9 +300,11 @@ impl Window for AndroidWindow {
 /// scheme into the engine's platform-agnostic [`InputFrame`] intent vocabulary
 /// (platforms.md §5) — the core never sees a raw touch.
 ///
-/// Phase 1 mapping (deliberately minimal — the real mobile control scheme is the Phase 0
-/// product risk, roadmap.md): a single touch sets `pointer` + `pointer_down` for the
-/// command-layer tap. Twin-stick / gyro for embodied combat is `TODO(phase1-step6+)`.
+/// Mapping: in the **command view** a single touch sets `pointer` + `pointer_down` for the
+/// tap/select/command scheme (D43) and a two-finger tap embodies. While **embodied**, every motion
+/// event forwards the full down-pointer set as [`InputFrame::touches`]; the engine's pure
+/// `touch_controls` seam turns those into the on-screen FPS HUD intents (move stick + drag-look +
+/// Fire/Crouch/Reload/Surface). Gyro aim is a later optional aid (`TODO(phase3+)`).
 pub struct AndroidInput {
     app: AndroidApp,
     frame: InputFrame,
@@ -331,6 +333,12 @@ impl AndroidInput {
     /// selection) a Move/Attack via the `command_tap` mode (set in [`Self::poll`]). A two-finger tap
     /// toggles embodiment.
     fn apply_motion(frame: &mut InputFrame, multi_touch: &mut bool, motion: &MotionEvent) {
+        // Forward the full currently-down pointer set EVERY motion event: while embodied the engine's
+        // `touch_controls` seam reads `frame.touches` to drive the on-screen FPS HUD (move stick +
+        // drag-look + Fire/Crouch/Reload/Surface). The command layer below still uses the primary
+        // pointer for taps; the two layers read the same touches, never fork (invariant #2).
+        capture_touches(frame, motion);
+
         // android-activity 0.6 exposes pointers via `motion.pointers()`; the primary pointer
         // drives the command-layer tap position.
         let action = motion.action();
@@ -342,12 +350,13 @@ impl AndroidInput {
         match action {
             MotionAction::Down | MotionAction::PointerDown => {
                 if pointer_count >= 2 {
-                    // TWO-FINGER TAP toggles embodiment (D43): raise BOTH edge intents and let
-                    // `engine::Game` resolve to embody-or-surface by the current state (the same
-                    // resolution the desktop E/Q keys get). Mark the gesture multi-finger and drop
-                    // the single-finger down so it neither selects nor commands.
+                    // TWO-FINGER TAP = EMBODY (command view only, by construction): raise ONLY
+                    // `embody_pressed`. `map_input_commands` no-ops it when already embodied
+                    // (`embody_pressed && !embodied`), so this gesture is harmless while possessed —
+                    // where two fingers now mean move+look on the twin-stick HUD. Surfacing is the
+                    // on-screen Surface BUTTON (engine `touch_controls`), NOT a gesture, so the two
+                    // never collide. Mark multi-finger + drop the single-finger down (no select/cmd).
                     frame.embody_pressed = true;
-                    frame.surface_pressed = true;
                     frame.pointer_down = false;
                     *multi_touch = true;
                 } else {
@@ -372,12 +381,11 @@ impl AndroidInput {
             // Move keeps the current down-state; pointer position already updated above.
             _ => {}
         }
-        // TODO(phase2+): embodied locomotion — on-screen virtual sticks -> move_axis / look_axis
-        //   while embodied, gyro (ndk Sensor API) -> look_axis; and the on-screen radial for the
-        //   ADVANCED order vocabulary (long-press -> long_press + wedge hit-test -> command_slot).
-        //   Those need on-screen UI + wedge hit-testing and are a separate slice (D43 "deferred").
-        //   The stick-geometry -> axis mapping should be a pure free fn tested on the host (the seam
-        //   pattern `engine::map_input_commands`/`Selection` already uses).
+        // Embodied locomotion/look/fire/crouch/reload IS now wired: `capture_touches` forwards the
+        // raw pointers and the engine's pure, host-tested `touch_controls` seam turns them into
+        // `move_axis`/`look_axis`/`fire` + the Crouch/Reload/Surface button edges (the seam lives in
+        // `engine`, not here, because an Android `MotionEvent` can't be unit-tested).
+        // TODO(phase3+): gyro (ndk Sensor API) -> look_axis as an optional aim aid.
         // TODO(phase2+): the command-view PRODUCTION intents — `building_slot` (place a Camp at the
         //   tapped point), `train_slot` (queue a unit at the active camp), `upgrade_pressed` (upgrade
         //   it) — join that deferred on-screen-UI slice: each is an on-screen palette/panel button +
@@ -397,6 +405,39 @@ impl AndroidInput {
             let _ = frame; // placeholder to keep the signature honest
         }
     }
+}
+
+/// Rebuild [`InputFrame::touches`] from a motion event's **currently-down** pointers, so the
+/// engine's `touch_controls` seam sees the live finger set each frame. The pointer that is *leaving*
+/// on this event is excluded: `Up` removes the last finger, `PointerUp` a secondary one (the action
+/// pointer at [`MotionEvent::pointer_index`]), `Cancel` removes all. Capped at [`MAX_TOUCHES`] (a
+/// twin-stick + a couple of buttons never needs more). The id is the platform `pointer_id`, stable
+/// across frames for a held finger so the seam can track which control each finger owns.
+fn capture_touches(frame: &mut InputFrame, motion: &MotionEvent) {
+    if motion.action() == MotionAction::Cancel {
+        frame.touch_count = 0;
+        return;
+    }
+    let lifting = match motion.action() {
+        MotionAction::Up | MotionAction::PointerUp => Some(motion.pointer_index()),
+        _ => None,
+    };
+    let mut n = 0usize;
+    for (idx, p) in motion.pointers().enumerate() {
+        if Some(idx) == lifting {
+            continue;
+        }
+        if n >= MAX_TOUCHES {
+            break;
+        }
+        frame.touches[n] = TouchSample {
+            id: p.pointer_id() as u64,
+            x: p.x(),
+            y: p.y(),
+        };
+        n += 1;
+    }
+    frame.touch_count = n as u8;
 }
 
 impl Input for AndroidInput {
