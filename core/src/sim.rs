@@ -703,7 +703,7 @@ impl Sim {
 
     /// Capture a read-only render snapshot (invariant #4).
     pub fn snapshot(&self) -> Snapshot {
-        Snapshot::capture(&self.world, &self.territory, self.tick)
+        Snapshot::capture(&self.world, &self.territory, &self.projectiles, self.tick)
     }
 }
 

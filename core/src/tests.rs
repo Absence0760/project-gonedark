@@ -991,6 +991,36 @@ fn snapshot_carries_each_units_kind() {
 }
 
 #[test]
+fn snapshot_carries_in_flight_projectiles_for_tracers() {
+    // The render snapshot copies the in-flight shell pool so the renderer can draw tracers (P7).
+    // Presentation only — not checksummed; here we just confirm the per-shell fields are mirrored.
+    use crate::components::Faction;
+    use crate::projectile::Projectile;
+    let mut sim = Sim::new(7);
+    let owner = sim.world.spawn();
+    sim.projectiles.push(Projectile {
+        pos2d: Vec2::new(Fixed::from_int(3), Fixed::from_int(-4)),
+        vel2d: Vec2::new(Fixed::ONE, Fixed::ZERO),
+        height: Fixed::from_ratio(1, 2),
+        vz: Fixed::ZERO - Fixed::from_ratio(1, 256),
+        owner,
+        faction: Faction::Player,
+        damage: Fixed::from_int(25),
+        penetration: Fixed::from_int(10),
+        lifetime: 180,
+    });
+    let snap = sim.snapshot();
+    assert_eq!(snap.projectiles.len(), 1, "the shell appears in the snapshot");
+    let s = &snap.projectiles[0];
+    assert_eq!(s.pos, Vec2::new(Fixed::from_int(3), Fixed::from_int(-4)));
+    assert_eq!(s.vel, Vec2::new(Fixed::ONE, Fixed::ZERO));
+    assert_eq!(s.height, Fixed::from_ratio(1, 2));
+    // vz drives the renderer's height extrapolation — assert it round-trips, not just position.
+    assert_eq!(s.vz, Fixed::ZERO - Fixed::from_ratio(1, 256));
+    assert_eq!(s.faction, Faction::Player);
+}
+
+#[test]
 fn embody_stops_motion_surface_resumes_it() {
     // Embodying freezes order-driven motion; surfacing hands the unit back to its order.
     let mut sim = Sim::new(0xBEEF);

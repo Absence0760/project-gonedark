@@ -296,6 +296,51 @@ pub fn faction_color(faction: Faction) -> [f32; 3] {
 /// readout (`readout.rs`) can exclude the avatar from the per-faction unit tally.
 pub(crate) const AVATAR_COLOR: [f32; 3] = [1.0, 0.85, 0.2];
 
+/// Uniform scale for a tracer bolt (the `tracer` mesh is ~0.6 m along its travel axis). Render-only
+/// cosmetic scale.
+const TRACER_SCALE: f32 = 1.0;
+
+/// A shell tracer's RGBA, by firing faction. The `a` channel is the shader's emissive term
+/// ([`mesh.wgsl`]'s warm flash add), so a high `a` makes the bolt glow hot in flight. Player shells
+/// read warm yellow-orange, enemy shells hotter red-orange — a readable "whose round is that".
+fn tracer_color(faction: Faction) -> [f32; 4] {
+    match faction {
+        Faction::Player => [1.0, 0.75, 0.30, 1.0],
+        Faction::Enemy => [1.0, 0.40, 0.20, 1.0],
+        Faction::Neutral => [0.90, 0.85, 0.55, 1.0],
+    }
+}
+
+/// Build tracer mesh instances from the in-flight shells, extrapolated by `alpha` for smooth flight
+/// between sim ticks (invariant #4 — interpolation lives in the renderer, not the sim). Each shell
+/// flies at constant ground velocity, so we advance the **previous** snapshot's shells by
+/// `pos + vel·alpha` (and `height + vz·alpha`): at `alpha = 1` a surviving shell lands exactly on its
+/// current-tick position, while a just-spawned shell simply appears one tick later and a spent one
+/// plays out its final segment — no fragile cross-tick index matching. Each bolt is yawed to its
+/// travel heading (`atan2(vel)`, matching [`mesh::model_matrix`]'s `+X = 0`/CCW convention) and stood
+/// at its `(x, y, height)`; a hot per-shell tint ([`tracer_color`]) drives the shader glow. These are
+/// embodied-only by construction (invariant #3 — only an embodied unit fires a ballistic shell), so
+/// every bolt is the firing player's own physical round, never strategic map intel (invariant #6).
+/// Pure + GPU-free, so it is unit-tested without a device.
+pub fn interpolate_projectiles(prev: &Snapshot, alpha: f32) -> Vec<mesh::MeshInstance> {
+    prev.projectiles
+        .iter()
+        .map(|p| {
+            let (vx, vy) = (fixed_to_f32(p.vel.x), fixed_to_f32(p.vel.y));
+            let x = fixed_to_f32(p.pos.x) + vx * alpha;
+            let y = fixed_to_f32(p.pos.y) + vy * alpha;
+            // Clamp to the ground so a shell dipping below z=0 (an undershoot) never draws underground.
+            let z = (fixed_to_f32(p.height) + fixed_to_f32(p.vz) * alpha).max(0.0);
+            // A near-stationary shell has no travel heading; atan2(0,0)=0 keeps it axis-aligned.
+            let yaw = vy.atan2(vx);
+            mesh::MeshInstance {
+                model: mesh::model_matrix([x, y, z], TRACER_SCALE, yaw),
+                color: tracer_color(p.faction),
+            }
+        })
+        .collect()
+}
+
 /// Build render instances from two sim snapshots interpolated by `alpha` in `[0,1]` (invariant
 /// #4 — interpolation lives in the renderer, not the sim). Units are matched by index (the
 /// shorter snapshot wins, so a mismatched count never panics); positions cross the float
@@ -486,6 +531,9 @@ pub struct Renderer {
     instance_cap: usize,
     /// CPU-side interpolated instances from the last [`Renderer::prepare`].
     instances: Vec<UnitInstance>,
+    /// CPU-side tracer mesh instances (in-flight shells) from the last [`Renderer::prepare`], drawn
+    /// in the embodied world pass ([`Renderer::render_world_meshes`]) (tank embodiment P7).
+    projectiles: Vec<mesh::MeshInstance>,
     /// The embodied directional-alert overlay (worker 2). Drawn as a second LOAD pass by
     /// [`Renderer::render_hud`] when the local player is embodied.
     hud: hud::HudRenderer,
@@ -655,6 +703,7 @@ impl Renderer {
             instance_buf,
             instance_cap,
             instances: Vec::new(),
+            projectiles: Vec::new(),
             hud,
             touch_controls,
             overlay,
@@ -686,6 +735,7 @@ impl Renderer {
     /// renderer rims them (empty while embodied — presentation state only, never sim state).
     pub fn prepare(&mut self, prev: &Snapshot, curr: &Snapshot, alpha: f32, selected: &[u32]) {
         self.instances = interpolate_instances(prev, curr, alpha, selected);
+        self.projectiles = interpolate_projectiles(prev, alpha);
     }
 
     /// The CPU-side interpolated instances from the last [`Renderer::prepare`].
@@ -1094,6 +1144,16 @@ impl Renderer {
                 }
             }
         }
+        // In-flight shell tracers (P7), drawn in the same pass so they depth-test against the world
+        // (a tracer behind a rock is occluded). Always full detail (the bolt is already minimal) and
+        // hot-tinted by `interpolate_projectiles`. Embodied-only: every shell is the firing player's
+        // own, so this leaks no map intel (invariant #6).
+        if !self.projectiles.is_empty() {
+            batches.push(mesh::MeshBatch {
+                mesh: self.mesh_lib.get(mesh::ModelKind::Tracer),
+                instances: self.projectiles.clone(),
+            });
+        }
         self.mesh_pipeline.draw(
             device,
             queue,
@@ -1160,7 +1220,7 @@ mod tests {
 
     use super::*;
     use gonedark_core::components::{Faction, Vec2};
-    use gonedark_core::snapshot::{ControlPointSnapshot, Snapshot, UnitSnapshot};
+    use gonedark_core::snapshot::{ControlPointSnapshot, ProjectileSnapshot, Snapshot, UnitSnapshot};
 
     const EPS: f32 = 1e-4;
 
@@ -1184,6 +1244,7 @@ mod tests {
             tick,
             units,
             control_points: Vec::new(),
+            projectiles: Vec::new(),
         }
     }
 
@@ -1574,6 +1635,66 @@ mod tests {
             (out[0].turret_yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
             "turret tweens to 90° (independent of the hull)"
         );
+    }
+
+    // ---- interpolate_projectiles: tank-shell tracers (P7) ----
+
+    /// Build a snapshot carrying one in-flight shell.
+    fn shell_snapshot(pos: (i32, i32), vel: (i32, i32), height: Fixed, vz: Fixed, f: Faction) -> Snapshot {
+        Snapshot {
+            tick: 0,
+            units: Vec::new(),
+            control_points: Vec::new(),
+            projectiles: vec![ProjectileSnapshot {
+                pos: Vec2::new(Fixed::from_int(pos.0), Fixed::from_int(pos.1)),
+                vel: Vec2::new(Fixed::from_int(vel.0), Fixed::from_int(vel.1)),
+                height,
+                vz,
+                faction: f,
+            }],
+        }
+    }
+
+    /// A shell is extrapolated along its velocity by `alpha`, stood at (x, y, height), and tinted hot.
+    #[test]
+    fn interpolate_projectiles_extrapolates_position_and_tints() {
+        let s = shell_snapshot((10, 0), (4, 0), Fixed::ONE, Fixed::ZERO, Faction::Player);
+        let out = interpolate_projectiles(&s, 0.5);
+        assert_eq!(out.len(), 1);
+        // pos.x = 10 + 4·0.5 = 12; y = 0; z = height = 1.
+        assert_eq!(out[0].model[3], [12.0, 0.0, 1.0, 1.0]);
+        assert_eq!(out[0].color, tracer_color(Faction::Player));
+        assert!(out[0].color[3] > 0.0, "tracer glows (emissive a > 0)");
+        // alpha = 1 lands on the next-tick ground position (10 + 4 = 14).
+        let at1 = interpolate_projectiles(&s, 1.0);
+        assert!((at1[0].model[3][0] - 14.0).abs() < EPS);
+    }
+
+    /// The bolt is yawed to its travel heading (matching `model_matrix`'s +X=0/CCW convention): a
+    /// shell flying +Y points 90°, so its local +X basis maps to world +Y.
+    #[test]
+    fn interpolate_projectiles_yaws_to_travel_heading() {
+        let s = shell_snapshot((0, 0), (0, 5), Fixed::ONE, Fixed::ZERO, Faction::Enemy);
+        let out = interpolate_projectiles(&s, 0.0);
+        // model_matrix col0 = [s·cos, s·sin, 0, 0]; yaw=90° → [0, TRACER_SCALE, 0, 0].
+        assert!(out[0].model[0][0].abs() < EPS, "cos(90°)≈0");
+        assert!((out[0].model[0][1] - TRACER_SCALE).abs() < EPS, "sin(90°)≈1");
+    }
+
+    /// A shell that has dipped below the ground plane clamps to z=0 (never drawn underground).
+    #[test]
+    fn interpolate_projectiles_clamps_to_ground() {
+        // height -0.25, vz 0 → z = max(0, -0.25) = 0.
+        let s = shell_snapshot((1, 1), (1, 0), Fixed::ZERO - Fixed::from_ratio(1, 4), Fixed::ZERO, Faction::Player);
+        let out = interpolate_projectiles(&s, 0.0);
+        assert_eq!(out[0].model[3][2], 0.0, "below-ground shell clamps to z=0");
+    }
+
+    /// No shells in flight → no tracer instances.
+    #[test]
+    fn interpolate_projectiles_empty_when_no_shells() {
+        let s = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, false)]);
+        assert!(interpolate_projectiles(&s, 0.5).is_empty());
     }
 
     /// Validate `shader.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression

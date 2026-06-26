@@ -10,6 +10,7 @@
 use crate::components::{EntityKind, Faction, InputSource, UnitKind, Vec2};
 use crate::ecs::World;
 use crate::fixed::Fixed;
+use crate::projectile::Projectile;
 use crate::territory::Territory;
 use crate::trig::Angle;
 
@@ -43,6 +44,26 @@ pub struct UnitSnapshot {
     pub turret_yaw: Angle,
 }
 
+/// One in-flight shell's renderable state at a tick (tank embodiment P7, D55). A presentation copy
+/// of a [`Projectile`] — enough to draw a tracer and extrapolate it smoothly between ticks. The
+/// real projectile pool is the checksummed sim state (`Sim::fold`); this copy is not checksummed
+/// (invariant #4/#7). All-`Fixed`, so it stays float-free in `core` (the renderer converts at its
+/// boundary).
+#[derive(Clone, Debug)]
+pub struct ProjectileSnapshot {
+    /// Ground-plane position (world units) this tick.
+    pub pos: Vec2,
+    /// Ground-plane velocity (world units/tick) — the renderer extrapolates `pos + vel·alpha` for a
+    /// smooth tracer between sim ticks, and reads the travel direction (its yaw) from it.
+    pub vel: Vec2,
+    /// Height above the ground plane (world units) — the shell's vertical position (its arc).
+    pub height: Fixed,
+    /// Vertical velocity (world units/tick) — the renderer extrapolates `height + vz·alpha`.
+    pub vz: Fixed,
+    /// The firing side (drives the tracer tint).
+    pub faction: Faction,
+}
+
 /// One control point's renderable state at a tick.
 #[derive(Clone, Debug)]
 pub struct ControlPointSnapshot {
@@ -58,10 +79,19 @@ pub struct Snapshot {
     pub tick: u64,
     pub units: Vec<UnitSnapshot>,
     pub control_points: Vec<ControlPointSnapshot>,
+    /// In-flight shells to draw as tracers (tank embodiment P7). Embodied-only by construction
+    /// (invariant #3 — only an embodied unit's `Fire` launches a ballistic shell), so every entry is
+    /// a physical, transient object, not strategic map intel.
+    pub projectiles: Vec<ProjectileSnapshot>,
 }
 
 impl Snapshot {
-    pub fn capture(world: &World, territory: &Territory, tick: u64) -> Self {
+    pub fn capture(
+        world: &World,
+        territory: &Territory,
+        projectiles: &[Projectile],
+        tick: u64,
+    ) -> Self {
         let mut units = Vec::new();
         for i in 0..world.capacity() {
             if !world.is_index_alive(i) {
@@ -89,10 +119,21 @@ impl Snapshot {
                 progress: p.progress,
             })
             .collect();
+        let projectiles = projectiles
+            .iter()
+            .map(|p| ProjectileSnapshot {
+                pos: p.pos2d,
+                vel: p.vel2d,
+                height: p.height,
+                vz: p.vz,
+                faction: p.faction,
+            })
+            .collect();
         Snapshot {
             tick,
             units,
             control_points,
+            projectiles,
         }
     }
 }

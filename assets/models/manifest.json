@@ -551,6 +551,61 @@
           "cooked_sha256": "ffe78c94f82ccee42f462ba79777e672dc7f00d702c2c67bb027c050c547a184"
         }
       ]
+    },
+    {
+      "name": "tracer",
+      "file": "tracer.glb",
+      "cooked": "tracer.mesh",
+      "description": "Tank-shell tracer \u2014 a small +X-elongated bolt, placed at the shell and yawed by velocity (P7).",
+      "base_color": [
+        1.0,
+        0.6,
+        0.2
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 2048,
+      "sha256": "6e31fc8641287f578251806adeac123b97fa10356574946cdab97f72bb8bb7cf",
+      "cooked_bytes": 1020,
+      "cooked_sha256": "b498aaf8b398b4bf29d8233751d5fb0042f647f9f50dab371aa16438bf0b6b71",
+      "lods": [
+        {
+          "level": 0,
+          "file": "tracer.glb",
+          "cooked": "tracer.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 12,
+          "bytes": 2048,
+          "sha256": "6e31fc8641287f578251806adeac123b97fa10356574946cdab97f72bb8bb7cf",
+          "cooked_bytes": 1020,
+          "cooked_sha256": "b498aaf8b398b4bf29d8233751d5fb0042f647f9f50dab371aa16438bf0b6b71"
+        },
+        {
+          "level": 1,
+          "file": "tracer.lod1.glb",
+          "cooked": "tracer.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 12,
+          "bytes": 1288,
+          "sha256": "216a710c7b4506c384ec07d44cd4b90ec3f76009e1946bd4042b0de796966952",
+          "cooked_bytes": 1020,
+          "cooked_sha256": "7bdec9c94afd4fc5f07f95b84375f0cd28c34a8f0ddf2b76be1cee1d31e99f51"
+        },
+        {
+          "level": 2,
+          "file": "tracer.lod2.glb",
+          "cooked": "tracer.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 12,
+          "bytes": 1288,
+          "sha256": "ef328d93d126e9c4ca7e4161586ed6e8ca2ffe5a0f3e3f8361fed7a4ecbc7a2d",
+          "cooked_bytes": 1020,
+          "cooked_sha256": "4d76007a684c0555b99e995647e8a0e109fab12cf0cfd5d28645905c9a5210f8"
+        }
+      ]
     }
   ]
 }

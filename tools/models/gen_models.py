@@ -272,6 +272,7 @@ COLORS = {
     "tree": (0.16, 0.30, 0.16),        # foliage greybox
     "rock": (0.40, 0.40, 0.42),        # grey boulder
     "barricade": (0.34, 0.30, 0.22),   # sandbag berm cover
+    "tracer": (1.00, 0.60, 0.20),      # hot orange shell tracer (renderer adds the glow)
 }
 
 
@@ -321,6 +322,16 @@ def build_tank_turret():
         cyl(0.10, 1.60, (1.2, 0, 1.05), rot=(0, math.radians(90), 0)),  # barrel, forward along +X
     ]
     return weld("tank_turret", parts, mat)
+
+
+def build_tracer():
+    # A tank-shell tracer: a small bolt elongated along +X (its travel axis), centred on the local
+    # origin so the renderer can place it at the shell's (x, y, height) and yaw it by the velocity
+    # heading (tank embodiment P7, D55). Deliberately tiny — it reads as a glowing round in flight,
+    # not a model; the renderer drives a hot emissive tint per-instance, so the base colour is only a
+    # fallback.
+    mat = make_material("tracer", rgba("tracer"))  # hot orange
+    return weld("tracer", [box((0.6, 0.12, 0.12), (0, 0, 0))], mat)
 
 
 def build_camp_hq():
@@ -410,6 +421,8 @@ MODELS = [
      "Scenery / hard cover — a faceted low-poly boulder."),
     ("barricade", build_barricade,
      "Cover prop — a stepped two-course sandbag berm."),
+    ("tracer", build_tracer,
+     "Tank-shell tracer — a small +X-elongated bolt, placed at the shell and yawed by velocity (P7)."),
 ]
 
 

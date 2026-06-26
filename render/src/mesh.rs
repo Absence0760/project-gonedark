@@ -154,11 +154,14 @@ pub enum ModelKind {
     Tree,
     Rock,
     Barricade,
+    /// A tank-shell tracer — a small bolt placed at an in-flight shell and yawed by its velocity,
+    /// drawn with a hot emissive tint (tank embodiment P7, D55).
+    Tracer,
 }
 
 impl ModelKind {
     /// Every kind, in canonical (enum-discriminant) order.
-    pub const ALL: [ModelKind; 10] = [
+    pub const ALL: [ModelKind; 11] = [
         ModelKind::Trooper,
         ModelKind::Tank,
         ModelKind::TankTurret,
@@ -169,6 +172,7 @@ impl ModelKind {
         ModelKind::Tree,
         ModelKind::Rock,
         ModelKind::Barricade,
+        ModelKind::Tracer,
     ];
 
     /// The cooked `.mesh` bytes for every LOD tier, embedded at build time so they ride into the
@@ -227,6 +231,11 @@ impl ModelKind {
                 include_bytes!("../../assets/models/barricade.lod1.mesh"),
                 include_bytes!("../../assets/models/barricade.lod2.mesh"),
             ],
+            ModelKind::Tracer => [
+                include_bytes!("../../assets/models/tracer.mesh"),
+                include_bytes!("../../assets/models/tracer.lod1.mesh"),
+                include_bytes!("../../assets/models/tracer.lod2.mesh"),
+            ],
         }
     }
 
@@ -252,6 +261,7 @@ impl ModelKind {
             ModelKind::Tree => [0.16, 0.30, 0.16],
             ModelKind::Rock => [0.40, 0.40, 0.42],
             ModelKind::Barricade => [0.34, 0.30, 0.22],
+            ModelKind::Tracer => [1.00, 0.60, 0.20], // hot orange; the renderer drives the per-shell glow
         }
     }
 }
