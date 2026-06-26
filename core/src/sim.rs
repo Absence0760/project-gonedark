@@ -231,6 +231,10 @@ impl Sim {
         // despawned the dead (so a Medic never heals a corpse), before territory/economy. A no-op
         // when no Medic is present, so Medic-free scenes are byte-unchanged.
         crate::heal::heal_system(&mut self.world);
+        // Ammo resupply (D67), AFTER combat/heal have settled this tick — a unit standing by a
+        // friendly finished Camp/Barracks tops its carried reserve back up, the logistics half of
+        // all-unit ammo. A building-free or ammo-free scene is a no-op (byte-unchanged checksum).
+        crate::resupply::resupply_system(&mut self.world);
         territory::territory_system(&self.world, &mut self.territory, &mut self.events);
         economy::economy_system(
             &mut self.world,

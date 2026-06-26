@@ -29,6 +29,7 @@ pub mod orders;
 pub mod persist;
 pub mod projectile;
 pub mod reconnect;
+pub mod resupply;
 pub mod rng;
 pub mod scenario;
 pub mod shell;
