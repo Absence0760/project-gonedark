@@ -1063,9 +1063,14 @@ pub struct Game {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Scene {
     /// The Phase 2 demo skirmish: two rifle squads, producing camps, two neutral control points.
-    /// The normal match the title screen's **Start** boots into.
+    /// A canned mid-action demo (units already advancing into contact).
     #[default]
     Default,
+    /// The **playable two-base skirmish** ([`gonedark_core::scenario::seed_skirmish`]): two
+    /// operational bases, **one starting troop each**, three neutral posts to capture. Booted in the
+    /// command view — you select your troop, take posts to fund production, and grow an army; the
+    /// scripted enemy commander does the same. The normal match the title screen's **Start** boots.
+    Skirmish,
     /// The two-tank hitbox duel ([`gonedark_core::scenario::seed_duel`]), booted **embodied** in
     /// the player tank so you drop straight into first person, drive it, and fire the gun — the
     /// "load two tanks and see the hitboxes work" sandbox. A debug scene, not a real match.
@@ -1082,6 +1087,7 @@ impl Scene {
     pub fn parse(name: &str) -> Option<Scene> {
         match name {
             "default" | "demo" => Some(Scene::Default),
+            "skirmish" | "match" => Some(Scene::Skirmish),
             "duel" => Some(Scene::Duel),
             "infantry" => Some(Scene::Infantry),
             _ => None,
@@ -1164,6 +1170,17 @@ fn seed_default_scene(sim: &mut Sim) -> (Entity, bool) {
     ]);
 
     (player, false)
+}
+
+/// Seed the **playable two-base skirmish** and return `(player, start_embodied)`. Seeds the shared
+/// `core::scenario::seed_skirmish` scene (two operational bases, one troop each, three neutral posts)
+/// and hands back the Player's starting troop as the embodiable/selectable `player`. Booted in the
+/// command view (`start_embodied == false`): unlike the debug sandboxes you start commanding, not
+/// possessing. No scripted opening order — the enemy is the commander's from its first plan, and the
+/// match-end is the host's existing win-condition evaluator. GPU-free, so it is host-tested directly.
+fn seed_skirmish_scene(sim: &mut Sim) -> (Entity, bool) {
+    let s = gonedark_core::scenario::seed_skirmish(sim);
+    (s.player_troop, false)
 }
 
 /// Seed the **two-tank hitbox duel** and return `(player, start_embodied)`. Seeds the shared
@@ -1326,6 +1343,7 @@ impl Game {
         let mut sim = Sim::new(seed);
         let (player, start_embodied) = match scene {
             Scene::Default => seed_default_scene(&mut sim),
+            Scene::Skirmish => seed_skirmish_scene(&mut sim),
             Scene::Duel => seed_duel_scene(&mut sim),
             Scene::Infantry => seed_infantry_scene(&mut sim),
         };
@@ -2663,14 +2681,52 @@ mod tests {
     fn scene_parse_known_and_unknown() {
         assert_eq!(Scene::parse("default"), Some(Scene::Default));
         assert_eq!(Scene::parse("demo"), Some(Scene::Default));
+        assert_eq!(Scene::parse("skirmish"), Some(Scene::Skirmish));
+        assert_eq!(Scene::parse("match"), Some(Scene::Skirmish));
         assert_eq!(Scene::parse("duel"), Some(Scene::Duel));
         assert_eq!(Scene::parse("infantry"), Some(Scene::Infantry));
         assert_eq!(Scene::parse("nope"), None);
         assert_eq!(Scene::default(), Scene::Default);
-        // The debug sandboxes default the overlay on; a real match leaves it off.
+        // The debug sandboxes default the overlay on; a real match (skirmish/demo) leaves it off.
         assert!(Scene::Duel.debug_overlay_default());
         assert!(Scene::Infantry.debug_overlay_default());
         assert!(!Scene::Default.debug_overlay_default());
+        assert!(!Scene::Skirmish.debug_overlay_default());
+    }
+
+    /// The skirmish boots in the **command view** (not embodied) with the Player's single starting
+    /// troop as the selectable `player`, two operational bases, three neutral posts, and the small
+    /// scenario purse. GPU-free seam under `Game::new_scene`, so it covers the wiring without a
+    /// device (the seeding itself is unit-tested in `core::scenario`).
+    #[test]
+    fn skirmish_scene_boots_in_command_view_with_one_player_troop() {
+        let mut sim = Sim::new(DEFAULT_SEED);
+        let (player, start_embodied) = seed_skirmish_scene(&mut sim);
+        assert!(!start_embodied, "the skirmish boots commanding, not possessing");
+
+        // The handed-back `player` is a live Player Rifleman, order-driven (not embodied).
+        let i = player.index as usize;
+        assert_eq!(sim.world.faction[i], Faction::Player);
+        assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+        assert_eq!(sim.world.kind[i], EntityKind::Unit);
+        assert_eq!(
+            sim.world.input_source[i],
+            gonedark_core::components::InputSource::Orders,
+        );
+
+        // One troop and one base per side, three neutral posts — the scene shape the host renders.
+        let units = |f: Faction| {
+            (0..sim.world.capacity())
+                .filter(|&j| {
+                    sim.world.is_index_alive(j)
+                        && sim.world.kind[j] == EntityKind::Unit
+                        && sim.world.faction[j] == f
+                })
+                .count()
+        };
+        assert_eq!(units(Faction::Player), 1);
+        assert_eq!(units(Faction::Enemy), 1);
+        assert_eq!(sim.territory.points.len(), 3);
     }
 
     /// The infantry sandbox boots **embodied** in a Player Rifleman with the input source swapped

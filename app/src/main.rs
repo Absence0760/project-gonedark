@@ -58,9 +58,10 @@ struct App {
     /// A pure window concern — it never touches the sim — so it lives on the host like cursor state.
     fullscreen: bool,
 
-    /// Which [`Scene`] a **Start** boots into — `Scene::Default` (the demo skirmish) unless the
-    /// `--scene <name>` launch flag selected a debug sandbox (e.g. `--scene duel`). A pure host
-    /// launch choice; it only picks which `Game::new_scene` seeding runs.
+    /// Which [`Scene`] a **Start** boots into — `Scene::Skirmish` (the playable two-base match)
+    /// unless the `--scene <name>` launch flag selected another scene (the canned `--scene default`
+    /// demo or a debug sandbox like `--scene duel`). A pure host launch choice; it only picks which
+    /// `Game::new_scene` seeding runs.
     scene: Scene,
 }
 
@@ -391,10 +392,14 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let scene = match scene_token(&args) {
         Some(tok) => Scene::parse(&tok).unwrap_or_else(|| {
-            eprintln!("unknown --scene {tok:?}; using default (known scenes: default, duel)");
-            Scene::Default
+            eprintln!(
+                "unknown --scene {tok:?}; using the skirmish \
+                 (known scenes: skirmish, default, duel, infantry)"
+            );
+            Scene::Skirmish
         }),
-        None => Scene::Default,
+        // No `--scene`: boot the playable two-base skirmish (the real match), not the canned demo.
+        None => Scene::Skirmish,
     };
 
     let event_loop = EventLoop::new().expect("create winit event loop");
