@@ -2,7 +2,9 @@
 
 > Status: living design doc. Captures the design as agreed in pre-production.
 > Open forks live in [`open-questions.md`](open-questions.md); the reasoning
-> behind locked decisions lives in [`decisions.md`](decisions.md).
+> behind locked decisions lives in [`decisions.md`](decisions.md); how this design
+> stacks up against the field (Delta Force, the FPS/RTS-hybrid graveyard, the CoH
+> lineage) lives in [`positioning.md`](positioning.md).
 
 ## 1. Concept
 

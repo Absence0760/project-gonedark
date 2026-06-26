@@ -4,7 +4,9 @@
 > invariant so none of them can become pay-to-win or unfair. The *why* is
 > [`decisions.md`](decisions.md) [D60](decisions.md) (weapons) / [D61](decisions.md) (HUD);
 > both reaffirm [D13](decisions.md) (cosmetic-only monetization) and pillar 4 (*the cost
-> must always feel fair* — [`game-design.md`](game-design.md) §2).
+> must always feel fair* — [`game-design.md`](game-design.md) §2). Why the gunsmith is
+> deliberately *horizontal* where CoD Mobile's is vertical — the competitive framing — is
+> [`positioning.md`](positioning.md) §4 / CP-1.
 
 The hard rule that shapes all three: **nothing a player can unlock or buy may grant a net
 power advantage.** Weapon *function* is horizontal (trades, not upgrades); weapon *looks*,

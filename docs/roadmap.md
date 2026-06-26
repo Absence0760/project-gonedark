@@ -383,6 +383,65 @@ narrative depth ([Q16](open-questions.md)).
 
 ---
 
+## Competitive parity — reaching the incumbents' bar
+
+> Where we sit against the field — Delta Force, CoD/Warzone Mobile, the FPS/RTS hybrid
+> graveyard (Eximius/Silica/NS2), and the CoH/StarCraft RTS lineage — is analysed in
+> **[`positioning.md`](positioning.md)**. The strategy in one line: **we lead on the four
+> things that define the product (command + embody, vision-as-cost, a deterministic sim built
+> for 200-unit lockstep — substrate landed, on-device scale is Phase 3, symmetric hybrid PvP)
+> and lag on the production-value table-stakes every mobile
+> shooter has polished for years.** These **CP-n** items reach *good-enough* on the
+> table-stakes so the shooter half never embarrasses the hybrid — none reopens an invariant;
+> each is bounded by #1 (determinism), #3 (literal-executor AI), #5 (embodiment), #6 (fair
+> dark). They **re-cut** existing PvE/Phase-3/Phase-4 work by "does it close a competitive
+> gap," so several deliberately overlap the pillars above rather than adding net-new scope.
+>
+> **Sequencing:** CP-7 + CP-2 are launch-critical (they gate whether a stranger *gets* and
+> *enjoys* the core); CP-1 + CP-4 are launch-important (shooter-audience table-stakes);
+> CP-3/CP-5/CP-6/CP-8 ramp after the PvE loop is proven. The **LEAD** rows need *protection*
+> (hold the determinism gates + the one-player-both-jobs symmetry), not new work.
+
+- [ ] **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
+  ([D60](decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,
+  barrel, stock, mag, grip, muzzle) — **horizontal only** (sidegrades, fixed-point,
+  checksum-folded; never vertical power). *Builds on PvE WS-C.*
+- [ ] **CP-2 — Embodied game-feel bar (launch-critical).** A focused gunplay pass so a Delta
+  Force player doesn't bounce in ten seconds: hit feedback (impact/hitmarker/damage-direction),
+  recoil/kick readability, responsive ADS, audio-coupled firing. **Presentation/feel only — never
+  sim state (#4).** Define a written "good-enough floor" and playtest against it.
+- [ ] **CP-3 — Animation/fidelity floor (conceded tier).** A "not jarring" floor — coherent
+  locomotion/fire/death anims on the greybox so the eye-level view reads as a *place* — via the
+  scripted pipeline ([`content-pipeline.md`](content-pipeline.md), [D41](decisions.md)/[D46](decisions.md)).
+  **Explicitly not UE5 parity**; we concede photoreal fidelity and compete on the hybrid.
+- [ ] **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (PvE WS-D,
+  [D61](decisions.md)) + a touch-target/rebind pass so controls feel CoD-Mobile-class. *Overlaps
+  the touch-layout editor under UI/UX polish above.*
+- [ ] **CP-5 — Unified cross-platform entitlement.** One account/entitlement layer so progression,
+  loadouts, and cosmetics follow the player across Android/iOS/desktop — the cross-progression
+  Warzone Mobile trained the market to expect ([Q9](open-questions.md) billing rails feed this).
+- [ ] **CP-6 — Audio identity pass.** Replace the procedural placeholders
+  ([D26](decisions.md)/[D29](decisions.md)) with a deliberate sound identity via the scripted
+  Csound/SoX pipeline — **load-bearing, not polish** (audio is the going-dark alert channel, #6);
+  keep the accessibility-equivalent cue.
+- [ ] **CP-7 — Onboarding that teaches the twist (launch-critical).** A new player must read their
+  first death as *"I stayed too long"* (#6). Built into PvE mission 1
+  ([`pve-campaign.md`](pve-campaign.md) §3, WS-A). No incumbent has the twist, so we can't borrow
+  this teach — we have to nail it. *Overlaps the onboarding item under UI/UX polish above.*
+- [ ] **CP-8 — Live-ops / content-cadence engine.** Wire the `server` scaffolding
+  (telemetry/consent/live-ops) into the rotating scenario-parameter modifier system (PvE WS-E) for a
+  sustainable post-launch cadence — **modifiers and content, never balance-number or power hacks**
+  (#1/#6).
+
+> **Protect the LEAD (no new work, but do not let it erode):** the determinism gates
+> (`determinism.yml` cross-arch matrix, per-tick checksum diffing) and the **symmetric** hybrid
+> PvP shape — each player is their own commander-and-avatar, never the asymmetric
+> commander-vs-grunts split that killed every prior hybrid ([`positioning.md`](positioning.md) §3).
+> Co-op ([Q14](open-questions.md)) is the one place that temptation returns; if built, each player
+> keeps both jobs.
+
+---
+
 ## Dev workflow & iteration
 
 Native Rust doesn't hot-reload engine code for free — that's the iteration cost of the
@@ -420,3 +479,5 @@ phone. Iterate logic on the emulator; **profile performance on real target devic
 | **Determinism bugs** | Any float leaking into the sim breaks lockstep silently | Enforce fixed-point in the sim layer; per-tick checksum diffing in CI from day one |
 | **Device fragmentation** | Android GPU/thermal variance is wide | Quality tiers + dynamic scaling baked in early, not as a post-ship patch |
 | **Blindness feels unfair** | "World goes dark" can read as robbery if mishandled | Thin alert thread, strong audio, visceral/constant blindness feedback, fast re-entry (design doc §6) |
+| **FPS-fidelity gap vs incumbents** | We share a storefront with Delta Force / CoD Mobile and *will* lose any head-to-head on raw gunfeel, animation, and texture fidelity; a shooter player who bounces in 10 s never reaches the hybrid | Don't fight on their axis — reach a written *good-enough floor* (CP-2/CP-3), consciously concede photoreal tier, and let the command+embody hybrid be the reason to stay ([`positioning.md`](positioning.md)) |
+| **Compared piecemeal, not whole** | Judged feature-by-feature (our FPS vs DF, our gunsmith vs CoD, our RTS vs CoH) a focused incumbent wins every isolated column | Keep the *intersection* legible — the command×embody×vision-cost square is empty; lead there, parity elsewhere ([`positioning.md`](positioning.md) §2/§6) |
