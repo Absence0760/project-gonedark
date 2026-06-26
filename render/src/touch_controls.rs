@@ -11,7 +11,8 @@
 //!
 //! The engine owns the layout (`engine::touch_controls::TouchLayout`); to keep the layering clean
 //! (`engine -> render`, never the reverse — invariant #2) the engine fills this crate's own
-//! [`TouchControlsHud`] description, exactly as it fills [`CommandPanels`](crate::CommandPanels).
+//! [`TouchControlsHud`] description, exactly as the engine fills the contextual
+//! [`command_panel::CommandPanelView`](crate::command_panel::CommandPanelView).
 
 use wgpu::util::DeviceExt;
 

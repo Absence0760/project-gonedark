@@ -9,14 +9,13 @@
 //! `upgrade_ui::upgrade_commands` intent: the panel shows the cost/effect, the button issues the
 //! command.
 //!
-//! ## Pure layout seam (the `readout` / `tiers` pattern)
+//! ## Pure data seam (the `readout` / `tiers` pattern)
 //!
-//! [`upgrade_view`] (derive the numbers) and [`upgrade_labels`] (lay out label strings + NDC
-//! anchors) are free fns, unit-testable without a GPU — exactly like [`crate::readout`]. The host
-//! turns each [`UpgradeLabel`] into a [`crate::text::TextRenderer::queue`] call. `render` is the
-//! float boundary (invariant #1), so the f32 NDC layout math here is fair game; this module never
-//! reads or mutates sim state (invariant #4) — it is a pure function of two host-supplied numbers
-//! (the camp's level and the faction's resource purse).
+//! [`upgrade_view`] derives the numbers — current tier, next-tier cost, and the production-speed
+//! effect — as a free fn, unit-testable without a GPU. The contextual
+//! [`command_panel`](crate::command_panel) formats these into its camp-panel rows; this module owns
+//! only the numbers, not the layout. It never reads or mutates sim state (invariant #4) — it is a
+//! pure function of two host-supplied numbers (the camp's level and the faction's resource purse).
 //!
 //! ## Inputs come from the host, not a sim read
 //!
@@ -37,10 +36,9 @@
 //! prerequisites, each with its own effect) is a **`core` follow-up**, not a render change: it needs
 //! new sim state (an upgrade id/enum + a per-building owned-upgrade set), a new `Command` variant,
 //! and prerequisite/cost logic in `core::economy` — all checksum-folded. Once that lands, this module
-//! grows from one "next tier" row to a list of branch rows (id, cost, prereq-met, effect), reusing
-//! the exact same [`UpgradeLabel`] layout primitive.
+//! grows from one "next tier" view to a list of branch rows (id, cost, prereq-met, effect) the
+//! [`command_panel`](crate::command_panel) renders.
 
-use crate::text::Anchor;
 use gonedark_core::components::UnitKind;
 use gonedark_core::economy;
 
@@ -94,102 +92,6 @@ pub fn upgrade_view(level: u8, resources: i64) -> UpgradeView {
     }
 }
 
-/// One laid-out upgrade-panel label ready for the [`text`](crate::text) pass: the string, its NDC
-/// anchor position + [`Anchor`], a size, and a color. Pure data — the host loops these into
-/// [`crate::text::TextRenderer::queue`] calls. Mirrors [`crate::readout::ReadoutLabel`].
-#[derive(Clone, PartialEq, Debug)]
-pub struct UpgradeLabel {
-    pub text: String,
-    pub pos: [f32; 2],
-    pub px_size: f32,
-    pub anchor: Anchor,
-    pub color: [f32; 3],
-    pub alpha: f32,
-}
-
-/// Label glyph height in NDC (cf. `text`/`readout`: practical label sizes ~0.03–0.08).
-const LABEL_SIZE: f32 = 0.045;
-/// Inset from the screen edge for the bottom-right panel stack, in NDC.
-const MARGIN: f32 = 0.04;
-/// Vertical step between stacked panel lines, in NDC.
-const LINE_STEP: f32 = 0.065;
-
-/// Title / heading color (neutral, reads as a panel header).
-const TITLE_COLOR: [f32; 3] = [0.9, 0.9, 0.95];
-/// Body line color (effect/description text).
-const BODY_COLOR: [f32; 3] = [0.82, 0.82, 0.88];
-/// Cost color when the next tier is affordable (player-blue/green-leaning "go").
-const AFFORDABLE_COLOR: [f32; 3] = [0.55, 0.92, 0.62];
-/// Cost color when the next tier is NOT affordable (red-leaning "can't yet").
-const UNAFFORDABLE_COLOR: [f32; 3] = [1.0, 0.55, 0.48];
-
-/// Lay out the selected camp's upgrade panel from an [`UpgradeView`]. Pure (no GPU, no sim) — the
-/// testable layout seam. The lines stack **up** the bottom-right corner so the panel reads as a
-/// grouped block anchored to that corner (newest/topmost line is the title):
-///
-/// - `CAMP — TIER <n>`            — the current tier (title, neutral).
-/// - `NEXT TIER: <cost>`          — the next-tier cost from [`economy::upgrade_cost`], colored by
-///   affordability (green = affordable, red = too poor).
-/// - `+ PRODUCTION SPEED`         — the truthful effect line: faster unit production (the only thing a
-///   camp tier improves today), with the per-unit ticks saved; OR `MAX TIER (no speedup)` once the
-///   camp has hit the [`economy::PROD_TICKS_FLOOR`] and the next tier buys no further speed.
-///
-/// All positions are NDC ([-1,1], +y up) anchored [`Anchor::TopLeft`] (so each line's box grows
-/// right/down from a known point); they sit in the bottom-right region. Screen-space chrome only
-/// (invariant #6) — no world position, command-view-only.
-pub fn upgrade_labels(view: &UpgradeView) -> Vec<UpgradeLabel> {
-    // Bottom-right anchor. We lay 3 lines from a top y that leaves room to stack downward while
-    // hugging the bottom edge, left-aligned at a right-side x.
-    let right_x = 0.45; // left edge of the (right-side) panel column, in NDC
-    let bottom = -1.0 + MARGIN; // bottom edge, inset
-    let n_lines = 3;
-    let top = bottom + (n_lines as f32 - 1.0) * LINE_STEP; // top line y so the last sits at `bottom`
-
-    let mut out = Vec::with_capacity(n_lines as usize);
-    let mut row = 0;
-    let mut push = |text: String, color: [f32; 3], size: f32, row: &mut i32| {
-        out.push(UpgradeLabel {
-            text,
-            pos: [right_x, top - (*row as f32) * LINE_STEP],
-            px_size: size,
-            anchor: Anchor::TopLeft,
-            color,
-            alpha: 1.0,
-        });
-        *row += 1;
-    };
-
-    // Title: current tier.
-    push(
-        format!("CAMP — TIER {}", view.level),
-        TITLE_COLOR,
-        LABEL_SIZE,
-        &mut row,
-    );
-
-    // Next-tier cost, colored by affordability.
-    let cost_color = if view.affordable {
-        AFFORDABLE_COLOR
-    } else {
-        UNAFFORDABLE_COLOR
-    };
-    push(
-        format!("NEXT TIER: {}", view.next_cost),
-        cost_color,
-        LABEL_SIZE,
-        &mut row,
-    );
-
-    // Truthful effect line: what the next tier actually buys.
-    let effect = if view.next_tier_improves_speed() {
-        format!("+ PRODUCTION SPEED (-{} ticks/unit)", view.prod_ticks_saved())
-    } else {
-        "MAX TIER (no further speedup)".to_string()
-    };
-    push(effect, BODY_COLOR, LABEL_SIZE * 0.9, &mut row);
-
-    out
-}
 
 #[cfg(test)]
 mod tests {
@@ -252,84 +154,4 @@ mod tests {
         assert_eq!(v.next_cost, economy::upgrade_cost(254));
     }
 
-    // ---- upgrade_labels ----
-
-    #[test]
-    fn labels_report_tier_cost_and_effect() {
-        let v = upgrade_view(2, 10_000);
-        let labels = upgrade_labels(&v);
-        assert_eq!(labels.len(), 3, "title + cost + effect");
-        assert!(labels[0].text.starts_with("CAMP"), "title line");
-        assert!(labels[0].text.contains('2'), "shows current tier 2");
-        assert!(labels[1].text.starts_with("NEXT TIER"), "cost line");
-        assert!(
-            labels[1].text.contains(&economy::upgrade_cost(2).to_string()),
-            "cost line shows upgrade_cost(2) = {}",
-            economy::upgrade_cost(2)
-        );
-        assert!(
-            labels[2].text.contains("PRODUCTION"),
-            "effect line names the truthful benefit (faster production)"
-        );
-        assert!(
-            labels[2].text.contains(&economy::LEVEL_PROD_SPEEDUP.to_string()),
-            "effect line quantifies the ticks saved"
-        );
-    }
-
-    #[test]
-    fn cost_line_is_green_when_affordable_red_when_not() {
-        let cost = economy::upgrade_cost(0);
-        let rich = upgrade_labels(&upgrade_view(0, cost));
-        let poor = upgrade_labels(&upgrade_view(0, cost - 1));
-        // Affordable → green-leaning (green channel dominates).
-        assert!(
-            rich[1].color[1] > rich[1].color[0] && rich[1].color[1] > rich[1].color[2],
-            "affordable cost label leans green, got {:?}",
-            rich[1].color
-        );
-        // Unaffordable → red-leaning (red channel dominates).
-        assert!(
-            poor[1].color[0] > poor[1].color[2],
-            "unaffordable cost label leans red, got {:?}",
-            poor[1].color
-        );
-    }
-
-    #[test]
-    fn maxed_camp_effect_line_says_no_further_speedup() {
-        let labels = upgrade_labels(&upgrade_view(254, i64::MAX / 2));
-        assert!(
-            labels[2].text.contains("MAX TIER"),
-            "at the floor the effect line is honest: no more speed, got {:?}",
-            labels[2].text
-        );
-    }
-
-    #[test]
-    fn labels_stack_up_the_bottom_right_corner() {
-        let labels = upgrade_labels(&upgrade_view(0, 0));
-        for w in labels.windows(2) {
-            // Same left x; each later line steps DOWN (smaller y).
-            assert_eq!(w[0].pos[0], w[1].pos[0], "same left x");
-            assert!(w[1].pos[1] < w[0].pos[1], "next line is lower");
-            assert_eq!(w[0].anchor, Anchor::TopLeft);
-        }
-        // The block sits in the bottom-right region (right of center, below center).
-        let last = labels.last().unwrap();
-        assert!(labels[0].pos[0] > 0.0, "panel is on the right");
-        assert!(last.pos[1] < 0.0, "panel hugs the bottom");
-    }
-
-    #[test]
-    fn labels_are_screen_space_chrome() {
-        // Fairness guard (invariant #6): every label is NDC chrome, never a world position.
-        for v in [upgrade_view(0, 0), upgrade_view(9, 99_999), upgrade_view(254, 0)] {
-            for l in upgrade_labels(&v) {
-                assert!(l.pos[0] >= -1.0 && l.pos[0] <= 1.0, "x in NDC");
-                assert!(l.pos[1] >= -1.0 && l.pos[1] <= 1.0, "y in NDC");
-                assert!(l.px_size > 0.0 && l.alpha > 0.0);
-            }
-        }
-    }
 }

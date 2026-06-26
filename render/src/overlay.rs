@@ -676,7 +676,6 @@ impl OverlayRenderer {
         if quads.is_empty() {
             return;
         }
-        let instances: Vec<OverlayInstance> = quads.iter().map(|q| q.instance()).collect();
 
         // Queue this surface's text labels (W4): summary numbers/title + button captions. Flushed
         // after the panel quads below so the glyphs composite on top of the chrome.
@@ -690,6 +689,29 @@ impl OverlayRenderer {
                 1.0,
             );
         }
+
+        self.draw_quads(device, queue, view, &quads);
+
+        // Flush the queued labels in their own LOAD pass, on top of the panels just drawn.
+        self.text.render(device, queue, view);
+    }
+
+    /// Upload + draw a set of NDC [`OverlayQuad`]s in one LOAD pass (no text). The shared quad
+    /// primitive behind both the in-session overlay above and the command-view panel box
+    /// ([`crate::Renderer::render_command_panel`]); the caller owns any text labels and draws them in
+    /// a following pass so glyphs composite on top. A no-op on an empty slice. The instance buffer
+    /// grows as needed and is reused across both callers.
+    pub fn draw_quads(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        quads: &[OverlayQuad],
+    ) {
+        if quads.is_empty() {
+            return;
+        }
+        let instances: Vec<OverlayInstance> = quads.iter().map(|q| q.instance()).collect();
 
         if instances.len() > self.instance_cap {
             let new_cap = instances.len().next_power_of_two();
@@ -729,9 +751,6 @@ impl OverlayRenderer {
             pass.draw(0..QUAD_VERTS.len() as u32, 0..instances.len() as u32);
         }
         queue.submit(std::iter::once(encoder.finish()));
-
-        // Flush the queued labels in their own LOAD pass, on top of the panels just drawn.
-        self.text.render(device, queue, view);
     }
 }
 

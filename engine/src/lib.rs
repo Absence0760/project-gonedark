@@ -499,18 +499,184 @@ fn embody_picker_view(
     EmbodyPicker {
         rows: rows
             .iter()
-            .map(|&e| {
-                let label = match world.unit_kind[e.index as usize] {
-                    UnitKind::Heavy => "Tank",
-                    UnitKind::Rifleman => "Rifleman",
-                }
-                .to_string();
-                PickerRow {
-                    label,
-                    embodiable: true,
-                }
+            .map(|&e| PickerRow {
+                label: unit_kind_name(world.unit_kind[e.index as usize]).to_string(),
+                embodiable: true,
             })
             .collect(),
+    }
+}
+
+/// Friendly display name for a unit kind, shared by the embody picker and the command panel.
+fn unit_kind_name(k: UnitKind) -> &'static str {
+    match k {
+        UnitKind::Heavy => "Tank",
+        UnitKind::Rifleman => "Rifleman",
+    }
+}
+
+/// Friendly display name for a stance (the command panel's troops summary).
+fn stance_name(s: gonedark_core::components::Stance) -> &'static str {
+    use gonedark_core::components::Stance;
+    match s {
+        Stance::HoldFire => "Hold Fire",
+        Stance::ReturnFire => "Return Fire",
+        Stance::FireAtWill => "Fire at Will",
+    }
+}
+
+/// Derive the contextual command panel from the current selection (PURE → unit-tested). CoH-style:
+///  - a selected **camp** (building) → its resources, train options, upgrade, and production queue;
+///  - selected **troops** → their composition, average health, and stance (the order/stance
+///    vocabulary is the unit "options" — invariant #3; in-match unit upgrades don't exist yet);
+///  - **nothing** selected → the build palette + banked resources.
+///
+/// Reuses the same `train_options` / `upgrade_view` / `build_menu_entries` data the dedicated panels
+/// used, so the numbers match the sim. Reads only presentation state (kind, level, queue, health,
+/// stance) — never mutates or folds (invariant #4). When several buildings are selected the first
+/// (selection order) drives the panel; a mixed building+troops selection shows the building.
+fn command_panel_view(
+    world: &gonedark_core::ecs::World,
+    selection: &Selection,
+    resources: i64,
+    trainable: &[UnitKind],
+) -> gonedark_render::command_panel::CommandPanelView {
+    use gonedark_core::components::EntityKind;
+    use gonedark_render::command_panel::{CommandPanelView, LineStyle, PanelLine};
+
+    // Affordable rows read normal; rows you can't yet pay for dim out (mirrors the old panels).
+    let afford = |cost: i64| {
+        if resources >= cost {
+            LineStyle::Normal
+        } else {
+            LineStyle::Dim
+        }
+    };
+
+    // 1. A selected, live Player camp → its command panel (selection order picks the first).
+    if let Some(camp) = selection.units.iter().copied().find(|&e| {
+        world.is_alive(e)
+            && world.faction[e.index as usize] == Faction::Player
+            && world.kind[e.index as usize] == EntityKind::Building
+    }) {
+        let b = &world.building[camp.index as usize];
+        let level = b.level;
+        let mut lines = vec![PanelLine::new(
+            format!("Resources: {resources}"),
+            LineStyle::Normal,
+        )];
+        lines.push(PanelLine::new("TRAIN  [R/H]", LineStyle::Header));
+        for o in gonedark_render::train_panel::train_options(trainable, level, resources) {
+            // `unit_kind_name` (not the train-panel `label`) so a Heavy reads "Tank" here exactly as
+            // it does in the QUEUE rows, the troops panel, and the embody picker.
+            lines.push(PanelLine::new(
+                format!("{}  {}  {:.1}s", unit_kind_name(o.kind), o.cost, o.eta_seconds),
+                afford(o.cost),
+            ));
+        }
+        lines.push(PanelLine::new("UPGRADE  [U]", LineStyle::Header));
+        let uv = gonedark_render::upgrade_panel::upgrade_view(level, resources);
+        let speed = if uv.prod_ticks_next < uv.prod_ticks_now {
+            "  (faster build)"
+        } else {
+            ""
+        };
+        lines.push(PanelLine::new(
+            format!("Next tier: {}{}", uv.next_cost, speed),
+            afford(uv.next_cost),
+        ));
+        if !b.queue.is_empty() {
+            lines.push(PanelLine::new("QUEUE", LineStyle::Header));
+            for item in &b.queue {
+                lines.push(PanelLine::new(
+                    format!(
+                        "{}  {:.1}s",
+                        unit_kind_name(item.kind),
+                        gonedark_render::train_panel::eta_seconds(item.ticks_left)
+                    ),
+                    LineStyle::Dim,
+                ));
+            }
+        }
+        return CommandPanelView {
+            title: format!("CAMP — TIER {level}"),
+            lines,
+        };
+    }
+
+    // 2. Selected troops → composition + average health + stance.
+    let units: Vec<Entity> = selection
+        .units
+        .iter()
+        .copied()
+        .filter(|&e| is_live_player_unit(world, e))
+        .collect();
+    if !units.is_empty() {
+        let mut riflemen = 0usize;
+        let mut tanks = 0usize;
+        let mut hp_sum = 0.0f32;
+        for &e in &units {
+            match world.unit_kind[e.index as usize] {
+                UnitKind::Rifleman => riflemen += 1,
+                UnitKind::Heavy => tanks += 1,
+            }
+            hp_sum += fixed_to_f32(world.health[e.index as usize].fraction());
+        }
+        let n = units.len();
+        let avg_hp = (hp_sum / n as f32 * 100.0).round() as i32;
+        // A uniform stance reads by name; a mixed group reads "Mixed".
+        let first_stance = world.stance[units[0].index as usize];
+        let uniform = units
+            .iter()
+            .all(|&e| world.stance[e.index as usize] == first_stance);
+
+        let mut lines = Vec::new();
+        if riflemen > 0 {
+            lines.push(PanelLine::new(
+                format!("{riflemen}x Rifleman"),
+                LineStyle::Normal,
+            ));
+        }
+        if tanks > 0 {
+            lines.push(PanelLine::new(format!("{tanks}x Tank"), LineStyle::Normal));
+        }
+        lines.push(PanelLine::new(format!("Avg HP: {avg_hp}%"), LineStyle::Normal));
+        lines.push(PanelLine::new(
+            format!(
+                "Stance: {}",
+                if uniform { stance_name(first_stance) } else { "Mixed" }
+            ),
+            LineStyle::Normal,
+        ));
+        lines.push(PanelLine::new("[E] embody   [1-9] orders", LineStyle::Dim));
+        return CommandPanelView {
+            title: format!("SELECTED — {} unit{}", n, if n == 1 { "" } else { "s" }),
+            lines,
+        };
+    }
+
+    // 3. Nothing selected → the build palette + banked resources.
+    let mut lines = vec![PanelLine::new(
+        format!("Resources: {resources}"),
+        LineStyle::Normal,
+    )];
+    for e in gonedark_render::build_menu::build_menu_entries(resources) {
+        lines.push(PanelLine::new(
+            e.text,
+            if e.affordable {
+                LineStyle::Normal
+            } else {
+                LineStyle::Dim
+            },
+        ));
+    }
+    lines.push(PanelLine::new(
+        "[B] place   select a unit/camp for more",
+        LineStyle::Dim,
+    ));
+    CommandPanelView {
+        title: "BUILD".to_string(),
+        lines,
     }
 }
 
@@ -1968,34 +2134,21 @@ impl Game {
             economy,
         );
 
-        // 7c. Command-view build / train / upgrade panels ("command and grow your camps"). Command
-        // view only — never over the dark embodied frame (invariant #6). Resolve the player's active
-        // camp deterministically (the unit-tested `active_player_camp`) and read its level + the
-        // production queue off the (checksummed) sim — a pure read that folds nothing, so it cannot
-        // perturb the per-tick checksum (invariants #1/#7). The build palette always renders; the
-        // train + upgrade panels render only when a camp is active.
+        // 7c. Contextual command panel ("command and grow your camps"), top-right. Command view only
+        // — never over the dark embodied frame (invariant #6). Its rows are derived from the current
+        // SELECTION (the unit-tested `command_panel_view`): a selected camp shows its train / upgrade
+        // / resources, selected troops show their composition + stance, and an empty selection shows
+        // the build palette. A pure read over the (checksummed) sim that folds nothing, so it cannot
+        // perturb the per-tick checksum (invariants #1/#7).
         if !self.embodied {
-            let camp = active_player_camp(&self.sim.world, Faction::Player);
-            let prod_queue: Vec<(UnitKind, u16)> = camp
-                .map(|e| {
-                    self.sim.world.building[e.index as usize]
-                        .queue
-                        .iter()
-                        .map(|item| (item.kind, item.ticks_left))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let active_camp = camp.map(|e| gonedark_render::ActiveCamp {
-                level: self.sim.world.building[e.index as usize].level,
-                queue: &prod_queue,
-            });
-            let panels = gonedark_render::CommandPanels {
-                resources: self.sim.resources.get(Faction::Player),
-                trainable: &[UnitKind::Rifleman, UnitKind::Heavy],
-                active_camp,
-            };
+            let panel_view = command_panel_view(
+                &self.sim.world,
+                &self.selection,
+                self.sim.resources.get(Faction::Player),
+                &[UnitKind::Rifleman, UnitKind::Heavy],
+            );
             self.renderer
-                .render_command_panels(device, queue, view, &panels);
+                .render_command_panel(device, queue, view, &panel_view);
         }
 
         // 7a''. Embody picker (command view): when open, draw the list of selected units the player
@@ -2788,6 +2941,80 @@ mod tests {
         assert_eq!(view.rows[0].label, "Tank");
         assert_eq!(view.rows[1].label, "Rifleman");
         assert!(view.rows.iter().all(|r| r.embodiable));
+    }
+
+    // ---- contextual command panel ----
+
+    /// Build a live, operational Player camp and return its handle.
+    fn build_player_camp(world: &mut World, res: &mut Resources) -> Entity {
+        let camp = economy::build(
+            world,
+            res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::new(Fixed::from_int(1), Fixed::from_int(1)),
+        )
+        .expect("camp affordable");
+        world.building[camp.index as usize].build_ticks_left = 0; // operational
+        camp
+    }
+
+    fn has_line(view: &gonedark_render::command_panel::CommandPanelView, needle: &str) -> bool {
+        view.lines.iter().any(|l| l.text.contains(needle))
+    }
+
+    /// A selected camp shows its train + upgrade options and resources.
+    #[test]
+    fn command_panel_view_camp_shows_train_and_upgrade() {
+        let mut world = World::new();
+        let mut res = Resources::new(10_000);
+        let camp = build_player_camp(&mut world, &mut res);
+        let sel = selection_of(&[camp]);
+        let view = command_panel_view(&world, &sel, res.get(Faction::Player), &[UnitKind::Rifleman, UnitKind::Heavy]);
+        assert!(view.title.starts_with("CAMP"), "title names the camp: {}", view.title);
+        assert!(has_line(&view, "TRAIN"), "shows a TRAIN section");
+        assert!(has_line(&view, "UPGRADE"), "shows an UPGRADE section");
+        assert!(has_line(&view, "Rifleman"), "lists a trainable unit");
+    }
+
+    /// A selected troop group shows its composition, average health, and stance.
+    #[test]
+    fn command_panel_view_troops_shows_composition_and_stance() {
+        let (mut world, e) = world_with_player_units(2);
+        world.unit_kind[e[0].index as usize] = UnitKind::Heavy;
+        world.unit_kind[e[1].index as usize] = UnitKind::Rifleman;
+        let sel = selection_of(&[e[0], e[1]]);
+        let view = command_panel_view(&world, &sel, 500, &[UnitKind::Rifleman, UnitKind::Heavy]);
+        assert_eq!(view.title, "SELECTED — 2 units");
+        assert!(has_line(&view, "1x Tank"));
+        assert!(has_line(&view, "1x Rifleman"));
+        assert!(has_line(&view, "Stance:"));
+        assert!(has_line(&view, "Avg HP:"));
+    }
+
+    /// An empty selection shows the build palette + resources.
+    #[test]
+    fn command_panel_view_empty_shows_build_palette() {
+        let world = World::new();
+        let empty = Selection::new();
+        let view = command_panel_view(&world, &empty, 500, &[UnitKind::Rifleman, UnitKind::Heavy]);
+        assert_eq!(view.title, "BUILD");
+        assert!(has_line(&view, "Resources:"));
+        assert!(has_line(&view, "Camp"), "lists the placeable camp");
+    }
+
+    /// A selection mixing a camp and troops shows the CAMP panel (building takes priority).
+    #[test]
+    fn command_panel_view_building_takes_priority_over_troops() {
+        let mut world = World::new();
+        let mut res = Resources::new(10_000);
+        let unit = world.spawn();
+        world.faction[unit.index as usize] = Faction::Player;
+        world.kind[unit.index as usize] = EntityKind::Unit;
+        let camp = build_player_camp(&mut world, &mut res);
+        let sel = selection_of(&[unit, camp]); // troop first, camp second
+        let view = command_panel_view(&world, &sel, res.get(Faction::Player), &[UnitKind::Rifleman, UnitKind::Heavy]);
+        assert!(view.title.starts_with("CAMP"), "a building in the selection wins over troops");
     }
 
     /// Embodied suppresses tap-to-move: a pointer-down while embodied produces no `Move`.

@@ -2862,3 +2862,47 @@ only means invariant #2 holds — no game logic forks, the seam is the existing 
 **Consequences:** the editor is a Settings-shell surface ([D32](decisions.md)) over the existing
 touch seams — no sim or netcode change. Build slice: [`pve-campaign-plan.md`](pve-campaign-plan.md)
 WS-D. Full design: [`customization.md`](customization.md).
+
+## D62 — Selection-contextual command panel; no minimap
+
+**Status:** decided. Realizes the Phase-4 "command HUD" polish item; replaces the always-on
+build/train/upgrade text panels with one selection-driven panel.
+
+**Decision:**
+
+- **The command panel is contextual on the current selection** (CoH-style), a single boxed panel
+  in the **top-right**: select a **camp** → its resources, train options, upgrade, and production
+  queue; select **troops** → their composition, average health, and stance; select **nothing** →
+  the build palette + banked resources. It supersedes the old always-on panels (build palette
+  always shown, train/upgrade shown whenever a camp existed), which are deleted. The numbers come
+  from the same `economy` / `train_options` / `upgrade_view` seams the old panels used, so they
+  still match the sim.
+- **The actions stay the existing key/seam bindings** (`B` build, `R`/`H` train, `U` upgrade); the
+  panel is the *readout* of what is contextually available — it changes nothing about the
+  `Command` vocabulary or the sim. Pure presentation: the host derives the panel from a read-only
+  pass over the (checksummed) sim + selection (`engine::command_panel_view`), folds nothing, and
+  draws it command-view-only (never over the dark embodied frame, invariant #6).
+- **No minimap** — anywhere. The "going dark" dread pillar is *no map reveal*; Q1 (reaffirmed
+  [D31](decisions.md)) leans alerts-only, and [D61](decisions.md) already forbids a minimap while
+  embodied. A *command-view* minimap would not break invariant #6, but it cuts against the
+  intended feel, so it is ruled out by design rather than left as a tempting default. Spatial
+  awareness in the command view comes from the world itself (pan/zoom over the real battlefield),
+  not a corner map.
+- **Troops have no in-match upgrades yet** — that system does not exist in the sim (the gunsmith
+  customization, [D60](decisions.md), is *pre-match loadout*). The troops panel honestly shows
+  composition + stance (the order/stance vocabulary *is* the unit "options" — invariant #3); real
+  per-unit upgrade rows are a `core` follow-up if/when that system lands.
+
+**Why:** a selection-contextual panel is table-stakes RTS UX and is pure placement/derivation, so
+it sits inside the locked decisions ([D43](decisions.md) selection grammar, [D61](decisions.md)
+movable HUD) without touching an invariant. Keeping the *minimap* out is the load-bearing call: it
+is the one element here that would erode the going-dark tension, so the decision records *why* it
+is absent rather than letting a future "just add a minimap" slip in. Reusing the existing economy /
+train / upgrade data seams keeps the panel byte-consistent with the sim and let the old
+layout-only code (`render_command_panels`, `*_labels`) be deleted as dead.
+
+**Consequences:** render gains `render::command_panel` (a boxed top-right panel drawn through the
+shared `overlay` quad pipeline + the text pass) and the engine gains the pure `command_panel_view`
+derivation; the per-corner `render_command_panels` / `CommandPanels` / `ActiveCamp` API and the
+orphaned `train_panel_labels` / `upgrade_labels` layout fns are removed. The contextual panel
+becomes one of the controls the [D61](decisions.md) HUD-layout editor can later reposition.
