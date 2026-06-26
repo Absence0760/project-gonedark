@@ -249,6 +249,12 @@ pub struct Weapon {
     /// Ticks left in an in-progress reload (`0` = not reloading). Set by `Command::Reload`,
     /// counted down in combat upkeep; on reaching zero the magazine refills to `mag_size`.
     pub reload_left: u16,
+    /// Maximum turret slew in angle-units per tick (tank embodiment P2, D55). `0` = a fixed mount
+    /// locked to the hull — the default for infantry and every existing unit, so their
+    /// `turret_yaw` never moves and the new field costs the checksum nothing. A real tank gun has
+    /// `turret_speed > 0`: the embodied `AimTurret` slews `turret_yaw` toward the look-stick at
+    /// this rate, and the AI turret tracks the hull at it (cosmetic — invariant #3).
+    pub turret_speed: u16,
 }
 
 /// A unit's body posture (the embodied crouch toggle). Crouching trades mobility for accuracy:

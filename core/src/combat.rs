@@ -470,6 +470,7 @@ mod tests {
             ammo: 0,
             reload_ticks: 0,
             reload_left: 0,
+            turret_speed: 0,
         }
     }
 
@@ -485,6 +486,7 @@ mod tests {
             ammo: mag,
             reload_ticks: reload,
             reload_left: 0,
+            turret_speed: 0,
         }
     }
 

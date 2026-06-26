@@ -36,8 +36,9 @@ use crate::sim::Command;
 /// `DelayChange` frame (the agreed RTT-adaptive input-delay change); 4 added the
 /// `Command::Locomote` vocabulary (tag 11) — a build without it would only choke on `BadTag(11)`
 /// mid-session, so the bump fails the skew loudly at the connection handshake instead; 5 added
-/// the embodied `Command::Reload` (tag 12) + `Command::Crouch` (tag 13) vocabulary.
-const WIRE_VERSION: u8 = 5;
+/// the embodied `Command::Reload` (tag 12) + `Command::Crouch` (tag 13) vocabulary; 6 added the
+/// embodied tank `Command::AimTurret` (tag 14) + `Command::DriveHull` (tag 15) vocabulary.
+const WIRE_VERSION: u8 = 6;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
 /// carry command sets, checksum reports, and delay-change proposals over the one wire format.
@@ -340,6 +341,16 @@ fn put_command(w: &mut Writer, c: &Command) {
             put_entity(w, entity);
             w.u8(crouched as u8);
         }
+        Command::AimTurret { entity, dir } => {
+            w.u8(14);
+            put_entity(w, entity);
+            put_vec2(w, dir);
+        }
+        Command::DriveHull { entity, dir } => {
+            w.u8(15);
+            put_entity(w, entity);
+            put_vec2(w, dir);
+        }
     }
 }
 
@@ -397,6 +408,14 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
         13 => Command::Crouch {
             entity: get_entity(r)?,
             crouched: r.u8()? != 0,
+        },
+        14 => Command::AimTurret {
+            entity: get_entity(r)?,
+            dir: get_vec2(r)?,
+        },
+        15 => Command::DriveHull {
+            entity: get_entity(r)?,
+            dir: get_vec2(r)?,
         },
         t => return Err(DecodeError::BadTag(t)),
     })
@@ -960,6 +979,14 @@ mod tests {
             Command::Crouch {
                 entity: ent(9, 1),
                 crouched: false,
+            },
+            Command::AimTurret {
+                entity: ent(10, 0),
+                dir: v(1, 0),
+            },
+            Command::DriveHull {
+                entity: ent(11, 1),
+                dir: v(0, 1),
             },
             // Cover the remaining Order variants too.
             Command::SetOrder {
@@ -1600,10 +1627,11 @@ mod tests {
     #[test]
     fn older_wire_version_frames_now_rejected() {
         // Every codec bump must be enforced: a frame written under any older WIRE_VERSION is
-        // rejected loudly, never silently misparsed against the new layout. Cover both the
-        // original frame-kind bump (2) and the immediately-previous version (3, pre-`Locomote`),
-        // since `Locomote` (tag 11) is the reason WIRE_VERSION is now 4.
-        for old in [2u8, 3] {
+        // rejected loudly, never silently misparsed against the new layout. Cover the original
+        // frame-kind bump (2), the pre-`Locomote` version (3), and the immediately-previous
+        // version (5, pre-`AimTurret`/`DriveHull`) — the P2 tank vocabulary (tags 14/15) is the
+        // reason WIRE_VERSION is now 6, so a pre-P2 peer's frame must be rejected at the handshake.
+        for old in [2u8, 3, 5] {
             let mut w = Writer::new();
             w.u8(old);
             w.u8(FrameKind::Command as u8);

@@ -10,6 +10,7 @@ use crate::components::{
     Weapon,
 };
 use crate::fixed::Fixed;
+use crate::trig::Angle;
 
 /// Default sight radius (world units) every entity spawns with (fog-of-war input). Kept here
 /// (not in `fog`) so the ECS has no dependency on a worker-owned module.
@@ -65,6 +66,22 @@ pub struct World {
     pub vision: Vec<Fixed>,
     /// Per-building state (construction/upgrade/production); inert for units.
     pub building: Vec<Building>,
+
+    // --- Tank embodiment P2 (D55): independent hull + turret heading + inertia ---
+    /// The direction the chassis points (a maintained world `Angle`). Movement turns it
+    /// (rate-limited by [`systems::HULL_TURN_RATE`](crate::systems::HULL_TURN_RATE)); it is the
+    /// facet reference the armour model will resolve against (plan §3/§4). Defaults to `Angle(0)`
+    /// (facing `+X`); infantry/buildings leave it tracking their velocity but nothing reads it
+    /// back into movement, so it is purely new state in P2. Folded into the checksum (invariant #7).
+    pub hull_heading: Vec<Angle>,
+    /// The independent gun bearing — an ABSOLUTE world `Angle` (the HUD shows `turret_yaw − hull`).
+    /// Slews toward the aim/hull at the weapon's `turret_speed`; a `turret_speed` of `0` (the
+    /// infantry default) pins it, so it stays `Angle(0)` for every non-tank entity.
+    pub turret_yaw: Vec<Angle>,
+    /// Current forward speed of the chassis. `DriveHull` accelerates/brakes it toward the stick
+    /// target by [`systems::HULL_ACCEL`](crate::systems::HULL_ACCEL) (tank inertia — no snap). Only
+    /// the embodied drive path moves it; it stays `Fixed::ZERO` for order-driven units.
+    pub hull_speed: Vec<Fixed>,
 }
 
 impl World {
@@ -94,6 +111,9 @@ impl World {
             self.retreat_below[i] = Fixed::ZERO;
             self.vision[i] = DEFAULT_VISION;
             self.building[i] = Building::default();
+            self.hull_heading[i] = Angle(0);
+            self.turret_yaw[i] = Angle(0);
+            self.hull_speed[i] = Fixed::ZERO;
             Entity {
                 index,
                 generation: self.generation[i],
@@ -118,6 +138,9 @@ impl World {
             self.retreat_below.push(Fixed::ZERO);
             self.vision.push(DEFAULT_VISION);
             self.building.push(Building::default());
+            self.hull_heading.push(Angle(0));
+            self.turret_yaw.push(Angle(0));
+            self.hull_speed.push(Fixed::ZERO);
             Entity {
                 index,
                 generation: 0,
@@ -235,6 +258,9 @@ impl World {
             retreat_below,
             vision,
             building,
+            hull_heading,
+            turret_yaw,
+            hull_speed,
         } = components;
         // Every array must be the same length as the liveness arrays.
         if alive.len() != cap
@@ -254,6 +280,9 @@ impl World {
             || retreat_below.len() != cap
             || vision.len() != cap
             || building.len() != cap
+            || hull_heading.len() != cap
+            || turret_yaw.len() != cap
+            || hull_speed.len() != cap
         {
             return None;
         }
@@ -293,6 +322,9 @@ impl World {
             retreat_below,
             vision,
             building,
+            hull_heading,
+            turret_yaw,
+            hull_speed,
         })
     }
 }
@@ -317,4 +349,7 @@ pub struct WorldComponents {
     pub retreat_below: Vec<Fixed>,
     pub vision: Vec<Fixed>,
     pub building: Vec<Building>,
+    pub hull_heading: Vec<Angle>,
+    pub turret_yaw: Vec<Angle>,
+    pub hull_speed: Vec<Fixed>,
 }

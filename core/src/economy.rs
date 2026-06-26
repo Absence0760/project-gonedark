@@ -184,6 +184,8 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 ammo: 30,
                 reload_ticks: 90,
                 reload_left: 0,
+                // Infantry rifle: fixed mount, no independent turret (P2 default).
+                turret_speed: 0,
             },
         ),
         UnitKind::Heavy => (
@@ -199,6 +201,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 ammo: 50,
                 reload_ticks: 138,
                 reload_left: 0,
+                // Heavy infantry bruiser: still a fixed mount (the playable tank is the new
+                // dedicated kind, plan §3). No independent turret here.
+                turret_speed: 0,
             },
         ),
     }

@@ -26,6 +26,7 @@ use crate::persist::{DeserializeError, Reader, StateSink, Writer};
 use crate::rng::Rng;
 use crate::snapshot::Snapshot;
 use crate::systems;
+use crate::trig::Angle;
 use crate::terrain::{MapId, Terrain};
 use crate::territory::{self, ControlPoint, Territory};
 
@@ -94,6 +95,22 @@ pub enum Command {
     /// no-op for a dead unit; harmless for an order-driven one (posture only affects the embodied
     /// fire/move paths). Lockstep-streamed like the other embodied intents.
     Crouch { entity: Entity, crouched: bool },
+    /// Slew an embodied tank's turret toward the look-stick bearing `dir` (tank embodiment P2,
+    /// D55). `dir` is the desired absolute aim, already quantized to `Fixed` at the host boundary
+    /// (invariant #1, exactly like [`Fire`](Self::Fire)/[`Locomote`](Self::Locomote)). The sim
+    /// turns `turret_yaw` one step (at the weapon's `turret_speed`) toward `atan2(dir.y, dir.x)`
+    /// via [`trig::rotate_toward`](crate::trig::rotate_toward). EMBODIED-ONLY (`alive && Embodied`,
+    /// else a no-op, mirroring `Locomote`); a zero `dir` is a no-op (no bearing to aim at). One per
+    /// embodied tank per tick the look-stick is live; rides the lockstep stream (invariant #7).
+    AimTurret { entity: Entity, dir: Vec2 },
+    /// Drive an embodied tank's chassis one tick along `dir` — the vehicle locomotion intent that
+    /// replaces [`Locomote`](Self::Locomote) for tanks (tank embodiment P2, D55). Unlike infantry's
+    /// instant strafe, `dir` turns the **hull heading** (rate-limited) and drives forward along it
+    /// with inertia (`hull_speed` accelerates/brakes toward the stick), so the tank turns-then-moves
+    /// and a released stick coasts to a halt. `dir` is host-quantized to `Fixed` (invariant #1); its
+    /// magnitude is the analog throttle. EMBODIED-ONLY (`alive && Embodied`, else a no-op).
+    /// Lockstep-streamed like the other embodied intents (invariant #7).
+    DriveHull { entity: Entity, dir: Vec2 },
 }
 
 /// The simulation: the deterministic world, the static terrain, per-faction resources, the
@@ -150,8 +167,10 @@ impl Sim {
         for c in commands {
             self.apply(*c);
         }
-        // Fixed system order (deterministic): move → fight → capture → economy.
+        // Fixed system order (deterministic): move → orient → fight → capture → economy.
         orders::order_system(&mut self.world, &self.terrain);
+        // Cosmetic AI hull/turret slew, AFTER movement sets this tick's velocity (D55 P2).
+        systems::heading_system(&mut self.world);
         combat::combat_system(
             &mut self.world,
             &self.terrain,
@@ -264,6 +283,30 @@ impl Sim {
                     };
                 }
             }
+            Command::AimTurret { entity, dir } => {
+                // Embodied-only, exactly like Locomote/Fire. A zero stick has no bearing → no-op.
+                let i = entity.index as usize;
+                if dir != Vec2::ZERO
+                    && self.world.is_alive(entity)
+                    && self.world.input_source[i] == InputSource::Embodied
+                {
+                    let bearing = crate::trig::atan2(dir.y, dir.x);
+                    let step = self.world.weapon[i].turret_speed as i32;
+                    self.world.turret_yaw[i] =
+                        crate::trig::rotate_toward(self.world.turret_yaw[i], bearing, step);
+                }
+            }
+            Command::DriveHull { entity, dir } => {
+                // Embodied-only vehicle locomotion (turn-then-drive + inertia). Order-driven (or
+                // dead) units ignore it, as order_system skips embodied units. A zero/near-zero dir
+                // brakes the hull to rest rather than no-opping (the stick was released).
+                let i = entity.index as usize;
+                if self.world.is_alive(entity)
+                    && self.world.input_source[i] == InputSource::Embodied
+                {
+                    systems::drive_hull(&mut self.world, i, dir);
+                }
+            }
         }
     }
 
@@ -317,6 +360,7 @@ impl Sim {
             sink.write_u32(w.ammo as u32);
             sink.write_u32(w.reload_ticks as u32);
             sink.write_u32(w.reload_left as u32);
+            sink.write_u32(w.turret_speed as u32);
             sink.write_i32(self.world.suppression[i].to_bits());
             match self.world.last_attacker[i] {
                 Some(e) => {
@@ -329,6 +373,10 @@ impl Sim {
             sink.write_i32(self.world.retreat_below[i].to_bits());
             sink.write_i32(self.world.vision[i].to_bits());
             write_building(sink, &self.world.building[i]);
+            // Tank embodiment P2 (D55): hull/turret headings + chassis speed (all sim state).
+            sink.write_i32(self.world.hull_heading[i].0);
+            sink.write_i32(self.world.turret_yaw[i].0);
+            sink.write_i32(self.world.hull_speed[i].to_bits());
         }
         // Global per-faction resources, in fixed faction order.
         for f in Faction::ALL {
@@ -434,6 +482,9 @@ impl Sim {
         let mut retreat_below = Vec::with_capacity(cap);
         let mut vision = Vec::with_capacity(cap);
         let mut building = Vec::with_capacity(cap);
+        let mut hull_heading = Vec::with_capacity(cap);
+        let mut turret_yaw = Vec::with_capacity(cap);
+        let mut hull_speed = Vec::with_capacity(cap);
 
         for _ in 0..cap {
             alive.push(r.read_u8()? != 0);
@@ -458,12 +509,17 @@ impl Sim {
                 ammo: read_u16(&mut r)?,
                 reload_ticks: read_u16(&mut r)?,
                 reload_left: read_u16(&mut r)?,
+                turret_speed: read_u16(&mut r)?,
             });
             suppression.push(Fixed::from_bits(r.read_i32()?));
             last_attacker.push(read_opt_entity(&mut r)?);
             retreat_below.push(Fixed::from_bits(r.read_i32()?));
             vision.push(Fixed::from_bits(r.read_i32()?));
             building.push(read_building(&mut r)?);
+            // Tank embodiment P2 (D55): mirror fold()'s hull/turret/speed trio, in the same order.
+            hull_heading.push(Angle(r.read_i32()?));
+            turret_yaw.push(Angle(r.read_i32()?));
+            hull_speed.push(Fixed::from_bits(r.read_i32()?));
         }
 
         // Global per-faction resources, fixed faction order.
@@ -531,6 +587,9 @@ impl Sim {
                 retreat_below,
                 vision,
                 building,
+                hull_heading,
+                turret_yaw,
+                hull_speed,
             },
         )
         .ok_or(DeserializeError::CorruptState)?;
@@ -556,7 +615,7 @@ impl Sim {
 /// Authoritative-snapshot format version (D28). Bumped on any layout change so a stale snapshot is
 /// rejected ([`DeserializeError::BadVersion`]) rather than silently misparsed into a divergent
 /// world. Independent of the lockstep wire version — different codec, different evolution.
-const SNAPSHOT_VERSION: u8 = 3;
+const SNAPSHOT_VERSION: u8 = 4;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.
@@ -856,5 +915,114 @@ mod tests {
             sim.world.pos[e.index as usize],
             reference.pos[r.index as usize]
         );
+    }
+
+    // --- tank embodiment P2 (D55): AimTurret / DriveHull command routing --------------------
+
+    #[test]
+    fn aim_turret_slews_toward_the_bearing_by_turret_speed_then_holds() {
+        let (mut sim, e) = sim_with_embodied_unit();
+        let i = e.index as usize;
+        sim.world.weapon[i].turret_speed = 200;
+        let north = Vec2::new(Fixed::ZERO, Fixed::ONE); // bearing = ANGLE_FULL/4
+        // First tick steps the turret toward +Y by exactly turret_speed.
+        sim.step(&[Command::AimTurret { entity: e, dir: north }]);
+        assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(200));
+        // Held long enough, it reaches the bearing and then holds (no overshoot, no drift).
+        let quarter = crate::trig::ANGLE_FULL / 4;
+        for _ in 0..(quarter / 200 + 4) {
+            sim.step(&[Command::AimTurret { entity: e, dir: north }]);
+        }
+        assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(quarter), "reaches the bearing");
+        sim.step(&[Command::AimTurret { entity: e, dir: north }]);
+        assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(quarter), "and holds it");
+    }
+
+    #[test]
+    fn aim_turret_is_embodied_only_and_zero_dir_is_a_noop() {
+        let (mut sim, e) = sim_with_embodied_unit();
+        let i = e.index as usize;
+        sim.world.weapon[i].turret_speed = 200;
+        // A zero look-stick has no bearing → no slew.
+        sim.step(&[Command::AimTurret { entity: e, dir: Vec2::ZERO }]);
+        assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(0));
+        // Surfaced (order-driven) → the live aim no-ops, and the AI slew leaves a held turret put.
+        sim.world.input_source[i] = InputSource::Orders;
+        sim.step(&[Command::AimTurret {
+            entity: e,
+            dir: Vec2::new(Fixed::ZERO, Fixed::ONE),
+        }]);
+        assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(0));
+    }
+
+    #[test]
+    fn drive_hull_moves_an_embodied_tank_and_no_ops_when_surfaced() {
+        let (mut sim, e) = sim_with_embodied_unit();
+        let i = e.index as usize;
+        let east = Vec2::new(Fixed::ONE, Fixed::ZERO); // along the initial +X heading
+        sim.step(&[Command::DriveHull { entity: e, dir: east }]);
+        // Accelerated from rest by one step and advanced along the hull heading.
+        assert_eq!(sim.world.hull_speed[i], systems::HULL_ACCEL);
+        assert!(sim.world.pos[i].x > Fixed::ZERO);
+        assert_eq!(sim.world.pos[i].y, Fixed::ZERO);
+        // Surface → DriveHull is ignored (order-driven units never take live locomotion).
+        sim.world.input_source[i] = InputSource::Orders;
+        let before = sim.world.pos[i];
+        sim.step(&[Command::DriveHull { entity: e, dir: east }]);
+        assert_eq!(sim.world.pos[i], before);
+    }
+
+    #[test]
+    fn drive_hull_release_brakes_the_embodied_tank_to_rest() {
+        let (mut sim, e) = sim_with_embodied_unit();
+        let i = e.index as usize;
+        let east = Vec2::new(Fixed::ONE, Fixed::ZERO);
+        for _ in 0..50 {
+            sim.step(&[Command::DriveHull { entity: e, dir: east }]);
+        }
+        assert_eq!(sim.world.hull_speed[i], MOVE_SPEED, "spun up to the cap");
+        // Release the stick: a zero-dir DriveHull brakes the chassis to a full stop.
+        for _ in 0..200 {
+            sim.step(&[Command::DriveHull {
+                entity: e,
+                dir: Vec2::ZERO,
+            }]);
+        }
+        assert_eq!(sim.world.hull_speed[i], Fixed::ZERO);
+        assert_eq!(sim.world.vel[i], Vec2::ZERO);
+    }
+
+    #[test]
+    fn aim_turret_for_a_dead_entity_is_a_no_op() {
+        // A stale handle must not panic or index out of bounds: the embodied-only `is_alive` guard
+        // is load-bearing in a zero-spawn sim (empty component spans). No panic + tick advancing to
+        // 1 proves `step` ran the guarded arm to completion.
+        let mut sim = Sim::new(0);
+        let stale = Entity {
+            index: 0,
+            generation: 99,
+        };
+        sim.step(&[Command::AimTurret {
+            entity: stale,
+            dir: Vec2::new(Fixed::ZERO, Fixed::ONE),
+        }]);
+        assert_eq!(sim.tick_count(), 1);
+    }
+
+    #[test]
+    fn drive_hull_for_a_dead_entity_is_a_no_op() {
+        // Same contract as Locomote/AimTurret: a stale handle is dropped by the `is_alive` guard
+        // before `drive_hull` would index the empty spans. The assertion is "no panic"; the tick
+        // reaching 1 proves the guard suppressed the move and `step` completed.
+        let mut sim = Sim::new(0);
+        let stale = Entity {
+            index: 0,
+            generation: 99,
+        };
+        sim.step(&[Command::DriveHull {
+            entity: stale,
+            dir: Vec2::new(Fixed::ONE, Fixed::ZERO),
+        }]);
+        assert_eq!(sim.tick_count(), 1);
     }
 }

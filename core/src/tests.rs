@@ -650,12 +650,16 @@ fn ecs_respawn_resets_component_arrays() {
         ammo: 11,
         reload_ticks: 60,
         reload_left: 17,
+        turret_speed: 9,
     };
     w.posture[i] = crate::components::Posture::Crouched;
     w.suppression[i] = Fixed::HALF;
     w.last_attacker[i] = Some(a);
     w.retreat_below[i] = Fixed::from_ratio(1, 3);
     w.vision[i] = Fixed::from_int(99);
+    w.hull_heading[i] = crate::trig::Angle(12_345);
+    w.turret_yaw[i] = crate::trig::Angle(6_789);
+    w.hull_speed[i] = Fixed::from_ratio(1, 8);
     w.building[i] = Building {
         kind: crate::components::BuildingKind::Camp,
         level: 5,
@@ -684,6 +688,10 @@ fn ecs_respawn_resets_component_arrays() {
     assert_eq!(w.retreat_below[j], Fixed::ZERO);
     assert_eq!(w.vision[j], Fixed::from_int(24)); // DEFAULT_VISION
     assert_eq!(w.building[j], Building::default());
+    // Tank embodiment P2 (D55) fields reset to their neutral defaults on slot recycle.
+    assert_eq!(w.hull_heading[j], crate::trig::Angle(0));
+    assert_eq!(w.turret_yaw[j], crate::trig::Angle(0));
+    assert_eq!(w.hull_speed[j], Fixed::ZERO);
 }
 
 #[test]
@@ -1354,6 +1362,44 @@ fn snapshot_preserves_posture_and_magazine_and_they_are_checksummed() {
     sim.world.weapon[i].ammo = 12; // restore
     sim.world.weapon[i].reload_left = 43;
     assert_ne!(base, sim.checksum(), "reload timer is checksummed");
+}
+
+/// Tank embodiment P2 (D55): hull/turret headings + chassis speed + `turret_speed` are REAL sim
+/// state — they must survive serialize/deserialize AND be folded into the per-tick checksum, or a
+/// resumed peer diverges on the next tank tick (invariant #7). Guards fold()/deserialize symmetry.
+#[test]
+fn snapshot_preserves_hull_turret_heading_and_they_are_checksummed() {
+    use crate::trig::Angle;
+
+    let mut sim = Sim::new(11);
+    let u = sim.world.spawn();
+    let i = u.index as usize;
+    sim.world.hull_heading[i] = Angle(12_345);
+    sim.world.turret_yaw[i] = Angle(54_321);
+    sim.world.hull_speed[i] = Fixed::from_ratio(1, 16);
+    sim.world.weapon[i].turret_speed = 250;
+
+    let restored = Sim::deserialize(&sim.serialize()).expect("round-trip deserialize");
+    assert_eq!(restored.world.hull_heading[i], Angle(12_345), "hull_heading round-trips");
+    assert_eq!(restored.world.turret_yaw[i], Angle(54_321), "turret_yaw round-trips");
+    assert_eq!(restored.world.hull_speed[i], Fixed::from_ratio(1, 16), "hull_speed round-trips");
+    assert_eq!(restored.world.weapon[i].turret_speed, 250, "turret_speed round-trips");
+    assert_eq!(restored.checksum(), sim.checksum(), "restored state checksums identically");
+
+    // Each new field genuinely perturbs the checksum (it is folded, not ignored like unit_kind).
+    let base = sim.checksum();
+    sim.world.hull_heading[i] = Angle(0);
+    assert_ne!(base, sim.checksum(), "hull_heading is checksummed");
+    sim.world.hull_heading[i] = Angle(12_345); // restore
+    assert_eq!(base, sim.checksum());
+    sim.world.turret_yaw[i] = Angle(0);
+    assert_ne!(base, sim.checksum(), "turret_yaw is checksummed");
+    sim.world.turret_yaw[i] = Angle(54_321); // restore
+    sim.world.hull_speed[i] = Fixed::ZERO;
+    assert_ne!(base, sim.checksum(), "hull_speed is checksummed");
+    sim.world.hull_speed[i] = Fixed::from_ratio(1, 16); // restore
+    sim.world.weapon[i].turret_speed = 0;
+    assert_ne!(base, sim.checksum(), "turret_speed is checksummed");
 }
 
 /// The free-list ORDER is load-bearing: it decides the next spawn's slot. A snapshot taken after
