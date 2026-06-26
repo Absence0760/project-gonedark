@@ -407,6 +407,19 @@ fn should_auto_surface(embodied: bool, avatar_present: bool) -> bool {
     embodied && !avatar_present
 }
 
+/// Is `c` a ONE-SHOT/edge command — an intent that fires for a single input frame (embody, surface,
+/// a tap-order, build/train/upgrade, a stance change) — as opposed to a HELD/continuous command
+/// re-emitted every frame while a control is held ([`Command::Locomote`], [`Command::Fire`])?
+///
+/// Used by the sub-tick catch-up rule: a one-shot must force a tick if none elapsed this frame (or
+/// it is lost), but a held command must NOT — forcing a tick per render frame makes the sim advance
+/// at the render rate while the key is held, scaling avatar speed / fire rate with FPS. A dropped
+/// held command is re-emitted next frame, so it costs nothing to skip. PURE → unit-testable.
+#[inline]
+fn is_oneshot_command(c: &Command) -> bool {
+    !matches!(c, Command::Locomote { .. } | Command::Fire { .. })
+}
+
 /// Integrate one frame's horizontal mouse-look into the embodied yaw (radians). PURE so the
 /// turn-direction is unit-testable without a window. The look delta is **subtracted**: with the
 /// embodied basis (look dir `(cos yaw, sin yaw)`, world +Z up) the camera's screen-right is world
@@ -1248,12 +1261,17 @@ impl Game {
         if budget == MAX_CATCHUP_STEPS && self.acc >= tick_dt {
             self.acc = 0.0;
         }
-        // Sub-tick frame: if no whole tick elapsed this frame (render faster than TICK_HZ) but
-        // input produced commands, advance ONE tick anyway so the edge-triggered tap/embody intent
-        // — which fires for exactly one drained input frame — is not dropped. (At delay 0 a
-        // submitted-but-not-advanced tick would strand the input; raising the budget to 1 here is
-        // the contract `drive_lockstep` relies on.)
-        if budget == 0 && !commands.is_empty() {
+        // Sub-tick frame: if no whole tick elapsed this frame (render faster than TICK_HZ) but a
+        // ONE-SHOT/edge intent fired (tap / embody / build / order — each lives for exactly one
+        // drained input frame), advance ONE tick anyway so it is not dropped. (At delay 0 a
+        // submitted-but-not-advanced tick would strand the input.)
+        //
+        // CRUCIALLY this must NOT bump for HELD/continuous commands (locomote, fire), which are
+        // re-emitted every frame. Bumping on those forced a tick on every render frame, so the sim
+        // advanced at the *render* rate while a key was held — movement/fire scaled with FPS (a
+        // 2x/4x avatar overspeed at 120/240 Hz). A held command dropped on a sub-tick frame is
+        // harmless: next frame re-emits it, and it applies on the next whole tick at the true 60 Hz.
+        if budget == 0 && commands.iter().any(is_oneshot_command) {
             budget = 1;
         }
 
@@ -2073,6 +2091,75 @@ mod tests {
             !should_auto_surface(false, true),
             "not embodied + present → nothing to do"
         );
+    }
+
+    /// One-shot/edge commands force a sub-tick catch-up; held/continuous ones (locomote, fire) do
+    /// not — the distinction that keeps avatar speed framerate-independent.
+    #[test]
+    fn only_oneshot_commands_force_a_subtick_step() {
+        let e = test_player();
+        let dir = Vec2::new(Fixed::ONE, Fixed::ZERO);
+        assert!(is_oneshot_command(&Command::Embody { entity: e }));
+        assert!(is_oneshot_command(&Command::Surface { entity: e }));
+        assert!(is_oneshot_command(&Command::Move { entity: e, target: dir }));
+        assert!(!is_oneshot_command(&Command::Locomote { entity: e, dir }));
+        assert!(!is_oneshot_command(&Command::Fire { entity: e, dir }));
+    }
+
+    /// Headlessly replay the frame() accumulator + sub-tick bump + `drive_lockstep` path for one
+    /// embodied unit holding "forward", returning how far it travels in `seconds` at `fps`. The
+    /// distance MUST be framerate-independent (the bug fixed here scaled it with fps).
+    fn held_locomotion_distance(fps: f32, seconds: f32) -> f32 {
+        let mut sim = Sim::new(99);
+        let e = sim.world.spawn();
+        sim.world.kind[e.index as usize] = EntityKind::Unit;
+        sim.world.faction[e.index as usize] = Faction::Player;
+        let mut ls = Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY);
+        let tick_dt = 1.0 / TICK_HZ as f32;
+        let dt = 1.0 / fps;
+        let mut acc = 0.0f32;
+        let mut embodied = false;
+        let frames = (seconds * fps) as u32;
+        for f in 0..frames {
+            let mut commands: Vec<Command> = Vec::new();
+            if f == 0 {
+                commands.push(Command::Embody { entity: e });
+                embodied = true;
+            } else if embodied {
+                // Held "W" (forward at yaw 0 → +x). Re-emitted every frame, exactly like the host.
+                if let Some(c) = locomote::locomote_command(e, 0.0, (0.0, -1.0)) {
+                    commands.push(c);
+                }
+            }
+            acc += dt;
+            let mut budget = 0u32;
+            while acc >= tick_dt && budget < MAX_CATCHUP_STEPS {
+                acc -= tick_dt;
+                budget += 1;
+            }
+            if budget == MAX_CATCHUP_STEPS && acc >= tick_dt {
+                acc = 0.0;
+            }
+            if budget == 0 && commands.iter().any(is_oneshot_command) {
+                budget = 1;
+            }
+            drive_lockstep(&mut sim, &mut ls, None, commands, budget, |s, m| s.step(m));
+        }
+        fixed_to_f32(sim.world.pos[e.index as usize].x)
+    }
+
+    #[test]
+    fn held_locomotion_speed_is_framerate_independent() {
+        let d60 = held_locomotion_distance(60.0, 1.0);
+        let d120 = held_locomotion_distance(120.0, 1.0);
+        let d240 = held_locomotion_distance(240.0, 1.0);
+        // ~7.5 wu over 1s at the 60 Hz tick; every framerate lands within one tick's worth (1/8 wu).
+        let tol = 0.2;
+        assert!(
+            (d60 - d120).abs() < tol && (d120 - d240).abs() < tol,
+            "avatar speed must not scale with fps: 60={d60} 120={d120} 240={d240}"
+        );
+        assert!(d60 > 7.0 && d60 < 7.6, "and the 60 Hz baseline is ~7.5 wu/s: {d60}");
     }
 
     /// Mouse-look must not be inverted: a rightward delta (`look_dx > 0`) turns the view to the
