@@ -188,6 +188,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 turret_speed: 0,
                 // Hitscan infantry weapon (P3 default): no shell flight, resolves instantly.
                 muzzle_vel: Fixed::ZERO,
+                // No armour penetration (P4 default): full damage vs the unarmoured units it fights
+                // (multiplier 1.0); only bites against a future armoured kind. Balance unchanged.
+                penetration: Fixed::ZERO,
             },
         ),
         UnitKind::Heavy => (
@@ -208,6 +211,8 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 turret_speed: 0,
                 // Hitscan infantry weapon (P3 default): no shell flight, resolves instantly.
                 muzzle_vel: Fixed::ZERO,
+                // No armour penetration (P4 default) — unchanged balance vs unarmoured units.
+                penetration: Fixed::ZERO,
             },
         ),
     }

@@ -23,7 +23,7 @@
 //! shell is part of the lockstep state. A hard [`MAX_PROJECTILES`] cap bounds the pool against the
 //! Phase-3 thermal budget; an overflow shot is dropped deterministically.
 
-use crate::combat::{is_enemy, SUPPRESSION_MAX, SUPPRESSION_PER_HIT};
+use crate::combat::{facing_penetration_multiplier, is_enemy, SUPPRESSION_MAX, SUPPRESSION_PER_HIT};
 use crate::components::{Faction, Vec2};
 use crate::ecs::{Entity, World};
 use crate::event::SimEvent;
@@ -169,7 +169,16 @@ fn apply_impact(
         None => return,
     };
     let mult = terrain.cover_at(world.pos[target_idx]).damage_multiplier();
-    let damage = p.damage * mult;
+    // All-unit armour facing, resolved AT IMPACT (D55 P4): the shot direction is the shell's
+    // ground-plane velocity, so a shell that catches a tank mid-turn hits the facet it rotated into.
+    // An unarmoured target returns exactly 1.0, so non-armoured impacts are unchanged from P3.
+    let facing = facing_penetration_multiplier(
+        p.vel2d,
+        world.hull_heading[target_idx],
+        p.penetration,
+        world.armor[target_idx],
+    );
+    let damage = p.damage * mult * facing;
     world.health[target_idx].cur -= damage;
     world.last_attacker[target_idx] = Some(p.owner);
     world.suppression[target_idx] =
@@ -232,8 +241,9 @@ pub fn fire_ballistic(
         owner,
         faction: world.faction[shooter_idx],
         damage: w.damage,
-        // P4 will carry Weapon.penetration here; until then a shell carries zero (unused).
-        penetration: Fixed::ZERO,
+        // Carry the weapon's armour penetration onto the shell (D55 P4); resolved against the
+        // target's `armor` facet at impact in `apply_impact`.
+        penetration: w.penetration,
         lifetime: DEFAULT_LIFETIME,
     });
     // Spend a round + go on cooldown, identically to resolve_fire (the gate above guarantees
@@ -544,6 +554,7 @@ mod tests {
             reload_left: 0,
             turret_speed: 100,
             muzzle_vel: fx(2),
+            penetration: Fixed::ZERO,
         };
         let mut pool = Vec::new();
         let fired = fire_ballistic(&mut world, i, Vec2::new(Fixed::ONE, Fixed::ZERO), &mut pool);
@@ -571,6 +582,7 @@ mod tests {
             reload_left: 0,
             turret_speed: 100,
             muzzle_vel: fx(2),
+            penetration: Fixed::ZERO,
         };
         let mut pool = Vec::new();
         let east = Vec2::new(Fixed::ONE, Fixed::ZERO);
@@ -612,6 +624,7 @@ mod tests {
                 reload_left: 0,
                 turret_speed: 0,
                 muzzle_vel: fx(2),
+                penetration: Fixed::ZERO,
             };
             // Fill the pool to the hard cap.
             let mut pool: Vec<Projectile> = (0..MAX_PROJECTILES)

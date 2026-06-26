@@ -6,8 +6,8 @@
 //! stale handle to a recycled slot is detected, with no pointers in sim state.
 
 use crate::components::{
-    Building, EntityKind, Faction, Health, InputSource, Order, Posture, Stance, UnitKind, Vec2,
-    Weapon,
+    Armor, Building, EntityKind, Faction, Health, InputSource, Order, Posture, Stance, UnitKind,
+    Vec2, Weapon,
 };
 use crate::fixed::Fixed;
 use crate::trig::Angle;
@@ -82,6 +82,15 @@ pub struct World {
     /// target by [`systems::HULL_ACCEL`](crate::systems::HULL_ACCEL) (tank inertia — no snap). Only
     /// the embodied drive path moves it; it stays `Fixed::ZERO` for order-driven units.
     pub hull_speed: Vec<Fixed>,
+
+    // --- Tank embodiment P4 (D55): directional armour (all-unit penetration-vs-facing) ---
+    /// Per-entity directional armour, resolved against an incoming shot's
+    /// [`Weapon::penetration`](crate::components::Weapon::penetration) at every damage site
+    /// (`combat`/`projectile`). **Defaults to all-zero (unarmoured)** for every entity, which makes
+    /// the facing multiplier exactly `1.0` — so this array is byte-neutral for the checksum until a
+    /// unit is actually given armour, and the existing balance/tests are unchanged (invariant #7).
+    /// Folded into the per-tick checksum (it is gameplay sim state). Plan §3/§4.
+    pub armor: Vec<Armor>,
 }
 
 impl World {
@@ -114,6 +123,7 @@ impl World {
             self.hull_heading[i] = Angle(0);
             self.turret_yaw[i] = Angle(0);
             self.hull_speed[i] = Fixed::ZERO;
+            self.armor[i] = Armor::default();
             Entity {
                 index,
                 generation: self.generation[i],
@@ -141,6 +151,7 @@ impl World {
             self.hull_heading.push(Angle(0));
             self.turret_yaw.push(Angle(0));
             self.hull_speed.push(Fixed::ZERO);
+            self.armor.push(Armor::default());
             Entity {
                 index,
                 generation: 0,
@@ -261,6 +272,7 @@ impl World {
             hull_heading,
             turret_yaw,
             hull_speed,
+            armor,
         } = components;
         // Every array must be the same length as the liveness arrays.
         if alive.len() != cap
@@ -283,6 +295,7 @@ impl World {
             || hull_heading.len() != cap
             || turret_yaw.len() != cap
             || hull_speed.len() != cap
+            || armor.len() != cap
         {
             return None;
         }
@@ -325,6 +338,7 @@ impl World {
             hull_heading,
             turret_yaw,
             hull_speed,
+            armor,
         })
     }
 }
@@ -352,4 +366,5 @@ pub struct WorldComponents {
     pub hull_heading: Vec<Angle>,
     pub turret_yaw: Vec<Angle>,
     pub hull_speed: Vec<Fixed>,
+    pub armor: Vec<Armor>,
 }

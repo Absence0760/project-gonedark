@@ -265,6 +265,45 @@ pub struct Weapon {
     /// by a zero default, the same pattern as `mag_size`/`turret_speed`. `Fixed`, no float
     /// (invariant #1).
     pub muzzle_vel: Fixed,
+    /// Armour penetration this weapon's shot carries, compared against the defender's [`Armor`]
+    /// facet at the damage step (tank embodiment P4, D55). `0` (the default for infantry and every
+    /// existing weapon) penetrates an **unarmoured** defender fully (`armor == {0,0,0}` ⇒
+    /// multiplier `1.0`, see [`combat::facing_penetration_multiplier`](crate::combat::facing_penetration_multiplier)),
+    /// so the new field is byte-neutral for the existing balance: it only bites against an armoured
+    /// target, where a low-penetration shot bounces off the thick frontal facet but pens the
+    /// thinner flank/rear. `Fixed`, no float (invariant #1).
+    pub penetration: Fixed,
+}
+
+/// Directional armour, in the same `Fixed` units a [`Weapon::penetration`] is measured in (tank
+/// embodiment P4, D55). A shot is bucketed onto one facet by the angle between its travel
+/// direction and the defender's [`hull_heading`](crate::ecs::World::hull_heading), then its
+/// penetration is compared against that facet's value
+/// ([`combat::facing_penetration_multiplier`](crate::combat::facing_penetration_multiplier)).
+///
+/// **The default is all-zero = unarmoured**, which yields a damage multiplier of exactly `1.0` on
+/// every facet regardless of penetration — so every Rifleman, Heavy, and building takes *identical*
+/// damage to today and the entire existing balance + combat-test suite is unchanged (invariant #7
+/// safety: armour only perturbs the checksum where a unit is actually armoured). A real tank carries
+/// thick `front`, thinner `side`, thinnest `rear` — *angle the hull at the enemy; flank to kill*.
+/// All `Fixed`, no float (invariant #1).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Armor {
+    /// Armour facing the hull heading — the thickest facet on a tank.
+    pub front: Fixed,
+    /// Armour on either flank (90° off the hull heading).
+    pub side: Fixed,
+    /// Armour at the tail — the thinnest facet.
+    pub rear: Fixed,
+}
+
+impl Armor {
+    /// Is this an unarmoured entity (every facet zero)? The common case — every non-tank — and the
+    /// fast path that guarantees a `1.0` damage multiplier without any facet/trig work.
+    #[inline]
+    pub fn is_unarmored(self) -> bool {
+        self.front == Fixed::ZERO && self.side == Fixed::ZERO && self.rear == Fixed::ZERO
+    }
 }
 
 /// A unit's body posture (the embodied crouch toggle). Crouching trades mobility for accuracy:

@@ -14,7 +14,7 @@
 use crate::checksum::Checksum;
 use crate::combat;
 use crate::components::{
-    Building, BuildingKind, EntityKind, Faction, Health, InputSource, Order, Posture,
+    Armor, Building, BuildingKind, EntityKind, Faction, Health, InputSource, Order, Posture,
     ProductionItem, Stance, UnitKind, Vec2, Weapon,
 };
 use crate::economy::{self, Resources};
@@ -392,6 +392,9 @@ impl Sim {
             sink.write_u32(w.reload_left as u32);
             sink.write_u32(w.turret_speed as u32);
             sink.write_i32(w.muzzle_vel.to_bits());
+            // Tank embodiment P4 (D55): weapon armour penetration (sim state — drives the facing
+            // multiplier). Zero for every existing weapon, so byte-neutral until a tank is fielded.
+            sink.write_i32(w.penetration.to_bits());
             sink.write_i32(self.world.suppression[i].to_bits());
             match self.world.last_attacker[i] {
                 Some(e) => {
@@ -408,6 +411,12 @@ impl Sim {
             sink.write_i32(self.world.hull_heading[i].0);
             sink.write_i32(self.world.turret_yaw[i].0);
             sink.write_i32(self.world.hull_speed[i].to_bits());
+            // Tank embodiment P4 (D55): directional armour (sim state). All-zero (unarmoured) for
+            // every existing entity, so it adds three zero words per slot and moves nothing.
+            let armor = self.world.armor[i];
+            sink.write_i32(armor.front.to_bits());
+            sink.write_i32(armor.side.to_bits());
+            sink.write_i32(armor.rear.to_bits());
         }
         // Global per-faction resources, in fixed faction order.
         for f in Faction::ALL {
@@ -535,6 +544,7 @@ impl Sim {
         let mut hull_heading = Vec::with_capacity(cap);
         let mut turret_yaw = Vec::with_capacity(cap);
         let mut hull_speed = Vec::with_capacity(cap);
+        let mut armor = Vec::with_capacity(cap);
 
         for _ in 0..cap {
             alive.push(r.read_u8()? != 0);
@@ -561,6 +571,7 @@ impl Sim {
                 reload_left: read_u16(&mut r)?,
                 turret_speed: read_u16(&mut r)?,
                 muzzle_vel: Fixed::from_bits(r.read_i32()?),
+                penetration: Fixed::from_bits(r.read_i32()?),
             });
             suppression.push(Fixed::from_bits(r.read_i32()?));
             last_attacker.push(read_opt_entity(&mut r)?);
@@ -571,6 +582,12 @@ impl Sim {
             hull_heading.push(Angle(r.read_i32()?));
             turret_yaw.push(Angle(r.read_i32()?));
             hull_speed.push(Fixed::from_bits(r.read_i32()?));
+            // Tank embodiment P4 (D55): mirror fold()'s armour trio (front/side/rear), same order.
+            armor.push(Armor {
+                front: Fixed::from_bits(r.read_i32()?),
+                side: Fixed::from_bits(r.read_i32()?),
+                rear: Fixed::from_bits(r.read_i32()?),
+            });
         }
 
         // Global per-faction resources, fixed faction order.
@@ -662,6 +679,7 @@ impl Sim {
                 hull_heading,
                 turret_yaw,
                 hull_speed,
+                armor,
             },
         )
         .ok_or(DeserializeError::CorruptState)?;
@@ -688,7 +706,7 @@ impl Sim {
 /// Authoritative-snapshot format version (D28). Bumped on any layout change so a stale snapshot is
 /// rejected ([`DeserializeError::BadVersion`]) rather than silently misparsed into a divergent
 /// world. Independent of the lockstep wire version — different codec, different evolution.
-const SNAPSHOT_VERSION: u8 = 5;
+const SNAPSHOT_VERSION: u8 = 6;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.

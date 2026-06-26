@@ -625,7 +625,7 @@ fn ecs_respawn_resets_component_arrays() {
     // Phase 1 fields AND every Phase 2 field, so a future `spawn()` that forgets to reset one
     // (silent stale-state desync on slot recycle) is caught here.
     use crate::components::{
-        Building, EntityKind, Faction, Health, ProductionItem, UnitKind, Weapon,
+        Armor, Building, EntityKind, Faction, Health, ProductionItem, UnitKind, Weapon,
     };
     let mut w = World::new();
     let a = w.spawn();
@@ -652,6 +652,7 @@ fn ecs_respawn_resets_component_arrays() {
         reload_left: 17,
         turret_speed: 9,
         muzzle_vel: Fixed::from_ratio(1, 4),
+        penetration: Fixed::from_ratio(1, 5),
     };
     w.posture[i] = crate::components::Posture::Crouched;
     w.suppression[i] = Fixed::HALF;
@@ -661,6 +662,11 @@ fn ecs_respawn_resets_component_arrays() {
     w.hull_heading[i] = crate::trig::Angle(12_345);
     w.turret_yaw[i] = crate::trig::Angle(6_789);
     w.hull_speed[i] = Fixed::from_ratio(1, 8);
+    w.armor[i] = Armor {
+        front: Fixed::from_int(7),
+        side: Fixed::from_int(4),
+        rear: Fixed::from_int(2),
+    };
     w.building[i] = Building {
         kind: crate::components::BuildingKind::Camp,
         level: 5,
@@ -693,6 +699,8 @@ fn ecs_respawn_resets_component_arrays() {
     assert_eq!(w.hull_heading[j], crate::trig::Angle(0));
     assert_eq!(w.turret_yaw[j], crate::trig::Angle(0));
     assert_eq!(w.hull_speed[j], Fixed::ZERO);
+    // Tank embodiment P4 (D55): armour resets to all-zero (unarmoured) on slot recycle.
+    assert_eq!(w.armor[j], Armor::default());
 }
 
 #[test]
@@ -1512,6 +1520,7 @@ fn embodied_tank(sim: &mut Sim, x: i32, y: i32, muzzle_vel: i32, damage: i32, ra
         reload_left: 0,
         turret_speed: 200,
         muzzle_vel: Fixed::from_int(muzzle_vel),
+        penetration: Fixed::ZERO,
     };
     e
 }
@@ -1688,4 +1697,165 @@ fn snapshot_round_trip_preserves_in_flight_projectile_pool() {
         tampered.checksum(),
         "the in-flight pool moves the checksum (folded, not ignored)"
     );
+}
+
+// ===========================================================================
+// Tank embodiment P4 (D55): all-unit armour facing — armour facet resolved AT IMPACT, determinism
+// with armoured units, and persist of `armor` + `Weapon.penetration`. Here so they ride the
+// determinism arch matrix automatically (invariant #7).
+// ===========================================================================
+
+#[test]
+fn shell_resolves_armor_facet_at_impact_not_at_fire() {
+    use crate::components::{Armor, Health};
+    use crate::projectile::{
+        projectile_system, Projectile, DEFAULT_LIFETIME, LAUNCH_VZ, MUZZLE_HEIGHT,
+    };
+    use crate::terrain::Terrain;
+
+    // An armoured tank at (5,0) initially faces the incoming +X shell head-on (front, 180°). A flat
+    // shell (no gravity) flies +X toward it. If the hull is rotated to face +X (0°) BEFORE the shell
+    // lands, the shell catches the now-exposed REAR — and because facing resolves at IMPACT (not at
+    // fire), it pens. Left unrotated, the same shot bounces off the thick front.
+    fn run(rotate_rear_on: bool) -> Fixed {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let owner = world.spawn(); // a Player owner (never a target — is_enemy spares it)
+        world.faction[owner.index as usize] = Faction::Player;
+        let t = world.spawn();
+        let ti = t.index as usize;
+        world.pos[ti] = v(5, 0);
+        world.faction[ti] = Faction::Enemy;
+        world.health[ti] = Health::full(Fixed::from_int(1000));
+        world.hull_heading[ti] = Angle(ANGLE_FULL / 2); // faces -X → front toward the +X shell
+        world.armor[ti] = Armor {
+            front: Fixed::from_int(100),
+            side: Fixed::from_int(1),
+            rear: Fixed::from_int(1),
+        };
+        let mut pool = vec![Projectile {
+            pos2d: v(0, 0),
+            vel2d: v(1, 0),
+            height: MUZZLE_HEIGHT,
+            vz: LAUNCH_VZ,
+            owner,
+            faction: Faction::Player,
+            damage: Fixed::from_int(50),
+            penetration: Fixed::from_int(10),
+            lifetime: DEFAULT_LIFETIME,
+        }];
+        let before = world.health[ti].cur;
+        let mut events = Vec::new();
+        for tick in 0..10 {
+            if rotate_rear_on && tick == 2 {
+                world.hull_heading[ti] = Angle(0); // rotate: rear now faces the +X shell
+            }
+            projectile_system(&mut world, &terrain, &mut pool, &mut events, Fixed::ZERO);
+            if pool.is_empty() {
+                break;
+            }
+        }
+        before - world.health[ti].cur
+    }
+    assert_eq!(run(false), Fixed::ZERO, "hull left front-on → frontal impact bounces");
+    assert_eq!(
+        run(true),
+        Fixed::from_int(50),
+        "hull rotated rear-on mid-flight → the shell pens the facet it rotated into AT IMPACT"
+    );
+}
+
+#[test]
+fn two_sims_agree_with_armored_units() {
+    use crate::components::{Armor, Health};
+    // Two sims on one seed, with an armoured enemy under sustained AI fire from a flank angle that
+    // lands the reduced ramp multiplier, must agree on every per-tick checksum (the armour math is
+    // folded sim state). A flank shot on a `side = 40` tank by a `pen = 30` rifle ramps to a partial
+    // multiplier, so a non-trivial Fixed enters the stream — agreement here is not vacuous.
+    fn build() -> (Sim, Entity) {
+        let mut sim = Sim::new(0x5EED_0004);
+        let t = sim.world.spawn();
+        let ti = t.index as usize;
+        sim.world.pos[ti] = v(0, 0);
+        sim.world.faction[ti] = Faction::Enemy;
+        sim.world.health[ti] = Health::full(Fixed::from_int(2000));
+        sim.world.stance[ti] = Stance::HoldFire;
+        sim.world.hull_heading[ti] = Angle(0); // front faces +X
+        sim.world.armor[ti] = Armor {
+            front: Fixed::from_int(100),
+            side: Fixed::from_int(40),
+            rear: Fixed::from_int(5),
+        };
+        // Shooter on the flank (+Y) so the shot strikes the side facet.
+        let s = spawn_rifleman(&mut sim, 0, 8, Faction::Player);
+        sim.world.stance[s.index as usize] = Stance::FireAtWill;
+        sim.world.weapon[s.index as usize].penetration = Fixed::from_int(30);
+        (sim, t)
+    }
+    let (mut a, ta) = build();
+    let (mut b, _tb) = build();
+    for _ in 0..120 {
+        a.step(&[]);
+        b.step(&[]);
+        assert_eq!(
+            a.checksum(),
+            b.checksum(),
+            "armoured combat stays bit-identical across peers"
+        );
+    }
+    assert!(
+        a.world.health[ta.index as usize].cur < Fixed::from_int(2000),
+        "the flank fire genuinely whittled the armoured tank (the multiplier participated)"
+    );
+}
+
+#[test]
+fn snapshot_round_trip_preserves_armor_and_penetration() {
+    use crate::components::Armor;
+    let mut sim = Sim::new(0x0A12_0004);
+    let u = sim.world.spawn();
+    let i = u.index as usize;
+    sim.world.armor[i] = Armor {
+        front: Fixed::from_int(120),
+        side: Fixed::from_int(45),
+        rear: Fixed::from_int(15),
+    };
+    sim.world.weapon[i].penetration = Fixed::from_int(77);
+
+    let bytes = sim.serialize();
+    let restored = Sim::deserialize(&bytes).expect("round-trip with armour");
+    assert_eq!(
+        restored.world.armor[i], sim.world.armor[i],
+        "armour round-trips field-for-field"
+    );
+    assert_eq!(
+        restored.world.weapon[i].penetration,
+        Fixed::from_int(77),
+        "weapon penetration round-trips"
+    );
+    assert_eq!(
+        restored.checksum(),
+        sim.checksum(),
+        "restored state checksums identically"
+    );
+    assert_eq!(restored.serialize(), bytes, "re-serialize is byte-stable");
+
+    // Both fields are genuinely folded (not ignored): perturbing each moves the checksum.
+    let base = sim.checksum();
+    sim.world.armor[i].front = Fixed::ZERO;
+    assert_ne!(base, sim.checksum(), "armor.front is checksummed");
+    sim.world.armor[i].front = Fixed::from_int(120); // restore
+    assert_eq!(base, sim.checksum());
+    // Perturb side and rear independently too — catches a fold() that drops or swaps either facet
+    // (the round-trip assertion alone would stay green on such a regression).
+    sim.world.armor[i].side = Fixed::ZERO;
+    assert_ne!(base, sim.checksum(), "armor.side is checksummed");
+    sim.world.armor[i].side = Fixed::from_int(45); // restore
+    assert_eq!(base, sim.checksum());
+    sim.world.armor[i].rear = Fixed::ZERO;
+    assert_ne!(base, sim.checksum(), "armor.rear is checksummed");
+    sim.world.armor[i].rear = Fixed::from_int(15); // restore
+    assert_eq!(base, sim.checksum());
+    sim.world.weapon[i].penetration = Fixed::ZERO;
+    assert_ne!(base, sim.checksum(), "weapon penetration is checksummed");
 }

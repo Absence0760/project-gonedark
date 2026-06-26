@@ -19,13 +19,14 @@
 //! shooter/target (needed by `last_attacker` and the `SimEvent`s) comes from the O(1)
 //! [`World::entity`] accessor.
 
-use crate::components::{EntityKind, Faction, InputSource, Posture, Stance, Vec2};
+use crate::components::{Armor, EntityKind, Faction, InputSource, Posture, Stance, Vec2};
 use crate::ecs::World;
 use crate::event::SimEvent;
 use crate::fixed::Fixed;
 use crate::rng::Rng;
 use crate::spatial::SpatialHash;
 use crate::terrain::Terrain;
+use crate::trig::{self, Angle};
 
 /// Suppression at or above this fraction of [`SUPPRESSION_MAX`] pins a unit: it may not fire
 /// and (per `orders`) moves at reduced speed.
@@ -210,7 +211,15 @@ pub fn combat_system(
         };
 
         let mult = terrain.cover_at(world.pos[target_idx]).damage_multiplier();
-        let damage = world.weapon[i].damage * mult;
+        // All-unit armour facing (D55 P4): shot direction is target − shooter. Unarmoured targets
+        // (the default) return the multiplier as one, so this is byte-neutral for existing balance.
+        let facing = facing_penetration_multiplier(
+            world.pos[target_idx] - world.pos[i],
+            world.hull_heading[target_idx],
+            world.weapon[i].penetration,
+            world.armor[target_idx],
+        );
+        let damage = world.weapon[i].damage * mult * facing;
 
         world.health[target_idx].cur -= damage;
         world.last_attacker[target_idx] = Some(shooter);
@@ -275,6 +284,107 @@ pub const FIRE_CONE_COS_HALF_CROUCHED: Fixed = Fixed::from_ratio(951, 1000);
 /// ([`systems::CROUCH_MOVE_SPEED`](crate::systems::CROUCH_MOVE_SPEED)): crouch to set up a
 /// precise, longer shot; stand to reposition. Exact rational keeps it float-free (invariant #1).
 pub const CROUCH_RANGE_BONUS: Fixed = Fixed::from_ratio(5, 4);
+
+/// The armour facet an incoming shot strikes — chosen by the angle between the shot's travel
+/// direction and the defender's hull heading (tank embodiment P4, D55).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Facet {
+    /// The shot arrives within the head-on arc — the thickest armour.
+    Front,
+    /// The shot arrives from the flank — thinner.
+    Side,
+    /// The shot catches the tail — the thinnest armour.
+    Rear,
+}
+
+/// Cosine of the half-angle of the front (and, mirrored, rear) armour arc. `1/2 = cos(60°)`: the
+/// front facet covers shots arriving within 60° of head-on (a 120°-wide frontal arc), the rear
+/// facet the mirror 120° tail arc, and the two 60° wedges between are the sides — a clean partition
+/// of the full turn. The facet test squares this (never a sqrt), exactly like
+/// [`FIRE_CONE_COS_HALF`], so only `cos²` ever enters the compare. Exact rational, no float
+/// (invariant #1).
+pub const FACET_ARC_COS_HALF: Fixed = Fixed::from_ratio(1, 2);
+
+/// Pick the [`Facet`] a shot travelling along `shot_dir` strikes on a defender whose chassis points
+/// along `hull_heading` (tank embodiment P4, D55). Float-free: the hull direction is the LUT
+/// `(cos, sin)` of the heading and the bucket is decided by the **squared cosine** of the angle
+/// between `shot_dir` and that direction — the same sqrt-free trick the aim cone uses
+/// ([`resolve_fire`]). `proj = shot_dir·hull_dir`; a shot opposing the hull (`proj < 0`) within the
+/// front arc is `Front`, one trailing it (`proj > 0`) within the rear arc is `Rear`, otherwise
+/// `Side`. A zero `shot_dir` is degenerate (no travel direction → `proj` and `mag_sq` both zero, so
+/// the arc test is trivially satisfied and the result is unspecified between `Front`/`Rear`);
+/// callers only ever reach here with a real, non-zero shot.
+#[inline]
+pub fn shot_facet(shot_dir: Vec2, hull_heading: Angle) -> Facet {
+    let hull_dir = Vec2::new(trig::cos(hull_heading), trig::sin(hull_heading));
+    let proj = shot_dir.dot(hull_dir);
+    let mag_sq = shot_dir.len_sq();
+    // Inside an arc when proj² ≥ cos²·|shot_dir|² (hull_dir is ~unit, so |hull_dir|² ≈ 1). Squaring
+    // keeps it sqrt-free; the sign of `proj` then splits front (opposing the hull) from rear. The
+    // compare is done in i64 on the raw Q16.16 bits — both sides land at the same `2^32` scale, so
+    // there is no precision loss and (unlike `Fixed`'s i32-truncating multiply) no overflow even
+    // for a large `shot_dir`, keeping facet selection correct as weapon ranges grow.
+    let cos_half_sq = FACET_ARC_COS_HALF * FACET_ARC_COS_HALF;
+    let proj_bits = proj.to_bits() as i64;
+    let lhs = proj_bits * proj_bits;
+    let rhs = (cos_half_sq.to_bits() as i64) * (mag_sq.to_bits() as i64);
+    if lhs >= rhs {
+        if proj < Fixed::ZERO {
+            Facet::Front
+        } else {
+            Facet::Rear
+        }
+    } else {
+        Facet::Side
+    }
+}
+
+/// The damage multiplier an incoming shot earns against a defender's directional [`Armor`], by
+/// **penetration vs the struck facet** (tank embodiment P4, D55 — the all-unit armour model). This
+/// is the single shared resolver multiplied into damage at **every** site (AI hitscan, embodied
+/// hitscan, and shell impact), so armour facing is genuinely all-unit, not embodied-only.
+///
+/// The safety property that keeps existing balance intact: an **unarmoured** defender
+/// (`armor.is_unarmored()`, the default for every Rifleman/Heavy/building) returns **exactly
+/// [`Fixed::ONE`]** with no facet/trig work — so every existing combat/economy test passes
+/// byte-for-byte and the checksum only moves where a unit is actually armoured (invariant #7).
+///
+/// For an armoured defender, `shot_facet` picks the facet, then penetration `p` meets that facet's
+/// armour `a`:
+/// - `p ≥ a` → full damage ([`Fixed::ONE`]): the shot pens cleanly.
+/// - `2·p ≤ a` → a hard **bounce** ([`Fixed::ZERO`]): armour clearly overmatches the shot (the War
+///   Thunder non-penetration).
+/// - between (`a/2 < p < a`) → a reduced multiplier ramping `(2p − a)/a` from just above zero to
+///   just below one as `p` climbs toward `a`.
+///
+/// All `Fixed`; the division only runs when `a > p ≥ 0` (so `a > 0`, never a divide-by-zero). No
+/// float, no transcendental beyond the LUT `cos`/`sin` in `shot_facet` (invariant #1).
+#[inline]
+pub fn facing_penetration_multiplier(
+    shot_dir: Vec2,
+    hull_heading: Angle,
+    penetration: Fixed,
+    armor: Armor,
+) -> Fixed {
+    // Fast path + the load-bearing safety property: unarmoured ⇒ exactly ONE, identical to today.
+    if armor.is_unarmored() {
+        return Fixed::ONE;
+    }
+    let a = match shot_facet(shot_dir, hull_heading) {
+        Facet::Front => armor.front,
+        Facet::Side => armor.side,
+        Facet::Rear => armor.rear,
+    };
+    let p = penetration;
+    if p >= a {
+        Fixed::ONE
+    } else if p + p <= a {
+        Fixed::ZERO
+    } else {
+        // a/2 < p < a: ramp (2p − a)/a ∈ (0, 1). `a > 0` here, so the divide is safe.
+        (p + p - a) / a
+    }
+}
 
 /// Resolve one embodied shot from `shooter_idx` aimed along `dir` (a unit aim vector in Fixed
 /// world space — quantized at the host boundary, invariant #1). A fixed-point **cone hitscan**:
@@ -395,7 +505,15 @@ pub fn resolve_fire(
     };
 
     let mult = terrain.cover_at(world.pos[target_idx]).damage_multiplier();
-    let damage = world.weapon[shooter_idx].damage * mult;
+    // All-unit armour facing (D55 P4): shot direction is the aim. Unarmoured targets return the
+    // multiplier as one, so embodied infantry fire against infantry/buildings is unchanged.
+    let facing = facing_penetration_multiplier(
+        dir,
+        world.hull_heading[target_idx],
+        world.weapon[shooter_idx].penetration,
+        world.armor[target_idx],
+    );
+    let damage = world.weapon[shooter_idx].damage * mult * facing;
 
     world.health[target_idx].cur -= damage;
     world.last_attacker[target_idx] = Some(shooter);
@@ -472,6 +590,7 @@ mod tests {
             reload_left: 0,
             turret_speed: 0,
             muzzle_vel: Fixed::ZERO,
+            penetration: Fixed::ZERO,
         }
     }
 
@@ -489,6 +608,7 @@ mod tests {
             reload_left: 0,
             turret_speed: 0,
             muzzle_vel: Fixed::ZERO,
+            penetration: Fixed::ZERO,
         }
     }
 
@@ -1276,5 +1396,161 @@ mod tests {
         world.posture[shooter.index as usize] = Posture::Crouched;
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(75), "crouch reaches the further target");
+    }
+
+    // --- Tank embodiment P4 (D55): all-unit armour facing ------------------------------------
+
+    use crate::components::Armor;
+
+    fn armored(front: i32, side: i32, rear: i32) -> Armor {
+        Armor { front: fx(front), side: fx(side), rear: fx(rear) }
+    }
+
+    /// An `Angle` for `deg` degrees (binary radians), float-free.
+    fn deg(d: i32) -> Angle {
+        Angle(trig::ANGLE_FULL * d / 360)
+    }
+
+    #[test]
+    fn facing_multiplier_unarmored_is_exactly_one() {
+        // The load-bearing safety property: an unarmoured defender (the default for every
+        // Rifleman/Heavy/building) takes the multiplier as EXACTLY one, for any shot direction and
+        // any penetration (even zero) — so existing balance/tests are byte-for-byte unchanged.
+        let bare = Armor::default();
+        for &(dx, dy) in &[(1, 0), (-1, 0), (0, 1), (0, -1), (3, 4), (-2, 5)] {
+            let dir = Vec2::new(fx(dx), fx(dy));
+            assert_eq!(
+                facing_penetration_multiplier(dir, Angle(0), Fixed::ZERO, bare),
+                Fixed::ONE
+            );
+            assert_eq!(
+                facing_penetration_multiplier(dir, deg(137), fx(99), bare),
+                Fixed::ONE,
+                "unarmoured is unity regardless of facing/penetration"
+            );
+        }
+    }
+
+    #[test]
+    fn shot_facet_selects_by_hull_heading_with_correct_boundaries() {
+        // A shot travelling +X; the struck facet depends only on where the hull points. The
+        // front/rear arcs are 120° wide (±60° of head-on/tail), the sides the 60° wedges between.
+        let east = Vec2::new(Fixed::ONE, Fixed::ZERO);
+        // Hull facing +X (0°): the +X shot catches it from behind → Rear.
+        assert_eq!(shot_facet(east, deg(0)), Facet::Rear);
+        // Hull facing -X (180°): the +X shot meets the front head-on.
+        assert_eq!(shot_facet(east, deg(180)), Facet::Front);
+        // Hull facing +Y (90°): broadside → Side.
+        assert_eq!(shot_facet(east, deg(90)), Facet::Side);
+        // Side/Rear boundary at 60°: just inside (55°) is Rear, just outside (65°) is Side.
+        assert_eq!(shot_facet(east, deg(55)), Facet::Rear, "inside the rear arc");
+        assert_eq!(shot_facet(east, deg(65)), Facet::Side, "past the rear arc → side");
+        // Front/Side boundary at 120°: just outside (115°) is Side, just inside (125°) is Front.
+        assert_eq!(shot_facet(east, deg(115)), Facet::Side, "before the front arc → side");
+        assert_eq!(shot_facet(east, deg(125)), Facet::Front, "inside the front arc");
+    }
+
+    #[test]
+    fn facing_multiplier_bounces_ramps_and_pens() {
+        // Hull facing -X so a +X shot strikes the FRONT facet; vary penetration vs front armour.
+        let east = Vec2::new(Fixed::ONE, Fixed::ZERO);
+        let front_on = deg(180);
+        // pen >= armour → full damage.
+        assert_eq!(
+            facing_penetration_multiplier(east, front_on, fx(10), armored(10, 1, 1)),
+            Fixed::ONE,
+            "penetration meets armour → full"
+        );
+        // 2·pen < armour → hard bounce.
+        assert_eq!(
+            facing_penetration_multiplier(east, front_on, fx(3), armored(10, 1, 1)),
+            Fixed::ZERO,
+            "armour overmatches → bounce"
+        );
+        // 2·pen == armour → still a bounce (the boundary is inclusive).
+        assert_eq!(
+            facing_penetration_multiplier(east, front_on, fx(3), armored(6, 1, 1)),
+            Fixed::ZERO,
+            "double-armour boundary bounces"
+        );
+        // a/2 < pen < a → reduced: (2·3 − 4)/4 = 1/2.
+        assert_eq!(
+            facing_penetration_multiplier(east, front_on, fx(3), armored(4, 1, 1)),
+            Fixed::from_ratio(1, 2),
+            "close penetration → reduced ramp"
+        );
+    }
+
+    #[test]
+    fn combat_system_armored_target_bounces_frontal_pens_flank_and_rear() {
+        // AI hitscan (the engage pass) honours armour facing. An armoured enemy faces +X with a
+        // thick front and thin flank/rear; a modest-penetration shooter bounces off the front but
+        // pens the flank and rear.
+        fn dmg(shooter_x: i32, shooter_y: i32) -> Fixed {
+            let mut world = World::new();
+            let terrain = Terrain::open();
+            let target = spawn_unit(&mut world, 0, 0, Faction::Enemy, 1000, Weapon::default());
+            let ti = target.index as usize;
+            world.stance[ti] = Stance::HoldFire;
+            world.hull_heading[ti] = deg(0); // front faces +X
+            world.armor[ti] = armored(100, 1, 1);
+            let shooter = spawn_unit(
+                &mut world,
+                shooter_x,
+                shooter_y,
+                Faction::Player,
+                100,
+                Weapon {
+                    range: fx(50),
+                    damage: fx(20),
+                    penetration: fx(10),
+                    ..Default::default()
+                },
+            );
+            world.stance[shooter.index as usize] = Stance::FireAtWill;
+            let before = world.health[ti].cur;
+            let mut events = Vec::new();
+            run(&mut world, &terrain, &mut events);
+            before - world.health[ti].cur
+        }
+        assert_eq!(dmg(10, 0), Fixed::ZERO, "frontal shot bounces off the thick front");
+        assert_eq!(dmg(-10, 0), fx(20), "rear shot pens for full damage");
+        assert_eq!(dmg(0, 10), fx(20), "flank shot pens for full damage");
+    }
+
+    #[test]
+    fn resolve_fire_applies_armor_facing() {
+        // Embodied hitscan also honours armour facing (the same shared resolver). Shot aims +X at a
+        // tank 5 ahead; the tank's hull heading decides the struck facet.
+        fn dmg(hull: Angle) -> Fixed {
+            let mut world = World::new();
+            let terrain = Terrain::open();
+            let shooter = spawn_unit(
+                &mut world,
+                0,
+                0,
+                Faction::Player,
+                100,
+                Weapon {
+                    range: fx(50),
+                    damage: fx(20),
+                    penetration: fx(10),
+                    ..Default::default()
+                },
+            );
+            world.input_source[shooter.index as usize] = InputSource::Embodied;
+            let target = spawn_unit(&mut world, 5, 0, Faction::Enemy, 1000, Weapon::default());
+            let ti = target.index as usize;
+            world.hull_heading[ti] = hull;
+            world.armor[ti] = armored(100, 1, 1);
+            let before = world.health[ti].cur;
+            let mut events = Vec::new();
+            resolve_fire(&mut world, &terrain, shooter.index as usize, aim_pos_x(), &mut events);
+            before - world.health[ti].cur
+        }
+        // Hull faces -X → the +X shot meets the front → bounce.
+        assert_eq!(dmg(deg(180)), Fixed::ZERO, "embodied frontal shot bounces");
+        // Hull faces +X → the +X shot catches the rear → full pen.
+        assert_eq!(dmg(deg(0)), fx(20), "embodied rear shot pens");
     }
 }
