@@ -349,7 +349,7 @@ pub fn economy_system(
     // the checksum), so the gate fires identically on every peer (invariant #7). Clamp 0 → 1 so a
     // malformed period can never divide by zero.
     let period = income_period.max(1) as u64;
-    if tick % period == 0 {
+    if tick.is_multiple_of(period) {
         for &faction in Faction::ALL.iter() {
             if faction == Faction::Neutral {
                 continue;
@@ -749,7 +749,7 @@ mod tests {
             let mut events = Vec::new();
             economy_system(&mut world, &mut res, &terr, &mut events, &mut rng, t, period);
             let gained = res.get(Faction::Player) - before;
-            if t % period as u64 == 0 {
+            if t.is_multiple_of(period as u64) {
                 assert_eq!(gained, per_accrual, "tick {t} is a boundary → full accrual");
                 accruals += 1;
             } else {

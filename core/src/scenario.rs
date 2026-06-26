@@ -694,7 +694,7 @@ mod tests {
         // 30 s of play (60 Hz). The Player issues nothing — we isolate that the *enemy* side alone
         // makes the economy/capture/production loop turn.
         for _ in 0..(30 * crate::sim::TICK_HZ as u64) {
-            let cmds = if sim.tick_count() % COMMANDER_PERIOD == 0 {
+            let cmds = if sim.tick_count().is_multiple_of(COMMANDER_PERIOD) {
                 commander_orders(
                     &sim.world,
                     &sim.territory,
