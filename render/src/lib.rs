@@ -1027,21 +1027,21 @@ impl Renderer {
         self.marquee.render(device, queue, view, marquee);
     }
 
-    /// Draw the debug hitbox / facet overlay on top of the current command frame (a LOAD pass —
-    /// never clears), delegating to [`debug::DebugRenderer`]. Reuses this renderer's camera bind
-    /// group — the command view-projection the preceding [`Renderer::render`] uploaded this frame —
-    /// so the world-space lines line up with the units. Command-view only (never over the dark
-    /// embodied frame, invariant #6); a no-op when `units`/`shells` produce no lines.
+    /// Draw the debug overlay's pre-composed world-space line list `verts` on top of the current
+    /// command frame (a LOAD pass — never clears), delegating to [`debug::DebugRenderer`]. The host
+    /// composes `verts` from the pure seams (tank hitbox lines / shell tracers / infantry range+cone
+    /// / LoS connectors). Reuses this renderer's camera bind group — the command view-projection the
+    /// preceding [`Renderer::render`] uploaded this frame — so the world-space lines line up with the
+    /// units. Command-view only (never over the dark embodied frame, invariant #6); a no-op on empty.
     pub fn render_debug(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
-        units: &[debug::DebugUnit],
-        shells: &[debug::DebugShell],
+        verts: &[debug::DebugVertex],
     ) {
         self.debug
-            .render(device, queue, view, &self.camera_bind_group, units, shells);
+            .render(device, queue, view, &self.camera_bind_group, verts);
     }
 
     /// Draw the contextual command panel (command view) — the boxed top-right panel whose rows

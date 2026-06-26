@@ -2955,3 +2955,13 @@ reusing the unit pass's camera bind group); `app` gains the `--scene <name>` fla
 overlay key. The overlay is **command-view only** and folds nothing into the sim, so it cannot move
 the checksum or reveal intel while embodied (invariants #4/#6). A real `UnitKind::Tank` (with its own
 `economy::unit_stats` armour/gun) remains a later step; the duel proves the *systems* first.
+
+**Update (second scene):** `seed_infantry` landed as the second instance of this pattern — a
+hitscan sandbox (a player rifleman vs HoldFire dummies proving range / aim-cone / Light-cover /
+line-of-sight / crouch, plus a `sim-runner infantry` auto-combat battery for stance / suppression /
+retreat / reload), with `Scene::Infantry` + `app --scene infantry`. It needed **no structural
+change** (exactly as predicted above): one `core::scenario` entry, picked up by the runner and the
+scene dispatch. `render::debug` was generalized — `render_debug` now takes a flat `DebugVertex` list
+composed by the host-tested `engine::debug_overlay_lines` (tanks → hitbox rings; infantry →
+range-ring + firing-cone wedge; all → Player→Enemy LoS connectors, green clear / red blocked) — so
+the overlay reads each scene's mechanic, not just the tank's.

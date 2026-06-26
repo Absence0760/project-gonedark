@@ -156,6 +156,74 @@ pub fn tracer_lines(shells: &[DebugShell]) -> Vec<DebugVertex> {
     v
 }
 
+/// A hitscan unit to draw the infantry overlay for — already f32 at the render boundary. Unlike a
+/// tank (whose hitbox is a shell impact-radius + armour facets), an infantryman's relevant geometry
+/// is its weapon **range** and firing **cone** about its facing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DebugInfantry {
+    pub x: f32,
+    pub y: f32,
+    /// Facing in radians (`+X = 0`, CCW) — the cone is centered here.
+    pub facing: f32,
+    /// Weapon range (world units) — the range ring radius.
+    pub range: f32,
+    /// Cosine of the firing cone's half-angle (`combat::FIRE_CONE_COS_HALF`) — the wedge half-width.
+    pub cone_cos_half: f32,
+    /// Faction tint for the range ring.
+    pub ring_color: [f32; 3],
+}
+
+/// Segments along the cone's far arc (closing the wedge between its two edge spokes).
+const CONE_ARC_SEGS: usize = 8;
+/// The firing-cone wedge color (a warm "fire arc").
+const COLOR_CONE: [f32; 3] = [1.0, 0.65, 0.20];
+
+/// Build the world-space line list for every infantryman: a faction-tinted **range ring** and a
+/// **firing-cone wedge** (two edge spokes about `facing` at the cone half-angle, closed by a far
+/// arc) out to `range`. Pure (no GPU) — the testable seam. Line-of-sight connectors are composed by
+/// the host (they need the terrain) and appended separately.
+pub fn infantry_lines(units: &[DebugInfantry]) -> Vec<DebugVertex> {
+    let mut v = Vec::with_capacity(units.len() * (RING_SEGS * 2 + CONE_ARC_SEGS * 2 + 4));
+    for u in units {
+        // Range ring.
+        for i in 0..RING_SEGS {
+            let a0 = (i as f32) / (RING_SEGS as f32) * 2.0 * PI;
+            let a1 = ((i + 1) as f32) / (RING_SEGS as f32) * 2.0 * PI;
+            v.push(range_point(u, a0));
+            v.push(range_point(u, a1));
+        }
+        // Firing cone: two edge spokes at facing ± half-angle, then the far arc between them.
+        let half = u.cone_cos_half.clamp(-1.0, 1.0).acos();
+        let edge = |a: f32| DebugVertex {
+            world: [u.x + u.range * a.cos(), u.y + u.range * a.sin()],
+            color: COLOR_CONE,
+        };
+        let center = DebugVertex {
+            world: [u.x, u.y],
+            color: COLOR_CONE,
+        };
+        for s in [-half, half] {
+            v.push(center);
+            v.push(edge(u.facing + s));
+        }
+        for i in 0..CONE_ARC_SEGS {
+            let a0 = u.facing - half + (i as f32) / (CONE_ARC_SEGS as f32) * 2.0 * half;
+            let a1 = u.facing - half + ((i + 1) as f32) / (CONE_ARC_SEGS as f32) * 2.0 * half;
+            v.push(edge(a0));
+            v.push(edge(a1));
+        }
+    }
+    v
+}
+
+/// One point on an infantryman's range ring at world angle `a`.
+fn range_point(u: &DebugInfantry, a: f32) -> DebugVertex {
+    DebugVertex {
+        world: [u.x + u.range * a.cos(), u.y + u.range * a.sin()],
+        color: u.ring_color,
+    }
+}
+
 /// World-space line renderer for the debug overlay. Owns a `LineList` pipeline + a grow-on-demand
 /// vertex buffer; reuses the caller's camera bind group (the command-view view-projection).
 pub struct DebugRenderer {
@@ -235,21 +303,19 @@ impl DebugRenderer {
         }
     }
 
-    /// Draw the hitbox rings + shell tracers over `view` (a LOAD pass — never clears), using
-    /// `camera_bind_group` (the command-view view-projection the host just uploaded). Builds the
-    /// line set from the pure seams, (re)allocating the vertex buffer if it must grow. A no-op when
-    /// there is nothing to draw.
+    /// Draw the pre-composed world-space line list `verts` over `view` (a LOAD pass — never clears),
+    /// using `camera_bind_group` (the command-view view-projection the host just uploaded). The host
+    /// builds `verts` from the pure seams ([`hitbox_lines`], [`tracer_lines`], [`infantry_lines`],
+    /// plus any LoS connectors), so this stays the thin GPU glue. (Re)allocates the vertex buffer if
+    /// it must grow; a no-op when `verts` is empty.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         camera_bind_group: &wgpu::BindGroup,
-        units: &[DebugUnit],
-        shells: &[DebugShell],
+        verts: &[DebugVertex],
     ) {
-        let mut verts = hitbox_lines(units);
-        verts.extend(tracer_lines(shells));
         if verts.is_empty() {
             return;
         }
@@ -263,7 +329,7 @@ impl DebugRenderer {
                 mapped_at_creation: false,
             });
         }
-        queue.write_buffer(&self.vbuf, 0, bytemuck::cast_slice(&verts));
+        queue.write_buffer(&self.vbuf, 0, bytemuck::cast_slice(verts));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gonedark.debug_encoder"),
@@ -394,6 +460,47 @@ mod tests {
         assert_eq!(head, [5.0, 0.0]);
         assert!(tail[0] < head[0], "tail trails the shell");
         assert!((tail[0] - (5.0 - TRACER_LEN)).abs() < 1e-5);
+    }
+
+    fn rifleman(facing: f32) -> DebugInfantry {
+        DebugInfantry {
+            x: 0.0,
+            y: 0.0,
+            facing,
+            range: 14.0,
+            cone_cos_half: 0.866, // ~30° half-angle (FIRE_CONE_COS_HALF)
+            ring_color: [0.3, 0.5, 1.0],
+        }
+    }
+
+    #[test]
+    fn infantry_draws_a_range_ring_and_a_cone_wedge() {
+        let v = infantry_lines(&[rifleman(0.0)]);
+        // RING_SEGS ring segments + 2 cone edge spokes + CONE_ARC_SEGS arc segments, 2 verts each.
+        assert_eq!(v.len(), (RING_SEGS + 2 + CONE_ARC_SEGS) * 2);
+        // The ring is faction-tinted; the cone is the warm fire-arc color.
+        assert!(v.iter().any(|p| p.color == [0.3, 0.5, 1.0]), "range ring tinted");
+        assert!(v.iter().any(|p| p.color == COLOR_CONE), "cone wedge drawn");
+        // Every ring/cone point sits within the range radius (+epsilon) of the unit.
+        assert!(v
+            .iter()
+            .all(|p| (p.world[0] * p.world[0] + p.world[1] * p.world[1]).sqrt() <= 14.0 + 1e-3));
+    }
+
+    #[test]
+    fn cone_wedge_straddles_the_facing() {
+        // Facing +X (0): the cone's two edge spokes sit symmetrically above and below the X axis,
+        // and the cone center spoke endpoints are within ±30° of +X (both have x > 0).
+        let v = infantry_lines(&[rifleman(0.0)]);
+        let cone: Vec<&DebugVertex> = v.iter().filter(|p| p.color == COLOR_CONE).collect();
+        // The wedge points downrange: every cone endpoint that isn't the muzzle has positive x.
+        assert!(cone
+            .iter()
+            .filter(|p| !(p.world[0] == 0.0 && p.world[1] == 0.0))
+            .all(|p| p.world[0] > 0.0));
+        // The edges reach above and below the axis (a real wedge, not a line).
+        assert!(cone.iter().any(|p| p.world[1] > 0.1));
+        assert!(cone.iter().any(|p| p.world[1] < -0.1));
     }
 
     #[test]

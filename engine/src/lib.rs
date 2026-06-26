@@ -1070,6 +1070,10 @@ pub enum Scene {
     /// the player tank so you drop straight into first person, drive it, and fire the gun — the
     /// "load two tanks and see the hitboxes work" sandbox. A debug scene, not a real match.
     Duel,
+    /// The infantry hitscan sandbox ([`gonedark_core::scenario::seed_infantry`]), booted **embodied**
+    /// in the player rifleman: aim/crouch/fire at a row of dummies to feel range / cone / cover /
+    /// line-of-sight. A debug scene, not a real match.
+    Infantry,
 }
 
 impl Scene {
@@ -1079,8 +1083,15 @@ impl Scene {
         match name {
             "default" | "demo" => Some(Scene::Default),
             "duel" => Some(Scene::Duel),
+            "infantry" => Some(Scene::Infantry),
             _ => None,
         }
+    }
+
+    /// Whether this scene boots with the debug hitbox/facet overlay on — the debug sandboxes do,
+    /// a real match does not.
+    fn debug_overlay_default(self) -> bool {
+        matches!(self, Scene::Duel | Scene::Infantry)
     }
 }
 
@@ -1172,6 +1183,128 @@ fn seed_duel_scene(sim: &mut Sim) -> (Entity, bool) {
     (duel.player, true)
 }
 
+/// Seed the **infantry hitscan sandbox** and return `(player, start_embodied)`. Seeds the shared
+/// `core::scenario::seed_infantry` scene, then possesses the player rifleman so the sandbox boots in
+/// first person (`start_embodied == true`). GPU-free, so it is host-tested directly.
+fn seed_infantry_scene(sim: &mut Sim) -> (Entity, bool) {
+    let inf = gonedark_core::scenario::seed_infantry(sim);
+    sim.step(&[Command::Embody { entity: inf.player }]);
+    log::info!(
+        "[tick {}] EMBODY (infantry boot) — world goes dark",
+        sim.tick_count()
+    );
+    (inf.player, true)
+}
+
+/// Faction tint for an infantry unit's debug range ring.
+fn faction_ring_color(f: Faction) -> [f32; 3] {
+    match f {
+        Faction::Player => [0.30, 0.55, 1.0],
+        Faction::Enemy => [1.0, 0.40, 0.35],
+        Faction::Neutral => [0.70, 0.70, 0.72],
+    }
+}
+
+/// Compose the **command-view debug overlay** line list (the F3 overlay) from a snapshot + terrain.
+/// Tanks (Heavy) get armour-facet hitbox rings + shell tracers; infantry (Rifleman) get a weapon
+/// **range** ring + firing-**cone** wedge; and every Player→Enemy pair within the player's weapon
+/// range gets a **line-of-sight** connector — green when the sightline is clear, red when Heavy
+/// cover blocks it. GPU-free + pure (reads the snapshot + terrain, mutates nothing), so it is
+/// host-tested without a device; the renderer just draws the returned world-space lines (invariant
+/// #4 — presentation floats, never the sim; invariant #6 — the caller draws it command-view only).
+fn debug_overlay_lines(
+    curr: &Snapshot,
+    terrain: &gonedark_core::terrain::Terrain,
+) -> Vec<gonedark_render::debug::DebugVertex> {
+    use gonedark_render::debug::{self as dbg, DebugVertex};
+    use gonedark_render::{fixed_to_f32 as fx, interp_angle};
+
+    let mut verts: Vec<DebugVertex> = Vec::new();
+    let yaw = |a| interp_angle(a, a, 0.0); // Angle → f32 radians (no interpolation needed)
+
+    // Tanks: armour-facet hitbox rings + spokes, and a tracer behind every in-flight shell.
+    let radius = fx(gonedark_core::projectile::HIT_RADIUS);
+    let tanks: Vec<dbg::DebugUnit> = curr
+        .units
+        .iter()
+        .filter(|u| !u.building && u.unit_kind == UnitKind::Heavy)
+        .map(|u| dbg::DebugUnit {
+            x: fx(u.pos.x),
+            y: fx(u.pos.y),
+            hull_yaw: yaw(u.hull_heading),
+            radius,
+            is_tank: true,
+        })
+        .collect();
+    verts.extend(dbg::hitbox_lines(&tanks));
+    let shells: Vec<dbg::DebugShell> = curr
+        .projectiles
+        .iter()
+        .map(|p| dbg::DebugShell {
+            x: fx(p.pos.x),
+            y: fx(p.pos.y),
+            vx: fx(p.vel.x),
+            vy: fx(p.vel.y),
+        })
+        .collect();
+    verts.extend(dbg::tracer_lines(&shells));
+
+    // Infantry: weapon range ring + firing-cone wedge (the produced Rifleman range + cone).
+    let rifle = gonedark_core::economy::unit_stats(UnitKind::Rifleman).1;
+    let cone = fx(gonedark_core::combat::FIRE_CONE_COS_HALF);
+    let infantry: Vec<dbg::DebugInfantry> = curr
+        .units
+        .iter()
+        .filter(|u| !u.building && u.unit_kind == UnitKind::Rifleman)
+        .map(|u| dbg::DebugInfantry {
+            x: fx(u.pos.x),
+            y: fx(u.pos.y),
+            facing: yaw(u.hull_heading),
+            range: fx(rifle.range),
+            cone_cos_half: cone,
+            ring_color: faction_ring_color(u.faction),
+        })
+        .collect();
+    verts.extend(dbg::infantry_lines(&infantry));
+
+    // Line-of-sight connectors: from each Player unit to each Enemy unit within the player's weapon
+    // range — green if the sightline is clear, red if a Heavy-cover wall blocks it (the LoS mechanic
+    // made visible). Distances + LoS are read in fixed-point against the snapshot/terrain. The range
+    // gate uses the archetype `unit_stats` range (the snapshot carries no per-entity weapon range);
+    // exact for the debug scenes' produced units, and a no-op where it slightly differs.
+    for p in curr
+        .units
+        .iter()
+        .filter(|u| !u.building && u.faction == Faction::Player)
+    {
+        let prange = gonedark_core::economy::unit_stats(p.unit_kind).1.range;
+        for e in curr
+            .units
+            .iter()
+            .filter(|u| !u.building && u.faction == Faction::Enemy)
+        {
+            if (e.pos - p.pos).len_sq() > prange * prange {
+                continue;
+            }
+            let color = if terrain.line_of_sight(p.pos, e.pos) {
+                [0.25, 1.0, 0.40] // clear sightline
+            } else {
+                [1.0, 0.30, 0.30] // blocked by Heavy cover
+            };
+            verts.push(DebugVertex {
+                world: [fx(p.pos.x), fx(p.pos.y)],
+                color,
+            });
+            verts.push(DebugVertex {
+                world: [fx(e.pos.x), fx(e.pos.y)],
+                color,
+            });
+        }
+    }
+
+    verts
+}
+
 impl Game {
     /// Build the game against a live GPU device into the default [`Scene`] (the Phase 2 demo
     /// skirmish). The returned `player` is a Player-faction unit you can embody. `seed` drives the
@@ -1194,10 +1327,11 @@ impl Game {
         let (player, start_embodied) = match scene {
             Scene::Default => seed_default_scene(&mut sim),
             Scene::Duel => seed_duel_scene(&mut sim),
+            Scene::Infantry => seed_infantry_scene(&mut sim),
         };
-        // The hitbox/facet overlay defaults on for the duel sandbox (its whole point), off for a
-        // real match; F3 toggles it either way.
-        let debug_hitboxes = scene == Scene::Duel;
+        // The debug overlay defaults on for the sandboxes (their whole point), off for a real
+        // match; F3 toggles it either way.
+        let debug_hitboxes = scene.debug_overlay_default();
 
         let curr = sim.snapshot();
         let prev = curr.clone();
@@ -2305,39 +2439,15 @@ impl Game {
             }
         }
 
-        // 7d. Debug hitbox / facet overlay (command view, F3): draw each unit's shell hit-radius
-        // ring — colored by armour facet for tanks (red front / yellow side / green rear) — a bright
-        // hull-heading spoke, and a tracer behind every in-flight shell, so the duel's hitboxes are
-        // visible. Built from the curr snapshot (no interpolation — debug chrome, and the duel tanks
-        // are near-stationary). Command-view only (invariant #6) and reuses the command view-proj the
-        // step-7 `render` just uploaded; a pure read of the snapshot, never the sim.
+        // 7d. Debug overlay (command view, F3): for tanks, armour-facet hitbox rings + hull spoke +
+        // shell tracers; for infantry, the weapon range ring + firing-cone wedge; plus Player→Enemy
+        // line-of-sight connectors (green clear / red blocked). Composed by the pure, host-tested
+        // `debug_overlay_lines` from the curr snapshot + terrain (no interpolation — debug chrome).
+        // Command-view only (invariant #6) and reuses the command view-proj the step-7 `render` just
+        // uploaded; a pure read of the snapshot + terrain, never the sim.
         if !self.embodied && self.debug_hitboxes {
-            let radius = fixed_to_f32(gonedark_core::projectile::HIT_RADIUS);
-            let units: Vec<gonedark_render::debug::DebugUnit> = self
-                .curr
-                .units
-                .iter()
-                .filter(|u| !u.building)
-                .map(|u| gonedark_render::debug::DebugUnit {
-                    x: fixed_to_f32(u.pos.x),
-                    y: fixed_to_f32(u.pos.y),
-                    hull_yaw: gonedark_render::interp_angle(u.hull_heading, u.hull_heading, 0.0),
-                    radius,
-                    is_tank: u.unit_kind == UnitKind::Heavy,
-                })
-                .collect();
-            let shells: Vec<gonedark_render::debug::DebugShell> = self
-                .curr
-                .projectiles
-                .iter()
-                .map(|p| gonedark_render::debug::DebugShell {
-                    x: fixed_to_f32(p.pos.x),
-                    y: fixed_to_f32(p.pos.y),
-                    vx: fixed_to_f32(p.vel.x),
-                    vy: fixed_to_f32(p.vel.y),
-                })
-                .collect();
-            self.renderer.render_debug(device, queue, view, &units, &shells);
+            let verts = debug_overlay_lines(&self.curr, &self.sim.terrain);
+            self.renderer.render_debug(device, queue, view, &verts);
         }
 
         // 8. While embodied, draw the directional alert HUD over the dark frame (worker 2) — the
@@ -2554,8 +2664,55 @@ mod tests {
         assert_eq!(Scene::parse("default"), Some(Scene::Default));
         assert_eq!(Scene::parse("demo"), Some(Scene::Default));
         assert_eq!(Scene::parse("duel"), Some(Scene::Duel));
+        assert_eq!(Scene::parse("infantry"), Some(Scene::Infantry));
         assert_eq!(Scene::parse("nope"), None);
         assert_eq!(Scene::default(), Scene::Default);
+        // The debug sandboxes default the overlay on; a real match leaves it off.
+        assert!(Scene::Duel.debug_overlay_default());
+        assert!(Scene::Infantry.debug_overlay_default());
+        assert!(!Scene::Default.debug_overlay_default());
+    }
+
+    /// The infantry sandbox boots **embodied** in a Player Rifleman with the input source swapped
+    /// to `Embodied` (invariant #5). GPU-free seam under `Game::new_scene`.
+    #[test]
+    fn infantry_scene_boots_embodied_in_a_player_rifleman() {
+        let mut sim = Sim::new(DEFAULT_SEED);
+        let (player, start_embodied) = seed_infantry_scene(&mut sim);
+        assert!(start_embodied, "the infantry sandbox boots in first person");
+        let i = player.index as usize;
+        assert_eq!(sim.world.faction[i], Faction::Player);
+        assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+        assert_eq!(
+            sim.world.input_source[i],
+            gonedark_core::components::InputSource::Embodied,
+        );
+    }
+
+    /// The infantry overlay composer draws the firing cone + a RED (blocked) LoS connector to the
+    /// walled dummy and GREEN (clear) connectors to the others — the line-of-sight mechanic made
+    /// visible. Pure, GPU-free seam under the F3 render block.
+    #[test]
+    fn infantry_overlay_draws_cone_and_a_blocked_los_connector() {
+        let mut sim = Sim::new(DEFAULT_SEED);
+        let _ = gonedark_core::scenario::seed_infantry(&mut sim);
+        let snap = sim.snapshot();
+        let verts = debug_overlay_lines(&snap, &sim.terrain);
+        assert!(!verts.is_empty());
+        // The firing-cone wedge color (render::debug COLOR_CONE) appears.
+        assert!(
+            verts.iter().any(|v| v.color == [1.0, 0.65, 0.20]),
+            "the firing-cone wedge is drawn",
+        );
+        // A blocked (red) connector to `walled` and clear (green) connectors to the open dummies.
+        assert!(
+            verts.iter().any(|v| v.color == [1.0, 0.30, 0.30]),
+            "the Heavy wall yields a blocked (red) LoS connector",
+        );
+        assert!(
+            verts.iter().any(|v| v.color == [0.25, 1.0, 0.40]),
+            "a clear sightline yields a green LoS connector",
+        );
     }
 
     /// The duel sandbox boots **embodied** in a Player Heavy tank, with the sim input-source already
