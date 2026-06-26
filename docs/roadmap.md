@@ -29,11 +29,11 @@ whether *CoH*-style command **and** a competent FPS scheme **and** an instant sw
 between them feel good on a small touchscreen. If this isn't fun, no amount of engine
 work saves it. (Embodied feel *over the network* is the next risk — Phase 0.5.)
 
-- Throwaway prototype (can be in anything fast — even a non-final engine).
-- One controllable unit; tap-to-select / order on the command layer.
-- Embody → FPS controls → surface, with the swap feeling instant.
-- The "world goes dark" vignette + an alert ping, faked.
-- **Exit criterion:** the embody ↔ command loop feels good in hand. Kill or rework
+- [x] Throwaway prototype (can be in anything fast — even a non-final engine).
+- [x] One controllable unit; tap-to-select / order on the command layer.
+- [x] Embody → FPS controls → surface, with the swap feeling instant.
+- [x] The "world goes dark" vignette + an alert ping, faked.
+- [x] **Exit criterion:** the embody ↔ command loop feels good in hand. Kill or rework
   the concept here if it doesn't.
 
 ## Phase 0.5 — Embodiment-over-network latency spike *(before the engine spine)*
@@ -57,12 +57,12 @@ single-unit and local. If embodied combat feels laggy over the wire, you want to
 *now*, not after building the ECS, renderer, and systems on top of an unfit netcode
 model.
 
-- Throwaway, like Phase 0 — minimal, not the final engine.
-- **Two networked clients**, one embodied unit each, fighting under *real* input delay
+- [x] Throwaway, like Phase 0 — minimal, not the final engine.
+- [x] **Two networked clients**, one embodied unit each, fighting under *real* input delay
   (and at the real 30 Hz tick, to test Q8 alongside Q7).
-- Try **avatar-local prediction** (predict only your own embodied entity, reconcile
+- [x] Try **avatar-local prediction** (predict only your own embodied entity, reconcile
   against the tick) if raw lockstep feels bad — the current lean for Q7.
-- **Exit criterion:** a credible path to good embodied combat feel over the net — *or*
+- [x] **Exit criterion:** a credible path to good embodied combat feel over the net — *or*
   a decision to change the netcode model (Q7) or tick rate (Q8) **before** Phase 1.
   Retrofitting a prediction/rollback boundary into a finished sim is far costlier than
   designing to it.
@@ -83,19 +83,19 @@ model.
 
 **Goal:** the real engine spine, end to end, with one of everything.
 
-- ECS world + scheduler; data-oriented component storage.
-- Fixed-tick deterministic sim loop + render interpolation. **Sim rate locked
+- [x] ECS world + scheduler; data-oriented component storage.
+- [x] Fixed-tick deterministic sim loop + render interpolation. **Sim rate locked
   ([D21](decisions.md), closing Q10):** 30 Hz was too coarse for embodied combat (D16), so the
   loop runs a single **global 60 Hz** tick (`core::sim::TICK_HZ = 60`) — with one unit on real
   arm64 it has huge headroom, so dual-rate is unjustified now and **deferred to Phase 3** (the
   200-unit thermal re-evaluation), not killed.
-- Embodiment as an input-source swap on a single entity; fog → avatar-only on embody. Wire
+- [x] Embodiment as an input-source swap on a single entity; fog → avatar-only on embody. Wire
   the **avatar-local-prediction boundary (D15) from the first netcode commit** — presentation
   path only, never writing sim state.
-- Minimal Vulkan renderer (instanced units), camera, top-down view.
-- One unit type moving via a flow field on screen.
-- **Validate on real arm64 hardware**, not just the emulator.
-- **Exit criterion (met — D22):** one unit, commandable and embodiable, running
+- [x] Minimal Vulkan renderer (instanced units), camera, top-down view.
+- [x] One unit type moving via a flow field on screen.
+- [x] **Validate on real arm64 hardware**, not just the emulator.
+- [x] **Exit criterion (met — D22):** one unit, commandable and embodiable, running
   deterministically at target frame rate on a target device. Passed on Galaxy S24;
   fallback retired (D22).
 
@@ -145,15 +145,15 @@ model.
 
 **Goal:** the actual game.
 
-- Combat, suppression, cover, line-of-sight.
-- Territory capture, resources, economy.
-- Camp building & upgrading.
-- Fog of war (and its interaction with embodiment).
-- The **order/stance system** — the real depth layer (patrol routes, engagement
+- [x] Combat, suppression, cover, line-of-sight.
+- [x] Territory capture, resources, economy.
+- [x] Camp building & upgrading.
+- [x] Fog of war (and its interaction with embodiment).
+- [x] The **order/stance system** — the real depth layer (patrol routes, engagement
   ranges, retreat triggers, trigger zones, queued production). This is where "smart
   play" lives, per the design.
-- Literal-executor unit AI; abilities/orders.
-- Alert channel + the embodied audio mix (strategic sound bleeding into FPS).
+- [x] Literal-executor unit AI; abilities/orders.
+- [x] Alert channel + the embodied audio mix (strategic sound bleeding into FPS).
 
 ## Phase 3 — Scale & net
 
@@ -173,10 +173,10 @@ model.
 
 **Goal:** make it hold up at size and (if pursued) in multiplayer.
 
-- 200-unit stress tests; job-system parallelism; profiling on target hardware.
-- Deterministic lockstep netcode; input delay; per-tick checksum diffing in CI.
-- Reconnect/snapshot handling; Wi-Fi↔cellular handoff.
-- PvP attention mind-game tuning (see open questions: enemy detection of "gone dark").
+- [ ] 200-unit stress tests; job-system parallelism; profiling on target hardware.
+- [ ] Deterministic lockstep netcode; input delay; per-tick checksum diffing in CI.
+- [ ] Reconnect/snapshot handling; Wi-Fi↔cellular handoff.
+- [ ] PvP attention mind-game tuning (see open questions: enemy detection of "gone dark").
 
 ## Phase 4 — Polish & ship
 
@@ -198,8 +198,8 @@ model.
 **Goal:** wrap the game in everything that ships *around* the match — the app shell, the
 storefront, the first-run teach — and tune it to mid-range silicon.
 
-- Thermal/battery tuning; device quality tiers; dynamic resolution.
-- Telemetry + live-ops scaffolding (consent-gated, per [`infrastructure.md`](infrastructure.md)).
+- [x] Thermal/battery tuning; device quality tiers; dynamic resolution.
+- [x] Telemetry + live-ops scaffolding (consent-gated, per [`infrastructure.md`](infrastructure.md)).
 
 ### Meta-UI / app shell — the screens *around* the match
 
