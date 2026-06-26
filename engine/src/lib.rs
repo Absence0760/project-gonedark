@@ -21,7 +21,7 @@
 use glam::{Mat4, Vec3, Vec4};
 use gonedark_core::alerts::AlertChannel;
 use gonedark_core::commander::{self, COMMANDER_PERIOD};
-use gonedark_core::components::{BuildingKind, EntityKind, Faction, Stance, UnitKind, Vec2};
+use gonedark_core::components::{BuildingKind, EntityKind, Faction, Posture, Stance, UnitKind, Vec2};
 use gonedark_core::economy::{self, Resources};
 use gonedark_core::ecs::Entity;
 use gonedark_core::event::SimEvent;
@@ -70,6 +70,11 @@ mod fire;
 /// `Command::Locomote` (camera-relative twin-stick), quantizing the world heading to `Fixed` at
 /// the boundary (invariant #1, exactly like `fire`).
 mod locomote;
+/// On-screen FPS touch controls (the COD-style embodied HUD). Owns the pure `TouchControls` seam:
+/// raw multi-touch points → embodied intents (`move_axis`/look/fire/crouch/reload/surface) + the
+/// screen-space layout the renderer draws. The testable logic `pal-android` can't host. Public so
+/// the renderer (and a host) can read the layout/HUD geometry.
+pub mod touch_controls;
 /// In-session shell (Phase 4 WS-B): the in-engine pause / surrender / post-match-summary /
 /// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
 /// session state — never mutates sim state. Public so a host (and tests) can drive it.
@@ -389,21 +394,81 @@ fn unproject_topdown(
 /// `player`" behavior was the unintuitive feel this replaced.)
 ///
 /// - Embody/surface (invariant #5): edge-triggered, mutually exclusive, *resolved by current
-///   state* — `embody_pressed && !embodied` → [`Command::Embody`]; `surface_pressed && embodied`
-///   → [`Command::Surface`]. The Android two-finger tap sets BOTH flags; this state-resolution
+///   state* — `embody_pressed && !embodied` → [`Command::Embody`] (targeting the resolved
+///   `embody_target`, see [`embody_target`]); `surface_pressed && embodied` → [`Command::Surface`]
+///   on the current `avatar`. The Android two-finger tap sets BOTH flags; this state-resolution
 ///   turns it into the correct toggle.
-fn map_input_commands(input: &InputFrame, embodied: bool, player: Entity) -> Vec<Command> {
+///
+/// `avatar` is the entity currently possessed (the surface target); `embody_target` is the entity
+/// the player would possess this frame (`None` when there is no live unit to take, so the embody
+/// press is a correct no-op rather than possessing a corpse).
+fn map_input_commands(
+    input: &InputFrame,
+    embodied: bool,
+    avatar: Entity,
+    embody_target: Option<Entity>,
+) -> Vec<Command> {
     let mut commands: Vec<Command> = Vec::new();
 
     // Embodiment input-source swap (invariant #5) — edge-triggered, mutually exclusive,
     // resolved by current state (so the two-finger BOTH-flags gesture toggles correctly).
     if input.embody_pressed && !embodied {
-        commands.push(Command::Embody { entity: player });
+        // Only possess a real, live unit — a `None` target (no player unit to take) drops the
+        // press so we never flip to embodied over nothing.
+        if let Some(target) = embody_target {
+            commands.push(Command::Embody { entity: target });
+        }
     } else if input.surface_pressed && embodied {
-        commands.push(Command::Surface { entity: player });
+        commands.push(Command::Surface { entity: avatar });
     }
 
     commands
+}
+
+/// Pick the Player unit to POSSESS this frame (invariant #5: embodiment is an input-source swap,
+/// resolved over *live* units — never a hardwired avatar). The RTS "select, then possess" rule:
+///  1. the first LIVE selected Player unit (what the command layer has highlighted), else
+///  2. the `current` avatar if it is still alive (re-possess the same unit when nothing is
+///     selected), else
+///  3. the first live Player unit in stable entity-index order — so a dead avatar never *strands*
+///     embodiment. (This is the bug it fixes: once your first avatar died, `E` re-targeted the
+///     corpse, `Sim` ignored the dead entity, and auto-surface bounced you straight back to command
+///     — possession looked dead because no live unit was ever taken.)
+///
+/// Returns `None` only when the player has NO live unit at all (every possession path is then a
+/// correct no-op). PURE (no `Game`/device) → unit-tested. The chosen entity rides into the lockstep
+/// [`Command::Embody`], so it is the local player's intent (like a tap target), applied
+/// bit-identically on every peer (the sim swaps that one entity's `InputSource`).
+fn embody_target(
+    selection: &Selection,
+    world: &gonedark_core::ecs::World,
+    current: Entity,
+) -> Option<Entity> {
+    let is_live_player_unit = |e: Entity| {
+        // `is_alive` validates the generation first, so the index reads below are in-bounds and
+        // current (a stale selected handle whose slot was reused fails here and is skipped).
+        world.is_alive(e)
+            && world.faction[e.index as usize] == Faction::Player
+            && world.kind[e.index as usize] == EntityKind::Unit
+    };
+    // 1. First live, selected Player unit.
+    if let Some(&e) = selection.units.iter().find(|&&e| is_live_player_unit(e)) {
+        return Some(e);
+    }
+    // 2. Keep the current avatar if it is still alive.
+    if is_live_player_unit(current) {
+        return Some(current);
+    }
+    // 3. Any live Player unit, in stable index order, so a death never permanently kills embodiment.
+    for i in 0..world.capacity() {
+        if world.is_index_alive(i)
+            && world.faction[i] == Faction::Player
+            && world.kind[i] == EntityKind::Unit
+        {
+            return world.entity(i);
+        }
+    }
+    None
 }
 
 /// Whether the host should auto-surface this frame: the player is embodied but their avatar entity
@@ -415,6 +480,24 @@ fn map_input_commands(input: &InputFrame, embodied: bool, player: Entity) -> Vec
 #[inline]
 fn should_auto_surface(embodied: bool, avatar_present: bool) -> bool {
     embodied && !avatar_present
+}
+
+/// The embodied crouch button → a `Command::Crouch` for `player`, or `None` when no press edge
+/// fired this frame. PURE (no `Game`/device) so the toggle inversion is unit-testable. A press
+/// **edge** flips posture off the avatar's CURRENT (authoritative sim) crouched state — the host
+/// holds no toggle bit, so a desktop key and the on-screen Crouch button share one path and a
+/// reconnecting peer's posture is never second-guessed. The caller guards that `player` is alive
+/// before reading `currently_crouched`.
+#[inline]
+fn crouch_toggle_command(
+    player: Entity,
+    crouch_edge: bool,
+    currently_crouched: bool,
+) -> Option<Command> {
+    crouch_edge.then_some(Command::Crouch {
+        entity: player,
+        crouched: !currently_crouched,
+    })
 }
 
 /// Is `c` a ONE-SHOT/edge command — an intent that fires for a single input frame (embody, surface,
@@ -647,6 +730,17 @@ pub struct Game {
     /// crosses into `core`. Set from the host-side `input.fire` edge in `frame`, alongside the
     /// `Command::Fire` the sim resolves authoritatively (invariant #4/#6: a render cue, not intel).
     last_fire_tick: Option<u64>,
+
+    /// Per-frame-persistent touch-control state (the Android FPS HUD): which finger owns the move
+    /// stick / look region + button-edge history. Drives the embodied intents from
+    /// `input.touches` while possessed. PRESENTATION/INPUT only — host-side floats, never sim state
+    /// (the intents it yields are quantized to `Fixed` by the `fire`/`locomote` seams, invariant #1).
+    touch: touch_controls::TouchControls,
+
+    /// What the on-screen touch HUD should draw THIS frame, or `None` when no touch input drove the
+    /// frame (e.g. desktop, or command view). Set in `frame`, read by the render step. Presentation
+    /// only.
+    touch_hud: Option<touch_controls::TouchHud>,
 }
 
 impl Game {
@@ -759,6 +853,9 @@ impl Game {
             commander_rng: Rng::new(seed ^ Faction::Enemy.index() as u64),
             // No shot fired yet → no muzzle flash (W5, presentation only).
             last_fire_tick: None,
+            // No touches tracked yet; the HUD is only built on embodied touch frames.
+            touch: touch_controls::TouchControls::new(),
+            touch_hud: None,
         }
     }
 
@@ -1072,7 +1169,16 @@ impl Game {
         // 1. Map input → sim commands (applied on the first step of this frame). The pure
         // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
         // `map_input_commands`; here we apply the resulting embodiment state transition.
-        let mut commands = map_input_commands(input, self.embodied, self.player);
+        // Resolve WHICH unit an embody press would possess this frame — the first live selected
+        // unit, else the current avatar, else any live player unit (see `embody_target`). Computed
+        // only on the embody edge; the selection read is last frame's highlight (you select, then
+        // press E). `None` ⇒ no live unit, so the press is dropped rather than possessing a corpse.
+        let target = if input.embody_pressed && !self.embodied {
+            embody_target(&self.selection, &self.sim.world, self.player)
+        } else {
+            None
+        };
+        let mut commands = map_input_commands(input, self.embodied, self.player, target);
 
         // 1b. Touch-UI layer (workers 4 + 5): in the command view, the pointer drives unit
         // SELECTION and the on-screen vocabulary issues orders to that selection. Both are pure
@@ -1213,33 +1319,71 @@ impl Game {
         // Embodiment input-source swap (invariant #5): mirror the toggle the mapping resolved.
         for cmd in &commands {
             match cmd {
-                Command::Embody { .. } => {
+                Command::Embody { entity } => {
+                    // Follow the possessed entity: the avatar may be a freshly-selected unit (not
+                    // the original spawn), so locomotion/fire/fog/camera all re-point at it here.
+                    self.player = *entity;
                     self.embodied = true;
                     self.camera = CameraMode::Embodied;
+                    // Fresh possession → forget any stale finger ownership from the command view so
+                    // the move stick / look region re-capture cleanly on the next touch.
+                    self.touch.reset();
                     log::info!("[tick {}] EMBODY — world goes dark", self.sim.tick_count());
                 }
                 Command::Surface { .. } => {
                     self.embodied = false;
                     self.camera = CameraMode::TopDown;
+                    self.touch.reset();
                     log::info!("[tick {}] SURFACE — back to command", self.sim.tick_count());
                 }
                 _ => {}
             }
         }
 
-        // Integrate look into presentation-only yaw + pitch (D15: never into the sim). Both
-        // subtract the delta so the view is non-inverted (mouse right → look right, mouse up → look
-        // up); pitch is clamped shy of vertical (see `integrate_look_*`).
-        self.yaw = integrate_look_yaw(self.yaw, input.look_axis.0);
-        self.pitch = integrate_look_pitch(self.pitch, input.look_axis.1);
+        // Embodied control intents (invariant #2/#5): a SINGLE platform-agnostic set of intents
+        // feeds the look integration + the Fire/Locomote/Crouch/Reload/Surface emission below,
+        // sourced from EITHER the Android on-screen FPS HUD (the pure `touch_controls` seam over
+        // `input.touches`) or the desktop keyboard/mouse `InputFrame` fields. The touch seam runs
+        // only while embodied and only when fingers are down; otherwise the on-screen HUD is cleared
+        // (the GUI is Android-only, and never drawn in the command view).
+        let (look_axis, move_axis, fire, crouch_edge, reload_edge, surface_edge) =
+            if self.embodied && input.touch_count > 0 {
+                let layout = touch_controls::TouchLayout::new(width, height);
+                let n = (input.touch_count as usize).min(input.touches.len());
+                let out = self.touch.update(&layout, &input.touches[..n]);
+                self.touch_hud = Some(out.hud);
+                (
+                    out.look_delta,
+                    out.move_axis,
+                    out.fire,
+                    out.crouch_edge,
+                    out.reload_edge,
+                    out.surface_edge,
+                )
+            } else {
+                self.touch_hud = None;
+                (
+                    input.look_axis,
+                    input.move_axis,
+                    input.fire,
+                    input.crouch_pressed,
+                    input.reload_pressed,
+                    false, // desktop ejects via the Q-key surface path in `map_input_commands`
+                )
+            };
 
-        // Embodied fire (W1, invariant #5/#1): while possessed, a pressed trigger emits a
-        // `Command::Fire` whose aim direction is the host yaw quantized to `Fixed` AT THE BOUNDARY
-        // (pure seam `fire::fire_command`). It enters the same lockstep command stream as taps, so
-        // the cone-hitscan hit is resolved sim-side, bit-identically on every peer. Embodied units
-        // never auto-fire (combat skips them); this is their only weapon path.
+        // Integrate look into presentation-only yaw + pitch (D15: never into the sim). Both
+        // subtract the delta so the view is non-inverted (mouse/drag right → look right, up → look
+        // up); pitch is clamped shy of vertical (see `integrate_look_*`).
+        self.yaw = integrate_look_yaw(self.yaw, look_axis.0);
+        self.pitch = integrate_look_pitch(self.pitch, look_axis.1);
+
         if self.embodied {
-            if let Some(cmd) = fire::fire_command(self.player, self.yaw, input.fire) {
+            // Embodied fire (W1, invariant #5/#1): a pressed trigger emits a `Command::Fire` whose
+            // aim is the host yaw quantized to `Fixed` AT THE BOUNDARY (pure seam
+            // `fire::fire_command`). Same lockstep stream as taps; the cone-hitscan hit resolves
+            // sim-side, bit-identically on every peer. Embodied units never auto-fire.
+            if let Some(cmd) = fire::fire_command(self.player, self.yaw, fire) {
                 commands.push(cmd);
                 // Stamp the muzzle-flash cue (W5, presentation only): the weapon viewmodel flares
                 // for a few ticks after this shot. Never read by the sim — it rides the host clock
@@ -1250,11 +1394,39 @@ impl Game {
             // Embodied locomotion (twin-stick): the WASD / virtual-stick `move_axis` becomes a
             // camera-relative `Command::Locomote` whose world heading is quantized to `Fixed` AT
             // THE BOUNDARY (pure seam `locomote::locomote_command`, exactly like the fire aim).
-            // Emitted only while possessed and only when the stick is off-neutral; it enters the
-            // SAME lockstep command stream as taps/fire, so the avatar advances bit-identically on
-            // every peer (the sim ignores it for any non-`Embodied` unit — invariant #1/#7).
-            if let Some(cmd) = locomote::locomote_command(self.player, self.yaw, input.move_axis) {
+            if let Some(cmd) = locomote::locomote_command(self.player, self.yaw, move_axis) {
                 commands.push(cmd);
+            }
+
+            // Crouch TOGGLE: derive the target posture from authoritative sim state (pure
+            // `crouch_toggle_command`), so a desktop key and the on-screen Crouch button share one
+            // path. The `Command::Crouch` rides the same lockstep stream as fire/locomote.
+            if self.sim.world.is_alive(self.player) {
+                let crouched =
+                    self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
+                if let Some(cmd) = crouch_toggle_command(self.player, crouch_edge, crouched) {
+                    commands.push(cmd);
+                }
+            }
+
+            // Reload: start a magazine reload (a no-op sim-side if there's no magazine / it's full /
+            // already reloading — see `combat`).
+            if reload_edge {
+                commands.push(Command::Reload {
+                    entity: self.player,
+                });
+            }
+
+            // Surface via the on-screen button (touch): two fingers now mean move+look, so the
+            // Surface button — not the two-finger gesture — ejects while embodied. The transition
+            // loop already ran THIS frame, so flip the camera state here directly (mirroring it).
+            if surface_edge {
+                commands.push(Command::Surface {
+                    entity: self.player,
+                });
+                self.embodied = false;
+                self.camera = CameraMode::TopDown;
+                self.touch.reset();
             }
         }
 
@@ -2083,7 +2255,7 @@ mod tests {
             pointer_down: true,
             ..Default::default()
         };
-        let cmds = map_input_commands(&input, false, player);
+        let cmds = map_input_commands(&input, false, player, None);
         assert!(
             cmds.is_empty(),
             "a left-click selects; it must not emit a Move/AttackMove, got {cmds:?}"
@@ -2098,7 +2270,7 @@ mod tests {
             embody_pressed: true,
             ..Default::default()
         };
-        let cmds = map_input_commands(&input, false, player);
+        let cmds = map_input_commands(&input, false, player, Some(player));
         assert!(cmds.iter().any(|c| matches!(c, Command::Embody { .. })));
         assert!(!cmds.iter().any(|c| matches!(c, Command::Surface { .. })));
     }
@@ -2111,7 +2283,7 @@ mod tests {
             surface_pressed: true,
             ..Default::default()
         };
-        let cmds = map_input_commands(&input, true, player);
+        let cmds = map_input_commands(&input, true, player, None);
         assert!(cmds.iter().any(|c| matches!(c, Command::Surface { .. })));
         assert!(!cmds.iter().any(|c| matches!(c, Command::Embody { .. })));
     }
@@ -2127,13 +2299,13 @@ mod tests {
             ..Default::default()
         };
 
-        let surfaced = map_input_commands(&both, false, player);
+        let surfaced = map_input_commands(&both, false, player, Some(player));
         assert!(surfaced.iter().any(|c| matches!(c, Command::Embody { .. })));
         assert!(!surfaced
             .iter()
             .any(|c| matches!(c, Command::Surface { .. })));
 
-        let embodied = map_input_commands(&both, true, player);
+        let embodied = map_input_commands(&both, true, player, None);
         assert!(embodied
             .iter()
             .any(|c| matches!(c, Command::Surface { .. })));
@@ -2149,7 +2321,7 @@ mod tests {
             pointer_down: true,
             ..Default::default()
         };
-        let cmds = map_input_commands(&input, true, player);
+        let cmds = map_input_commands(&input, true, player, None);
         assert!(!cmds.iter().any(|c| matches!(c, Command::Move { .. })));
     }
 
@@ -2173,6 +2345,29 @@ mod tests {
             !should_auto_surface(false, true),
             "not embodied + present → nothing to do"
         );
+    }
+
+    /// The crouch button toggles posture off the avatar's CURRENT sim state: standing → crouch,
+    /// crouched → stand. No edge → no command, regardless of current posture.
+    #[test]
+    fn crouch_toggle_inverts_current_posture_only_on_an_edge() {
+        let e = test_player();
+        // No press edge → nothing, whatever the posture.
+        assert!(crouch_toggle_command(e, false, false).is_none());
+        assert!(crouch_toggle_command(e, false, true).is_none());
+        // Standing + edge → crouch.
+        match crouch_toggle_command(e, true, false) {
+            Some(Command::Crouch { entity, crouched }) => {
+                assert_eq!(entity, e);
+                assert!(crouched, "standing → crouch");
+            }
+            other => panic!("expected a Crouch command, got {other:?}"),
+        }
+        // Crouched + edge → stand.
+        match crouch_toggle_command(e, true, true) {
+            Some(Command::Crouch { crouched, .. }) => assert!(!crouched, "crouched → stand"),
+            other => panic!("expected a Crouch command, got {other:?}"),
+        }
     }
 
     /// One-shot/edge commands force a sub-tick catch-up; held/continuous ones (locomote, fire) do

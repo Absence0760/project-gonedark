@@ -245,6 +245,10 @@ pub struct DesktopInput {
     building_slot: Option<u8>,
     train_slot: Option<u8>,
     upgrade_latch: bool,
+    // Embodied FPS edges (the on-screen GUI is Android-only, but desktop keys exercise the same
+    // mechanics): C toggles crouch, V starts a reload. One-shot, cleared on drain.
+    crouch_latch: bool,
+    reload_latch: bool,
 }
 
 impl Default for DesktopInput {
@@ -270,6 +274,8 @@ impl Default for DesktopInput {
             building_slot: None,
             train_slot: None,
             upgrade_latch: false,
+            crouch_latch: false,
+            reload_latch: false,
         }
     }
 }
@@ -411,6 +417,10 @@ impl DesktopInput {
             KeyCode::KeyR if pressed && !repeat => self.train_slot = Some(0),
             KeyCode::KeyH if pressed && !repeat => self.train_slot = Some(1),
             KeyCode::KeyU if pressed && !repeat => self.upgrade_latch = true,
+            // Embodied FPS keys (mirror the Android Crouch/Reload buttons so the mechanics are
+            // testable on desktop). Edge-latched; the engine ignores them while not embodied.
+            KeyCode::KeyC if pressed && !repeat => self.crouch_latch = true,
+            KeyCode::KeyV if pressed && !repeat => self.reload_latch = true,
             _ => {}
         }
     }
@@ -457,6 +467,11 @@ impl DesktopInput {
             move_axis: (mx, my),
             look_axis: (self.look_dx, self.look_dy),
             fire: self.fire,
+            crouch_pressed: self.crouch_latch,
+            reload_pressed: self.reload_latch,
+            // No on-screen touch controls on desktop — the embodied GUI is Android-only.
+            touches: Default::default(),
+            touch_count: 0,
             scroll: self.scroll,
         };
 
@@ -472,6 +487,8 @@ impl DesktopInput {
         self.building_slot = None;
         self.train_slot = None;
         self.upgrade_latch = false;
+        self.crouch_latch = false;
+        self.reload_latch = false;
         self.look_dx = 0.0;
         self.look_dy = 0.0;
         self.scroll = 0.0;

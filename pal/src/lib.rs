@@ -16,6 +16,22 @@ pub trait Clock {
     fn now_secs(&self) -> f64;
 }
 
+/// Max simultaneous touch points the engine tracks per frame (a twin-stick + a couple of buttons
+/// never needs more). Extra fingers beyond this are dropped by the backend — irrelevant to the
+/// control scheme. Small + fixed so [`InputFrame`] stays `Copy`-cheap and allocation-free.
+pub const MAX_TOUCHES: usize = 8;
+
+/// One currently-down touch point this frame, in window pixels. `id` is the platform pointer id,
+/// **stable across frames** for a held finger, so the engine's `touch_controls` seam can track
+/// which finger owns which on-screen control. The platform backend fills these; the engine reads
+/// them (the testable logic lives engine-side — `pal-android` can't be unit-tested).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TouchSample {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+}
+
 /// Per-frame input, already translated from the platform's native scheme into the
 /// engine's intent vocabulary. Each backend maps touch+gyro / mouse+kbd / gamepad onto
 /// this SAME struct, so the core stays input-agnostic (platforms.md §5).
@@ -83,6 +99,24 @@ pub struct InputFrame {
     pub move_axis: (f32, f32),
     pub look_axis: (f32, f32),
     pub fire: bool,
+    /// **Embodied crouch** intent — a one-shot edge that *toggles* the avatar's posture (the engine
+    /// flips it off the authoritative sim posture, so the host holds no toggle state). Desktop
+    /// latches a key; touch derives it from the on-screen Crouch button via the `touch_controls`
+    /// seam. Ignored while not embodied.
+    pub crouch_pressed: bool,
+    /// **Embodied reload** intent — a one-shot edge that starts a magazine reload
+    /// ([`Command::Reload`](../../core)). Desktop latches a key; touch derives it from the on-screen
+    /// Reload button. Ignored while not embodied / for a weapon with no magazine.
+    pub reload_pressed: bool,
+    /// Currently-down touch points this frame, feeding the Android FPS HUD (floating move stick,
+    /// drag-look, and the Fire / Crouch / Reload / Surface buttons). The first
+    /// [`touch_count`](Self::touch_count) entries are valid. While embodied, the engine's
+    /// `touch_controls` seam turns these into the embodied intents above — `move_axis`, `look_axis`,
+    /// `fire`, `crouch`, `reload`, surface. Desktop leaves it empty: its embodied controls are
+    /// keyboard+mouse, and the on-screen GUI is Android-only.
+    pub touches: [TouchSample; MAX_TOUCHES],
+    /// How many of [`touches`](Self::touches) are valid this frame (`0` on desktop / no touch).
+    pub touch_count: u8,
     /// Command-view **camera zoom** input this frame: accumulated mouse-wheel / pinch delta,
     /// positive = zoom IN (closer), negative = zoom OUT. A host-only presentation signal (like
     /// `look_axis`) — it shrinks/grows the command camera's framing and never enters the sim.
