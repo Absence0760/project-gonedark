@@ -193,8 +193,8 @@ heavyweight is clearly better and we either close the gap or knowingly concede i
 | Command **and** embody, one continuous battle | unique | — | **LEAD** |
 | Vision as the price of getting closer ("going dark") | unique | — | **LEAD** |
 | Your army is *yours* and obeys (no teammate roulette) | unique | Hell Let Loose splits it | **LEAD** |
-| Tactical RTS depth & readability | systems-complete | Company of Heroes 3 | **PAR-ish** |
-| RTS skill ceiling / mastery | designed | StarCraft II | **LAG** (different skill, must prove it's real) |
+| Tactical RTS depth & readability | systems-complete | Company of Heroes 3 | **PAR-ish** (→ CP-9) |
+| RTS skill ceiling / mastery | designed | StarCraft II | **LAG** (different skill, must prove it's real → PC-5) |
 | Raw gunfeel | hitscan + tank | Call of Duty | **LAG** (concede twitch; aim for "feels right with a mouse") |
 | Combined-arms spectacle | greybox, growing | Battlefield 6 | **LAG** (but BF can't make it *your* battle) |
 | Handcrafted campaign encounters | PvE designed | Halo | **LAG** (closing via PvE) |
@@ -229,6 +229,13 @@ the invariants.
 - **PC-4 — Mods / data-driven content.** Missions and scenarios are already **data**
   ([`pve-campaign.md`](../pve-campaign.md)). Exposing that as moddable content is how *StarCraft*
   and *Total War* stayed alive for decades — a longevity lever unique to PC.
+- **PC-5 — RTS depth & mastery proof.** The closing item for the *RTS skill ceiling / mastery* row
+  above, conceded LAG "until we prove it's real": the order/stance vocabulary + the *when do I dare
+  go dark* timing must be a genuine, masterable skill a StarCraft/CoH veteran respects — a different
+  skill from APM, but a real one. Prove it via structured playtests + the `--metrics` harness
+  (decision depth → outcome variance) + a higher-tier honest commander ([D39](../decisions.md)).
+  Depth stays in the *vocabulary*, never autonomous unit AI (invariant #3). **Pairs with CP-9**:
+  legible first, then masterable.
 
 > **The guardrail:** none of this is allowed to fork the game. The PC build is the *same shared
 > core* (invariant #2) with a richer control-and-options skin on top. PC-specific features

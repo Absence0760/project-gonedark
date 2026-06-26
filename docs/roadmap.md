@@ -398,9 +398,22 @@ narrative depth ([Q16](open-questions.md)).
 > gap," so several deliberately overlap the pillars above rather than adding net-new scope.
 >
 > **Sequencing:** CP-7 + CP-2 are launch-critical (they gate whether a stranger *gets* and
-> *enjoys* the core); CP-1 + CP-4 are launch-important (shooter-audience table-stakes);
-> CP-3/CP-5/CP-6/CP-8 ramp after the PvE loop is proven. The **LEAD** rows need *protection*
-> (hold the determinism gates + the one-player-both-jobs symmetry), not new work.
+> *enjoys* the core); CP-1 + CP-4 + CP-9 are launch-important (table-stakes for the shooter
+> *and* the command audiences); CP-3/CP-5/CP-6/CP-8 + PC-5 ramp after the PvE loop is proven.
+> The **LEAD** rows need *protection* (hold the determinism gates + the one-player-both-jobs
+> symmetry), not new work.
+>
+> **Completeness (reconciled against the positioning scorecards).** Every scored capability in
+> all three positioning docs — [`positioning.md`](positioning/positioning.md) §6,
+> [`positioning-pc.md`](positioning/positioning-pc.md) §7,
+> [`positioning-cross-platform.md`](positioning/positioning-cross-platform.md) §6 — maps to an
+> item below, to a phase/PvE-pillar item above, or to the **LEAD-protection** callout at the end
+> of this section. So **finishing this parity section + the phases + the PvE pillar reaches
+> parity-or-better on every row the incumbents are scored on** (photoreal fidelity and BF-scale
+> combined-arms spectacle are the two *consciously conceded* tiers — CP-3 and the LEAD-adjacent
+> "but it's *your* battle" — not gaps to close). The conceded **roster/combined-arms breadth**
+> (more unit/vehicle variety toward the "growing" spectacle row) rides the PvE content pillar +
+> the scripted asset pipeline ([`content-pipeline.md`](content-pipeline.md)), not a separate item.
 
 - [ ] **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
   ([D60](decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,
@@ -432,6 +445,16 @@ narrative depth ([Q16](open-questions.md)).
   (telemetry/consent/live-ops) into the rotating scenario-parameter modifier system (PvE WS-E) for a
   sustainable post-launch cadence — **modifiers and content, never balance-number or power hacks**
   (#1/#6).
+- [ ] **CP-9 — Command-layer readability + teach-fast pass.** The closing item for the PAR-ish
+  *Strategic/command depth* row ([`positioning.md`](positioning/positioning.md) §6): the RTS half
+  must read **at a glance on a small screen** and **teach itself fast** — a shooter-first audience
+  won't learn it slowly, and a *Company of Heroes*/*StarCraft* veteran must respect it. This is the
+  *information architecture + glanceability* of selection / orders / economy / territory (what the
+  player can parse and act on in a second), **broader than and paired with** the *Visual-design pass
+  on the command HUD* under UI/UX polish above (which is the icon/type/colour layer). Bounded by
+  invariant #3 (depth lives in the **order/stance vocabulary**, never smarter unit AI) and #6 (no
+  strategic intel leaks while embodied). *Launch-important — it gates whether the command half lands
+  for the shooter-first audience the storefront sends us.*
 
 **PC-facing parity** — meeting a seated, genre-literate player's expectations without forking the
 game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
@@ -446,6 +469,15 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
 - [ ] **PC-4 — Mods / data-driven content.** Missions/scenarios are already data
   ([Q15](open-questions.md)); exposing them as moddable content is how StarCraft/Total War lasted
   decades — a PC-only longevity lever.
+- [ ] **PC-5 — RTS depth & mastery proof.** The closing item for the *RTS skill ceiling / mastery*
+  row the PC scoreboard concedes as LAG "until we prove it's real" ([`positioning-pc.md`](positioning/positioning-pc.md)
+  §7): the **order/stance vocabulary** + the **"when do I dare go dark" timing** must form a genuine,
+  *masterable* skill curve a StarCraft/CoH veteran respects — a different skill from raw APM, but a
+  real one. Validate by **structured playtests** plus the `--metrics` harness as a supporting signal
+  (decision depth shows up as outcome variance, not coin-flips), and a higher-tier honest commander
+  ([D39](decisions.md)) that punishes shallow play. Depth stays in the **vocabulary**, never in
+  autonomous unit AI (invariant #3). **Pairs with CP-9** — a skill must be legible before it can be
+  mastered. *Ramps after the PvE loop proves the core skill is fun.*
 
 **Cross-platform parity** — keeping *one game* fair and coherent across phone/PC/console (full
 analysis: [`positioning-cross-platform.md`](positioning/positioning-cross-platform.md)):

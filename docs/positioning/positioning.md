@@ -157,7 +157,7 @@ match. **Lag** = an incumbent is materially better and we must close or consciou
 | Vision-as-cost ("going dark") | ✅ unique | — | **LEAD** | Teach it (PvE M1) |
 | Deterministic sim built for 200-unit lockstep | ✅ substrate landed; on-device scale pending (Phase 3) | — (DF has no sim) | **LEAD** | Hold determinism gates; finish Phase 3 mobile profile |
 | Symmetric hybrid PvP (no dead commander seat) | ⏳ designed | hybrids: all asymmetric | **LEAD (potential)** | Phase 3 netcode → PvP |
-| Strategic/command depth | ⏳ systems-complete | Company of Heroes | **PAR-ish** | Command-layer readability pass |
+| Strategic/command depth | ⏳ systems-complete | Company of Heroes | **PAR-ish** | **CP-9** command-layer readability pass |
 | Gunsmith / loadout | ⏳ designed (WS-C) | CoD Mobile | **LAG** | **CP-1** gunsmith to mobile-expected depth |
 | Raw FPS gunfeel / gunplay | ⏳ hitscan + tank | Delta Force / CoD | **LAG** | **CP-2** embodied game-feel bar |
 | Animation / character fidelity | ⏳ greybox | Delta Force (UE5) | **LAG (conceded tier)** | **CP-3** "not jarring" floor, not parity |
@@ -211,12 +211,18 @@ the reason to choose us.** None reopens an invariant.
 - **CP-8 — Live-ops / content cadence engine.** Wire the `server` scaffolding (telemetry/consent/
   live-ops) into the rotating scenario-parameter modifier system (PvE WS-E) so we can sustain a
   post-launch cadence — *modifiers and content, never balance-number or power hacks* (keeps #1/#6).
+- **CP-9 — Command-layer readability + teach-fast pass.** The closing item for the **PAR-ish**
+  *Strategic/command depth* row above: the RTS half must read *at a glance on a small screen* and
+  *teach itself fast* — a shooter-first audience won't learn it slowly, and a CoH/StarCraft veteran
+  must respect it (§5, Cohort C). Information architecture + glanceability of selection/orders/
+  economy/territory, broader than the pure visual-design HUD pass. Depth stays in the order/stance
+  vocabulary (invariant #3), no intel leaks while embodied (#6). *Launch-important.*
 
 **Sequencing principle:** CP-7 (onboarding) and CP-2 (game feel) are launch-critical — they gate
-whether a stranger *gets* and *enjoys* the core. CP-1/CP-4 are launch-important (table-stakes for
-the shooter audience). CP-3/CP-5/CP-6/CP-8 are parity-over-time, fine to ramp after the PvE product
-proves the loop. The LEAD rows need *protection*, not new work — the determinism gates and the
-single-player-both-jobs symmetry must not erode as we chase parity.
+whether a stranger *gets* and *enjoys* the core. CP-1/CP-4/CP-9 are launch-important (table-stakes
+for the shooter and command audiences). CP-3/CP-5/CP-6/CP-8 are parity-over-time, fine to ramp
+after the PvE product proves the loop. The LEAD rows need *protection*, not new work — the
+determinism gates and the single-player-both-jobs symmetry must not erode as we chase parity.
 
 ---
 
