@@ -169,7 +169,7 @@ All payloads stay `Copy` fixed-point/handle data — no float crosses the bounda
 P1  trig: atan2 + rotate_toward (turret slew math)      ── DONE (committed, fully tested)
 P2  hull_heading + turret_yaw + hull inertia + AimTurret/DriveHull + AI slew   ── DONE (c1e4059)
 P3  ballistic projectile pool: flight + drop + impact detection (muzzle_vel > 0)   ── DONE (4fbe31b)
-P4  Armor + Weapon.penetration + facing multiplier, resolved AT IMPACT (ALL-UNIT rewrite)   ◀ NEXT
+P4  Armor + Weapon.penetration + facing multiplier, resolved AT IMPACT (ALL-UNIT rewrite)   ── DONE (dc8ce4e)
 P5  dispersion / aim-time bloom: settle-to-center scatter on Fire
 P6  ShellKind AP/APHE/HE + SelectShell + per-shell pen/damage/splash
 P7  render: turret mesh node + shortest-arc angle interp + tracer/projectile draw (inv #4)
@@ -185,7 +185,7 @@ order is why ballistics-first avoids hitscan-then-projectile rework). P5–P6 ar
 P7–P9 make it legible and playable. Each lands with unit tests in the same commit; **P3 and P4
 must keep `determinism.yml`'s arch matrix green** (invariant #7 — projectiles and the damage
 rewrite are both checksummed sim state). High-blast-radius phases (P2, P3, P4, P6) run through
-`/safe-edit`. **P1 is done; P2 is next.**
+`/safe-edit`. **P1–P4 done; P5 is next.**
 
 ---
 
@@ -237,10 +237,11 @@ more.
 - **P3** a projectile travels at `muzzle_vel` (a near target is hit later than a far gun would
   hitscan); drop arcs `height` down by `GRAVITY`; impact detection picks the right unit/tick;
   the pool ring-caps and never leaks; **two `Sim` instances on one seed agree** (cross-arch).
-- **P4** the **load-bearing battery**: unarmoured unit takes *identical* damage to today (golden
+- **P4** ✅ the **load-bearing battery**: unarmoured unit takes *identical* damage to today (golden
   test vs current numbers); frontal shot on a tank bounces; flank/rear pens; facet correct at the
   front/side and side/rear boundaries; **a shot that lands mid-turn hits the rotated-in facet**;
-  an armoured duel checksums identically — added to the cross-arch matrix.
+  an armoured duel checksums identically — added to the cross-arch matrix. Green dev+release (301
+  core tests, 8 new), 2-peer lockstep agrees over 300 ticks (`dc8ce4e`).
 - **P5** dispersion grows under motion/traverse, shrinks at rest, and a **fully-settled gun fires
   dead-on (zero scatter)**; the bounded scatter is bit-identical across two `Sim`s on one seed.
 - **P7/P8** pure render/HUD seams tested like `interpolate_instances` / `map_input_commands`
@@ -251,15 +252,19 @@ more.
 
 ## 9. Status & next step
 
-**P1–P3 are committed and green.** P1 (`trig::atan2`/`rotate_toward`, `a5812fb`); **P2** hull/turret
+**P1–P4 are committed and green.** P1 (`trig::atan2`/`rotate_toward`, `a5812fb`); **P2** hull/turret
 heading + inertia + `AimTurret`/`DriveHull` + AI `heading_system` (`c1e4059`); **P3** the
 fixed-point ballistic projectile pool — travel time + drop via projectile-local height, impact
-applies the existing cover-mitigated damage, embodied-only (`4fbe31b`). Built via a fan-out
-workflow (build → 3-lens adversarial review → fix), whose P2 review caught a real `WIRE_VERSION`
-desync-on-skew bug before commit. Verified: **293 core tests** green dev+release, the **2-peer
-lockstep runner agrees over 300 ticks** with no desync, `WIRE_VERSION` 5→6, `SNAPSHOT_VERSION` 3→5.
+applies the existing cover-mitigated damage, embodied-only (`4fbe31b`); **P4** the all-unit armour
+rewrite — `Armor{front,side,rear}` + `Weapon.penetration` + a shared `facing_penetration_multiplier`
+applied at all three damage sites (AI hitscan, embodied hitscan, shell impact), resolved **at
+impact** (`dc8ce4e`). Built via a fan-out workflow (build → 3-lens adversarial review → fix); the P2
+review caught a real `WIRE_VERSION` desync-on-skew bug, and the P4 review caught a latent i32
+overflow in the facet compare (now i64) + a fold-coverage gap (now perturbing every armour facet)
+before commit. Verified: **301 core tests** green dev+release, the **2-peer lockstep runner agrees
+over 300 ticks** with no desync, `WIRE_VERSION` 6 (unchanged — P4 adds no command),
+`SNAPSHOT_VERSION` 5→6.
 
-**P4 is next** — `Armor` + `Weapon.penetration` + the facing multiplier resolved **at projectile
-impact** (the all-unit damage rewrite). It is the highest-risk determinism change; run it under
-`/safe-edit` with cross-arch checksum coverage. The P3 projectile already carries an (unused)
-`penetration` field as the hook for it.
+**P5 is next** — dispersion / aim-time bloom: a reticle that grows under motion/traverse, settles at
+rest, and a fully-settled gun fires dead-on (zero scatter), with the bounded scatter drawn from
+`combat`'s reserved deterministic `&mut Rng`.

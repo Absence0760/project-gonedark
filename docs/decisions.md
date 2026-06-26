@@ -2580,10 +2580,12 @@ are un-constructible off-device, so it carries the same standing test-exemption 
 
 ## D55 — Tank embodiment goes War Thunder-flavoured: independent hull/turret + all-unit armour facing
 
-**Status:** decided + plan recorded; **P1–P3 landed** — `trig::atan2`/`rotate_toward` (`a5812fb`),
-hull/turret heading + inertia + slew (`c1e4059`), and the ballistic projectile pool (`4fbe31b`);
-P4–P9 phased. Verified green (293 core tests dev+release; 2-peer lockstep agrees over 300 ticks;
-`WIRE_VERSION` 5→6, `SNAPSHOT_VERSION` 3→5). Reference feel **War Thunder (sim)**; both follow-up
+**Status:** decided + plan recorded; **P1–P4 landed** — `trig::atan2`/`rotate_toward` (`a5812fb`),
+hull/turret heading + inertia + slew (`c1e4059`), the ballistic projectile pool (`4fbe31b`), and the
+all-unit armour-facing rewrite — `Armor{front,side,rear}` + `Weapon.penetration` + a shared
+`facing_penetration_multiplier` resolved at impact across all three damage sites (`dc8ce4e`);
+P5–P9 phased. Verified green (301 core tests dev+release; 2-peer lockstep agrees over 300 ticks;
+`WIRE_VERSION` 6 — P4 adds no command, `SNAPSHOT_VERSION` 5→6). Reference feel **War Thunder (sim)**; both follow-up
 forks settled — ballistic flight is a **core phase** (not deferred) and the tank is the **deep**
 embodiment by design. Full plan: [`tank-embodiment-plan.md`](tank-embodiment-plan.md).
 
