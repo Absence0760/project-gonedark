@@ -144,9 +144,10 @@ impl App {
     /// Desktop-host-only key handling for a running match: the pause/surrender entry + cursor
     /// controls. **Esc** toggles the in-session pause overlay (`Game::toggle_pause` — open the menu
     /// while playing, close it while paused; the menu's own **Surrender** button ends the match);
-    /// **Left Alt** transiently frees the cursor while held. Neither reaches the sim (they're not in
-    /// the keymap `DesktopInput` decodes) — pause is a host-side `SessionAction` that never enters
-    /// the deterministic input frame, so the checksum stream is untouched.
+    /// **Left Alt** transiently frees the cursor while held; **F3** toggles the debug hitbox/facet
+    /// overlay. None reach the sim (they're not in the keymap `DesktopInput` decodes) — pause is a
+    /// host-side `SessionAction` and the overlay is presentation state, so neither enters the
+    /// deterministic input frame and the checksum stream is untouched.
     fn handle_host_keys(&mut self, event: &WindowEvent) {
         if let WindowEvent::KeyboardInput { event: key, .. } = event {
             let pressed = key.state == ElementState::Pressed;
@@ -155,6 +156,15 @@ impl App {
                     if pressed && !key.repeat {
                         if let Screen::InMatch(game) = &mut self.screen {
                             game.toggle_pause();
+                        }
+                    }
+                }
+                // F3 toggles the debug hitbox / facet overlay (command view only). A pure host UX
+                // key over a presentation toggle — it never enters the sim input frame.
+                PhysicalKey::Code(KeyCode::F3) => {
+                    if pressed && !key.repeat {
+                        if let Screen::InMatch(game) = &mut self.screen {
+                            game.toggle_debug_hitboxes();
                         }
                     }
                 }

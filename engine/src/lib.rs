@@ -325,6 +325,18 @@ fn embodied_proj(width: u32, height: u32) -> Mat4 {
     Mat4::perspective_rh(EMBODIED_FOV_DEG.to_radians(), aspect, EMBODIED_NEAR, EMBODIED_FAR)
 }
 
+/// Whether the embodied first-person frame draws the handheld rifle viewmodel (W5/D44) for a
+/// possessed unit of `kind`. The viewmodel is the rifleman's `weapon_rifle` greybox — an *infantry*
+/// weapon — so it is drawn only when an infantry unit is possessed. A possessed tank (`Heavy`) has
+/// no handheld weapon (and no cannon-viewmodel asset yet), so it shows none rather than a rifle
+/// floating incongruously in the lower-right of the gun camera. PURE → unit-tested.
+fn embodied_shows_rifle_viewmodel(kind: UnitKind) -> bool {
+    match kind {
+        UnitKind::Rifleman => true,
+        UnitKind::Heavy => false,
+    }
+}
+
 /// Embodied perspective view-projection (free fn — eye position + yaw/pitch + viewport only, no
 /// `Game`/device needed): eye at the possessed unit's position, raised by `EYE_HEIGHT`, looking out
 /// along the current `yaw` (heading) and `pitch` (up/down tilt, radians; +up, −down).
@@ -1036,6 +1048,12 @@ pub struct Game {
     /// frame (e.g. desktop, or command view). Set in `frame`, read by the render step. Presentation
     /// only.
     touch_hud: Option<touch_controls::TouchHud>,
+
+    /// Whether the debug hitbox / facet overlay is on (host **F3** toggle via
+    /// [`Game::toggle_debug_hitboxes`]). Drawn ONLY in the command view (invariant #6) — surface to
+    /// inspect the tanks. Defaults on for the duel debug scene, off otherwise. Pure presentation
+    /// chrome: it reads the snapshot and never touches the sim.
+    debug_hitboxes: bool,
 }
 
 /// Which world [`Game::new_scene`] seeds. The default match is the Phase 2 demo skirmish; the
@@ -1177,6 +1195,9 @@ impl Game {
             Scene::Default => seed_default_scene(&mut sim),
             Scene::Duel => seed_duel_scene(&mut sim),
         };
+        // The hitbox/facet overlay defaults on for the duel sandbox (its whole point), off for a
+        // real match; F3 toggles it either way.
+        let debug_hitboxes = scene == Scene::Duel;
 
         let curr = sim.snapshot();
         let prev = curr.clone();
@@ -1228,7 +1249,19 @@ impl Game {
             // No touches tracked yet; the HUD is only built on embodied touch frames.
             touch: touch_controls::TouchControls::new(),
             touch_hud: None,
+            debug_hitboxes,
         }
+    }
+
+    /// Toggle the debug hitbox / facet overlay (the host's **F3**). Visible only in the command
+    /// view; pure presentation state, never the sim.
+    pub fn toggle_debug_hitboxes(&mut self) {
+        self.debug_hitboxes = !self.debug_hitboxes;
+    }
+
+    /// Whether the debug hitbox overlay is currently on (for a host indicator / test).
+    pub fn debug_hitboxes(&self) -> bool {
+        self.debug_hitboxes
     }
 
     /// The current in-session shell surface (pause / surrender-ended / reconnect / playing) — a
@@ -2242,8 +2275,12 @@ impl Game {
         // greybox 3D mesh — over the world + avatar, with a muzzle flash that flares + recoils for a
         // few ticks after the player fires. Anchored in view space, so the host hands in the
         // projection ALONE (the model matrix is the view-space placement). No world position →
-        // reveals no intel (invariant #6).
-        if self.embodied {
+        // reveals no intel (invariant #6). Only an *infantry* avatar shows it: the viewmodel is an
+        // infantry rifle, so a possessed tank (`Heavy`) draws none rather than a rifle floating in
+        // the cannon view (see `embodied_shows_rifle_viewmodel`).
+        if self.embodied
+            && embodied_shows_rifle_viewmodel(self.sim.world.unit_kind[self.player.index as usize])
+        {
             let proj = embodied_proj(width, height).to_cols_array_2d();
             let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
             self.renderer
@@ -2266,6 +2303,41 @@ impl Game {
                 };
                 self.renderer.render_marquee(device, queue, view, &marquee);
             }
+        }
+
+        // 7d. Debug hitbox / facet overlay (command view, F3): draw each unit's shell hit-radius
+        // ring — colored by armour facet for tanks (red front / yellow side / green rear) — a bright
+        // hull-heading spoke, and a tracer behind every in-flight shell, so the duel's hitboxes are
+        // visible. Built from the curr snapshot (no interpolation — debug chrome, and the duel tanks
+        // are near-stationary). Command-view only (invariant #6) and reuses the command view-proj the
+        // step-7 `render` just uploaded; a pure read of the snapshot, never the sim.
+        if !self.embodied && self.debug_hitboxes {
+            let radius = fixed_to_f32(gonedark_core::projectile::HIT_RADIUS);
+            let units: Vec<gonedark_render::debug::DebugUnit> = self
+                .curr
+                .units
+                .iter()
+                .filter(|u| !u.building)
+                .map(|u| gonedark_render::debug::DebugUnit {
+                    x: fixed_to_f32(u.pos.x),
+                    y: fixed_to_f32(u.pos.y),
+                    hull_yaw: gonedark_render::interp_angle(u.hull_heading, u.hull_heading, 0.0),
+                    radius,
+                    is_tank: u.unit_kind == UnitKind::Heavy,
+                })
+                .collect();
+            let shells: Vec<gonedark_render::debug::DebugShell> = self
+                .curr
+                .projectiles
+                .iter()
+                .map(|p| gonedark_render::debug::DebugShell {
+                    x: fixed_to_f32(p.pos.x),
+                    y: fixed_to_f32(p.pos.y),
+                    vx: fixed_to_f32(p.vel.x),
+                    vy: fixed_to_f32(p.vel.y),
+                })
+                .collect();
+            self.renderer.render_debug(device, queue, view, &units, &shells);
         }
 
         // 8. While embodied, draw the directional alert HUD over the dark frame (worker 2) — the
@@ -2723,6 +2795,20 @@ mod tests {
             (m[0][0] - m11 / (width as f32 / height as f32)).abs() < 1e-4,
             "m00 = {}",
             m[0][0]
+        );
+    }
+
+    /// The handheld rifle viewmodel is infantry-only: a possessed rifleman shows it, a possessed
+    /// tank does not (no infantry rifle floating in the cannon view).
+    #[test]
+    fn rifle_viewmodel_is_infantry_only() {
+        assert!(
+            embodied_shows_rifle_viewmodel(UnitKind::Rifleman),
+            "an embodied rifleman carries the rifle viewmodel"
+        );
+        assert!(
+            !embodied_shows_rifle_viewmodel(UnitKind::Heavy),
+            "an embodied tank has no handheld rifle viewmodel"
         );
     }
 

@@ -54,6 +54,11 @@ pub mod touch_controls;
 /// Band-select marquee. Owns `MarqueeRenderer`: the selection rectangle drawn in the command view
 /// while a band-drag is in flight. Public so the host can describe the box via [`marquee::Marquee`].
 pub mod marquee;
+/// Debug hitbox / facet overlay. Owns `DebugRenderer`: the command-view, world-space line pass that
+/// draws each unit's hit-radius ring (colored by armour facet for tanks), a hull-heading spoke, and
+/// shell tracers — the visual "see the hitboxes" half of the duel sandbox, behind a developer
+/// toggle. Drawn as a LOAD pass by [`Renderer::render_debug`].
+pub mod debug;
 /// In-session shell overlay (Phase 4 WS-B). Owns `OverlayRenderer`: the pause / reconnect-prompt /
 /// post-match-summary chrome, drawn on top of the (possibly dark) match frame. Public so the host
 /// can describe which surface to draw via [`overlay::Overlay`].
@@ -532,6 +537,9 @@ pub struct Renderer {
     /// The band-select marquee. Drawn as a LOAD pass by [`Renderer::render_marquee`] in the command
     /// view while a band-drag is in flight.
     marquee: marquee::MarqueeRenderer,
+    /// The debug hitbox/facet overlay. Drawn as a LOAD pass by [`Renderer::render_debug`] in the
+    /// command view when the developer toggle is on. Reuses the unit pass's camera bind group.
+    debug: debug::DebugRenderer,
     /// The embodied first-person world (W5). The host calls [`Renderer::render_world_sky`] FIRST in
     /// the embodied branch (it clears to a sky/ground) and [`Renderer::render_world_weapon`] after
     /// the avatar pass (the gun viewmodel). Draws only the camera-derived environment — no intel.
@@ -671,6 +679,8 @@ impl Renderer {
         let world = world::WorldRenderer::new(device, surface_format);
         // The ground grid shares the unit pass's camera layout so it uses the same view-projection.
         let terrain = terrain::TerrainRenderer::new(device, surface_format, &camera_layout);
+        // The debug overlay reuses the same camera layout (its bind group is the command view-proj).
+        let debug = debug::DebugRenderer::new(device, surface_format, &camera_layout);
         let text = text::TextRenderer::new(device, surface_format);
         // Cooked greybox meshes + the shared 3D mesh pipeline + an initial (placeholder) depth
         // buffer; the depth buffer is resized to the surface on the first mesh pass (D44).
@@ -692,6 +702,7 @@ impl Renderer {
             overlay,
             radial,
             marquee,
+            debug,
             world,
             terrain,
             text,
@@ -1014,6 +1025,23 @@ impl Renderer {
         marquee: &marquee::Marquee,
     ) {
         self.marquee.render(device, queue, view, marquee);
+    }
+
+    /// Draw the debug hitbox / facet overlay on top of the current command frame (a LOAD pass —
+    /// never clears), delegating to [`debug::DebugRenderer`]. Reuses this renderer's camera bind
+    /// group — the command view-projection the preceding [`Renderer::render`] uploaded this frame —
+    /// so the world-space lines line up with the units. Command-view only (never over the dark
+    /// embodied frame, invariant #6); a no-op when `units`/`shells` produce no lines.
+    pub fn render_debug(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        units: &[debug::DebugUnit],
+        shells: &[debug::DebugShell],
+    ) {
+        self.debug
+            .render(device, queue, view, &self.camera_bind_group, units, shells);
     }
 
     /// Draw the contextual command panel (command view) — the boxed top-right panel whose rows
