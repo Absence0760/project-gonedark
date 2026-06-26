@@ -26,12 +26,15 @@
 //! have to manoeuvre onto a flank. That is exactly the assertion the harness pins down and exactly
 //! the lesson the playable sandbox teaches.
 
-use crate::components::{Armor, EntityKind, Faction, Health, Stance, UnitKind, Vec2, Weapon};
+use crate::components::{
+    Armor, BuildingKind, EntityKind, Faction, Health, Stance, UnitKind, Vec2, Weapon,
+};
 use crate::ecs::Entity;
 use crate::economy;
 use crate::fixed::Fixed;
 use crate::sim::Sim;
 use crate::terrain::Cover;
+use crate::territory::ControlPoint;
 use crate::trig::{Angle, ANGLE_FULL};
 
 /// Half the gap between the two duelling tanks: each sits this far from the origin on the X axis,
@@ -269,6 +272,129 @@ pub fn seed_infantry(sim: &mut Sim) -> Infantry {
     }
 }
 
+// --- The skirmish: the first *real* (non-debug) match ------------------------------------------
+//
+// Unlike the duel / infantry sandboxes above — which isolate one mechanic for a harness — this is
+// the playable two-base game: two operational bases, one starting troop each, and neutral "posts"
+// to fight over. It is single-sourced in `core` for the same reason the debug scenes are: the
+// desktop `app` and any headless driver seed the *identical* world, so the match you play is the
+// match a harness could check, bit-for-bit (invariant #1/#2).
+//
+// Everything else the match needs already exists and is generic over the world this seeds: income
+// + production ([`economy`](crate::economy)), capture ([`territory`](crate::territory)), the
+// literal-executor units ([`orders`](crate::orders), invariant #3), and the scripted enemy
+// [`commander`](crate::commander) the host drives. The host's win-condition evaluator decides the
+// match (elimination / timeout); this seeder just sets the opening position.
+
+/// Distance (world units) of each base from the centre line, on the X axis. The two bases sit at
+/// `(∓SKIRMISH_BASE_X, 0)` — far enough apart that the no-man's-land in between is a real journey.
+pub const SKIRMISH_BASE_X: i32 = 30;
+/// How far *toward the centre* each base's starting troop spawns from its base, so the troop reads
+/// as "stationed at the front of the base", not buried inside the camp footprint.
+pub const SKIRMISH_TROOP_GAP: i32 = 4;
+/// The two flank posts sit at `(0, ∓SKIRMISH_POST_FLANK_Y)`; the third is dead centre `(0, 0)`.
+/// `14` keeps the posts more than a capture diameter apart (`2·CAPTURE_RADIUS = 12`), so a single
+/// unit can't contest two at once.
+pub const SKIRMISH_POST_FLANK_Y: i32 = 14;
+/// The skirmish's deliberately small starting purse — the **scenario-local** economy lever (it does
+/// NOT touch the locked D30 balance constants). With only this much banked, a faction cannot mass an
+/// army turn-one; funding real production means *capturing posts* (each held point ~triples income —
+/// [`economy::PER_POINT_INCOME`]), which is the whole "take a post to earn gold faster" loop.
+/// `100` = one Rifleman ([`economy::RIFLEMAN_COST`]): enough for a single opening choice, no flood.
+pub const SKIRMISH_START_PURSE: i64 = 100;
+
+/// The handles a seeded skirmish hands back: each side's operational base camp and its single
+/// starting troop. The host embodies / selects `player_troop`; the enemy commander tasks
+/// `enemy_troop` from its first plan.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Skirmish {
+    /// The Player base camp at `(-SKIRMISH_BASE_X, 0)` — operational (produces immediately).
+    pub player_base: Entity,
+    /// The Enemy base camp at `(+SKIRMISH_BASE_X, 0)` — operational.
+    pub enemy_base: Entity,
+    /// The Player's single starting troop, just in front of the player base.
+    pub player_troop: Entity,
+    /// The Enemy's single starting troop, just in front of the enemy base.
+    pub enemy_troop: Entity,
+}
+
+/// Seed `sim` with the two-base skirmish and return the [`Skirmish`] handles: two operational base
+/// camps on opposite sides, **one starting troop each**, **three neutral posts** to capture, and the
+/// small [`SKIRMISH_START_PURSE`]. The Enemy is left for the [`commander`](crate::commander) to drive
+/// (no scripted opening order here), so the match plays out from this position.
+///
+/// Pure, deterministic, fixed-point (invariant #1): spawn order is fixed (posts, then both bases,
+/// then both troops) and every value is integer / `Fixed`, so two seeds of a fresh `Sim` are
+/// bit-identical — the property the single-sourced `app`/harness correspondence rests on.
+pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
+    // Three neutral posts strung across the no-man's-land: dead centre plus the two flanks. Holding
+    // one ~triples a faction's income, so taking posts is how you out-produce the enemy.
+    for post in [
+        Vec2::new(Fixed::ZERO, Fixed::ZERO),
+        Vec2::new(Fixed::ZERO, Fixed::from_int(SKIRMISH_POST_FLANK_Y)),
+        Vec2::new(Fixed::ZERO, Fixed::from_int(-SKIRMISH_POST_FLANK_Y)),
+    ] {
+        sim.territory.points.push(ControlPoint::neutral(post));
+    }
+
+    // Pre-build both bases through the canonical `economy::build` path (so each camp's HP and
+    // Building fields are exactly a produced camp's), funded from a temporary purse, then overwrite
+    // the purse with the scenario's real, small starting value. Per-faction `Resources::new` gives
+    // each side exactly one camp's worth, so both builds succeed.
+    let base_x = Fixed::from_int(SKIRMISH_BASE_X);
+    sim.resources = economy::Resources::new(economy::CAMP_BUILD_COST);
+    let player_base = economy::build(
+        &mut sim.world,
+        &mut sim.resources,
+        Faction::Player,
+        BuildingKind::Camp,
+        Vec2::new(-base_x, Fixed::ZERO),
+    )
+    .expect("the seed purse covers exactly one camp per faction");
+    let enemy_base = economy::build(
+        &mut sim.world,
+        &mut sim.resources,
+        Faction::Enemy,
+        BuildingKind::Camp,
+        Vec2::new(base_x, Fixed::ZERO),
+    )
+    .expect("the seed purse covers exactly one camp per faction");
+    // Both bases start operational — this is a running match, not a fresh construction.
+    sim.world.building[player_base.index as usize].build_ticks_left = 0;
+    sim.world.building[enemy_base.index as usize].build_ticks_left = 0;
+    // The real, deliberately small scenario purse (the scenario-local economy lever).
+    sim.resources = economy::Resources::new(SKIRMISH_START_PURSE);
+
+    // One starting troop per base. Full produced-Rifleman HP, `ReturnFire` stance (it fights back if
+    // engaged but never auto-roams — invariant #3, it does exactly what it's ordered), facing the
+    // enemy across the map. The player selects/commands theirs; the commander tasks the Enemy's.
+    let troop_hp = economy::unit_stats(UnitKind::Rifleman).0.max;
+    let troop_x = Fixed::from_int(SKIRMISH_BASE_X - SKIRMISH_TROOP_GAP);
+    let player_troop = spawn_rifleman(
+        sim,
+        Vec2::new(-troop_x, Fixed::ZERO),
+        Faction::Player,
+        Stance::ReturnFire,
+        troop_hp,
+        Angle(0), // +X, toward the enemy
+    );
+    let enemy_troop = spawn_rifleman(
+        sim,
+        Vec2::new(troop_x, Fixed::ZERO),
+        Faction::Enemy,
+        Stance::ReturnFire,
+        troop_hp,
+        Angle(ANGLE_FULL / 2), // −X, toward the player
+    );
+
+    Skirmish {
+        player_base,
+        enemy_base,
+        player_troop,
+        enemy_troop,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,6 +567,93 @@ mod tests {
         let mut b = fresh();
         seed_infantry(&mut a);
         seed_infantry(&mut b);
+        assert_eq!(a.checksum(), b.checksum());
+    }
+
+    // --- the skirmish (the first real match) -----------------------------------------------
+
+    /// Count alive `Unit`-kind entities of `faction` in `sim`.
+    fn unit_count(sim: &Sim, faction: Faction) -> usize {
+        (0..sim.world.capacity())
+            .filter(|&i| {
+                sim.world.is_index_alive(i)
+                    && sim.world.kind[i] == EntityKind::Unit
+                    && sim.world.faction[i] == faction
+            })
+            .count()
+    }
+
+    #[test]
+    fn skirmish_seeds_two_operational_bases_one_troop_each() {
+        let mut sim = fresh();
+        let s = seed_skirmish(&mut sim);
+
+        // Two operational base camps, one per faction, on opposite sides of the X axis.
+        for (base, faction, sign) in [
+            (s.player_base, Faction::Player, -1),
+            (s.enemy_base, Faction::Enemy, 1),
+        ] {
+            let i = base.index as usize;
+            assert_eq!(sim.world.kind[i], EntityKind::Building);
+            assert_eq!(sim.world.faction[i], faction);
+            assert_eq!(sim.world.building[i].kind, BuildingKind::Camp);
+            assert_eq!(
+                sim.world.building[i].build_ticks_left, 0,
+                "a base starts operational (no construction)"
+            );
+            assert_eq!(sim.world.pos[i].x, Fixed::from_int(sign * SKIRMISH_BASE_X));
+            assert!(sim.world.building[i].queue.is_empty(), "no pre-queued production");
+        }
+
+        // Exactly one starting troop per faction — a Rifleman on ReturnFire (invariant #3: it does
+        // exactly what it's told, never auto-roams).
+        for (troop, faction) in [
+            (s.player_troop, Faction::Player),
+            (s.enemy_troop, Faction::Enemy),
+        ] {
+            let i = troop.index as usize;
+            assert_eq!(sim.world.kind[i], EntityKind::Unit);
+            assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+            assert_eq!(sim.world.faction[i], faction);
+            assert_eq!(sim.world.stance[i], Stance::ReturnFire);
+        }
+        // ...and *only* one each (no squads — the user's "each base starts with one troop").
+        assert_eq!(unit_count(&sim, Faction::Player), 1);
+        assert_eq!(unit_count(&sim, Faction::Enemy), 1);
+    }
+
+    #[test]
+    fn skirmish_has_three_neutral_posts_no_one_holds_at_start() {
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        assert_eq!(sim.territory.points.len(), 3, "three posts to fight over");
+        assert!(
+            sim.territory.points.iter().all(|p| p.owner == Faction::Neutral),
+            "every post starts neutral"
+        );
+        // No starting troop sits on a post, so income opens at the base rate for both sides.
+        assert_eq!(sim.territory.controlled_count(Faction::Player), 0);
+        assert_eq!(sim.territory.controlled_count(Faction::Enemy), 0);
+    }
+
+    #[test]
+    fn skirmish_starts_with_the_small_scenario_purse() {
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        // The scenario-local economy lever: a small purse, identical for both combatants. (The
+        // build-cost dance is fully reset — neither base build leaves the purse skewed.)
+        assert_eq!(sim.resources.get(Faction::Player), SKIRMISH_START_PURSE);
+        assert_eq!(sim.resources.get(Faction::Enemy), SKIRMISH_START_PURSE);
+    }
+
+    #[test]
+    fn skirmish_seeding_is_deterministic() {
+        // The single-sourcing property: two seeds of a fresh Sim are bit-identical (invariant #1),
+        // so the played match and any headless driver agree.
+        let mut a = fresh();
+        let mut b = fresh();
+        seed_skirmish(&mut a);
+        seed_skirmish(&mut b);
         assert_eq!(a.checksum(), b.checksum());
     }
 
