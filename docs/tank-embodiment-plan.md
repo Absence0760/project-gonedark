@@ -167,9 +167,9 @@ All payloads stay `Copy` fixed-point/handle data — no float crosses the bounda
 
 ```
 P1  trig: atan2 + rotate_toward (turret slew math)      ── DONE (committed, fully tested)
-P2  hull_heading + turret_yaw + hull inertia + AimTurret/DriveHull + AI slew
-P3  ballistic projectile pool: flight + drop + impact detection (muzzle_vel > 0)   ◀ promoted
-P4  Armor + Weapon.penetration + facing multiplier, resolved AT IMPACT (ALL-UNIT rewrite)
+P2  hull_heading + turret_yaw + hull inertia + AimTurret/DriveHull + AI slew   ── DONE (c1e4059)
+P3  ballistic projectile pool: flight + drop + impact detection (muzzle_vel > 0)   ── DONE (4fbe31b)
+P4  Armor + Weapon.penetration + facing multiplier, resolved AT IMPACT (ALL-UNIT rewrite)   ◀ NEXT
 P5  dispersion / aim-time bloom: settle-to-center scatter on Fire
 P6  ShellKind AP/APHE/HE + SelectShell + per-shell pen/damage/splash
 P7  render: turret mesh node + shortest-arc angle interp + tracer/projectile draw (inv #4)
@@ -251,6 +251,15 @@ more.
 
 ## 9. Status & next step
 
-**P1 is committed** (`trig::atan2` + `rotate_toward`, fully tested — pure, isolated, no combat
-risk). **P2 is next** (hull/turret heading + inertia + slew), under `/safe-edit`; then the P3
-projectile pool and the P4 impact-resolved armour rewrite, each `/safe-edit` + cross-arch checksum.
+**P1–P3 are committed and green.** P1 (`trig::atan2`/`rotate_toward`, `a5812fb`); **P2** hull/turret
+heading + inertia + `AimTurret`/`DriveHull` + AI `heading_system` (`c1e4059`); **P3** the
+fixed-point ballistic projectile pool — travel time + drop via projectile-local height, impact
+applies the existing cover-mitigated damage, embodied-only (`4fbe31b`). Built via a fan-out
+workflow (build → 3-lens adversarial review → fix), whose P2 review caught a real `WIRE_VERSION`
+desync-on-skew bug before commit. Verified: **293 core tests** green dev+release, the **2-peer
+lockstep runner agrees over 300 ticks** with no desync, `WIRE_VERSION` 5→6, `SNAPSHOT_VERSION` 3→5.
+
+**P4 is next** — `Armor` + `Weapon.penetration` + the facing multiplier resolved **at projectile
+impact** (the all-unit damage rewrite). It is the highest-risk determinism change; run it under
+`/safe-edit` with cross-arch checksum coverage. The P3 projectile already carries an (unused)
+`penetration` field as the hook for it.

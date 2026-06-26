@@ -60,7 +60,7 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/phase-3-plan.md`](docs/phase-3-plan.md) | Phase 3 (Scale & net) plan — four-workstream sequencing (perf/lockstep/snapshot/PvP), per-slice sign-off in progress |
 | [`docs/phase-4-plan.md`](docs/phase-4-plan.md) | Phase 4 (Polish & ship) plan — app-shell workstreams (seam ✅/in-session shell ✅/device tiers ✅/telemetry ✅); Boot & title landed on Android (D35) and desktop (D36); remaining surfaces pending |
 | [`docs/playability-plan.md`](docs/playability-plan.md) | Playability push (LANDED — D37–D40) — six parallel-worker workstreams that made the game *play* and *read* like a game: embodied combat, win/lose, enemy AI, in-match text, embodied FPS world, command-view polish |
-| [`docs/tank-embodiment-plan.md`](docs/tank-embodiment-plan.md) | Tank-embodiment plan (PLAN — D55) — War Thunder-flavoured embodied tank: independent hull/turret, all-unit armour facing, dispersion gunnery; fixed-point/lockstep phasing P1–P9 (P1 landed) |
+| [`docs/tank-embodiment-plan.md`](docs/tank-embodiment-plan.md) | Tank-embodiment plan (PLAN — D55) — War Thunder-flavoured embodied tank: independent hull/turret, all-unit armour facing, dispersion gunnery; fixed-point/lockstep phasing P1–P9 (P1–P3 landed: trig slew math, hull/turret heading, ballistic projectile pool) |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |
 | `prototypes/` *(deleted)* | The two throwaway Godot prototypes (`phase0-controls/` → D14, `phase0.5-netfeel/` → D15) proved touch-feel and embodied netcode feel; deleted on Phase 1 completion (D22). Not the engine |
