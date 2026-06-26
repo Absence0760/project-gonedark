@@ -128,7 +128,7 @@ const CONTROL_POINT_HALF: f32 = 2.2;
 /// (slightly heavier) token; the camp is already structure-sized. Render-only cosmetic scale.
 const UNIT_TOKEN_SCALE: f32 = 2.2;
 const TANK_TOKEN_SCALE: f32 = 0.42;
-const BUILDING_TOKEN_SCALE: f32 = 1.0;
+const BUILDING_TOKEN_SCALE: f32 = 2.2;
 
 /// The 3D token mesh for a snapshot unit: buildings are the camp structure; units map by their
 /// producible archetype (`Heavy`→tank, `Rifleman`/default→infantry). This is the honest greybox
