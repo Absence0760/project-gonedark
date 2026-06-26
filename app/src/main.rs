@@ -20,7 +20,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
 
 mod shell;
 use shell::{build_channel, build_stamp, resolve_title_action, EguiShell, HostTransition};
@@ -56,6 +56,9 @@ struct App {
     /// Momentary "free the cursor" request — true while **Left Alt** is held (released on key-up).
     /// The held-key alternative to the Esc toggle; either one frees the pointer.
     alt_held: bool,
+    /// Whether the window is currently in borderless fullscreen. Toggled by **F11** on any screen.
+    /// A pure window concern — it never touches the sim — so it lives on the host like cursor state.
+    fullscreen: bool,
 }
 
 impl App {
@@ -70,6 +73,34 @@ impl App {
             cursor_captured: false,
             cursor_free_toggle: false,
             alt_held: false,
+            fullscreen: false,
+        }
+    }
+
+    /// Toggle borderless fullscreen. `Fullscreen::Borderless(None)` takes the window's current
+    /// monitor — no mode change, so it's instant and plays nice with the compositor (the right
+    /// default on the dev box's Wayland session). Available on any screen via F11; cursor capture is
+    /// orthogonal (`sync_cursor` reconciles it each frame regardless of window mode).
+    fn toggle_fullscreen(&mut self) {
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+        self.fullscreen = !self.fullscreen;
+        let mode = self.fullscreen.then(|| Fullscreen::Borderless(None));
+        surface.window().set_fullscreen(mode);
+    }
+
+    /// Desktop-host-only keys that apply on **every** screen (title or match): **F11** toggles
+    /// borderless fullscreen. Like the cursor keys, these are not in the sim keymap, so handling them
+    /// on the host leaves the deterministic input frame untouched.
+    fn handle_global_keys(&mut self, event: &WindowEvent) {
+        if let WindowEvent::KeyboardInput { event: key, .. } = event {
+            if key.state == ElementState::Pressed
+                && !key.repeat
+                && key.physical_key == PhysicalKey::Code(KeyCode::F11)
+            {
+                self.toggle_fullscreen();
+            }
         }
     }
 
@@ -255,6 +286,9 @@ impl ApplicationHandler for App {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // Global host keys (F11 fullscreen) apply on every screen, before screen-specific routing.
+        self.handle_global_keys(&event);
+
         // Route input by screen: the egui shell gets UI events on the title screen; the game input
         // accumulator gets them in a match. (A stray event in the other state is simply ignored, so
         // nothing leaks between the shell and the sim.)
