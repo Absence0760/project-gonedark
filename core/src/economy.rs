@@ -186,6 +186,8 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 reload_left: 0,
                 // Infantry rifle: fixed mount, no independent turret (P2 default).
                 turret_speed: 0,
+                // Hitscan infantry weapon (P3 default): no shell flight, resolves instantly.
+                muzzle_vel: Fixed::ZERO,
             },
         ),
         UnitKind::Heavy => (
@@ -204,6 +206,8 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Heavy infantry bruiser: still a fixed mount (the playable tank is the new
                 // dedicated kind, plan §3). No independent turret here.
                 turret_speed: 0,
+                // Hitscan infantry weapon (P3 default): no shell flight, resolves instantly.
+                muzzle_vel: Fixed::ZERO,
             },
         ),
     }

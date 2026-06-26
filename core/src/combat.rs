@@ -51,7 +51,7 @@ pub const SUPPRESSION_PER_HIT: Fixed = Fixed::from_ratio(1, 8);
 /// never involves `Neutral` on either side (invariant #3 keeps it literal — no friendly fire,
 /// no neutral aggression).
 #[inline]
-fn is_enemy(attacker: Faction, defender: Faction) -> bool {
+pub(crate) fn is_enemy(attacker: Faction, defender: Faction) -> bool {
     attacker != defender && attacker != Faction::Neutral && defender != Faction::Neutral
 }
 
@@ -471,6 +471,7 @@ mod tests {
             reload_ticks: 0,
             reload_left: 0,
             turret_speed: 0,
+            muzzle_vel: Fixed::ZERO,
         }
     }
 
@@ -487,6 +488,7 @@ mod tests {
             reload_ticks: reload,
             reload_left: 0,
             turret_speed: 0,
+            muzzle_vel: Fixed::ZERO,
         }
     }
 

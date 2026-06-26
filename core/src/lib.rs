@@ -26,6 +26,7 @@ pub mod fog;
 pub mod lockstep;
 pub mod orders;
 pub mod persist;
+pub mod projectile;
 pub mod reconnect;
 pub mod rng;
 pub mod shell;

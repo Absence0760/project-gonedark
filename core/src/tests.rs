@@ -651,6 +651,7 @@ fn ecs_respawn_resets_component_arrays() {
         reload_ticks: 60,
         reload_left: 17,
         turret_speed: 9,
+        muzzle_vel: Fixed::from_ratio(1, 4),
     };
     w.posture[i] = crate::components::Posture::Crouched;
     w.suppression[i] = Fixed::HALF;
@@ -1483,4 +1484,208 @@ fn deserialize_rejects_malformed_input() {
     let mut bytes = sim.serialize();
     bytes[1..5].copy_from_slice(&7u32.to_le_bytes());
     assert_eq!(err(&bytes), DeserializeError::UnknownMapId(7));
+}
+
+// ===========================================================================
+// Tank embodiment P3 (D55): ballistic projectile pool — travel time, the muzzle_vel == 0 hitscan
+// fallback, determinism with in-flight shells, and persist of the pool. These live here so they
+// ride the determinism arch matrix automatically (invariant #7).
+// ===========================================================================
+
+/// An embodied "tank": a unit firing a ballistic gun (`muzzle_vel > 0`) along the aim. `muzzle_vel`
+/// of `0` makes it an embodied infantry weapon (hitscan) instead, to exercise the fallback path.
+fn embodied_tank(sim: &mut Sim, x: i32, y: i32, muzzle_vel: i32, damage: i32, range: i32) -> Entity {
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    sim.world.kind[i] = EntityKind::Unit;
+    sim.world.faction[i] = Faction::Player;
+    sim.world.pos[i] = v(x, y);
+    sim.world.input_source[i] = InputSource::Embodied;
+    sim.world.weapon[i] = crate::components::Weapon {
+        range: Fixed::from_int(range),
+        damage: Fixed::from_int(damage),
+        cooldown_ticks: 0,
+        cooldown_left: 0,
+        mag_size: 0,
+        ammo: 0,
+        reload_ticks: 0,
+        reload_left: 0,
+        turret_speed: 200,
+        muzzle_vel: Fixed::from_int(muzzle_vel),
+    };
+    e
+}
+
+/// A passive, fat enemy target that never shoots back (range-0 default weapon, HoldFire) — so a
+/// test isolates the projectile's behaviour from auto-combat.
+fn passive_enemy(sim: &mut Sim, x: i32, y: i32) -> Entity {
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    sim.world.kind[i] = EntityKind::Unit;
+    sim.world.faction[i] = Faction::Enemy;
+    sim.world.pos[i] = v(x, y);
+    sim.world.health[i] = crate::components::Health::full(Fixed::from_int(1000));
+    sim.world.stance[i] = Stance::HoldFire;
+    e
+}
+
+#[test]
+fn embodied_tank_shell_has_travel_time_near_hit_before_far() {
+    // A ballistic shell takes time to cross the gap: a distant target is struck several ticks after
+    // firing, a nearer one sooner — the signature War Thunder leading mechanic (NOT a hitscan).
+    fn ticks_to_hit(enemy_x: i32) -> u32 {
+        let mut sim = Sim::new(0x7A4B_C0DE);
+        let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30);
+        let enemy = passive_enemy(&mut sim, enemy_x, 0);
+        let ei = enemy.index as usize;
+        let full = sim.world.health[ei].cur;
+        sim.step(&[Command::Fire {
+            entity: tank,
+            dir: v(1, 0),
+        }]);
+        let mut t = 1u32;
+        while sim.world.health[ei].cur == full && t < 200 {
+            sim.step(&[]);
+            t += 1;
+        }
+        assert!(sim.world.health[ei].cur < full, "the shell must eventually hit");
+        t
+    }
+    let far = ticks_to_hit(10);
+    let near = ticks_to_hit(6);
+    assert!(near < far, "a nearer target is hit sooner ({near} < {far})");
+    assert!(far > 1, "finite muzzle velocity means travel time, not an instant hitscan");
+}
+
+#[test]
+fn embodied_muzzle_vel_zero_still_hitscans_no_projectile_spawned() {
+    // The opt-in-by-zero contract: an embodied weapon with `muzzle_vel == 0` resolves the OLD
+    // instant cone hitscan (`resolve_fire`) and spawns NO shell — every infantry unit is untouched.
+    let mut sim = Sim::new(0x9001);
+    let shooter = embodied_tank(&mut sim, 0, 0, 0, 50, 30); // muzzle_vel 0 → hitscan
+    let enemy = passive_enemy(&mut sim, 5, 0);
+    let ei = enemy.index as usize;
+    let full = sim.world.health[ei].cur;
+    sim.step(&[Command::Fire {
+        entity: shooter,
+        dir: v(1, 0),
+    }]);
+    assert!(
+        sim.world.health[ei].cur < full,
+        "muzzle_vel 0 resolves instantly the same tick (hitscan)"
+    );
+    assert!(
+        sim.projectiles.is_empty(),
+        "the hitscan path must not spawn a ballistic shell"
+    );
+}
+
+#[test]
+fn ai_unit_with_ballistic_gun_never_spawns_a_shell_invariant_3() {
+    // Invariant #3 guard: the ballistic path is EMBODIED-ONLY. A unit with muzzle_vel > 0 but an
+    // AI/orders input source (InputSource::Orders) must fall through to the instant hitscan
+    // (resolve_fire) and spawn NO projectile — the literal-executor AI never gains shell micro. This
+    // exercises the `&& input_source == Embodied` half of the dispatch guard that the muzzle_vel == 0
+    // test does not: drop that check and an AI tank would start lobbing shells, and this fails.
+    let mut sim = Sim::new(0xA1D0_0DDE);
+    let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30); // a real ballistic gun (muzzle_vel 2)
+    let ti = tank.index as usize;
+    sim.world.input_source[ti] = InputSource::Orders; // ...but AI-driven, not possessed
+    sim.world.stance[ti] = Stance::HoldFire; // isolate: no auto-fire, only the commanded shot
+    let enemy = passive_enemy(&mut sim, 5, 0);
+    let ei = enemy.index as usize;
+    let full = sim.world.health[ei].cur;
+    sim.step(&[Command::Fire {
+        entity: tank,
+        dir: v(1, 0),
+    }]);
+    assert!(
+        sim.projectiles.is_empty(),
+        "an AI unit must never spawn a ballistic shell (embodied-only, invariant #3)"
+    );
+    assert!(
+        sim.world.health[ei].cur < full,
+        "AI fire falls through to the instant hitscan and hits the same tick"
+    );
+}
+
+#[test]
+fn two_sims_agree_with_in_flight_projectiles() {
+    // Two sims on one seed, fed identical Fire commands, must agree on every per-tick checksum —
+    // INCLUDING the in-flight shell (the pool is folded). A third, never-firing sim proves the
+    // shell genuinely perturbs the checksum (so the agreement above is meaningful, not vacuous).
+    fn build() -> (Sim, Entity) {
+        let mut sim = Sim::new(0x5EED_0003);
+        let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30);
+        let _enemy = passive_enemy(&mut sim, 40, 0); // far → a long flight
+        (sim, tank)
+    }
+    let (mut a, ta) = build();
+    let (mut b, tb) = build();
+    let (mut c, _tc) = build(); // identical, but never fires
+    a.step(&[Command::Fire {
+        entity: ta,
+        dir: v(1, 0),
+    }]);
+    b.step(&[Command::Fire {
+        entity: tb,
+        dir: v(1, 0),
+    }]);
+    c.step(&[]);
+    assert_eq!(a.checksum(), b.checksum(), "identical fire → identical state");
+    assert!(!a.projectiles.is_empty(), "a shell is genuinely in flight");
+    assert_ne!(
+        a.checksum(),
+        c.checksum(),
+        "the in-flight shell moves the checksum (the pool is folded, invariant #7)"
+    );
+    for _ in 0..10 {
+        a.step(&[]);
+        b.step(&[]);
+        assert_eq!(
+            a.checksum(),
+            b.checksum(),
+            "in-flight projectiles stay bit-identical across peers"
+        );
+    }
+}
+
+#[test]
+fn snapshot_round_trip_preserves_in_flight_projectile_pool() {
+    // A snapshot taken mid-flight must restore the exact pool and checksum a never-interrupted run
+    // holds — fold()/deserialize symmetry for the projectile block (invariant #7).
+    let mut sim = Sim::new(0xBA11_1570);
+    let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30);
+    let _enemy = passive_enemy(&mut sim, 40, 0);
+    sim.step(&[Command::Fire {
+        entity: tank,
+        dir: v(1, 0),
+    }]);
+    for _ in 0..3 {
+        sim.step(&[]);
+    }
+    assert!(!sim.projectiles.is_empty(), "a shell is mid-flight to snapshot");
+
+    let bytes = sim.serialize();
+    let restored = Sim::deserialize(&bytes).expect("round-trip with a live shell");
+    assert_eq!(
+        restored.projectiles, sim.projectiles,
+        "the in-flight pool round-trips field-for-field"
+    );
+    assert_eq!(
+        restored.checksum(),
+        sim.checksum(),
+        "restored state (incl. the pool) checksums identically"
+    );
+    assert_eq!(restored.serialize(), bytes, "re-serialize is byte-stable");
+
+    // The pool is genuinely folded: clearing the shell changes the checksum.
+    let base = sim.checksum();
+    let mut tampered = Sim::deserialize(&bytes).unwrap();
+    tampered.projectiles.clear();
+    assert_ne!(
+        base,
+        tampered.checksum(),
+        "the in-flight pool moves the checksum (folded, not ignored)"
+    );
 }

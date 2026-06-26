@@ -23,6 +23,7 @@ use crate::event::SimEvent;
 use crate::fixed::Fixed;
 use crate::orders;
 use crate::persist::{DeserializeError, Reader, StateSink, Writer};
+use crate::projectile::{self, Projectile};
 use crate::rng::Rng;
 use crate::snapshot::Snapshot;
 use crate::systems;
@@ -123,6 +124,12 @@ pub struct Sim {
     /// Facts emitted this tick (combat/territory/economy); cleared at the top of every step.
     /// Derived, transient signal for alerts/audio — NOT folded into the checksum.
     pub events: Vec<SimEvent>,
+    /// In-flight ballistic shells (tank embodiment P3, D55). A bounded pool advanced each tick by
+    /// [`projectile::projectile_system`]; folded into the per-tick checksum + serialized (it is
+    /// lockstep sim state — an in-flight shell decides a future hit). Empty in any scene with no
+    /// embodied tank firing (every `muzzle_vel == 0` weapon stays hitscan), so it costs the
+    /// existing checksum stream nothing.
+    pub projectiles: Vec<Projectile>,
     /// Which static map this sim is on. Terrain is static map data (not per-tick state, not
     /// checksummed), so the authoritative snapshot (D28) serializes this small id and re-derives
     /// `terrain` from it on resume, never the `GRID×GRID` grid. The scene is map id 0.
@@ -139,6 +146,7 @@ impl Sim {
             resources: Resources::default(),
             territory: Territory::empty(),
             events: Vec::new(),
+            projectiles: Vec::new(),
             map_id: Terrain::SCENE_MAP_ID,
             rng: Rng::new(seed),
             tick: 0,
@@ -176,6 +184,16 @@ impl Sim {
             &self.terrain,
             &mut self.rng,
             &mut self.events,
+        );
+        // Advance in-flight shells + resolve impacts, AFTER auto-combat (D55 P3). Embodied tank
+        // fire spawns shells in `apply`; this integrates their travel/drop and applies the same
+        // cover-mitigated damage on impact.
+        projectile::projectile_system(
+            &mut self.world,
+            &self.terrain,
+            &mut self.projectiles,
+            &mut self.events,
+            projectile::GRAVITY,
         );
         territory::territory_system(&self.world, &mut self.territory, &mut self.events);
         economy::economy_system(
@@ -236,13 +254,25 @@ impl Sim {
             }
             Command::Fire { entity, dir } => {
                 if self.world.is_alive(entity) {
-                    combat::resolve_fire(
-                        &mut self.world,
-                        &self.terrain,
-                        entity.index as usize,
-                        dir,
-                        &mut self.events,
-                    );
+                    let i = entity.index as usize;
+                    // A ballistic gun (muzzle_vel > 0) on an embodied unit launches a shell instead
+                    // of resolving an instant hitscan (D55 P3). `muzzle_vel == 0` (infantry, every
+                    // existing unit) keeps the unchanged `resolve_fire` path — opt-in by a zero
+                    // default. AI/auto fire never reaches here (combat skips embodied units), so the
+                    // projectile path is embodied-only by construction (invariant #3).
+                    if self.world.weapon[i].muzzle_vel > Fixed::ZERO
+                        && self.world.input_source[i] == InputSource::Embodied
+                    {
+                        projectile::fire_ballistic(&mut self.world, i, dir, &mut self.projectiles);
+                    } else {
+                        combat::resolve_fire(
+                            &mut self.world,
+                            &self.terrain,
+                            i,
+                            dir,
+                            &mut self.events,
+                        );
+                    }
                 }
             }
             Command::Locomote { entity, dir } => {
@@ -361,6 +391,7 @@ impl Sim {
             sink.write_u32(w.reload_ticks as u32);
             sink.write_u32(w.reload_left as u32);
             sink.write_u32(w.turret_speed as u32);
+            sink.write_i32(w.muzzle_vel.to_bits());
             sink.write_i32(self.world.suppression[i].to_bits());
             match self.world.last_attacker[i] {
                 Some(e) => {
@@ -394,6 +425,25 @@ impl Sim {
         let (rng_state, rng_inc) = self.rng.checksum_state();
         sink.write_u64(rng_state);
         sink.write_u64(rng_inc);
+        // In-flight ballistic shells (tank embodiment P3, D55) — a global block AFTER the existing
+        // globals, in stable pool order. An in-flight shell is lockstep sim state (it decides a
+        // future impact), so it folds into the checksum + serializes. Empty (count 0) for every
+        // scene with no embodied tank firing, so it is byte-neutral there.
+        sink.write_u32(self.projectiles.len() as u32);
+        for p in &self.projectiles {
+            sink.write_i32(p.pos2d.x.to_bits());
+            sink.write_i32(p.pos2d.y.to_bits());
+            sink.write_i32(p.vel2d.x.to_bits());
+            sink.write_i32(p.vel2d.y.to_bits());
+            sink.write_i32(p.height.to_bits());
+            sink.write_i32(p.vz.to_bits());
+            sink.write_u32(p.owner.index);
+            sink.write_u32(p.owner.generation);
+            sink.write_u8(projectile::faction_tag(p.faction));
+            sink.write_i32(p.damage.to_bits());
+            sink.write_i32(p.penetration.to_bits());
+            sink.write_u32(p.lifetime as u32);
+        }
     }
 
     /// Serialize the **authoritative** sim state a reconnecting peer resumes from (D28). The bytes
@@ -510,6 +560,7 @@ impl Sim {
                 reload_ticks: read_u16(&mut r)?,
                 reload_left: read_u16(&mut r)?,
                 turret_speed: read_u16(&mut r)?,
+                muzzle_vel: Fixed::from_bits(r.read_i32()?),
             });
             suppression.push(Fixed::from_bits(r.read_i32()?));
             last_attacker.push(read_opt_entity(&mut r)?);
@@ -544,6 +595,27 @@ impl Sim {
         let rng_state = r.read_u64()?;
         let rng_inc = r.read_u64()?;
         let rng = Rng::from_state(rng_state, rng_inc);
+
+        // In-flight ballistic shells (tank embodiment P3, D55) — mirror fold()'s pool block,
+        // field-for-field in the same order, right after the RNG and before the liveness extras.
+        let n_proj = r.read_len(MIN_PROJECTILE_BYTES)?;
+        let mut projectiles = Vec::with_capacity(n_proj);
+        for _ in 0..n_proj {
+            projectiles.push(Projectile {
+                pos2d: read_vec2(&mut r)?,
+                vel2d: read_vec2(&mut r)?,
+                height: Fixed::from_bits(r.read_i32()?),
+                vz: Fixed::from_bits(r.read_i32()?),
+                owner: Entity {
+                    index: r.read_u32()?,
+                    generation: r.read_u32()?,
+                },
+                faction: read_faction(&mut r)?,
+                damage: Fixed::from_bits(r.read_i32()?),
+                penetration: Fixed::from_bits(r.read_i32()?),
+                lifetime: read_u16(&mut r)?,
+            });
+        }
 
         // --- liveness extras (serialize-only; not in the checksum) ---
         let mut generation = Vec::with_capacity(cap);
@@ -600,6 +672,7 @@ impl Sim {
             resources,
             territory,
             events: Vec::new(),
+            projectiles,
             map_id,
             rng,
             tick,
@@ -615,11 +688,17 @@ impl Sim {
 /// Authoritative-snapshot format version (D28). Bumped on any layout change so a stale snapshot is
 /// rejected ([`DeserializeError::BadVersion`]) rather than silently misparsed into a divergent
 /// world. Independent of the lockstep wire version — different codec, different evolution.
-const SNAPSHOT_VERSION: u8 = 4;
+const SNAPSHOT_VERSION: u8 = 5;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.
 const MIN_CONTROL_POINT_BYTES: usize = 13;
+
+/// Smallest possible encoding of one in-flight [`Projectile`]: `pos2d` (2×i32) + `vel2d` (2×i32) +
+/// `height` (i32) + `vz` (i32) + `owner` (2×u32) + faction tag (u8) + `damage` (i32) +
+/// `penetration` (i32) + `lifetime` (u32) = 45 bytes. Rejects a garbage pool count before
+/// allocating (tank embodiment P3, D55).
+const MIN_PROJECTILE_BYTES: usize = 45;
 
 fn write_order<S: StateSink>(sink: &mut S, o: Order) {
     match o {

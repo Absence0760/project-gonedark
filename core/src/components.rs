@@ -255,6 +255,16 @@ pub struct Weapon {
     /// `turret_speed > 0`: the embodied `AimTurret` slews `turret_yaw` toward the look-stick at
     /// this rate, and the AI turret tracks the hull at it (cosmetic — invariant #3).
     pub turret_speed: u16,
+    /// Shell muzzle velocity in world units per tick (tank embodiment P3, D55). `0` (the infantry
+    /// default) means **hitscan**: an embodied [`Fire`](crate::sim::Command::Fire) resolves
+    /// instantly through [`combat::resolve_fire`](crate::combat::resolve_fire), exactly as today —
+    /// so the new field costs every existing unit nothing and moves the checksum by nothing. A
+    /// real tank gun has `muzzle_vel > 0`: an embodied shot instead launches a fixed-point
+    /// **ballistic projectile** ([`projectile`](crate::projectile)) that travels at this speed,
+    /// drops under gravity, and resolves its hit on impact (travel time + leading + drop). Opt-in
+    /// by a zero default, the same pattern as `mag_size`/`turret_speed`. `Fixed`, no float
+    /// (invariant #1).
+    pub muzzle_vel: Fixed,
 }
 
 /// A unit's body posture (the embodied crouch toggle). Crouching trades mobility for accuracy:
