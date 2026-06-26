@@ -2,7 +2,8 @@
 # Going Dark — placeholder model generator (decisions.md D41).
 #
 # Builds the game's greybox/low-tier placeholder models from primitives in Blender and
-# exports, per object, into ../../assets/models/, as a small LOD chain:
+# exports, per object, into a category subfolder under ../../assets/models/ (units/, structures/,
+# weapons/, props/, fx/ — see CATEGORY), as a small LOD chain:
 #   - LOD0 (full detail) — one `.glb` (interchange / source-of-record, two-view harness §4)
 #     and one `.mesh` (the COOKED runtime format the engine actually loads, decisions.md D44)
 #   - LOD1/LOD2 (decimated) — `<name>.lod1.glb`/`.lod1.mesh` (and `.lod2.*`), produced by
@@ -276,6 +277,31 @@ COLORS = {
 }
 
 
+# Category subfolder each model is written into under assets/models/ — keeps the asset tree
+# browsable by role instead of one flat dump. The renderer's `include_bytes!` paths in
+# `render/src/mesh.rs` and the manifest's per-tier `file`/`cooked` paths both carry this prefix,
+# so a model's category here is its on-disk home everywhere. Adding a model? Give it a category.
+CATEGORY = {
+    "trooper": "units",
+    "tank": "units",
+    "tank_turret": "units",
+    "camp_hq": "structures",
+    "turret": "structures",
+    "barricade": "structures",
+    "weapon_rifle": "weapons",
+    "crate": "props",
+    "tree": "props",
+    "rock": "props",
+    "tracer": "fx",
+}
+
+
+def relpath(stem, suffix):
+    """Category-relative path for a model file, e.g. ('trooper', '.lod1.glb') → 'units/trooper.lod1.glb'.
+    Always forward-slashed so the strings written into manifest.json are stable across platforms."""
+    return CATEGORY[stem] + "/" + stem + suffix
+
+
 def rgba(name):
     r, g, b = COLORS[name]
     return (r, g, b, 1.0)
@@ -447,21 +473,23 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     entries = []
     for stem, builder, description in MODELS:
+        os.makedirs(os.path.join(OUT_DIR, CATEGORY[stem]), exist_ok=True)
         reset_scene()
         obj = builder()
         # LOD0 (full detail): `.glb` (interchange source) + `.mesh` (cooked runtime format the
-        # engine loads, D44). This path is unchanged — the LOD0 `.mesh` stays byte-identical.
-        glb_path = export_glb(obj, stem + ".glb")
-        mesh_path = export_mesh(obj, stem + ".mesh")
-        lods = [tier_record(0, stem + ".glb", stem + ".mesh", 1.0)]
+        # engine loads, D44). Files land in the model's category subfolder (CATEGORY); the LOD0
+        # `.mesh` bytes stay identical — only the path moved.
+        glb_path = export_glb(obj, relpath(stem, ".glb"))
+        mesh_path = export_mesh(obj, relpath(stem, ".mesh"))
+        lods = [tier_record(0, relpath(stem, ".glb"), relpath(stem, ".mesh"), 1.0)]
 
         # Decimated tiers: gltfpack simplifies the glb, then we re-import it and run the SAME
         # `export_mesh` cook so the tier lands in the identical GDM1 format with recomputed flat
         # normals. LOD2 chains off LOD1's glb (monotone pyramid; see LOD_TIERS notes).
-        prev_glb = stem + ".glb"
+        prev_glb = relpath(stem, ".glb")
         for level, suffix, ratio_arg, cum_ratio in LOD_TIERS:
-            lod_glb = stem + suffix + ".glb"
-            lod_mesh = stem + suffix + ".mesh"
+            lod_glb = relpath(stem, suffix + ".glb")
+            lod_mesh = relpath(stem, suffix + ".mesh")
             run_gltfpack(prev_glb, lod_glb, ratio_arg)
             reset_scene()
             imp = import_glb(lod_glb)
@@ -471,8 +499,9 @@ def main():
 
         entries.append({
             "name": stem,
-            "file": stem + ".glb",
-            "cooked": stem + ".mesh",
+            "category": CATEGORY[stem],
+            "file": relpath(stem, ".glb"),
+            "cooked": relpath(stem, ".mesh"),
             "description": description,
             "base_color": [round(c, 4) for c in COLORS[stem]],
             "source": "procedural (Blender bpy — tools/models/gen_models.py)",

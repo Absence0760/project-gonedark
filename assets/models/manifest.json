@@ -4,8 +4,9 @@
   "assets": [
     {
       "name": "trooper",
-      "file": "trooper.glb",
-      "cooked": "trooper.mesh",
+      "category": "units",
+      "file": "units/trooper.glb",
+      "cooked": "units/trooper.mesh",
       "description": "Greybox infantry unit \u2014 boxy humanoid (hips/torso/head/limbs).",
       "base_color": [
         0.3,
@@ -24,8 +25,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "trooper.glb",
-          "cooked": "trooper.mesh",
+          "file": "units/trooper.glb",
+          "cooked": "units/trooper.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 488,
           "bytes": 33336,
@@ -35,8 +36,8 @@
         },
         {
           "level": 1,
-          "file": "trooper.lod1.glb",
-          "cooked": "trooper.lod1.mesh",
+          "file": "units/trooper.lod1.glb",
+          "cooked": "units/trooper.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 236,
           "bytes": 5520,
@@ -46,8 +47,8 @@
         },
         {
           "level": 2,
-          "file": "trooper.lod2.glb",
-          "cooked": "trooper.lod2.mesh",
+          "file": "units/trooper.lod2.glb",
+          "cooked": "units/trooper.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 108,
           "bytes": 3044,
@@ -59,8 +60,9 @@
     },
     {
       "name": "tank",
-      "file": "tank.glb",
-      "cooked": "tank.mesh",
+      "category": "units",
+      "file": "units/tank.glb",
+      "cooked": "units/tank.mesh",
       "description": "Greybox vehicle hull \u2014 chassis + tracks (turret is a separate model so it slews independently).",
       "base_color": [
         0.18,
@@ -79,8 +81,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "tank.glb",
-          "cooked": "tank.mesh",
+          "file": "units/tank.glb",
+          "cooked": "units/tank.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 36,
           "bytes": 3740,
@@ -90,8 +92,8 @@
         },
         {
           "level": 1,
-          "file": "tank.lod1.glb",
-          "cooked": "tank.lod1.mesh",
+          "file": "units/tank.lod1.glb",
+          "cooked": "units/tank.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 36,
           "bytes": 1724,
@@ -101,8 +103,8 @@
         },
         {
           "level": 2,
-          "file": "tank.lod2.glb",
-          "cooked": "tank.lod2.mesh",
+          "file": "units/tank.lod2.glb",
+          "cooked": "units/tank.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 36,
           "bytes": 1724,
@@ -114,8 +116,9 @@
     },
     {
       "name": "tank_turret",
-      "file": "tank_turret.glb",
-      "cooked": "tank_turret.mesh",
+      "category": "units",
+      "file": "units/tank_turret.glb",
+      "cooked": "units/tank_turret.mesh",
       "description": "Greybox tank turret \u2014 gun mantlet + barrel, pivoting about the hull's turret ring (P7).",
       "base_color": [
         0.18,
@@ -134,8 +137,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "tank_turret.glb",
-          "cooked": "tank_turret.mesh",
+          "file": "units/tank_turret.glb",
+          "cooked": "units/tank_turret.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 72,
           "bytes": 5496,
@@ -145,8 +148,8 @@
         },
         {
           "level": 1,
-          "file": "tank_turret.lod1.glb",
-          "cooked": "tank_turret.lod1.mesh",
+          "file": "units/tank_turret.lod1.glb",
+          "cooked": "units/tank_turret.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 32,
           "bytes": 1700,
@@ -156,8 +159,8 @@
         },
         {
           "level": 2,
-          "file": "tank_turret.lod2.glb",
-          "cooked": "tank_turret.lod2.mesh",
+          "file": "units/tank_turret.lod2.glb",
+          "cooked": "units/tank_turret.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 14,
           "bytes": 1412,
@@ -169,8 +172,9 @@
     },
     {
       "name": "camp_hq",
-      "file": "camp_hq.glb",
-      "cooked": "camp_hq.mesh",
+      "category": "structures",
+      "file": "structures/camp_hq.glb",
+      "cooked": "structures/camp_hq.mesh",
       "description": "Greybox structure \u2014 walled building with a pyramid roof + antenna.",
       "base_color": [
         0.45,
@@ -189,8 +193,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "camp_hq.glb",
-          "cooked": "camp_hq.mesh",
+          "file": "structures/camp_hq.glb",
+          "cooked": "structures/camp_hq.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 78,
           "bytes": 6036,
@@ -200,8 +204,8 @@
         },
         {
           "level": 1,
-          "file": "camp_hq.lod1.glb",
-          "cooked": "camp_hq.lod1.mesh",
+          "file": "structures/camp_hq.lod1.glb",
+          "cooked": "structures/camp_hq.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 34,
           "bytes": 1776,
@@ -211,8 +215,8 @@
         },
         {
           "level": 2,
-          "file": "camp_hq.lod2.glb",
-          "cooked": "camp_hq.lod2.mesh",
+          "file": "structures/camp_hq.lod2.glb",
+          "cooked": "structures/camp_hq.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 22,
           "bytes": 1560,
@@ -224,8 +228,9 @@
     },
     {
       "name": "weapon_rifle",
-      "file": "weapon_rifle.glb",
-      "cooked": "weapon_rifle.mesh",
+      "category": "weapons",
+      "file": "weapons/weapon_rifle.glb",
+      "cooked": "weapons/weapon_rifle.mesh",
       "description": "First-person weapon viewmodel \u2014 receiver, barrel, magazine, stock, grip.",
       "base_color": [
         0.12,
@@ -244,8 +249,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "weapon_rifle.glb",
-          "cooked": "weapon_rifle.mesh",
+          "file": "weapons/weapon_rifle.glb",
+          "cooked": "weapons/weapon_rifle.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 108,
           "bytes": 8040,
@@ -255,8 +260,8 @@
         },
         {
           "level": 1,
-          "file": "weapon_rifle.lod1.glb",
-          "cooked": "weapon_rifle.lod1.mesh",
+          "file": "weapons/weapon_rifle.lod1.glb",
+          "cooked": "weapons/weapon_rifle.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 41,
           "bytes": 1944,
@@ -266,8 +271,8 @@
         },
         {
           "level": 2,
-          "file": "weapon_rifle.lod2.glb",
-          "cooked": "weapon_rifle.lod2.mesh",
+          "file": "weapons/weapon_rifle.lod2.glb",
+          "cooked": "weapons/weapon_rifle.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 36,
           "bytes": 1760,
@@ -279,8 +284,9 @@
     },
     {
       "name": "crate",
-      "file": "crate.glb",
-      "cooked": "crate.mesh",
+      "category": "props",
+      "file": "props/crate.glb",
+      "cooked": "props/crate.mesh",
       "description": "Cover prop \u2014 a 1m crate.",
       "base_color": [
         0.4,
@@ -299,8 +305,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "crate.glb",
-          "cooked": "crate.mesh",
+          "file": "props/crate.glb",
+          "cooked": "props/crate.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 12,
           "bytes": 1960,
@@ -310,8 +316,8 @@
         },
         {
           "level": 1,
-          "file": "crate.lod1.glb",
-          "cooked": "crate.lod1.mesh",
+          "file": "props/crate.lod1.glb",
+          "cooked": "props/crate.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 12,
           "bytes": 1240,
@@ -321,8 +327,8 @@
         },
         {
           "level": 2,
-          "file": "crate.lod2.glb",
-          "cooked": "crate.lod2.mesh",
+          "file": "props/crate.lod2.glb",
+          "cooked": "props/crate.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 12,
           "bytes": 1240,
@@ -334,8 +340,9 @@
     },
     {
       "name": "turret",
-      "file": "turret.glb",
-      "cooked": "turret.mesh",
+      "category": "structures",
+      "file": "structures/turret.glb",
+      "cooked": "structures/turret.mesh",
       "description": "Defensive structure \u2014 base pad, rotating drum, gun housing + barrel.",
       "base_color": [
         0.22,
@@ -354,8 +361,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "turret.glb",
-          "cooked": "turret.mesh",
+          "file": "structures/turret.glb",
+          "cooked": "structures/turret.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 144,
           "bytes": 9740,
@@ -365,8 +372,8 @@
         },
         {
           "level": 1,
-          "file": "turret.lod1.glb",
-          "cooked": "turret.lod1.mesh",
+          "file": "structures/turret.lod1.glb",
+          "cooked": "structures/turret.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 80,
           "bytes": 2556,
@@ -376,8 +383,8 @@
         },
         {
           "level": 2,
-          "file": "turret.lod2.glb",
-          "cooked": "turret.lod2.mesh",
+          "file": "structures/turret.lod2.glb",
+          "cooked": "structures/turret.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 76,
           "bytes": 2436,
@@ -389,8 +396,9 @@
     },
     {
       "name": "tree",
-      "file": "tree.glb",
-      "cooked": "tree.mesh",
+      "category": "props",
+      "file": "props/tree.glb",
+      "cooked": "props/tree.mesh",
       "description": "Scenery / soft cover \u2014 trunk with a two-tier canopy.",
       "base_color": [
         0.16,
@@ -409,8 +417,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "tree.glb",
-          "cooked": "tree.mesh",
+          "file": "props/tree.glb",
+          "cooked": "props/tree.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 228,
           "bytes": 18200,
@@ -420,8 +428,8 @@
         },
         {
           "level": 1,
-          "file": "tree.lod1.glb",
-          "cooked": "tree.lod1.mesh",
+          "file": "props/tree.lod1.glb",
+          "cooked": "props/tree.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 172,
           "bytes": 4100,
@@ -431,8 +439,8 @@
         },
         {
           "level": 2,
-          "file": "tree.lod2.glb",
-          "cooked": "tree.lod2.mesh",
+          "file": "props/tree.lod2.glb",
+          "cooked": "props/tree.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 157,
           "bytes": 3772,
@@ -444,8 +452,9 @@
     },
     {
       "name": "rock",
-      "file": "rock.glb",
-      "cooked": "rock.mesh",
+      "category": "props",
+      "file": "props/rock.glb",
+      "cooked": "props/rock.mesh",
       "description": "Scenery / hard cover \u2014 a faceted low-poly boulder.",
       "base_color": [
         0.4,
@@ -464,8 +473,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "rock.glb",
-          "cooked": "rock.mesh",
+          "file": "props/rock.glb",
+          "cooked": "props/rock.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 100,
           "bytes": 8836,
@@ -475,8 +484,8 @@
         },
         {
           "level": 1,
-          "file": "rock.lod1.glb",
-          "cooked": "rock.lod1.mesh",
+          "file": "props/rock.lod1.glb",
+          "cooked": "props/rock.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 100,
           "bytes": 2864,
@@ -486,8 +495,8 @@
         },
         {
           "level": 2,
-          "file": "rock.lod2.glb",
-          "cooked": "rock.lod2.mesh",
+          "file": "props/rock.lod2.glb",
+          "cooked": "props/rock.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 100,
           "bytes": 2864,
@@ -499,8 +508,9 @@
     },
     {
       "name": "barricade",
-      "file": "barricade.glb",
-      "cooked": "barricade.mesh",
+      "category": "structures",
+      "file": "structures/barricade.glb",
+      "cooked": "structures/barricade.mesh",
       "description": "Cover prop \u2014 a stepped two-course sandbag berm.",
       "base_color": [
         0.34,
@@ -519,8 +529,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "barricade.glb",
-          "cooked": "barricade.mesh",
+          "file": "structures/barricade.glb",
+          "cooked": "structures/barricade.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 24,
           "bytes": 2888,
@@ -530,8 +540,8 @@
         },
         {
           "level": 1,
-          "file": "barricade.lod1.glb",
-          "cooked": "barricade.lod1.mesh",
+          "file": "structures/barricade.lod1.glb",
+          "cooked": "structures/barricade.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 24,
           "bytes": 1552,
@@ -541,8 +551,8 @@
         },
         {
           "level": 2,
-          "file": "barricade.lod2.glb",
-          "cooked": "barricade.lod2.mesh",
+          "file": "structures/barricade.lod2.glb",
+          "cooked": "structures/barricade.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 24,
           "bytes": 1552,
@@ -554,8 +564,9 @@
     },
     {
       "name": "tracer",
-      "file": "tracer.glb",
-      "cooked": "tracer.mesh",
+      "category": "fx",
+      "file": "fx/tracer.glb",
+      "cooked": "fx/tracer.mesh",
       "description": "Tank-shell tracer \u2014 a small +X-elongated bolt, placed at the shell and yawed by velocity (P7).",
       "base_color": [
         1.0,
@@ -574,8 +585,8 @@
       "lods": [
         {
           "level": 0,
-          "file": "tracer.glb",
-          "cooked": "tracer.mesh",
+          "file": "fx/tracer.glb",
+          "cooked": "fx/tracer.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 12,
           "bytes": 2048,
@@ -585,8 +596,8 @@
         },
         {
           "level": 1,
-          "file": "tracer.lod1.glb",
-          "cooked": "tracer.lod1.mesh",
+          "file": "fx/tracer.lod1.glb",
+          "cooked": "fx/tracer.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 12,
           "bytes": 1288,
@@ -596,8 +607,8 @@
         },
         {
           "level": 2,
-          "file": "tracer.lod2.glb",
-          "cooked": "tracer.lod2.mesh",
+          "file": "fx/tracer.lod2.glb",
+          "cooked": "fx/tracer.lod2.mesh",
           "simplify_ratio": 0.25,
           "tri_count": 12,
           "bytes": 1288,

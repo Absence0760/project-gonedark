@@ -5,10 +5,27 @@ Scripted, license-clean greybox models for the publishable build — see
 [`content-pipeline.md` §2/§5/§6](../../docs/content-pipeline.md).
 
 These are **placeholders**, not art: blocky primitives welded into one mesh per object,
-exported as `.glb` into [`../../assets/models/`](../../assets/models/) with a license
-manifest. They read fine as top-down RTS tokens; the honest weak axis is eye-level FPS
-credibility (the two-view filter, §4) — that's the accepted placeholder trade, fixed later
-by the mid/hero art pass.
+exported as `.glb` into a category subfolder under
+[`../../assets/models/`](../../assets/models/) with a license manifest. They read fine as
+top-down RTS tokens; the honest weak axis is eye-level FPS credibility (the two-view filter,
+§4) — that's the accepted placeholder trade, fixed later by the mid/hero art pass.
+
+## Layout
+
+Models live in role subfolders under `assets/models/` (set per model by `CATEGORY` in
+`gen_models.py`) so the asset tree stays browsable instead of one flat dump:
+
+| Folder | Models |
+|---|---|
+| `units/` | `trooper`, `tank`, `tank_turret` |
+| `structures/` | `camp_hq`, `turret`, `barricade` |
+| `weapons/` | `weapon_rifle` |
+| `props/` | `crate`, `tree`, `rock` |
+| `fx/` | `tracer` |
+
+The category prefix is part of the on-disk path everywhere: the renderer's `include_bytes!`
+paths in `render/src/mesh.rs` and each manifest entry's `category` + `file`/`cooked` paths all
+carry it. `manifest.json` itself stays at the `assets/models/` root.
 
 ## Run it
 
@@ -21,26 +38,29 @@ pnpm assets:models
 blender --background --python tools/models/gen_models.py
 ```
 
-Output, per object, in `assets/models/`: a full-detail `.glb` + cooked `.mesh`, plus a
-gltfpack-decimated LOD chain (`<name>.lod1.*`, `<name>.lod2.*`), and `manifest.json` (each
-entry records `source`, `author`, `license: CC0-1.0`, `base_color`, `bytes`, `sha256`, and a
-`lods` array of per-tier stats).
+Output, per object, in its `assets/models/<category>/` subfolder: a full-detail `.glb` +
+cooked `.mesh`, plus a gltfpack-decimated LOD chain (`<name>.lod1.*`, `<name>.lod2.*`); plus
+`manifest.json` at the `assets/models/` root (each entry records `category`, `source`,
+`author`, `license: CC0-1.0`, `base_color`, `bytes`, `sha256`, and a `lods` array of per-tier
+stats).
 
 ## What it builds
 
-Nine models — units, structures, props, scenery:
+Eleven models — units, structures, weapons, props, scenery, fx:
 
-| Name | What |
-|---|---|
-| `trooper` | Greybox infantry unit (boxy humanoid) |
-| `tank` | Greybox vehicle unit (hull/tracks/turret/barrel) |
-| `camp_hq` | Greybox structure (walls + pyramid roof + antenna) |
-| `weapon_rifle` | First-person weapon viewmodel |
-| `crate` | 1 m cover prop |
-| `turret` | Defensive structure (base/drum/housing/barrel) |
-| `tree` | Scenery / soft cover (trunk + two-tier canopy) |
-| `rock` | Scenery / hard cover (faceted boulder) |
-| `barricade` | Cover prop (two-course sandbag berm) |
+| Name | Category | What |
+|---|---|---|
+| `trooper` | `units` | Greybox infantry unit (boxy humanoid) |
+| `tank` | `units` | Greybox vehicle hull (chassis + tracks) |
+| `tank_turret` | `units` | Tank turret (mantlet + barrel, slews on the hull's ring) |
+| `camp_hq` | `structures` | Greybox structure (walls + pyramid roof + antenna) |
+| `turret` | `structures` | Defensive structure (base/drum/housing/barrel) |
+| `barricade` | `structures` | Two-course sandbag berm cover |
+| `weapon_rifle` | `weapons` | First-person weapon viewmodel |
+| `crate` | `props` | 1 m cover prop |
+| `tree` | `props` | Scenery / soft cover (trunk + two-tier canopy) |
+| `rock` | `props` | Scenery / hard cover (faceted boulder) |
+| `tracer` | `fx` | Tank-shell tracer (small +X-elongated bolt) |
 
 ## The LOD chain
 
