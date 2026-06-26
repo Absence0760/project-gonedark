@@ -3052,8 +3052,10 @@ first genuinely new *system* since the economy: healing.
   vehicles (Rifleman / Heavy / Tank); the **Barracks** is infantry-only and the **sole source of the
   Medic**. `queue_production` enforces the routing (a mismatched request is rejected without
   spending), and `economy_system` now serves *any* operational building's queue, not just a Camp's.
-  Per-kind building HP / build-time come from `building_hp` / `build_ticks`. Desktop slots: `B`/build
-  slot 1 = Barracks; train slots 2/3 = Tank/Medic.
+  Per-kind building HP / build-time come from `building_hp` / `build_ticks`. The slot vocabulary
+  lives in the engine seams (`build_ui` slot 1 = Barracks; `train_ui` slots 2/3 = Tank/Medic);
+  the desktop keybinds in `pal-desktop` still reach only Camp (`B`) / Rifleman (`R`) / Heavy (`H`),
+  so Barracks/Tank/Medic are not yet selectable on the desktop host — a keybind gap, not a sim gap.
 
 **Why:**
 

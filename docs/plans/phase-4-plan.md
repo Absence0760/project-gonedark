@@ -297,10 +297,12 @@ Do **not** resolve the open questions here — leans only; each lock needs the i
 - **[D34](../decisions.md) — shell↔sim seam shape/contract** ✅ **RECORDED** — the GPU-free, logic-free
   `core::shell` façade native shells (and the in-session shell) drive `core` through (WS-A), plus the
   [`architecture.md`](../architecture.md) boundary note D32 flagged as owed. Landed this run.
-- **Dn — [Q5](../open-questions.md) resolution (PvE vs PvP first)** — gates onboarding (surface 2),
-  match setup's mode select (4), and lobby (5). *Lean (from Q5):* **PvE-first** to derisk
-  onboarding and skip netcode until the core loop is proven, with multiplayer a fast-follow given
-  the lockstep-ready architecture. Locking it unblocks the teach surface.
+- **[D58](../decisions.md) — Q5 resolved: PvE-first** ✅ **RECORDED** — the teach surface and
+  first shippable mode are now decided (the Operations campaign), unblocking the *PvE/skirmish*
+  halves of onboarding (surface 2) and match setup (4); only the *PvP* half of match setup and the
+  lobby (5) stay blocked, now on **Phase 3 netcode** rather than Q5. (The §2 table cells below still
+  read "BLOCKED — Q5"; treat that as superseded by D58 — PvE halves are unblocked, PvP halves wait
+  on net.)
 - **Dn — [Q9](../open-questions.md) resolution (billing rails)** — gates Store/IAP (surface 7).
   *Lean:* **hybrid** — mandatory StoreKit/Play Billing on mobile, Stripe/Steam on desktop, behind
   a unified entitlement service keyed to the account; cross-store reconciliation cost needs scoping

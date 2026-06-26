@@ -77,7 +77,8 @@ model.
 > live on hardware. One unit moves via the flow field; tap-to-move works; the two-finger embody
 > toggle flips the world dark. All three decide-first gates locked (D17, D18, D21). The
 > **Unity/Godot fallback (D8) is retired**; the throwaway prototypes are deleted. **Phase 2
-> (game systems) is the active phase.** Honest caveat: validated on a flagship; frame-rate/thermal
+> (game systems) is signed off (D31); Phase 3 (scale & net) is the active phase and Phase 4
+> (polish & ship) is opening.** Honest caveat: validated on a flagship; frame-rate/thermal
 > on mid-range silicon and the 200-unit power budget are Phase 3 (D21). Detailed plan and
 > sign-off record: **[`phase-1-plan.md`](plans/phase-1-plan.md)**.
 
@@ -141,7 +142,10 @@ model.
 > the systems sign-off left** — embodied firing ([D37](decisions.md)), a win/lose evaluator
 > ([D38](decisions.md)), the enemy commander AI ([D39](decisions.md)), and a real first-person
 > world ([D40](decisions.md)), plus in-match text — without disturbing the signed-off systems;
-> by-hand feel and the art pass are still owed.
+> by-hand feel and the art pass are still owed. **The D30 balance baseline has since been
+> overhauled** — D66 made combat lethal (×5 damage, ~1.5 s rifle TTK) and D67 added finite per-unit
+> ammo + resupply; inter-unit balance at that lethal speed is reopened as
+> [Q18](open-questions.md) (the [combat-rebalance plan](plans/combat-rebalance-plan.md)).
 
 **Goal:** the actual game.
 
@@ -303,8 +307,9 @@ narrative depth ([Q16](open-questions.md)).
   follow-up (new sim state + a `Command` variant), not a presentation change.*
 - [x] Resource/economy readout that makes cost and income legible at a glance
   (`render::readout::EconomyReadout` — banked credits + income rate)
-- [ ] A full match a new player can complete start→finish unaided (loop closes; needs the
-  UI above wrapped around the D38 evaluator)
+- [ ] A full match a new player can complete start→finish unaided (the loop itself now
+  *closes* — D64's two-base `seed_skirmish` is a live, winnable match booted by default and proven
+  end-to-end in test; the remaining gap is unaided new-player onboarding/UX, not loop existence)
 
 ### Campaign & content — the first shippable product (PvE)
 
@@ -355,9 +360,11 @@ narrative depth ([Q16](open-questions.md)).
 - [x] **Adopt AI-generated placeholder models** for units, structures, and the embodied
   weapon instead of commissioned art ([D41](decisions.md)) — this pulls the "AI-assisted"
   route that [`content-pipeline.md`](content-pipeline.md) §2 reserved for *hero* art forward
-  to *everything*, sitting at the greybox/low tier of the production ladder. **Done:** nine
-  procedural greybox models, all now drawn — units (Rifleman→infantry, Heavy→tank), the camp,
-  the first-person weapon, and the scenery/cover props ([D50](decisions.md))
+  to *everything*, sitting at the greybox/low tier of the production ladder. **Done:** eleven
+  procedural greybox models, all now drawn — the trooper (also backing the D65 Medic kind), the tank
+  hull + turret ([D55](decisions.md), backing the dedicated Tank kind of [D65](decisions.md)), the
+  camp, the first-person weapon, the tracer, and the scenery/cover props (crate/tree/rock/barricade)
+  ([D50](decisions.md))
 - [x] One source `.glb` per unit/structure run through the cook → LOD chain so it
   satisfies the two-view filter (top-down token *and* eye-level mesh — §4). **Done:** the cook
   now emits a real **3-tier gltfpack LOD chain** per model, distance-selected at runtime
@@ -413,7 +420,11 @@ narrative depth ([Q16](open-questions.md)).
 > combined-arms spectacle are the two *consciously conceded* tiers — CP-3 and the LEAD-adjacent
 > "but it's *your* battle" — not gaps to close). The conceded **roster/combined-arms breadth**
 > (more unit/vehicle variety toward the "growing" spectacle row) rides the PvE content pillar +
-> the scripted asset pipeline ([`content-pipeline.md`](content-pipeline.md)), not a separate item.
+> the scripted asset pipeline ([`content-pipeline.md`](content-pipeline.md)) — and is now also
+> carried by the **factions pillar** ([D68](decisions.md), [`factions.md`](factions.md),
+> [`factions-plan.md`](plans/factions-plan.md), open fork [Q19](open-questions.md)): real-army
+> asymmetric rosters (US Army vs French Army) are a distinct, fairness-bounded workstream layered
+> over `UnitKind`, gated on the [combat rebalance](plans/combat-rebalance-plan.md) ([Q18](open-questions.md)) landing first.
 
 - [ ] **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
   ([D60](decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,

@@ -1,6 +1,10 @@
 # Tank embodiment plan — the War Thunder-flavoured tank
 
-**Status: PLAN (D55).** Phasing for turning the embodied tank from "infantry-FPS-in-a-tank-
+**Status: IN PROGRESS (D55) — P1–P4 + P7 landed (see §6); P5/P6/P8/P9 remain.** A
+`UnitKind::Tank` already exists as of [D65](../decisions.md), but as an *unarmoured, hitscan*
+production unit — distinct from this plan's armoured/ballistic embodied tank; that covers the
+"Tank unit kind + economy stats" half of P9, leaving P9's armour block + ballistic gun + sniper/zoom.
+Phasing for turning the embodied tank from "infantry-FPS-in-a-tank-
 shaped-token" into a real **vehicle**: independent hull + turret control, a reticle that
 blooms when you move and settles when you hold, and a penetration-vs-armour-facing combat
 model that applies to **every unit**, not just the one you're driving. The reference feel is

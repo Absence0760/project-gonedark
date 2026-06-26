@@ -185,8 +185,9 @@ store the input stream, not the world state.
   timer counts down in combat upkeep. A per-unit `Posture {Standing,Crouched}` array makes crouch slow
   movement (`systems::CROUCH_MOVE_SPEED`) and tighten/extend embodied aim. New `Command::Reload` /
   `Command::Crouch` ride the lockstep stream; all of it is folded into the per-tick checksum and the
-  authoritative snapshot (so `SNAPSHOT_VERSION` 2→3, `WIRE_VERSION` 4→5 — a stale peer is rejected at
-  the handshake, never desynced mid-session).
+  authoritative snapshot (D51 bumped `SNAPSHOT_VERSION` 2→3 and `WIRE_VERSION` 4→5; both have since
+  advanced — currently 7 and 6 — as later state/wire changes landed, e.g. D55/D64). A stale peer is
+  rejected at the handshake, never desynced mid-session.
 - **Embodied input is one platform-agnostic intent stream.** `pal::InputFrame` carries the embodied
   axes/edges (`move_axis`/`look_axis`/`fire`/`crouch_pressed`/`reload_pressed`) plus a raw multi-touch
   array (`touches`/`touch_count`). The pure, host-tested `engine::touch_controls` seam turns the touch
@@ -279,8 +280,8 @@ scheduling (nearby/engaged squads re-evaluate every tick, distant idle squads ev
 > checksum hashes: every component incl. dead slots, the free-list order, `Rng(state, inc)`, `tick`),
 > serde-free in `core`, terrain by `map_id`. Reconnect = snapshot + replay the buffered commands,
 > correct by construction; the load-bearing guard is the round-trip-replay determinism test on the
-> arch matrix. **Landed** as `core::persist` (`Writer`/`Reader`/`StateSink`; `SNAPSHOT_VERSION = 3`)
-> + the `core::reconnect` resume policy.
+> arch matrix. **Landed** as `core::persist` (`Writer`/`Reader`/`StateSink`; `SNAPSHOT_VERSION`,
+> currently 7 as later state changes landed) + the `core::reconnect` resume policy.
 
 Because the sim is deterministic, clients exchange only **orders**, not world state.
 Bandwidth scales with players, not the hundreds of units on the field.
