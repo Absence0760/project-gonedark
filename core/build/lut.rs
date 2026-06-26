@@ -18,6 +18,16 @@ const SCALE: f64 = (1u64 << FRAC_BITS) as f64; // noqa: float-in-sim — host bu
 /// mask. 4096 keeps the per-step error tiny before the (fixed-point) linear interp.
 const SIN_LUT_LEN: usize = 4096;
 
+/// Bits of angle resolution — must match `core::trig::ANGLE_BITS`. A full turn is
+/// `1 << ANGLE_BITS` angle-units, so the atan table below emits results in those units.
+const ANGLE_BITS: u32 = 16;
+const ANGLE_FULL: f64 = (1u32 << ANGLE_BITS) as f64; // noqa: float-in-sim — host build script
+
+/// Entries in the arctangent table, sampling `atan(t)` for `t` in `[0, 1]`. Indexed by the
+/// fixed-point ratio `min(|x|,|y|) / max(|x|,|y|)` during octant-reduced `atan2`. 1024 gives
+/// well under one angle-unit of error across the first octant after the integer ratio index.
+const ATAN_LUT_LEN: usize = 1024;
+
 fn main() {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let dest = Path::new(&out_dir).join("lut_generated.rs");
@@ -30,6 +40,20 @@ fn main() {
         let theta = (i as f64) / (SIN_LUT_LEN as f64) * std::f64::consts::TAU; // noqa: float-in-sim noqa: transcendental-in-sim — compile-time host math; emits integer LUT
         let bits = (theta.sin() * SCALE).round() as i32; // noqa: transcendental-in-sim — host build script bakes the LUT the sim then reads (invariant #1 pattern)
         src.push_str(&format!("    {bits},\n"));
+    }
+    src.push_str("];\n");
+
+    // Arctangent table in angle-units: ATAN_LUT[i] = atan(i/(LEN-1)) for the first octant
+    // (result in [0, ANGLE_FULL/8]). `atan2` reduces any vector to this octant by sign/swap,
+    // indexes by the fixed-point ratio of the smaller to the larger component, and reflects the
+    // base angle into the right quadrant — all integer ops in the sim (invariant #1).
+    src.push_str(&format!("pub const ATAN_LUT_LEN: usize = {ATAN_LUT_LEN};\n"));
+    src.push_str(&format!("pub static ATAN_LUT: [i32; {ATAN_LUT_LEN}] = [\n"));
+    for i in 0..ATAN_LUT_LEN {
+        let t = (i as f64) / ((ATAN_LUT_LEN - 1) as f64); // noqa: float-in-sim — host build script
+        // atan(t) in radians → turns (÷ TAU) → angle-units (× ANGLE_FULL).
+        let units = (t.atan() / std::f64::consts::TAU * ANGLE_FULL).round() as i32; // noqa: float-in-sim noqa: transcendental-in-sim — host build script bakes the LUT the sim reads (invariant #1 pattern)
+        src.push_str(&format!("    {units},\n"));
     }
     src.push_str("];\n");
 
