@@ -657,6 +657,63 @@ mod tests {
         assert_eq!(a.checksum(), b.checksum());
     }
 
+    /// End-to-end: the skirmish is a **live, evolving match**, not an inert tableau. Drive it the
+    /// way the host does — the Enemy played by the scripted `commander` on its 1 s cadence, the
+    /// Player sitting idle — and confirm the whole loop turns over on this scene: the enemy troop
+    /// captures a post, income from it funds production, and reinforcements actually spawn. This is
+    /// the integration the per-system unit tests can't give (each proves one wheel; this proves the
+    /// gearbox), and it pins the scene against a future regression that would leave the match dead.
+    ///
+    /// Deterministic by construction: the commander reads only checksummed state + its own seeded
+    /// RNG (no float, no `Sim::rng` draw), so this plays out identically on every run/arch.
+    #[test]
+    fn skirmish_plays_out_as_a_live_match_under_the_commander() {
+        use crate::commander::{commander_orders, COMMANDER_PERIOD};
+        use crate::rng::Rng;
+
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        // The enemy commander's own stream (host seeds it `sim_seed ^ faction`); never `Sim::rng`.
+        let mut enemy_rng = Rng::new(0xD0E1 ^ Faction::Enemy.index() as u64);
+
+        // 30 s of play (60 Hz). The Player issues nothing — we isolate that the *enemy* side alone
+        // makes the economy/capture/production loop turn.
+        for _ in 0..(30 * crate::sim::TICK_HZ as u64) {
+            let cmds = if sim.tick_count() % COMMANDER_PERIOD == 0 {
+                commander_orders(
+                    &sim.world,
+                    &sim.territory,
+                    &sim.resources,
+                    &mut enemy_rng,
+                    Faction::Enemy,
+                    sim.tick_count(),
+                )
+            } else {
+                Vec::new()
+            };
+            sim.step(&cmds);
+        }
+
+        // The commander sent its lone troop to take the nearest post → the Enemy now holds ground.
+        assert!(
+            sim.territory.controlled_count(Faction::Enemy) >= 1,
+            "the enemy commander should have captured at least one post in 30 s"
+        );
+        // Post income + the base drip funded reinforcements → more than the one troop it started
+        // with now fights for the Enemy (production actually spawned units on this scene).
+        assert!(
+            unit_count(&sim, Faction::Enemy) > 1,
+            "the enemy should have produced reinforcements beyond its starting troop"
+        );
+        // The Player, untouched, still has exactly its starting troop (nothing auto-roamed it —
+        // invariant #3: a unit with no order just holds).
+        assert_eq!(
+            unit_count(&sim, Faction::Player),
+            1,
+            "the idle player keeps exactly its one starting troop"
+        );
+    }
+
     #[test]
     fn ballistic_pipeline_is_deterministic() {
         let sum = run_ballistic_duel(130);
