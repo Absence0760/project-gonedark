@@ -425,6 +425,95 @@ fn map_input_commands(
     commands
 }
 
+/// Whether `e` is a live, possessable Player unit — alive, Player faction, and a unit (not a
+/// building). Shared by [`embody_target`] and the embody picker. `is_alive` validates the
+/// generation first, so a stale selected handle whose slot was reused fails here and is skipped.
+fn is_live_player_unit(world: &gonedark_core::ecs::World, e: Entity) -> bool {
+    world.is_alive(e)
+        && world.faction[e.index as usize] == Faction::Player
+        && world.kind[e.index as usize] == EntityKind::Unit
+}
+
+/// The live, possessable Player units in the current selection, in selection order — the rows of the
+/// embody picker. Two or more means the player band-selected a mixed group and we ask *which* to
+/// possess; zero or one falls through to [`embody_target`]'s direct path. PURE → unit-tested.
+fn live_selected_player_units(
+    selection: &Selection,
+    world: &gonedark_core::ecs::World,
+) -> Vec<Entity> {
+    selection
+        .units
+        .iter()
+        .copied()
+        .filter(|&e| is_live_player_unit(world, e))
+        .collect()
+}
+
+/// What an open embody picker should do with this frame's input.
+#[derive(Debug, PartialEq)]
+enum PickOutcome {
+    /// Possess this unit (a row was chosen) and close the picker.
+    Pick(Entity),
+    /// Close the picker without possessing (a tap missed the list, or embody/surface was re-pressed).
+    Cancel,
+    /// Leave the picker open (no decisive input this frame).
+    Stay,
+}
+
+/// Resolve an open embody picker against this frame's input (PURE → unit-tested). A number key
+/// (`command_slot` `0`→row 0, i.e. the player's "1" key) or a `tap_row` hit picks that unit; a tap
+/// that missed every row (`pointer_up` with `tap_row == None`), or a fresh embody/surface press,
+/// cancels; anything else leaves it open. An out-of-range number key is ignored (the picker stays),
+/// never a mis-pick.
+fn embody_pick_outcome(
+    rows: &[Entity],
+    command_slot: Option<u8>,
+    tap_row: Option<usize>,
+    pointer_up: bool,
+    embody_pressed: bool,
+    surface_pressed: bool,
+) -> PickOutcome {
+    if let Some(s) = command_slot {
+        if (s as usize) < rows.len() {
+            return PickOutcome::Pick(rows[s as usize]);
+        }
+    }
+    if let Some(r) = tap_row {
+        if r < rows.len() {
+            return PickOutcome::Pick(rows[r]);
+        }
+    }
+    if pointer_up || embody_pressed || surface_pressed {
+        return PickOutcome::Cancel;
+    }
+    PickOutcome::Stay
+}
+
+/// Build the picker's presentation description from the live selected entities — one labelled row per
+/// unit (`Heavy`→"Tank", `Rifleman`→"Rifleman"), all possessable today. Render-only mapping.
+fn embody_picker_view(
+    rows: &[Entity],
+    world: &gonedark_core::ecs::World,
+) -> gonedark_render::picker::EmbodyPicker {
+    use gonedark_render::picker::{EmbodyPicker, PickerRow};
+    EmbodyPicker {
+        rows: rows
+            .iter()
+            .map(|&e| {
+                let label = match world.unit_kind[e.index as usize] {
+                    UnitKind::Heavy => "Tank",
+                    UnitKind::Rifleman => "Rifleman",
+                }
+                .to_string();
+                PickerRow {
+                    label,
+                    embodiable: true,
+                }
+            })
+            .collect(),
+    }
+}
+
 /// Pick the Player unit to POSSESS this frame (invariant #5: embodiment is an input-source swap,
 /// resolved over *live* units — never a hardwired avatar). The RTS "select, then possess" rule:
 ///  1. the first LIVE selected Player unit (what the command layer has highlighted), else
@@ -438,25 +527,23 @@ fn map_input_commands(
 /// Returns `None` only when the player has NO live unit at all (every possession path is then a
 /// correct no-op). PURE (no `Game`/device) → unit-tested. The chosen entity rides into the lockstep
 /// [`Command::Embody`], so it is the local player's intent (like a tap target), applied
-/// bit-identically on every peer (the sim swaps that one entity's `InputSource`).
+/// bit-identically on every peer (the sim swaps that one entity's `InputSource`). For a multi-unit
+/// selection the host opens the embody picker instead, so the player chooses which (see `frame`).
 fn embody_target(
     selection: &Selection,
     world: &gonedark_core::ecs::World,
     current: Entity,
 ) -> Option<Entity> {
-    let is_live_player_unit = |e: Entity| {
-        // `is_alive` validates the generation first, so the index reads below are in-bounds and
-        // current (a stale selected handle whose slot was reused fails here and is skipped).
-        world.is_alive(e)
-            && world.faction[e.index as usize] == Faction::Player
-            && world.kind[e.index as usize] == EntityKind::Unit
-    };
     // 1. First live, selected Player unit.
-    if let Some(&e) = selection.units.iter().find(|&&e| is_live_player_unit(e)) {
+    if let Some(&e) = selection
+        .units
+        .iter()
+        .find(|&&e| is_live_player_unit(world, e))
+    {
         return Some(e);
     }
     // 2. Keep the current avatar if it is still alive.
-    if is_live_player_unit(current) {
+    if is_live_player_unit(world, current) {
         return Some(current);
     }
     // 3. Any live Player unit, in stable index order, so a death never permanently kills embodiment.
@@ -713,6 +800,12 @@ pub struct Game {
     /// #3). Exposed via [`Game::radial_menu`] for a future on-screen radial renderer.
     radial_menu: Vec<&'static str>,
 
+    /// The open embody-unit picker: the live selected Player units the player is choosing one of to
+    /// possess, in selection order. `None` when closed. Opened by pressing embody with two or more
+    /// units selected (a single selection embodies directly); a row pick / number key emits
+    /// `Command::Embody`, a miss cancels. Pure presentation/intent state — never sim state.
+    embody_picker: Option<Vec<Entity>>,
+
     /// The rolling embodied alert channel (worker 2's HUD reads this; `core::alerts` derives it).
     /// A presentation derivation from the event stream — never sim state (invariant #7).
     alerts: AlertChannel,
@@ -870,6 +963,7 @@ impl Game {
             avatar: AvatarPrediction::default(),
             selection: Selection::new(),
             radial_menu: Vec::new(),
+            embody_picker: None,
             alerts: AlertChannel::new(),
             // Single-player lockstep: one peer (us), local id 0, zero input delay (D27 step 4).
             lockstep: Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY),
@@ -1196,6 +1290,10 @@ impl Game {
         audio: &mut dyn Audio,
     ) {
         let (width, height) = viewport;
+        // A local, mutable copy of this frame's input so the embody picker (below) can CONSUME the
+        // tap / number-key / embody edges it reacts to — clearing them here so the selection + order
+        // layers downstream never also handle a tap the player aimed at the picker.
+        let mut input = input.clone();
 
         // 0. Render quality tuning (Phase 4 WS-C): observe this frame's wall-clock `dt` + the
         // host-reported thermal state and ease the dynamic-resolution scale / FPS cap to hold the
@@ -1228,6 +1326,72 @@ impl Game {
             self.cam_half_extent = zoom_half_extent(self.cam_half_extent, input.scroll);
         }
 
+        // 0c. Embody picker (command view): with two or more units selected, pressing embody opens a
+        // small on-screen list so the player chooses WHICH to possess (e.g. the tank in a mixed
+        // troops+tanks band) instead of the engine silently taking the first. Resolved BEFORE
+        // selection below, and it CONSUMES the tap / number-key / embody edges it uses (clearing them
+        // on the local `input`) so the same tap never also drives selection or the order vocabulary.
+        // Command-view only — being embodied force-closes it. Pure host UX over `Command::Embody`;
+        // the sim and embodiment semantics (invariant #5) are unchanged — only *which* entity is
+        // chosen differs.
+        let mut picker_embody: Option<Entity> = None;
+        if self.embodied {
+            self.embody_picker = None;
+        } else {
+            // Drop dead handles so a stale pick never targets a corpse; if fewer than two possessable
+            // units remain there is nothing to choose between, so just close it (the player presses
+            // embody again to possess the lone survivor directly).
+            if let Some(rows) = self.embody_picker.as_mut() {
+                rows.retain(|&e| is_live_player_unit(&self.sim.world, e));
+                if rows.len() < 2 {
+                    self.embody_picker = None;
+                }
+            }
+            if let Some(rows) = self.embody_picker.clone() {
+                // Open: this frame's number key / tap picks a row, or cancels. `width.max(1)` mirrors
+                // `unproject_topdown` so a zero-size viewport can't divide by zero.
+                let tap_row = if input.pointer_up {
+                    input.pointer.and_then(|(px, py)| {
+                        let nx = px / width.max(1) as f32 * 2.0 - 1.0;
+                        let ny = 1.0 - py / height.max(1) as f32 * 2.0;
+                        gonedark_render::picker::picker_row_at(rows.len(), nx, ny)
+                    })
+                } else {
+                    None
+                };
+                match embody_pick_outcome(
+                    &rows,
+                    input.command_slot,
+                    tap_row,
+                    input.pointer_up,
+                    input.embody_pressed,
+                    input.surface_pressed,
+                ) {
+                    PickOutcome::Pick(e) => {
+                        picker_embody = Some(e);
+                        self.embody_picker = None;
+                    }
+                    PickOutcome::Cancel => self.embody_picker = None,
+                    PickOutcome::Stay => {}
+                }
+                // Consume the inputs the picker reacted to so the selection / order layer below does
+                // not also handle this tap or key.
+                input.pointer = None;
+                input.pointer_up = false;
+                input.command_slot = None;
+                input.embody_pressed = false;
+                input.surface_pressed = false;
+            } else if input.embody_pressed {
+                // Closed + embody pressed: open the picker for a multi-unit selection; otherwise fall
+                // through to the existing direct-embody path (0/1 selected → first / avatar / any).
+                let rows = live_selected_player_units(&self.selection, &self.sim.world);
+                if rows.len() >= 2 {
+                    self.embody_picker = Some(rows);
+                    input.embody_pressed = false; // the picker — not this press — will embody
+                }
+            }
+        }
+
         // 1. Map input → sim commands (applied on the first step of this frame). The pure
         // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
         // `map_input_commands`; here we apply the resulting embodiment state transition.
@@ -1235,12 +1399,16 @@ impl Game {
         // unit, else the current avatar, else any live player unit (see `embody_target`). Computed
         // only on the embody edge; the selection read is last frame's highlight (you select, then
         // press E). `None` ⇒ no live unit, so the press is dropped rather than possessing a corpse.
+        // (When the picker is open it has already cleared `embody_pressed`, so this stays `None`.)
         let target = if input.embody_pressed && !self.embodied {
             embody_target(&self.selection, &self.sim.world, self.player)
         } else {
             None
         };
-        let mut commands = map_input_commands(input, self.embodied, self.player, target);
+        let mut commands = map_input_commands(&input, self.embodied, self.player, target);
+        if let Some(e) = picker_embody {
+            commands.push(Command::Embody { entity: e });
+        }
 
         // 1b. Touch-UI layer (workers 4 + 5): in the command view, the pointer drives unit
         // SELECTION and the on-screen vocabulary issues orders to that selection. Both are pure
@@ -1372,7 +1540,7 @@ impl Game {
         if !self.embodied {
             let active_camp = active_player_camp(&self.sim.world, Faction::Player);
             commands.extend(command_view_production_commands(
-                input,
+                &input,
                 pointer_world,
                 active_camp,
             ));
@@ -1828,6 +1996,17 @@ impl Game {
             };
             self.renderer
                 .render_command_panels(device, queue, view, &panels);
+        }
+
+        // 7a''. Embody picker (command view): when open, draw the list of selected units the player
+        // is choosing one of to possess. Text chrome only, on top of the command panels; gated to the
+        // command view so it never paints over the dark embodied frame (invariant #6).
+        if !self.embodied {
+            if let Some(rows) = &self.embody_picker {
+                let view_desc = embody_picker_view(rows, &self.sim.world);
+                self.renderer
+                    .render_embody_picker(device, queue, view, &view_desc);
+            }
         }
 
         // 7a. Embodied weapon viewmodel (W5/D44): the first-person gun — the real `weapon_rifle`
@@ -2525,6 +2704,90 @@ mod tests {
         world.kind[enemy.index as usize] = EntityKind::Unit;
         let empty = Selection::new();
         assert_eq!(embody_target(&empty, &world, enemy), None);
+    }
+
+    // ---- embody picker (multi-select "which unit to possess") ----
+
+    /// The picker rows are the LIVE PLAYER units in the selection, in selection order — a corpse and
+    /// an enemy in the selection are filtered out.
+    #[test]
+    fn live_selected_player_units_filters_to_live_player_units() {
+        let (mut world, e) = world_with_player_units(4);
+        world.despawn(e[1]); // a dead selected handle
+        world.faction[e[2].index as usize] = Faction::Enemy; // an enemy in the band
+        let sel = selection_of(&[e[0], e[1], e[2], e[3]]);
+        assert_eq!(
+            live_selected_player_units(&sel, &world),
+            vec![e[0], e[3]],
+            "only the live player units survive, in selection order"
+        );
+    }
+
+    /// A number key picks its row (the player's "1" key is `command_slot` 0); an out-of-range key is
+    /// ignored (the picker stays open), never a mis-pick.
+    #[test]
+    fn embody_pick_outcome_number_key_picks_row_in_range() {
+        let (_w, e) = world_with_player_units(3);
+        assert_eq!(
+            embody_pick_outcome(&e, Some(0), None, false, false, false),
+            PickOutcome::Pick(e[0])
+        );
+        assert_eq!(
+            embody_pick_outcome(&e, Some(2), None, false, false, false),
+            PickOutcome::Pick(e[2])
+        );
+        // Out of range (only 3 rows) → not a pick, and with no other signal the picker stays.
+        assert_eq!(
+            embody_pick_outcome(&e, Some(7), None, false, false, false),
+            PickOutcome::Stay
+        );
+    }
+
+    /// A tap on a row picks it; a tap that hit no row (a miss) cancels.
+    #[test]
+    fn embody_pick_outcome_tap_picks_or_cancels() {
+        let (_w, e) = world_with_player_units(3);
+        assert_eq!(
+            embody_pick_outcome(&e, None, Some(1), true, false, false),
+            PickOutcome::Pick(e[1])
+        );
+        assert_eq!(
+            embody_pick_outcome(&e, None, None, true, false, false),
+            PickOutcome::Cancel,
+            "a tap that missed every row closes the picker"
+        );
+    }
+
+    /// Re-pressing embody (or surface) while the picker is open cancels it; an idle frame leaves it
+    /// open.
+    #[test]
+    fn embody_pick_outcome_embody_or_surface_cancels_and_idle_stays() {
+        let (_w, e) = world_with_player_units(2);
+        assert_eq!(
+            embody_pick_outcome(&e, None, None, false, true, false),
+            PickOutcome::Cancel
+        );
+        assert_eq!(
+            embody_pick_outcome(&e, None, None, false, false, true),
+            PickOutcome::Cancel
+        );
+        assert_eq!(
+            embody_pick_outcome(&e, None, None, false, false, false),
+            PickOutcome::Stay
+        );
+    }
+
+    /// The picker view labels each row by unit kind (Heavy→"Tank", Rifleman→"Rifleman").
+    #[test]
+    fn embody_picker_view_labels_rows_by_kind() {
+        let (mut world, e) = world_with_player_units(2);
+        world.unit_kind[e[0].index as usize] = UnitKind::Heavy;
+        world.unit_kind[e[1].index as usize] = UnitKind::Rifleman;
+        let view = embody_picker_view(&e, &world);
+        assert_eq!(view.rows.len(), 2);
+        assert_eq!(view.rows[0].label, "Tank");
+        assert_eq!(view.rows[1].label, "Rifleman");
+        assert!(view.rows.iter().all(|r| r.embodiable));
     }
 
     /// Embodied suppresses tap-to-move: a pointer-down while embodied produces no `Move`.

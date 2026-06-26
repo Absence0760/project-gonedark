@@ -62,6 +62,10 @@ pub mod overlay;
 /// command vocabulary, drawn as a LOAD pass in the command view. Public so the host can describe the
 /// open menu via [`radial::RadialMenu`].
 pub mod radial;
+/// Embody-unit picker (command view). A text-pass list of the selected units so the player chooses
+/// which one to possess. Public so the host can describe the open list via [`picker::EmbodyPicker`]
+/// and hit-test taps with [`picker::picker_row_at`].
+pub mod picker;
 
 /// Screen-space text pass (W4). Owns `TextRenderer`: a baked bitmap-glyph LOAD pass that draws
 /// labels/numbers at an NDC position with a size + color. Public so the host and other render passes
@@ -1074,6 +1078,27 @@ impl Renderer {
             }
         }
 
+        self.text.render(device, queue, view);
+    }
+
+    /// Draw the embody-unit picker (command view) — the list of selected units the player chooses
+    /// from to possess one — on top of the current command frame (a LOAD text pass; never clears).
+    /// The host calls this ONLY in the command view (never embodied → never over the dark frame,
+    /// invariant #6) while its picker is open, and supplies the rows in [`picker::EmbodyPicker`];
+    /// this lays them out ([`picker::picker_labels`]) and queues them through the text pass. Pairs
+    /// with [`picker::picker_row_at`], which the host runs against a tap to resolve the chosen row.
+    /// Screen-space chrome with no world position — it leaks no intel the command frame doesn't show.
+    pub fn render_embody_picker(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        picker: &picker::EmbodyPicker,
+    ) {
+        for l in picker::picker_labels(picker) {
+            self.text
+                .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
+        }
         self.text.render(device, queue, view);
     }
 
