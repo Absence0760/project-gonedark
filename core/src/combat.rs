@@ -57,6 +57,11 @@ fn is_enemy(attacker: Faction, defender: Faction) -> bool {
 
 /// Can `shooter_idx` currently land a shot on `target_idx`? Target must be alive, a different
 /// hostile faction, within `range` (squared compare — never a sqrt), and in line of sight.
+///
+/// There is deliberately **no `EntityKind` filter on the target**: a unit may engage an enemy
+/// *building* (so an attack-moving squad razes a hostile camp), and `is_enemy` still spares
+/// friendly buildings. Only the *attacker* is restricted to `EntityKind::Unit` (in the engage
+/// pass) — buildings never shoot.
 fn can_engage(world: &World, terrain: &Terrain, shooter_idx: usize, target_idx: usize) -> bool {
     if shooter_idx == target_idx || !world.is_index_alive(target_idx) {
         return false;
@@ -158,6 +163,8 @@ pub fn combat_system(
         if !world.is_index_alive(i) {
             continue;
         }
+        // Only units attack — buildings never acquire targets or fire (they are damageable
+        // TARGETS only; see `can_engage`). This is the sole attacker-side kind filter.
         if world.kind[i] != EntityKind::Unit {
             continue;
         }
@@ -245,10 +252,12 @@ pub const FIRE_CONE_COS_HALF: Fixed = Fixed::from_ratio(866, 1000);
 
 /// Resolve one embodied shot from `shooter_idx` aimed along `dir` (a unit aim vector in Fixed
 /// world space — quantized at the host boundary, invariant #1). A fixed-point **cone hitscan**:
-/// the lowest-index living hostile unit that lies inside the aim cone, within weapon range, and
-/// in line of sight takes the same cover-mitigated damage + suppression the auto-resolver applies,
-/// and the weapon goes on cooldown. Returns silently (no shot, no cooldown) if the weapon is
-/// disarmed, still cooling down, or no target qualifies.
+/// the lowest-index living hostile entity — a unit **or** a building — that lies inside the aim
+/// cone, within weapon range, and in line of sight takes the same cover-mitigated damage +
+/// suppression the auto-resolver applies, and the weapon goes on cooldown. Returns silently (no
+/// shot, no cooldown) if the weapon is disarmed, still cooling down, or no target qualifies.
+/// Buildings are damageable so an embodied player can shoot down an enemy structure; the
+/// `is_enemy` filter still spares friendly buildings (no own-base fire).
 ///
 /// Determinism (the guard greps this file): fixed-point only, no sqrt/normalize. The cone test
 /// `dir·(t−p) ≥ cos_half·|t−p|` is evaluated by **squaring both non-negative sides** —
@@ -281,13 +290,12 @@ pub fn resolve_fire(
     let cos_half = FIRE_CONE_COS_HALF;
     let cos_half_sq = cos_half * cos_half;
 
-    // Pick the lowest-index hostile, living unit inside the cone, in range, with LoS.
+    // Pick the lowest-index hostile, living target inside the cone, in range, with LoS. A target
+    // may be a unit OR a building — embodied fire razes enemy structures (the `is_enemy` test
+    // below still excludes friendly buildings). No kind filter here, on purpose.
     let mut chosen: Option<usize> = None;
     for t in 0..world.capacity() {
         if t == shooter_idx || !world.is_index_alive(t) {
-            continue;
-        }
-        if world.kind[t] != EntityKind::Unit {
             continue;
         }
         if world.health[t].is_dead() {
@@ -380,6 +388,18 @@ mod tests {
         world.faction[i] = faction;
         world.health[i] = Health::full(fx(hp));
         world.weapon[i] = weapon;
+        e
+    }
+
+    /// Spawn a building at `(x, y)` with the given faction, full at `hp`. A building carries a
+    /// default (range-0) weapon, so it is a valid damage TARGET but never an attacker.
+    fn spawn_building(world: &mut World, x: i32, y: i32, faction: Faction, hp: i32) -> Entity {
+        let e = world.spawn();
+        let i = e.index as usize;
+        world.pos[i] = Vec2::new(fx(x), fx(y));
+        world.faction[i] = faction;
+        world.health[i] = Health::full(fx(hp));
+        world.kind[i] = EntityKind::Building;
         e
     }
 
@@ -890,6 +910,150 @@ mod tests {
         combat_system(&mut world, &terrain, &mut rng, &mut events);
         assert!(!world.is_alive(enemy), "lethal embodied shot despawns the target this tick");
         assert!(events.iter().any(|e| matches!(e, SimEvent::Killed { .. })));
+    }
+
+    // --- Buildings are damageable / destroyable targets -------------------------------------
+
+    #[test]
+    fn embodied_fire_damages_then_destroys_enemy_building() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 50, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        // Enemy structure dead ahead on +X, distance 5 (< range 10), 100 HP.
+        let building = spawn_building(&mut world, 5, 0, Faction::Enemy, 100);
+
+        let mut events = Vec::new();
+        // First shot: 50 dmg at full (open) multiplier — building survives, records the attacker.
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.health[building.index as usize].cur, fx(50), "building takes fire");
+        assert_eq!(world.last_attacker[building.index as usize], Some(shooter));
+        assert_eq!(events.len(), 1, "one Damaged event for the hit building");
+
+        // Second shot drops it to zero; the death pass then despawns it (same as a unit).
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert!(world.health[building.index as usize].is_dead());
+        let mut rng = Rng::new(1);
+        combat_system(&mut world, &terrain, &mut rng, &mut events);
+        assert!(!world.is_alive(building), "a razed building is despawned exactly like a unit");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::Killed { entity, .. } if *entity == building)),
+            "destruction emits a Killed event for the building"
+        );
+    }
+
+    #[test]
+    fn attack_moving_unit_razes_enemy_building() {
+        // RTS auto-combat: a FireAtWill unit in range of an enemy building destroys it. The
+        // AttackMove order documents the scenario (movement is resolved by `orders`, not here);
+        // `combat_system` is what applies the damage and despawns the structure.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 50, 0));
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        world.order[shooter.index as usize] =
+            crate::components::Order::AttackMove(Vec2::new(fx(5), fx(0)));
+        let building = spawn_building(&mut world, 3, 0, Faction::Enemy, 100);
+
+        let mut events = Vec::new();
+        // Tick 1: 50 dmg lands on the enemy building.
+        run(&mut world, &terrain, &mut events);
+        assert_eq!(
+            world.health[building.index as usize].cur,
+            fx(50),
+            "a combat unit auto-targets the enemy building"
+        );
+        // Tick 2: the second 50 dmg razes it and the death pass despawns it the same tick.
+        run(&mut world, &terrain, &mut events);
+        assert!(!world.is_alive(building), "attack-moving unit razes the enemy building");
+        assert!(events.iter().any(|e| matches!(e, SimEvent::Killed { .. })));
+    }
+
+    #[test]
+    fn friendly_building_is_never_targeted() {
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 50, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        // A friendly structure squarely inside the aim cone and in weapon range.
+        let friendly = spawn_building(&mut world, 5, 0, Faction::Player, 100);
+
+        let mut events = Vec::new();
+        // Embodied fire must not hit an own-faction building (no friendly fire on the base).
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(
+            world.health[friendly.index as usize].cur,
+            fx(100),
+            "embodied fire spares the friendly building"
+        );
+        // Auto-combat must not auto-target it either (the shooter goes order-driven for this pass).
+        world.input_source[shooter.index as usize] = InputSource::Orders;
+        for _ in 0..5 {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert_eq!(
+            world.health[friendly.index as usize].cur,
+            fx(100),
+            "a FireAtWill unit never engages a friendly building"
+        );
+        assert!(events.is_empty(), "no damage events against a friendly building");
+    }
+
+    #[test]
+    fn destroyed_building_stops_producing() {
+        use crate::components::{Building, BuildingKind, ProductionItem, UnitKind};
+        use crate::economy::{economy_system, Resources};
+        use crate::territory::Territory;
+
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        // A built enemy camp with a Rifleman one tick from completion.
+        let camp = spawn_building(&mut world, 5, 0, Faction::Enemy, 100);
+        let ci = camp.index as usize;
+        world.building[ci] = Building {
+            kind: BuildingKind::Camp,
+            level: 0,
+            build_ticks_left: 0,
+            queue: vec![ProductionItem {
+                kind: UnitKind::Rifleman,
+                ticks_left: 1,
+            }],
+        };
+
+        // An embodied player razes the camp before the unit finishes.
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 100, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert!(world.health[ci].is_dead());
+        let mut rng = Rng::new(1);
+        combat_system(&mut world, &terrain, &mut rng, &mut events);
+        assert!(!world.is_alive(camp), "razed camp is despawned");
+
+        // The economy must skip the despawned camp: no unit spawns, no UnitProduced event.
+        let mut resources = Resources::new(0);
+        let territory = Territory::empty();
+        let mut eco_events = Vec::new();
+        economy_system(
+            &mut world,
+            &mut resources,
+            &territory,
+            &mut eco_events,
+            &mut rng,
+        );
+        let units = (0..world.capacity())
+            .filter(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)
+            .count();
+        assert_eq!(units, 1, "only the shooter remains; the razed camp produced nothing");
+        assert!(
+            !eco_events
+                .iter()
+                .any(|e| matches!(e, SimEvent::UnitProduced { .. })),
+            "a destroyed camp emits no production"
+        );
     }
 
     #[test]
