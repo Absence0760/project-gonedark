@@ -769,6 +769,14 @@ impl Game {
         self.shell.surface()
     }
 
+    /// Whether the player is currently embodied (possessing a unit; the strategic map is dark).
+    /// A read-only host query for presentation concerns — e.g. the desktop host locks+hides the OS
+    /// cursor only while embodied so mouse motion drives the FPS look instead of drifting onto UI.
+    /// Never mutates state and never reaches the sim.
+    pub fn is_embodied(&self) -> bool {
+        self.embodied
+    }
+
     /// Apply a resolved in-session [`SessionAction`](gonedark_core::shell::SessionAction) to the
     /// shell — the host calls this after `core::shell::resolve_intent` returns the
     /// `ResolvedIntent::Session` arm. Pause/Resume flip the overlay (and, single-player, the tick
@@ -778,6 +786,23 @@ impl Game {
     pub fn apply_session_action(&mut self, action: gonedark_core::shell::SessionAction) {
         let summary = self.assemble_summary();
         self.shell.apply(action, &summary);
+    }
+
+    /// Hit-test a pointer click (given in normalized device coordinates — `x` rightward, `y` upward,
+    /// the same screen space the overlay is drawn in) against the current in-session shell overlay's
+    /// buttons, and resolve it to a host action. Returns `None` when no overlay is up or the click
+    /// misses every button.
+    ///
+    /// This is the missing seam between a tap and the shell: the renderer lays the buttons out
+    /// ([`overlay::button_slot_at`](gonedark_render::overlay::button_slot_at)) and this maps the hit
+    /// slot to its action for the live surface. Read-only — the host applies the result (an
+    /// [`OverlayClick::Session`] via [`Self::apply_session_action`]; an [`OverlayClick::Dismiss`] by
+    /// tearing the match down and returning to its out-of-match screen, which the engine has no
+    /// concept of).
+    pub fn overlay_click(&self, ndc: (f32, f32)) -> Option<OverlayClick> {
+        let overlay = overlay_for_surface(self.shell.surface());
+        let slot = gonedark_render::overlay::button_slot_at(&overlay, ndc.0, ndc.1)?;
+        overlay_click_action(&overlay, slot)
     }
 
     /// One faction's standing [`FactionForces`] — alive units/buildings + territory + purse — read
@@ -1641,6 +1666,36 @@ impl Game {
         // is a no-op.
         let overlay = overlay_for_surface(self.shell.surface());
         self.renderer.render_overlay(device, queue, view, &overlay);
+    }
+}
+
+/// What a click on an in-session shell-overlay button resolves to for the host. `Session` is a
+/// [`SessionAction`](gonedark_core::shell::SessionAction) the host feeds back through
+/// [`Game::apply_session_action`] (pause/resume/surrender flips the live overlay); `Dismiss`
+/// acknowledges the terminal post-match summary — the host tears the match down and returns to its
+/// own out-of-match screen, which the engine deliberately knows nothing about (invariant #2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayClick {
+    Session(gonedark_core::shell::SessionAction),
+    Dismiss,
+}
+
+/// Resolve a hit button `slot` on `overlay` to its [`OverlayClick`]. The slot order mirrors the
+/// renderer's per-surface button vocabulary (`overlay::surface_choices`): on the pause / reconnect
+/// surfaces slot 0 is the affirmative **Resume** and slot 1 is **Surrender**/leave; the post-match
+/// summary has a single **Dismiss**. Pure (no `Game`, no GPU) — unit-tested below. An unknown
+/// (overlay, slot) pair yields `None` rather than a wrong action.
+fn overlay_click_action(overlay: &Overlay, slot: usize) -> Option<OverlayClick> {
+    use gonedark_core::shell::SessionAction;
+    match (overlay, slot) {
+        (Overlay::Paused, 0) | (Overlay::ReconnectPrompt { .. }, 0) => {
+            Some(OverlayClick::Session(SessionAction::Resume))
+        }
+        (Overlay::Paused, 1) | (Overlay::ReconnectPrompt { .. }, 1) => {
+            Some(OverlayClick::Session(SessionAction::Surrender))
+        }
+        (Overlay::Summary(_), 0) => Some(OverlayClick::Dismiss),
+        _ => None,
     }
 }
 
@@ -2679,6 +2734,67 @@ mod tests {
             Overlay::Summary(s) => assert_eq!(s, summary),
             other => panic!("Ended must map to Overlay::Summary, got {other:?}"),
         }
+    }
+
+    /// Each surface's button slots resolve to the right host action — and the post-match summary's
+    /// lone slot resolves to `Dismiss` (the reported "dismiss button does nothing" path: the click
+    /// must produce an actionable result, not `None`).
+    #[test]
+    fn overlay_click_action_maps_each_slot() {
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        // Pause: slot 0 resumes, slot 1 surrenders.
+        assert_eq!(
+            overlay_click_action(&Overlay::Paused, 0),
+            Some(OverlayClick::Session(SessionAction::Resume))
+        );
+        assert_eq!(
+            overlay_click_action(&Overlay::Paused, 1),
+            Some(OverlayClick::Session(SessionAction::Surrender))
+        );
+        // Reconnect prompt: same Resume / leave vocabulary.
+        assert_eq!(
+            overlay_click_action(&Overlay::ReconnectPrompt { desynced: true }, 0),
+            Some(OverlayClick::Session(SessionAction::Resume))
+        );
+        assert_eq!(
+            overlay_click_action(&Overlay::ReconnectPrompt { desynced: false }, 1),
+            Some(OverlayClick::Session(SessionAction::Surrender))
+        );
+        // Post-match summary: the single DISMISS button.
+        assert_eq!(
+            overlay_click_action(&Overlay::Summary(summary), 0),
+            Some(OverlayClick::Dismiss)
+        );
+        // No overlay, and out-of-range slots, resolve to nothing (never a wrong action).
+        assert_eq!(overlay_click_action(&Overlay::None, 0), None);
+        assert_eq!(overlay_click_action(&Overlay::Paused, 2), None);
+    }
+
+    /// `Game::overlay_click` ties the geometry seam to the action map: a click on the live overlay's
+    /// drawn button center resolves; a miss does not. Exercised on the terminal post-match summary
+    /// (the reported broken path) without constructing a GPU `Game` — `overlay_click` only reads the
+    /// shell surface, so we drive the same two pure seams it composes.
+    #[test]
+    fn overlay_click_resolves_summary_dismiss_at_button_center() {
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        let overlay = overlay_for_surface(&ShellSurface::Ended(summary));
+        // The drawn DISMISS button's center, taken from the renderer's own layout.
+        let button = gonedark_render::overlay::overlay_quads(&overlay)
+            .into_iter()
+            .find(|q| q.role == gonedark_render::overlay::QuadRole::ButtonPrimary)
+            .expect("summary draws a dismiss button");
+        let slot = gonedark_render::overlay::button_slot_at(&overlay, button.cx, button.cy);
+        assert_eq!(slot, Some(0), "the button center hit-tests to slot 0");
+        assert_eq!(
+            overlay_click_action(&overlay, slot.unwrap()),
+            Some(OverlayClick::Dismiss),
+            "clicking DISMISS resolves to a host Dismiss, not a no-op"
+        );
+        // A click far outside the panel resolves to nothing.
+        assert_eq!(
+            gonedark_render::overlay::button_slot_at(&overlay, 5.0, 5.0),
+            None
+        );
     }
 
     /// End-to-end the reconnect wire-up as `frame` runs it (minus the GPU glue): a confirmed desync

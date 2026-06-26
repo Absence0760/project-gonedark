@@ -12,14 +12,15 @@
 //! This binary owns only the desktop concerns: the window, the wgpu surface, input plumbing, the
 //! egui shell, and the wall clock that feeds per-frame `dt` into the engine's fixed-tick accumulator.
 
-use gonedark_engine::{Game, DEFAULT_SEED};
+use gonedark_engine::{Game, OverlayClick, DEFAULT_SEED};
 use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface};
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
-use winit::event::{DeviceEvent, DeviceId, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::window::{Window, WindowAttributes, WindowId};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{CursorGrabMode, Window, WindowAttributes, WindowId};
 
 mod shell;
 use shell::{build_channel, build_stamp, resolve_title_action, EguiShell, HostTransition};
@@ -44,6 +45,17 @@ struct App {
     /// The desktop audio sink handed into `Game::frame` for the embodied mix (worker 3).
     audio: DesktopAudio,
     last_frame: Instant,
+
+    /// Whether the OS cursor is currently locked+hidden. Tracked so we only call the (relatively
+    /// costly) winit grab/visibility setters on a *change*, not every frame. Cursor capture is a
+    /// pure desktop-host concern — it never touches the sim — so it lives here, not in the engine.
+    cursor_captured: bool,
+    /// Sticky "free the cursor for UI" request, toggled by **Esc**. While embodied this hands the
+    /// pointer back so the player can work menus / inventory; pressing Esc again recaptures.
+    cursor_free_toggle: bool,
+    /// Momentary "free the cursor" request — true while **Left Alt** is held (released on key-up).
+    /// The held-key alternative to the Esc toggle; either one frees the pointer.
+    alt_held: bool,
 }
 
 impl App {
@@ -55,6 +67,64 @@ impl App {
             input: DesktopInput::new(),
             audio: DesktopAudio::new(),
             last_frame: Instant::now(),
+            cursor_captured: false,
+            cursor_free_toggle: false,
+            alt_held: false,
+        }
+    }
+
+    /// Lock+hide the OS cursor while embodied so mouse motion drives the FPS look (raw device
+    /// deltas) instead of the pointer drifting across on-screen items — and hand it back the moment
+    /// the player surfaces or asks for it (Esc toggle / held Left-Alt). Idempotent: it only calls
+    /// the winit setters when the desired state differs from the last applied one.
+    ///
+    /// `CursorGrabMode::Locked` (pointer pinned in place) is the Wayland/macOS path; X11 only
+    /// supports `Confined`, so we fall back to it there. Either way the cursor is hidden and look
+    /// reads from raw `DeviceEvent::MouseMotion`, so both behave the same for the player.
+    fn sync_cursor(&mut self) {
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+        let embodied = matches!(&self.screen, Screen::InMatch(game) if game.is_embodied());
+        // Once the player surfaces (or the match ends), forget any leftover free-cursor toggle so the
+        // next embodiment starts captured rather than silently free.
+        if !embodied {
+            self.cursor_free_toggle = false;
+        }
+        let cursor_free = self.cursor_free_toggle || self.alt_held;
+        let want = want_cursor_capture(embodied, cursor_free);
+        if want == self.cursor_captured {
+            return;
+        }
+        let window = surface.window();
+        if want {
+            let _ = window
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+            window.set_cursor_visible(false);
+        } else {
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
+            window.set_cursor_visible(true);
+        }
+        self.cursor_captured = want;
+    }
+
+    /// Desktop-host-only key handling for a running match: the cursor-capture controls. **Esc**
+    /// toggles the sticky free-cursor mode; **Left Alt** frees it only while held. These never reach
+    /// the sim (they're not in the keymap `DesktopInput` decodes), so handling them here keeps the
+    /// deterministic input frame untouched.
+    fn handle_host_keys(&mut self, event: &WindowEvent) {
+        if let WindowEvent::KeyboardInput { event: key, .. } = event {
+            let pressed = key.state == ElementState::Pressed;
+            match key.physical_key {
+                PhysicalKey::Code(KeyCode::Escape) => {
+                    if pressed && !key.repeat {
+                        self.cursor_free_toggle = !self.cursor_free_toggle;
+                    }
+                }
+                PhysicalKey::Code(KeyCode::AltLeft) => self.alt_held = pressed,
+                _ => {}
+            }
         }
     }
 
@@ -80,19 +150,45 @@ impl App {
                 }
             }
             Screen::InMatch(game) => {
-                let input = self.input.drain_frame();
+                let mut input = self.input.drain_frame();
                 let viewport = surface.size();
-                if let Some((frame, view)) = surface.acquire() {
-                    game.frame(
-                        &input,
-                        dt,
-                        viewport,
-                        surface.device(),
-                        surface.queue(),
-                        &view,
-                        &mut self.audio,
-                    );
-                    surface.present(frame);
+                // Shell overlay buttons (pause / reconnect / post-match summary). A click while an
+                // overlay is up belongs to that overlay, not the match world: hit-test it in NDC and
+                // either feed the resolved session action back to the shell or — for the terminal
+                // summary's DISMISS — leave the match. When the click is consumed here we strip it
+                // from `input` so the same release doesn't also drive a world selection underneath.
+                if input.pointer_up {
+                    if let Some((px, py)) = input.pointer {
+                        let (w, h) = viewport;
+                        let ndc = (2.0 * px / w as f32 - 1.0, 1.0 - 2.0 * py / h as f32);
+                        match game.overlay_click(ndc) {
+                            Some(OverlayClick::Session(action)) => {
+                                game.apply_session_action(action);
+                                input.pointer_up = false;
+                                input.pointer_down = false;
+                            }
+                            Some(OverlayClick::Dismiss) => {
+                                transition = Some(HostTransition::ExitToTitle);
+                            }
+                            None => {}
+                        }
+                    }
+                }
+                // Skip the match frame entirely when we're leaving it this turn; the title screen
+                // draws next frame.
+                if transition.is_none() {
+                    if let Some((frame, view)) = surface.acquire() {
+                        game.frame(
+                            &input,
+                            dt,
+                            viewport,
+                            surface.device(),
+                            surface.queue(),
+                            &view,
+                            &mut self.audio,
+                        );
+                        surface.present(frame);
+                    }
                 }
             }
         }
@@ -108,9 +204,26 @@ impl App {
             // Settings surface not built yet (phase-4-plan §2 surface 3) — a no-op placeholder.
             Some(HostTransition::OpenSettings) => {}
             Some(HostTransition::Exit) => event_loop.exit(),
+            // Drop the `Game` and return to the title screen (the post-match DISMISS path).
+            Some(HostTransition::ExitToTitle) => {
+                self.screen = Screen::Title;
+                self.last_frame = Instant::now();
+            }
             None => {}
         }
+
+        // Reconcile cursor capture against the (possibly just-changed) embodiment/screen state, so a
+        // surface, death-eject, or match-exit hands the pointer back within the same frame.
+        self.sync_cursor();
     }
+}
+
+/// Whether the desktop host should lock+hide the OS cursor this frame. True only while **embodied**
+/// and the player has NOT requested a free cursor (Esc toggle or held Left-Alt). In the command
+/// (RTS) view the cursor is always free — it *is* the pointer; capture is purely the embodied-FPS
+/// concern. Pure (no winit types) so it is unit-tested without a real `Window`.
+fn want_cursor_capture(embodied: bool, cursor_free: bool) -> bool {
+    embodied && !cursor_free
 }
 
 impl ApplicationHandler for App {
@@ -151,7 +264,12 @@ impl ApplicationHandler for App {
                     sh.on_window_event(surface.window(), &event);
                 }
             }
-            Screen::InMatch(_) => self.input.handle_window_event(&event),
+            Screen::InMatch(_) => {
+                // Host-level cursor-capture keys (Esc / Left-Alt) are consumed here, then the event
+                // also feeds the sim input accumulator (they're not in its keymap, so no double-use).
+                self.handle_host_keys(&event);
+                self.input.handle_window_event(&event);
+            }
         }
 
         match event {
@@ -173,7 +291,10 @@ impl ApplicationHandler for App {
         _device_id: DeviceId,
         event: DeviceEvent,
     ) {
-        if matches!(self.screen, Screen::InMatch(_)) {
+        // Only feed raw mouse-look while the cursor is actually captured: when the player has freed
+        // the pointer for UI (Esc / Alt) or is in the command view, moving the mouse must NOT turn
+        // the camera.
+        if self.cursor_captured {
             self.input.handle_device_event(&event);
         }
     }
@@ -191,4 +312,29 @@ fn main() {
     let event_loop = EventLoop::new().expect("create winit event loop");
     let mut app = App::new();
     event_loop.run_app(&mut app).expect("run winit app");
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    //! The cursor-capture *decision* is the only logic worth testing here; the winit grab/visibility
+    //! calls and the key/screen plumbing around it are thin, un-constructible glue (`Window`,
+    //! `KeyEvent`, `ActiveEventLoop` have no public test constructors), so they're exercised by
+    //! running the app, not unit tests — matching this crate's existing testable-seam convention.
+    use super::want_cursor_capture;
+
+    #[test]
+    fn captures_only_while_embodied_and_not_freed() {
+        // Embodied with the cursor not freed → lock+hide it (the FPS look path).
+        assert!(want_cursor_capture(true, false));
+        // Embodied but the player asked for the cursor (Esc toggle or held Alt) → hand it back.
+        assert!(!want_cursor_capture(true, true));
+    }
+
+    #[test]
+    fn never_captures_in_command_view() {
+        // Not embodied (RTS command view, or title) → the cursor is always the free pointer,
+        // regardless of the free-cursor request.
+        assert!(!want_cursor_capture(false, false));
+        assert!(!want_cursor_capture(false, true));
+    }
 }
