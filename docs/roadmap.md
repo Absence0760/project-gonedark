@@ -275,7 +275,9 @@ in the in-match layer; the **settings surface that configures it** is.
   spacing, colour language (so it looks intentional, not greybox)
 - [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface)
 - [ ] Onboarding / first-possession tutorial (teach the going-dark cost — invariant #6 lives here)
-- [ ] In-session shell — pause, surrender/leave, post-match summary
+- [~] In-session shell — pause, surrender/leave, post-match summary. **Partly landed:** the
+  post-match summary surface + its DISMISS button → leave-match → return-to-title transition are
+  wired ([D52](decisions.md), phase-4-plan WS-E); pause + in-match surrender remain.
 - [ ] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
   cue for the directional-flash + audio alert channel)
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions
@@ -299,7 +301,9 @@ in the in-match layer; the **settings surface that configures it** is.
   (units muted faction-neutral, structures warm/steel, scenery desaturated) in `gen_models.py`
 - [x] FPS-view world dressing beyond the existing ground/sky/cover ([D40](decisions.md)) —
   enough to read as a *place*. **Done:** static scenery + cover props (trees, boulders, crates,
-  sandbag berms, turrets) drawn in the embodied view, LOD-by-distance ([D50](decisions.md))
+  sandbag berms, turrets) drawn in the embodied view, LOD-by-distance ([D50](decisions.md)) —
+  and the embodied view now also draws the **fog-filtered, avatar-visible sim units** themselves
+  (line-of-sight enemies/allies), not just static props ([D52](decisions.md))
 
 ### Release readiness — the store-facing layer
 

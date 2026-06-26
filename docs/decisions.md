@@ -1938,6 +1938,14 @@ unit pass now LOADs over the sky clear; a presentation-only `last_fire_tick` on 
 fairness assertions were re-expressed around strategic-map collapse (and proven to hold during combat),
 not weakened. Render tests + viz-runner green.
 
+> **Superseded in part by [D52](#d52--embodied-view-draws-fog-filtered-avatar-visible-units-post-match-dismiss-wiring):**
+> the "the world pass draws **only** the camera-derived environment + a screen-space gun; it has **no
+> access to sim entities**" mechanism above no longer holds — the embodied pass now *does* draw
+> fog-filtered avatar-visible sim units. The fairness guarantee (invariant #6) is unchanged but is now
+> enforced **structurally by the `render::fog::visible_instances` filter** (avatar's own line of sight
+> only — it drops `FLAG_EMBODIED` self + the strategic map + control-point rings), not by withholding
+> entity access from the pass.
+
 ---
 
 ## D41 — AI-generated placeholder models for all render content (skip commissioned art for now)
@@ -2455,3 +2463,40 @@ paid for by the range bonus — tune against feel later (the cone/range/speed co
 locked). The on-screen icons are shader glyphs for now; real Inkscape-exported art is later polish (D46
 pipeline), not a blocker. Gyro aim is a deferred optional aid. The numbers (mag sizes, reload ticks,
 crouch multipliers) are a playtest baseline.
+
+---
+
+## D52 — Embodied view draws fog-filtered avatar-visible units; post-match DISMISS wiring
+
+**Status:** decided + landed. Playability push, finishing the embodied first-person view ([D40](#d40--embodied-world-rendering-a-real-fps-world-drawn-while-the-strategic-map-stays-dark)) and the post-match shell ([D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)/[D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)).
+
+**Decision:**
+
+- **The embodied pass now draws sim units, not just the procedural world.** While embodied, the
+  first-person mesh pass renders the **fog-filtered, avatar-visible** sim entities (`unit_draw_plan` in
+  `render::lib`; `render_world_props` → `render_world_meshes`) alongside the D40 sky/ground/weapon. An
+  enemy physically in the avatar's line of sight is now actually *drawn* — previously the embodied view
+  could not show any sim entity at all.
+- **Fairness (invariant #6) is preserved structurally by the fog filter, not by entity-withholding.**
+  The avatar-visible set comes from `render::fog::visible_instances`, which drops the embodied self
+  (`FLAG_EMBODIED`), the strategic map, and control-point rings — leaving only what the avatar's own
+  line of sight legitimately sees. This **supersedes the D40 mechanism** ("the world pass has no access
+  to sim entities, so it cannot leak intel even in principle"): the pass now *does* see entities; the fog
+  filter is the guarantee.
+- **Post-match DISMISS leaves the match and returns to title.** The post-match summary overlay's DISMISS
+  button gets a pure NDC hit-test seam (`render::overlay::button_slot_at`) and an `ExitToTitle` host
+  transition (`app::shell`), so DISMISS tears down the in-session shell and returns to the title screen
+  instead of being a dead control.
+
+**Why:** a void that can never draw an in-line-of-sight enemy is both unfair-feeling *and* unreadable —
+the going-dark cost is meant to be *losing strategic intel*, not *blindness in front of you* (invariant
+#6, [game-design.md](game-design.md) §6). Routing visibility through the existing `render::fog` filter
+keeps the fairness boundary in one place that's already the source of truth for command-view fog, rather
+than relying on the fragile "the renderer simply can't see entities" property. The DISMISS wiring closes
+the obvious loop: a summary you can't dismiss is a dead end.
+
+**Consequences:** D40's "no access to sim entities" claim is now stale and carries a superseding note.
+The embodied view's correctness now depends on `visible_instances` being exactly the avatar's line of
+sight — the viz-runner strategic-map-collapse fairness assertion still guards this. The DISMISS path adds
+a host-level `ExitToTitle` transition; the hit-test is a pure function (host-tested), per the standing
+seam rule.

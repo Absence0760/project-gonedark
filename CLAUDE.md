@@ -6,8 +6,13 @@ and fight it in first person — while the strategic map goes dark.** One player
 both jobs; the tension is divided attention.
 
 **Current state: Phase 1 COMPLETE — validated on real arm64 (D22). Phase 2 (game systems) —
-SIGNED OFF systems-complete (D31); Phase 3 (scale & net) is active.** The custom Rust engine
-([D10]) is committed; the Unity/Godot fallback ([D8]) is retired. The design corpus in `docs/`
+SIGNED OFF systems-complete (D31). Phase 3 (scale & net) — lockstep + cross-client checksum
+agreement, `core::persist`/`reconnect`, and the `spatial` index have landed. A playability push
+(D37–D40) made it an end-to-end playable loop (command-and-grow UI, embodied FPS combat,
+win/lose, a scripted enemy commander), and Phase 4 app-shell work is in flight (boot/title
+D35/D36, server telemetry/consent/live-ops scaffolding, in-session + post-match shell); embodied
+FPS controls, 3D greybox assets, and avatar-visible unit rendering run through D52.** The custom
+Rust engine ([D10]) is committed; the Unity/Godot fallback ([D8]) is retired. The design corpus in `docs/`
 is the product of record; engine code now exists in the
 Cargo workspace (`core/ pal/ render/ engine/ pal-desktop/ pal-android/ app/ sim-runner/
 net-sim-runner/ viz-runner/ server/`) with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]).

@@ -9,9 +9,8 @@
 //! advance by integer ticks in stable entity-index order, and produced units get their stats
 //! from a fixed [`UnitKind`] table so every peer spawns the bit-identical unit.
 //!
-//! IMPLEMENTATION OWNER: worker 3. This is a compiling stub. Fill in the bodies + inline
-//! `#[cfg(test)]` tests. KEEP the `Resources` field shape (`amounts: [i64; FACTION_COUNT]`)
-//! and all public signatures intact — the sim's checksum folds `Resources` by that shape.
+//! KEEP the `Resources` field shape (`amounts: [i64; FACTION_COUNT]`) and all public signatures
+//! intact — the sim's checksum folds `Resources` by that shape.
 
 use crate::components::{
     Building, BuildingKind, EntityKind, Faction, Health, Order, ProductionItem, Stance, UnitKind,

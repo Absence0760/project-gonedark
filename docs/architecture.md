@@ -171,6 +171,13 @@ store the input stream, not the world state.
   sim events (damage, capture) surfaced to the embodied HUD as direction + audio
   only — no map reveal. Audio routing (bleeding strategic-layer sound into the
   embodied mix) is the one system that needs real attention here.
+- **The "gone-dark tell" is a checksum-excluded derivation** ([D33](decisions.md)).
+  `core::detection` derives a per-unit `TellMode {Hidden, Subtle, Marked}` (default `Subtle`)
+  — how visible *you* are to the enemy while embodied — as a pure read over sim state, exactly
+  like `fog` and `alerts`. It is **excluded from the checksum** (it's a derivation, not
+  authoritative state), so it can never desync lockstep; the embodied view filter
+  (`render::fog::visible_instances`) and the tell both flow through this same derive-don't-store
+  discipline.
 - **Embodied combat mechanics are deterministic sim state, embodied-only** ([D51](decisions.md)).
   `Weapon` carries an *opt-in* magazine (`mag_size`/`ammo`/`reload_ticks`/`reload_left`;
   `mag_size == 0` = no magazine, the default for AI/auto units — so the `combat_system` engage pass is
@@ -218,18 +225,32 @@ On mobile, draw calls and bandwidth are the wall, not triangles.
 Layered, because per-unit per-frame A* doesn't scale:
 
 - **Layer 1 — Flow fields** for group movement: one field per destination, any number
-  of units sample it in O(1).
+  of units sample it in O(1). **Landed** (`core::flow_field`) — the literal-executor
+  movement path samples it via `core::systems::step_toward`.
 - **Layer 2 — Hierarchical (HPA\*)** for long routes: coarse sector graph, refine
-  only the local sector.
-- **Layer 3 — Local avoidance (RVO / steering)** each tick; spatial hash keeps
-  neighbor queries near-constant.
+  only the local sector. **Design target, not yet built.**
+- **Layer 3 — Local avoidance (RVO / steering)** each tick. **Design target, not yet
+  built.**
+
+> **What `core::spatial` is — and isn't.** A deterministic uniform-grid hash *does* ship
+> today, but it backs **combat target acquisition** (near-O(1) nearest-enemy queries,
+> bit-identical to the old brute-force scan — Phase 3 A5), **not** movement or local
+> avoidance. Layer-3 steering would reuse it for neighbor queries if/when it's built.
 
 ## AI — budgeted
 
-Squad behavior on utility scoring over behavior trees, informed by influence maps
-(low-res threat/control grids, updated incrementally). LOD scheduling: nearby/engaged
-squads re-evaluate every tick, distant idle squads every N ticks, round-robin to
-spread cost.
+> **What ships today: a commander, not squad AI.** `core::commander` is a deterministic,
+> scripted **commander-level** AI: it issues the *same* orders a player would
+> (`AttackMove`/`SetOrder`/`Build`/`QueueProduction`) through the normal command path —
+> it does **not** give units autonomous brains. Units remain literal executors
+> (invariant #3). There is **no** utility scoring, behavior tree, or influence map in the
+> codebase today; the paragraph below is the *budget headroom* the literal-executor
+> design buys, not a description of shipped code.
+
+A conventional RTS would spend that headroom on squad behavior via utility scoring over
+behavior trees, informed by influence maps (low-res threat/control grids), with LOD
+scheduling (nearby/engaged squads re-evaluate every tick, distant idle squads every N).
+*Going Dark* deliberately doesn't:
 
 > **Design note:** *Going Dark* deliberately keeps unit AI **literal** (execute the
 > last order, don't strategize) — see the game design doc §8. This is *cheaper* than
@@ -241,22 +262,25 @@ spread cost.
 > **Topology decided ([`decisions.md`](decisions.md) D27); first slice landed
 > ([`phase-3-plan.md`](phase-3-plan.md) §"Workstream B").** The lockstep loop + wire codec live in
 > a new platform-free, **sans-I/O** `core::lockstep`: it produces/consumes opaque byte frames but
-> does no transport. The host moves the bytes via a `pal::Transport` trait (no socket type),
-> concrete sockets/relay in `pal-desktop`/`server` — the same abstract-in-`pal`,
+> does no transport. The host moves the bytes via a `pal::Transport` trait (no socket type); two
+> concrete backends ship in `pal-desktop`: an in-process `LoopbackTransport` for dev/test and a
+> **real-socket `UdpTransport`** over `std::net::UdpSocket` — the same abstract-in-`pal`,
 > concrete-in-the-backend split as D19/D20. `core` never names a socket (nor depends on `pal`); the
 > transport never names a `Command`. The in-process 2-client loop is done and verified against a
 > simulated lossy/jittery/reordering channel (per-tick checksums agree + match a no-network
-> reference). Avatar-local prediction (D15) stays in the `engine` presentation path, never touching
+> reference). **Still pending:** QUIC/relay topology and Wi-Fi↔cellular socket handoff (UDP only so
+> far). Avatar-local prediction (D15) stays in the `engine` presentation path, never touching
 > sim state.
 
-> **Reconnect snapshot format decided ([`decisions.md`](decisions.md) D28); code pending
+> **Reconnect snapshot format decided ([`decisions.md`](decisions.md) D28); landed
 > ([`phase-3-plan.md`](phase-3-plan.md) §"Workstream C").** The authoritative resume snapshot is a
 > *second*, complete serialization distinct from the lossy render snapshot — a hand-rolled LE
 > `Writer`/`Reader` sharing one field-walk with `Sim::checksum` (so it captures exactly what the
 > checksum hashes: every component incl. dead slots, the free-list order, `Rng(state, inc)`, `tick`),
 > serde-free in `core`, terrain by `map_id`. Reconnect = snapshot + replay the buffered commands,
 > correct by construction; the load-bearing guard is the round-trip-replay determinism test on the
-> arch matrix. The forthcoming `core::persist` slice lands under `/safe-edit`.
+> arch matrix. **Landed** as `core::persist` (`Writer`/`Reader`/`StateSink`; `SNAPSHOT_VERSION = 3`)
+> + the `core::reconnect` resume policy.
 
 Because the sim is deterministic, clients exchange only **orders**, not world state.
 Bandwidth scales with players, not the hundreds of units on the field.
@@ -313,17 +337,21 @@ confirmed this directly — raw lockstep felt laggy; prediction fixed it.
   the "no floats in the sim" invariant covers first-person combat, not just unit
   movement. The earlier "embodiment is cheap" finding is about *state plumbing* (the
   input-source swap and vision toggle), not about combat-resolution math. (The Phase 0.5
-  harness used floats — it tested *feel*, not determinism; the fixed-point combat math is
-  still Phase 1 work.)
+  harness used floats — it tested *feel*, not determinism.) **Landed:** `combat::resolve_fire`
+  is fixed-point cone hitscan, called from `Sim::apply` on `Command::Fire`; D51 added
+  fixed-point ammo/reload/crouch posture, all folded into the checksum + snapshot.
 
 ## Memory & concurrency
 
 - **Allocators:** frame arena (bump-allocate transient data, reset each frame),
   pools per component type preallocated to max capacity, **zero heap alloc on the
   per-tick hot path. No GC, ever** — a core reason to go native.
-- **Job system:** work-stealing scheduler across performance cores (culling,
-  pathfinding, AI, animation); sim stays deterministic (stable order, no data races);
-  dedicated render-submission thread feeding Vulkan command buffers.
+- **Job system (design target, not yet built):** a work-stealing scheduler across
+  performance cores (culling, pathfinding, AI, animation) with a dedicated
+  render-submission thread is the intended shape for the 200-unit budget — but today
+  `Sim::step` runs a straight-line, single-threaded system sequence (and stays
+  deterministic by construction). Multithreading the sim must preserve stable order / no
+  data races; it's deferred until the single-threaded budget is actually exceeded.
 
 ## Asset pipeline & loading
 
