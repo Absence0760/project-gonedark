@@ -2863,6 +2863,8 @@ only means invariant #2 holds — no game logic forks, the seam is the existing 
 touch seams — no sim or netcode change. Build slice: [`pve-campaign-plan.md`](pve-campaign-plan.md)
 WS-D. Full design: [`customization.md`](customization.md).
 
+---
+
 ## D62 — Selection-contextual command panel; no minimap
 
 **Status:** decided. Realizes the Phase-4 "command HUD" polish item; replaces the always-on

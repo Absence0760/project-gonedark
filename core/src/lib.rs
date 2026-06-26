@@ -29,6 +29,7 @@ pub mod persist;
 pub mod projectile;
 pub mod reconnect;
 pub mod rng;
+pub mod scenario;
 pub mod shell;
 pub mod sim;
 pub mod snapshot;

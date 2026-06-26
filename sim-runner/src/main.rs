@@ -17,8 +17,15 @@
 //!   embodied. Exercises the per-tick systems at size so profiling (`--time`) reflects the real
 //!   200-unit cost and the determinism gate covers the sim at scale.
 //!
+//! - **`duel`** — a Phase-2-era debug *validation* scene (not a CI baseline): two tanks in a tiny
+//!   world, the player's ballistic gun fired on cadence, proving the armour-facet hitbox model
+//!   end-to-end (head-on shells bounce; flank shells pen and kill). Runs its own phased loop
+//!   ([`duel`]) and prints a watchable per-event report to **stderr**, still emitting the
+//!   determinism-covered `<tick> <checksum>` stream to stdout. See `core::scenario::seed_duel` —
+//!   the SAME scene the desktop `app --scene duel` and `viz-runner` render.
+//!
 //! Usage: `gonedark-sim-runner [ticks] [scenario] [--time] [--metrics[=<which>]]`
-//!   (defaults: 300 ticks, `phase2`)
+//!   (defaults: 300 ticks, `phase2`; scenarios: `phase2`, `stress[:<n>]`, `duel`)
 //!   - `--time` prints per-tick wall-clock stats (min/median/p99/max ms) to **stderr**; the
 //!     `<tick> <checksum>` stream on stdout is unchanged. Timing is host-side only (`Instant`)
 //!     and never touches sim state, so it cannot move the checksum.
@@ -29,6 +36,7 @@
 //!     Like `--time`, it touches stdout not at all, so determinism is unaffected; it runs its own
 //!     canonical fights instead of the `phase2`/`stress` scenario and then exits.
 
+mod duel;
 mod metrics;
 
 use std::collections::BTreeMap;
@@ -83,6 +91,9 @@ enum Which {
     Phase2,
     /// `n` total units across both factions.
     Stress(u32),
+    /// The two-tank hitbox duel ([`duel`]) — a debug validation scene, not a CI baseline. Runs its
+    /// own phased loop + report rather than the generic [`run`], so it never reaches [`build`].
+    Duel,
 }
 
 impl Which {
@@ -90,6 +101,7 @@ impl Which {
         match token {
             "phase2" => Some(Which::Phase2),
             "stress" => Some(Which::Stress(200)),
+            "duel" => Some(Which::Duel),
             other => other
                 .strip_prefix("stress:")
                 .and_then(|n| n.parse::<u32>().ok())
@@ -103,6 +115,9 @@ fn build(which: Which) -> Scenario {
     match which {
         Which::Phase2 => build_phase2(),
         Which::Stress(n) => build_stress(n),
+        // The duel owns its own phased loop + report (`duel::run`); main branches to it before
+        // ever calling `build`, so reaching here is a bug.
+        Which::Duel => unreachable!("the duel scenario runs via duel::run, not build/run"),
     }
 }
 
@@ -321,6 +336,13 @@ fn main() {
         .map(|s| Which::parse(s).unwrap_or_else(|| fatal_scenario(s)))
         .unwrap_or(Which::Phase2);
 
+    // The duel is a self-contained debug-validation scene (its own phased loop + stderr report);
+    // it emits the same stdout checksum stream but never goes through `build`/`run`/`--time`.
+    if which == Which::Duel {
+        duel::run(ticks);
+        return;
+    }
+
     let scenario = build(which);
     let durations = run(scenario, ticks, timed);
 
@@ -330,7 +352,7 @@ fn main() {
 }
 
 fn fatal_scenario(s: &str) -> ! {
-    eprintln!("unknown scenario {s:?}; expected `phase2`, `stress`, or `stress:<n>`");
+    eprintln!("unknown scenario {s:?}; expected `phase2`, `stress`, `stress:<n>`, or `duel`");
     std::process::exit(2);
 }
 
@@ -398,6 +420,7 @@ mod tests {
     fn scenario_token_parsing() {
         assert_eq!(Which::parse("phase2"), Some(Which::Phase2));
         assert_eq!(Which::parse("stress"), Some(Which::Stress(200)));
+        assert_eq!(Which::parse("duel"), Some(Which::Duel));
         assert_eq!(Which::parse("stress:50"), Some(Which::Stress(50)));
         assert_eq!(Which::parse("stress:1"), None); // need >= 2 for two factions
         assert_eq!(Which::parse("stress:0"), None);
