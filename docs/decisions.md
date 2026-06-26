@@ -2580,7 +2580,9 @@ are un-constructible off-device, so it carries the same standing test-exemption 
 
 ## D55 — Tank embodiment goes War Thunder-flavoured: independent hull/turret + all-unit armour facing
 
-**Status:** decided (direction) + plan recorded; implementation phased (P1 landing). Full plan:
+**Status:** decided + plan recorded; **P1 landed** (fixed-point `trig::atan2`/`rotate_toward`),
+P2–P9 phased. Reference feel **War Thunder (sim)**; both follow-up forks settled — ballistic flight
+is a **core phase** (not deferred) and the tank is the **deep** embodiment by design. Full plan:
 [`tank-embodiment-plan.md`](tank-embodiment-plan.md).
 
 **Decision:** the embodied tank stops being "infantry-FPS in a tank-shaped token" (D50–D52, where
@@ -2602,13 +2604,29 @@ real **vehicle**, anchored on **War Thunder (sim)** feel within the fixed-point/
   byte-for-byte unchanged**; only the new armoured **`UnitKind::Tank`** gets bounce/flank texture
   (front shots can hard-bounce; flank/rear pen). It applies to AI-driven *and* embodied tanks.
 - **Aim is a skill, via dispersion + slow traverse**, not a tighter cone: a reticle that blooms
-  on the move/traverse and settles at rest, with `Fire` perturbed by a **deterministic
-  RNG-bounded dispersion roll** (the first real use of `combat`'s reserved `&mut Rng`). Shell
+  on the move/traverse and settles at rest. **Skill-honest dispersion (refined):** a *fully
+  settled* gun fires dead-on `turret_yaw` with **zero scatter** — only an unsettled gun scatters,
+  the offset scaling with `dispersion` — so a perfect aim is never robbed by an RNG bullet. The
+  bounded scatter still uses `combat`'s reserved `&mut Rng` (integer draw, deterministic). Shell
   types (AP/APHE/HE) trade penetration against damage/splash via a `SelectShell` command.
-- **Deferred to their own later decisions:** ballistic shell *flight/drop* (hitscan-with-pen is
-  the MVP; the lead-the-target fork is logged as [Q-tank-ballistics](open-questions.md)) and
-  **module/crew damage** (tracks/breech/ammo-rack) — both ride cleanly on this spine once it
-  ships and proves fun.
+- **Ballistic shell flight is a CORE phase, not deferred (fork resolved).** Travel time +
+  leading + drop is War Thunder's soul, so it ships as real fixed-point projectiles. Crucially,
+  resolving facing **at impact** (not at fire time) means a shell that catches a tank mid-turn
+  hits the side it rotated into — so building ballistics *before* armour facing avoids a
+  hitscan-then-projectile rework. Verticality is **localized to the projectile** (units stay 2D
+  at a per-kind hull height; only the shell carries `height`+`vz` and integrates gravity), so the
+  signature *drop* lands without forcing a world z-axis. A bounded projectile **ring** caps shell
+  count against the Phase-3 thermal budget. `muzzle_vel == 0` ⇒ hitscan (infantry) — same
+  zero-default opt-in. ([Q13](open-questions.md) resolves here.)
+- **The tank is the project's DEEP embodiment — an intended asymmetry.** Unlike D51's deliberately
+  shallow infantry (move/aim/crouch/reload), the tank is rich and sticky *on purpose*: it's the
+  unit you commit to and master. The pillar tension this creates (a rewarding embodiment vs. the
+  "cost is time away" rule) is held by the **existing** levers — going-dark blindness + the
+  precious-unit economy — not by flattening the tank. If playtest shows tanks over-reward camping,
+  the dial is the going-dark cost, not the tank's depth.
+- **Deferred to their own later decisions:** **module/crew damage** (tracks/breech/ammo-rack) and
+  a **true world z-axis** (unit elevation / multi-storey cover — the projectile-local height above
+  covers drop without it). Both ride cleanly on this spine once it ships and proves fun.
 
 **Why:** the user picked War Thunder fidelity and all-unit armour facing explicitly. The defining
 tank mechanic — hull≠turret and angle-your-armour — is what makes embodying a tank *mechanically
@@ -2620,8 +2638,11 @@ determinism risk (invariant #7) is contained to scenes that actually field armou
 `atan2`/`rotate_toward` and integer penetration LUTs keep the whole thing float-free (invariant
 #1); the AI tank still only points where its order/stance already aims (invariant #3).
 
-**Consequences:** new pure `trig` angle math (P1, lands first — isolated, fully tested), then
-heading state + slew (P2), then the all-unit damage rewrite (P3, under `/safe-edit`, shipping with
-cross-arch checksum coverage), then dispersion/shells/render/HUD (P4–P8). Until P3 lands, combat is
+**Consequences:** new pure `trig` angle math (**P1, done — isolated, fully tested, committed**),
+then heading state + hull inertia + slew (P2), the ballistic projectile pool (P3), the
+impact-resolved all-unit armour rewrite (P4), then dispersion/shells/render/HUD (P5–P9). **P3 and
+P4 both add checksummed sim state** (projectiles and the damage rewrite), so each ships with
+cross-arch checksum coverage and runs through `/safe-edit`. Until P4 lands, combat damage is
 unchanged. The embodied tank HUD diverges from the infantry HUD (hull-relative turret indicator,
-dispersion reticle, shell selector) — a render/`engine` follow-up, not a sim change.
+dispersion reticle, **lead pip**, shell selector) — a render/`engine` follow-up, not a sim change.
+A tank gun reuses D51's magazine as `mag_size = 1` + a long reload (no new reload code).

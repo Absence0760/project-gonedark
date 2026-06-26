@@ -258,22 +258,33 @@ shell in-engine because invariant #6 forces it — which is the (c)-shaped carve
 
 ---
 
-## Q13 — Tank gunnery: hitscan-with-penetration, or true ballistic shell flight? <a id="q-tank-ballistics"></a>
+## Q13 — Tank gunnery: hitscan-with-penetration, or true ballistic shell flight? — RESOLVED ([D55](decisions.md): full ballistic, projectile-local height) <a id="q-tank-ballistics"></a>
+
+**Resolved to (b) — full fixed-point ballistic shell flight as a core phase**, not the hitscan
+MVP. Travel time + leading is War Thunder's soul and resolving facing *at impact* avoids a
+hitscan-then-projectile rework (D55 P3→P4). The one thing **not** taken from option (b): a true
+world z-axis. Drop is delivered by **localizing verticality to the projectile** — units stay 2D at
+a per-kind hull height; only the shell carries `height`+`vz` and integrates gravity (plan §6a). So
+the remaining sub-fork is narrow: *do units ever need real elevation (multi-storey cover, hills)?*
+— parked as a later call ([D55](decisions.md) deferrals); the projectile-local model holds until
+level design demands more. Original analysis retained below.
 
 The tank-embodiment plan ([D55](decisions.md), [`tank-embodiment-plan.md`](tank-embodiment-plan.md))
-ships **hitscan + armour-facing penetration** as the MVP of tank gunnery. War Thunder's signature
-is the next layer up: **shells with travel time and drop**, so you *lead* moving targets and *arc*
-over cover. Whether to add it — and how far — is open.
+makes **shell flight** — travel time, drop, leading — a core phase. War Thunder's signature is
+exactly this: **shells with travel time and drop**, so you *lead* moving targets and *arc* over
+cover. The fork below was *which fidelity*; it landed on real projectiles.
 
 | Option | Upside | Cost / risk |
 |---|---|---|
-| **(a) Hitscan + penetration only** (the D55 MVP) | Simplest; reuses the cone/LoS machinery; cheap on the 200-unit mobile budget; no projectile entities | No lead/drop skill; long-range gunnery feels "lasery", not ballistic |
+| **(a) Hitscan + penetration only** (the original pre-resolution lean) | Simplest; reuses the cone/LoS machinery; cheap on the 200-unit mobile budget; no projectile entities | No lead/drop skill; long-range gunnery feels "lasery", not ballistic |
 | **(b) Fixed-point projectile** (gravity per tick, hitscan-on-impact) | Real travel time + drop = the War Thunder lead-the-target skill; still float-free (Q16.16 kinematics) | New per-shot projectile entities (sim state + checksum surface); a 200-unit fight firing shells multiplies entity count; aim UX must teach leading |
 | **(c) Instant ray, simulated "drop" as a range falloff** | A middle path: no projectile entity, but penetration/damage taper with range to *fake* the long-shot tax | Cosmetically ballistic, not mechanically — no real leading; may read as neither |
 
 **Why it matters:** travel-time gunnery is the deepest part of the embodied-tank skill ceiling
 and the clearest "embodiment beats the AI" lever (§5) at range — but projectile entities are the
 first thing in the sim that *spawns per shot*, which hits both the checksum surface (invariant #7)
-and the 200-unit power budget Phase 3 still has to prove. **Current lean:** ship (a), then
-prototype (b) behind the same zero-default opt-in pattern once the facing model (P3) is fun;
-resolve against a `--metrics` run on a mid-range device, not feel.
+and the 200-unit power budget Phase 3 still has to prove. **Resolved to (b)** with two risk
+mitigations baked into D55: a **bounded projectile ring** (a hard shell-count cap, `log`-ed if
+hit) keeps the budget honest, and **projectile-local height** delivers drop without the cost/blast
+of a world z-axis. Option (c) was rejected as "neither" (no real leading); (a) was rejected because
+hitscan tank guns read as lasers and undercut the whole reference feel.
