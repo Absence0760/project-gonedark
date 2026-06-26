@@ -255,3 +255,25 @@ no strategic intel. That argues the in-session shell stays in-engine regardless,
 above leaned (c) hybrid; the decision lands on **native out-of-match shells** with the in-session
 shell in-engine because invariant #6 forces it — which is the (c)-shaped carve-out folded into a
 (b) choice. The shell↔sim boundary it gates is fixed before Phase 4 shell work begins.
+
+---
+
+## Q13 — Tank gunnery: hitscan-with-penetration, or true ballistic shell flight? <a id="q-tank-ballistics"></a>
+
+The tank-embodiment plan ([D55](decisions.md), [`tank-embodiment-plan.md`](tank-embodiment-plan.md))
+ships **hitscan + armour-facing penetration** as the MVP of tank gunnery. War Thunder's signature
+is the next layer up: **shells with travel time and drop**, so you *lead* moving targets and *arc*
+over cover. Whether to add it — and how far — is open.
+
+| Option | Upside | Cost / risk |
+|---|---|---|
+| **(a) Hitscan + penetration only** (the D55 MVP) | Simplest; reuses the cone/LoS machinery; cheap on the 200-unit mobile budget; no projectile entities | No lead/drop skill; long-range gunnery feels "lasery", not ballistic |
+| **(b) Fixed-point projectile** (gravity per tick, hitscan-on-impact) | Real travel time + drop = the War Thunder lead-the-target skill; still float-free (Q16.16 kinematics) | New per-shot projectile entities (sim state + checksum surface); a 200-unit fight firing shells multiplies entity count; aim UX must teach leading |
+| **(c) Instant ray, simulated "drop" as a range falloff** | A middle path: no projectile entity, but penetration/damage taper with range to *fake* the long-shot tax | Cosmetically ballistic, not mechanically — no real leading; may read as neither |
+
+**Why it matters:** travel-time gunnery is the deepest part of the embodied-tank skill ceiling
+and the clearest "embodiment beats the AI" lever (§5) at range — but projectile entities are the
+first thing in the sim that *spawns per shot*, which hits both the checksum surface (invariant #7)
+and the 200-unit power budget Phase 3 still has to prove. **Current lean:** ship (a), then
+prototype (b) behind the same zero-default opt-in pattern once the facing model (P3) is fun;
+resolve against a `--metrics` run on a mid-range device, not feel.

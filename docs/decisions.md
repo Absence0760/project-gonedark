@@ -2577,3 +2577,51 @@ Android twin of D52's desktop-only `ExitToTitle`) until that JNI path lands. The
 glue over already-tested engine seams (`pause_toggle_action`, `shell_overlay_active`); `AndroidApp`/`KeyEvent`
 are un-constructible off-device, so it carries the same standing test-exemption as the sibling
 `apply_motion`/`apply_key`/`capture_touches`.
+
+## D55 — Tank embodiment goes War Thunder-flavoured: independent hull/turret + all-unit armour facing
+
+**Status:** decided (direction) + plan recorded; implementation phased (P1 landing). Full plan:
+[`tank-embodiment-plan.md`](tank-embodiment-plan.md).
+
+**Decision:** the embodied tank stops being "infantry-FPS in a tank-shaped token" (D50–D52, where
+`Heavy` merely renders as a tank mesh and drives with the rifleman scheme of D51) and becomes a
+real **vehicle**, anchored on **War Thunder (sim)** feel within the fixed-point/lockstep envelope:
+
+- **Hull heading and turret bearing are independent, first-class sim state.** Two new
+  per-entity `Angle`s (`hull_heading`, `turret_yaw`) — *none exist today*; facing is currently
+  derived from velocity in render only. The turret slews toward the aim at a rate-limited
+  `turret_speed`/tick. `turret_speed == 0` means "no turret" (locked to hull), which is **every
+  infantry unit** — so the system is **opt-in by a zero default**, exactly like `mag_size == 0`
+  disables the magazine (D51). Non-tank entities cost nothing and move the checksum by nothing.
+- **Penetration-vs-armour-facing becomes the combat model for ALL units**, not an embodied-only
+  bonus. A new `Armor{front,side,rear}` component (**default all-zero = unarmoured**) and a
+  `Weapon.penetration` field add a `facing_penetration_multiplier` to the damage step. The hit
+  facet is chosen from the dot product of shot-direction vs hull-heading — the **same
+  squared-cosine, sqrt-free trick** the aim cone already uses. An unarmoured defender always
+  takes the multiplier as `1.0`, so **existing infantry balance and every combat test are
+  byte-for-byte unchanged**; only the new armoured **`UnitKind::Tank`** gets bounce/flank texture
+  (front shots can hard-bounce; flank/rear pen). It applies to AI-driven *and* embodied tanks.
+- **Aim is a skill, via dispersion + slow traverse**, not a tighter cone: a reticle that blooms
+  on the move/traverse and settles at rest, with `Fire` perturbed by a **deterministic
+  RNG-bounded dispersion roll** (the first real use of `combat`'s reserved `&mut Rng`). Shell
+  types (AP/APHE/HE) trade penetration against damage/splash via a `SelectShell` command.
+- **Deferred to their own later decisions:** ballistic shell *flight/drop* (hitscan-with-pen is
+  the MVP; the lead-the-target fork is logged as [Q-tank-ballistics](open-questions.md)) and
+  **module/crew damage** (tracks/breech/ammo-rack) — both ride cleanly on this spine once it
+  ships and proves fun.
+
+**Why:** the user picked War Thunder fidelity and all-unit armour facing explicitly. The defining
+tank mechanic — hull≠turret and angle-your-armour — is what makes embodying a tank *mechanically
+better* than letting the AI drive it (the §5 acceptance bar), and routing it through new
+per-entity components keeps embodiment a pure input-swap (invariant #5) rather than a vehicle
+object. Gating both systems behind a zero default is what lets an "all-unit" combat-model rewrite
+land **without** disturbing the D30-tuned infantry balance or the lockstep checksum — the
+determinism risk (invariant #7) is contained to scenes that actually field armour. Fixed-point
+`atan2`/`rotate_toward` and integer penetration LUTs keep the whole thing float-free (invariant
+#1); the AI tank still only points where its order/stance already aims (invariant #3).
+
+**Consequences:** new pure `trig` angle math (P1, lands first — isolated, fully tested), then
+heading state + slew (P2), then the all-unit damage rewrite (P3, under `/safe-edit`, shipping with
+cross-arch checksum coverage), then dispersion/shells/render/HUD (P4–P8). Until P3 lands, combat is
+unchanged. The embodied tank HUD diverges from the infantry HUD (hull-relative turret indicator,
+dispersion reticle, shell selector) — a render/`engine` follow-up, not a sim change.
