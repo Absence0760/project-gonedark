@@ -24,8 +24,14 @@
 //!   determinism-covered `<tick> <checksum>` stream to stdout. See `core::scenario::seed_duel` —
 //!   the SAME scene the desktop `app --scene duel` and `viz-runner` render.
 //!
+//! - **`infantry`** — the hitscan counterpart of `duel`: a player rifleman vs HoldFire dummies,
+//!   proving range / aim-cone / Light-cover / line-of-sight / crouch end-to-end, plus an auto-combat
+//!   battery (stance / suppression / retreat / reload). Runs its own loop ([`infantry`]); report to
+//!   **stderr**, the determinism-covered `<tick> <checksum>` stream to stdout. The SAME scene
+//!   `app --scene infantry` renders (`core::scenario::seed_infantry`).
+//!
 //! Usage: `gonedark-sim-runner [ticks] [scenario] [--time] [--metrics[=<which>]]`
-//!   (defaults: 300 ticks, `phase2`; scenarios: `phase2`, `stress[:<n>]`, `duel`)
+//!   (defaults: 300 ticks, `phase2`; scenarios: `phase2`, `stress[:<n>]`, `duel`, `infantry`)
 //!   - `--time` prints per-tick wall-clock stats (min/median/p99/max ms) to **stderr**; the
 //!     `<tick> <checksum>` stream on stdout is unchanged. Timing is host-side only (`Instant`)
 //!     and never touches sim state, so it cannot move the checksum.
@@ -37,6 +43,7 @@
 //!     canonical fights instead of the `phase2`/`stress` scenario and then exits.
 
 mod duel;
+mod infantry;
 mod metrics;
 
 use std::collections::BTreeMap;
@@ -94,6 +101,9 @@ enum Which {
     /// The two-tank hitbox duel ([`duel`]) — a debug validation scene, not a CI baseline. Runs its
     /// own phased loop + report rather than the generic [`run`], so it never reaches [`build`].
     Duel,
+    /// The infantry sandbox ([`infantry`]) — a hitscan debug validation scene (range/cone/cover/LoS/
+    /// crouch + the auto-combat battery). Like [`Duel`], owns its own loop and never reaches [`build`].
+    Infantry,
 }
 
 impl Which {
@@ -102,6 +112,7 @@ impl Which {
             "phase2" => Some(Which::Phase2),
             "stress" => Some(Which::Stress(200)),
             "duel" => Some(Which::Duel),
+            "infantry" => Some(Which::Infantry),
             other => other
                 .strip_prefix("stress:")
                 .and_then(|n| n.parse::<u32>().ok())
@@ -115,9 +126,10 @@ fn build(which: Which) -> Scenario {
     match which {
         Which::Phase2 => build_phase2(),
         Which::Stress(n) => build_stress(n),
-        // The duel owns its own phased loop + report (`duel::run`); main branches to it before
+        // The duel + infantry scenes own their own loops + reports; main branches to them before
         // ever calling `build`, so reaching here is a bug.
         Which::Duel => unreachable!("the duel scenario runs via duel::run, not build/run"),
+        Which::Infantry => unreachable!("the infantry scenario runs via infantry::run, not build/run"),
     }
 }
 
@@ -336,10 +348,14 @@ fn main() {
         .map(|s| Which::parse(s).unwrap_or_else(|| fatal_scenario(s)))
         .unwrap_or(Which::Phase2);
 
-    // The duel is a self-contained debug-validation scene (its own phased loop + stderr report);
-    // it emits the same stdout checksum stream but never goes through `build`/`run`/`--time`.
+    // The duel + infantry scenes are self-contained debug-validation scenes (own loop + stderr
+    // report); they emit the same stdout checksum stream but never go through `build`/`run`/`--time`.
     if which == Which::Duel {
         duel::run(ticks);
+        return;
+    }
+    if which == Which::Infantry {
+        infantry::run(ticks);
         return;
     }
 
@@ -352,7 +368,9 @@ fn main() {
 }
 
 fn fatal_scenario(s: &str) -> ! {
-    eprintln!("unknown scenario {s:?}; expected `phase2`, `stress`, `stress:<n>`, or `duel`");
+    eprintln!(
+        "unknown scenario {s:?}; expected `phase2`, `stress`, `stress:<n>`, `duel`, or `infantry`"
+    );
     std::process::exit(2);
 }
 
@@ -421,6 +439,7 @@ mod tests {
         assert_eq!(Which::parse("phase2"), Some(Which::Phase2));
         assert_eq!(Which::parse("stress"), Some(Which::Stress(200)));
         assert_eq!(Which::parse("duel"), Some(Which::Duel));
+        assert_eq!(Which::parse("infantry"), Some(Which::Infantry));
         assert_eq!(Which::parse("stress:50"), Some(Which::Stress(50)));
         assert_eq!(Which::parse("stress:1"), None); // need >= 2 for two factions
         assert_eq!(Which::parse("stress:0"), None);

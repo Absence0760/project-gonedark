@@ -28,8 +28,10 @@
 
 use crate::components::{Armor, EntityKind, Faction, Health, Stance, UnitKind, Vec2, Weapon};
 use crate::ecs::Entity;
+use crate::economy;
 use crate::fixed::Fixed;
 use crate::sim::Sim;
+use crate::terrain::Cover;
 use crate::trig::{Angle, ANGLE_FULL};
 
 /// Half the gap between the two duelling tanks: each sits this far from the origin on the X axis,
@@ -153,6 +155,118 @@ pub fn seed_duel(sim: &mut Sim) -> Duel {
         Angle(ANGLE_FULL / 2), // −X: facing the player
     );
     Duel { player, enemy }
+}
+
+// --- The infantry scene -------------------------------------------------------------------------
+
+/// Max HP of a debug enemy rifleman — deliberately **low** (a produced Rifleman is 100) so the
+/// sandbox fight resolves in a handful of shots and the harness report stays short. Debug-scene
+/// local; it touches no shipping stat.
+pub const INF_ENEMY_HP: Fixed = Fixed::from_int(12);
+/// The player rifleman keeps a full produced-Rifleman HP pool so it survives the demonstration.
+pub const INF_PLAYER_HP: Fixed = Fixed::from_int(100);
+
+/// Enemy placements, with the player embodied at the origin facing `+X`. Each one isolates a
+/// different infantry mechanic — the `+X`-aiming player engages them in this order
+/// (`resolve_fire` takes the lowest-index target inside cone + range + LoS):
+/// - **open** — on-axis, open ground, mid-range: the clean kill (full damage).
+/// - **cover** — in **Light** cover, just inside the standing cone: same shot, **half** damage.
+/// - **walled** — in cone + range but behind a **Heavy** wall: **line-of-sight** blocks the shot.
+/// - **far** — on-axis but **beyond base range** (16 > 14): unreachable until the player **crouches**
+///   (range ×5/4 = 17.5), the crouch range bonus made visible.
+/// - **flank** — in range but **outside the standing cone** (~63° off `+X`): the cone made visible.
+pub const INF_OPEN: (i32, i32) = (8, 0);
+pub const INF_COVER: (i32, i32) = (9, 3);
+pub const INF_WALLED: (i32, i32) = (10, -4);
+pub const INF_FAR: (i32, i32) = (16, 1);
+pub const INF_FLANK: (i32, i32) = (4, 8);
+
+/// The handles a seeded infantry scene hands back. `player` is the embodiable Player rifleman; the
+/// rest are HoldFire Enemy **dummies** (they never shoot back, so the player methodically eliminates
+/// them and the validation only sees the player's own shots — invariant #3).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Infantry {
+    pub player: Entity,
+    pub open: Entity,
+    pub cover: Entity,
+    pub walled: Entity,
+    pub far: Entity,
+    pub flank: Entity,
+}
+
+/// A world point from an `(i32, i32)` cell-aligned coordinate.
+fn at(p: (i32, i32)) -> Vec2 {
+    Vec2::new(Fixed::from_int(p.0), Fixed::from_int(p.1))
+}
+
+/// Spawn a [`Rifleman`](UnitKind::Rifleman) with the produced weapon loadout (range/cone/cover/LoS
+/// all read against the real `economy::unit_stats` values) but an explicit `hp` (the scene uses a
+/// low enemy HP for a short fight) and `stance`, facing `hull`.
+fn spawn_rifleman(
+    sim: &mut Sim,
+    pos: Vec2,
+    faction: Faction,
+    stance: Stance,
+    hp: Fixed,
+    hull: Angle,
+) -> Entity {
+    let (_default_hp, weapon) = economy::unit_stats(UnitKind::Rifleman);
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    sim.world.kind[i] = EntityKind::Unit;
+    sim.world.unit_kind[i] = UnitKind::Rifleman;
+    sim.world.faction[i] = faction;
+    sim.world.pos[i] = pos;
+    sim.world.health[i] = Health::full(hp);
+    sim.world.weapon[i] = weapon;
+    sim.world.stance[i] = stance;
+    sim.world.hull_heading[i] = hull;
+    sim.world.turret_yaw[i] = hull;
+    e
+}
+
+/// Seed `sim` with the infantry sandbox and return the [`Infantry`] handles: a Player rifleman at
+/// the origin facing `+X`, and five Enemy **dummy** riflemen (HoldFire) positioned to isolate one
+/// hitscan mechanic each (see [`INF_OPEN`]…[`INF_FLANK`]). Light cover sits on the **cover** dummy
+/// and a Heavy wall blocks line of sight to the **walled** dummy.
+///
+/// Pure, deterministic, fixed-point — the same scene the headless `sim-runner infantry` harness
+/// drives and the `app --scene infantry` sandbox renders (single-sourced like [`seed_duel`]).
+pub fn seed_infantry(sim: &mut Sim) -> Infantry {
+    let facing_enemy = Angle(ANGLE_FULL / 2); // dummies face −X, toward the player (cosmetic)
+    let player = spawn_rifleman(
+        sim,
+        at((0, 0)),
+        Faction::Player,
+        Stance::FireAtWill,
+        INF_PLAYER_HP,
+        Angle(0), // +X, at the enemy line
+    );
+    let enemy = |sim: &mut Sim, p| {
+        spawn_rifleman(sim, at(p), Faction::Enemy, Stance::HoldFire, INF_ENEMY_HP, facing_enemy)
+    };
+    let open = enemy(sim, INF_OPEN);
+    let cover = enemy(sim, INF_COVER);
+    let walled = enemy(sim, INF_WALLED);
+    let far = enemy(sim, INF_FAR);
+    let flank = enemy(sim, INF_FLANK);
+
+    // Light cover on the `cover` dummy → its incoming damage is halved (`Cover::Light` = 1/2).
+    let (ccx, ccy) = sim.terrain.cell_of(at(INF_COVER));
+    sim.terrain.set_cover(ccx, ccy, Cover::Light);
+    // A short Heavy wall straddling the sightline from the player (origin) to `walled` (10, −4):
+    // the line passes ~(5, −2), so a 1×3 vertical Heavy bar there blocks LoS (Heavy blocks sight).
+    let (wx, wy) = sim.terrain.cell_of(at((5, -2)));
+    sim.terrain.fill_rect(wx, wy - 1, wx, wy + 1, Cover::Heavy);
+
+    Infantry {
+        player,
+        open,
+        cover,
+        walled,
+        far,
+        flank,
+    }
 }
 
 #[cfg(test)]
@@ -283,6 +397,53 @@ mod tests {
     /// desync — but `phase2`/`stress` are rifle squads (`muzzle_vel == 0`, unarmoured), so the
     /// shell + facet path they never touch would otherwise have NO cross-arch coverage. This pins a
     /// golden checksum after the full chain runs, so every arch must reproduce it bit-for-bit.
+    #[test]
+    fn infantry_seeds_player_and_five_dummies() {
+        let mut sim = fresh();
+        let inf = seed_infantry(&mut sim);
+        let p = inf.player.index as usize;
+        assert_eq!(sim.world.faction[p], Faction::Player);
+        assert_eq!(sim.world.unit_kind[p], UnitKind::Rifleman);
+        assert_eq!(sim.world.stance[p], Stance::FireAtWill);
+        assert_eq!(sim.world.hull_heading[p], Angle(0)); // aims +X
+        for e in [inf.open, inf.cover, inf.walled, inf.far, inf.flank] {
+            let i = e.index as usize;
+            assert_eq!(sim.world.faction[i], Faction::Enemy);
+            // Dummies hold fire — the literal-executor AI never shoots back (invariant #3), so the
+            // harness only sees the player's own shots.
+            assert_eq!(sim.world.stance[i], Stance::HoldFire);
+            assert_eq!(sim.world.health[i].max, INF_ENEMY_HP);
+            assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+        }
+    }
+
+    #[test]
+    fn infantry_cover_and_wall_are_placed() {
+        let mut sim = fresh();
+        let _ = seed_infantry(&mut sim);
+        // Light cover sits on the cover dummy; the open dummy stands in the clear.
+        assert_eq!(sim.terrain.cover_at(at(INF_COVER)), Cover::Light);
+        assert_eq!(sim.terrain.cover_at(at(INF_OPEN)), Cover::None);
+        // The Heavy wall blocks line of sight to `walled` but not to `open` (both within range).
+        assert!(
+            sim.terrain.line_of_sight(at((0, 0)), at(INF_OPEN)),
+            "open is in the clear",
+        );
+        assert!(
+            !sim.terrain.line_of_sight(at((0, 0)), at(INF_WALLED)),
+            "the Heavy wall blocks the walled dummy",
+        );
+    }
+
+    #[test]
+    fn infantry_seeding_is_deterministic() {
+        let mut a = fresh();
+        let mut b = fresh();
+        seed_infantry(&mut a);
+        seed_infantry(&mut b);
+        assert_eq!(a.checksum(), b.checksum());
+    }
+
     #[test]
     fn ballistic_pipeline_is_deterministic() {
         let sum = run_ballistic_duel(130);
