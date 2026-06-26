@@ -1,4 +1,4 @@
-//! Headless deterministic driver (invariant #7, docs/phase-1-plan.md §6, docs/phase-3-plan.md
+//! Headless deterministic driver (invariant #7, docs/plans/phase-1-plan.md §6, docs/plans/phase-3-plan.md
 //! §"Workstream A").
 //!
 //! Plays a fixed input script and prints a per-tick `<tick> <checksum>` stream. CI runs this

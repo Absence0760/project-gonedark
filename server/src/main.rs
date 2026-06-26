@@ -1,4 +1,4 @@
-//! Backend services host. See docs/infrastructure.md and docs/phase-4-plan.md (WS-D).
+//! Backend services host. See docs/infrastructure.md and docs/plans/phase-4-plan.md (WS-D).
 //!
 //! Honors the "clone-and-run" promise: `docker compose up -d` + `cargo run -p gonedark-server`
 //! gives a live HTTP service bound to `HTTP_BIND` from `.env.development`. Phase 4 WS-D adds the

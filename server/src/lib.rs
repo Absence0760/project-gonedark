@@ -1,6 +1,6 @@
 //! `gonedark-server` library seam — backend services for Going Dark (docs/infrastructure.md).
 //!
-//! Phase 4 WS-D (docs/phase-4-plan.md §4) lands the **telemetry + consent-gated live-ops
+//! Phase 4 WS-D (docs/plans/phase-4-plan.md §4) lands the **telemetry + consent-gated live-ops
 //! scaffolding** here, server-side only. The load-bearing property is **consent by
 //! construction**: a non-consenting client emits *nothing* (no-op at the source), enforced
 //! structurally by [`consent::ConsentGate`] which sits on every emit path. See [`consent`].

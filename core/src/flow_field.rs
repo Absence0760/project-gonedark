@@ -18,7 +18,7 @@
 //! same target can share one build. [`FlowFieldCache`] memoises one field per distinct goal
 //! within a tick; the result a unit samples is bit-identical to building its own field, but a
 //! 200-unit push to a shared objective builds a handful of fields instead of ~200 (the per-unit
-//! rebuild was the measured 60 Hz bottleneck — see `docs/phase-3-plan.md` §"Workstream A").
+//! rebuild was the measured 60 Hz bottleneck — see `docs/plans/phase-3-plan.md` §"Workstream A").
 
 use crate::components::Vec2;
 use crate::fixed::Fixed;

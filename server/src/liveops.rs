@@ -1,5 +1,5 @@
 //! Live-ops scaffolding — the remote-tunable config/flag surface live-ops will need. Phase 4
-//! WS-D step 3 (docs/phase-4-plan.md §4). Consistent with the data/config hot-reload lean in
+//! WS-D step 3 (docs/plans/phase-4-plan.md §4). Consistent with the data/config hot-reload lean in
 //! roadmap.md: values live as data the server hands out, not compiled-in constants.
 //!
 //! **Scaffold only — no live-ops *content* this phase.** This is the *shape* of the surface:

@@ -41,13 +41,13 @@ the network. We have the opposite problem solved already, by accident of good ar
   (screen, speakers, touch/mouse) differs.
 - **It runs bit-for-bit identically** (invariant #1). We already *proved* this: the simulation on a
   Galaxy S24 phone produced a checksum **identical** to the desktop, tick for tick, over a 300-tick
-  run ([`decisions.md`](decisions.md) D22). Same input → same exact result, on an ARM phone and an
+  run ([`decisions.md`](../decisions.md) D22). Same input → same exact result, on an ARM phone and an
   x86 PC alike.
 
 Why that matters for cross-play: our netcode is **lockstep** — players exchange *orders*, not world
 state, and each device computes the identical world from them. That **only works if every device
 agrees to the last bit** — which is exactly the determinism we built and verified (the lockstep loop
-is already proven correct in-process, over a lossy/jittery channel — [D27](decisions.md); the
+is already proven correct in-process, over a lossy/jittery channel — [D27](../decisions.md); the
 real-socket transport that carries it between machines is Phase 3 work, not yet shipped). So for us,
 **cross-play isn't a feature we bolt on later — it's what the engine is *built to be* from the first
 commit.** Once that transport lands, a phone and a PC in the same match is the *natural* case, not a
@@ -110,7 +110,7 @@ unfair?" argument), and we don't get a free pass on it.
    This is the cleanest fix and our most likely path for any embodied PvP.
 2. **Aim assist** for the slower input, tuned per mode. Standard, but a perennial balance headache.
 3. **Our structural ace — PvE-first sidesteps it entirely.** Our [first shippable product is
-   single-player PvE](pve-campaign.md) ([D58](decisions.md)). Against the AI, **there's no human on
+   single-player PvE](../pve-campaign.md) ([D58](../decisions.md)). Against the AI, **there's no human on
    the other end to be unfair to** — so a phone player and a PC player can each enjoy the campaign at
    their own input's comfort level, cross-progression and all, with *zero* fairness tax. The hard
    problem only switches on when **embodied PvP** does — and that's later (Phase 3 netcode).
@@ -121,7 +121,7 @@ unfair?" argument), and we don't get a free pass on it.
 
 > **This is a real, open decision, not a solved one.** Exactly how embodied PvP handles
 > mixed-input fairness — separate pools, aim assist, or lean on the command-heavy balance — is logged
-> as **[Q17](open-questions.md)**. We flag it now so it's designed in deliberately, not patched in
+> as **[Q17](../open-questions.md)**. We flag it now so it's designed in deliberately, not patched in
 > after launch (the way it bit Destiny and others). The good news: **nothing about it blocks the PvE
 > launch**, where cross-play is pure upside.
 
@@ -132,10 +132,10 @@ unfair?" argument), and we don't get a free pass on it.
 The *cross-progression* half is less philosophically tricky but still real work: a single account
 and entitlement layer so your unlocks, loadouts, and cosmetics live on a server, not a device.
 
-- It's already tagged as **CP-5** in [`roadmap.md`](roadmap.md) (unified cross-platform entitlement).
-- It leans on the per-platform **billing rails** question ([Q9](open-questions.md)) — buying a
+- It's already tagged as **CP-5** in [`roadmap.md`](../roadmap.md) (unified cross-platform entitlement).
+- It leans on the per-platform **billing rails** question ([Q9](../open-questions.md)) — buying a
   cosmetic on iOS vs. Android vs. PC goes through different stores, but must land in *one* wallet.
-- Our cosmetics are **presentation-only and fairness-bounded** ([D13](decisions.md)/[D60](decisions.md)),
+- Our cosmetics are **presentation-only and fairness-bounded** ([D13](../decisions.md)/[D60](../decisions.md)),
   which keeps this clean: nothing that follows you across devices can grant power, so syncing it can
   never create a pay-or-platform-to-win problem. Two players with different skins (or different
   phones) compute the **same** world (invariant #1).
@@ -153,9 +153,9 @@ and entitlement layer so your unlocks, loadouts, and cosmetics live on a server,
 | Phone + PC in the same match, technically | lockstep already device-agnostic | Fortnite / Warzone | **PAR (substrate done)** |
 | Cross-progression / one account | persistence exists; entitlement layer pending (CP-5) | Fortnite / Genshin | **LAG (build it)** |
 | Fairness: command layer across inputs | even by nature | — | **LEAD** |
-| Fairness: embodied PvP across inputs | **open — [Q17](open-questions.md)** | Warzone input pools | **OPEN DECISION** |
+| Fairness: embodied PvP across inputs | **open — [Q17](../open-questions.md)** | Warzone input pools | **OPEN DECISION** |
 | Pick-up-and-continue handoff | shared core makes state portable | Genshin | **PAR (needs cloud-save wiring)** |
-| Per-platform billing into one wallet | open — [Q9](open-questions.md) | every live game | **LAG (decision + build)** |
+| Per-platform billing into one wallet | open — [Q9](../open-questions.md) | every live game | **LAG (decision + build)** |
 | Cross-play with *no pay/platform-to-win* | guaranteed by fairness invariants | a constant struggle for others | **LEAD** |
 
 **Read it like this:** our **architecture hands us the hard technical half for free** (the engine is
@@ -168,15 +168,15 @@ genuinely strong position — most studios would trade a lot to start here.
 
 ## 7. What this means for the build (cross-platform work)
 
-Tagged **XP-n** in [`roadmap.md`](roadmap.md) → *Competitive parity*.
+Tagged **XP-n** in [`roadmap.md`](../roadmap.md) → *Competitive parity*.
 
 - **XP-1 — Cross-save & handoff.** Match/campaign state and progress live server-side so you can
   stop on one device and resume on another. The "commute on your phone, finish on your PC" promise.
-- **XP-2 — Input-based matchmaking policy (decide [Q17](open-questions.md) first).** For embodied PvP:
+- **XP-2 — Input-based matchmaking policy (decide [Q17](../open-questions.md) first).** For embodied PvP:
   separate input pools, aim-assist tuning, or lean on the command-heavy balance. **Decide before
   building PvP, not after.** PvE needs none of this.
 - **XP-3 — Unified entitlement / one wallet** *(= CP-5)*. One account; unlocks and cosmetics follow
-  the player; per-platform purchases ([Q9](open-questions.md)) all resolve into it.
+  the player; per-platform purchases ([Q9](../open-questions.md)) all resolve into it.
 - **XP-4 — Control parity without forking the game.** Each platform gets a native-feeling control
   scheme (touch / mouse+keyboard / controller) **over the same shared core** (invariant #2) — never a
   forked ruleset. The *controls* differ; the *game* doesn't.
@@ -192,7 +192,7 @@ Tagged **XP-n** in [`roadmap.md`](roadmap.md) → *Competitive parity*.
 ## 8. The one-line answer to "what's our cross-platform story?"
 
 **We're cross-play-native by construction** — the same deterministic core runs identically on every
-device (proven phone≡PC, [D22](decisions.md)), so once the network transport ships (Phase 3) a phone
+device (proven phone≡PC, [D22](../decisions.md)), so once the network transport ships (Phase 3) a phone
 and a PC sharing a battle is a *natural* case, not a bolted-on miracle. We ship the
 *one-account-everywhere* plumbing as product work, and we **start where cross-play is pure upside
 (PvE)**, deliberately solving the one genuinely hard part — a thumb shouldn't have to out-aim a mouse
@@ -209,4 +209,4 @@ Grounded in public reporting as of June 2026:
   [input-based matchmaking discussion (ResetEra)](https://www.resetera.com/threads/input-based-matchmaking-needs-to-be-standard-in-every-fps-multiplayer-game-from-here-on-out.1187616/)
 - Warzone Mobile cross-progression with the CoD wallet —
   [oneEsports](https://www.oneesports.gg/call-of-duty/gunsmith-in-warzone-mobile/)
-- Internal evidence the core is provably identical phone≡PC — [`decisions.md`](decisions.md) D22.
+- Internal evidence the core is provably identical phone≡PC — [`decisions.md`](../decisions.md) D22.

@@ -1,6 +1,6 @@
 # Pin the toolchain so every contributor and CI runner builds the sim with the same
 # compiler — a determinism input, not just hygiene (invariant #1 / #7). Bump
-# deliberately and re-run the checksum matrix (docs/phase-1-plan.md §6) on any change.
+# deliberately and re-run the checksum matrix (docs/plans/phase-1-plan.md §6) on any change.
 [toolchain]
 channel = "1.96.0"
 components = ["rustfmt", "clippy"]

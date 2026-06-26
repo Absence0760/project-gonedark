@@ -10,7 +10,7 @@
 //! [`FlowFieldCache`](crate::flow_field::FlowFieldCache) — units sharing a goal share one build,
 //! which is bit-identical to each building its own (a field is a pure function of its goal) but
 //! turns a 200-unit shared push from ~200 builds into a handful (the measured 60 Hz bottleneck;
-//! `docs/phase-3-plan.md` §"Workstream A"). Phase 1 had no obstacles, so the field points at the
+//! `docs/plans/phase-3-plan.md` §"Workstream A"). Phase 1 had no obstacles, so the field points at the
 //! goal; the structure generalises to Phase 2 terrain.
 
 use crate::components::{EntityKind, InputSource, Vec2};

@@ -5,8 +5,8 @@ into a NativeActivity — the shared engine — and (2) it now **launches into a
 Compose title/landing screen** (the first out-of-match app-shell surface, "Boot & title", D32/
 D34/D35). The engine `NativeActivity` is no longer the launcher: the Compose `MainActivity` is,
 and pressing **Start** launches the engine via an explicit `Intent`. The NativeActivity half is
-**Phase 1 build-order step 6** scaffolding (see `docs/phase-1-plan.md` §5, `docs/platforms.md`
-§8); the Compose shell is **Phase 4** (see `docs/phase-4-plan.md` §2 surface 1, `docs/decisions.md`
+**Phase 1 build-order step 6** scaffolding (see `docs/plans/phase-1-plan.md` §5, `docs/platforms.md`
+§8); the Compose shell is **Phase 4** (see `docs/plans/phase-4-plan.md` §2 surface 1, `docs/decisions.md`
 D35).
 
 ## The native Compose shell (the launcher) — D35

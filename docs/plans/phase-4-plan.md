@@ -13,11 +13,11 @@
 > now. This doc is the product-of-record plan; it is sequenced by what is unblocked *today* and
 > updated as slices land.
 >
-> **Goal (from [`roadmap.md`](roadmap.md) §"Phase 4 — Polish & ship"):** wrap the game in
+> **Goal (from [`roadmap.md`](../roadmap.md) §"Phase 4 — Polish & ship"):** wrap the game in
 > everything that ships *around* the match — the **app shell** (every screen before, between, and
 > after a match) and the first-run teach — and **tune it to mid-range silicon** (device quality
 > tiers, dynamic resolution, thermal/battery), with telemetry + live-ops scaffolding that is
-> **consent-gated** ([`infrastructure.md`](infrastructure.md)).
+> **consent-gated** ([`infrastructure.md`](../infrastructure.md)).
 
 ---
 
@@ -29,7 +29,7 @@ plus the **mid-range tuning** the Phase 1/3 caveats deferred (validated only on 
 D22/D21). The shipping touch *gameplay* scheme (D14/Q4) is **not** in scope here — it lives in the
 in-match layer; only the **settings surface that configures it** is Phase 4.
 
-The load-bearing structural fact for this phase is **[D32](decisions.md)**: the out-of-match
+The load-bearing structural fact for this phase is **[D32](../decisions.md)**: the out-of-match
 shells are **native per-platform** (SwiftUI / Jetpack Compose / a desktop shell), **not**
 Rust-workspace code, reached through a narrow **GPU-free, logic-free shell↔sim seam**. Only the
 **in-session** shell stays in-engine (`engine`/`render`), because it renders under avatar-only fog
@@ -47,21 +47,21 @@ Rust-workspace code, reached through a narrow **GPU-free, logic-free shell↔sim
 
 ## 2. The eight app-shell surfaces — buildable-now vs blocked
 
-From [`roadmap.md`](roadmap.md) §"Meta-UI / app shell". For each: what it covers, its dependency,
+From [`roadmap.md`](../roadmap.md) §"Meta-UI / app shell". For each: what it covers, its dependency,
 and a verdict. **All seven out-of-match surfaces are native (D32) and gated on the seam (§4 WS-A)
 landing first** — that prerequisite is implicit in every "BLOCKED" below; the *additional* blocker
 is named explicitly.
 
 | # | Surface | Covers | Depends on | Verdict |
 |---|---|---|---|---|
-| 1 | **Boot & title** | Splash, title/attract, build-channel + version stamp | — | **LANDED (Android [D35](decisions.md) + desktop [D36](decisions.md)).** First native surface built once the seam landed: a Jetpack Compose title/landing screen on Android (`MainActivity` is now the launcher; engine `NativeActivity` is Start-launched) and an **egui** title screen on desktop (`app` boots a `Title`↔`InMatch` state machine instead of straight into a match; egui binds to the app's single shared wgpu 29/winit 0.30). **iOS** is the only platform still pending (no iOS build target at all). "Start" launches the engine's *default* match; match-config handoff stays deferred with match-setup ([Q5](open-questions.md)), and Settings is a placeholder until surface 3. |
-| 2 | **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a loss reads as *"I stayed too long."* | **[Q5](open-questions.md)** (PvE is the natural teach surface); invariant #6 | **BLOCKED — [Q5](open-questions.md).** The teach surface *is* the PvE-vs-PvP-first call; can't author the first-run beat before Q5 picks the first shippable mode. |
+| 1 | **Boot & title** | Splash, title/attract, build-channel + version stamp | — | **LANDED (Android [D35](../decisions.md) + desktop [D36](../decisions.md)).** First native surface built once the seam landed: a Jetpack Compose title/landing screen on Android (`MainActivity` is now the launcher; engine `NativeActivity` is Start-launched) and an **egui** title screen on desktop (`app` boots a `Title`↔`InMatch` state machine instead of straight into a match; egui binds to the app's single shared wgpu 29/winit 0.30). **iOS** is the only platform still pending (no iOS build target at all). "Start" launches the engine's *default* match; match-config handoff stays deferred with match-setup ([Q5](../open-questions.md)), and Settings is a placeholder until surface 3. |
+| 2 | **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a loss reads as *"I stayed too long."* | **[Q5](../open-questions.md)** (PvE is the natural teach surface); invariant #6 | **BLOCKED — [Q5](../open-questions.md).** The teach surface *is* the PvE-vs-PvP-first call; can't author the first-run beat before Q5 picks the first shippable mode. |
 | 3 | **Settings** | Graphics tiers (↔ device quality tiers, §4 WS-C), audio-mix levels, the touch-layout/rebind editor (configures the D14 scheme), desktop key/gamepad rebinds, **accessibility** | invariant #6 (accessibility) | **BLOCKED — native scaffold (D32).** Buildable in design terms (it configures shipped systems), but it is native UI on the seam, and it **owns the accessibility cues** (§5) that the going-dark channel's fairness depends on — so it can't be a thin afterthought. |
-| 4 | **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry | order/stance vocab (D25); **[Q5](open-questions.md)** | **BLOCKED — [Q5](open-questions.md) (PvP half).** The skirmish/PvE half rides shipped order/stance vocab (D25), but "PvP entry" depends on Q5 *and* Phase 3 net; mode select is undefined until Q5. |
-| 5 | **Lobby & matchmaking** (PvP) | Party/invite, connection-quality readout, ready-up. *Seam:* the net plumbing is Phase 3; only the surface is Phase 4 | **Phase 3 netcode** (D27 lockstep, host-RTT, relay/matchmaking); **[Q5](open-questions.md)** | **BLOCKED — Phase 3 netcode + [Q5](open-questions.md).** The connection-quality readout and ready-up sit on the host-side RTT estimator + relay/matchmaking that Phase 3 still owes; no PvP target until Q5. |
-| 6 | **Progression & profile** | Persistence, stats, cosmetic inventory | account/persistence backend ([`infrastructure.md`](infrastructure.md)) | **BLOCKED — accounts/persistence backend.** The Postgres-backed accounts/entitlements service is scaffolding-only today ([`infrastructure.md`](infrastructure.md)); no server code yet. |
-| 7 | **Store / IAP** | Cosmetic purchases, restore-purchases, receipts, refund paths | **[Q9](open-questions.md)** (per-platform billing rails); **[Q11](open-questions.md)** (hero cosmetics feed the catalog) | **BLOCKED — [Q9](open-questions.md) + [Q11](open-questions.md).** Billing rails (mandatory StoreKit/Play Billing on mobile; desktop Stripe-vs-Steam) are unresolved (Q9); the catalog has nothing to sell until the hero-asset source (Q11) is picked. Gated by surface 8 (consent) at runtime. |
-| 8 | **Consent & legal** | Telemetry/privacy consent, age gate, ToS/EULA — **gates** store + telemetry, so it precedes them | [`infrastructure.md`](infrastructure.md) | **PARTIAL — the *gate* is buildable now, the *UI* is native.** The **consent-gate seam** (the boolean that telemetry + store check) ships now in `server` (§4 WS-D); the consent *screen* itself is native chrome on the seam (D32), blocked with the rest. Build the gate first so telemetry is structurally consent-respecting from its first byte. |
+| 4 | **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry | order/stance vocab (D25); **[Q5](../open-questions.md)** | **BLOCKED — [Q5](../open-questions.md) (PvP half).** The skirmish/PvE half rides shipped order/stance vocab (D25), but "PvP entry" depends on Q5 *and* Phase 3 net; mode select is undefined until Q5. |
+| 5 | **Lobby & matchmaking** (PvP) | Party/invite, connection-quality readout, ready-up. *Seam:* the net plumbing is Phase 3; only the surface is Phase 4 | **Phase 3 netcode** (D27 lockstep, host-RTT, relay/matchmaking); **[Q5](../open-questions.md)** | **BLOCKED — Phase 3 netcode + [Q5](../open-questions.md).** The connection-quality readout and ready-up sit on the host-side RTT estimator + relay/matchmaking that Phase 3 still owes; no PvP target until Q5. |
+| 6 | **Progression & profile** | Persistence, stats, cosmetic inventory | account/persistence backend ([`infrastructure.md`](../infrastructure.md)) | **BLOCKED — accounts/persistence backend.** The Postgres-backed accounts/entitlements service is scaffolding-only today ([`infrastructure.md`](../infrastructure.md)); no server code yet. |
+| 7 | **Store / IAP** | Cosmetic purchases, restore-purchases, receipts, refund paths | **[Q9](../open-questions.md)** (per-platform billing rails); **[Q11](../open-questions.md)** (hero cosmetics feed the catalog) | **BLOCKED — [Q9](../open-questions.md) + [Q11](../open-questions.md).** Billing rails (mandatory StoreKit/Play Billing on mobile; desktop Stripe-vs-Steam) are unresolved (Q9); the catalog has nothing to sell until the hero-asset source (Q11) is picked. Gated by surface 8 (consent) at runtime. |
+| 8 | **Consent & legal** | Telemetry/privacy consent, age gate, ToS/EULA — **gates** store + telemetry, so it precedes them | [`infrastructure.md`](../infrastructure.md) | **PARTIAL — the *gate* is buildable now, the *UI* is native.** The **consent-gate seam** (the boolean that telemetry + store check) ships now in `server` (§4 WS-D); the consent *screen* itself is native chrome on the seam (D32), blocked with the rest. Build the gate first so telemetry is structurally consent-respecting from its first byte. |
 
 **In-session shell (the carve-out) — BUILDABLE NOW.** Pause, surrender/leave, post-match summary,
 reconnect prompt. **In-engine** (`engine`/`render`), under avatar-only fog (invariant #6). The
@@ -84,7 +84,7 @@ WS-D (telemetry + consent gate, server) ───────  feeds Consent + l
 ```
 
 - **WS-A is the prerequisite** (D32). It is GPU-free, logic-free, single-sourced (invariant #2) —
-  the same boundary discipline as the PAL. **It landed this run as `core::shell` ([D34](decisions.md))**,
+  the same boundary discipline as the PAL. **It landed this run as `core::shell` ([D34](../decisions.md))**,
   so the rest of the phase has a fixed contract to design against.
 - **WS-B (in-session shell)** is the one shell surface buildable now; it consumes WS-A's
   query side for post-match summary data and the Phase 3 reconnect policy for the reconnect prompt.
@@ -101,13 +101,13 @@ Four **buildable-now** Rust workstreams are greenlit for this run, mirroring Pha
 shape. Status legend matches the other plans: **✅ DONE** · **IN PROGRESS** · **☐ not started** ·
 **BLOCKED**.
 
-### Workstream A — The shell↔sim seam (`core`) — ✅ DONE (landed this run, [D34](decisions.md))
+### Workstream A — The shell↔sim seam (`core`) — ✅ DONE (landed this run, [D34](../decisions.md))
 
 **Goal:** the narrow, **GPU-free, logic-free** command/query boundary native shells (and the
 in-session shell) drive the shared engine through — the D32 prerequisite, fixed before any shell
-work. **Landed as `core::shell` and recorded in [D34](decisions.md).**
+work. **Landed as `core::shell` and recorded in [D34](../decisions.md).**
 
-**What landed (the contract — [D34](decisions.md)):** a typed **façade / DTO** module, `core::shell`,
+**What landed (the contract — [D34](../decisions.md)):** a typed **façade / DTO** module, `core::shell`,
 on the same footing as the PAL — *intent in, presentation-safe view out*, holding **no** game/sim
 logic (invariant #2/#3) and mutating no sim state.
 
@@ -132,12 +132,12 @@ feeds **no** float/logic into the command path — wiring it leaves the per-tick
 byte-identical (the bar every Phase 2/3 derivation cleared). Verified: `core` tests 193 → 202 green
 (dev + release), float-free guard clean, `code-reviewer` CLEAN.
 
-*Owed addition delivered with the landing:* the [`architecture.md`](architecture.md) shell↔sim
-boundary note and [D34](decisions.md) recording the seam shape (§6).
+*Owed addition delivered with the landing:* the [`architecture.md`](../architecture.md) shell↔sim
+boundary note and [D34](../decisions.md) recording the seam shape (§6).
 
 *Not in this slice (deferred to the consuming workstreams):* the broader command surface — start/
 configure/abort a match, apply settings, store/progression refresh — arrives with WS-B/native
-shells, several of those blocked on [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md);
+shells, several of those blocked on [Q5](../open-questions.md)/[Q9](../open-questions.md)/[Q11](../open-questions.md);
 and no win-condition evaluator (the host fills `MatchSummary` today — a single-sourced win condition,
 if wanted, is a `core` *system*, not this boundary).
 
@@ -151,8 +151,8 @@ if wanted, is a `core` *system*, not this boundary).
 > screen-space only, the full-info summary appears only once `Ended`, and a desync drained from
 > lockstep supersedes a local pause). Engine 81 / render 52 tests; `code-reviewer` CLEAN after fixing
 > the desync-drain + pause-guard wire-up. **Also landed:** post-match DISMISS → title transition
-> ([D52](decisions.md)); pause overlay (desktop Esc [D53](decisions.md), Android back-gesture
-> [D54](decisions.md)) + in-match surrender are now wired — the in-session shell goal is fully
+> ([D52](../decisions.md)); pause overlay (desktop Esc [D53](../decisions.md), Android back-gesture
+> [D54](../decisions.md)) + in-match surrender are now wired — the in-session shell goal is fully
 > satisfied. **Owed:** the Android leave-to-title path (overlay **Surrender**/**DISMISS** taps →
 > JNI `Activity.finish()`, the twin of D52's desktop `ExitToTitle`); the Wi-Fi↔cellular reconnect
 > *handoff* half stays QUIC-blocked (Phase 3 C).
@@ -189,7 +189,7 @@ testing rule). `/safe-edit` (embodiment/fairness blast radius).
 > (`pal::ThermalSensor` → `ThermalState`/`PowerState`), implemented as a synthetic stub in
 > `pal-desktop` — **owed:** a real `pal-android` reader (`PowerManager.getThermalStatus()` /
 > `BatteryManager`), which is where the on-device 200-unit numbers that may reopen the
-> **[D21](decisions.md) dual-rate** question come from (record via `/decision` when measured). The
+> **[D21](../decisions.md) dual-rate** question come from (record via `/decision` when measured). The
 > load-bearing guard test steps the same scripted sim across Low/Mid/High × {Nominal,Fair,Serious,
 > Critical} and asserts a byte-identical checksum stream — a tier is a *rendering* choice, never a
 > sim input (invariant #1/#4). `core` untouched + float-free; `code-reviewer` CLEAN. **Owed glue:**
@@ -231,7 +231,7 @@ the 200-unit power budget were explicitly deferred here).
 > *screen* (D32 chrome), the accounts backend, and the real Postgres `TelemetrySink`.
 
 **Goal:** stand up telemetry + live-ops scaffolding that is **consent-respecting by construction**,
-per [`infrastructure.md`](infrastructure.md) — built so a player who hasn't consented emits
+per [`infrastructure.md`](../infrastructure.md) — built so a player who hasn't consented emits
 **nothing**, not "emits then filters."
 
 **Sequence:**
@@ -241,10 +241,10 @@ per [`infrastructure.md`](infrastructure.md) — built so a player who hasn't co
    first byte. This is the buildable-now slice of surface 8.
 2. **Telemetry pipeline (scaffold)** — event schema + an ingest endpoint in `server`, every emit
    path passing through the consent gate (no-consent ⇒ no-op at the source). Runs against the local
-   Docker Postgres/Redis ([`infrastructure.md`](infrastructure.md): clone-and-run, non-secret
+   Docker Postgres/Redis ([`infrastructure.md`](../infrastructure.md): clone-and-run, non-secret
    defaults; prod secrets stay in the private estate repo, invariant #8).
 3. **Live-ops scaffolding** — the config/flag surface live-ops will need (remote-tunable values,
-   consistent with the data/scripting hot-reload lean in [`roadmap.md`](roadmap.md)), consent-gated
+   consistent with the data/scripting hot-reload lean in [`roadmap.md`](../roadmap.md)), consent-gated
    the same way. Scaffold only — no live-ops *content* this phase.
 
 **Guard:** server code, not `core` — no determinism matrix concern, but the no-secrets invariant
@@ -259,13 +259,13 @@ carries its own blocker from §2:
 
 | Surface | Blocker (beyond the WS-A seam + missing native project) |
 |---|---|
-| Boot & title | **LANDED (Android [D35](decisions.md) + desktop [D36](decisions.md))** (Compose title/landing screen on Android; egui title screen on desktop); only the **iOS** native shell still pending (no iOS target) |
-| Onboarding / tutorial | **[Q5](open-questions.md)** (PvE-vs-PvP-first defines the teach surface) |
+| Boot & title | **LANDED (Android [D35](../decisions.md) + desktop [D36](../decisions.md))** (Compose title/landing screen on Android; egui title screen on desktop); only the **iOS** native shell still pending (no iOS target) |
+| Onboarding / tutorial | **[Q5](../open-questions.md)** (PvE-vs-PvP-first defines the teach surface) |
 | Settings | owns the accessibility cues (§5) — must ship *with* them, not after |
-| Match setup | **[Q5](open-questions.md)** (PvP half + mode select) |
-| Lobby & matchmaking | **Phase 3 netcode** (host-RTT, relay/matchmaking) + **[Q5](open-questions.md)** |
-| Progression & profile | **accounts/persistence backend** ([`infrastructure.md`](infrastructure.md)) |
-| Store / IAP | **[Q9](open-questions.md)** (billing rails) + **[Q11](open-questions.md)** (catalog content) |
+| Match setup | **[Q5](../open-questions.md)** (PvP half + mode select) |
+| Lobby & matchmaking | **Phase 3 netcode** (host-RTT, relay/matchmaking) + **[Q5](../open-questions.md)** |
+| Progression & profile | **accounts/persistence backend** ([`infrastructure.md`](../infrastructure.md)) |
+| Store / IAP | **[Q9](../open-questions.md)** (billing rails) + **[Q11](../open-questions.md)** (catalog content) |
 | Consent & legal | the *gate* ships in WS-D; the *screen* is blocked native chrome |
 
 ---
@@ -294,18 +294,18 @@ These outrank surface convenience and apply to **every** workstream.
 
 Do **not** resolve the open questions here — leans only; each lock needs the input named.
 
-- **[D34](decisions.md) — shell↔sim seam shape/contract** ✅ **RECORDED** — the GPU-free, logic-free
+- **[D34](../decisions.md) — shell↔sim seam shape/contract** ✅ **RECORDED** — the GPU-free, logic-free
   `core::shell` façade native shells (and the in-session shell) drive `core` through (WS-A), plus the
-  [`architecture.md`](architecture.md) boundary note D32 flagged as owed. Landed this run.
-- **Dn — [Q5](open-questions.md) resolution (PvE vs PvP first)** — gates onboarding (surface 2),
+  [`architecture.md`](../architecture.md) boundary note D32 flagged as owed. Landed this run.
+- **Dn — [Q5](../open-questions.md) resolution (PvE vs PvP first)** — gates onboarding (surface 2),
   match setup's mode select (4), and lobby (5). *Lean (from Q5):* **PvE-first** to derisk
   onboarding and skip netcode until the core loop is proven, with multiplayer a fast-follow given
   the lockstep-ready architecture. Locking it unblocks the teach surface.
-- **Dn — [Q9](open-questions.md) resolution (billing rails)** — gates Store/IAP (surface 7).
+- **Dn — [Q9](../open-questions.md) resolution (billing rails)** — gates Store/IAP (surface 7).
   *Lean:* **hybrid** — mandatory StoreKit/Play Billing on mobile, Stripe/Steam on desktop, behind
   a unified entitlement service keyed to the account; cross-store reconciliation cost needs scoping
   first.
-- **Dn — [Q11](open-questions.md) resolution (hero asset source)** — gates the store catalog
+- **Dn — [Q11](../open-questions.md) resolution (hero asset source)** — gates the store catalog
   (surface 7) and the eye-level content the embodied camera lingers on. *Lean:* **hybrid** —
   CC0/procedural for low/mid, a small *commissioned* hero set, AI-gen for iteration/greyboxing
   only until its license terms firm up; scope the hero-asset count/budget before locking.
@@ -316,13 +316,13 @@ Do **not** resolve the open questions here — leans only; each lock needs the i
 ---
 
 **Phase 4's four buildable-now Rust workstreams have all landed** (A: the `core::shell` seam,
-[D34](decisions.md); B: the in-engine in-session shell; C: device tiers / dyn-res / thermal; D:
+[D34](../decisions.md); B: the in-engine in-session shell; C: device tiers / dyn-res / thermal; D:
 telemetry + consent gate) — full suite green dev+release, `code-reviewer` CLEAN on each. What remains
 in Phase 4 is the **native out-of-match shells** — and "Boot & title" (surface 1) has now landed on
-**both** platforms with a native shell: the **Android Compose landing screen** ([D35](decisions.md))
-and the **desktop egui title screen** ([D36](decisions.md)), each the first native surface buildable
+**both** platforms with a native shell: the **Android Compose landing screen** ([D35](../decisions.md))
+and the **desktop egui title screen** ([D36](../decisions.md)), each the first native surface buildable
 once the WS-A seam landed. Only the **iOS** Boot & title shell is still pending (no iOS build target at
 all). The rest of the surfaces are still pending: deferred behind the per-platform UI projects the repo
 still lacks and the Q5/Q9/Q11/Phase-3/backend blockers in §2 — Settings, onboarding, match setup,
-lobby, store, consent all remain blocked. See [`roadmap.md`](roadmap.md) §"Phase 4 — Polish & ship",
-[D32](decisions.md), [D35](decisions.md), and [D36](decisions.md).
+lobby, store, consent all remain blocked. See [`roadmap.md`](../roadmap.md) §"Phase 4 — Polish & ship",
+[D32](../decisions.md), [D35](../decisions.md), and [D36](../decisions.md).

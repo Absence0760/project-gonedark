@@ -2,8 +2,8 @@
 
 > Status: living strategy doc. Who we overlap with, where the moat is, where we're
 > exposed, and the concrete roadmap work that closes each gap. This is the
-> *product-strategy* counterpart to [`game-design.md`](game-design.md) (the design) and
-> [`decisions.md`](decisions.md) (the why). It picks no fights with the invariants — every
+> *product-strategy* counterpart to [`game-design.md`](../game-design.md) (the design) and
+> [`decisions.md`](../decisions.md) (the why). It picks no fights with the invariants — every
 > "reach parity here" item below is bounded by them, especially #1 (determinism), #3
 > (literal-executor AI), #5 (embodiment is not a character system), and #6 (the dark
 > stays fair).
@@ -96,7 +96,7 @@ is a multiplayer-role problem we don't have.
 > **Take:** the fantasy is real and under-served — people *want* command-and-embody. **Avoid:**
 > never split the two roles across players. The PvP pillar (Phase 3) must stay
 > *symmetric* — each player is their own commander-and-avatar — not asymmetric commander-vs-grunts.
-> Co-op ([Q14](open-questions.md)) is the one place the role-split temptation returns; if we ever
+> Co-op ([Q14](../open-questions.md)) is the one place the role-split temptation returns; if we ever
 > build it, each player keeps both jobs.
 
 ---
@@ -110,7 +110,7 @@ them. We try to be *fair-and-good-enough* on the FPS so the hybrid can be the re
 | Game | What they nail | Why they don't own our square |
 |---|---|---|
 | **Delta Force** (Team Jade / TiMi) | UE4 (MP) + UE5 (campaign); unified PC/mobile assets; bespoke terrain/anim tooling; extraction + Warfare; a real studio | Pure server-authoritative shooter. **No strategic layer, no command-an-army, no vision-as-cost.** They can't add it without becoming us — and their netcode (no deterministic sim) is the wrong substrate for 200-unit lockstep. |
-| **CoD: Mobile / Warzone Mobile** | The gunsmith that *defined* mobile weapon customization; omnimovement; true cross-progression with the PC/console CoD wallet | Twitch BR/MP only. The gunsmith is the bar we're measured against — but theirs is a *vertical-power* grind; ours is **fairness-bounded sidegrades** ([D60](decisions.md)) so it can fold into a deterministic checksum. |
+| **CoD: Mobile / Warzone Mobile** | The gunsmith that *defined* mobile weapon customization; omnimovement; true cross-progression with the PC/console CoD wallet | Twitch BR/MP only. The gunsmith is the bar we're measured against — but theirs is a *vertical-power* grind; ours is **fairness-bounded sidegrades** ([D60](../decisions.md)) so it can fold into a deterministic checksum. |
 | **PUBG Mobile** | Massive reach; the template for mobile FPS controls + monetization | Same: no command layer. Reach/serviceability lessons, not a design threat. |
 
 **The honest exposure.** Their gunsmith is table-stakes now — "mobile gamers crave and deserve
@@ -123,7 +123,7 @@ gunplay in the first ten seconds,"** not "we out-gun Delta Force." §6–7 size 
 
 > **Take:** unified cross-platform assets; gunsmith depth as *expectation*; mobile control polish.
 > **Avoid:** pay-to-win vertical progression (corrodes invariant #6 and breaks checksum fairness —
-> [D60](decisions.md)); chasing photoreal fidelity we can't staff.
+> [D60](../decisions.md)); chasing photoreal fidelity we can't staff.
 
 ---
 
@@ -134,12 +134,12 @@ model (cover, suppression, territory, squads); *StarCraft* is the macro/micro sk
 *Bad North* is the proof a legible RTS can live on a phone. None has embodiment, so none
 threatens the square — but they set the bar for **command-layer depth and readability** that a
 shooter audience won't have patience to learn slowly. Lesson: the command layer must teach itself
-fast (PvE mission 1, [`pve-campaign.md`](pve-campaign.md) §3) and read at a glance on a small screen.
+fast (PvE mission 1, [`pve-campaign.md`](../pve-campaign.md) §3) and read at a glance on a small screen.
 
 **Cohort D — PvE / objective shooters (the campaign neighbors).** *Helldivers 2* (the recent proof
 that co-op PvE with a strategic frame can be a breakout), *Destiny 2* (weekly modifiers, pursuit
-goals — borrowed in [`pve-campaign.md`](pve-campaign.md) §6), *Deep Rock Galactic* (co-op identity),
-and *Halo* (handcrafted set-pieces — also borrowed). Our **PvE-first** decision ([D58](decisions.md))
+goals — borrowed in [`pve-campaign.md`](../pve-campaign.md) §6), *Deep Rock Galactic* (co-op identity),
+and *Halo* (handcrafted set-pieces — also borrowed). Our **PvE-first** decision ([D58](../decisions.md))
 puts us in this neighborhood at launch; the lesson is that a strong PvE shooter can ship and thrive
 *without* winning the PvP-fidelity arms race — which is exactly the lane our FPS-fidelity honesty (§4)
 needs.
@@ -179,12 +179,12 @@ the LEAD rows; we're not.
 ## 7. The plan — closing each gap to parity-or-better
 
 The gaps above map to roadmap items, tagged **CP-n** (Competitive Parity), tracked in
-[`roadmap.md`](roadmap.md) → *"Competitive parity — reaching the incumbents' bar."* The
+[`roadmap.md`](../roadmap.md) → *"Competitive parity — reaching the incumbents' bar."* The
 principle for every one: **reach the incumbents' bar on table-stakes, then let the hybrid be
 the reason to choose us.** None reopens an invariant.
 
 - **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
-  ([D60](decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,
+  ([D60](../decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,
   barrel, stock, mag, grip, muzzle), *staying horizontal* (sidegrades, fixed-point,
   checksum-folded — never vertical power). Parity on *feel*, deliberate divergence on *fairness*.
 - **CP-2 — Embodied game-feel bar.** A focused gunplay pass so a Delta Force player doesn't bounce
@@ -193,20 +193,20 @@ the reason to choose us.** None reopens an invariant.
   written "good-enough floor" and playtest against it.
 - **CP-3 — Animation/fidelity floor (conceded tier).** *Not* UE5 parity — a "not jarring" floor:
   coherent locomotion/fire/death anims on the greybox so the eye-level view reads as a place, via the
-  scripted asset pipeline ([`content-pipeline.md`](content-pipeline.md), D41/D46). Explicitly a
+  scripted asset pipeline ([`content-pipeline.md`](../content-pipeline.md), D41/D46). Explicitly a
   conceded tier; we compete on the hybrid, not the polygon count.
-- **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (WS-D, [D61](decisions.md))
+- **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (WS-D, [D61](../decisions.md))
   and a touch-target/rebind pass so controls feel CoD-Mobile-class. Closes the one PAR row we can
   actually win.
 - **CP-5 — Unified cross-platform entitlement.** A single account/entitlement layer so progression,
   loadouts, and cosmetics follow the player across Android/iOS/desktop — the cross-progression
-  Warzone Mobile trained the market to expect ([Q9](open-questions.md) billing rails feed this).
-- **CP-6 — Audio identity pass.** Replace procedural placeholders ([D26](decisions.md)/[D29](decisions.md))
+  Warzone Mobile trained the market to expect ([Q9](../open-questions.md) billing rails feed this).
+- **CP-6 — Audio identity pass.** Replace procedural placeholders ([D26](../decisions.md)/[D29](../decisions.md))
   with a deliberate sound identity — *load-bearing*, not polish, because audio is the going-dark alert
   channel (invariant #6). Use the scripted Csound/SoX pipeline; keep the accessibility-equivalent cue.
 - **CP-7 — Onboarding that teaches the twist.** The highest-leverage screen in the project: a new
   player must read their first death as *"I stayed too long"* (invariant #6). Built into PvE mission 1
-  ([`pve-campaign.md`](pve-campaign.md) §3, WS-A). No incumbent needs this because no incumbent has the
+  ([`pve-campaign.md`](../pve-campaign.md) §3, WS-A). No incumbent needs this because no incumbent has the
   twist — so we can't borrow it; we have to nail it.
 - **CP-8 — Live-ops / content cadence engine.** Wire the `server` scaffolding (telemetry/consent/
   live-ops) into the rotating scenario-parameter modifier system (PvE WS-E) so we can sustain a

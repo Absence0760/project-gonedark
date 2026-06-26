@@ -1,5 +1,5 @@
 //! Consent gate — the single authoritative consent representation that BOTH telemetry
-//! and (later) the store check. Phase 4 WS-D, surface 8 (docs/phase-4-plan.md §2, §4).
+//! and (later) the store check. Phase 4 WS-D, surface 8 (docs/plans/phase-4-plan.md §2, §4).
 //!
 //! # Consent by construction
 //!

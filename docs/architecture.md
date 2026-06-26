@@ -260,7 +260,7 @@ scheduling (nearby/engaged squads re-evaluate every tick, distant idle squads ev
 ## Netcode — deterministic lockstep
 
 > **Topology decided ([`decisions.md`](decisions.md) D27); first slice landed
-> ([`phase-3-plan.md`](phase-3-plan.md) §"Workstream B").** The lockstep loop + wire codec live in
+> ([`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream B").** The lockstep loop + wire codec live in
 > a new platform-free, **sans-I/O** `core::lockstep`: it produces/consumes opaque byte frames but
 > does no transport. The host moves the bytes via a `pal::Transport` trait (no socket type); two
 > concrete backends ship in `pal-desktop`: an in-process `LoopbackTransport` for dev/test and a
@@ -273,7 +273,7 @@ scheduling (nearby/engaged squads re-evaluate every tick, distant idle squads ev
 > sim state.
 
 > **Reconnect snapshot format decided ([`decisions.md`](decisions.md) D28); landed
-> ([`phase-3-plan.md`](phase-3-plan.md) §"Workstream C").** The authoritative resume snapshot is a
+> ([`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream C").** The authoritative resume snapshot is a
 > *second*, complete serialization distinct from the lossy render snapshot — a hand-rolled LE
 > `Writer`/`Reader` sharing one field-walk with `Sim::checksum` (so it captures exactly what the
 > checksum hashes: every component incl. dead slots, the free-list order, `Rng(state, inc)`, `tick`),

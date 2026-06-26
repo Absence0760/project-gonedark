@@ -8,7 +8,7 @@
 //!   mutates sim state.
 //! - **#7 Per-tick checksum.** [`sim::Sim::checksum`] folds state for the CI desync matrix.
 //!
-//! See docs/phase-1-plan.md for the build order this scaffolds.
+//! See docs/plans/phase-1-plan.md for the build order this scaffolds.
 #![forbid(unsafe_code)]
 
 pub mod alerts;

@@ -1,6 +1,6 @@
 # Going Dark — Rust engine workspace (decisions.md D10).
 #
-# Layering (docs/architecture.md, docs/phase-1-plan.md §4):
+# Layering (docs/architecture.md, docs/plans/phase-1-plan.md §4):
 #   core        — shared deterministic sim. ZERO platform deps (invariant #2).
 #   pal         — Platform Abstraction Layer: trait definitions only.
 #   render      — wgpu renderer; consumes a read-only snapshot, never mutates sim.

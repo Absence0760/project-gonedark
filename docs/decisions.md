@@ -484,7 +484,7 @@ Phase 1 profiling establishes (60 Hz is the working target, not yet a locked flo
 or from `f32`/`f64`; the renderer converts at its own boundary via `Fixed::to_bits()`.
 Transcendentals are LUT/integer (`core::trig`: build-time-baked sine table, integer
 `isqrt`), never `libm`. This closes the first Phase-1 decide-first gate
-([`phase-1-plan.md`](phase-1-plan.md) §2).
+([`phase-1-plan.md`](plans/phase-1-plan.md) §2).
 
 **Why:** invariant #1 is that the sim is bit-identical across arch/compiler, and a float
 leak desyncs lockstep *silently*. Owning the type makes "no floats in the sim" a **compile
@@ -504,7 +504,7 @@ pure integer data, never executed in the sim); that one spot carries a `// noqa`
 **Decision:** `core`'s world is a **hand-rolled struct-of-arrays** store (`core::ecs`):
 parallel dense `Vec`s per component, entity = index + generation handle, systems iterate by
 index. **Not** Bevy/hecs/legion. Closes the second Phase-1 decide-first gate
-([`phase-1-plan.md`](phase-1-plan.md) §2).
+([`phase-1-plan.md`](plans/phase-1-plan.md) §2).
 
 **Why:** determinism needs a **stable iteration order** (invariant #1/#7), and an archetype
 ECS does not contract its iteration order across spawns/despawns or versions — adopting one
@@ -604,7 +604,7 @@ android entry) plus `app → pal-android` (its android-target dep) would not be.
 
 **Resolves:** [Q10](open-questions.md) (how to deliver the ~60 Hz embodied rate — global vs
 dual-rate). Settles the last open Phase-1 decide-first gate
-([`phase-1-plan.md`](phase-1-plan.md) §2).
+([`phase-1-plan.md`](plans/phase-1-plan.md) §2).
 
 **Decision:** the simulation runs **one global 60 Hz** deterministic tick for Phase 1
 (`core::sim::TICK_HZ = 60`). The **dual-rate** split (heavy RTS/unit sim at 30 Hz, embodied
@@ -622,7 +622,7 @@ unjustified complexity. This follows D16's explicit lean exactly.
 
 **The 200-unit question is real, but it is a *scale* concern, not a Phase-1 one.** Whether
 global-60 wrecks the mobile power/thermal budget only shows up under the full ~200-unit load,
-which Phase 1 deliberately does not have ([`phase-1-plan.md`](phase-1-plan.md) §8). So the
+which Phase 1 deliberately does not have ([`phase-1-plan.md`](plans/phase-1-plan.md) §8). So the
 dual-rate re-evaluation belongs to **Phase 3** (200-unit stress + thermal profiling on target
 hardware — [`roadmap.md`](roadmap.md)), not here, and is not a reason to add a second clock now.
 
@@ -637,7 +637,7 @@ hardware — [`roadmap.md`](roadmap.md)), not here, and is not a reason to add a
 
 ## D22 — Phase 1 vertical slice PASSED on real arm64; custom Rust engine validated, fallback retired
 
-**Resolves:** the Phase 1 exit criterion ([`roadmap.md`](roadmap.md), [`phase-1-plan.md`](phase-1-plan.md)) and the build-cost de-risk bet of [D8](#d8--pre-production-is-design-only-engine-direction-is-custom-native-with-a-live-fallback).
+**Resolves:** the Phase 1 exit criterion ([`roadmap.md`](roadmap.md), [`phase-1-plan.md`](plans/phase-1-plan.md)) and the build-cost de-risk bet of [D8](#d8--pre-production-is-design-only-engine-direction-is-custom-native-with-a-live-fallback).
 
 **Decision:** **Phase 1 is complete.** The custom **Rust** engine ([D10](#d10--engine-language-rust)) is validated end-to-end on real hardware, so the **Unity DOTS / Godot+GDExtension fallback (D8) is retired** and the two throwaway Godot prototypes (`prototypes/phase0-controls` → D14, `prototypes/phase0.5-netfeel` → D15) are **deleted**. Phase 2 (game systems) begins.
 
@@ -972,7 +972,7 @@ the balance baseline was measured into [D30](#d30--a-measured-combateconomy-bala
 
 **Status:** topology decided, and the **first slice has landed** — `core::lockstep` (the
 in-process deterministic 2-client loop + wire codec, no sockets;
-[`phase-3-plan.md`](phase-3-plan.md) §"Workstream B" step 1). This entry fixed *where each piece
+[`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream B" step 1). This entry fixed *where each piece
 lives* before the wire code, exactly as [D19](#d19--the-gpu-device-crosses-into-the-renderer-at-the-concrete-wiring-layer-not-through-the-abstract-pal-trait)/[D20](#d20--the-platform-agnostic-game-loop-is-a-shared-engine-crate-both-hosts-drive)
 fixed the PAL boundary before the renderer. The deterministic substrate it builds on already
 exists: `core::sim::Command` is the lockstep "order" unit (`Copy`, float-free), `Sim::step(&[Command])`
@@ -1049,7 +1049,7 @@ Building and validating against the in-process double *first* puts the cheapest-
 **Consequences:**
 - New `core::lockstep` module (platform-free; `core` deps stay empty) and a new `pal::Transport`
   trait with concrete impls in `pal-desktop`/`server`. The implementation lands incrementally,
-  each slice under `/safe-edit`, per [`phase-3-plan.md`](phase-3-plan.md) §"Workstream B".
+  each slice under `/safe-edit`, per [`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream B".
 - [`architecture.md`](architecture.md) §Netcode flips from design prose to **decided** (topology),
   referencing this entry; [`README.md`](../README.md) repo-map will note `core::lockstep` and
   `pal::Transport` when the first slice lands (not before — they do not exist yet).
@@ -1064,7 +1064,7 @@ Building and validating against the in-process double *first* puts the cheapest-
 an authoritative, bit-identical-resume snapshot before the wire/persistence code is written —
 exactly as [D27](#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait)
 fixed the netcode topology before the lockstep code. It opens Phase 3 workstream C
-([`phase-3-plan.md`](phase-3-plan.md) §"Workstream C — Reconnect / snapshot / handoff"). The
+([`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream C — Reconnect / snapshot / handoff"). The
 first code slice (`core::persist` + `Sim::serialize`/`deserialize` + `Rng::from_state` + the
 round-trip-replay test) is forthcoming under `/safe-edit`, **not** landed here.
 
@@ -1180,7 +1180,7 @@ test that rides the arch matrix means a format regression fails CI the same way 
   lives in platform-free `core` (invariant #2), and its correctness is asserted on the existing
   cross-arch matrix (invariant #7). The render snapshot stays the only thing the renderer reads
   (invariant #4).
-- [`phase-3-plan.md`](phase-3-plan.md) §"Workstream C" is unblocked (the first slice can land
+- [`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream C" is unblocked (the first slice can land
   alongside workstream A); the "Decisions Phase 3 will need" snapshot-format bullet flips to
   DECIDED. [`architecture.md`](architecture.md) §Netcode notes the format is now decided (D28),
   code pending. [`README.md`](../README.md) repo-map will note `core::persist` when the first slice
@@ -1497,7 +1497,7 @@ shell↔sim boundary can be designed for it.
 ## D33 — "Going dark" detection: a tunable three-mode tell, default Subtle
 
 **Status:** resolves **[Q2](open-questions.md)** (can the enemy tell you've gone dark?) and gates
-**workstream D** ([`phase-3-plan.md`](phase-3-plan.md)). We ship a **tunable mechanism, not a locked
+**workstream D** ([`phase-3-plan.md`](plans/phase-3-plan.md)). We ship a **tunable mechanism, not a locked
 design** (the D31 house style): a `core::detection` module with a `tell_mode: Hidden | Subtle |
 Marked` switch, **defaulting to `Subtle`** — a soft, line-of-sight-gated, *aging* tell on the
 embodied unit. One build covers all three modes for A/B playtesting; the default ships ON so the
@@ -1551,7 +1551,7 @@ follow-ups, not part of this `core` slice.
 **Consequences:**
 - [`open-questions.md`](open-questions.md) **Q2** migrates to RESOLVED, pointing here.
 - A new `core::detection` module ships (config + `detectable_embodiment` + tests); the
-  [`README.md`](../README.md) repo-map and [`phase-3-plan.md`](phase-3-plan.md) workstream D are
+  [`README.md`](../README.md) repo-map and [`phase-3-plan.md`](plans/phase-3-plan.md) workstream D are
   updated. The mechanism is **single-client now**; the HUD wiring + a scripted enemy that reads the
   channel are the net-facing follow-ups (the *actual* two-human mind game needs the net layer).
 
@@ -1565,7 +1565,7 @@ follow-ups, not part of this `core` slice.
 split the meta-UI — **native per-platform** shells for the out-of-match surfaces, the **in-engine**
 in-session shell — and required *both* to reach the shared `core` through "a narrow GPU-free,
 logic-free shell↔sim seam," fixed **before** any shell work begins
-([`phase-4-plan.md`](phase-4-plan.md) workstream A). This decides that boundary's shape.
+([`phase-4-plan.md`](plans/phase-4-plan.md) workstream A). This decides that boundary's shape.
 
 **Decision:** the seam is a typed **façade / DTO** module, `core::shell`, on the same footing as the
 PAL and the `fog`/`alerts`/`detection` derivations: it carries no game logic, makes no unit
@@ -1634,7 +1634,7 @@ scope — D32's "native shells" remain deferred behind this seam and the
   guards); `core` tests grow 193 → 202 (green dev + release; float-free guard clean; `code-reviewer`
   CLEAN).
 - [`architecture.md`](architecture.md) gains the shell↔sim boundary note D32 flagged as owed; the
-  [`README.md`](../README.md) repo-map lists `shell`; [`phase-4-plan.md`](phase-4-plan.md)
+  [`README.md`](../README.md) repo-map lists `shell`; [`phase-4-plan.md`](plans/phase-4-plan.md)
   workstream A is marked landed.
 
 ---
@@ -1642,7 +1642,7 @@ scope — D32's "native shells" remain deferred behind this seam and the
 ## D35 — First native app-shell surface: the Android Compose "Boot & title" landing screen
 
 **Status:** decided + landed (Android only). The **first native out-of-match shell surface** —
-"Boot & title" ([`phase-4-plan.md`](phase-4-plan.md) §2 surface 1) — ships as a native **Jetpack
+"Boot & title" ([`phase-4-plan.md`](plans/phase-4-plan.md) §2 surface 1) — ships as a native **Jetpack
 Compose** layer in the existing [`android/`](../android) Gradle project, realizing
 [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session) (native
 per-platform out-of-match shells) and consuming the
@@ -1676,7 +1676,7 @@ seam. This is the first surface to become buildable *the moment the seam landed*
 chose native shells for the out-of-match surfaces, and
 [D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)'s
 `core::shell` seam — the named prerequisite for *every* shell surface — has now landed. Per
-[`phase-4-plan.md`](phase-4-plan.md) §2, "Boot & title" carries **no** design/net blocker; its *only*
+[`phase-4-plan.md`](plans/phase-4-plan.md) §2, "Boot & title" carries **no** design/net blocker; its *only*
 remaining gate was the missing per-platform native UI project. This change creates that project, so
 "Boot & title" is the first native surface buildable once the seam landed — exactly the sequencing the
 plan called. Building it in Compose buys OS-native text input/IME, scroll, the accessibility tree, the
@@ -1695,7 +1695,7 @@ any **iOS** surface (no iOS build target exists at all per Phase 3). **Onboardin
 **Consequences:**
 - [`android/`](../android) gains a Kotlin/Compose source set and Gradle Compose enablement; the engine
   `NativeActivity` is now **Start-launched**, not the launcher.
-- [`phase-4-plan.md`](phase-4-plan.md) §2 surface 1 + the §"LATER" table flip from BLOCKED to
+- [`phase-4-plan.md`](plans/phase-4-plan.md) §2 surface 1 + the §"LATER" table flip from BLOCKED to
   **LANDED (Android)** (the deeper menu behind it — match setup / lobby — stays blocked per its own
   rows); [`roadmap.md`](roadmap.md) §"Meta-UI / app shell" "Boot & title" row notes the Android Compose
   landing screen has landed.
@@ -1704,7 +1704,7 @@ any **iOS** surface (no iOS build target exists at all per Phase 3). **Onboardin
   ([D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)) and
   exempt per CLAUDE.md's testing rule (thin, un-constructible glue).
 - **Still owed:** the match-config handoff (Q5), Settings content, the desktop + iOS native shells, and
-  onboarding (Q5) — each tracked against its own blocker in [`phase-4-plan.md`](phase-4-plan.md) §2.
+  onboarding (Q5) — each tracked against its own blocker in [`phase-4-plan.md`](plans/phase-4-plan.md) §2.
 - The in-engine in-session shell (Phase 4 workstream B) and the native out-of-match shells now have
   a fixed contract to build against.
 
@@ -1714,7 +1714,7 @@ any **iOS** surface (no iOS build target exists at all per Phase 3). **Onboardin
 
 **Status:** decided + landed (desktop). The **desktop** counterpart of
 [D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen): the
-"Boot & title" surface ([`phase-4-plan.md`](phase-4-plan.md) §2 surface 1) now also ships on the
+"Boot & title" surface ([`phase-4-plan.md`](plans/phase-4-plan.md) §2 surface 1) now also ships on the
 desktop host — an **egui** title screen in the `app` crate. The desktop binary previously booted
 straight into a match (`Game::new`); it now boots into a native title screen, and **Start** enters
 the match. This realizes
@@ -1784,7 +1784,7 @@ in-engine — D32 carve-out). It builds **no iOS** shell (no iOS build target ex
   exempt per CLAUDE.md. The shell compiles against the pinned wgpu 29 / winit 0.30 with one `wgpu` in
   the dep tree; egui is desktop-only host chrome.
 - **"Boot & title" is now landed on BOTH Android ([D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen))
-  and desktop (D36)**; **iOS** still has no build target. [`phase-4-plan.md`](phase-4-plan.md) §2
+  and desktop (D36)**; **iOS** still has no build target. [`phase-4-plan.md`](plans/phase-4-plan.md) §2
   surface 1 + the §"LATER" table and [`roadmap.md`](roadmap.md) §"Meta-UI / app shell" "Boot & title"
   row note both. The deeper menu behind it — match setup / lobby — stays blocked per its own rows
   (**[Q5](open-questions.md)** / Phase-3).
@@ -1794,7 +1794,7 @@ in-engine — D32 carve-out). It builds **no iOS** shell (no iOS build target ex
 ## D37 — Embodied firing model: a fixed-point cone hitscan, sim-authoritative via the lockstep stream
 
 **Status:** decided + landed. Part of the **playability push**
-([`playability-plan.md`](playability-plan.md), worker W1). The FPS half of the hybrid was
+([`playability-plan.md`](plans/playability-plan.md), worker W1). The FPS half of the hybrid was
 non-functional — `core::combat` skipped `InputSource::Embodied` units and there was no fire command,
 so an embodied player could move, look, and *die* but deal no damage. This closes that gap while
 holding invariants #1/#4/#5/#7.
@@ -1836,7 +1836,7 @@ lockstep runners stay green.
 
 ## D38 — Match-end / victory condition is a host-side derivation, not a sim system
 
-**Status:** decided + landed. Playability push ([`playability-plan.md`](playability-plan.md), worker
+**Status:** decided + landed. Playability push ([`playability-plan.md`](plans/playability-plan.md), worker
 W2). A match previously never ended — `MatchOutcome` was hard-wired to `Draw`.
 
 **Decision:**
@@ -1868,7 +1868,7 @@ shows a real VICTORY / DEFEAT / DRAW. Ten branch unit tests, green dev+release.
 
 ## D39 — The enemy is a commander-level scripted AI issuing orders via the lockstep stream
 
-**Status:** decided + landed. Playability push ([`playability-plan.md`](playability-plan.md), worker
+**Status:** decided + landed. Playability push ([`playability-plan.md`](plans/playability-plan.md), worker
 W3). The enemy previously got one `AttackMove` at spawn then went inert forever.
 
 **Decision:**
@@ -1905,7 +1905,7 @@ captures, and reinforces" integration test, green dev+release; sim + 2-peer lock
 
 ## D40 — Embodied-world rendering: a real FPS world drawn while the strategic map stays dark
 
-**Status:** decided + landed. Playability push ([`playability-plan.md`](playability-plan.md), worker
+**Status:** decided + landed. Playability push ([`playability-plan.md`](plans/playability-plan.md), worker
 W5). The embodied (first-person) view was a literal near-black void + the avatar quad, which read as
 broken and gave no sense of motion or heading.
 
@@ -2008,7 +2008,7 @@ art bullet cites D41.
 ## D42 — Desktop command controls: the classic-RTS split (left-click selects, right-click commands)
 
 **Status:** decided + landed (desktop). A control-feel fix on top of the playability push
-([`playability-plan.md`](playability-plan.md)): the *desktop* command-layer input scheme. The
+([`playability-plan.md`](plans/playability-plan.md)): the *desktop* command-layer input scheme. The
 question came from play — "if I select a troop and then click, shouldn't it move there?" — and
 exposed a genuine smell.
 
@@ -2508,7 +2508,7 @@ seam rule.
 
 ## D53 — Wire the pause-overlay trigger: Esc opens pause; in-match surrender becomes reachable
 
-**Status:** decided + landed. Closes the in-session shell ([phase-4-plan WS-B](phase-4-plan.md)), the
+**Status:** decided + landed. Closes the in-session shell ([phase-4-plan WS-B](plans/phase-4-plan.md)), the
 sibling of the post-match DISMISS wiring ([D52](#d52--embodied-view-draws-fog-filtered-avatar-visible-units-post-match-dismiss-wiring)).
 
 **Decision:**
@@ -2592,7 +2592,7 @@ all-unit armour-facing rewrite — `Armor{front,side,rear}` + `Weapon.penetratio
 P5–P9 phased. Verified green (301 core tests dev+release; 2-peer lockstep agrees over 300 ticks;
 `WIRE_VERSION` 6 — P4 adds no command, `SNAPSHOT_VERSION` 5→6). Reference feel **War Thunder (sim)**; both follow-up
 forks settled — ballistic flight is a **core phase** (not deferred) and the tank is the **deep**
-embodiment by design. Full plan: [`tank-embodiment-plan.md`](tank-embodiment-plan.md).
+embodiment by design. Full plan: [`tank-embodiment-plan.md`](plans/tank-embodiment-plan.md).
 
 **Decision:** the embodied tank stops being "infantry-FPS in a tank-shaped token" (D50–D52, where
 `Heavy` merely renders as a tank mesh and drives with the rifleman scheme of D51) and becomes a
@@ -2745,7 +2745,7 @@ costs nothing toward the PvP fast-follow — the sim, order vocabulary, and netc
 single-sourced (invariant #2).
 
 **Consequences:** the roadmap gains a dedicated **Operations-campaign** build section (the
-first shippable slice), sequenced in [`pve-campaign-plan.md`](pve-campaign-plan.md). The
+first shippable slice), sequenced in [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). The
 PvP-specific forks ([Q1](open-questions.md) thread-thinness, [Q3](open-questions.md) leash,
 the PvP attention mind-game) stay open — PvE-first does not resolve them, it defers their
 *lock* to when live PvP exists. Opens [Q14](open-questions.md) (co-op PvE).
@@ -2790,7 +2790,7 @@ content pillar from reopening a locked invariant.
 events feeding the existing `MatchSummary` and a new in-match objective HUD; a `difficulty`
 parameter threaded into the commander. First code slice (objective evaluator + mission 1, with
 `core`/`engine` tests green dev+release and the determinism matrix green) is
-[`pve-campaign-plan.md`](pve-campaign-plan.md) WS-A. Deferred: mission authoring format
+[`pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-A. Deferred: mission authoring format
 ([Q15](open-questions.md)), narrative depth ([Q16](open-questions.md)).
 
 ---
@@ -2826,7 +2826,7 @@ of the sim entirely.
 
 **Consequences:** a fixed-point attachment-delta table in `core` (checksum-folded) + a
 pre-match loadout UI on the command layer; the cosmetic catalogue feeds the
-[D13](decisions.md)/[Q9](open-questions.md) store. Build slice: [`pve-campaign-plan.md`](pve-campaign-plan.md)
+[D13](decisions.md)/[Q9](open-questions.md) store. Build slice: [`pve-campaign-plan.md`](plans/pve-campaign-plan.md)
 WS-C. Full design: [`customization.md`](customization.md).
 
 ---
@@ -2860,7 +2860,7 @@ thumb-reach tuned for driving a tank is wrong for marquee-selecting a squad. Pre
 only means invariant #2 holds — no game logic forks, the seam is the existing one.
 
 **Consequences:** the editor is a Settings-shell surface ([D32](decisions.md)) over the existing
-touch seams — no sim or netcode change. Build slice: [`pve-campaign-plan.md`](pve-campaign-plan.md)
+touch seams — no sim or netcode change. Build slice: [`pve-campaign-plan.md`](plans/pve-campaign-plan.md)
 WS-D. Full design: [`customization.md`](customization.md).
 
 ---

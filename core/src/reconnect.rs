@@ -12,7 +12,7 @@
 //! Transport-free and serde-free — pure `core` (invariants #1, #2). The Wi-Fi↔cellular **handoff**
 //! half of workstream C (surviving a network switch without a full reconnect) needs QUIC
 //! connection migration and is **deferred until a QUIC transport exists** (only a UDP transport
-//! has landed; `docs/phase-3-plan.md` §B/§C, D28).
+//! has landed; `docs/plans/phase-3-plan.md` §B/§C, D28).
 
 use crate::lockstep::Lockstep;
 use crate::persist::DeserializeError;

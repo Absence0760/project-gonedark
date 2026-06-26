@@ -13,10 +13,10 @@
 > **UDP** transport, and **RTT-adaptive delay** via the agreed `DelayChange` protocol). **C** — the
 > authoritative snapshot (D28) and the **reconnect policy** (snapshot + buffered-command replay).
 > **D** — the gone-dark **detection** tell (`core::detection`, tunable `Hidden|Subtle|Marked`,
-> default Subtle — **Q2** resolved by [D33](decisions.md)).
+> default Subtle — **Q2** resolved by [D33](../decisions.md)).
 > **Still open:** **A** — rayon-into-`core` (needs a decision *and* is unjustified at ~3.7 ms) and
 > the dual-rate re-eval (D21, needs on-device thermal numbers); **B** — the host-side RTT
-> estimator wiring + relay/matchmaking ([Q9](open-questions.md)); **C** — the Wi-Fi↔cellular
+> estimator wiring + relay/matchmaking ([Q9](../open-questions.md)); **C** — the Wi-Fi↔cellular
 > **handoff** (blocked on a QUIC transport); **D** — the detection **HUD/AI wiring** (the core
 > mechanism landed; the *two-human* mind game needs the net layer). The remaining items are gated on
 > decisions, a physical device, or the net layer — not on more core code.
@@ -126,7 +126,7 @@ already applies a per-tick command set in stable order; `Sim::checksum` already 
 everything incl. RNG state; and `engine::predict_avatar` already exists as a stub with
 the D15 "MUST NOT feed back into the sim" rule in its doc-comment.
 
-**Crate topology (decided in [`D27`](decisions.md#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait); code is next):**
+**Crate topology (decided in [`D27`](../decisions.md#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait); code is next):**
 
 | Concern | Lives in |
 |---|---|
@@ -165,7 +165,7 @@ checksum byte-identical with prediction on vs off."*
    `checksum`/`compare` jobs are untouched (invariant #7). 6 tests, dev + release.
 3. **`pal::Transport` trait** + loopback impl in `pal-desktop` ✅ **DONE** — `pal::Transport`
    (opaque byte frames: `send(&[u8])` / `poll() -> Vec<Vec<u8>>`, object-safe, names no socket
-   type; mirrors `pal::Audio`, [D27](decisions.md)) plus an in-process `LoopbackTransport::pair()`
+   type; mirrors `pal::Audio`, [D27](../decisions.md)) plus an in-process `LoopbackTransport::pair()`
    in `pal-desktop` (per-direction FIFO, byte-exact framing). Trait + impl + 6 tests only — wiring
    into `engine::Game` is step 4.
 4. **Wire lockstep into `engine::Game::frame`** ✅ **DONE** — the fixed-tick accumulator now
@@ -222,7 +222,7 @@ checksum byte-identical with prediction on vs off."*
    asserting both peers stay checksum-identical to each other *and* to a no-change reference;
    determinism-auditor clean (no float/clock, no command-stream desync). **Still owed:** the
    host-side RTT estimator + hysteresis that *calls* `propose_delay` (thin `pal-desktop`/`engine`
-   wiring, low determinism risk); relay / matchmaking ([Q9](open-questions.md)) untouched.
+   wiring, low determinism risk); relay / matchmaking ([Q9](../open-questions.md)) untouched.
 
 ---
 
@@ -253,7 +253,7 @@ every arch. Because it lives in `core`'s test module, it rides the existing arch
 automatically. Reconnect then = snapshot + replay-buffered-commands (a plain `step` loop)
 — correct *by construction* once the round-trip invariant holds.
 
-**Format decided in [D28](decisions.md#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)**
+**Format decided in [D28](../decisions.md#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)**
 (hand-rolled LE `Writer`/`Reader` sharing the checksum field-walk; `Rng(state, inc)` captured;
 terrain by `map_id`; serde-free in `core`) — the first slice is now **unblocked**.
 
@@ -282,7 +282,7 @@ and only the UDP transport has landed, so it is **deferred until a QUIC `pal::Tr
 
 ## Workstream D — PvP attention mind-game (design-led, LAST)
 
-**Q2 is RESOLVED ([D33](decisions.md)): a tunable three-mode tell, default `Subtle`.** The fork
+**Q2 is RESOLVED ([D33](../decisions.md)): a tunable three-mode tell, default `Subtle`.** The fork
 (*can the enemy tell you've gone dark?* — no signal / soft tell / no tell) is settled the
 "mechanism, not lock" way: ship all three modes behind a config and default to the soft tell.
 Bounded by **Q1** (alerts-only lean) and **Q3** (possession leashed vs global), both still open with
@@ -315,7 +315,7 @@ that draws the tell for an enemy, and a scripted/PvE enemy that *consults* the c
   §Netcode updated. *Code not yet landed; unlocks workstream B.*
 - **D28 — authoritative snapshot format** ✓ **DECIDED** (hand-rolled LE `Writer`/`Reader`
   sharing the checksum field-walk; `Rng(state, inc)` captured; terrain by `map_id`; serde-free
-  in `core`). [`decisions.md`](decisions.md#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)
+  in `core`). [`decisions.md`](../decisions.md#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)
   §D28. *Format locked; the `core::persist` slice is unblocked, code not yet landed.*
 - **D33 — Q2 resolution** ✓ **DECIDED** (enemy detection of "gone dark"): a tunable three-mode
   tell (`Hidden|Subtle|Marked`), default `Subtle`, as a pure checksum-excluded `core::detection`

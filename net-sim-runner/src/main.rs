@@ -1,4 +1,4 @@
-//! Headless 2-peer lockstep driver (invariant #7, docs/phase-3-plan.md §"Workstream B"
+//! Headless 2-peer lockstep driver (invariant #7, docs/plans/phase-3-plan.md §"Workstream B"
 //! step 2, D27).
 //!
 //! Drives **two** in-process `core::lockstep::Lockstep` instances — peer 0 issues the

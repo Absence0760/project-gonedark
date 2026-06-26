@@ -1,5 +1,5 @@
 //! Core determinism + math tests. These run in CI on every target in the matrix
-//! (docs/phase-1-plan.md §6); a cross-arch divergence shows up as a checksum mismatch.
+//! (docs/plans/phase-1-plan.md §6); a cross-arch divergence shows up as a checksum mismatch.
 
 use crate::checksum::Checksum;
 use crate::components::{InputSource, Order, Stance, Vec2};

@@ -282,7 +282,7 @@ the remaining sub-fork is narrow: *do units ever need real elevation (multi-stor
 — parked as a later call ([D55](decisions.md) deferrals); the projectile-local model holds until
 level design demands more. Original analysis retained below.
 
-The tank-embodiment plan ([D55](decisions.md), [`tank-embodiment-plan.md`](tank-embodiment-plan.md))
+The tank-embodiment plan ([D55](decisions.md), [`tank-embodiment-plan.md`](plans/tank-embodiment-plan.md))
 makes **shell flight** — travel time, drop, leading — a core phase. War Thunder's signature is
 exactly this: **shells with travel time and drop**, so you *lead* moving targets and *arc* over
 cover. The fork below was *which fidelity*; it landed on real projectiles.
@@ -377,7 +377,7 @@ phone and PC ([D22](decisions.md), invariants #1/#2), so a touch player and a mo
 **same** match is technically the normal case, not a bolt-on. The *command* layer is naturally fair
 across inputs (issuing orders isn't a twitch contest). The **embodied** (FPS) layer is not: a mouse
 out-aims a thumb. How embodied **PvP** handles that mismatch is open. (Full framing:
-[`positioning-cross-platform.md`](positioning-cross-platform.md) §4.)
+[`positioning-cross-platform.md`](positioning/positioning-cross-platform.md) §4.)
 
 | Option | Upside | Cost / risk |
 |---|---|---|

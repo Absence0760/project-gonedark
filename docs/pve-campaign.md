@@ -3,10 +3,10 @@
 > Status: living design doc. The **first shippable product** is single-player PvE
 > ([`decisions.md`](decisions.md) D58 resolves [Q5](open-questions.md) → *PvE-first, PvP
 > fast-follow*). This doc is the design of that pillar; the build sequencing lives in
-> [`pve-campaign-plan.md`](pve-campaign-plan.md). The *why* behind the locked choices is
+> [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). The *why* behind the locked choices is
 > [D58](decisions.md)/[D59](decisions.md); why PvE-first is also the right *competitive*
 > move (ship a strong PvE product without winning the PvP-fidelity arms race) is
-> [`positioning.md`](positioning.md) §5.
+> [`positioning.md`](positioning/positioning.md) §5.
 
 ## 1. Why PvE exists — it teaches *going dark*
 
@@ -170,5 +170,5 @@ objective** — none of them reopen a locked invariant or add sim/desync surface
 - **Narrative depth.** Light briefings now; a full authored arc is [Q16](open-questions.md),
   expandable without restructuring the hub.
 - **Not yet built.** This is the *design*; the first code slice (the objective evaluator +
-  mission 1, with tests + the determinism matrix green) is [`pve-campaign-plan.md`](pve-campaign-plan.md)
+  mission 1, with tests + the determinism matrix green) is [`pve-campaign-plan.md`](plans/pve-campaign-plan.md)
   WS-A.

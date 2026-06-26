@@ -43,7 +43,7 @@ work saves it. (Embodied feel *over the network* is the next risk — Phase 0.5.
 > validated phone-vs-laptop over real Wi-Fi up to a simulated "cellular" link. Resolves
 > [`open-questions.md`](open-questions.md) Q7; Q8 (tick rate) resolved in Phase 1 via D16
 > (30 Hz too coarse) + D21 (global 60 Hz). The throwaway harness (`prototypes/phase0.5-netfeel/`)
-> has since been deleted on Phase 1 completion (D22). Plan: [`phase-0.5-plan.md`](phase-0.5-plan.md).
+> has since been deleted on Phase 1 completion (D22). Plan: [`phase-0.5-plan.md`](plans/phase-0.5-plan.md).
 
 **Goal:** prove embodied FPS combat feels acceptable under the chosen
 deterministic-lockstep + input-delay netcode — *before* committing the full engine.
@@ -79,7 +79,7 @@ model.
 > **Unity/Godot fallback (D8) is retired**; the throwaway prototypes are deleted. **Phase 2
 > (game systems) is the active phase.** Honest caveat: validated on a flagship; frame-rate/thermal
 > on mid-range silicon and the 200-unit power budget are Phase 3 (D21). Detailed plan and
-> sign-off record: **[`phase-1-plan.md`](phase-1-plan.md)**.
+> sign-off record: **[`phase-1-plan.md`](plans/phase-1-plan.md)**.
 
 **Goal:** the real engine spine, end to end, with one of everything.
 
@@ -137,7 +137,7 @@ model.
 > `adb` checksum leg), carried forward not faked. Open forks Q1/Q2/Q3 are deliberately left open —
 > fog and alerts ship as a *mechanism*, not a lock; each lean was reaffirmed at Phase-2 close (D31)
 > but locking depends on real audio / live PvP that doesn't exist yet. **A later
-> [playability push](playability-plan.md) (D37–D40) then closed the remaining *functional* gaps
+> [playability push](plans/playability-plan.md) (D37–D40) then closed the remaining *functional* gaps
 > the systems sign-off left** — embodied firing ([D37](decisions.md)), a win/lose evaluator
 > ([D38](decisions.md)), the enemy commander AI ([D39](decisions.md)), and a real first-person
 > world ([D40](decisions.md)), plus in-match text — without disturbing the signed-off systems;
@@ -158,7 +158,7 @@ model.
 ## Phase 3 — Scale & net
 
 > **Status: IN PROGRESS.** Plan and four-workstream sequencing:
-> **[`phase-3-plan.md`](phase-3-plan.md)**. Workstream A underway: a deterministic **200-unit
+> **[`phase-3-plan.md`](plans/phase-3-plan.md)**. Workstream A underway: a deterministic **200-unit
 > stress scenario** + on-device timing mode in `sim-runner` (`pnpm desktop:sim:stress`) showed 200
 > units running **~2× over the 16.6 ms 60 Hz budget on desktop**, pinpointing the per-unit
 > flow-field rebuild (not threading) as the #1 cost. **Flow-field caching then landed** (one field
@@ -181,7 +181,7 @@ model.
 ## Phase 4 — Polish & ship
 
 > **Status: OPENING (plan landed) — Phase 3 still IN PROGRESS.** Plan and workstream sequencing:
-> **[`phase-4-plan.md`](phase-4-plan.md)**. Per [D32](decisions.md) the out-of-match app shell is
+> **[`phase-4-plan.md`](plans/phase-4-plan.md)**. Per [D32](decisions.md) the out-of-match app shell is
 > **native per-platform** (reached through a narrow shell↔sim seam), with the **in-session** shell
 > in-engine. **The seam prerequisite has landed:** `core::shell` — a GPU-free, logic-free façade
 > (intent in, presentation-safe view out; fairness structural via no `&World`), recorded in
@@ -243,7 +243,7 @@ in the in-match layer; the **settings surface that configures it** is.
 > **PvE-first, PvP fast-follow**: the single-player **Operations campaign** is the first shippable
 > product and the onboarding surface for *going dark* (invariant #6). Design:
 > **[`pve-campaign.md`](pve-campaign.md)** + **[`customization.md`](customization.md)**; decisions
-> [D58](decisions.md)–[D61](decisions.md); execution plan: **[`pve-campaign-plan.md`](pve-campaign-plan.md)**.
+> [D58](decisions.md)–[D61](decisions.md); execution plan: **[`pve-campaign-plan.md`](plans/pve-campaign-plan.md)**.
 
 **Goal:** a stranger can install the game and play a campaign of missions — learning the
 blindness cost in a place that punishes overstaying *honestly* — with a movable HUD and a
@@ -310,7 +310,7 @@ narrative depth ([Q16](open-questions.md)).
 
 > Net-new content pillar ([D58](decisions.md)–[D61](decisions.md)); design in
 > [`pve-campaign.md`](pve-campaign.md)/[`customization.md`](customization.md), build sequencing in
-> [`pve-campaign-plan.md`](pve-campaign-plan.md). All unchecked — this is the active design→build
+> [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). All unchecked — this is the active design→build
 > frontier.
 
 - [ ] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
@@ -345,7 +345,7 @@ narrative depth ([Q16](open-questions.md)).
 - [x] In-session shell — pause, surrender/leave, post-match summary. **Fully landed:** the
   post-match summary surface + its DISMISS button → leave-match → return-to-title transition
   ([D52](decisions.md)); pause overlay (Esc on desktop ([D53](decisions.md)), back-gesture on
-  Android ([D54](decisions.md))) + in-match surrender are now wired ([phase-4-plan WS-B](phase-4-plan.md)).
+  Android ([D54](decisions.md))) + in-match surrender are now wired ([phase-4-plan WS-B](plans/phase-4-plan.md)).
 - [ ] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
   cue for the directional-flash + audio alert channel)
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions
@@ -387,7 +387,7 @@ narrative depth ([Q16](open-questions.md)).
 
 > Where we sit against the field — Delta Force, CoD/Warzone Mobile, the FPS/RTS hybrid
 > graveyard (Eximius/Silica/NS2), and the CoH/StarCraft RTS lineage — is analysed in
-> **[`positioning.md`](positioning.md)**. The strategy in one line: **we lead on the four
+> **[`positioning.md`](positioning/positioning.md)**. The strategy in one line: **we lead on the four
 > things that define the product (command + embody, vision-as-cost, a deterministic sim built
 > for 200-unit lockstep — substrate landed, on-device scale is Phase 3, symmetric hybrid PvP)
 > and lag on the production-value table-stakes every mobile
@@ -434,7 +434,7 @@ narrative depth ([Q16](open-questions.md)).
   (#1/#6).
 
 **PC-facing parity** — meeting a seated, genre-literate player's expectations without forking the
-game (full analysis: [`positioning-pc.md`](positioning-pc.md)):
+game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
 
 - [ ] **PC-1 — Mouse-and-keyboard combat feel.** The embodied layer must feel right with a *mouse*,
   not just thumbs — precise aim, sensible defaults, FOV control. PC players notice instantly.
@@ -448,7 +448,7 @@ game (full analysis: [`positioning-pc.md`](positioning-pc.md)):
   decades — a PC-only longevity lever.
 
 **Cross-platform parity** — keeping *one game* fair and coherent across phone/PC/console (full
-analysis: [`positioning-cross-platform.md`](positioning-cross-platform.md)):
+analysis: [`positioning-cross-platform.md`](positioning/positioning-cross-platform.md)):
 
 - [ ] **XP-1 — Cross-save & handoff.** Match/campaign/progress state lives server-side so you stop on
   one device and resume on another ("commute on your phone, finish on PC").
@@ -464,7 +464,7 @@ analysis: [`positioning-cross-platform.md`](positioning-cross-platform.md)):
 > **Protect the LEAD (no new work, but do not let it erode):** the determinism gates
 > (`determinism.yml` cross-arch matrix, per-tick checksum diffing) and the **symmetric** hybrid
 > PvP shape — each player is their own commander-and-avatar, never the asymmetric
-> commander-vs-grunts split that killed every prior hybrid ([`positioning.md`](positioning.md) §3).
+> commander-vs-grunts split that killed every prior hybrid ([`positioning.md`](positioning/positioning.md) §3).
 > Co-op ([Q14](open-questions.md)) is the one place that temptation returns; if built, each player
 > keeps both jobs.
 
@@ -507,5 +507,5 @@ phone. Iterate logic on the emulator; **profile performance on real target devic
 | **Determinism bugs** | Any float leaking into the sim breaks lockstep silently | Enforce fixed-point in the sim layer; per-tick checksum diffing in CI from day one |
 | **Device fragmentation** | Android GPU/thermal variance is wide | Quality tiers + dynamic scaling baked in early, not as a post-ship patch |
 | **Blindness feels unfair** | "World goes dark" can read as robbery if mishandled | Thin alert thread, strong audio, visceral/constant blindness feedback, fast re-entry (design doc §6) |
-| **FPS-fidelity gap vs incumbents** | We share a storefront with Delta Force / CoD Mobile and *will* lose any head-to-head on raw gunfeel, animation, and texture fidelity; a shooter player who bounces in 10 s never reaches the hybrid | Don't fight on their axis — reach a written *good-enough floor* (CP-2/CP-3), consciously concede photoreal tier, and let the command+embody hybrid be the reason to stay ([`positioning.md`](positioning.md)) |
-| **Compared piecemeal, not whole** | Judged feature-by-feature (our FPS vs DF, our gunsmith vs CoD, our RTS vs CoH) a focused incumbent wins every isolated column | Keep the *intersection* legible — the command×embody×vision-cost square is empty; lead there, parity elsewhere ([`positioning.md`](positioning.md) §2/§6) |
+| **FPS-fidelity gap vs incumbents** | We share a storefront with Delta Force / CoD Mobile and *will* lose any head-to-head on raw gunfeel, animation, and texture fidelity; a shooter player who bounces in 10 s never reaches the hybrid | Don't fight on their axis — reach a written *good-enough floor* (CP-2/CP-3), consciously concede photoreal tier, and let the command+embody hybrid be the reason to stay ([`positioning.md`](positioning/positioning.md)) |
+| **Compared piecemeal, not whole** | Judged feature-by-feature (our FPS vs DF, our gunsmith vs CoD, our RTS vs CoH) a focused incumbent wins every isolated column | Keep the *intersection* legible — the command×embody×vision-cost square is empty; lead there, parity elsewhere ([`positioning.md`](positioning/positioning.md) §2/§6) |

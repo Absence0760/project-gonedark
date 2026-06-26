@@ -6,7 +6,7 @@
 > both reaffirm [D13](decisions.md) (cosmetic-only monetization) and pillar 4 (*the cost
 > must always feel fair* — [`game-design.md`](game-design.md) §2). Why the gunsmith is
 > deliberately *horizontal* where CoD Mobile's is vertical — the competitive framing — is
-> [`positioning.md`](positioning.md) §4 / CP-1.
+> [`positioning.md`](positioning/positioning.md) §4 / CP-1.
 
 The hard rule that shapes all three: **nothing a player can unlock or buy may grant a net
 power advantage.** Weapon *function* is horizontal (trades, not upgrades); weapon *looks*,
@@ -121,5 +121,5 @@ editor and are not optional.
 | **Cosmetics** (weapon/unit looks) | No — render-only | Can't touch determinism / hitbox / silhouette / tell | [D13](decisions.md)/[D60](decisions.md) |
 | **HUD layout editor** | No — input-mapping + screen-space draw | Placement not information; obeys invariant #6 | [D61](decisions.md) |
 
-Build sequencing for all three is in [`pve-campaign-plan.md`](pve-campaign-plan.md)
+Build sequencing for all three is in [`pve-campaign-plan.md`](plans/pve-campaign-plan.md)
 (WS-C gunsmith, WS-D HUD editor); cosmetics ride the Phase 4 store surface.

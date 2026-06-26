@@ -15,7 +15,7 @@ This is the **PC** companion to the positioning family:
 - [`positioning-cross-platform.md`](positioning-cross-platform.md) — how we keep *one game*
   fair and coherent across phone, PC, and console.
 
-Nothing here reopens a [locked invariant](../CLAUDE.md). This is strategy, not design.
+Nothing here reopens a [locked invariant](../../CLAUDE.md). This is strategy, not design.
 
 ---
 
@@ -75,7 +75,7 @@ respects our RTS half.
 
 ### Company of Heroes 3 — *our literal model*
 Squad combat, cover, suppression, territory control. This **is** the game our command
-layer is built in the image of ([`game-design.md`](game-design.md) §1). The bar it sets:
+layer is built in the image of ([`game-design.md`](../game-design.md) §1). The bar it sets:
 tactical depth that reads instantly. The lesson hiding in its history: even *Relic*, the
 masters, shipped CoH3 to a rough reception in 2023 and had to win players back with
 updates. **Pure tactical RTS is hard and a little niche on its own** — which is exactly why
@@ -143,7 +143,7 @@ Two things make it *not* our competitor, and both are gifts to us:
 Halo wrote the book on **handcrafted FPS encounters** and the "thirty seconds of fun" combat
 loop, and the series is moving to Unreal Engine 5 under the new Halo Studios. We won't match
 its fidelity — but its *encounter design* is the model for our PvE missions
-([`pve-campaign.md`](pve-campaign.md)): pressure, then relief, then a memorable set-piece.
+([`pve-campaign.md`](../pve-campaign.md)): pressure, then relief, then a memorable set-piece.
 
 ---
 
@@ -152,8 +152,8 @@ its fidelity — but its *encounter design* is the model for our PvE missions
 ### Destiny 2 — *the decade-long shooter*
 Destiny is the proof that **a shooter can be a hobby you keep for years** — deep build-crafting,
 seasonal content, a PvE endgame people return to. Its weapon/build depth is a north star for
-our gunsmith ([`customization.md`](customization.md)) and its content cadence for our live-ops
-(CP-8 in [`roadmap.md`](roadmap.md)).
+our gunsmith ([`customization.md`](../customization.md)) and its content cadence for our live-ops
+(CP-8 in [`roadmap.md`](../roadmap.md)).
 
 The cautionary half: even Destiny's *best* and most acclaimed expansion (The Final Shape, 2024,
 which wrapped its decade-long story) **made less money than the ones before it.** Live-service
@@ -214,7 +214,7 @@ mobile rarely gets.
 
 ## 8. What this means for the build (PC-facing work)
 
-These map to roadmap items tagged **PC-n** in [`roadmap.md`](roadmap.md) → *Competitive
+These map to roadmap items tagged **PC-n** in [`roadmap.md`](../roadmap.md) → *Competitive
 parity*. They're about meeting PC expectations *without* betraying the cross-platform plan or
 the invariants.
 
@@ -227,7 +227,7 @@ the invariants.
   a seed + an input log; replays and spectator view are *cheap* and a genuine PC/e-sports
   differentiator. Low cost, high signal.
 - **PC-4 — Mods / data-driven content.** Missions and scenarios are already **data**
-  ([`pve-campaign.md`](pve-campaign.md)). Exposing that as moddable content is how *StarCraft*
+  ([`pve-campaign.md`](../pve-campaign.md)). Exposing that as moddable content is how *StarCraft*
   and *Total War* stayed alive for decades — a longevity lever unique to PC.
 
 > **The guardrail:** none of this is allowed to fork the game. The PC build is the *same shared

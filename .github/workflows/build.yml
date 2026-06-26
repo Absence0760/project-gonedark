@@ -1,4 +1,4 @@
-# Graphical / host / Android build-rot guard (docs/phase-1-plan.md §5 steps 4-8).
+# Graphical / host / Android build-rot guard (docs/plans/phase-1-plan.md §5 steps 4-8).
 #
 # The determinism matrix (determinism.yml) is the load-bearing job: it diffs per-tick
 # checksums across arch and a divergence there is a real lockstep desync — NEVER narrow

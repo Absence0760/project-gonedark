@@ -1,5 +1,5 @@
 //! HTTP surface — the router, app state, and handlers for the telemetry ingest endpoint and
-//! the live-ops config endpoint. Phase 4 WS-D (docs/phase-4-plan.md §4).
+//! the live-ops config endpoint. Phase 4 WS-D (docs/plans/phase-4-plan.md §4).
 //!
 //! Consent travels per-request in the `X-Consent-Analytics` header (the native consent screen,
 //! surface 8 — deferred — will set it; until then any non-consenting/absent value denies). The
@@ -89,7 +89,7 @@ async fn health() -> &'static str {
 }
 
 async fn root() -> &'static str {
-    "going-dark backend (telemetry + consent gate scaffold — docs/phase-4-plan.md WS-D)"
+    "going-dark backend (telemetry + consent gate scaffold — docs/plans/phase-4-plan.md WS-D)"
 }
 
 /// `POST /v1/telemetry` — ingest one event, consent-gated. Returns:

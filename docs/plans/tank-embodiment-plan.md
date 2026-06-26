@@ -215,7 +215,7 @@ time) and **arcing fire** (drop) — while keeping units, terrain, fog, and the 
 The projectile pool is a **bounded ring** (a hard cap, `log()`-ed if hit) so a 200-unit firefight
 can't unbounded-spawn shells against the Phase-3 thermal budget. Whether units ever need a true
 z-axis (multi-storey cover, real elevation) is the remaining sub-fork, parked in
-[Q13](open-questions.md) — the projectile-local height model is the answer until something needs
+[Q13](../open-questions.md) — the projectile-local height model is the answer until something needs
 more.
 
 ---

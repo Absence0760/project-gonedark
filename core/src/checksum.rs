@@ -1,6 +1,6 @@
 //! Per-tick state checksum (invariant #7). The sim folds its whole state into one of
 //! these every tick, in stable index order; CI diffs the streams across the platform/arch
-//! matrix (docs/phase-1-plan.md §6). A mismatch is a desync — a real bug, never silenced.
+//! matrix (docs/plans/phase-1-plan.md §6). A mismatch is a desync — a real bug, never silenced.
 //! FNV-1a over little-endian bytes so the hash is endianness-stable.
 
 /// Incremental FNV-1a 64-bit hasher.

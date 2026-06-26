@@ -1,4 +1,4 @@
-# Per-tick checksum matrix (CLAUDE.md invariant #7, docs/phase-1-plan.md §6).
+# Per-tick checksum matrix (CLAUDE.md invariant #7, docs/plans/phase-1-plan.md §6).
 #
 # The sim is float-free fixed-point so it must be BIT-IDENTICAL across CPU arch and
 # compiler. This workflow runs the headless `sim-runner` on x86_64 (ubuntu, windows) and
@@ -93,7 +93,7 @@ jobs:
       # ADD-ONLY: the 2-peer lockstep agreed stream. A SEPARATELY-NAMED artifact so it is
       # NOT swept into the `checksums-*.txt` glob the existing `compare` job diffs — the net
       # stream is a distinct group, compared by its own `compare-net` job below (invariant #7,
-      # docs/phase-3-plan.md §"Workstream A" CI note on separately-grouped streams).
+      # docs/plans/phase-3-plan.md §"Workstream A" CI note on separately-grouped streams).
       - name: Emit agreed 2-peer lockstep checksum stream
         run: cargo run -q -p gonedark-net-sim-runner --release -- 300 > "net-checksums-${{ matrix.target }}.txt"
       - uses: actions/upload-artifact@v4
@@ -104,7 +104,7 @@ jobs:
       # SEPARATELY-NAMED artifact (`stress-checksums-*`, NOT `checksums-*`) so it is NOT swept
       # into the `checksums-*.txt` glob the existing `compare` job diffs — the 200-unit scene is
       # a DISTINCT stream from the phase2 scene and must be its own group, compared by the
-      # `compare-stress` job below (invariant #7, docs/phase-3-plan.md §"Workstream A" CI note).
+      # `compare-stress` job below (invariant #7, docs/plans/phase-3-plan.md §"Workstream A" CI note).
       # `--time` is deliberately omitted: it writes only to stderr, but the artifact must be the
       # bare stdout checksum stream.
       - name: Emit per-tick stress (200-unit) checksum stream

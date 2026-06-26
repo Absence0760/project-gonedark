@@ -580,7 +580,7 @@ pub struct Lockstep {
     /// Our own encoded frames, kept for (re)transmission until they fall out of the active
     /// window. Re-sending every drain makes delivery loss-tolerant without ACKs — a deliberate
     /// first-slice simplification; a real ACK/retransmit + flow-control layer is a later slice
-    /// (`docs/phase-3-plan.md` §"Workstream B").
+    /// (`docs/plans/phase-3-plan.md` §"Workstream B").
     retained: BTreeMap<u64, Vec<u8>>,
     /// Our own post-tick checksum per recently-executed tick, recorded by the host via
     /// [`record_checksum`](Self::record_checksum). Used to (a) emit our checksum reports in

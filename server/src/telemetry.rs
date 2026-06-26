@@ -1,5 +1,5 @@
 //! Telemetry pipeline (scaffold) — event schema + a consent-gated ingest/emit path.
-//! Phase 4 WS-D step 2 (docs/phase-4-plan.md §4). Server-side only; **not** in the
+//! Phase 4 WS-D step 2 (docs/plans/phase-4-plan.md §4). Server-side only; **not** in the
 //! deterministic sim path (no `core`/`engine` deps), so there is no checksum concern.
 //!
 //! Every emit path here funnels through [`crate::consent::ConsentGate`] so a non-consenting

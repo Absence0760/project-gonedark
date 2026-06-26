@@ -1,16 +1,16 @@
 # Phase 0.5 — Embodiment-over-network latency spike *(plan)*
 
-> **Status: DONE — PASSED ([`decisions.md`](decisions.md) D15).** Avatar-local prediction
+> **Status: DONE — PASSED ([`decisions.md`](../decisions.md) D15).** Avatar-local prediction
 > made embodied combat feel good over the lockstep netcode in all tested conditions (raw
 > lockstep felt laggy); Q7 resolved, Q8 still open (leaning hold-30 Hz). Phase 1 unblocked.
 > This plan is retained as the record of how the spike was run. (Throwaway, like Phase 0.)
 >
 > **Goal:** prove embodied FPS combat feels acceptable under the chosen
 > deterministic-lockstep + input-delay netcode — *or* decide to change the netcode model
-> ([`open-questions.md`](open-questions.md) Q7) or tick rate (Q8) — **before** committing
+> ([`open-questions.md`](../open-questions.md) Q7) or tick rate (Q8) — **before** committing
 > the engine spine.
 >
-> **Exit criterion (from [`roadmap.md`](roadmap.md)):** a credible path to good embodied
+> **Exit criterion (from [`roadmap.md`](../roadmap.md)):** a credible path to good embodied
 > combat feel over the net, *or* a decision to change Q7/Q8 before Phase 1.
 
 ---
@@ -18,7 +18,7 @@
 ## 1. The precise question
 
 Lockstep + input delay is **RTS-optimal and FPS-hostile** (see
-[`architecture.md`](architecture.md) §"Embodied combat over lockstep"). Input delay
+[`architecture.md`](../architecture.md) §"Embodied combat over lockstep"). Input delay
 **executes inputs several ticks in the future** so every peer has them in time — invisible
 for top-down command, but for a first-person gunfight it is *fixed latency between your
 finger and your avatar aiming/firing.*
@@ -205,6 +205,6 @@ and the architecture doc's "open tension" section is updated to a settled approa
 ---
 
 **On completion:** record the outcome as a `Dn` resolving Q7 (and Q8), update
-[`architecture.md`](architecture.md) §"Embodied combat over lockstep" from *open tension*
-to *settled approach*, mark Phase 0.5 done in [`roadmap.md`](roadmap.md), and only then
+[`architecture.md`](../architecture.md) §"Embodied combat over lockstep" from *open tension*
+to *settled approach*, mark Phase 0.5 done in [`roadmap.md`](../roadmap.md), and only then
 start the Phase 1 engine spine.

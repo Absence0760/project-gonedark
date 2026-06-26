@@ -9,8 +9,8 @@
 > fixed order (W4 → W1 → W2 → W3 → W5 → W6), each with tests green dev+release, the
 > determinism + 2-peer lockstep runners agreeing, and the viz-runner real-pixel assertions
 > passing. The four design forks are logged as
-> **[D37](decisions.md) (embodied combat) / [D38](decisions.md) (win-lose) /
-> [D39](decisions.md) (enemy AI) / [D40](decisions.md) (embodied world)**. It spans the
+> **[D37](../decisions.md) (embodied combat) / [D38](../decisions.md) (win-lose) /
+> [D39](../decisions.md) (enemy AI) / [D40](../decisions.md) (embodied world)**. It spans the
 > unfinished gameplay tail of Phase 2 and the in-match-readability slice of Phase 4. **Honest
 > caveat:** verified by the automated suite (unit tests, determinism matrix, offscreen pixel
 > assertions); the by-hand "play a full match on desktop" feel pass is still owed, and the

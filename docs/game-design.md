@@ -4,7 +4,7 @@
 > Open forks live in [`open-questions.md`](open-questions.md); the reasoning
 > behind locked decisions lives in [`decisions.md`](decisions.md); how this design
 > stacks up against the field (Delta Force, the FPS/RTS-hybrid graveyard, the CoH
-> lineage) lives in [`positioning.md`](positioning.md).
+> lineage) lives in [`positioning.md`](positioning/positioning.md).
 
 ## 1. Concept
 
@@ -236,4 +236,4 @@ yet face a human: it scripts the temptation to overstay and lets the honest-AI c
 / Push) are each a parameterized scenario plus a **host-side objective set** read off the
 deterministic event stream — *not* sim state, so missions add **zero desync surface** (the
 same footing as the win/lose evaluator, fog, and alerts). Full design:
-[`pve-campaign.md`](pve-campaign.md); build sequencing: [`pve-campaign-plan.md`](pve-campaign-plan.md).
+[`pve-campaign.md`](pve-campaign.md); build sequencing: [`pve-campaign-plan.md`](plans/pve-campaign-plan.md).
