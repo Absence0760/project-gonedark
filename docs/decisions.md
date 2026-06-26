@@ -2403,3 +2403,55 @@ unchanged. No float crosses into `core` (the LOD distance + placement math is re
 roster or building set grows, `model_for_unit` and `PROP_LAYOUT` extend; if props ever need to be
 gameplay cover they must become sim entities and pass through the snapshot like any other unit
 (never a render-side back-channel to the sim — invariant #4).
+
+---
+
+## D51 — Embodied FPS controls: ammo+reload+crouch mechanics + the COD-style on-screen touch HUD
+
+**Status:** decided + landed (`core` mechanics + `pal`/`engine` touch seam + `pal-android` multi-touch
+forwarding + `render` on-screen GUI); workspace green, `core` determinism tests pass in both profiles,
+sim-runner checksum stream verified bit-stable across runs.
+
+**Decision:** Build the shipping first-person control scheme that [D14](#d14--phase-0-control-prototype-passes-touch-feel-risk-retired)'s Phase-0 prototype validated
+and deferred. Two halves:
+
+(1) **Three embodied combat mechanics, all deterministic sim state** (fixed-point, folded into the
+per-tick checksum + the authoritative snapshot; `SNAPSHOT_VERSION` 2→3, `WIRE_VERSION` 4→5):
+  - **Ammo + reload** — an *opt-in* magazine on `Weapon` (`mag_size`/`ammo`/`reload_ticks`/`reload_left`).
+    `mag_size == 0` means **no magazine** (infinite ammo), which every AI/auto-combat unit and every
+    pre-existing test uses, so the `combat_system` engage pass is untouched. The gate lives ONLY in the
+    embodied fire path (`combat::resolve_fire`): an empty mag or in-progress reload is a silent dry click
+    (no cooldown spent). `Command::Reload` starts the timer; combat upkeep counts it down and refills.
+    The playable Rifleman/Heavy get real 30/50-round mags from `economy::unit_stats`.
+  - **Crouch posture** — a per-unit `Posture {Standing,Crouched}` array. Crouch is a *marksman stance*:
+    half move speed (`systems::CROUCH_MOVE_SPEED`), a tighter aim cone (`FIRE_CONE_COS_HALF_CROUCHED`) and
+    +25% range (`CROUCH_RANGE_BONUS`) — a deliberate "aim true, reach further, can't reposition" trade.
+    Player-only state (`Command::Crouch`, a toggle resolved off authoritative sim posture so the host
+    holds no toggle bit); AI units stay `Standing` (literal-executor, invariant #3).
+
+(2) **The Android on-screen FPS HUD** — a floating **left move stick**, a **right drag-to-look region**
+(no visible stick; COD-Mobile feel), and floating **Fire / Crouch / Reload / Surface** buttons. The pure,
+host-tested `engine::touch_controls` seam turns raw `InputFrame.touches` into the embodied intents (the
+testable logic an Android `MotionEvent` can't host); `pal-android` only forwards the down-pointer set;
+`render::touch_controls` draws the controls as a screen-space LOAD overlay with shader-drawn glyphs (no
+binary art). Desktop keeps keyboard+mouse (C=crouch, V=reload) — the GUI is **Android-only**.
+
+**The Surface button supersedes the two-finger toggle while embodied.** Twin-stick play means two
+fingers are *constantly* down (move + look), so the old two-finger embody/surface gesture would eject the
+player mid-fight. The Android two-finger gesture is now **embody-only** (`map_input_commands` no-ops it
+when already embodied); ejecting is the on-screen Surface button.
+
+**Why:** the embodied view was uncontrollable on a touchscreen (`pal-android` forwarded only a single
+command-layer pointer). Move/look/fire already had deterministic seams; ammo/reload/crouch are the buttons
+those FPS controls imply, and the user chose full mechanics over dead buttons. Scoping ammo/reload/crouch
+to the **embodied path only** keeps RTS auto-combat balance byte-identical (the engage pass never reads the
+new fields) and keeps AI units literal executors that never manage ammo. Keeping the new state in the
+checksum is mandatory — it affects fire/movement, so an unfolded field would desync lockstep silently
+(invariant #1/#7). The testable logic lives in `engine` (not `pal-android`) per the standing seam rule.
+
+**Consequences:** new sim state means the lockstep/snapshot codecs grew (versioned, so a stale peer is
+rejected at the handshake, not desynced mid-session). Crouch's tighter cone is a *downside for sloppy aim*
+paid for by the range bonus — tune against feel later (the cone/range/speed constants are baseline, not
+locked). The on-screen icons are shader glyphs for now; real Inkscape-exported art is later polish (D46
+pipeline), not a blocker. Gyro aim is a deferred optional aid. The numbers (mag sizes, reload ticks,
+crouch multipliers) are a playtest baseline.

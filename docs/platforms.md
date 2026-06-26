@@ -113,13 +113,18 @@ ever consumes **orders/intents**, never raw input. Each platform's input layer
 | Input class | Platforms | Command layer | Embodied (FPS) layer |
 |---|---|---|---|
 | **Mouse + keyboard** | Windows, Linux | native CoH paradigm — *easy* | mouse-look + WASD — *easy, familiar* |
-| **Touch + gyro** | Android, iOS | the hard problem (Phase 0) | touch sticks / gyro aim — *hard* |
+| **Touch + gyro** | Android, iOS | tap-select / tap-command, two-finger embody (D43) | **shipped: left move stick + right drag-look + Fire/Crouch/Reload/Surface buttons** (D51) |
 | **Gamepad** | all (optional) | cursor/radial — *medium* | twin-stick — *medium* |
 
 **Design consequence:** desktop gets the *native* CoH control feel almost for free,
-while mobile is where the control scheme must be invented. Prototyping controls
-(Phase 0) should cover **both** input classes, because the embody↔command swap feels
-different on each — and the game must ship feeling good on all of them.
+while mobile is where the control scheme must be invented. The Phase-0 prototype
+validated the embodied scheme on real hardware ([D14](decisions.md)); the shipping
+COD-style on-screen HUD is now built ([D51](decisions.md)). The raw touch points cross
+the PAL as `InputFrame.touches`; the pure `engine::touch_controls` seam (not the
+per-platform backend) maps them to intents, so the core stays input-agnostic and the
+mapping is host-testable. **The on-screen embodied GUI is Android-only**; desktop keeps
+keyboard+mouse. While embodied, two fingers mean move+look, so ejecting to command is the
+on-screen **Surface** button — not the two-finger gesture (which stays embody-only).
 
 ## 6. Per-device optimization & quality tiers
 

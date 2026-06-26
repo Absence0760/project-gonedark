@@ -171,6 +171,22 @@ store the input stream, not the world state.
   sim events (damage, capture) surfaced to the embodied HUD as direction + audio
   only — no map reveal. Audio routing (bleeding strategic-layer sound into the
   embodied mix) is the one system that needs real attention here.
+- **Embodied combat mechanics are deterministic sim state, embodied-only** ([D51](decisions.md)).
+  `Weapon` carries an *opt-in* magazine (`mag_size`/`ammo`/`reload_ticks`/`reload_left`;
+  `mag_size == 0` = no magazine, the default for AI/auto units — so the `combat_system` engage pass is
+  untouched); the ammo gate + decrement live only in the embodied `combat::resolve_fire`, and a reload
+  timer counts down in combat upkeep. A per-unit `Posture {Standing,Crouched}` array makes crouch slow
+  movement (`systems::CROUCH_MOVE_SPEED`) and tighten/extend embodied aim. New `Command::Reload` /
+  `Command::Crouch` ride the lockstep stream; all of it is folded into the per-tick checksum and the
+  authoritative snapshot (so `SNAPSHOT_VERSION` 2→3, `WIRE_VERSION` 4→5 — a stale peer is rejected at
+  the handshake, never desynced mid-session).
+- **Embodied input is one platform-agnostic intent stream.** `pal::InputFrame` carries the embodied
+  axes/edges (`move_axis`/`look_axis`/`fire`/`crouch_pressed`/`reload_pressed`) plus a raw multi-touch
+  array (`touches`/`touch_count`). The pure, host-tested `engine::touch_controls` seam turns the touch
+  set into those intents + the on-screen-HUD geometry (the COD-style move stick + drag-look +
+  Fire/Crouch/Reload/Surface buttons), so the testable logic lives in `engine`, not the
+  un-unit-testable `pal-android`. Desktop fills the same intents from keyboard+mouse; the on-screen GUI
+  (`render::touch_controls`) is Android-only.
 
 ## Rendering — Vulkan, draw-call disciplined
 

@@ -73,6 +73,23 @@ These two layers are mutually exclusive in time. That exclusivity *is* the game.
   blindness and the whole FPS layer becomes a novelty nobody uses. Manual control
   has to win the local fight in ways the AI can't.
 
+**The embodied control scheme** ([D14](decisions.md) prototype → [D51](decisions.md) shipping;
+mobile-first, COD-Mobile-shaped). On touch: a floating **left move stick**, a **right drag-to-look**
+region (no visible stick), and floating **Fire / Crouch / Reload / Surface** buttons. On desktop:
+WASD + mouse-look + click-fire, with C/R-style keys for crouch/reload. Because two fingers are
+*always* down in twin-stick play (move + look), **ejecting back to command is the on-screen Surface
+button**, not a two-finger gesture. The three combat mechanics those buttons drive are deterministic
+sim state (so they stay bit-identical in lockstep):
+
+- **Ammo + reload.** The embodied weapon has a magazine; running it dry leaves you dry-clicking until
+  you tap **Reload** (a real timed reload). This is the moment-to-moment FPS resource — *don't get
+  caught reloading.* Auto-combat (AI units) ignores ammo entirely; it is a first-person-only pressure.
+- **Crouch — the marksman stance.** Crouching halves your move speed but tightens your aim and extends
+  your range: a deliberate *"set up the precise long shot, but you can't reposition"* trade, paid for
+  with the mobility you'd want when the world is dark around you.
+- Manual fire stays sim-authoritative (the hit is resolved on every peer, [D51](decisions.md)), so
+  embodiment "winning the local fight" is real mechanical advantage, not a client-side fudge.
+
 ## 6. Going dark — the vision model
 
 **Locked decision: while embodied, the world goes dark.** Fog of war reverts to
