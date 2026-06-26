@@ -95,6 +95,20 @@ const EYE_HEIGHT: f32 = 1.5;
 /// Mouse-look sensitivity (radians of yaw per accumulated raw look-delta unit).
 const LOOK_SENSITIVITY: f32 = 0.0025;
 
+/// Command-camera zoom bounds (half-extent in world units). Floor = closest framing (read a single
+/// skirmish), ceiling = widest (survey the whole playfield). [`TOPDOWN_HALF_EXTENT`] is the default
+/// inside this band.
+const CAM_HALF_EXTENT_MIN: f32 = 12.0;
+const CAM_HALF_EXTENT_MAX: f32 = 120.0;
+/// Multiplicative zoom per wheel notch: one notch toward the player shrinks the half-extent to
+/// `1/CAM_ZOOM_PER_NOTCH` of its value (zoom in), away grows it. Geometric so each notch feels equal
+/// at any zoom.
+const CAM_ZOOM_PER_NOTCH: f32 = 1.12;
+/// Command-camera pan rate as a fraction of the current half-extent per second at full stick
+/// deflection. Scaling pan speed by the zoom keeps the felt pan velocity (screen-fractions/sec)
+/// constant: zoomed out you sweep more ground, zoomed in you nudge precisely.
+const CAM_PAN_RATE: f32 = 1.3;
+
 /// Avatar-local prediction (D15): the predicted embodied eye eases toward the authoritative
 /// target by this fraction each frame — high enough to feel responsive, low enough that a
 /// per-tick correction reads as smooth rather than a snap. Presentation feel knob; tunable.
@@ -246,26 +260,33 @@ const COMMAND_PITCH_DEG: f32 = 58.0;
 /// the scene; it must stay larger than the scene's half-extent in Z + the framed ground radius.
 const COMMAND_EYE_DIST: f32 = 120.0;
 
-/// Command-view orthographic view-projection (free fn — viewport only, no `Game`/device needed).
-/// World units are on the ground plane (z = 0; see `render/shader.wgsl`); the camera looks down at a
-/// fixed [`COMMAND_PITCH_DEG`] tilt from the south (−Y), framing roughly `±TOPDOWN_HALF_EXTENT`
-/// (aspect-corrected on the long axis; the tilt foreshortens the Y axis slightly). World +Y reads as
-/// "into the screen / north", world +Z reads as "up". The tilt is pure pitch (no yaw) so the ground
-/// projection stays axis-separable — see [`COMMAND_PITCH_DEG`].
-fn topdown_view_proj(width: u32, height: u32) -> Mat4 {
+/// Command-view orthographic view-projection (free fn — viewport + camera state only, no
+/// `Game`/device needed). World units are on the ground plane (z = 0; see `render/shader.wgsl`); the
+/// camera looks down at a fixed [`COMMAND_PITCH_DEG`] tilt from the south (−Y). `(focus_x, focus_y)`
+/// is the ground point centered on screen (camera PAN), and `half_extent` is the world radius framed
+/// to the shorter screen edge (camera ZOOM — smaller = closer). Aspect-corrected on the long axis;
+/// the tilt foreshortens the Y axis slightly. World +Y reads as "into the screen / north", +Z "up".
+/// The tilt is pure pitch (no yaw) so the ground projection stays axis-separable — see
+/// [`COMMAND_PITCH_DEG`]. Pan only translates the eye+target together, so it never shears that
+/// separability (band-select stays exact); zoom only scales the ortho extents.
+fn topdown_view_proj(width: u32, height: u32, focus_x: f32, focus_y: f32, half_extent: f32) -> Mat4 {
     let aspect = width.max(1) as f32 / height.max(1) as f32;
     let (hx, hy) = if aspect >= 1.0 {
-        (TOPDOWN_HALF_EXTENT * aspect, TOPDOWN_HALF_EXTENT)
+        (half_extent * aspect, half_extent)
     } else {
-        (TOPDOWN_HALF_EXTENT, TOPDOWN_HALF_EXTENT / aspect)
+        (half_extent, half_extent / aspect)
     };
     let pitch = COMMAND_PITCH_DEG.to_radians();
-    // Eye south-and-above the focus; look at the origin with world +Z as "up" (no roll/yaw).
-    let eye = Vec3::new(
-        0.0,
-        -COMMAND_EYE_DIST * pitch.cos(),
-        COMMAND_EYE_DIST * pitch.sin(),
-    );
+    // Focus point on the ground; eye sits south-and-above it; look straight at it (+Z up, no
+    // roll/yaw). Translating both eye and target by the focus is a rigid pan — the view direction
+    // and the pure-pitch tilt are unchanged, so screen-X still depends only on world-X (and Y on Y).
+    let focus = Vec3::new(focus_x, focus_y, 0.0);
+    let eye = focus
+        + Vec3::new(
+            0.0,
+            -COMMAND_EYE_DIST * pitch.cos(),
+            COMMAND_EYE_DIST * pitch.sin(),
+        );
     let proj = Mat4::orthographic_rh(
         -hx,
         hx,
@@ -274,7 +295,7 @@ fn topdown_view_proj(width: u32, height: u32) -> Mat4 {
         COMMAND_EYE_DIST - 100.0,
         COMMAND_EYE_DIST + 140.0,
     );
-    let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Z);
+    let view = Mat4::look_at_rh(eye, focus, Vec3::Z);
     proj * view
 }
 
@@ -386,6 +407,45 @@ fn should_auto_surface(embodied: bool, avatar_present: bool) -> bool {
     embodied && !avatar_present
 }
 
+/// Integrate one frame's horizontal mouse-look into the embodied yaw (radians). PURE so the
+/// turn-direction is unit-testable without a window. The look delta is **subtracted**: with the
+/// embodied basis (look dir `(cos yaw, sin yaw)`, world +Z up) the camera's screen-right is world
+/// −Y, so a rightward mouse move (`look_dx > 0`) must *decrease* yaw to rotate the view toward −Y
+/// (i.e. turn right). Adding it inverts the horizontal axis — the bug this fixes.
+#[inline]
+fn integrate_look_yaw(yaw: f32, look_dx: f32) -> f32 {
+    yaw - look_dx * LOOK_SENSITIVITY
+}
+
+/// Advance the command camera's ground focus (PAN) from the WASD / stick `move_axis` over `dt`
+/// seconds. PURE → testable without a device. `move_axis` is the host screen-convention stick
+/// (`+mx` = right/`D`, `+my` = down, so `W`/up is `−my`); the command ground maps screen-right →
+/// world +X and screen-up/north → world +Y, so the world pan is `(+mx, −my)`. Speed scales with
+/// `half_extent` ([`CAM_PAN_RATE`]) so the felt pan velocity is constant across zoom. Returns the new
+/// `(focus_x, focus_y)`.
+#[inline]
+fn pan_focus(
+    focus_x: f32,
+    focus_y: f32,
+    move_axis: (f32, f32),
+    half_extent: f32,
+    dt: f32,
+) -> (f32, f32) {
+    let (mx, my) = move_axis;
+    let step = CAM_PAN_RATE * half_extent * dt;
+    (focus_x + mx * step, focus_y - my * step)
+}
+
+/// Apply wheel `scroll` notches to the command camera's `half_extent` (ZOOM), clamped to
+/// [`CAM_HALF_EXTENT_MIN`]..=[`CAM_HALF_EXTENT_MAX`]. PURE → testable. Positive scroll = zoom IN =
+/// smaller extent. Geometric (`MIN^scroll`) so each notch scales by the same factor at any zoom and
+/// the result never flips sign or hits zero.
+#[inline]
+fn zoom_half_extent(half_extent: f32, scroll: f32) -> f32 {
+    let scaled = half_extent * CAM_ZOOM_PER_NOTCH.powf(-scroll);
+    scaled.clamp(CAM_HALF_EXTENT_MIN, CAM_HALF_EXTENT_MAX)
+}
+
 /// The player's **active camp** for the per-camp command panels (train + upgrade) — the lowest-index
 /// **built, operational** [`BuildingKind::Camp`] owned by `faction`, or `None` if it has none. A pure,
 /// deterministic read over the world (stable entity-index order, identical on every peer): no autonomy
@@ -474,6 +534,13 @@ pub struct Game {
     /// Accumulated embodied yaw (radians), integrated from raw look deltas. Presentation
     /// only — never written into the sim (D15). The aim half of the predicted avatar transform.
     yaw: f32,
+
+    /// Command-camera ground focus (the world point centered on screen) and framed half-extent
+    /// (zoom). Presentation only — the RTS camera pans (`cam_focus_*`) and zooms (`cam_half_extent`)
+    /// with no effect on the sim. Updated from `move_axis`/`scroll` each command-view frame.
+    cam_focus_x: f32,
+    cam_focus_y: f32,
+    cam_half_extent: f32,
 
     /// Avatar-local prediction (D15): the smooth, led embodied **eye** for the first-person
     /// camera + audio listener. PRESENTATION ONLY — see [`AvatarPrediction`]; it holds no sim
@@ -629,6 +696,9 @@ impl Game {
             embodied: false,
             camera: CameraMode::TopDown,
             yaw: 0.0,
+            cam_focus_x: 0.0,
+            cam_focus_y: 0.0,
+            cam_half_extent: TOPDOWN_HALF_EXTENT,
             avatar: AvatarPrediction::default(),
             selection: Selection::new(),
             radial_menu: Vec::new(),
@@ -871,6 +941,20 @@ impl Game {
         embodied_view_proj(px, py, self.yaw, width, height)
     }
 
+    /// Command-view orthographic view-projection at the current pan focus + zoom — thin wrapper
+    /// over the free [`topdown_view_proj`] threading `self.cam_focus_*` / `self.cam_half_extent`.
+    /// Single source of the command matrix so picking (`unproject_topdown`) and rendering always
+    /// agree on the framing.
+    fn command_view_proj(&self, width: u32, height: u32) -> Mat4 {
+        topdown_view_proj(
+            width,
+            height,
+            self.cam_focus_x,
+            self.cam_focus_y,
+            self.cam_half_extent,
+        )
+    }
+
     /// Advance and present one frame: map this frame's `input` → sim commands, drain the
     /// fixed-tick accumulator by `dt_secs`, build the camera, and render the interpolated
     /// snapshot into `view`. `viewport` is the surface size in pixels. The host owns acquiring
@@ -904,6 +988,24 @@ impl Game {
         self.tuning
             .observe_frame(dt_secs, self.thermal, budget_secs);
 
+        // 0b. Command-camera pan + zoom (presentation only — never touches the sim). While in the
+        // command view the WASD/stick `move_axis` pans the ground focus and the wheel `scroll` zooms
+        // the framing; both feed the SAME `topdown_view_proj` used for picking below, so selection,
+        // the pick radius (zoom-aware via `gesture_scale`), and what's drawn stay consistent. Gated
+        // to !embodied so `move_axis` drives the avatar (not the camera) while possessed.
+        if !self.embodied {
+            let (fx, fy) = pan_focus(
+                self.cam_focus_x,
+                self.cam_focus_y,
+                input.move_axis,
+                self.cam_half_extent,
+                dt_secs,
+            );
+            self.cam_focus_x = fx;
+            self.cam_focus_y = fy;
+            self.cam_half_extent = zoom_half_extent(self.cam_half_extent, input.scroll);
+        }
+
         // 1. Map input → sim commands (applied on the first step of this frame). The pure
         // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
         // `map_input_commands`; here we apply the resulting embodiment state transition.
@@ -919,7 +1021,7 @@ impl Game {
         // fixed-pixel finger jitter reads as a tap (and the pick radius stays a usable hit target)
         // regardless of camera zoom. Float geometry at the input boundary — never enters the sim.
         let (pointer_world, gesture_scale) = if !self.embodied {
-            let vp = topdown_view_proj(width, height);
+            let vp = self.command_view_proj(width, height);
             let pw = input
                 .pointer
                 .and_then(|(px, py)| unproject_topdown(&vp, px, py, width, height));
@@ -1062,8 +1164,9 @@ impl Game {
             }
         }
 
-        // Integrate look into presentation-only yaw (D15: never into the sim).
-        self.yaw += input.look_axis.0 * LOOK_SENSITIVITY;
+        // Integrate look into presentation-only yaw (D15: never into the sim). Subtracted, not
+        // added, so a rightward mouse turns the view right (see `integrate_look_yaw`).
+        self.yaw = integrate_look_yaw(self.yaw, input.look_axis.0);
 
         // Embodied fire (W1, invariant #5/#1): while possessed, a pressed trigger emits a
         // `Command::Fire` whose aim direction is the host yaw quantized to `Fixed` AT THE BOUNDARY
@@ -1288,7 +1391,7 @@ impl Game {
 
         // 4. Build the camera for the active view (alpha computed above for the avatar lead).
         let view_proj = match self.camera {
-            CameraMode::TopDown => topdown_view_proj(width, height),
+            CameraMode::TopDown => self.command_view_proj(width, height),
             CameraMode::Embodied => self.embodied_view_proj(width, height),
         };
         let camera = Camera {
@@ -1756,7 +1859,7 @@ mod tests {
     #[test]
     fn topdown_projects_origin_to_screen_center() {
         let (width, height) = (1920u32, 1080u32);
-        let vp = topdown_view_proj(width, height);
+        let vp = topdown_view_proj(width, height, 0.0, 0.0, TOPDOWN_HALF_EXTENT);
         let clip = vp * Vec4::new(0.0, 0.0, 0.0, 1.0);
         let ndc_x = clip.x / clip.w;
         let ndc_y = clip.y / clip.w;
@@ -1801,7 +1904,7 @@ mod tests {
     #[test]
     fn unproject_center_pixel_is_origin() {
         let (width, height) = (1920u32, 1080u32);
-        let vp = topdown_view_proj(width, height);
+        let vp = topdown_view_proj(width, height, 0.0, 0.0, TOPDOWN_HALF_EXTENT);
         let (wx, wy) =
             unproject_topdown(&vp, width as f32 / 2.0, height as f32 / 2.0, width, height).unwrap();
         assert!(wx.abs() < 1e-3, "center world x = {wx}");
@@ -1814,7 +1917,7 @@ mod tests {
     #[test]
     fn unproject_roundtrips_on_the_tilted_camera() {
         let (width, height) = (1000u32, 1000u32); // square -> symmetric extent
-        let vp = topdown_view_proj(width, height);
+        let vp = topdown_view_proj(width, height, 0.0, 0.0, TOPDOWN_HALF_EXTENT);
 
         // Right edge, vertical centre -> (+half_extent, 0). The centre row stays y=0 (separability),
         // and the X extent is unchanged by the pitch tilt.
@@ -1848,7 +1951,7 @@ mod tests {
     #[test]
     fn command_camera_is_tilted_and_axis_separable() {
         let (width, height) = (1000u32, 1000u32);
-        let vp = topdown_view_proj(width, height);
+        let vp = topdown_view_proj(width, height, 0.0, 0.0, TOPDOWN_HALF_EXTENT);
         let project = |x: f32, y: f32, z: f32| {
             let c = vp * Vec4::new(x, y, z, 1.0);
             (c.x / c.w, c.y / c.w)
@@ -1970,6 +2073,89 @@ mod tests {
             !should_auto_surface(false, true),
             "not embodied + present → nothing to do"
         );
+    }
+
+    /// Mouse-look must not be inverted: a rightward delta (`look_dx > 0`) turns the view to the
+    /// player's right. With look dir `(cos yaw, sin yaw)` and screen-right = world −Y, "turn right"
+    /// means the heading rotates toward −Y, i.e. `sin(yaw)` goes negative. A leftward delta mirrors.
+    #[test]
+    fn look_is_not_inverted() {
+        let right = integrate_look_yaw(0.0, 10.0);
+        assert!(right < 0.0, "rightward mouse decreases yaw: {right}");
+        assert!(right.sin() < 0.0, "view heading turns toward world −Y (screen right)");
+
+        let left = integrate_look_yaw(0.0, -10.0);
+        assert!(left > 0.0, "leftward mouse increases yaw: {left}");
+        assert!(left.sin() > 0.0, "view heading turns toward world +Y (screen left)");
+
+        assert_eq!(integrate_look_yaw(1.234, 0.0), 1.234, "no delta → yaw unchanged");
+    }
+
+    /// Command pan maps the screen stick to world ground motion: `D` (+mx) pans +X, `W` (−my) pans
+    /// +Y (north), and the step scales with both `dt` and the zoom half-extent so the felt velocity
+    /// is constant across zoom.
+    #[test]
+    fn pan_focus_moves_with_the_stick_and_scales_with_zoom() {
+        // D held for the frame: focus slides +X, Y untouched.
+        let (x, y) = pan_focus(0.0, 0.0, (1.0, 0.0), TOPDOWN_HALF_EXTENT, 0.1);
+        assert!(x > 0.0 && (y - 0.0).abs() < 1e-6, "D pans +X only: ({x}, {y})");
+
+        // W is screen-up = −my: north is +Y.
+        let (_, ny) = pan_focus(0.0, 0.0, (0.0, -1.0), TOPDOWN_HALF_EXTENT, 0.1);
+        assert!(ny > 0.0, "W pans +Y (north): {ny}");
+
+        // S (+my) pans −Y, A (−mx) pans −X — opposite signs.
+        let (sx, sy) = pan_focus(0.0, 0.0, (-1.0, 1.0), TOPDOWN_HALF_EXTENT, 0.1);
+        assert!(sx < 0.0 && sy < 0.0, "A/S pan −X/−Y: ({sx}, {sy})");
+
+        // Zoomed out (larger half-extent) sweeps more ground for the same stick + dt.
+        let near = pan_focus(0.0, 0.0, (1.0, 0.0), 20.0, 0.1).0;
+        let far = pan_focus(0.0, 0.0, (1.0, 0.0), 80.0, 0.1).0;
+        assert!(far > near, "pan speed scales with zoom: far {far} > near {near}");
+
+        // Neutral stick is a no-op.
+        assert_eq!(pan_focus(3.0, 5.0, (0.0, 0.0), 40.0, 0.1), (3.0, 5.0));
+    }
+
+    /// Wheel zoom shrinks the half-extent on a positive (zoom-in) notch, grows it on a negative one,
+    /// and clamps hard to the configured band so it can never invert or run away.
+    #[test]
+    fn zoom_half_extent_is_geometric_and_clamped() {
+        let start = 40.0;
+        let zin = zoom_half_extent(start, 1.0);
+        assert!(zin < start, "positive scroll zooms in (smaller extent): {zin}");
+        let zout = zoom_half_extent(start, -1.0);
+        assert!(zout > start, "negative scroll zooms out (larger extent): {zout}");
+
+        // Geometric/symmetric: one notch in then one out returns (within fp) to start.
+        let roundtrip = zoom_half_extent(zin, -1.0);
+        assert!((roundtrip - start).abs() < 1e-3, "in then out round-trips: {roundtrip}");
+
+        // Clamps: a huge zoom-in floors at MIN, a huge zoom-out ceils at MAX.
+        assert_eq!(zoom_half_extent(start, 100.0), CAM_HALF_EXTENT_MIN);
+        assert_eq!(zoom_half_extent(start, -100.0), CAM_HALF_EXTENT_MAX);
+        assert_eq!(zoom_half_extent(start, 0.0), start, "no scroll → unchanged");
+    }
+
+    /// Pan is a rigid translation, so the command projection stays axis-separable at a non-zero
+    /// focus: ground points sharing world-X still share screen-X (and world-Y → screen-Y). This is
+    /// the load-bearing property band-select relies on (mirrors the origin-focus test below).
+    #[test]
+    fn panned_command_view_stays_axis_separable() {
+        let (w, h) = (1280u32, 720u32);
+        let vp = topdown_view_proj(w, h, 17.0, -9.0, 55.0);
+        let clip = |x: f32, y: f32| {
+            let c = vp * Vec4::new(x, y, 0.0, 1.0);
+            (c.x / c.w, c.y / c.w)
+        };
+        // Same world-X, different world-Y → identical screen-X.
+        let (sx0, _) = clip(20.0, -30.0);
+        let (sx1, _) = clip(20.0, 25.0);
+        assert!((sx0 - sx1).abs() < 1e-5, "world-X alone fixes screen-X: {sx0} vs {sx1}");
+        // Same world-Y, different world-X → identical screen-Y.
+        let (_, sy0) = clip(-40.0, 12.0);
+        let (_, sy1) = clip(33.0, 12.0);
+        assert!((sy0 - sy1).abs() < 1e-5, "world-Y alone fixes screen-Y: {sy0} vs {sy1}");
     }
 
     // ---- lockstep drive seam (D27 step 4) ----

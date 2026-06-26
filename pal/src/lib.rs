@@ -83,6 +83,11 @@ pub struct InputFrame {
     pub move_axis: (f32, f32),
     pub look_axis: (f32, f32),
     pub fire: bool,
+    /// Command-view **camera zoom** input this frame: accumulated mouse-wheel / pinch delta,
+    /// positive = zoom IN (closer), negative = zoom OUT. A host-only presentation signal (like
+    /// `look_axis`) — it shrinks/grows the command camera's framing and never enters the sim.
+    /// Command view only; ignored while embodied. Zero on platforms/frames with no wheel input.
+    pub scroll: f32,
 }
 
 /// A platform window / surface + lifecycle.

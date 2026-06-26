@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use gonedark_pal::{InputFrame, PowerState, ThermalSensor, ThermalState};
-use winit::event::{DeviceEvent, ElementState, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::Window;
 
@@ -223,6 +223,8 @@ pub struct DesktopInput {
     // Accumulated raw mouse-look delta since the last drain (cleared each frame).
     look_dx: f32,
     look_dy: f32,
+    // Accumulated mouse-wheel delta since the last drain (cleared each frame). Positive = zoom in.
+    scroll: f32,
     // Edge-triggered latches — set on key/button press, cleared on drain.
     embody_latch: bool,
     surface_latch: bool,
@@ -257,6 +259,7 @@ impl Default for DesktopInput {
             move_right: false,
             look_dx: 0.0,
             look_dy: 0.0,
+            scroll: 0.0,
             embody_latch: false,
             surface_latch: false,
             click_latch: false,
@@ -290,6 +293,16 @@ impl DesktopInput {
             WindowEvent::CursorLeft { .. } => self.on_cursor_left(),
             WindowEvent::MouseInput { state, button, .. } => {
                 self.on_mouse_button(*button, *state == ElementState::Pressed);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                // Normalise both wheel encodings to "notches": a line-delta is already ~±1 per
+                // detent; a pixel-delta (trackpads) is divided by a typical detent height. Wheel-up
+                // (positive) = zoom in. Only the Y axis drives zoom.
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => *y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 120.0,
+                };
+                self.on_mouse_wheel(dy);
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
@@ -408,6 +421,11 @@ impl DesktopInput {
         self.look_dy += dy;
     }
 
+    /// Accumulate mouse-wheel notches for command-view zoom (positive = zoom in; cleared each drain).
+    fn on_mouse_wheel(&mut self, dy: f32) {
+        self.scroll += dy;
+    }
+
     /// Produce one frame's [`InputFrame`] and clear the edge-triggered fields (embody /
     /// surface / click latches) plus the accumulated look delta. Held state (pointer
     /// position, WASD, fire) persists into the next frame, mirroring real key state.
@@ -439,6 +457,7 @@ impl DesktopInput {
             move_axis: (mx, my),
             look_axis: (self.look_dx, self.look_dy),
             fire: self.fire,
+            scroll: self.scroll,
         };
 
         // Clear one-shot state for the next accumulation window. `long_press` is NOT cleared here —
@@ -455,6 +474,7 @@ impl DesktopInput {
         self.upgrade_latch = false;
         self.look_dx = 0.0;
         self.look_dy = 0.0;
+        self.scroll = 0.0;
 
         frame
     }
