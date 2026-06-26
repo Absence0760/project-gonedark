@@ -95,17 +95,30 @@ embodied feel **over the network** is unproven — that is the Phase 0.5 spike (
 
 ---
 
-## Q5 — Single-player, multiplayer, or both — and in what order?
+## Q5 — Single-player, multiplayer, or both — and in what order? — RESOLVED ([D58](decisions.md): PvE-first)
+
+**Resolved in [D58](decisions.md): PvE-first, PvP fast-follow.** The first shippable product is
+the single-player **Operations campaign** ([`pve-campaign.md`](pve-campaign.md)) — the onboarding
+surface for the going-dark mechanic (invariant #6) and the lower-risk way to prove the core loop
+is *fun* before proving it holds up *over the wire* (Phase 3). PvP rides the same
+deterministic-lockstep core as a fast-follow; single-player runs the existing `core::lockstep`
+loop as a 1-peer delay-0 session ([D27](decisions.md)), so no new netcode is in the critical path.
+This takes the pre-production lean (below) and locks it. The PvP-specific forks
+([Q1](#q1--how-thin-is-the-thread-back-to-command-while-embodied), [Q3](#q3--is-possession-instant-and-global-or-leashed))
+stay open — PvE-first defers their *lock* to when live PvP exists, it doesn't resolve them.
+Opens [Q14](#q14--co-op-pve). Original analysis retained below.
+
+---
 
 The design supports both, and the tech (deterministic lockstep) is multiplayer-ready,
-but the *first shippable* target isn't decided.
+but the *first shippable* target wasn't decided.
 
 - PvP is where the attention mind-game sings (Q2).
 - PvE/campaign is a lower netcode risk and a better onboarding surface for the
   blindness mechanic.
 
-**Current lean:** undecided; likely PvE-first to derisk onboarding and skip netcode
-until the core loop is proven, with multiplayer as a fast-follow given the
+**Pre-resolution lean (now locked by [D58](decisions.md)):** PvE-first to derisk onboarding and
+skip netcode until the core loop is proven, with multiplayer as a fast-follow given the
 lockstep-ready architecture.
 
 ---
@@ -288,3 +301,69 @@ mitigations baked into D55: a **bounded projectile ring** (a hard shell-count ca
 hit) keeps the budget honest, and **projectile-local height** delivers drop without the cost/blast
 of a world z-axis. Option (c) was rejected as "neither" (no real leading); (a) was rejected because
 hitscan tank guns read as lasers and undercut the whole reference feel.
+
+---
+
+## Q14 — Co-op PvE? <a id="q14--co-op-pve"></a>
+
+The Operations campaign ([`pve-campaign.md`](pve-campaign.md), [D58](decisions.md)/[D59](decisions.md))
+is designed single-commander first, but deterministic lockstep already supports N peers — so co-op
+is *architecturally* cheap-ish and a natural fast-follow alongside PvP. The fork is **design, not
+tech.**
+
+- **Shared command** — two players co-command one army (split duties, both can embody). Highest
+  coordination, but *whose fog is whose* when one goes dark and the other doesn't? The going-dark
+  cost (invariant #6) is built around **one** attention being divided; two attentions change the
+  core tension fundamentally.
+- **One commander + others embody** — one player runs the macro, others live permanently in units.
+  Cleaner fairness model (one fog of war), but it splits the *one player does both jobs* pillar
+  ([`game-design.md`](game-design.md) §1) across people — arguably a different game.
+- **Separate armies, shared objective** — two commanders, two economies, one mission. Closest to
+  PvP-with-a-shared-enemy; least novel but least invariant risk.
+
+**Why it matters:** the entire design rests on *one* divided attention. Co-op doesn't break the
+tech, it potentially dilutes the pillar — so this needs a deliberate call, not a default.
+
+**Current lean:** single-commander campaign first ([D58](decisions.md) ships that); revisit co-op
+after the solo loop and PvP both exist, leaning *separate armies, shared objective* as the variant
+that least disturbs invariant #6.
+
+---
+
+## Q15 — Mission authoring format: Rust builders or external data files? <a id="q15--mission-authoring-format"></a>
+
+Missions are **data** ([D59](decisions.md)) — a parameterized scenario + an objective set. *Where
+that data lives* is open.
+
+| Option | Upside | Cost / risk |
+|---|---|---|
+| **Rust scenario builders** (like [`sim-runner`](../sim-runner/src/main.rs) today) | Type-safe, no parser, zero new deps; the pattern already exists | Every mission edit is a recompile; designers need Rust; missions ship in the binary |
+| **External data file** (RON / Lua) | Hot-reloadable, designer-editable, fits the dev-workflow scripting lane ([`roadmap.md`](roadmap.md)); missions become content, not code | A schema + loader to build and validate; must stay deterministic (no float leakage from the data into the sim — invariant #1) |
+
+**Why it matters:** missions are the campaign's *content volume* — the thing we'll author the most
+of. A recompile-per-mission loop throttles that; a data format is the primary mitigation for Rust's
+weak engine hot-reload ([D10](decisions.md) tradeoff, [`roadmap.md`](roadmap.md) dev workflow).
+
+**Current lean:** external data file (RON for a first pass — serde-native, no scripting VM), so
+mission design iterates without a recompile. Validate the loader rejects any non-fixed-point input
+so authored data can't smuggle a float into the sim.
+
+---
+
+## Q16 — Campaign narrative depth: light framing or an authored arc? <a id="q16--narrative-depth"></a>
+
+The Operations hub ships with **light briefings** (who/where/why per node — [D59](decisions.md)).
+How far past that to go is open.
+
+- **Light framing** — short briefings + connective text; the hub is a mission delivery system, not
+  a story. Cheapest; keeps focus on the loop.
+- **Authored arc** — a Halo-style throughline with characters, set-piece reveals, scripted beats.
+  Stronger identity and retention; the most expensive content per hour and needs writing/VO/cutscene
+  pipeline none of which exists.
+
+**Why it matters:** narrative is a retention lever but a deep cost sink, and it's easy to over-invest
+before the loop is proven fun. The hub structure ([D59](decisions.md)) supports growing from the
+former into the latter **without restructuring**, so this can stay deferred safely.
+
+**Current lean:** light framing for the first shippable campaign; revisit an authored arc once the
+core loop and difficulty curve are validated by play.

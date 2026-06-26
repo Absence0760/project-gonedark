@@ -35,7 +35,9 @@ flagship; frame-rate/thermal on mid-range silicon and the 200-unit power budget 
 
 | Doc | What it is |
 |---|---|
-| `docs/game-design.md` | The design — pillars, embodiment, the going-dark vision model, unit-AI philosophy |
+| `docs/game-design.md` | The design — pillars, embodiment, the going-dark vision model, unit-AI philosophy, progression/customization (§13), the PvE campaign (§14) |
+| `docs/pve-campaign.md` | The PvE pillar (first shippable product, D58) — the Operations-hub campaign, mission archetypes, the host-side objective system, honest-AI difficulty |
+| `docs/customization.md` | Gunsmith (horizontal sidegrades), cosmetics, the mobile HUD layout editor (D60/D61) — all fairness-bounded |
 | `docs/architecture.md` | Engine & systems reference — native core, deterministic sim, Vulkan, lockstep netcode |
 | `docs/platforms.md` | Cross-platform plan — Windows/Linux/Android/iOS, shared core + native backends |
 | `docs/infrastructure.md` | Local dev (Docker), env/config files, Terraform infra, sops secrets |

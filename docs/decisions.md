@@ -2719,3 +2719,146 @@ and D55's `orient` step). Ships with unit tests for the resolver and a `Sim::ste
 test (a unit driven into a building) so the collide step's wiring rides the `determinism.yml`
 cross-arch run. **Deferred:** non-circular footprints, building-vs-building placement rules, and
 flow-field re-routing around structures.
+
+---
+
+## D58 — PvE-first: the Operations campaign is the first shippable product (resolves Q5)
+
+**Status:** decided (design). Resolves [Q5](open-questions.md) — *single-player, multiplayer, or
+both, and in what order* — which had carried a soft "likely PvE-first" lean since pre-production.
+
+**Decision:**
+
+- **The first shippable product is single-player PvE** — a campaign of missions
+  ([`pve-campaign.md`](pve-campaign.md)). **PvP is a fast-follow** riding the same
+  deterministic-lockstep core, not a parallel track.
+- PvE is the **onboarding surface for the going-dark mechanic** (invariant #6): a controlled
+  place to teach a new player the blindness cost *before* they ever face a human.
+- Single-player runs the **existing** `core::lockstep` loop as a 1-peer, delay-0 session
+  ([D27](decisions.md)) — no new netcode is in the critical path to ship.
+
+**Why:** PvE derisks the two scariest unknowns *independently* — is the core loop **fun**
+(provable single-player) and does it hold up **over the wire** (Phase 3) — instead of betting
+both at once. It is also the only honest way to teach invariant #6: a stranger's first match
+cannot be against another human. The lockstep-ready architecture means choosing PvE-first
+costs nothing toward the PvP fast-follow — the sim, order vocabulary, and netcode are
+single-sourced (invariant #2).
+
+**Consequences:** the roadmap gains a dedicated **Operations-campaign** build section (the
+first shippable slice), sequenced in [`pve-campaign-plan.md`](pve-campaign-plan.md). The
+PvP-specific forks ([Q1](open-questions.md) thread-thinness, [Q3](open-questions.md) leash,
+the PvP attention mind-game) stay open — PvE-first does not resolve them, it defers their
+*lock* to when live PvP exists. Opens [Q14](open-questions.md) (co-op PvE).
+
+---
+
+## D59 — The Operations-hub campaign + a host-side objective system
+
+**Status:** decided (design). The structural design of the D58 campaign.
+
+**Decision:**
+
+- **Structure = an Operations hub** (Company of Heroes meta-map + Delta-Force *Operations*):
+  a **node-graph of replayable missions**, not a linear reel. Clearing a node unlocks its
+  successors; any cleared node replays at higher difficulty. **Modifiers** (Destiny-2-style
+  rotation) change **scenario parameters** (force size, reinforcement cadence, fog rules,
+  time limits) — **never balance numbers** — so the measured combat/economy baseline
+  ([D30](decisions.md)) and determinism are untouched.
+- **Missions are data, not engine:** each is a **parameterized scenario** (a starting world via
+  the data-driven `Sim::new` + spawn path) plus an **objective set**. Four archetypes ship the
+  verbs — **Seize** (the "10 troops, take the base" first mission), **Hold**, **Assassinate/
+  Extract**, **Push**.
+- **Objectives are host-side, not sim state.** An `ObjectiveSet` is evaluated **after
+  `Sim::step`** by reading the per-tick `SimEvent` stream + already-derived faction reads —
+  the **same footing as `evaluate_outcome` ([D38](decisions.md))** and fog/alerts/tell
+  ([D23](decisions.md)/[D33](decisions.md)). It generalizes `evaluate_outcome`'s
+  elimination/territory/timeout rules rather than replacing them.
+- **Difficulty extends the honest commander** ([`commander_orders`](../core/src/commander.rs),
+  [D39](decisions.md)) with a deterministic tier (reserve/unit-mix/cadence/aggression knobs on
+  the seeded planner). It **must never** become omniscient ("you're embodied, attack now") —
+  that is the cheap punisher [`game-design.md`](game-design.md) §9 forbids and would break
+  invariant #6.
+
+**Why:** keeping objectives **out of the checksum fold** means missions can be authored,
+tuned, and reshuffled with **zero lockstep/desync risk** (invariant #7) and zero new cross-arch
+coverage for the objective layer itself — it observes the sim, it never changes it. Expressing
+every borrowed idea (Halo set-pieces, CoH territory objectives, Delta-Force replayable ops,
+Destiny modifiers) as a *scenario parameter* or a *host-side objective* is what keeps the whole
+content pillar from reopening a locked invariant.
+
+**Consequences:** new host-side `Objective`/`ObjectiveSet` types + `ObjectiveCompleted/Failed`
+events feeding the existing `MatchSummary` and a new in-match objective HUD; a `difficulty`
+parameter threaded into the commander. First code slice (objective evaluator + mission 1, with
+`core`/`engine` tests green dev+release and the determinism matrix green) is
+[`pve-campaign-plan.md`](pve-campaign-plan.md) WS-A. Deferred: mission authoring format
+([Q15](open-questions.md)), narrative depth ([Q16](open-questions.md)).
+
+---
+
+## D60 — Horizontal weapon customization: a sidegrade gunsmith, never an upgrade tree
+
+**Status:** decided (design). Reaffirms [D13](decisions.md) (cosmetic-only, no pay-to-win)
+under the new progression surface.
+
+**Decision:**
+
+- **The gunsmith is horizontal.** A CoD-Mobile-style attachment-slot system on the embodied
+  weapon ([D51](decisions.md)) where **every attachment is a trade, not an upgrade** (long
+  barrel → +range / −ADS speed; grip → +recoil control / −handling). Design rule: **no
+  strictly-dominant build** — the same anti-degeneracy bar [D30](decisions.md) holds units to.
+  A loadout is a *playstyle*, not a *power tier*.
+- **Loadout stat deltas are sim state, handled deterministically.** They are **fixed-point
+  (Q16.16, [D17](decisions.md))**, applied to the weapon component **at match start** as
+  match-setup **input** (never mutated live), and therefore **folded into the per-tick
+  checksum** ([D28](decisions.md)) — a loadout divergence is caught by the cross-arch matrix
+  (invariant #7) like any other. **No floats** (invariant #1).
+- **Cosmetics stay strictly presentation-layer** (skins/paint/charms): render-only, can't
+  touch determinism, hitboxes, silhouette readability, or the gone-dark tell — the
+  [D13](decisions.md) guardrails. **Unlocks grant content** (more attachment options, units,
+  maps), never raw power.
+
+**Why:** a stat-raising attachment tree would be pay-to-win or grind-to-win, detonating pillar
+4 and D13 — the fairness argument the entire game rests on. Horizontal sidegrades give the
+gunsmith real depth *without* a power axis, so it can carry into PvP untouched. Putting the one
+sim-touching part (function deltas) through the fixed-point/checksum path keeps the
+customization from becoming a determinism hole; keeping looks render-only keeps cosmetics free
+of the sim entirely.
+
+**Consequences:** a fixed-point attachment-delta table in `core` (checksum-folded) + a
+pre-match loadout UI on the command layer; the cosmetic catalogue feeds the
+[D13](decisions.md)/[Q9](open-questions.md) store. Build slice: [`pve-campaign-plan.md`](pve-campaign-plan.md)
+WS-C. Full design: [`customization.md`](customization.md).
+
+---
+
+## D61 — Mobile HUD customization: a per-layer layout editor, presentation-only
+
+**Status:** decided (design). Realizes the roadmap "Touch-layout / rebind editor" item as a
+concrete feature, scoped against invariant #6.
+
+**Decision:**
+
+- **A CoD-Mobile / Mobile-Legends layout editor** for the touch controls: drag, resize, and
+  opacity for **every** on-screen control, with **per-layer presets** (the command layer and
+  the embodied layer are different control sets — [D51](decisions.md)), multiple saved presets,
+  and reset-to-default.
+- **Pure presentation / input-mapping — never sim.** It configures *where a control is and what
+  raw touch maps to which intent*; it plugs into the host-tested touch seam (`engine`
+  `touch_controls`) and the screen-space HUD pass (`render::touch_controls`), and lives in the
+  native **Settings** shell ([D32](decisions.md)). It is stored in local/profile config, not
+  sim state.
+- **Hard constraint — invariant #6:** the editor configures **placement, never information.**
+  It may not add, reveal, or relocate any element that surfaces strategic intel while embodied
+  (no minimap onto the FPS view, no enemy readout). It can reposition the directional alert
+  *indicator*, not turn it into a map. Accessibility cues for the alert channel are a **separate**
+  (non-optional) settings surface, not this cosmetic editor.
+
+**Why:** a movable HUD is table-stakes for a serious mobile shooter and costs nothing in
+fairness *as long as* it stays placement-only — which is why the invariant-#6 guardrail is
+written into the decision itself rather than left implicit. Per-layer presets matter because a
+thumb-reach tuned for driving a tank is wrong for marquee-selecting a squad. Presentation/input
+only means invariant #2 holds — no game logic forks, the seam is the existing one.
+
+**Consequences:** the editor is a Settings-shell surface ([D32](decisions.md)) over the existing
+touch seams — no sim or netcode change. Build slice: [`pve-campaign-plan.md`](pve-campaign-plan.md)
+WS-D. Full design: [`customization.md`](customization.md).

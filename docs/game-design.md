@@ -198,3 +198,40 @@ for free and can't affect determinism, hitboxes, silhouette readability, or the
 embodied-unit tell (the hard guardrails live in D13). The open fork is *billing rails*
 per platform — store IAP on mobile vs Stripe/Steam on desktop —
 [`open-questions.md`](open-questions.md) Q9.
+
+## 13. Progression, loadout & customization
+
+The game has a **horizontal** progression: playing *widens* your options, it never raises
+your power ceiling. This is the only progression model that survives pillar 4 and
+[D13](decisions.md), and it covers three surfaces — full design in
+[`customization.md`](customization.md).
+
+- **Gunsmith (weapon function).** A Call-of-Duty-Mobile-style attachment system where every
+  attachment is a **trade, not an upgrade** — long barrel buys range with ADS speed, a grip
+  buys recoil control with handling. There is no strictly-dominant build (the anti-degeneracy
+  discipline of [D30](decisions.md)); a loadout is a *playstyle*, not a *tier*. Loadout stat
+  deltas are the one customization that touches the sim, so they are **fixed-point and
+  checksum-folded** (invariants #1/#7) as deterministic match-setup input
+  ([D60](decisions.md)).
+- **Cosmetics (identity).** Skins, paint, charms — strictly presentation-layer, the only
+  purchasable goods ([D13](decisions.md)). Identity, never advantage.
+- **HUD layout editor.** A CoD-Mobile / Mobile-Legends layout editor for the touch controls
+  — drag/resize/opacity, per-layer presets, presentation-only, and **bounded by invariant #6**
+  (it configures placement, never information; it can never reveal map intel while embodied)
+  ([D61](decisions.md)).
+
+**Unlocks grant content, not power:** the campaign opens new units, maps, and attachment
+*options* — a wider palette a new player and a veteran field at equal power.
+
+## 14. PvE — the Operations campaign
+
+**The first shippable product is single-player PvE** ([D58](decisions.md) resolves
+[Q5](open-questions.md): *PvE-first, PvP fast-follow*). The campaign is a **CoH/Delta-Force
+Operations hub** — a node-graph of replayable missions with difficulty tiers and
+scenario-parameter modifiers — and it exists to **teach *going dark*** to a player who can't
+yet face a human: it scripts the temptation to overstay and lets the honest-AI commander
+(§9) collect the debt *fairly* (invariant #6). Mission archetypes (Seize / Hold / Assassinate
+/ Push) are each a parameterized scenario plus a **host-side objective set** read off the
+deterministic event stream — *not* sim state, so missions add **zero desync surface** (the
+same footing as the win/lose evaluator, fog, and alerts). Full design:
+[`pve-campaign.md`](pve-campaign.md); build sequencing: [`pve-campaign-plan.md`](pve-campaign-plan.md).

@@ -53,6 +53,8 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/architecture.md`](docs/architecture.md) | Engine & systems architecture (native core, deterministic sim, Vulkan, netcode) |
 | [`docs/platforms.md`](docs/platforms.md) | Cross-platform plan — Windows/Linux/Android/iOS, one shared core with platform-optimized backends |
 | [`docs/content-pipeline.md`](docs/content-pipeline.md) | Asset production — quality tiers, open-source sourcing, license hygiene, the two-view filter, what Claude can/can't build |
+| [`docs/pve-campaign.md`](docs/pve-campaign.md) | The PvE pillar — the Operations-hub campaign, mission archetypes, the host-side objective system, honest-AI difficulty ([D58](docs/decisions.md)/[D59](docs/decisions.md); first shippable product) |
+| [`docs/customization.md`](docs/customization.md) | Customization — the horizontal gunsmith (fixed-point sidegrades), cosmetics (presentation-only), the mobile HUD layout editor ([D60](docs/decisions.md)/[D61](docs/decisions.md)) |
 | [`docs/infrastructure.md`](docs/infrastructure.md) | Local dev (clone-and-run via Docker), config/env files, Terraform infra, sops secrets |
 | [`docs/roadmap.md`](docs/roadmap.md) | Build phases, milestones, and the top risks |
 | [`docs/phase-0.5-plan.md`](docs/phase-0.5-plan.md) | Plan + record of the embodiment-over-network latency spike (resolved Q7/Q8 → D15/D16) |
@@ -60,6 +62,7 @@ See [`docs/game-design.md`](docs/game-design.md) for the full design and
 | [`docs/phase-3-plan.md`](docs/phase-3-plan.md) | Phase 3 (Scale & net) plan — four-workstream sequencing (perf/lockstep/snapshot/PvP), per-slice sign-off in progress |
 | [`docs/phase-4-plan.md`](docs/phase-4-plan.md) | Phase 4 (Polish & ship) plan — app-shell workstreams (seam ✅/in-session shell ✅/device tiers ✅/telemetry ✅); Boot & title landed on Android (D35) and desktop (D36); remaining surfaces pending |
 | [`docs/playability-plan.md`](docs/playability-plan.md) | Playability push (LANDED — D37–D40) — six parallel-worker workstreams that made the game *play* and *read* like a game: embodied combat, win/lose, enemy AI, in-match text, embodied FPS world, command-view polish |
+| [`docs/pve-campaign-plan.md`](docs/pve-campaign-plan.md) | PvE campaign plan (PLAN — D58–D61) — the first shippable product: five workstreams (mission/objective core, Operations hub, gunsmith loadout, HUD layout editor, difficulty/modifiers) building the single-player campaign on host-side objectives |
 | [`docs/tank-embodiment-plan.md`](docs/tank-embodiment-plan.md) | Tank-embodiment plan (PLAN — D55) — War Thunder-flavoured embodied tank: independent hull/turret, all-unit armour facing, dispersion gunnery; fixed-point/lockstep phasing P1–P9 (P1–P3 landed: trig slew math, hull/turret heading, ballistic projectile pool) |
 | [`docs/decisions.md`](docs/decisions.md) | Decision log — the choices we locked in and the reasoning |
 | [`docs/open-questions.md`](docs/open-questions.md) | Unresolved design forks still on the table |

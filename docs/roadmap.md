@@ -237,6 +237,45 @@ in the in-match layer; the **settings surface that configures it** is.
 
 ---
 
+## PvE — the Operations campaign *(the first shippable product)*
+
+> **Status: DESIGNED, build pending.** [D58](decisions.md) resolves [Q5](open-questions.md) →
+> **PvE-first, PvP fast-follow**: the single-player **Operations campaign** is the first shippable
+> product and the onboarding surface for *going dark* (invariant #6). Design:
+> **[`pve-campaign.md`](pve-campaign.md)** + **[`customization.md`](customization.md)**; decisions
+> [D58](decisions.md)–[D61](decisions.md); execution plan: **[`pve-campaign-plan.md`](pve-campaign-plan.md)**.
+
+**Goal:** a stranger can install the game and play a campaign of missions — learning the
+blindness cost in a place that punishes overstaying *honestly* — with a movable HUD and a
+horizontal weapon-customization loadout. This is net-new content scope sitting on the
+systems-complete, playable engine (D31, D37–D40); it is **not** an engine-risk phase, so it's
+scoped here as its own pillar rather than renumbered into the risk-ordered phases above.
+
+The campaign is a **CoH/Delta-Force Operations hub** — a node-graph of replayable missions with
+difficulty tiers + scenario-parameter modifiers. Missions are **data** (a parameterized scenario +
+an objective set); objectives are **host-side derivations off the deterministic event stream**, so
+they add **zero checksum/desync surface** (the same footing as `evaluate_outcome`, fog, and alerts).
+Everything anchors to seams that already exist — `evaluate_outcome`/`FactionForces`
+([`engine/src/session_shell.rs`](../engine/src/session_shell.rs)), the data-driven `Sim::new` +
+spawn path ([`core/src/sim.rs`](../core/src/sim.rs)), the honest `commander_orders`
+([`core/src/commander.rs`](../core/src/commander.rs)), and the `SimEvent`/`territory`/`alerts`
+streams.
+
+| WS | Workstream | What it builds | Anchors |
+|---|---|---|---|
+| **A** | **Mission/objective core** | Host-side `Objective`/`ObjectiveSet` evaluated post-`Sim::step` off `SimEvent` (generalizes `evaluate_outcome`); the **Seize** archetype + the **"10 troops, take the base"** first mission. Ships with `core`/`engine` tests (green dev+release, determinism matrix green). | `event.rs`, `session_shell.rs`, `sim.rs` |
+| **B** | **Operations hub** | Node-graph meta-progression, unlock state, mission-select + briefing surface (native shell, [D32](decisions.md)). | `core::shell` seam, native shells |
+| **C** | **Gunsmith loadout** | Fixed-point attachment-delta model in `core` (checksum-folded, sidegrades-only per [D60](decisions.md)) + pre-match loadout UI. Ships with `core` tests. | `combat.rs`, weapon component, `persist` fold |
+| **D** | **HUD layout editor** | Per-layer drag/resize/opacity layout editor over the existing touch seams ([D61](decisions.md)); the build-out of the touch-layout settings item below. Presentation/input only. | `engine::touch_controls`, `render::touch_controls`, Settings shell |
+| **E** | **Difficulty + modifiers + narrative glue** | A deterministic `difficulty` tier on `commander_orders`; scenario-parameter modifiers; light briefing framing. | `commander.rs`, scenario params |
+
+**Sequencing:** A is the spine (a playable first mission proves the loop); B wraps it into a
+campaign; C/D/E layer on. WS-A is the natural next code slice after this design lands. Open forks
+threaded through: co-op ([Q14](open-questions.md)), mission authoring format ([Q15](open-questions.md)),
+narrative depth ([Q16](open-questions.md)).
+
+---
+
 ## Path to publishable — completion checklist
 
 > A flat, checkable list of what stands between the current build (systems-complete +
@@ -267,14 +306,42 @@ in the in-match layer; the **settings surface that configures it** is.
 - [ ] A full match a new player can complete start→finish unaided (loop closes; needs the
   UI above wrapped around the D38 evaluator)
 
+### Campaign & content — the first shippable product (PvE)
+
+> Net-new content pillar ([D58](decisions.md)–[D61](decisions.md)); design in
+> [`pve-campaign.md`](pve-campaign.md)/[`customization.md`](customization.md), build sequencing in
+> [`pve-campaign-plan.md`](pve-campaign-plan.md). All unchecked — this is the active design→build
+> frontier.
+
+- [ ] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
+  stream (generalizes [D38](decisions.md)'s `evaluate_outcome`); zero checksum surface; ships with
+  `core`/`engine` tests + determinism matrix green
+- [ ] **Mission 1 — *Seize*** ("10 troops, take the enemy base"): the first playable mission and
+  the going-dark teach beat
+- [ ] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
+  briefing (native shell, [D32](decisions.md))
+- [ ] **Gunsmith loadout (WS-C)** — fixed-point sidegrade attachment model, checksum-folded, +
+  pre-match loadout UI ([D60](decisions.md))
+- [ ] **HUD layout editor (WS-D)** — per-layer drag/resize/opacity presets over the existing touch
+  seams, presentation/input-only, invariant-#6-bounded ([D61](decisions.md); also tracked under
+  *UI / UX polish* below)
+- [ ] **Difficulty + modifiers (WS-E)** — deterministic `commander_orders` difficulty tier; rotating
+  scenario-parameter modifiers (never balance-number hacks)
+- [ ] **PvP fast-follow** — the multiplayer pillar on the same lockstep core (after the PvE loop is
+  proven; Phase 3 netcode is the prerequisite)
+
 ### UI / UX polish — make it read as a product
 
 - [x] In-match command HUD, selection rim, embodied alert HUD ([D24](decisions.md)/[D26](decisions.md))
 - [x] Native title screens — Android Compose ([D35](decisions.md)) + desktop egui ([D36](decisions.md))
 - [ ] **Visual-design pass** on the command HUD — consistent iconography, type scale,
   spacing, colour language (so it looks intentional, not greybox)
-- [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface)
-- [ ] Onboarding / first-possession tutorial (teach the going-dark cost — invariant #6 lives here)
+- [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface).
+  **Now scoped as the CoD-Mobile/MLBB HUD layout editor** — per-layer drag/resize/opacity presets,
+  presentation/input-only, invariant-#6-bounded ([D61](decisions.md); PvE pillar WS-D)
+- [ ] Onboarding / first-possession tutorial (teach the going-dark cost — invariant #6 lives here).
+  **Lives in campaign mission 1** — the *Seize* "10 troops, take the base" beat scripts the
+  overstay temptation ([`pve-campaign.md`](pve-campaign.md) §3; PvE pillar WS-A)
 - [x] In-session shell — pause, surrender/leave, post-match summary. **Fully landed:** the
   post-match summary surface + its DISMISS button → leave-match → return-to-title transition
   ([D52](decisions.md)); pause overlay (Esc on desktop ([D53](decisions.md)), back-gesture on
