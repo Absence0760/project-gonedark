@@ -36,7 +36,7 @@ use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Wind
 // lives on `AudioStreamBase`, `request_start` on `AudioStream`).
 use oboe::{AudioStream, AudioStreamBase};
 
-use android_activity::input::{InputEvent, KeyAction, KeyEvent, MotionAction, MotionEvent};
+use android_activity::input::{InputEvent, KeyAction, KeyEvent, Keycode, MotionAction, MotionEvent};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use log::{info, warn};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -194,10 +194,30 @@ fn android_main(app: AndroidApp) {
         // engine-neutral frame, then drive the shared game loop: compute the wall-clock dt,
         // acquire a surface frame, and let `engine::Game` step the deterministic sim + render
         // the interpolated snapshot — exactly as the desktop host does in app/src/main.rs.
-        let input_frame: InputFrame = input.poll();
+        let mut input_frame: InputFrame = input.poll();
+
+        // Back-gesture → in-session pause toggle (the Android counterpart of the desktop Esc, D53).
+        // A host/session action handled OUTSIDE the deterministic `input_frame`, so the sim/checksum
+        // stream is untouched. Drained as a one-shot edge so one press toggles exactly once.
+        if input.take_back_pressed() {
+            if let Some(game) = game.as_mut() {
+                game.toggle_pause();
+            }
+        }
 
         if window.surface_up {
             if let (Some(rhi), Some(game)) = (rhi.as_mut(), game.as_mut()) {
+                // While a shell overlay (pause / reconnect / post-match summary) is up the match is
+                // frozen underneath it: blank this frame's world-driving input so stray touches
+                // behind the menu can't select units, fire the weapon, or pan the camera. Mirrors the
+                // desktop host (app/src/main.rs). Single-player pause also halts the tick via
+                // `halts_local_tick`; this stops *world input*, not the clock. The overlay's own
+                // buttons are not yet tappable on Android — wiring `overlay_click` + a JNI
+                // `Activity.finish()` leave-to-title path (the Android twin of D52's desktop-only
+                // ExitToTitle) is the next follow-up; until then back-to-resume is the way out.
+                if game.shell_overlay_active() {
+                    input_frame = InputFrame::default();
+                }
                 let now = Instant::now();
                 let dt = now.duration_since(last_frame).as_secs_f32();
                 last_frame = now;
@@ -312,6 +332,13 @@ pub struct AndroidInput {
     /// suppresses the single-finger tap's `pointer_up` release latch on lift, so lifting from a
     /// two-finger gesture doesn't also resolve a spurious empty-ground command/selection.
     multi_touch: bool,
+    /// Edge flag: the **system back gesture/button** was pressed since the last drain. It is the
+    /// Android counterpart of the desktop **Esc** pause key ([D53](../../docs/decisions.md)) — a
+    /// host/session concern, deliberately kept OUT of [`InputFrame`] (which feeds the deterministic
+    /// sim) so the checksum stream is untouched. The host drains it via [`Self::take_back_pressed`]
+    /// after `poll` and routes it to `Game::toggle_pause`, exactly as the desktop host handles Esc
+    /// outside the sim keymap.
+    back_pressed: bool,
 }
 
 impl AndroidInput {
@@ -320,7 +347,16 @@ impl AndroidInput {
             app,
             frame: InputFrame::default(),
             multi_touch: false,
+            back_pressed: false,
         }
+    }
+
+    /// Take (and clear) the pending **back-gesture** edge — the host calls this once per loop after
+    /// [`poll`](Input::poll) and, if set, toggles the in-session pause overlay
+    /// (`Game::toggle_pause`, [D53](../../docs/decisions.md)). A session action, never a sim input:
+    /// it does not enter the [`InputFrame`], so the deterministic tick/checksum is unaffected.
+    pub fn take_back_pressed(&mut self) -> bool {
+        core::mem::take(&mut self.back_pressed)
     }
 
     /// Translate one motion (touch) event into the running InputFrame (the command-layer touch
@@ -395,13 +431,24 @@ impl AndroidInput {
         //   upgrade yet — like `command_slot`, which is likewise unset here pending the radial UI.
     }
 
-    /// Translate one key event (back button, gamepad face buttons) into the InputFrame.
-    fn apply_key(frame: &mut InputFrame, key: &KeyEvent) {
-        // Edge-triggered: only set the *_pressed intents on the Down edge.
+    /// Translate one key event into intents. The **system back** key routes to the host-side
+    /// `back_pressed` edge (the pause toggle, [D53](../../docs/decisions.md)) — NOT into the
+    /// deterministic [`InputFrame`]; everything else (gamepad face buttons) is still unmapped.
+    fn apply_key(frame: &mut InputFrame, back_pressed: &mut bool, key: &KeyEvent) {
+        // Edge-triggered: only act on the Down edge (one toggle per physical press).
         if key.action() == KeyAction::Down {
-            // TODO(phase1-step6): map a gamepad/keyboard "embody" / "surface" / "fire" key
-            //   here once the chosen bindings exist. Left intentionally unmapped — picking
-            //   bindings is a design call, not to be silently decided.
+            if key.key_code() == Keycode::Back {
+                // Back = open/close the in-session pause overlay (the Android counterpart of the
+                // desktop Esc, D53). Routed to the host via `take_back_pressed`, never to the sim
+                // input frame, so the per-tick checksum is untouched (invariants #1/#4). We consume
+                // it (the poll loop returns `Handled`), so back never falls through to the OS's
+                // default "finish the activity" — leaving the match is the pause menu's job.
+                *back_pressed = true;
+                return;
+            }
+            // TODO(phase1-step6): map a gamepad/keyboard "embody" / "surface" / "fire" key here once
+            //   the chosen bindings exist. Left intentionally unmapped — picking bindings is a design
+            //   call, not to be silently decided.
             let _ = frame; // placeholder to keep the signature honest
         }
     }
@@ -450,6 +497,9 @@ impl Input for AndroidInput {
         // The pointer-release is an EDGE (one frame), like the *_pressed intents — clear it each
         // poll so a single lift resolves exactly one selection/command (D43).
         self.frame.pointer_up = false;
+        // The back-gesture pause edge is likewise one-shot — clear it so a single press toggles the
+        // pause overlay exactly once (the host drains it via `take_back_pressed` after this poll).
+        self.back_pressed = false;
         // Touch is the single-pointer "tap commands" scheme (D43): a tap off a unit, with a
         // selection, issues the default order rather than deselecting. It's a mode, set every poll.
         self.frame.command_tap = true;
@@ -465,12 +515,13 @@ impl Input for AndroidInput {
             // two fields the motion path mutates so the closure holds them disjointly from `app`.
             let frame = &mut self.frame;
             let multi_touch = &mut self.multi_touch;
+            let back_pressed = &mut self.back_pressed;
             while iter.next(|event| {
                 match event {
                     InputEvent::MotionEvent(motion) => {
                         Self::apply_motion(frame, multi_touch, motion)
                     }
-                    InputEvent::KeyEvent(key) => Self::apply_key(frame, key),
+                    InputEvent::KeyEvent(key) => Self::apply_key(frame, back_pressed, key),
                     // TextEvent and any future variants: ignored for the game input path.
                     _ => {}
                 }

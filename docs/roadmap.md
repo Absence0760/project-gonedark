@@ -277,8 +277,8 @@ in the in-match layer; the **settings surface that configures it** is.
 - [ ] Onboarding / first-possession tutorial (teach the going-dark cost — invariant #6 lives here)
 - [x] In-session shell — pause, surrender/leave, post-match summary. **Fully landed:** the
   post-match summary surface + its DISMISS button → leave-match → return-to-title transition
-  ([D52](decisions.md)); pause overlay (Esc) + in-match surrender are now wired
-  ([D53](decisions.md), [phase-4-plan WS-B](phase-4-plan.md)).
+  ([D52](decisions.md)); pause overlay (Esc on desktop ([D53](decisions.md)), back-gesture on
+  Android ([D54](decisions.md))) + in-match surrender are now wired ([phase-4-plan WS-B](phase-4-plan.md)).
 - [ ] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
   cue for the directional-flash + audio alert channel)
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions

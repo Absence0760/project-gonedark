@@ -2537,4 +2537,43 @@ post-match summary). Esc no longer toggles the sticky free-cursor mode (subsumed
 + Left-Alt). The pause *decision* logic is pure and unit-tested (`pause_toggle_action`, `overlay_active`);
 the winit/Esc host glue is the only un-constructible seam, exempt per the standing testing rule. Android
 back-gesture → `toggle_pause` is the natural follow-up (the engine seam is platform-neutral); only the
-desktop binding landed here.
+desktop binding landed here. *(Superseded: the Android binding landed in
+[D54](#d54--android-back-gesture-pause-binding--the-platform-twin-of-d53).)*
+
+## D54 — Android back-gesture pause binding — the platform twin of D53
+
+**Status:** decided + landed. The Android counterpart of the desktop pause wiring
+([D53](#d53--wire-the-pause-overlay-trigger-esc-opens-pause-in-match-surrender-becomes-reachable)),
+which D53 flagged as the natural follow-up.
+
+**Decision:**
+
+- **The system back gesture toggles the in-session pause overlay.** `pal-android` maps `Keycode::Back`
+  (Down edge) to a host-side `back_pressed` edge that `android_main` drains (`AndroidInput::take_back_pressed`)
+  and routes to `Game::toggle_pause` — the exact platform twin of desktop's Esc. Like Esc, it is handled
+  **outside** the deterministic `InputFrame`, so the sim/checksum stream is untouched (invariants #1/#4).
+  Back opens the pause menu while playing and resumes while paused (the `pause_toggle_action` map, D53).
+- **Back is always consumed; it never falls through to the OS "finish activity" default.** Returning
+  `InputStatus::Handled` for the back key suppresses Android's default back-exits-the-activity behavior,
+  so back is a true pause toggle rather than an app-exit. Leaving the match is the pause menu's job.
+- **The match freezes under any overlay.** While `Game::shell_overlay_active()` is true, `android_main`
+  feeds a neutral `InputFrame`, so touches behind the menu can't select units / fire / pan the camera —
+  the same freeze the desktop host applies. Single-player pause also halts the tick (`halts_local_tick`);
+  this stops *world input*, not the clock.
+
+**Why:** D53 left Android able to open no pause menu at all; the back gesture is the conventional mobile
+pause affordance and the engine seam was already platform-neutral, so the binding is pure host glue. Back
+was previously swallowed as a no-op (the key path returned `Handled` but mapped nothing), so routing it to
+pause is a strict improvement with no behavior regressed. Keeping it out of the `InputFrame` mirrors the
+desktop Esc rationale and preserves determinism by construction.
+
+**Consequences:** Android now has a usable pause (open + resume via back) with the world correctly frozen
+underneath. **Deferred — the Android leave-to-title path:** tapping the pause menu's **Surrender** or the
+post-match **DISMISS** button is *not* wired on Android, because finishing the `NativeActivity` to return
+to the Compose title ([D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen)) needs a
+JNI `Activity.finish()` call — there is no `AndroidApp::finish()` in android-activity 0.6. Wiring it now
+would strand the player on an undismissable `Ended` summary, so overlay-button taps stay desktop-only (the
+Android twin of D52's desktop-only `ExitToTitle`) until that JNI path lands. The new Android code is host/PAL
+glue over already-tested engine seams (`pause_toggle_action`, `shell_overlay_active`); `AndroidApp`/`KeyEvent`
+are un-constructible off-device, so it carries the same standing test-exemption as the sibling
+`apply_motion`/`apply_key`/`capture_touches`.
