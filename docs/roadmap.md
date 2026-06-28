@@ -335,6 +335,33 @@ narrative depth ([Q16](open-questions.md)).
 - [ ] **PvP fast-follow** — the multiplayer pillar on the same lockstep core (after the PvE loop is
   proven; Phase 3 netcode is the prerequisite)
 
+### Test & feedback hardening — verify it *plays*, not just *computes*
+
+> The deterministic-sim tooling is strong (sim-runner harnesses, the cross-arch checksum
+> matrix, the unit-test floor) — but it proves the sim is *correct*, not that the game is
+> *playable and readable*. The two combat bugs this cycle ("can't tell if anything's firing",
+> "impossible to kill an enemy") lived in that unverified perception/input layer. Plan +
+> sequencing: [`test-harness-plan.md`](plans/test-harness-plan.md). GPU-gated items stay local
+> smoke tests (like `viz-runner` today), never the no-GPU CI matrix. **Execution order:** start
+> with **TF-2** (don't build the combat viz on a red bar), then TF-1 → TF-4; TF-3 is independent.
+> (The TF-*n* numbers map to the plan's WS-*n*, not to build order.)
+
+- [ ] **TF-1 — Visual combat verification.** Extend `viz-runner` to render the embodied
+  infantry/duel scenes with the debug overlay on, drive scripted fire, write PNGs, and
+  pixel-assert the muzzle flash draws + enemies die. Lets firing/killing be *seen*, not just
+  checksummed — the layer the muzzle-flash overlay + embodied-fire kill path are untested in
+  today. *(plan WS-1)*
+- [ ] **TF-2 — Fix the standing embodied-dark viz FAIL.** Root-cause
+  `embodied_combat_strategic_map_stays_dark` (likely the avatar dies + ejects to command
+  mid-scenario; possibly a real fog leak). Fix honestly — never narrow the assertion
+  (invariant #6). *(plan WS-2)*
+- [ ] **TF-3 — Input-pipeline integration tests.** Cover mouse/key → yaw → `Command::Fire`
+  (the aim convention only verified by reading code), incl. camera-forward == fire-dir. No
+  GPU; ships in `cargo test`. *(plan WS-3)*
+- [ ] **TF-4 — In-game hit feedback.** Hitmarker / target flash / hit SFX off the local
+  avatar's `SimEvent::Damaged` — the "I hit him" signal the game never sent
+  (invariant-#6-safe). *Folds into the Game-feel polish item below.* *(plan WS-4)*
+
 ### UI / UX polish — make it read as a product
 
 - [x] In-match command HUD, selection rim, embodied alert HUD ([D24](decisions.md)/[D26](decisions.md))
@@ -353,7 +380,9 @@ narrative depth ([Q16](open-questions.md)).
   Android ([D54](decisions.md))) + in-match surrender are now wired ([phase-4-plan WS-B](plans/phase-4-plan.md)).
 - [ ] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
   cue for the directional-flash + audio alert channel)
-- [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions
+- [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions.
+  **Hit feedback (the embodied "I hit him" cue) is tracked as TF-4** under *Test & feedback
+  hardening* above ([`test-harness-plan.md`](plans/test-harness-plan.md) WS-4)
 
 ### Art & assets — AI-generated placeholders (skip custom 3D for now)
 
