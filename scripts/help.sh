@@ -15,6 +15,7 @@ DESKTOP — your workstation (x86_64 host): the playable game + host build
   pnpm desktop:sim          Headless determinism runner on this machine (per-tick checksums)
   pnpm desktop:sim:stress   200-unit scaling scene + per-tick timing stats (Phase 3 profiling)
   pnpm desktop:sim:combat   Embodied-combat harness: drives the rifleman vs dummies, PASS/FAIL report
+  pnpm desktop:sim:matchup  Cross-type matchup battery: tank/rifleman RPS + armour, PASS/FAIL report
   pnpm desktop:viz          Headless offscreen render smoke test (PNGs + pixel asserts; needs a GPU)
   pnpm desktop:server       Run the backend service on this machine (placeholder)
 

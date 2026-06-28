@@ -30,8 +30,14 @@
 //!   **stderr**, the determinism-covered `<tick> <checksum>` stream to stdout. The SAME scene
 //!   `app --scene infantry` renders (`core::scenario::seed_infantry`).
 //!
+//! - **`matchup`** — the cross-type matchup battery ([`matchup`]): AI-vs-AI fights pitting the unit
+//!   *kinds* against each other (Heavy/Tank vs Rifleman 1v1, rifle MASS vs a bruiser, an unarmoured
+//!   Tank dying to sustained rifle fire, and an armoured chassis bouncing penetration-0 rifle shots).
+//!   The auto-combat counterpart of `duel`/`infantry`; report to **stderr**, the determinism-covered
+//!   `<tick> <checksum>` stream of one canonical combined-arms brawl to stdout.
+//!
 //! Usage: `gonedark-sim-runner [ticks] [scenario] [--time] [--metrics[=<which>]]`
-//!   (defaults: 300 ticks, `phase2`; scenarios: `phase2`, `stress[:<n>]`, `duel`, `infantry`)
+//!   (defaults: 300 ticks, `phase2`; scenarios: `phase2`, `stress[:<n>]`, `duel`, `infantry`, `matchup`)
 //!   - `--time` prints per-tick wall-clock stats (min/median/p99/max ms) to **stderr**; the
 //!     `<tick> <checksum>` stream on stdout is unchanged. Timing is host-side only (`Instant`)
 //!     and never touches sim state, so it cannot move the checksum.
@@ -44,6 +50,7 @@
 
 mod duel;
 mod infantry;
+mod matchup;
 mod metrics;
 
 use std::collections::BTreeMap;
@@ -104,6 +111,9 @@ enum Which {
     /// The infantry sandbox ([`infantry`]) — a hitscan debug validation scene (range/cone/cover/LoS/
     /// crouch + the auto-combat battery). Like [`Duel`], owns its own loop and never reaches [`build`].
     Infantry,
+    /// The cross-type matchup battery ([`matchup`]) — AI-vs-AI tank/rifleman RPS + armour/penetration
+    /// checks. Like [`Duel`]/[`Infantry`], owns its own loop and never reaches [`build`].
+    Matchup,
 }
 
 impl Which {
@@ -113,6 +123,7 @@ impl Which {
             "stress" => Some(Which::Stress(200)),
             "duel" => Some(Which::Duel),
             "infantry" => Some(Which::Infantry),
+            "matchup" => Some(Which::Matchup),
             other => other
                 .strip_prefix("stress:")
                 .and_then(|n| n.parse::<u32>().ok())
@@ -130,6 +141,7 @@ fn build(which: Which) -> Scenario {
         // ever calling `build`, so reaching here is a bug.
         Which::Duel => unreachable!("the duel scenario runs via duel::run, not build/run"),
         Which::Infantry => unreachable!("the infantry scenario runs via infantry::run, not build/run"),
+        Which::Matchup => unreachable!("the matchup scenario runs via matchup::run, not build/run"),
     }
 }
 
@@ -358,6 +370,10 @@ fn main() {
         infantry::run(ticks);
         return;
     }
+    if which == Which::Matchup {
+        matchup::run(ticks);
+        return;
+    }
 
     let scenario = build(which);
     let durations = run(scenario, ticks, timed);
@@ -369,7 +385,7 @@ fn main() {
 
 fn fatal_scenario(s: &str) -> ! {
     eprintln!(
-        "unknown scenario {s:?}; expected `phase2`, `stress`, `stress:<n>`, `duel`, or `infantry`"
+        "unknown scenario {s:?}; expected `phase2`, `stress`, `stress:<n>`, `duel`, `infantry`, or `matchup`"
     );
     std::process::exit(2);
 }
@@ -440,6 +456,7 @@ mod tests {
         assert_eq!(Which::parse("stress"), Some(Which::Stress(200)));
         assert_eq!(Which::parse("duel"), Some(Which::Duel));
         assert_eq!(Which::parse("infantry"), Some(Which::Infantry));
+        assert_eq!(Which::parse("matchup"), Some(Which::Matchup));
         assert_eq!(Which::parse("stress:50"), Some(Which::Stress(50)));
         assert_eq!(Which::parse("stress:1"), None); // need >= 2 for two factions
         assert_eq!(Which::parse("stress:0"), None);
