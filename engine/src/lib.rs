@@ -1247,6 +1247,19 @@ const _: () = assert!(
     gonedark_core::snapshot::MUZZLE_FLASH_TICKS as u64 == gonedark_render::world::MUZZLE_FLASH_TICKS
 );
 
+/// Count living `Unit`-kind entities of `faction` in `sim`. The testable seam behind
+/// [`Game::alive_unit_count`] (the method is GPU-bound through `Game`; this free fn is driven
+/// directly in tests). Read-only — no sim mutation, no checksum surface.
+fn alive_units_of(sim: &Sim, faction: Faction) -> usize {
+    (0..sim.world.capacity())
+        .filter(|&i| {
+            sim.world.is_index_alive(i)
+                && sim.world.kind[i] == EntityKind::Unit
+                && sim.world.faction[i] == faction
+        })
+        .count()
+}
+
 fn debug_overlay_lines(
     curr: &Snapshot,
     terrain: &gonedark_core::terrain::Terrain,
@@ -1700,6 +1713,14 @@ impl Game {
     /// private sim state. Observation only: never mutates the sim, no determinism impact.
     pub fn tick_count(&self) -> u64 {
         self.sim.tick_count()
+    }
+
+    /// Read-only: how many living `Unit`-kind entities of `faction` there are right now. A
+    /// presentation/test query over the sim world — it mutates nothing and never enters the
+    /// checksum, so it has no determinism impact. Used by the offscreen viz harness to assert that
+    /// embodied fire actually *kills* (TF-1) without leaning on fragile screen-pixel counts.
+    pub fn alive_unit_count(&self, faction: Faction) -> usize {
+        alive_units_of(&self.sim, faction)
     }
 
     /// The sim's current per-tick checksum — a read-only window onto deterministic state so a
@@ -2808,6 +2829,22 @@ mod tests {
             verts.iter().any(|v| v.color == [0.25, 1.0, 0.40]),
             "a clear sightline yields a green LoS connector",
         );
+    }
+
+    /// `alive_units_of` (the seam behind `Game::alive_unit_count`) counts only living units of the
+    /// asked faction — buildings and the other side excluded. Driven over a headless `Sim` (no GPU),
+    /// since `Game` itself needs a device.
+    #[test]
+    fn alive_units_of_counts_living_units_per_faction() {
+        let mut sim = Sim::new(7);
+        spawn_unit(&mut sim, 0, 0, Faction::Enemy, Stance::HoldFire);
+        let e2 = spawn_unit(&mut sim, 1, 0, Faction::Enemy, Stance::HoldFire);
+        spawn_unit(&mut sim, 2, 0, Faction::Player, Stance::HoldFire);
+        assert_eq!(alive_units_of(&sim, Faction::Enemy), 2);
+        assert_eq!(alive_units_of(&sim, Faction::Player), 1);
+        // A despawned unit drops out of the count.
+        sim.world.despawn(e2);
+        assert_eq!(alive_units_of(&sim, Faction::Enemy), 1);
     }
 
     /// The muzzle-flash overlay lights only firing, non-building units (the `!u.building && u.firing`

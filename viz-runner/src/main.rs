@@ -18,7 +18,8 @@
 //! into the no-GPU CI matrix. Exit code: 0 = all assertions passed (or skipped: no adapter),
 //! 1 = a visual assertion failed. PNGs land in `target/viz/` for eyeballing.
 
-use gonedark_engine::{Game, DEFAULT_SEED};
+use gonedark_core::components::Faction;
+use gonedark_engine::{Game, Scene, DEFAULT_SEED};
 use gonedark_pal::{Audio, AudioCue, InputFrame};
 
 const W: u32 = 512;
@@ -206,6 +207,15 @@ fn is_alert_marker(p: [u8; 4]) -> bool {
     let teal = g > 150 && b > 150 && g > r + 40 && b > r + 30;
     warm || teal
 }
+/// A command-view debug muzzle-flash pixel (`render::debug` `COLOR_MUZZLE` = linear
+/// `[1.0, 0.95, 0.55]`, sRGB-encoded by the target ≈ `(255, 249, 196)`): a hot near-white-yellow,
+/// R+G both near-max with G clearly above B. The bounds hug that one colour to exclude the other
+/// warm overlay chrome: the cone arc (`COLOR_CONE` ≈ (255,211,124), G too low / B too low), the
+/// enemy range ring (≈ (255,170,160), G far too low), the tank SIDE facet (≈ (255,234,124), B too
+/// low), and the white selection rim (B ≈ 255). Verified against a pre-combat baseline (~0).
+fn is_muzzle_flash(p: [u8; 4]) -> bool {
+    p[0] > 248 && p[1] > 240 && (182..=214).contains(&p[2]) && (p[1] as i32 - p[2] as i32) > 32
+}
 fn count(rgba: &[u8], f: impl Fn([u8; 4]) -> bool) -> usize {
     px(rgba).filter(|&p| f(p)).count()
 }
@@ -224,6 +234,22 @@ fn advance(game: &mut Game, n: u32, first: InputFrame, gpu: &Gpu, view: &wgpu::T
         };
         game.frame(
             &input,
+            TICK_DT,
+            (W, H),
+            &gpu.device,
+            &gpu.queue,
+            view,
+            &mut NullAudio,
+        );
+    }
+}
+
+/// Drive `n` frames holding the SAME input every frame — for level/held inputs like `fire` that the
+/// real host re-emits each frame (unlike [`advance`], which applies its input only on frame 0).
+fn advance_holding(game: &mut Game, n: u32, held: InputFrame, gpu: &Gpu, view: &wgpu::TextureView) {
+    for _ in 0..n {
+        game.frame(
+            &held,
             TICK_DT,
             (W, H),
             &gpu.device,
@@ -550,8 +576,79 @@ fn main() {
     );
     let _ = dark_nondark; // (the pre-/post-alert dark counts are now both ~0 with a world drawn)
 
+    // --- Scenario 4: command-view muzzle flash (TF-1) ------------------------------------------
+    // The debug overlay draws a bright muzzle-flash burst on any unit that fired in the last few
+    // ticks (command-view only, invariant #6). Boot the demo skirmish, turn the overlay on (F3),
+    // let the squads close and trade fire, and prove the flash actually draws — the visual proof
+    // that "units are firing" reads on screen, which the headless sim harnesses cannot see.
+    println!("[combat_muzzle] AI units firing draw a muzzle flash in the command-view debug overlay");
+    let mut g = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Default);
+    g.toggle_debug_hitboxes(); // Scene::Default boots the overlay OFF — turn it on (the F3 overlay)
+    // Baseline BEFORE anyone is in range: the overlay (range rings / cones / LoS lines) is already
+    // drawn, but no shot has fired — so the muzzle-flash count must be ~0 here. This makes the check
+    // a real delta and proves the predicate isn't just catching static overlay chrome.
+    advance(&mut g, 8, InputFrame::default(), &gpu, &view);
+    let pre = read_pixels(&gpu.device, &gpu.queue, &target);
+    let pre_muzzle = count(&pre, is_muzzle_flash);
+    // A flash lasts MUZZLE_FLASH_TICKS (8) per shot on a ~30-tick cooldown, so any single frame may
+    // fall in a cooldown gap. Sample the whole engagement (the squads close, trade, and die out) and
+    // keep the frame with the most flash — guarantees catching a unit mid-flash while combat lasts.
+    let mut best_muzzle = 0usize;
+    let mut muzzle_frame: Vec<u8> = Vec::new();
+    for _ in 0..220 {
+        advance(&mut g, 1, InputFrame::default(), &gpu, &view);
+        let f = read_pixels(&gpu.device, &gpu.queue, &target);
+        let m = count(&f, is_muzzle_flash);
+        if m >= best_muzzle {
+            best_muzzle = m;
+            muzzle_frame = f;
+        }
+    }
+    save_png("target/viz/combat_muzzle.png", &muzzle_frame);
+    check(
+        &mut failures,
+        "command_muzzle_flash_drawn",
+        pre_muzzle < 8 && best_muzzle > 30,
+        format!("muzzle-flash px {pre_muzzle} pre-combat → {best_muzzle} peak during combat (firing reads on screen, not static overlay)"),
+    );
+
+    // --- Scenario 5: embodied fire kills the enemy you aim at (TF-1) ---------------------------
+    // The infantry sandbox boots embodied, facing +X at a row of dummies (the open one 8 units dead
+    // ahead, 12 HP). Holding the trigger must KILL them — the visual proof of the kill path the
+    // "impossible to kill" report was about. (Through the full `Game::frame` path the enemy commander
+    // also advances the dummies into the line of fire, so several fall, not just the two reachable
+    // from a standstill.)
+    println!("[embodied_kill] holding fire while embodied kills the enemies under the crosshair");
+    let mut g = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Infantry);
+    advance(&mut g, 4, InputFrame::default(), &gpu, &view); // settle the camera/world
+    save_png(
+        "target/viz/embodied_kill_before.png",
+        &read_pixels(&gpu.device, &gpu.queue, &target),
+    );
+    // The kill itself is judged on SIM state, not screen pixels: the embodied first-person frame
+    // carries a warm muzzle-flash tint + a low-health vignette that defeat an enemy-red pixel count
+    // (we render before/after PNGs for eyeballing, but assert on the authoritative entity count).
+    let enemies_before = g.alive_unit_count(Faction::Enemy);
+    let fire = InputFrame {
+        fire: true,
+        ..Default::default()
+    };
+    advance_holding(&mut g, 160, fire, &gpu, &view); // ~2.6 s of trigger → the cone targets die
+    save_png(
+        "target/viz/embodied_kill_after.png",
+        &read_pixels(&gpu.device, &gpu.queue, &target),
+    );
+    let enemies_after = g.alive_unit_count(Faction::Enemy);
+    check(
+        &mut failures,
+        "embodied_fire_kills_enemy",
+        enemies_before > 0 && enemies_after < enemies_before,
+        format!("alive enemy units {enemies_before} → {enemies_after} after sustained embodied fire (the targets you aimed at died)"),
+    );
+
     println!(
-        "\nPNGs: target/viz/{{command,selected,radial,marquee,embodied_dark,embodied_hud}}.png"
+        "\nPNGs: target/viz/{{command,selected,radial,marquee,embodied_dark,embodied_hud,\
+         combat_muzzle,embodied_kill_before,embodied_kill_after}}.png"
     );
     if failures == 0 {
         println!("RESULT: all visual assertions passed ✓");

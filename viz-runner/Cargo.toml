@@ -11,6 +11,7 @@ publish = false
 # view draws units; embodiment goes dark; the alert HUD draws markers). Needs a GPU adapter, so it
 # is a LOCAL tool (run via `pnpm viz`), NOT part of the no-GPU CI matrix.
 [dependencies]
+gonedark-core = { path = "../core" }
 gonedark-engine = { path = "../engine" }
 gonedark-pal = { path = "../pal" }
 wgpu = "29"

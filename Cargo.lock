@@ -1127,6 +1127,7 @@ dependencies = [
 name = "gonedark-viz-runner"
 version = "0.0.0"
 dependencies = [
+ "gonedark-core",
  "gonedark-engine",
  "gonedark-pal",
  "png 0.17.16",
