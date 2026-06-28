@@ -400,7 +400,15 @@ build item **XP-2** ([`roadmap.md`](roadmap.md)).
 
 ---
 
-## Q18 — Inter-unit balance at lethal speed: how do we restore RPS + suppression? <a id="q18--lethal-speed-retune"></a>
+## Q18 — Inter-unit balance at lethal speed: how do we restore RPS + suppression? — RESOLVED ([D69](decisions.md) + [D70](decisions.md)) <a id="q18--lethal-speed-retune"></a>
+
+**Resolved by the combat-rebalance plan, both workstreams landed.** [D69](decisions.md) (WS-A) re-tuned
+the Heavy (HP 280→300, damage 90→100) to restore the range-dependent Rifleman/Heavy rock-paper-scissors
+at lethal speed; [D70](decisions.md) (WS-B) added **area (fire-and-maneuver) suppression** + lowered
+`SUPPRESSION_PIN` to 3/8 so concentrated fire pins a cluster before it is wiped, while a lone shooter
+never pins. Both were dialed against `sim-runner --metrics`, and the metrics tests now assert the
+*intended* properties (reversing the D66 regression-locks). The chosen fork below was **both the stat
+re-tune and the suppression rework** — exactly the lean.
 
 [D66](decisions.md) scaled damage ×5 for modern lethality (~1.5 s rifle TTK). Uniform scaling keeps
 the D30 DPS *ratios* on paper, but at 1–2-volley kill speed the *emergent* balance collapses: the
@@ -421,9 +429,9 @@ stat re-tune *and* a per-near-miss suppression rework, measured against the harn
 balance pass, not blocking the lethality/ammo changes that shipped. Likely bundled with the
 [faction rosters](#q19--faction-roster-specifics) (re-tune once, against the real armies).
 
-**Plan:** [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md) (WS-A restores the RPS —
-**landed**: Heavy HP 280→300, damage 90→100, harness-confirmed; WS-B area suppression pending) —
-faction-independent. Landing WS-B closes this question.
+**Plan:** [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md) — **both workstreams landed**:
+WS-A restored the RPS ([D69](decisions.md): Heavy HP 280→300, damage 90→100); WS-B added area
+suppression + `SUPPRESSION_PIN` 1/2→3/8 ([D70](decisions.md)). Harness-confirmed; question closed.
 
 ---
 

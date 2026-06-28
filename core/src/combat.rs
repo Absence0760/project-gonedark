@@ -31,13 +31,16 @@ use crate::trig::{self, Angle};
 /// Suppression at or above this fraction of [`SUPPRESSION_MAX`] pins a unit: it may not fire
 /// and (per `orders`) moves at reduced speed.
 ///
-/// 1/2 (D30, lowered from 3/4). At [`SUPPRESSION_PER_HIT`] = 1/8 this means a unit pins once
-/// **four** shots land before they decay — i.e. *concentrated* fire pins, but a lone shooter
-/// (one hit per cooldown, decaying 1/64 a tick) never accumulates enough, so a clean 1v1 still
-/// resolves by damage. The harness confirmed the old 3/4 pin never triggered before a kill in
-/// focus-fire (suppression was cosmetic); at 1/2 a 4-shooter focus pins the target on the first
-/// burst, *before* it dies — making suppression a real "concentrate fire to pin" lever (D26 goal).
-pub const SUPPRESSION_PIN: Fixed = Fixed::from_ratio(1, 2);
+/// 3/8 (D70, lowered from the D30 1/2, itself down from 3/4). The threshold dropped when the
+/// [D66](../docs/decisions.md) ×5 lethality made kills outrun suppression: at 1/2 a focused unit
+/// died on the same volley it would have pinned, so "concentrate fire to pin" was vestigial again
+/// (the metric honestly locked pin-at-0). With **area suppression** ([`SUPPRESSION_SPLASH_PER_HIT`])
+/// a 4-shooter volley splashes a whole cluster, and at 3/8 that splash crosses the pin line *before*
+/// the kill — a directly-hit unit needs 3 hits (it dies on the 4th), and a *neighbour* of the impact
+/// pins from one direct hit plus the volley's splash. A lone shooter still never pins: one hit per
+/// cooldown (1/8) decays (1/64 a tick) before the next, never reaching 3/8, so a clean 1v1 resolves
+/// by damage. (combat-rebalance-plan WS-B; tuned against `sim-runner --metrics`.)
+pub const SUPPRESSION_PIN: Fixed = Fixed::from_ratio(3, 8);
 
 /// Ceiling for accumulated suppression; it decays toward zero each tick.
 pub const SUPPRESSION_MAX: Fixed = Fixed::ONE;
@@ -45,8 +48,25 @@ pub const SUPPRESSION_MAX: Fixed = Fixed::ONE;
 /// Suppression removed per tick when not taking fire.
 pub const SUPPRESSION_DECAY: Fixed = Fixed::from_ratio(1, 64);
 
-/// Suppression added to a target per shot that lands.
+/// Suppression added to the unit a shot directly lands on.
 pub const SUPPRESSION_PER_HIT: Fixed = Fixed::from_ratio(1, 8);
+
+/// World-unit radius of a shot's **area** suppression: every hostile unit within this distance of
+/// the impact (not just the body hit) accrues [`SUPPRESSION_SPLASH_PER_HIT`]. This is the
+/// fire-and-maneuver model (combat-rebalance-plan WS-B, D70): rounds cracking past a position pin
+/// the soldiers near them, so concentrated fire pins a *cluster* before it is wiped one-by-one —
+/// the doctrine the D66 lethal speed had broken. Squared-compared in [`combat_system`] (no sqrt).
+pub const SUPPRESSION_RADIUS: Fixed = Fixed::from_int(4);
+
+/// Suppression added to each hostile unit within [`SUPPRESSION_RADIUS`] of a shot's impact, *on
+/// top of* the full [`SUPPRESSION_PER_HIT`] on the directly-hit body. Strictly **less** than the
+/// per-hit value (1/16 < 1/8): a near-miss suppresses half as much as a direct hit. Tuned (with
+/// [`SUPPRESSION_PIN`]) so a 4-shooter cluster volley pins before the kill while a lone shooter never
+/// pins — and kept low enough that area suppression does not let a rifle blob trivially pin-and-wipe
+/// a cost-equal Heavy force (the [D69](../docs/decisions.md) RPS still holds at the canonical points:
+/// heavy wins close at 500, rifle kites at range; a larger rifle mass trading up close stays a real
+/// ~3 s fight, not a blowout). (combat-rebalance-plan WS-B, D70; measured against `--metrics`.)
+pub const SUPPRESSION_SPLASH_PER_HIT: Fixed = Fixed::from_ratio(1, 16);
 
 /// Is `(attacker, defender)` a hostile pair? Combat engages only across distinct factions and
 /// never involves `Neutral` on either side (invariant #3 keeps it literal — no friendly fire,
@@ -81,6 +101,40 @@ fn can_engage(world: &World, terrain: &Terrain, shooter_idx: usize, target_idx: 
         return false;
     }
     terrain.line_of_sight(my_pos, target_pos)
+}
+
+/// Apply **area suppression** for a shot that landed on `target_idx` at `target_pos`, fired by a
+/// unit of `shooter_faction`, to one candidate slot `j` (yielded by the per-tick spatial scan or a
+/// plain index scan). `j` accrues [`SUPPRESSION_SPLASH_PER_HIT`] iff it is a *living hostile unit*
+/// within [`SUPPRESSION_RADIUS`] of the impact and is **not** the directly-hit body (which already
+/// took the full [`SUPPRESSION_PER_HIT`]). Same-faction friendlies are excluded (invariant #3: no
+/// friendly suppression); buildings are excluded (only soldiers near the impact pin). Squared-distance
+/// compare — never a sqrt. The saturating add is independent per slot, so applying it across the
+/// candidate set in any order yields the identical result (determinism, invariants #1/#7).
+#[inline]
+fn splash_suppress(
+    world: &mut World,
+    shooter_faction: Faction,
+    target_idx: usize,
+    target_pos: Vec2,
+    j: usize,
+) {
+    if j == target_idx || !world.is_index_alive(j) {
+        return;
+    }
+    if world.kind[j] != EntityKind::Unit {
+        return;
+    }
+    if world.health[j].is_dead() {
+        return;
+    }
+    if !is_enemy(shooter_faction, world.faction[j]) {
+        return;
+    }
+    if (world.pos[j] - target_pos).len_sq() > SUPPRESSION_RADIUS * SUPPRESSION_RADIUS {
+        return;
+    }
+    world.suppression[j] = (world.suppression[j] + SUPPRESSION_SPLASH_PER_HIT).min(SUPPRESSION_MAX);
 }
 
 /// Pick the target slot for `shooter_idx` under its stance, or `None` to hold fire.
@@ -243,6 +297,18 @@ pub fn combat_system(
         world.last_attacker[target_idx] = Some(shooter);
         world.suppression[target_idx] =
             (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
+        // Area (fire-and-maneuver) suppression (WS-B, D70): the same shot pins the hostiles near the
+        // impact, not just the body it hit. Reuse the per-tick spatial index (the candidates are a
+        // superset; `splash_suppress` owns the precise radius/hostility/kind filter). Index-ordered,
+        // float-free; the per-slot saturating add is order-independent. Applied during pass 2, so a
+        // splash that pushes a not-yet-processed unit over SUPPRESSION_PIN can keep it from firing
+        // this same tick — exactly the within-fight bite the lethal speed had erased (deterministic:
+        // the engage pass is index-ordered identically on every peer, invariant #7).
+        let sf = world.faction[i];
+        let target_pos = world.pos[target_idx];
+        spatial.for_each_within(target_pos, SUPPRESSION_RADIUS, |j| {
+            splash_suppress(world, sf, target_idx, target_pos, j);
+        });
         world.weapon[i].cooldown_left = world.weapon[i].cooldown_ticks;
         // Spend a round (magazine weapons only); the gate above guarantees ammo > 0 here, so the
         // subtraction never underflows. AI auto-reload (upkeep) refills from reserve when it empties.
@@ -542,6 +608,16 @@ pub fn resolve_fire(
     world.last_attacker[target_idx] = Some(shooter);
     world.suppression[target_idx] =
         (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
+    // Area (fire-and-maneuver) suppression (WS-B, D70), same as the auto-resolver's engage pass: an
+    // embodied player's shot also pins the hostiles near the impact. No per-tick spatial index is
+    // built on this single-shot path, so scan index-ordered (mirrors the 0..n targeting scan above);
+    // `splash_suppress` owns the precise radius/hostility/kind filter. Float-free, order-independent.
+    let sf = world.faction[shooter_idx];
+    let target_pos = world.pos[target_idx];
+    let n = world.capacity();
+    for j in 0..n {
+        splash_suppress(world, sf, target_idx, target_pos, j);
+    }
     world.weapon[shooter_idx].cooldown_left = world.weapon[shooter_idx].cooldown_ticks;
     // Spend a round (magazine weapons only). The pre-fire gate guarantees `ammo > 0` here, so the
     // subtraction never underflows. A miss spends nothing (we returned before this point).
@@ -880,6 +956,92 @@ mod tests {
             world.suppression[enemy.index as usize] > SUPPRESSION_PER_HIT,
             "suppression should accumulate over repeated hits"
         );
+    }
+
+    #[test]
+    fn splash_is_strictly_weaker_than_a_direct_hit() {
+        // The WS-B fairness invariant: a near-miss suppresses LESS than a hit (else area suppression
+        // would dominate). Cheap, but it pins the relationship the tuning relies on.
+        assert!(
+            SUPPRESSION_SPLASH_PER_HIT < SUPPRESSION_PER_HIT,
+            "splash {SUPPRESSION_SPLASH_PER_HIT:?} must be < per-hit {SUPPRESSION_PER_HIT:?}"
+        );
+        assert!(SUPPRESSION_SPLASH_PER_HIT > Fixed::ZERO, "splash must actually suppress");
+    }
+
+    #[test]
+    fn area_suppression_pins_neighbours_by_radius_faction_and_kind() {
+        // A Player shooter hits the nearest Enemy A; the SAME shot's area suppression (WS-B) must
+        // pin Enemy soldiers NEAR the impact — but only enemy UNITS within SUPPRESSION_RADIUS.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        // Low damage so A survives the hit (we are measuring suppression, not the kill).
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(12, 1, 0));
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        // A is the directly-hit target (nearest enemy). Big HP so it lives.
+        let a = spawn_unit(&mut world, 5, 0, Faction::Enemy, 1000, Weapon::default());
+        // B: enemy unit 2 away from A → inside the radius-4 splash.
+        let b = spawn_unit(&mut world, 5, 2, Faction::Enemy, 1000, Weapon::default());
+        // C: enemy unit 9 away from A → outside the splash radius.
+        let c = spawn_unit(&mut world, 5, 9, Faction::Enemy, 1000, Weapon::default());
+        // Friendly: a Player unit 1 away from A → never suppressed by Player fire (invariant #3).
+        let friendly = spawn_unit(&mut world, 5, 1, Faction::Player, 1000, Weapon::default());
+        // An enemy BUILDING 3 away from A → in radius, but only soldiers pin, not structures.
+        let building = spawn_building(&mut world, 5, 3, Faction::Enemy, 1000);
+
+        let mut events = Vec::new();
+        run(&mut world, &terrain, &mut events);
+
+        let s = |e: Entity| world.suppression[e.index as usize];
+        assert_eq!(s(a), SUPPRESSION_PER_HIT, "directly-hit A takes the full per-hit");
+        assert_eq!(s(b), SUPPRESSION_SPLASH_PER_HIT, "in-radius enemy B takes splash");
+        assert_eq!(s(c), Fixed::ZERO, "out-of-radius enemy C is untouched");
+        assert_eq!(s(friendly), Fixed::ZERO, "friendly neighbour is never suppressed");
+        assert_eq!(s(building), Fixed::ZERO, "an enemy building is not a suppressible soldier");
+    }
+
+    #[test]
+    fn area_suppression_is_order_independent() {
+        // Two identical builds stepped once yield identical neighbour suppression — the per-slot
+        // saturating add must not depend on spatial visitation order (determinism, invariant #7).
+        let build = || {
+            let mut world = World::new();
+            let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(12, 1, 0));
+            world.stance[shooter.index as usize] = Stance::FireAtWill;
+            spawn_unit(&mut world, 5, 0, Faction::Enemy, 1000, Weapon::default());
+            spawn_unit(&mut world, 5, 2, Faction::Enemy, 1000, Weapon::default());
+            spawn_unit(&mut world, 6, 1, Faction::Enemy, 1000, Weapon::default());
+            spawn_unit(&mut world, 4, 1, Faction::Enemy, 1000, Weapon::default());
+            world
+        };
+        let mut w1 = build();
+        let mut w2 = build();
+        let terrain = Terrain::open();
+        let mut ev = Vec::new();
+        run(&mut w1, &terrain, &mut ev);
+        run(&mut w2, &terrain, &mut ev);
+        for i in 0..w1.capacity() {
+            assert_eq!(w1.suppression[i], w2.suppression[i], "suppression slot {i} must match");
+        }
+    }
+
+    #[test]
+    fn embodied_fire_also_area_suppresses() {
+        // The embodied `resolve_fire` path applies the same area suppression as the auto-resolver,
+        // so a player's shot pins the cluster around the body it hits.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(12, 1, 0));
+        let a = spawn_unit(&mut world, 5, 0, Faction::Enemy, 1000, Weapon::default());
+        let b = spawn_unit(&mut world, 5, 2, Faction::Enemy, 1000, Weapon::default());
+        let far = spawn_unit(&mut world, 5, 9, Faction::Enemy, 1000, Weapon::default());
+
+        let mut events = Vec::new();
+        resolve_fire(&mut world, &terrain, shooter.index as usize, Vec2::new(fx(1), fx(0)), &mut events);
+
+        assert_eq!(world.suppression[a.index as usize], SUPPRESSION_PER_HIT, "embodied direct hit");
+        assert_eq!(world.suppression[b.index as usize], SUPPRESSION_SPLASH_PER_HIT, "embodied splash");
+        assert_eq!(world.suppression[far.index as usize], Fixed::ZERO, "out of radius: no splash");
     }
 
     #[test]

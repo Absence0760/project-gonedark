@@ -1,8 +1,11 @@
 # Combat rebalance plan — inter-unit balance + suppression at lethal speed
 
-> **Status: WS-A landed (Heavy HP 280→300, damage 90→100; Rifleman/Heavy RPS restored,
-> harness-measured — `equal_cost_outcomes` re-pinned to `heavy_wins_close_rifle_wins_at_range`).
-> WS-B (area suppression) not yet started.** Addresses [Q18](../open-questions.md). Follows the
+> **Status: COMPLETE — both workstreams landed, [Q18](../open-questions.md) closed.** WS-A
+> ([D69](../decisions.md): Heavy HP 280→300, damage 90→100; Rifleman/Heavy RPS restored) and WS-B
+> ([D70](../decisions.md): area suppression + `SUPPRESSION_PIN` 1/2→3/8; concentrated fire pins a
+> cluster before the kill, lone shooter never pins). Both harness-measured; metrics re-pinned to the
+> intended properties (`heavy_wins_close_rifle_wins_at_range`,
+> `focus_fire_pins_before_kill_but_lone_shooter_never_pins`). Addresses [Q18](../open-questions.md). Follows the
 > modern-combat-realism arc: [D66](../decisions.md) (×5 lethality) and [D67](../decisions.md)
 > (all-unit ammo + resupply) shipped. This doc is the build sequencing for the *re-tune* those
 > changes made necessary — the analogue of [`playability-plan.md`](playability-plan.md), scoped to

@@ -338,8 +338,8 @@ mod tests {
         w.order[ci] = Order::MoveTo(target);
         w.order[si] = Order::MoveTo(target);
         // A suppression strictly between 0 and PIN → half speed. Use a value comfortably
-        // below SUPPRESSION_PIN (now 1/2 — D30) so this exercises the "slowed but not pinned"
-        // path regardless of small pin-threshold moves.
+        // below SUPPRESSION_PIN (now 3/8 — D70, lowered from D30's 1/2) so this exercises the
+        // "slowed but not pinned" path regardless of small pin-threshold moves.
         w.suppression[si] = Fixed::from_ratio(1, 4);
         assert!(
             w.suppression[si] < combat::SUPPRESSION_PIN && w.suppression[si] > Fixed::ZERO,

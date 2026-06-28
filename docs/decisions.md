@@ -3220,3 +3220,59 @@ ticks). The economy baseline + a `heal` test fixture updated to 300 HP. **Measur
 number dialed against `--metrics` (pillar 4: a *relative* re-tune, no power creep). **Remaining:** WS-B
 makes suppression bite before the kill at lethal speed (separate commit, `/safe-edit`); landing it
 closes [Q18](open-questions.md).
+
+---
+
+## D70 — Combat rebalance WS-B: area suppression + lower pin (suppression bites before the kill)
+
+**Decision:** Add **area (fire-and-maneuver) suppression** and lower the pin threshold so concentrated
+fire pins a cluster *before* it is wiped, at the [D66](decisions.md) lethal kill speed:
+
+- A shot now suppresses the **area** around its impact, not just the body it hits. Every hostile
+  **unit** within `SUPPRESSION_RADIUS` (4 world units) of the target accrues `SUPPRESSION_SPLASH_PER_HIT`
+  (1/16 — strictly less than the 1/8 a direct hit applies), on top of the full per-hit on the target
+  itself. Applied on **both** fire paths — the auto-resolver's engage pass (reusing the per-tick
+  `SpatialHash` via the new `SpatialHash::for_each_within`) and the embodied `resolve_fire` (an
+  index-ordered scan). Friendlies and buildings are excluded (invariant #3: only enemy soldiers pin).
+- `SUPPRESSION_PIN` lowered **1/2 → 3/8**. Area splash alone cannot reach the pin line at lethal speed
+  (four splash increments of <1/8 sum below 1/2, and decay erases a volley between cooldowns), so the
+  threshold had to drop with it. At 3/8, a 4-shooter cluster volley pins while a lone shooter — one
+  decaying hit per cooldown — still never does.
+
+This is workstream **WS-B** of [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md); with WS-A
+([D69](decisions.md)) it **closes [Q18](open-questions.md)**.
+
+**Why:** suppression + maneuver *is* modern infantry doctrine — the fantasy the [D68](decisions.md)
+US-vs-France direction leans into — and [D66](decisions.md)'s ×5 lethality had made it vestigial: a
+target died before per-*hit* suppression could pin it, so "concentrate fire to pin" did nothing (the
+metric honestly locked pin-at-0). Suppressing the *area* (rounds cracking past a position pin the
+soldiers near them, even those not hit) is both the doctrinally-correct model and what lets a pin land
+before the kill. The user chose this fork (area splash + a lower global pin) over slowing decay or a
+splash-only partial fix.
+
+**Why these numbers:** measured against `sim-runner --metrics`, not felt. Splash was first tried at 3/32
+but that let a numerous rifle blob pin-and-wipe a cost-equal Heavy force (area suppression amplifies
+numerical superiority), flattening the [D69](decisions.md) RPS at scale (equal-cost 1000 close flipped
+to a rifle 10-0 blowout). Dropping splash to **1/16** keeps the 4-shooter pin-before-kill (now via the
+3-direct-hit unit) while keeping the equal-cost trades *real fights*: the canonical RPS holds — heavy
+wins close at 500, rifle kites at range — and a larger rifle mass trading up close stays a ~3 s fight,
+not a blowout. **Known interaction (honest caveat):** area suppression still tilts the equal-cost trade
+toward the more numerous side, so "Heavy wins close" is now budget-dependent — it holds at the smaller
+(500) budget but a 10-rifle mass out-suppresses 4 Heavies close at the 1000 budget. Acceptable (massed
+infantry volume-of-fire pinning a few gunners reads true) and flagged for the per-faction tuning pass.
+
+**Consequences:** `core::combat` gains `SUPPRESSION_RADIUS`, `SUPPRESSION_SPLASH_PER_HIT`, and a
+`splash_suppress` helper; `core::spatial` gains `for_each_within` (an area companion to `nearest_within`,
+with its own superset/order-independence contract + tests). All fixed-point, float-free (determinism
+guard green), index-ordered, no RNG — the per-slot saturating add is order-independent, so the
+cross-arch + 2-peer lockstep runners stay the safety net (invariants #1/#7). Suppression is
+checksum-folded, so behavior moved by design; **no goldens needed re-pinning** — the pinned scenes
+assert their *final* checksum, where the area-suppressed dummies (HoldFire, order-less) are already dead.
+The metrics tests were re-pinned to the intended properties:
+`suppression_no_longer_pins_before_kill_at_lethal_speed` → `focus_fire_pins_before_kill_but_lone_shooter_never_pins`
+(the focus-fire scenario became a tight **cluster**, since a lone target has no neighbours for area
+suppression to act on), and the [D69](decisions.md) `heavy_wins_close_rifle_wins_at_range` exact pins
+were updated for the suppression-moved numbers (directions unchanged). Five new `core::combat`
+suppression tests + two `core::spatial` tests. **Deliberately deferred:** suppression as a function of
+*incoming volume* over a window (vs per-shot); cover/terrain modulating splash; per-faction suppression
+feel; tuning splash/pin again once the per-faction `unit_stats` land.

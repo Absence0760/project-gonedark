@@ -129,6 +129,45 @@ impl SpatialHash {
         }
         best.map(|(_, idx)| idx)
     }
+
+    /// Visit every live entity slot in the cell window around `pos` for a `radius`-world-unit area
+    /// query, passing each candidate slot to `visit`. Unlike [`nearest_within`](Self::nearest_within)
+    /// (which returns the single nearest), this is for **area effects** where every neighbour in
+    /// range matters — e.g. proximity suppression ([`combat`](crate::combat) WS-B).
+    ///
+    /// Like `nearest_within`, the visited set is a proven **superset** of the in-radius slots (the
+    /// `±r_cells` window), so the caller MUST apply the authoritative precise test itself — the
+    /// squared-distance `<= radius*radius` membership check plus any hostility/kind/liveness filter
+    /// — exactly as `acquire_target` leans on `can_engage`. `visit` owns that filter (and any
+    /// mutation), which is why this yields raw candidates instead of an accept closure: it lets the
+    /// caller hold a single `&mut World` inside `visit` (read position + write the effect) with no
+    /// borrow conflict.
+    ///
+    /// **Determinism contract:** the visitation order is the grid-scan order (`dy` then `dx`), NOT
+    /// ascending slot order, so the caller's per-slot effect MUST be order-independent (an
+    /// independent saturating accumulate per distinct slot is — invariant #1/#7). Cells are visited
+    /// once each and a slot lives in exactly one cell, so no slot is visited twice.
+    pub fn for_each_within(&self, pos: Vec2, radius: Fixed, mut visit: impl FnMut(usize)) {
+        let (cx, cy) = world_to_cell(pos);
+        // Same window proof as `nearest_within`: a slot within `radius` world units is within
+        // `radius.to_int() + 1` cells on each axis (CELL_SIZE = 1, plus one boundary cell for the
+        // sub-cell offset), so the inclusive `±r_cells` box is a superset of the in-range slots.
+        let r_cells = radius.to_int() + 1;
+        let mut dy = -r_cells;
+        while dy <= r_cells {
+            let mut dx = -r_cells;
+            while dx <= r_cells {
+                let (gx, gy) = (cx + dx, cy + dy);
+                if in_bounds(gx, gy) {
+                    for &idx in &self.buckets[cell_index(gx, gy)] {
+                        visit(idx);
+                    }
+                }
+                dx += 1;
+            }
+            dy += 1;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -222,6 +261,47 @@ mod tests {
             |_| Fixed::ZERO,
         );
         assert_eq!(got, None);
+    }
+
+    #[test]
+    fn for_each_within_visits_a_superset_of_the_in_radius_slots() {
+        let mut world = World::new();
+        let origin = Vec2::new(fx(0), fx(0));
+        let inside_a = spawn_at(&mut world, fx(2), fx(0)); // dist 2
+        let inside_b = spawn_at(&mut world, fx(0), fx(3)); // dist 3
+        let outside = spawn_at(&mut world, fx(30), fx(0)); // dist 30, far outside
+        let hash = SpatialHash::build(&world);
+        let radius = fx(4);
+        let r_sq = radius * radius;
+        // Caller applies the precise squared-distance filter inside `visit` (the API contract).
+        let mut matched: Vec<usize> = Vec::new();
+        let mut visited: Vec<usize> = Vec::new();
+        hash.for_each_within(origin, radius, |idx| {
+            visited.push(idx);
+            if (world.pos[idx] - origin).len_sq() <= r_sq {
+                matched.push(idx);
+            }
+        });
+        matched.sort_unstable();
+        assert_eq!(matched, vec![inside_a, inside_b], "precise filter yields exactly the in-radius slots");
+        // Superset property: every in-radius slot was visited; `outside` may or may not be visited
+        // (it is far enough to fall outside the cell window here), but must never be a false match.
+        assert!(visited.contains(&inside_a) && visited.contains(&inside_b), "all in-radius slots visited");
+        assert!(!matched.contains(&outside), "out-of-radius slot is never a match");
+    }
+
+    #[test]
+    fn for_each_within_visits_each_slot_at_most_once() {
+        let mut world = World::new();
+        let a = spawn_at(&mut world, fx(1), fx(1));
+        let b = spawn_at(&mut world, fx(-1), fx(2));
+        let hash = SpatialHash::build(&world);
+        let mut counts = std::collections::BTreeMap::new();
+        hash.for_each_within(Vec2::new(fx(0), fx(0)), fx(5), |idx| {
+            *counts.entry(idx).or_insert(0) += 1;
+        });
+        assert_eq!(counts.get(&a), Some(&1), "a visited exactly once");
+        assert_eq!(counts.get(&b), Some(&1), "b visited exactly once");
     }
 
     /// Build a brute-force `min dist_sq, lowest-index` oracle and assert the spatial query

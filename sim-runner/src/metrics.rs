@@ -200,30 +200,58 @@ pub fn equal_cost_outcome(budget: i64, sep: i32) -> (u64, u32, u32) {
     )
 }
 
-/// Focus-fire suppression timing: `m` Riflemen on one target Rifleman. Returns
-/// `(pin_tick, kill_tick)` — `pin_tick` is when the target first reaches
-/// [`combat::SUPPRESSION_PIN`], `kill_tick` when it dies (0 if it never happened within budget).
+/// Focus-fire suppression timing: `m` Riflemen firing into a tight enemy **cluster** (three
+/// Riflemen packed within [`combat::SUPPRESSION_RADIUS`]). Returns `(pin_tick, kill_tick)` —
+/// `pin_tick` is the first tick any *alive* cluster member reaches [`combat::SUPPRESSION_PIN`],
+/// `kill_tick` the first tick a cluster member dies (0 if it never happened within budget).
+///
+/// A **cluster**, not a lone body, because this measures **area suppression** (WS-B): a shot pins
+/// the soldiers *near* the impact, not just the one hit. The property it exists to prove —
+/// "concentrated fire pins the cluster before it is wiped one-by-one" — only has meaning when the
+/// target has neighbours. A lone shooter (`m == 1`) still never pins: one hit per cooldown decays
+/// before the next, so suppression never reaches the line and the kill comes by damage.
 pub fn focus_fire_pin_kill(m: i32) -> (u64, u64) {
     let mut sim = Sim::new(0x5077_F1AE);
     for k in 0..m {
         spawn(&mut sim, 0, k, Faction::Player, UnitKind::Rifleman);
     }
-    spawn(&mut sim, 5, 0, Faction::Enemy, UnitKind::Rifleman);
-    let target = (0..sim.world.capacity())
-        .find(|&i| sim.world.is_index_alive(i) && sim.world.faction[i] == Faction::Enemy)
-        .expect("target spawned");
+    // Three enemies packed tight (pairwise distance <= ~1.4 < SUPPRESSION_RADIUS) so every shot into
+    // the clump splashes the whole cluster.
+    for &(x, y) in &[(5, 0), (5, 1), (6, 0)] {
+        spawn(&mut sim, x, y, Faction::Enemy, UnitKind::Rifleman);
+    }
+    let cluster: Vec<usize> = (0..sim.world.capacity())
+        .filter(|&i| sim.world.is_index_alive(i) && sim.world.faction[i] == Faction::Enemy)
+        .collect();
+    // The cluster HOLDS FIRE (like `cover_duel`'s defenders): isolate the metric to the *incoming*
+    // fire's pin-vs-kill timing. With FireAtWill the cluster's 3 guns would wipe a lone (m == 1)
+    // attacker before it could shoot back, hiding the lone-shooter-never-pins property we measure.
+    for &i in &cluster {
+        sim.world.stance[i] = Stance::HoldFire;
+    }
+    let alive_cluster = |w: &gonedark_core::ecs::World| -> u32 {
+        cluster.iter().filter(|&&i| w.is_index_alive(i)).count() as u32
+    };
+    let start = alive_cluster(&sim.world);
     let mut pin_tick = 0u64;
     let mut kill_tick = 0u64;
     for t in 1..=1200u64 {
         sim.step(&[]);
         if pin_tick == 0
-            && sim.world.is_index_alive(target)
-            && sim.world.suppression[target] >= combat::SUPPRESSION_PIN
+            && cluster.iter().any(|&i| {
+                sim.world.is_index_alive(i) && sim.world.suppression[i] >= combat::SUPPRESSION_PIN
+            })
         {
             pin_tick = t;
         }
-        if !sim.world.is_index_alive(target) {
+        if kill_tick == 0 && alive_cluster(&sim.world) < start {
             kill_tick = t;
+        }
+        if alive_cluster(&sim.world) == 0 {
+            break;
+        }
+        // Stop once we know both timings (pin recorded and a death recorded).
+        if pin_tick != 0 && kill_tick != 0 {
             break;
         }
     }
@@ -389,27 +417,31 @@ mod tests {
         // CLOSE (sep 5): the Heavy blob trades up at point-blank — heavy survives, rifle 0-for.
         let (t_close, r_close, h_close) = equal_cost_outcome(500, 5);
         assert!(h_close > 0 && r_close == 0, "close (sep5): heavy must win, got rifle {r_close} heavy {h_close}");
-        assert_eq!((t_close, r_close, h_close), (97, 0, 2), "close 500: measured RPS pin");
+        assert_eq!((t_close, r_close, h_close), (98, 0, 1), "close 500: measured RPS pin (post-WS-B suppression)");
         // RANGE (sep 9): the longer-reaching rifles kite — rifle survives, heavy 0-for.
         let (t_range, r_range, h_range) = equal_cost_outcome(1000, 9);
         assert!(r_range > 0 && h_range == 0, "range (sep9): rifle must win, got rifle {r_range} heavy {h_range}");
-        assert_eq!((t_range, r_range, h_range), (361, 2, 0), "ranged 1000: measured RPS pin");
+        assert_eq!((t_range, r_range, h_range), (181, 3, 0), "ranged 1000: measured RPS pin (post-WS-B suppression)");
     }
 
-    /// MEASURED-BASELINE LOCK (D66). At lethal kill speed the per-*hit* suppression model
-    /// (`combat::SUPPRESSION_PER_HIT`) no longer bites: the target dies before suppression can
-    /// reach `SUPPRESSION_PIN`, so focus-fire NEVER pins before the kill (pin tick 0 = never).
-    /// This is the model gap a per-near-miss "fire-and-maneuver" suppression rework would close —
-    /// tracked as an open question. Lock the current reality so it's a conscious change, not a
-    /// silent drift, when that rework happens.
+    /// INTENDED SUPPRESSION (combat-rebalance-plan WS-B, D70, Q18). Area (fire-and-maneuver)
+    /// suppression makes concentrated fire **pin a cluster before it is wiped**, restoring the
+    /// "concentrate fire to pin" lever the D66 lethal speed had erased. This reverses the D66
+    /// regression-lock (`suppression_no_longer_pins_before_kill_at_lethal_speed`): a 4-shooter
+    /// volley into a tight cluster splashes the whole clump over `SUPPRESSION_PIN` (now 3/8) before
+    /// the first kill, while a lone shooter — one decaying hit per cooldown — still never pins and
+    /// resolves by damage. Asserts the *direction* (pin happens, pin precedes kill, lone never pins)
+    /// plus the exact measured ticks so a stray edit still trips.
     #[test]
-    fn suppression_no_longer_pins_before_kill_at_lethal_speed() {
+    fn focus_fire_pins_before_kill_but_lone_shooter_never_pins() {
         let (pin4, kill4) = focus_fire_pin_kill(4);
-        assert_eq!(pin4, 0, "lethal speed: 4-on-1 kills before suppression can pin");
-        assert!(kill4 > 0, "4-on-1 still kills (near-instantly)");
+        assert!(pin4 > 0, "4-shooter focus must pin the cluster (got pin tick {pin4})");
+        assert!(pin4 < kill4, "the cluster must pin BEFORE the first kill (pin {pin4}, kill {kill4})");
+        assert_eq!((pin4, kill4), (1, 31), "4-on-1 cluster: measured pin/kill pin");
         let (pin1, kill1) = focus_fire_pin_kill(1);
-        assert_eq!(pin1, 0, "a lone shooter never pins");
-        assert!(kill1 > 0, "a lone shooter kills by damage");
+        assert_eq!(pin1, 0, "a lone shooter never pins (suppression decays between shots)");
+        assert!(kill1 > 0, "a lone shooter still kills by damage");
+        assert_eq!((pin1, kill1), (0, 91), "lone shooter: measured pin/kill pin");
     }
 
     /// Cover materially extends survival: the enemy line standing in Heavy cover (1/4 damage)
