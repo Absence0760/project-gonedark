@@ -346,11 +346,11 @@ narrative depth ([Q16](open-questions.md)).
 > with **TF-2** (don't build the combat viz on a red bar), then TF-1 → TF-4; TF-3 is independent.
 > (The TF-*n* numbers map to the plan's WS-*n*, not to build order.)
 
-- [ ] **TF-1 — Visual combat verification.** Extend `viz-runner` to render the embodied
-  infantry/duel scenes with the debug overlay on, drive scripted fire, write PNGs, and
-  pixel-assert the muzzle flash draws + enemies die. Lets firing/killing be *seen*, not just
-  checksummed — the layer the muzzle-flash overlay + embodied-fire kill path are untested in
-  today. *(plan WS-1)*
+- [x] **TF-1 — Visual combat verification.** `viz-runner` now renders two combat scenarios
+  through the real `Game::frame` path: `combat_muzzle` (command-view muzzle flash draws during a
+  skirmish, pixel-asserted against a clean pre-combat baseline) and `embodied_kill` (holding fire
+  while embodied kills enemies, asserted on `Game::alive_unit_count`). PNGs land in `target/viz/`
+  for eyeballing. GPU-gated/local. *(plan WS-1)*
 - [ ] **TF-2 — Fix the standing embodied-dark viz FAIL.** Root-cause
   `embodied_combat_strategic_map_stays_dark` (likely the avatar dies + ejects to command
   mid-scenario; possibly a real fog leak). Fix honestly — never narrow the assertion
