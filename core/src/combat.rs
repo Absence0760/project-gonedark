@@ -1834,4 +1834,53 @@ mod tests {
         // Hull faces +X → the +X shot catches the rear → full pen.
         assert_eq!(dmg(deg(0)), fx(20), "embodied rear shot pens");
     }
+
+    /// End-to-end: a real auto-fire shot lights the render snapshot's `firing` flag (so the debug
+    /// overlay can draw a muzzle flash), and it clears once the cooldown decays past the flash
+    /// window. Couples the presentation flag to actual combat, beyond the pure `weapon_recently_fired`
+    /// seam unit-tested in `snapshot`.
+    #[test]
+    fn snapshot_firing_flag_lights_on_the_shot_tick_then_clears() {
+        use crate::snapshot::{Snapshot, MUZZLE_FLASH_TICKS};
+        use crate::territory::Territory;
+
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 30));
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        // A high-HP target that holds fire: it survives so the shooter keeps a live target, and it
+        // never fires itself (so only the shooter's flag should light).
+        let target = spawn_unit(&mut world, 3, 0, Faction::Enemy, 1000, Weapon::default());
+        world.stance[target.index as usize] = Stance::HoldFire;
+
+        let firing = |w: &World| {
+            Snapshot::capture(w, &Territory::default(), &[], 0)
+                .units
+                .iter()
+                .find(|u| u.entity_index == shooter.index)
+                .unwrap()
+                .firing
+        };
+
+        assert!(!firing(&world), "an idle unit reads as not firing");
+
+        // One combat tick fires (cooldown_ticks = 30 > flash window), lighting the flag.
+        let mut events = Vec::new();
+        run(&mut world, &terrain, &mut events);
+        assert!(firing(&world), "the unit that just fired lights the firing flag");
+        // The lone non-firing target never lights.
+        let target_firing = Snapshot::capture(&world, &Territory::default(), &[], 0)
+            .units
+            .iter()
+            .find(|u| u.entity_index == target.index)
+            .unwrap()
+            .firing;
+        assert!(!target_firing, "a hold-fire unit never lights the flag");
+
+        // Run upkeep-only ticks (cooldown decays 30→22, no re-fire) until past the window: clears.
+        for _ in 0..MUZZLE_FLASH_TICKS {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert!(!firing(&world), "the flag clears once the cooldown decays past the flash window");
+    }
 }

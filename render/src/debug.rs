@@ -216,6 +216,57 @@ pub fn infantry_lines(units: &[DebugInfantry]) -> Vec<DebugVertex> {
     v
 }
 
+/// A unit that fired this tick (snapshot `firing` flag), to draw a muzzle flash for — f32 at the
+/// render boundary. Kind-agnostic: a tank and an infantryman flash the same way, so a single seam
+/// covers both. The host derives the flag from the weapon cooldown (`core::snapshot`), so this is
+/// the command-view analogue of the embodied viewmodel flash ([`crate::world::muzzle_flash_intensity`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DebugMuzzle {
+    pub x: f32,
+    pub y: f32,
+    /// Gun bearing in radians (`+X = 0`, CCW) — the forward spike points down it (the shot direction).
+    pub facing: f32,
+    /// Flash size in world units (the star-spoke length; the forward spike is twice this).
+    pub size: f32,
+}
+
+/// Star spokes in a muzzle-flash burst (besides the forward spike), so the flash reads from any facing.
+const MUZZLE_SPOKES: usize = 6;
+/// Hot muzzle-flash tint — a bright yellow-white that pops against the facet / cone / tracer colors.
+const COLOR_MUZZLE: [f32; 3] = [1.0, 0.95, 0.55];
+
+/// Build the world-space line list for every firing unit's muzzle flash: a `MUZZLE_SPOKES`-armed star
+/// burst centered on the unit, plus a longer spike down `facing` so you can read *which way* it is
+/// shooting. Pure (no GPU) — the testable seam.
+pub fn muzzle_flash_lines(flashes: &[DebugMuzzle]) -> Vec<DebugVertex> {
+    let mut v = Vec::with_capacity(flashes.len() * (MUZZLE_SPOKES + 1) * 2);
+    for f in flashes {
+        let center = DebugVertex {
+            world: [f.x, f.y],
+            color: COLOR_MUZZLE,
+        };
+        // Star burst: evenly spaced spokes radiating from the unit.
+        for i in 0..MUZZLE_SPOKES {
+            let a = (i as f32) / (MUZZLE_SPOKES as f32) * 2.0 * PI;
+            v.push(center);
+            v.push(DebugVertex {
+                world: [f.x + f.size * a.cos(), f.y + f.size * a.sin()],
+                color: COLOR_MUZZLE,
+            });
+        }
+        // Forward spike (twice as long) down the gun bearing — the shot direction.
+        v.push(center);
+        v.push(DebugVertex {
+            world: [
+                f.x + 2.0 * f.size * f.facing.cos(),
+                f.y + 2.0 * f.size * f.facing.sin(),
+            ],
+            color: COLOR_MUZZLE,
+        });
+    }
+    v
+}
+
 /// One point on an infantryman's range ring at world angle `a`.
 fn range_point(u: &DebugInfantry, a: f32) -> DebugVertex {
     DebugVertex {
@@ -501,6 +552,28 @@ mod tests {
         // The edges reach above and below the axis (a real wedge, not a line).
         assert!(cone.iter().any(|p| p.world[1] > 0.1));
         assert!(cone.iter().any(|p| p.world[1] < -0.1));
+    }
+
+    #[test]
+    fn muzzle_flash_is_a_star_plus_a_forward_spike() {
+        let v = muzzle_flash_lines(&[DebugMuzzle {
+            x: 0.0,
+            y: 0.0,
+            facing: 0.0,
+            size: 1.0,
+        }]);
+        assert_eq!(v.len(), (MUZZLE_SPOKES + 1) * 2);
+        assert!(v.iter().all(|p| p.color == COLOR_MUZZLE), "all hot muzzle tint");
+        let tip = v[v.len() - 1].world;
+        assert!(
+            (tip[0] - 2.0).abs() < 1e-5 && tip[1].abs() < 1e-5,
+            "spike points downrange to 2*size"
+        );
+    }
+
+    #[test]
+    fn no_firing_units_draw_no_flash() {
+        assert!(muzzle_flash_lines(&[]).is_empty());
     }
 
     #[test]

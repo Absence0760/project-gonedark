@@ -7,7 +7,7 @@
 //! snapshot lists the territory control points. None of this is sim state — it is a copy
 //! taken for rendering, so it is not checksummed (invariant #7 covers the world itself).
 
-use crate::components::{EntityKind, Faction, InputSource, UnitKind, Vec2};
+use crate::components::{EntityKind, Faction, InputSource, UnitKind, Vec2, Weapon};
 use crate::ecs::World;
 use crate::fixed::Fixed;
 use crate::projectile::Projectile;
@@ -42,6 +42,29 @@ pub struct UnitSnapshot {
     /// (no separate turret mesh). Same absolute frame as `hull_heading` (`+X = 0`, CCW). The renderer
     /// yaws the tank's turret mesh by it (P7). Presentation copy, not checksummed.
     pub turret_yaw: Angle,
+    /// Did this unit fire within the last [`MUZZLE_FLASH_TICKS`] ticks? Derived purely from the
+    /// (checksummed) weapon cooldown at capture (see [`weapon_recently_fired`]) — the debug overlay
+    /// lights a muzzle flash on it so you can *see* a unit shooting from the command view, the
+    /// AI-side analogue of the embodied viewmodel's `render::world::muzzle_flash_intensity`.
+    /// Presentation only: adds no sim state and never enters the checksum fold (invariant #4/#7).
+    pub firing: bool,
+}
+
+/// How many sim ticks a unit reads as "firing" after each shot — the muzzle-flash window the debug
+/// overlay lights it for. Set to mirror the embodied viewmodel's flash length
+/// (`render::world::MUZZLE_FLASH_TICKS`) so an AI unit's command-view flash and the player's
+/// first-person flash last the same wall-clock time at the locked 60 Hz tick.
+pub const MUZZLE_FLASH_TICKS: u16 = 8;
+
+/// Did `w` fire within the last [`MUZZLE_FLASH_TICKS`] ticks? A shot resets `cooldown_left` to
+/// `cooldown_ticks` (both `combat::combat_system` and `combat::resolve_fire`), which then counts
+/// down one per tick — so a freshly-fired weapon sits near the top of its cooldown and a never-fired
+/// one rests at zero. An unarmed weapon (`cooldown_ticks == 0`, never settable to a non-zero
+/// `cooldown_left`) reads as not firing. A weapon whose whole cooldown is shorter than the window
+/// stays lit for every on-cooldown tick (a continuously-firing unit glows). Pure + float-free
+/// (invariant #1) — the testable seam for the `firing` snapshot flag.
+fn weapon_recently_fired(w: &Weapon) -> bool {
+    w.cooldown_ticks > 0 && w.cooldown_left > w.cooldown_ticks.saturating_sub(MUZZLE_FLASH_TICKS)
 }
 
 /// One in-flight shell's renderable state at a tick (tank embodiment P7, D55). A presentation copy
@@ -108,6 +131,7 @@ impl Snapshot {
                 unit_kind: world.unit_kind[i],
                 hull_heading: world.hull_heading[i],
                 turret_yaw: world.turret_yaw[i],
+                firing: weapon_recently_fired(&world.weapon[i]),
             });
         }
         let control_points = territory
@@ -135,5 +159,47 @@ impl Snapshot {
             control_points,
             projectiles,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A weapon with a given cooldown profile; other fields default (float-free — invariant #1).
+    fn gun(cooldown_ticks: u16, cooldown_left: u16) -> Weapon {
+        Weapon {
+            range: Fixed::from_int(10),
+            damage: Fixed::ONE,
+            cooldown_ticks,
+            cooldown_left,
+            ..Weapon::default()
+        }
+    }
+
+    #[test]
+    fn just_fired_reads_as_firing() {
+        assert!(weapon_recently_fired(&gun(30, 30)));
+    }
+
+    #[test]
+    fn firing_window_closes_after_muzzle_flash_ticks() {
+        let cd = 30;
+        assert!(weapon_recently_fired(&gun(cd, cd - MUZZLE_FLASH_TICKS + 1)));
+        assert!(!weapon_recently_fired(&gun(cd, cd - MUZZLE_FLASH_TICKS)));
+    }
+
+    #[test]
+    fn never_fired_or_unarmed_is_not_firing() {
+        assert!(!weapon_recently_fired(&gun(30, 0)), "ready, never fired");
+        assert!(!weapon_recently_fired(&gun(0, 0)), "unarmed: no cooldown to flash from");
+    }
+
+    #[test]
+    fn fast_weapon_stays_lit_through_its_whole_cooldown() {
+        // A cooldown shorter than the flash window: lit for every on-cooldown tick, dark only when ready.
+        assert!(weapon_recently_fired(&gun(3, 3)));
+        assert!(weapon_recently_fired(&gun(3, 1)));
+        assert!(!weapon_recently_fired(&gun(3, 0)));
     }
 }

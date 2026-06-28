@@ -1239,6 +1239,14 @@ fn faction_ring_color(f: Faction) -> [f32; 3] {
 /// cover blocks it. GPU-free + pure (reads the snapshot + terrain, mutates nothing), so it is
 /// host-tested without a device; the renderer just draws the returned world-space lines (invariant
 /// #4 — presentation floats, never the sim; invariant #6 — the caller draws it command-view only).
+// The command-view muzzle flash (core's snapshot `firing` window) and the embodied first-person
+// viewmodel flash (render::world) must last the same wall-clock time. Invariant #2 bars `core` from
+// depending on `render`, so the two windows are declared apart; pin them equal at compile time here
+// in `engine` — the one crate that sees both — so they can never silently drift.
+const _: () = assert!(
+    gonedark_core::snapshot::MUZZLE_FLASH_TICKS as u64 == gonedark_render::world::MUZZLE_FLASH_TICKS
+);
+
 fn debug_overlay_lines(
     curr: &Snapshot,
     terrain: &gonedark_core::terrain::Terrain,
@@ -1296,6 +1304,24 @@ fn debug_overlay_lines(
         })
         .collect();
     verts.extend(dbg::infantry_lines(&infantry));
+
+    // Muzzle flashes: any non-building unit that fired within the last few ticks (the snapshot
+    // `firing` flag, derived from the weapon cooldown in `core::snapshot`) lights a bright burst —
+    // the command-view analogue of the embodied viewmodel flash, so AI firing reads at a glance. The
+    // spike points down the gun bearing (`turret_yaw`, which tracks the hull for turret-less units).
+    const MUZZLE_FLASH_SIZE: f32 = 1.5;
+    let flashes: Vec<dbg::DebugMuzzle> = curr
+        .units
+        .iter()
+        .filter(|u| !u.building && u.firing)
+        .map(|u| dbg::DebugMuzzle {
+            x: fx(u.pos.x),
+            y: fx(u.pos.y),
+            facing: yaw(u.turret_yaw),
+            size: MUZZLE_FLASH_SIZE,
+        })
+        .collect();
+    verts.extend(dbg::muzzle_flash_lines(&flashes));
 
     // Line-of-sight connectors: from each Player unit to each Enemy unit within the player's weapon
     // range — green if the sightline is clear, red if a Heavy-cover wall blocks it (the LoS mechanic
@@ -2781,6 +2807,48 @@ mod tests {
         assert!(
             verts.iter().any(|v| v.color == [0.25, 1.0, 0.40]),
             "a clear sightline yields a green LoS connector",
+        );
+    }
+
+    /// The muzzle-flash overlay lights only firing, non-building units (the `!u.building && u.firing`
+    /// filter in `debug_overlay_lines`): a building is a damageable target, never a shooter, and an
+    /// idle unit draws no flash.
+    #[test]
+    fn muzzle_flash_overlay_lights_firing_units_but_not_buildings() {
+        use gonedark_core::components::{Faction, UnitKind, Vec2};
+        use gonedark_core::fixed::Fixed;
+        use gonedark_core::snapshot::{Snapshot, UnitSnapshot};
+        use gonedark_core::trig::Angle;
+
+        const COLOR_MUZZLE: [f32; 3] = [1.0, 0.95, 0.55]; // render::debug COLOR_MUZZLE
+        let terrain = gonedark_core::terrain::Terrain::open();
+
+        let mk = |index: u32, building: bool, firing: bool| UnitSnapshot {
+            entity_index: index,
+            pos: Vec2::new(Fixed::from_int(index as i32 * 5), Fixed::ZERO),
+            vel: Vec2::ZERO,
+            embodied: false,
+            faction: Faction::Player,
+            health: Fixed::ONE,
+            building,
+            unit_kind: UnitKind::Rifleman,
+            hull_heading: Angle(0),
+            turret_yaw: Angle(0),
+            firing,
+        };
+        let snap = |units| Snapshot {
+            tick: 0,
+            units,
+            control_points: Vec::new(),
+            projectiles: Vec::new(),
+        };
+        let has_muzzle =
+            |s: &Snapshot| debug_overlay_lines(s, &terrain).iter().any(|v| v.color == COLOR_MUZZLE);
+
+        assert!(has_muzzle(&snap(vec![mk(0, false, true)])), "a firing unit flashes");
+        assert!(
+            !has_muzzle(&snap(vec![mk(1, true, true), mk(2, false, false)])),
+            "a firing building and an idle unit draw no muzzle flash",
         );
     }
 

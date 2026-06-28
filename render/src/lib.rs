@@ -1251,6 +1251,7 @@ mod tests {
             unit_kind: UnitKind::Rifleman,
             hull_heading: Angle(0),
             turret_yaw: Angle(0),
+            firing: false,
         }
     }
 

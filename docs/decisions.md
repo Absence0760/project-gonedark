@@ -2963,8 +2963,9 @@ retreat / reload), with `Scene::Infantry` + `app --scene infantry`. It needed **
 change** (exactly as predicted above): one `core::scenario` entry, picked up by the runner and the
 scene dispatch. `render::debug` was generalized — `render_debug` now takes a flat `DebugVertex` list
 composed by the host-tested `engine::debug_overlay_lines` (tanks → hitbox rings; infantry →
-range-ring + firing-cone wedge; all → Player→Enemy LoS connectors, green clear / red blocked) — so
-the overlay reads each scene's mechanic, not just the tank's.
+range-ring + firing-cone wedge; all → Player→Enemy LoS connectors (green clear / red blocked) +
+muzzle-flash marker when firing) — so the overlay reads each scene's mechanic, not just the
+tank's.
 
 ## D64 — The playable skirmish + a scenario-local income-pace lever
 
