@@ -376,22 +376,24 @@ mod tests {
         );
     }
 
-    /// MEASURED-BASELINE LOCK (D66). The equal-cost Rifleman-vs-Heavy outcomes are pinned at their
-    /// current measured values so a stray edit that shifts them trips a test — NOT an assertion of
-    /// intended balance.
-    ///
-    /// KNOWN REGRESSION the lethality re-tune introduced: at ~1.5 s kill speed the Rifleman mass's
-    /// body-count + faster cadence dominate the Heavy mass at *every* range (heavies wiped 0-for),
-    /// collapsing the D26/D30 range-dependent rock-paper-scissors. The intended "heavies win close,
-    /// rifles kite at range" property needs a Heavy re-tune AT lethal speed — tracked as an open
-    /// question (Q on lethal-speed re-tune, `docs/open-questions.md`). This test guards that the
-    /// numbers don't drift *silently* before that re-tune lands.
+    /// INTENDED RPS (combat-rebalance-plan WS-A, Q18). The equal-cost Rifleman-vs-Heavy trade is
+    /// range-dependent *by design*: the cost-equal Heavy mass out-trades the rifles at point-blank,
+    /// the longer-ranged rifles kite and win at range. This reverses the D66 regression-lock
+    /// (`equal_cost_outcomes_locked_at_lethal_baseline`): the ×5 lethality re-tune had flattened the
+    /// RPS so rifles won at *every* range (heavies 0-for); the Heavy HP/burst re-tune (280/90 →
+    /// 300/100) restores the D26/D30 matchup at lethal speed. Asserts the *direction* (who wins,
+    /// nobody-0-for) plus the exact measured survivor/tick pins so a stray edit that drifts the
+    /// numbers still trips.
     #[test]
-    fn equal_cost_outcomes_locked_at_lethal_baseline() {
-        // close (sep 5), seed-purse budget: rifles win 2-for currently (was: heavies win).
-        assert_eq!(equal_cost_outcome(500, 5), (151, 2, 0), "close 500: measured lethal baseline");
-        // at range (sep 9), larger budget: rifles win 6-for (range advantage holds in the same dir).
-        assert_eq!(equal_cost_outcome(1000, 9), (121, 6, 0), "ranged 1000: measured lethal baseline");
+    fn heavy_wins_close_rifle_wins_at_range() {
+        // CLOSE (sep 5): the Heavy blob trades up at point-blank — heavy survives, rifle 0-for.
+        let (t_close, r_close, h_close) = equal_cost_outcome(500, 5);
+        assert!(h_close > 0 && r_close == 0, "close (sep5): heavy must win, got rifle {r_close} heavy {h_close}");
+        assert_eq!((t_close, r_close, h_close), (97, 0, 2), "close 500: measured RPS pin");
+        // RANGE (sep 9): the longer-reaching rifles kite — rifle survives, heavy 0-for.
+        let (t_range, r_range, h_range) = equal_cost_outcome(1000, 9);
+        assert!(r_range > 0 && h_range == 0, "range (sep9): rifle must win, got rifle {r_range} heavy {h_range}");
+        assert_eq!((t_range, r_range, h_range), (361, 2, 0), "ranged 1000: measured RPS pin");
     }
 
     /// MEASURED-BASELINE LOCK (D66). At lethal kill speed the per-*hit* suppression model

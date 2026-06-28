@@ -421,8 +421,9 @@ stat re-tune *and* a per-near-miss suppression rework, measured against the harn
 balance pass, not blocking the lethality/ammo changes that shipped. Likely bundled with the
 [faction rosters](#q19--faction-roster-specifics) (re-tune once, against the real armies).
 
-**Plan:** [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md) (WS-A restores the RPS, WS-B
-adds area suppression) — faction-independent and shippable now.
+**Plan:** [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md) (WS-A restores the RPS —
+**landed**: Heavy HP 280→300, damage 90→100, harness-confirmed; WS-B area suppression pending) —
+faction-independent. Landing WS-B closes this question.
 
 ---
 

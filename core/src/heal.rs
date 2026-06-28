@@ -149,7 +149,7 @@ mod tests {
         // Medic-free scene's checksum is byte-unchanged.
         let mut world = World::new();
         let hurt = spawn(&mut world, UnitKind::Rifleman, Faction::Player, at(0, 0), 50, 100);
-        spawn(&mut world, UnitKind::Heavy, Faction::Player, at(1, 0), 100, 280);
+        spawn(&mut world, UnitKind::Heavy, Faction::Player, at(1, 0), 100, 300);
         heal_system(&mut world);
         assert_eq!(hp(&world, hurt), Fixed::from_int(50), "no medic ⇒ no healing");
     }

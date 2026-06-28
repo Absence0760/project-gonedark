@@ -3117,6 +3117,9 @@ tests were **re-pinned to lock the measured reality** (honest names: `rifle_ttk_
 `equal_cost_outcomes_locked_at_lethal_baseline`, `suppression_no_longer_pins_before_kill_at_lethal_speed`)
 rather than assert the now-false properties — so the numbers can't drift *silently* before the
 re-tune. One golden checksum (embodied infantry scene) regenerated. Stats remain a playtest baseline.
+*(Superseded in part by [D69](decisions.md): the WS-A stat re-tune subsequently raised Heavy HP
+280→300 and damage 90→100 — restoring the Rifleman/Heavy RPS at lethal speed. "HP …
+unchanged" was true for D66 itself; the Heavy's HP moved in the follow-on re-tune.)*
 
 ---
 
@@ -3184,3 +3187,36 @@ component layered over `UnitKind` rosters, not a rename of `Faction`.
 **Plan:** the build sequencing is [`factions-plan.md`](plans/factions-plan.md) (gated on the
 shared-archetype rebalance, [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md), landing
 first).
+
+---
+
+## D69 — Combat rebalance WS-A: restore the Rifleman↔Heavy RPS at lethal speed (Heavy 280/90 → 300/100)
+
+**Decision:** Re-tune the **Heavy** unit (and only the Heavy) from the [D66](decisions.md) lethal
+baseline of **280 HP / 90 damage** to **300 HP / 100 damage**, keeping its range (11), cooldown (48),
+and all ammo/loadout stats unchanged. This restores the intended range-dependent rock-paper-scissors:
+the cost-equal Heavy mass **wins at point-blank**, the longer-ranged Rifleman mass **kites and wins at
+range**. Measured against the [D30](decisions.md) `sim-runner --metrics` harness: equal-cost **sep5 →
+Heavy survives +2, Rifle 0-for**; **sep9 → Rifle survives +2, Heavy 0-for**. This is workstream **WS-A**
+of [`combat-rebalance-plan.md`](plans/combat-rebalance-plan.md); it partially resolves
+[Q18](open-questions.md) (WS-B, area suppression, is the remaining half).
+
+**Why:** [D66](decisions.md)'s ×5 lethality scaled every weapon uniformly, which preserved the DPS
+*ratios* on paper but at 1–2-volley kill speed **flattened** the RPS — the Rifleman mass's body-count +
+faster cadence won at *every* range (Heavies wiped 0-for), erasing the [D26](decisions.md)/[D30](decisions.md)
+"Heavies win close, rifles kite at range" matchup. D66 honestly **re-pinned** the metrics test to lock
+that regression rather than assert the now-false property. This un-breaks it. Suppression+maneuver is
+the core of the modern-infantry fantasy the [D68](decisions.md) US-vs-France direction leans into, so
+the matchup matters. The fix is the **smallest** Heavy buff that crosses over cleanly (HP +20, damage
++10): bigger buffs made the Heavy win at range too; smaller ones failed to win close.
+
+**Consequences:** two integer `Fixed::from_int` constants in `economy::unit_stats` changed —
+fixed-point, so the cross-arch `determinism.yml` matrix is bit-identical by construction, and **no
+checksum goldens moved** (the ballistic/duel/infantry goldens use scene-local stats or are Rifleman-only;
+confirmed). The re-pinned metrics test `equal_cost_outcomes_locked_at_lethal_baseline` was **renamed**
+to `heavy_wins_close_rifle_wins_at_range` and now asserts the *intended* direction (who wins, nobody
+0-for) plus exact survivor/tick pins. `rifle_ttk_in_lethal_band` stays green (Rifleman untouched, 91
+ticks). The economy baseline + a `heal` test fixture updated to 300 HP. **Measured, not felt** — every
+number dialed against `--metrics` (pillar 4: a *relative* re-tune, no power creep). **Remaining:** WS-B
+makes suppression bite before the kill at lethal speed (separate commit, `/safe-edit`); landing it
+closes [Q18](open-questions.md).

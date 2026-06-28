@@ -1,11 +1,13 @@
 # Combat rebalance plan — inter-unit balance + suppression at lethal speed
 
-> **Status: PLAN.** Addresses [Q18](../open-questions.md). Follows the modern-combat-realism arc:
-> [D66](../decisions.md) (×5 lethality) and [D67](../decisions.md) (all-unit ammo + resupply) shipped.
-> This doc is the build sequencing for the *re-tune* those changes made necessary — the analogue of
-> [`playability-plan.md`](playability-plan.md), scoped to balance, not engine risk. It is
-> **faction-independent and shippable now** ([`factions.md`](../factions.md) build depends on it
-> landing first — [`factions-plan.md`](factions-plan.md) WS-0).
+> **Status: WS-A landed (Heavy HP 280→300, damage 90→100; Rifleman/Heavy RPS restored,
+> harness-measured — `equal_cost_outcomes` re-pinned to `heavy_wins_close_rifle_wins_at_range`).
+> WS-B (area suppression) not yet started.** Addresses [Q18](../open-questions.md). Follows the
+> modern-combat-realism arc: [D66](../decisions.md) (×5 lethality) and [D67](../decisions.md)
+> (all-unit ammo + resupply) shipped. This doc is the build sequencing for the *re-tune* those
+> changes made necessary — the analogue of [`playability-plan.md`](playability-plan.md), scoped to
+> balance, not engine risk. It is **faction-independent** ([`factions.md`](../factions.md) build
+> depends on the full rebalance landing first — [`factions-plan.md`](factions-plan.md) WS-0).
 
 ---
 

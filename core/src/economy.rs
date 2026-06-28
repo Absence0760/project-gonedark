@@ -69,12 +69,15 @@ pub const CAMP_BUILD_COST: i64 = 250;
 /// body you mass.
 pub const RIFLEMAN_COST: i64 = 100;
 /// Resource cost to produce one [`Heavy`](UnitKind::Heavy).
-/// 220 = 2.2x a Rifleman. The Heavy is a short-range *bruiser*: 2.8x HP (280 vs 100)
-/// and 3x burst (18 vs 6 dmg) at *shorter* range (11 vs 14). The 2.2x cost is tuned
+/// 220 = 2.2x a Rifleman. The Heavy is a short-range *bruiser*: 3x HP (300 vs 100)
+/// and 100-vs-30 burst at *shorter* range (11 vs 14). The 2.2x cost is tuned
 /// (D30) so the equal-cost trade is genuinely range-dependent — at point-blank the
 /// Heavy mass trades up, at rifle range the cheaper, longer-reaching Rifleman mass
 /// wins — instead of the old strictly-dominated Heavy (measured rifle-mass-wipes-
-/// heavy under D26's numbers).
+/// heavy under D26's numbers). The HP/burst were re-tuned up from the D66 280/90 baseline
+/// (combat-rebalance-plan WS-A): at the ×5 lethal kill speed 280/90 had flattened the RPS
+/// (rifles won at *every* range); 300/100 restores heavy-wins-close / rifle-kites-at-range,
+/// harness-measured (`--metrics`: sep5 → heavy +2, sep9 → rifle +2).
 pub const HEAVY_COST: i64 = 220;
 
 /// Ticks to finish a freshly-placed camp's construction. 1200 ticks = 20 s — a
@@ -226,9 +229,12 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
         //   * Rifleman: 30 dmg / 30 ticks = 60 DPS → a symmetric open 1v1 now resolves in ~1-2 s
         //     (4 hits to drop a 100-HP soldier), and long-reaching (range 14) so rifle MASS still
         //     wins at range.
-        //   * Heavy: a short-range BRUISER — 280 HP, 90 dmg / 48 ticks at range 11. Still out-
+        //   * Heavy: a short-range BRUISER — 300 HP, 100 dmg / 48 ticks at range 11. Out-
         //     trades a cost-equal Rifleman blob at point-blank, still kited by the longer-ranged
-        //     Rifleman (the ratio is unchanged from D30).
+        //     Rifleman (combat-rebalance-plan WS-A re-tune off the D66 280/90 baseline: at the new
+        //     ×5 kill speed 280/90 lost the equal-cost trade at every range — rifle body-count +
+        //     cadence dominated — so the D30 range RPS had flattened. 300/100 restores it,
+        //     harness-measured: equal-cost sep5 → heavy wins +2, sep9 → rifle kites +2).
         // CAVEAT: with kills this fast, the per-*hit* suppression model (`combat::SUPPRESSION_PER_HIT`)
         // mostly stops biting before death — fire-and-maneuver suppression wants a per-near-miss
         // rework. Logged as an open question, not fixed here (D66).
@@ -260,10 +266,10 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
             },
         ),
         UnitKind::Heavy => (
-            Health::full(Fixed::from_int(280)),
+            Health::full(Fixed::from_int(300)),
             Weapon {
                 range: Fixed::from_int(11),
-                damage: Fixed::from_int(90),
+                damage: Fixed::from_int(100),
                 cooldown_ticks: 48,
                 cooldown_left: 0,
                 // Bigger belt, slower 138-tick reload (≈2300 ms) — the bruiser sustains fire
@@ -960,10 +966,10 @@ mod tests {
         assert_eq!(rw.cooldown_ticks, 30, "rifleman 30-tick cooldown -> 60 DPS, ~1-2 s 1v1");
 
         let (hh, hw) = unit_stats(UnitKind::Heavy);
-        assert_eq!(hh, Health::full(Fixed::from_int(280)), "heavy 280 HP (280 vs 100 rifle)");
+        assert_eq!(hh, Health::full(Fixed::from_int(300)), "heavy 300 HP (3x the 100-HP rifle, rebalance WS-A)");
         assert_eq!(hw.range, Fixed::from_int(11), "heavy range 11 (shorter than rifle -> kiteable)");
-        assert_eq!(hw.damage, Fixed::from_int(90), "heavy 90 dmg (3x rifle burst, D66 ×5)");
-        assert_eq!(hw.cooldown_ticks, 48, "heavy 48-tick cooldown -> 90 dmg per 48 ticks");
+        assert_eq!(hw.damage, Fixed::from_int(100), "heavy 100 dmg (100 vs 30 rifle burst, rebalance WS-A)");
+        assert_eq!(hw.cooldown_ticks, 48, "heavy 48-tick cooldown -> 100 dmg per 48 ticks");
 
         // The Heavy is a bruiser, not a strict upgrade: shorter range than the Rifleman is the
         // load-bearing weakness that makes the matchup range-dependent (the old Heavy was
