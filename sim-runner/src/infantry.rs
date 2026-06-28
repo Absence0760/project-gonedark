@@ -10,10 +10,11 @@
 //!    the range bonus reaches it), the aim **cone** (the flank dummy, off-axis, is never hit),
 //!    **cover** (the Light-cover dummy takes half damage), and **line of sight** (the walled dummy,
 //!    behind Heavy cover, is never hit).
-//! 2. **The auto-combat battery** ([`battery`]) — four focused fresh-sim checks the embodied scene
+//! 2. **The auto-combat battery** ([`battery`]) — five focused fresh-sim checks the embodied scene
 //!    can't show: **stance** (HoldFire holds, FireAtWill fires), **suppression** (a pinned unit can't
-//!    fire), **retreat** (the health-threshold trigger installs FallBack), and the **reload** gate
-//!    (an empty magazine dry-clicks; a reload refills it).
+//!    fire), **retreat** (the health-threshold trigger installs FallBack), the **reload** gate
+//!    (an empty magazine dry-clicks; a reload refills it), and **target-priority** (an embodied shot
+//!    hits the nearest hostile in the cone, not a lower-index one screened behind it).
 //!
 //! Output mirrors `duel`/`--metrics`: the `<tick> <checksum>` stream of the embodied scene on
 //! **stdout** (determinism-covered), the human-readable report on **stderr** (never touches stdout).
@@ -374,13 +375,47 @@ fn check_reload() -> Check {
     }
 }
 
-/// Run the four auto-combat checks.
+/// **Target priority (embodied):** a player shot hits the NEAREST hostile inside the aim cone, not a
+/// lower-index one further down the same line. Regression for the "I aim at the soldier in front of
+/// me but nothing dies" bug: the enemy base (lower index) sitting behind its troop used to soak
+/// every shot. Spawn the FAR enemy first (lower index) and the NEAR one second (higher index), both
+/// dead ahead inside the cone and range, then fire once — the near one must take the hit, the far one
+/// must be untouched.
+fn check_target_priority() -> Check {
+    let mut sim = Sim::new(0x7A26E7);
+    let p = spawn_rifle(&mut sim, 0, 0, Faction::Player, Stance::HoldFire);
+    sim.step(&[Command::Embody { entity: p }]);
+    let far_low = spawn_rifle(&mut sim, 12, 0, Faction::Enemy, Stance::HoldFire);
+    let near_high = spawn_rifle(&mut sim, 4, 0, Faction::Enemy, Stance::HoldFire);
+    let far_hp0 = hp(&sim, far_low);
+    let near_hp0 = hp(&sim, near_high);
+
+    sim.step(&[Command::Fire {
+        entity: p,
+        dir: plus_x(),
+    }]);
+    let near_dmg = shooter_hp0_to(near_hp0, hp(&sim, near_high));
+    let far_dmg = shooter_hp0_to(far_hp0, hp(&sim, far_low));
+
+    Check {
+        name: "target-priority",
+        pass: near_dmg > Fixed::ZERO && far_dmg == Fixed::ZERO,
+        detail: format!(
+            "nearest in cone took {:.0}; the lower-index target behind it took {:.0}",
+            show(near_dmg),
+            show(far_dmg),
+        ),
+    }
+}
+
+/// Run the five auto-combat / embodied-fire checks.
 fn battery() -> Vec<Check> {
     vec![
         check_stance(),
         check_suppression(),
         check_retreat(),
         check_reload(),
+        check_target_priority(),
     ]
 }
 
