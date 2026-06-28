@@ -477,19 +477,20 @@ pub fn facing_penetration_multiplier(
 
 /// Resolve one embodied shot from `shooter_idx` aimed along `dir` (a unit aim vector in Fixed
 /// world space — quantized at the host boundary, invariant #1). A fixed-point **cone hitscan**:
-/// the lowest-index living hostile entity — a unit **or** a building — that lies inside the aim
+/// the **nearest** living hostile entity — a unit **or** a building — that lies inside the aim
 /// cone, within weapon range, and in line of sight takes the same cover-mitigated damage +
 /// suppression the auto-resolver applies, and the weapon goes on cooldown. Returns silently (no
 /// shot, no cooldown) if the weapon is disarmed, still cooling down, or no target qualifies.
 /// Buildings are damageable so an embodied player can shoot down an enemy structure; the
-/// `is_enemy` filter still spares friendly buildings (no own-base fire).
+/// `is_enemy` filter still spares friendly buildings (no own-base fire), and a unit screening a
+/// structure is hit before the structure (nearest wins).
 ///
 /// Determinism (the guard greps this file): fixed-point only, no sqrt/normalize. The cone test
 /// `dir·(t−p) ≥ cos_half·|t−p|` is evaluated by **squaring both non-negative sides** —
 /// `proj·proj ≥ cos_half²·|t−p|²` — after rejecting any target behind the aim (`proj < 0`), so a
-/// transcendental never enters. Targets are scanned in stable index order; the first qualifier
-/// (lowest index) wins ties. Only already-checksummed fields are written, so the per-tick
-/// `fold()`/checksum stream is untouched (invariant #7).
+/// transcendental never enters. Targets are scanned in stable index order and the nearest qualifier
+/// (by squared distance) wins, the lowest index breaking a distance tie. Only already-checksummed
+/// fields are written, so the per-tick `fold()`/checksum stream is untouched (invariant #7).
 pub fn resolve_fire(
     world: &mut World,
     terrain: &Terrain,
@@ -539,10 +540,16 @@ pub fn resolve_fire(
     };
     let cos_half_sq = cos_half * cos_half;
 
-    // Pick the lowest-index hostile, living target inside the cone, in range, with LoS. A target
-    // may be a unit OR a building — embodied fire razes enemy structures (the `is_enemy` test
-    // below still excludes friendly buildings). No kind filter here, on purpose.
-    let mut chosen: Option<usize> = None;
+    // Pick the **nearest** hostile, living target inside the cone, in range, with LoS — ties broken
+    // to the lowest index. This matches what the crosshair promises (the closest enemy you are
+    // pointing at takes the shot) and mirrors the AI auto-resolver's nearest-target pick
+    // (`acquire_target` FireAtWill); the old lowest-index-in-cone pick let a lower-index enemy (or
+    // an enemy building) behind your actual target steal every shot, so the unit under the crosshair
+    // never died. A target may be a unit OR a building — embodied fire razes enemy structures (the
+    // `is_enemy` test below still excludes friendly buildings), but a unit screening it is hit first.
+    // Track the best (nearest) candidate as `(index, dist_sq)` so the nearest-wins invariant is
+    // structural — there is no zero sentinel that a future edit could compare against by mistake.
+    let mut best: Option<(usize, Fixed)> = None;
     for t in 0..world.capacity() {
         if t == shooter_idx || !world.is_index_alive(t) {
             continue;
@@ -572,12 +579,14 @@ pub fn resolve_fire(
         if !terrain.line_of_sight(my_pos, world.pos[t]) {
             continue;
         }
-        chosen = Some(t);
-        break;
+        // Nearest wins; a strict `<` keeps the first (lowest-index) candidate on a distance tie.
+        if best.is_none_or(|(_, bd)| dist_sq < bd) {
+            best = Some((t, dist_sq));
+        }
     }
 
-    let target_idx = match chosen {
-        Some(t) => t,
+    let target_idx = match best {
+        Some((t, _)) => t,
         None => return,
     };
 
@@ -1270,6 +1279,35 @@ mod tests {
     }
 
     #[test]
+    fn fire_hits_the_nearest_enemy_not_a_lower_index_one_behind_it() {
+        // Regression: embodied fire used to pick the LOWEST-INDEX hostile in the cone, so a closer
+        // target the player was aiming at went unhit while a lower-index enemy further down the same
+        // line (e.g. the enemy base behind a soldier) soaked every shot — "the unit in front of me
+        // won't die." It must hit the NEAREST qualifier instead, matching the AI auto-resolver.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(20, 25, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        // The FAR enemy is spawned first → lower index; the NEAR one second → higher index. Both
+        // sit dead ahead on +X, inside the cone and range.
+        let far_low = spawn_unit(&mut world, 12, 0, Faction::Enemy, 100, Weapon::default());
+        let near_high = spawn_unit(&mut world, 4, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(
+            world.health[near_high.index as usize].cur,
+            fx(75),
+            "the nearest enemy takes the shot",
+        );
+        assert_eq!(
+            world.health[far_low.index as usize].cur,
+            fx(100),
+            "the lower-index enemy behind it is spared",
+        );
+    }
+
+    #[test]
     fn fire_never_hits_same_faction() {
         let mut world = World::new();
         let terrain = Terrain::open();
@@ -1331,6 +1369,33 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, SimEvent::Killed { entity, .. } if *entity == building)),
             "destruction emits a Killed event for the building"
+        );
+    }
+
+    #[test]
+    fn embodied_fire_hits_a_unit_screening_a_lower_index_building() {
+        // The docstring promise, isolated in one shot: a unit in front of an enemy structure is hit
+        // before the structure (nearest wins), even when the structure has the lower index. This is
+        // the skirmish case — a soldier in front of the enemy base — distilled to a single call.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(20, 25, 0));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        // The building is spawned first → lower index, and sits farther back on the same +X line.
+        let building = spawn_building(&mut world, 12, 0, Faction::Enemy, 100);
+        let screen = spawn_unit(&mut world, 4, 0, Faction::Enemy, 100, Weapon::default());
+
+        let mut events = Vec::new();
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(
+            world.health[screen.index as usize].cur,
+            fx(75),
+            "the nearer unit is hit",
+        );
+        assert_eq!(
+            world.health[building.index as usize].cur,
+            fx(100),
+            "the lower-index building behind it is spared",
         );
     }
 

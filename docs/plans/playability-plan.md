@@ -64,7 +64,7 @@ parallel branches collide minimally.
 **W1 — Embodied combat.** *(HIGH blast radius — `/safe-edit` + determinism-auditor.)*
 Add `Command::Fire { entity, dir: Vec2 }` to `core/sim.rs` (enum tail + one `apply` arm —
 both appends). New `core/combat.rs::resolve_fire(...)`: a fixed-point **cone hitscan** —
-lowest-index hostile with `dir·(target−pos) ≥ cos_half·|target−pos|` (Fixed dot, **no
+nearest hostile (ties → lowest index) with `dir·(target−pos) ≥ cos_half·|target−pos|` (Fixed dot, **no
 normalize/sqrt**), within `range²`, passing `terrain.line_of_sight`; reuse
 `cover_at().damage_multiplier()` + the existing damage/suppression/cooldown writes. Keep the
 embodied-skip at `combat.rs:164` — embodied units fire *only* via the command. The firing

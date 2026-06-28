@@ -599,6 +599,32 @@ mod tests {
     }
 
     #[test]
+    fn skirmish_embodied_fire_kills_the_unit_in_front_not_the_base_behind() {
+        use crate::components::{InputSource, Stance};
+        let mut sim = fresh();
+        let s = seed_skirmish(&mut sim);
+        let p = s.player_troop.index as usize;
+        let e = s.enemy_troop.index as usize;
+        sim.world.input_source[p] = InputSource::Embodied;
+        sim.world.stance[e] = Stance::HoldFire; // isolate: only the player's shots matter
+        // Stand the player 5 units west of the enemy troop; the enemy base sits further east on the
+        // same +X line. Regression: the shot must kill the troop in front, not be soaked by the
+        // lower-index enemy base behind it (the original "impossible to kill an enemy" report).
+        sim.world.pos[p] = Vec2::new(sim.world.pos[e].x - Fixed::from_int(5), sim.world.pos[e].y);
+        for _ in 0..300 {
+            sim.step(&[Command::Fire { entity: s.player_troop, dir: plus_x() }]);
+            if !sim.world.is_alive(s.enemy_troop) {
+                break;
+            }
+        }
+        assert!(
+            !sim.world.is_alive(s.enemy_troop),
+            "the embodied player kills the troop it is aiming at",
+        );
+        assert!(sim.world.is_alive(s.enemy_base), "the base behind it is not what got shot");
+    }
+
+    #[test]
     fn skirmish_seeds_two_operational_bases_one_troop_each() {
         let mut sim = fresh();
         let s = seed_skirmish(&mut sim);

@@ -1809,7 +1809,7 @@ holding invariants #1/#4/#5/#7.
   `cos/sin(yaw)` to a `Fixed` unit vector **at the input boundary** — exactly the `world_to_fixed`
   pattern used for tap targets. No float leaks into the sim (invariant #1).
 - The shot resolves **sim-side** in `core::combat::resolve_fire`: a fixed-point **cone hitscan** picking
-  the lowest-index living hostile unit with `dir·(t−p) ≥ cos_half·|t−p|` — evaluated by squaring both
+  the nearest living hostile unit (ties → lowest index) with `dir·(t−p) ≥ cos_half·|t−p|` — evaluated by squaring both
   sides after rejecting a negative projection, so there is **no `sqrt`/normalize** — within weapon
   `range²` and passing `terrain.line_of_sight`, taking the same cover-mitigated damage / suppression /
   cooldown writes as the auto-resolver. The aim cone is `cos(30°)` (a 60° hip-fire arc); a clean miss
