@@ -532,7 +532,20 @@ fn main() {
     // After combat the directional alert HUD draws markers OVER the FPS world. The markers add
     // non-dark pixels beyond the no-alert world frame (scenario 2), and — crucially — combat still
     // leaks NO enemy intel: the alerts are directional pings, never enemy positions. So even with
-    // the enemy actively firing, the embodied frame stays free of enemy-red pixels (invariant #6).
+    // the enemy actively firing, the embodied frame stays free of strategic map content (#6).
+    //
+    // Invariant #5 makes this scenario subtle, and is what the standing FAIL was really about. A
+    // possessed avatar that dies AUTO-SURFACES the player back to command — there is NO respawn
+    // (engine `should_auto_surface`). The default-scene avatar holds the front line and dies early,
+    // so driving a single embody for 220 frames and reading "whatever falls out" asserted the
+    // POST-EJECTION command view (grid + control-point rings + `UNITS:` readout) — which of course
+    // shows strategic intel, and whose warm HUD text even spuriously satisfied `hud_markers_drawn`.
+    // That was a SCENARIO bug, not an invariant-#6 leak (scenario 2 already proves a genuinely
+    // embodied frame draws zero strategic blue). The fix is to stay embodied the way a real player
+    // does: when the avatar falls and the host ejects us, re-press embody to possess another live
+    // player unit (the RTS "pick another unit" loop — engine `embody_target` falls back to a live
+    // unit), and assert on the best GENUINELY-embodied combat frame (guarded by `is_embodied()` and
+    // no shell overlay) once alerts have accrued.
     println!("[embodied_hud] after combat, the alert HUD draws markers over the FPS world (no intel)");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     g.frame(
@@ -548,31 +561,74 @@ fn main() {
     // alerts), so the marker delta isolates the HUD overlay rather than the world itself.
     let pre_alert = read_pixels(&gpu.device, &gpu.queue, &target);
     let pre_marker = count(&pre_alert, is_alert_marker);
-    advance(&mut g, 220, InputFrame::default(), &gpu, &view); // allies take fire → alerts accrue
-    let hud_frame = read_pixels(&gpu.device, &gpu.queue, &target);
+    // Drive combat, re-possessing a live unit after every avatar death so the fight is fought (and
+    // asserted) in first person, and keep the embodied frame with the most alert markers. Combat
+    // raises alerts within the first second or two, while player units (incl. camp reinforcements)
+    // are still alive to re-possess.
+    let mut hud_marker = 0usize;
+    let mut hud_frame: Vec<u8> = Vec::new();
+    let mut captured_embodied = false;
+    for _ in 0..240 {
+        // If a fallen avatar ejected us to command, re-press embody to take another live player
+        // unit; otherwise let the frame run. `embody_pressed` is a no-op once already embodied.
+        let input = if g.is_embodied() {
+            InputFrame::default()
+        } else {
+            embody.clone()
+        };
+        g.frame(
+            &input,
+            TICK_DT,
+            (W, H),
+            &gpu.device,
+            &gpu.queue,
+            &view,
+            &mut NullAudio,
+        );
+        // Only a frame that is embodied AND has no shell overlay (pause / post-match summary) up is
+        // a valid sample of the dark first-person combat view.
+        if g.is_embodied() && !g.shell_overlay_active() {
+            let f = read_pixels(&gpu.device, &gpu.queue, &target);
+            let m = count(&f, is_alert_marker);
+            if !captured_embodied || m >= hud_marker {
+                hud_marker = m;
+                hud_frame = f;
+                captured_embodied = true;
+            }
+        }
+    }
     save_png("target/viz/embodied_hud.png", &hud_frame);
-    let hud_marker = count(&hud_frame, is_alert_marker);
+    // Guard: we must have actually held a genuinely embodied combat frame. If we never could (every
+    // player unit died before we re-possessed), the scenario proves nothing — fail loudly rather
+    // than assert against a stale/command frame (the exact trap the old version fell into).
+    check(
+        &mut failures,
+        "embodied_combat_frame_captured",
+        captured_embodied,
+        "held a genuinely embodied combat frame (is_embodied + no overlay) to assert against"
+            .to_string(),
+    );
     // The directional alert HUD draws marker glyphs over the FPS world: more alert-marker-colored
-    // px after combat than before any alert fired. (`is_alert_marker` keys on the saturated marker
+    // px during combat than before any alert fired. (`is_alert_marker` keys on the saturated marker
     // palette — orange/red/teal/pale — which the muted blue-grey sky/ground never produces.)
     check(
         &mut failures,
         "hud_markers_drawn",
         hud_marker > pre_marker + 30,
-        format!("{hud_marker} alert-marker px after combat vs {pre_marker} before (directional pings drawn over the world)"),
+        format!("{hud_marker} alert-marker px during embodied combat vs {pre_marker} before (directional pings drawn over the world)"),
     );
     // The fairness guarantee holds THROUGH combat: the alert HUD is a DIRECTIONAL PING ring near the
     // screen edge (`render/src/hud.rs`), not a map reveal — it tells you a bearing, never an enemy
     // position. The strategic map stays dark: the player's own off-screen squad + control-point
     // intel never reappear. We count player-blue px that are NOT themselves alert markers (the teal
     // TerritoryLost glyph reads blue-ish but is a directional ping, not ally intel) — that residual
-    // must stay near zero even while the enemy is firing.
+    // must stay near zero even while the enemy is firing AND we keep re-embodying through deaths.
     let hud_map_intel = count(&hud_frame, |p| is_player_blue(p) && !is_alert_marker(p));
     check(
         &mut failures,
         "embodied_combat_strategic_map_stays_dark",
         hud_map_intel < 20 && (hud_map_intel as f32) < (blue as f32) * 0.1,
-        format!("{hud_map_intel} non-marker player-blue px after combat (<20 and <10% of command's {blue} — the map stays dark; alerts are pings, not intel)"),
+        format!("{hud_map_intel} non-marker player-blue px during embodied combat (<20 and <10% of command's {blue} — the map stays dark; alerts are pings, not intel)"),
     );
     let _ = dark_nondark; // (the pre-/post-alert dark counts are now both ~0 with a world drawn)
 
