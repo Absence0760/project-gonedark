@@ -20,4 +20,4 @@ gonedark-pal = { path = "../pal" }
 winit = "0.30"
 wgpu = "29"
 pollster = "0.4"
-cpal = { version = "0.15", optional = true }
+cpal = { version = "0.18", optional = true }
