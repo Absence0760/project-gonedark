@@ -48,6 +48,10 @@ pub struct TouchButton {
     pub glyph: TouchGlyph,
     pub pressed: bool,
     pub active: bool,
+    /// Player-set draw opacity multiplier in `[0,1]` from the HUD layout editor (WS-D); `1.0` is the
+    /// shipped look. Multiplies the resting/hot alpha — a pure presentation fade, never a hit-test
+    /// change (the geometry the engine hit-tests is unaffected).
+    pub opacity: f32,
 }
 
 /// The floating move stick, in pixels: the captured base center + radius and the current (clamped)
@@ -59,6 +63,9 @@ pub struct StickView {
     pub radius: f32,
     pub thumb_x: f32,
     pub thumb_y: f32,
+    /// Player-set draw opacity multiplier in `[0,1]` from the HUD layout editor (WS-D); `1.0` is the
+    /// shipped look. Fades the ring + thumb together; never affects the input seam.
+    pub opacity: f32,
 }
 
 /// What to draw this frame: the viewport (for pixel→NDC), the optional move stick, and the four
@@ -130,11 +137,12 @@ fn button_quad(b: &TouchButton, w: f32, h: f32) -> TouchQuad {
         TouchGlyph::Reload => RELOAD_COL,
         TouchGlyph::Surface => SURFACE_COL,
     };
-    let a = if b.pressed || b.active {
+    let base_a = if b.pressed || b.active {
         HOT_ALPHA
     } else {
         IDLE_ALPHA
     };
+    let a = base_a * b.opacity.clamp(0.0, 1.0);
     TouchQuad {
         ndc_x,
         ndc_y,
@@ -158,6 +166,7 @@ pub fn build_quads(hud: &TouchControlsHud) -> Vec<TouchQuad> {
     let mut quads = Vec::with_capacity(6);
 
     if let Some(s) = hud.stick {
+        let op = s.opacity.clamp(0.0, 1.0);
         // Base ring at the captured origin.
         let (bx, by) = to_ndc(s.base_x, s.base_y, w, h);
         let (bhx, bhy) = half_ndc(s.radius, w, h);
@@ -169,7 +178,7 @@ pub fn build_quads(hud: &TouchControlsHud) -> Vec<TouchQuad> {
             r: STICK_BASE_COL[0],
             g: STICK_BASE_COL[1],
             b: STICK_BASE_COL[2],
-            a: STICK_BASE_ALPHA,
+            a: STICK_BASE_ALPHA * op,
             shape: 0.0,
         });
         // Thumb disc (~40% of the base radius) at the clamped finger position.
@@ -183,7 +192,7 @@ pub fn build_quads(hud: &TouchControlsHud) -> Vec<TouchQuad> {
             r: STICK_THUMB_COL[0],
             g: STICK_THUMB_COL[1],
             b: STICK_THUMB_COL[2],
-            a: STICK_THUMB_ALPHA,
+            a: STICK_THUMB_ALPHA * op,
             shape: 1.0,
         });
     }
@@ -373,6 +382,7 @@ mod tests {
             glyph,
             pressed: false,
             active: false,
+            opacity: 1.0,
         }
     }
 
@@ -407,6 +417,7 @@ mod tests {
             radius: 100.0,
             thumb_x: 180.0,
             thumb_y: 360.0,
+            opacity: 1.0,
         });
         let q = build_quads(&h);
         assert_eq!(q.len(), 6, "stick base + thumb + four buttons");
@@ -437,6 +448,37 @@ mod tests {
         // r=60 px on 1000 wide → 0.12 NDC; on 500 tall → 0.24 NDC.
         assert!((f.half_x - 0.12).abs() < 1e-5);
         assert!((f.half_y - 0.24).abs() < 1e-5);
+    }
+
+    #[test]
+    fn editor_opacity_fades_a_buttons_alpha() {
+        // The HUD layout editor's per-control opacity multiplies the base alpha (WS-D) — a pure
+        // presentation fade. It must NOT change the hit shape (that's the engine's geometry).
+        let mut h = hud();
+        h.fire.opacity = 0.5;
+        let q = build_quads(&h);
+        assert!((q[0].a - IDLE_ALPHA * 0.5).abs() < 1e-6, "idle fire faded to half alpha");
+        // A pressed-but-faded button scales the HOT alpha, not the idle one.
+        h.fire.pressed = true;
+        assert!((build_quads(&h)[0].a - HOT_ALPHA * 0.5).abs() < 1e-6);
+        // Geometry is untouched by opacity.
+        assert!((build_quads(&h)[0].half_x - q[0].half_x).abs() < 1e-9);
+    }
+
+    #[test]
+    fn stick_opacity_fades_ring_and_thumb_together() {
+        let mut h = hud();
+        h.stick = Some(StickView {
+            base_x: 150.0,
+            base_y: 400.0,
+            radius: 100.0,
+            thumb_x: 180.0,
+            thumb_y: 360.0,
+            opacity: 0.25,
+        });
+        let q = build_quads(&h);
+        assert!((q[0].a - STICK_BASE_ALPHA * 0.25).abs() < 1e-6, "ring faded");
+        assert!((q[1].a - STICK_THUMB_ALPHA * 0.25).abs() < 1e-6, "thumb faded");
     }
 
     #[test]

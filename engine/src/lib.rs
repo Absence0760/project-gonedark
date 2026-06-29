@@ -78,6 +78,13 @@ mod locomote;
 /// screen-space layout the renderer draws. The testable logic `pal-android` can't host. Public so
 /// the renderer (and a host) can read the layout/HUD geometry.
 pub mod touch_controls;
+/// HUD layout editor (PvE-campaign plan WS-D). Owns `HudLayoutProfile`: the per-layer (command vs
+/// embodied) drag/resize/opacity editor layered over the existing touch seams, with saved presets +
+/// reset-to-default and a pure `resolve_embodied` seam (saved layout → `TouchLayout` geometry +
+/// opacity, feeding `touch_controls::TouchControls::update` unchanged). PRESENTATION/INPUT only —
+/// never sim, never checksummed (D61); placement, never information (invariant #6). Public so a host
+/// (and the native settings shell) can drive the editor + persist the profile.
+pub mod hud_layout;
 /// In-session shell (Phase 4 WS-B): the in-engine pause / surrender / post-match-summary /
 /// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
 /// session state — never mutates sim state. Public so a host (and tests) can drive it.
@@ -889,15 +896,17 @@ fn render_touch_hud(
     hud: &touch_controls::TouchHud,
     viewport: (u32, u32),
     crouched: bool,
+    opacity: &hud_layout::Opacity,
 ) -> gonedark_render::touch_controls::TouchControlsHud {
     use gonedark_render::touch_controls as r;
-    let button = |c: &touch_controls::Circle, glyph, pressed, active| r::TouchButton {
+    let button = |c: &touch_controls::Circle, glyph, pressed, active, op| r::TouchButton {
         cx: c.cx,
         cy: c.cy,
         r: c.r,
         glyph,
         pressed,
         active,
+        opacity: op,
     };
     r::TouchControlsHud {
         viewport,
@@ -907,11 +916,30 @@ fn render_touch_hud(
             radius: layout.stick_radius,
             thumb_x: hud.stick_thumb.0,
             thumb_y: hud.stick_thumb.1,
+            opacity: opacity.stick,
         }),
-        fire: button(&layout.fire, r::TouchGlyph::Fire, hud.fire_pressed, false),
-        crouch: button(&layout.crouch, r::TouchGlyph::Crouch, hud.crouch_pressed, crouched),
-        reload: button(&layout.reload, r::TouchGlyph::Reload, hud.reload_pressed, false),
-        surface: button(&layout.surface, r::TouchGlyph::Surface, hud.surface_pressed, false),
+        fire: button(&layout.fire, r::TouchGlyph::Fire, hud.fire_pressed, false, opacity.fire),
+        crouch: button(
+            &layout.crouch,
+            r::TouchGlyph::Crouch,
+            hud.crouch_pressed,
+            crouched,
+            opacity.crouch,
+        ),
+        reload: button(
+            &layout.reload,
+            r::TouchGlyph::Reload,
+            hud.reload_pressed,
+            false,
+            opacity.reload,
+        ),
+        surface: button(
+            &layout.surface,
+            r::TouchGlyph::Surface,
+            hud.surface_pressed,
+            false,
+            opacity.surface,
+        ),
     }
 }
 
@@ -1186,6 +1214,13 @@ pub struct Game {
     /// `input.touches` while possessed. PRESENTATION/INPUT only — host-side floats, never sim state
     /// (the intents it yields are quantized to `Fixed` by the `fire`/`locomote` seams, invariant #1).
     touch: touch_controls::TouchControls,
+
+    /// The player's HUD layout editor profile (WS-D): saved per-layer presets the embodied touch
+    /// controls are placed/sized/faded by. PRESENTATION/INPUT only — it resolves to the
+    /// `TouchLayout` geometry that feeds the pure input seam + the renderer's opacity, and never
+    /// reaches the sim or the checksum (D61; invariant #6: placement, never information). A default
+    /// profile resolves bit-identically to the shipped layout, so this is inert until edited.
+    hud_layout: hud_layout::HudLayoutProfile,
 
     /// What the on-screen touch HUD should draw THIS frame, or `None` when no touch input drove the
     /// frame (e.g. desktop, or command view). Set in `frame`, read by the render step. Presentation
@@ -1658,6 +1693,8 @@ impl Game {
             last_hit_tick: None,
             // No touches tracked yet; the HUD is only built on embodied touch frames.
             touch: touch_controls::TouchControls::new(),
+            // The shipped-default HUD layout (no overrides → resolves to the stock `TouchLayout`).
+            hud_layout: hud_layout::HudLayoutProfile::default(),
             touch_hud: None,
             debug_hitboxes,
             // The "gone dark" detection tell: D33 `Subtle` baseline, with its own per-client linger
@@ -2304,7 +2341,10 @@ impl Game {
         // (the GUI is Android-only, and never drawn in the command view).
         let (look_axis, move_axis, fire, crouch_edge, reload_edge, surface_edge) =
             if self.embodied && input.touch_count > 0 {
-                let layout = touch_controls::TouchLayout::new(width, height);
+                // Resolve the active HUD-editor preset to the embodied control geometry (WS-D). The
+                // draw step below re-resolves the SAME profile + viewport, so the hit shapes the
+                // input seam tests and the shapes the renderer draws can never drift.
+                let layout = self.hud_layout.resolve_embodied(width, height).layout;
                 let n = (input.touch_count as usize).min(input.touches.len());
                 let out = self.touch.update(&layout, &input.touches[..n]);
                 self.touch_hud = Some(out.hud);
@@ -2856,10 +2896,14 @@ impl Game {
         // authoritative sim posture. Screen-space chrome with no world position (invariant #6).
         if self.embodied {
             if let Some(hud_state) = self.touch_hud {
-                let layout = touch_controls::TouchLayout::new(width, height);
+                // Re-resolve the SAME HUD-editor preset the input seam used above → identical
+                // geometry + the player-set per-control opacity for the renderer (WS-D).
+                let resolved = self.hud_layout.resolve_embodied(width, height);
+                let layout = resolved.layout;
                 let crouched = self.sim.world.is_alive(self.player)
                     && self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
-                let rhud = render_touch_hud(&layout, &hud_state, viewport, crouched);
+                let rhud =
+                    render_touch_hud(&layout, &hud_state, viewport, crouched, &resolved.opacity);
                 self.renderer
                     .render_touch_controls(device, queue, view, &rhud);
             }
@@ -4077,11 +4121,13 @@ mod tests {
             reload_pressed: false,
             surface_pressed: false,
         };
-        let r = render_touch_hud(&layout, &hud, (1280, 720), /* crouched = */ true);
+        let op = hud_layout::Opacity::default();
+        let r = render_touch_hud(&layout, &hud, (1280, 720), /* crouched = */ true, &op);
         assert!(r.stick.is_some(), "active stick → a stick view");
         let s = r.stick.unwrap();
         assert_eq!((s.base_x, s.base_y), (120.0, 600.0));
         assert_eq!(s.radius, layout.stick_radius);
+        assert_eq!(s.opacity, 1.0, "default profile → full opacity");
         assert!(r.fire.pressed, "held fire carries the pressed flash");
         assert!(r.crouch.active, "crouched avatar lights the Crouch toggle");
         assert!(!r.crouch.pressed);
@@ -4090,7 +4136,7 @@ mod tests {
 
         // No active stick → no stick view drawn.
         let hud2 = touch_controls::TouchHud::default();
-        let r2 = render_touch_hud(&layout, &hud2, (1280, 720), false);
+        let r2 = render_touch_hud(&layout, &hud2, (1280, 720), false, &op);
         assert!(r2.stick.is_none());
         assert!(!r2.crouch.active);
     }
