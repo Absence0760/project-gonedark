@@ -972,6 +972,23 @@ impl Renderer {
         );
     }
 
+    /// Draw the embodied hitmarker — the centered "X" flash confirming the player's OWN connecting
+    /// shot (WS-4) — as a LOAD pass over the current frame. Delegates to [`hud::HudRenderer`]. The
+    /// host calls this only while embodied; it is a no-op unless a hit is live (`last_hit_tick`
+    /// within the fade window). Presentation feedback on the player's own action, never map intel
+    /// (invariant #6).
+    pub fn render_hitmarker(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        last_hit_tick: Option<u64>,
+        tick: u64,
+    ) {
+        self.hud
+            .render_hitmarker(device, queue, view, last_hit_tick, tick);
+    }
+
     /// Draw the on-screen FPS touch-control HUD (move stick + Fire/Crouch/Reload/Surface) on top of
     /// the current frame (a LOAD pass — never clears), delegating to
     /// [`touch_controls::TouchControlsRenderer`]. The host calls this only while embodied on a touch

@@ -36,6 +36,24 @@ const RING_RADIUS: f32 = 0.82;
 /// Initial GPU capacity (in markers) for the instance buffer.
 const INITIAL_CAP: usize = 16;
 
+/// How many ticks the embodied hitmarker flash stays up after a connecting shot, fading linearly
+/// to nothing. At 60 Hz this is a ~0.17 s snap — long enough to register "I hit him", short enough
+/// to feel crisp and not smear across sustained fire (WS-4 / roadmap game-feel polish).
+pub const HITMARKER_TICKS: u64 = 10;
+
+/// Half-size (NDC) of the centered hitmarker quad — a small crosshair flash at screen center.
+const HITMARKER_HALF_SIZE: f32 = 0.085;
+
+/// The hitmarker is a crisp bright white "X" at screen center. White is deliberately distinct from
+/// every other embodied-frame element: the alert-marker palette (warm red/orange, teal, pale grey)
+/// rides the screen *edge* ring; the muzzle flash is a *warm* yellow (low blue); the FPS world is a
+/// muted, low-saturation blue-grey. A high-blue near-white pixel at center reads only as the
+/// hitmarker — which is exactly what the viz pixel-assert keys on.
+const HITMARKER_COLOR: [f32; 3] = [1.0, 1.0, 1.0];
+
+/// The hitmarker glyph id matched by `glyph_coverage` in `hud.wgsl` (4 = centered "X").
+const SHAPE_HITMARKER: f32 = 4.0;
+
 /// The RGB color for an alert kind. Color is only ONE of the two cues — [`shape_for`] carries a
 /// redundant shape so the kinds stay distinct for CVD players (invariant #6: the thread back must
 /// stay legible). The palette is spaced along lightness *and* the blue-yellow axis, not just warm
@@ -140,6 +158,38 @@ pub fn marker_for(
         alpha,
         half_size: MARKER_HALF_SIZE,
         shape: shape_for(alert.kind),
+    })
+}
+
+/// Build the centered hitmarker for this frame from `last_hit_tick` (the tick the embodied avatar's
+/// own shot last connected) and the current `tick`, or `None` when no hit is live (never hit, a
+/// future-stamped tick, or aged past [`HITMARKER_TICKS`]).
+///
+/// The hitmarker is presentation feedback on the player's OWN action — it draws iff the avatar
+/// itself dealt damage — so it reveals nothing about unseen enemies and stays inside invariant #6
+/// (WS-4). A pure float fn (the presentation boundary) so it is unit-testable without a GPU. Placed
+/// dead-center (NDC `(0, 0)`) so it never collides with the edge-ring alert markers.
+pub fn hitmarker_marker(last_hit_tick: Option<u64>, tick: u64) -> Option<HudMarker> {
+    let fired = last_hit_tick?;
+    if tick < fired {
+        return None; // future-stamped hit is not yet live
+    }
+    let age = tick - fired;
+    if age >= HITMARKER_TICKS {
+        return None;
+    }
+    // Linear fade: full-bright on the connecting frame, gone by HITMARKER_TICKS.
+    let alpha = 1.0 - age as f32 / HITMARKER_TICKS as f32;
+    let [r, g, b] = HITMARKER_COLOR;
+    Some(HudMarker {
+        ndc_x: 0.0,
+        ndc_y: 0.0,
+        r,
+        g,
+        b,
+        alpha,
+        half_size: HITMARKER_HALF_SIZE,
+        shape: SHAPE_HITMARKER,
     })
 }
 
@@ -294,6 +344,41 @@ impl HudRenderer {
             .collect();
 
         // No live markers → nothing to draw (and the frame must stay untouched).
+        self.draw_markers(device, queue, view, &markers);
+    }
+
+    /// Draw the embodied hitmarker — the centered "X" flash confirming the player's OWN shot
+    /// connected (WS-4). Builds the single live marker via [`hitmarker_marker`] from `last_hit_tick`
+    /// and `tick`, then composites it as a LOAD pass over the embodied frame (same pipeline/shader as
+    /// the alert markers, glyph 4). No-op when no hit is live, so it leaves the frame untouched.
+    ///
+    /// Invariant #6: this is feedback on the avatar's own action (the caller only stamps
+    /// `last_hit_tick` when the avatar itself dealt damage), not intel about an unseen enemy — it
+    /// reveals nothing the player could not already see.
+    pub fn render_hitmarker(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        last_hit_tick: Option<u64>,
+        tick: u64,
+    ) {
+        let Some(marker) = hitmarker_marker(last_hit_tick, tick) else {
+            return;
+        };
+        self.draw_markers(device, queue, view, &[marker]);
+    }
+
+    /// Upload `markers` and composite them as one LOAD pass over `view` (never clears). Shared by
+    /// the alert overlay ([`Self::render`]) and the hitmarker ([`Self::render_hitmarker`]) so both
+    /// drive the one screen-space pipeline. No-op on an empty set so the frame stays untouched.
+    fn draw_markers(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        markers: &[HudMarker],
+    ) {
         if markers.is_empty() {
             return;
         }
@@ -308,7 +393,7 @@ impl HudRenderer {
             });
             self.instance_cap = new_cap;
         }
-        queue.write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(&markers));
+        queue.write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(markers));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gonedark.hud_encoder"),
@@ -552,6 +637,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ---- hitmarker (WS-4) ----
+
+    #[test]
+    fn no_hit_yet_is_no_marker() {
+        assert!(hitmarker_marker(None, 0).is_none());
+        assert!(hitmarker_marker(None, 500).is_none());
+    }
+
+    #[test]
+    fn fresh_hit_is_centered_full_bright_x() {
+        let m = hitmarker_marker(Some(100), 100).expect("a hit this tick is live");
+        // Dead center so it never collides with the edge-ring alert markers.
+        assert!(m.ndc_x.abs() < 1e-6 && m.ndc_y.abs() < 1e-6, "centered");
+        assert!((m.alpha - 1.0).abs() < 1e-4, "alpha={} should be ~1", m.alpha);
+        // The distinct hitmarker glyph + bright white color the viz pixel-assert keys on.
+        assert_eq!(m.shape, SHAPE_HITMARKER);
+        assert_eq!([m.r, m.g, m.b], HITMARKER_COLOR);
+    }
+
+    #[test]
+    fn hitmarker_fades_monotonically_then_vanishes() {
+        let young = hitmarker_marker(Some(0), 1).unwrap();
+        let mid = hitmarker_marker(Some(0), HITMARKER_TICKS / 2).unwrap();
+        let old = hitmarker_marker(Some(0), HITMARKER_TICKS - 1).unwrap();
+        assert!(young.alpha > mid.alpha && mid.alpha > old.alpha, "fades with age");
+        assert!(old.alpha > 0.0 && young.alpha <= 1.0, "stays in (0, 1]");
+        // Aged past the window → gone (the frame is left untouched).
+        assert!(hitmarker_marker(Some(0), HITMARKER_TICKS).is_none());
+        assert!(hitmarker_marker(Some(0), HITMARKER_TICKS + 50).is_none());
+    }
+
+    #[test]
+    fn future_stamped_hit_is_none() {
+        // tick < last_hit_tick (clock not yet there) yields None rather than a negative age.
+        assert!(hitmarker_marker(Some(100), 50).is_none());
     }
 
     /// Validate `hud.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails

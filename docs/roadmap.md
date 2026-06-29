@@ -358,9 +358,12 @@ narrative depth ([Q16](open-questions.md)).
 - [ ] **TF-3 — Input-pipeline integration tests.** Cover mouse/key → yaw → `Command::Fire`
   (the aim convention only verified by reading code), incl. camera-forward == fire-dir. No
   GPU; ships in `cargo test`. *(plan WS-3)*
-- [ ] **TF-4 — In-game hit feedback.** Hitmarker / target flash / hit SFX off the local
-  avatar's `SimEvent::Damaged` — the "I hit him" signal the game never sent
-  (invariant-#6-safe). *Folds into the Game-feel polish item below.* *(plan WS-4)*
+- [x] **TF-4 — In-game hit feedback.** The "I hit him" signal the game never sent: a centered
+  hitmarker "X" + a one-shot hit SFX (`SoundId::HitConfirm`), derived from the pure
+  `engine::avatar_landed_hit` seam over the deterministic `SimEvent::Damaged` stream where the
+  avatar is the `source` (presentation-only, invariant-#6-safe — feedback on your OWN shot, not
+  intel). Pixel-asserted by the WS-1 `embodied_kill` scene (center hitmarker px ~0 → peak on a
+  connecting shot). *Folds into the Game-feel polish item below.* *(plan WS-4)*
 
 ### UI / UX polish — make it read as a product
 
