@@ -22,6 +22,7 @@ use glam::{Mat4, Vec3, Vec4};
 use gonedark_core::alerts::AlertChannel;
 use gonedark_core::commander::{self, COMMANDER_PERIOD};
 use gonedark_core::components::{BuildingKind, EntityKind, Faction, Posture, Stance, UnitKind, Vec2};
+use gonedark_core::detection::{detectable_embodiment, DetectionConfig, DetectionMemory, Tell};
 use gonedark_core::economy::{self, Resources};
 use gonedark_core::ecs::Entity;
 use gonedark_core::event::SimEvent;
@@ -1181,6 +1182,19 @@ pub struct Game {
     /// inspect the tanks. Defaults on for the duel debug scene, off otherwise. Pure presentation
     /// chrome: it reads the snapshot and never touches the sim.
     debug_hitboxes: bool,
+
+    /// Tuning for the "gone dark" detection tell (`core::detection`, D33) — which mode, range, and
+    /// linger this client surfaces. PRESENTATION/intel config only: it drives what the COMMAND view
+    /// marks about hostile embodied enemies and is never folded into the checksum (invariants
+    /// #1/#7). Defaults to the D33 `Subtle` baseline.
+    detection: DetectionConfig,
+
+    /// Per-client linger memory for `Subtle` detection tells (`core::detection::DetectionMemory`):
+    /// the last-seen tick + position of each sensed hostile avatar, so a tell can fade in place after
+    /// sight is lost. PRESENTATION state — each client holds its own for its own HUD; never sim state,
+    /// never checksummed (invariant #6/#7). Mutated only by the read-only `detectable_embodiment`
+    /// derivation in the command-view render path.
+    detection_memory: DetectionMemory,
 }
 
 /// Which world [`Game::new_scene`] seeds. The default match is the Phase 2 demo skirmish; the
@@ -1491,6 +1505,56 @@ fn debug_overlay_lines(
     verts
 }
 
+/// The faintest a `Subtle` detection tell fades to at the end of its linger window — kept above zero
+/// so an aging, last-known marker is still legible (a ghost, not gone) right until it expires.
+const MIN_TELL_ALPHA: f32 = 0.25;
+
+/// Marker opacity for a tell aged `age_ticks` into a `linger_ticks` window. A fresh / in-sight /
+/// `Marked` tell (`age_ticks == 0`) is fully opaque; a `Subtle` linger fades **linearly** from 1.0
+/// toward [`MIN_TELL_ALPHA`] as it ages, so the commander reads "this is stale" at a glance. Pure
+/// (the float side, invariant #4): floats are fine here — this is presentation, never sim math.
+fn tell_alpha(age_ticks: u32, linger_ticks: u32) -> f32 {
+    if linger_ticks == 0 || age_ticks == 0 {
+        return 1.0;
+    }
+    let frac = (age_ticks as f32 / linger_ticks as f32).clamp(0.0, 1.0);
+    1.0 - frac * (1.0 - MIN_TELL_ALPHA)
+}
+
+/// Map the per-observer "gone dark" detection [`Tell`]s (`core::detection::detectable_embodiment`)
+/// into command-view render markers. PURE + GPU-free — the testable seam (mirrors
+/// [`debug_overlay_lines`] / `render::interpolate_instances`): the only host-side glue is the
+/// `Fixed -> f32` hop and the age → fade-alpha mapping.
+///
+/// ## Fairness (invariant #6) — the load-bearing guard
+///
+/// `world_dark` is the **local** player's embodiment. While the local player is embodied the command
+/// view is gone (avatar-only fog), so this **refuses to emit any marker**: the detection tell is
+/// command-view intel for the *commander*, and must never paint over the dark embodied frame. The
+/// host also gates the call to the command view, so this is defense in depth — but the gate living
+/// in the pure seam is what lets a headless test *prove* the tell stays dark while embodied, with no
+/// GPU. The tell itself is "alerts, not intel": each marker is one already-earned, sensed unit's
+/// live-or-last-seen point, never a reveal of the rest of the map (`core::detection` does the range +
+/// line-of-sight gating and the last-seen lingering upstream).
+fn detection_markers(
+    tells: &[Tell],
+    world_dark: bool,
+    linger_ticks: u32,
+) -> Vec<gonedark_render::detection::DetectionMarker> {
+    use gonedark_render::detection::DetectionMarker;
+    if world_dark {
+        return Vec::new(); // embodied: no command-view intel can leak (invariant #6)
+    }
+    tells
+        .iter()
+        .map(|t| DetectionMarker {
+            x: fixed_to_f32(t.pos.x),
+            y: fixed_to_f32(t.pos.y),
+            alpha: tell_alpha(t.age_ticks, linger_ticks),
+        })
+        .collect()
+}
+
 impl Game {
     /// Build the game against a live GPU device into the default [`Scene`] (the Phase 2 demo
     /// skirmish). The returned `player` is a Player-faction unit you can embody. `seed` drives the
@@ -1576,6 +1640,10 @@ impl Game {
             touch: touch_controls::TouchControls::new(),
             touch_hud: None,
             debug_hitboxes,
+            // The "gone dark" detection tell: D33 `Subtle` baseline, with its own per-client linger
+            // memory. Presentation/intel only — never sim state, never checksummed (invariant #6/#7).
+            detection: DetectionConfig::default(),
+            detection_memory: DetectionMemory::new(),
         }
     }
 
@@ -2686,6 +2754,31 @@ impl Game {
             self.renderer.render_debug(device, queue, view, &verts);
         }
 
+        // 7e. Detection "gone dark" tell (command view): mark each hostile EMBODIED enemy the Player
+        // commander can currently SENSE — Subtle reveals one only while an own unit holds range +
+        // line of sight, then a fading linger at the last-seen point; Marked is persistent (D33,
+        // `core::detection`). The fairness boundary (invariant #6): this is "alerts, not intel" for
+        // the COMMANDER — a marker on an already-earned, sensed unit, never a reveal of un-sensed
+        // units or the rest of the map. It is gated to the command view here (`!self.embodied`) AND
+        // the pure `detection_markers` seam refuses to emit while the local player is embodied, so it
+        // can never paint over the dark embodied frame. `detectable_embodiment` is a read-only,
+        // checksum-excluded derivation over the live world + terrain (it never mutates the sim or
+        // touches the checksum — invariants #1/#7); the linger memory is per-client presentation
+        // state. Reuses the command view-projection the step-7 `render` just uploaded.
+        if !self.embodied {
+            let tells = detectable_embodiment(
+                &self.sim.world,
+                &self.sim.terrain,
+                &self.detection,
+                Faction::Player,
+                tick,
+                &mut self.detection_memory,
+            );
+            let markers = detection_markers(&tells, self.embodied, self.detection.tell_linger_ticks);
+            let verts = gonedark_render::detection::detection_vertices(&markers);
+            self.renderer.render_detection(device, queue, view, &verts);
+        }
+
         // 8. While embodied, draw the directional alert HUD over the dark frame (worker 2) — the
         // only thread back to command (invariant #6).
         if self.embodied {
@@ -2917,6 +3010,89 @@ mod tests {
         assert!(Scene::Infantry.debug_overlay_default());
         assert!(!Scene::Default.debug_overlay_default());
         assert!(!Scene::Skirmish.debug_overlay_default());
+    }
+
+    // --- detection "gone dark" tell → render markers (the pure seam) -------------------------------
+
+    fn tell(index: u32, x: i32, y: i32, age_ticks: u32) -> Tell {
+        Tell {
+            unit: gonedark_core::ecs::Entity {
+                index,
+                generation: 0,
+            },
+            pos: Vec2::new(Fixed::from_int(x), Fixed::from_int(y)),
+            age_ticks,
+        }
+    }
+
+    /// The fairness gate (invariant #6): while the LOCAL player is embodied the command view is dark,
+    /// so the seam emits NO marker — even when the observer has live tells. Proven headlessly here.
+    #[test]
+    fn detection_markers_empty_while_locally_embodied() {
+        let tells = [tell(0, 5, 0, 0), tell(1, -3, 2, 0)];
+        let markers = detection_markers(&tells, /* world_dark = */ true, 90);
+        assert!(
+            markers.is_empty(),
+            "no command-view detection intel may leak while the local player is embodied"
+        );
+    }
+
+    /// No tells in → no markers out (the Hidden mode / nothing-sensed case the host hands through).
+    #[test]
+    fn detection_markers_empty_with_no_tells() {
+        assert!(detection_markers(&[], false, 90).is_empty());
+    }
+
+    /// In the command view, each fresh (in-sight / Marked) tell maps to one fully-opaque marker at
+    /// the tell's f32 position — correct count + positions.
+    #[test]
+    fn detection_markers_map_count_and_positions() {
+        let tells = [tell(0, 5, 0, 0), tell(1, -3, 7, 0), tell(2, 12, -4, 0)];
+        let markers = detection_markers(&tells, false, 90);
+        assert_eq!(markers.len(), 3, "one marker per sensed tell");
+        for (m, t) in markers.iter().zip(tells.iter()) {
+            assert_eq!(m.x, fixed_to_f32(t.pos.x));
+            assert_eq!(m.y, fixed_to_f32(t.pos.y));
+            assert_eq!(m.alpha, 1.0, "a fresh / in-sight tell is fully opaque");
+        }
+    }
+
+    /// The `Subtle` linger surfaces as a fade: a marker grows fainter as the tell ages out of its
+    /// linger window, down to (but not below) `MIN_TELL_ALPHA` at the edge of the window.
+    #[test]
+    fn detection_markers_linger_fades_with_age() {
+        let linger = 100;
+        let fresh = detection_markers(&[tell(0, 1, 1, 0)], false, linger)[0].alpha;
+        let mid = detection_markers(&[tell(0, 1, 1, 50)], false, linger)[0].alpha;
+        let old = detection_markers(&[tell(0, 1, 1, 100)], false, linger)[0].alpha;
+        assert_eq!(fresh, 1.0, "age 0 is fully opaque");
+        assert!(mid < fresh && mid > old, "alpha falls monotonically as the tell ages");
+        assert!((old - MIN_TELL_ALPHA).abs() < 1e-6, "fades to the floor at the window edge");
+        assert!(old > 0.0, "a last-known marker stays legible until it expires");
+    }
+
+    /// `tell_alpha` edge cases: a zero-linger window (every present tell is in-sight) never fades, and
+    /// an age past the window clamps to the floor rather than going negative.
+    #[test]
+    fn tell_alpha_edge_cases() {
+        assert_eq!(tell_alpha(0, 0), 1.0);
+        assert_eq!(tell_alpha(5, 0), 1.0, "zero linger → no fade (only in-sight tells exist)");
+        assert_eq!(tell_alpha(0, 90), 1.0);
+        assert_eq!(tell_alpha(200, 90), MIN_TELL_ALPHA, "past the window clamps to the floor");
+    }
+
+    /// End-to-end through the render geometry: command-view markers produce the fixed per-marker
+    /// vertex count carrying the tell's alpha, and the embodied (world-dark) case produces none.
+    #[test]
+    fn detection_markers_feed_render_geometry() {
+        use gonedark_render::detection::{detection_vertices, VERTS_PER_MARKER};
+        let tells = [tell(0, 5, 0, 0), tell(1, -3, 7, 30)];
+        let markers = detection_markers(&tells, false, 60);
+        let verts = detection_vertices(&markers);
+        assert_eq!(verts.len(), 2 * VERTS_PER_MARKER);
+        // The embodied path renders nothing (no markers → empty vertex list).
+        let dark = detection_vertices(&detection_markers(&tells, true, 60));
+        assert!(dark.is_empty());
     }
 
     /// The skirmish boots in the **command view** (not embodied) with the Player's single starting

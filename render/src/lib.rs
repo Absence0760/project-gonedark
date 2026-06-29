@@ -59,6 +59,12 @@ pub mod marquee;
 /// shell tracers — the visual "see the hitboxes" half of the duel sandbox, behind a developer
 /// toggle. Drawn as a LOAD pass by [`Renderer::render_debug`].
 pub mod debug;
+/// "Gone dark" detection tell. Owns `DetectionRenderer`: the command-view, world-space line pass
+/// that marks each hostile EMBODIED enemy the local commander can currently sense (`core::detection`,
+/// D33) — a diamond + caret at the unit's live-or-last-seen position, fading as a `Subtle` linger
+/// ages. Drawn as a LOAD pass by [`Renderer::render_detection`]. Public so the host (engine) builds
+/// the markers via [`detection::DetectionMarker`]. Command-view only (invariant #6).
+pub mod detection;
 /// In-session shell overlay (Phase 4 WS-B). Owns `OverlayRenderer`: the pause / reconnect-prompt /
 /// post-match-summary chrome, drawn on top of the (possibly dark) match frame. Public so the host
 /// can describe which surface to draw via [`overlay::Overlay`].
@@ -542,6 +548,10 @@ pub struct Renderer {
     /// The debug hitbox/facet overlay. Drawn as a LOAD pass by [`Renderer::render_debug`] in the
     /// command view when the developer toggle is on. Reuses the unit pass's camera bind group.
     debug: debug::DebugRenderer,
+    /// The "gone dark" detection-tell overlay. Drawn as a LOAD pass by [`Renderer::render_detection`]
+    /// in the command view, marking each hostile embodied enemy the commander can sense. Reuses the
+    /// unit pass's camera bind group (the top-down view-projection).
+    detection: detection::DetectionRenderer,
     /// The embodied first-person world (W5). The host calls [`Renderer::render_world_sky`] FIRST in
     /// the embodied branch (it clears to a sky/ground) and [`Renderer::render_world_weapon`] after
     /// the avatar pass (the gun viewmodel). Draws only the camera-derived environment — no intel.
@@ -683,6 +693,8 @@ impl Renderer {
         let terrain = terrain::TerrainRenderer::new(device, surface_format, &camera_layout);
         // The debug overlay reuses the same camera layout (its bind group is the command view-proj).
         let debug = debug::DebugRenderer::new(device, surface_format, &camera_layout);
+        // The detection-tell overlay likewise reuses the command view-projection camera layout.
+        let detection = detection::DetectionRenderer::new(device, surface_format, &camera_layout);
         let text = text::TextRenderer::new(device, surface_format);
         // Cooked greybox meshes + the shared 3D mesh pipeline + an initial (placeholder) depth
         // buffer; the depth buffer is resized to the surface on the first mesh pass (D44).
@@ -705,6 +717,7 @@ impl Renderer {
             radial,
             marquee,
             debug,
+            detection,
             world,
             terrain,
             text,
@@ -1060,6 +1073,25 @@ impl Renderer {
         verts: &[debug::DebugVertex],
     ) {
         self.debug
+            .render(device, queue, view, &self.camera_bind_group, verts);
+    }
+
+    /// Draw the "gone dark" detection-tell overlay's pre-composed world-space line list `verts` on
+    /// top of the current command frame (a LOAD pass — never clears), delegating to
+    /// [`detection::DetectionRenderer`]. The host composes `verts` from
+    /// [`detection::detection_vertices`] over the markers the pure `engine::detection_markers` seam
+    /// produced. Reuses this renderer's camera bind group — the command view-projection the preceding
+    /// [`Renderer::render`] uploaded this frame — so each marker sits on its sensed unit. Command-view
+    /// only (the host never calls this over the dark embodied frame, and the seam emits nothing while
+    /// the local player is embodied — invariant #6); a no-op on empty.
+    pub fn render_detection(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        verts: &[detection::DetectionVertex],
+    ) {
+        self.detection
             .render(device, queue, view, &self.camera_bind_group, verts);
     }
 
