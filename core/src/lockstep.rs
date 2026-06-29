@@ -26,7 +26,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::components::{BuildingKind, Faction, Order, Stance, UnitKind, Vec2};
+use crate::components::{Army, BuildingKind, Faction, Order, Stance, UnitKind, Vec2};
 use crate::ecs::Entity;
 use crate::fixed::Fixed;
 use crate::sim::Command;
@@ -37,8 +37,10 @@ use crate::sim::Command;
 /// `Command::Locomote` vocabulary (tag 11) — a build without it would only choke on `BadTag(11)`
 /// mid-session, so the bump fails the skew loudly at the connection handshake instead; 5 added
 /// the embodied `Command::Reload` (tag 12) + `Command::Crouch` (tag 13) vocabulary; 6 added the
-/// embodied tank `Command::AimTurret` (tag 14) + `Command::DriveHull` (tag 15) vocabulary.
-const WIRE_VERSION: u8 = 6;
+/// embodied tank `Command::AimTurret` (tag 14) + `Command::DriveHull` (tag 15) vocabulary; 7 added
+/// the match-setup `Command::SelectArmy` (tag 16) — the faction-identity selection (factions-plan
+/// WS-A) — so a pre-factions peer's frame is rejected at the handshake, not on `BadTag(16)` mid-game.
+const WIRE_VERSION: u8 = 7;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
 /// carry command sets, checksum reports, and delay-change proposals over the one wire format.
@@ -282,6 +284,24 @@ fn get_unit_kind(r: &mut Reader) -> Result<UnitKind, DecodeError> {
     })
 }
 
+fn put_army(w: &mut Writer, a: Army) {
+    // Tags MUST match sim.rs's army_tag (and Army::index): a SelectArmy command encoded on one peer
+    // has to decode to the identical army on every other (invariant #7). Factions-plan WS-A.
+    w.u8(match a {
+        Army::Neutral => 0,
+        Army::Us => 1,
+        Army::Fr => 2,
+    });
+}
+fn get_army(r: &mut Reader) -> Result<Army, DecodeError> {
+    Ok(match r.u8()? {
+        0 => Army::Neutral,
+        1 => Army::Us,
+        2 => Army::Fr,
+        t => return Err(DecodeError::BadTag(t)),
+    })
+}
+
 fn put_command(w: &mut Writer, c: &Command) {
     match *c {
         Command::Move { entity, target } => {
@@ -361,6 +381,13 @@ fn put_command(w: &mut Writer, c: &Command) {
             put_entity(w, entity);
             put_vec2(w, dir);
         }
+        Command::SelectArmy { faction, army } => {
+            // Match-setup faction-identity selection (factions-plan WS-A). Carries a Faction tag +
+            // an Army tag; both tag schemes match sim.rs so the decode is identical on every peer.
+            w.u8(16);
+            put_faction(w, faction);
+            put_army(w, army);
+        }
     }
 }
 
@@ -426,6 +453,10 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
         15 => Command::DriveHull {
             entity: get_entity(r)?,
             dir: get_vec2(r)?,
+        },
+        16 => Command::SelectArmy {
+            faction: get_faction(r)?,
+            army: get_army(r)?,
         },
         t => return Err(DecodeError::BadTag(t)),
     })
@@ -1013,6 +1044,21 @@ mod tests {
             Command::DriveHull {
                 entity: ent(11, 1),
                 dir: v(0, 1),
+            },
+            // Factions WS-A: the match-setup SelectArmy must survive the wire codec — its Faction +
+            // Army tags match sim.rs, so a setup command decodes to the identical matchup on every
+            // peer (invariant #7). Cover both real armies and the Neutral default.
+            Command::SelectArmy {
+                faction: Faction::Player,
+                army: Army::Us,
+            },
+            Command::SelectArmy {
+                faction: Faction::Enemy,
+                army: Army::Fr,
+            },
+            Command::SelectArmy {
+                faction: Faction::Neutral,
+                army: Army::Neutral,
             },
             // Cover the remaining Order variants too.
             Command::SetOrder {
@@ -1606,6 +1652,65 @@ mod tests {
         }
     }
 
+    // ----- factions WS-A: both peers pick armies over the lockstep stream -----
+
+    #[test]
+    fn lockstep_two_peers_agree_when_each_picks_an_army() {
+        // Each side chooses a real army through the lockstep stream (peer 0 → US for Player, peer 1 →
+        // FR for Enemy). The SelectArmy commands cross the wire codec, merge in fixed peer order, and
+        // apply identically on every peer: both sims must converge on the SAME matchup AND keep
+        // bit-identical per-tick checksum streams. The selection is checksum-neutral, so the checksum
+        // agreement proves nothing *else* desynced, and the `army_of` equality proves the wire decode
+        // itself agreed on every peer (invariant #7). Factions-plan WS-A.
+        let mut sims = [Sim::new(SCENE_SEED), Sim::new(SCENE_SEED)];
+        let _ = scene(&mut sims[0]);
+        let _ = scene(&mut sims[1]); // identical scene by determinism
+        let mut sessions = [Lockstep::new(2, 0, 0), Lockstep::new(2, 1, 0)];
+
+        // Tick 0: each peer submits its own side's army pick; later ticks are quiet.
+        let picks: [Vec<Command>; 2] = [
+            vec![Command::SelectArmy {
+                faction: Faction::Player,
+                army: Army::Us,
+            }],
+            vec![Command::SelectArmy {
+                faction: Faction::Enemy,
+                army: Army::Fr,
+            }],
+        ];
+
+        let mut sums: [Vec<u64>; 2] = [Vec::new(), Vec::new()];
+        for t in 0..8u64 {
+            for i in 0..2 {
+                sessions[i].submit(if t == 0 { picks[i].clone() } else { Vec::new() });
+            }
+            // Clean channel: hand each peer's frames straight to the other (own echo is ignored).
+            let f0 = sessions[0].drain_outbound();
+            let f1 = sessions[1].drain_outbound();
+            for b in &f1 {
+                sessions[0].deliver(b).unwrap();
+            }
+            for b in &f0 {
+                sessions[1].deliver(b).unwrap();
+            }
+            for i in 0..2 {
+                while let Some(cmds) = sessions[i].try_advance() {
+                    sims[i].step(&cmds);
+                    sums[i].push(sims[i].checksum());
+                }
+            }
+        }
+
+        // Both peers converged on the identical matchup (the wire-decoded armies agree).
+        for s in &sims {
+            assert_eq!(s.army_of(Faction::Player), Army::Us);
+            assert_eq!(s.army_of(Faction::Enemy), Army::Fr);
+        }
+        // ...and their per-tick checksum streams are bit-identical (no desync from the picks).
+        assert!(!sums[0].is_empty(), "the session must have executed ticks");
+        assert_eq!(sums[0], sums[1], "the two peers' checksum streams must agree");
+    }
+
     // ----- B7: agreed RTT-adaptive delay change -----
 
     #[test]
@@ -1655,9 +1760,10 @@ mod tests {
         // Every codec bump must be enforced: a frame written under any older WIRE_VERSION is
         // rejected loudly, never silently misparsed against the new layout. Cover the original
         // frame-kind bump (2), the pre-`Locomote` version (3), and the immediately-previous
-        // version (5, pre-`AimTurret`/`DriveHull`) — the P2 tank vocabulary (tags 14/15) is the
-        // reason WIRE_VERSION is now 6, so a pre-P2 peer's frame must be rejected at the handshake.
-        for old in [2u8, 3, 5] {
+        // version (5, pre-`AimTurret`/`DriveHull`; and 6, pre-`SelectArmy`) — the match-setup
+        // SelectArmy vocabulary (tag 16) is the reason WIRE_VERSION is now 7, so a pre-factions
+        // peer's frame must be rejected at the handshake, never misparsed against the new layout.
+        for old in [2u8, 3, 5, 6] {
             let mut w = Writer::new();
             w.u8(old);
             w.u8(FrameKind::Command as u8);

@@ -1572,7 +1572,10 @@ fn deserialize_rejects_malformed_input() {
     let mut w = Writer::new();
     w.write_u8(cur_version); // version (current SNAPSHOT_VERSION)
     w.write_u32(0); // map_id
-    w.write_u32(1); // income_period (wrapper field after map_id, before capacity)
+    w.write_u32(1); // income_period (wrapper field after map_id)
+    w.write_u8(0); // armies[Player] = Neutral (wrapper field, factions WS-A)
+    w.write_u8(0); // armies[Enemy] = Neutral
+    w.write_u8(0); // armies[Neutral] = Neutral (then capacity follows)
     w.write_u32(0xFFFF_FFFF); // capacity claims ~4 billion slots
     assert_eq!(err(&w.into_bytes()), DeserializeError::LengthOverflow);
 

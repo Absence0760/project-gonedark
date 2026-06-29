@@ -27,7 +27,7 @@
 //! the lesson the playable sandbox teaches.
 
 use crate::components::{
-    Armor, BuildingKind, EntityKind, Faction, Health, Stance, UnitKind, Vec2, Weapon,
+    Armor, Army, BuildingKind, EntityKind, Faction, Health, Stance, UnitKind, Vec2, Weapon,
 };
 use crate::ecs::Entity;
 use crate::economy;
@@ -342,6 +342,13 @@ pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
     // Base income now reads as ~1 Rifleman / 30 s, and capturing posts is how you speed it up.
     sim.set_income_period(SKIRMISH_INCOME_PERIOD);
 
+    // The faction matchup (factions-plan WS-A, D68): the Player fields the US Army, the Enemy the
+    // French Army. Identity only — `Army` carries no per-tick checksum surface yet (the per-army
+    // roster is WS-B), so seeding it leaves this scene byte-identical; it just records *which* armies
+    // this match is between, ready for WS-B/WS-C to draw rosters and silhouettes from.
+    sim.set_army(Faction::Player, Army::Us);
+    sim.set_army(Faction::Enemy, Army::Fr);
+
     // Three neutral posts strung across the no-man's-land: dead centre plus the two flanks. Holding
     // one ~triples a faction's income, so taking posts is how you out-produce the enemy.
     for post in [
@@ -471,6 +478,12 @@ pub fn seed_seize_mission(sim: &mut Sim) -> SeizeMission {
     // assault rather than an economy race. The player has no camp at all (so it cannot produce); the
     // enemy camp is the objective and, with an empty purse, its commander cannot reinforce.
     sim.set_income_period(600);
+
+    // The PvE matchup (factions-plan WS-A/WS-D, D68): the campaign is played US-side, with the French
+    // Army as the OPFOR — so factions debut in PvE. Identity only (no per-army stats until WS-B), so
+    // this is byte-neutral; it records the matchup for WS-B/WS-C to render distinctly.
+    sim.set_army(Faction::Player, Army::Us);
+    sim.set_army(Faction::Enemy, Army::Fr);
 
     // Ten Player Riflemen in a 2x5 block on the west, full produced HP, ReturnFire, facing the base.
     let troop_hp = economy::unit_stats(UnitKind::Rifleman).0.max;
@@ -952,5 +965,44 @@ mod tests {
         seed_seize_mission(&mut a);
         seed_seize_mission(&mut b);
         assert_eq!(a.checksum(), b.checksum());
+    }
+
+    // --- factions WS-A: the seeded matchup -----------------------------------------------------
+
+    #[test]
+    fn skirmish_seeds_the_us_vs_french_matchup() {
+        // factions-plan WS-A/D68: the real match fields the US Army (Player) vs the French Army
+        // (Enemy). Neutral (uncontrolled posts) stays non-aligned.
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        assert_eq!(sim.army_of(Faction::Player), Army::Us);
+        assert_eq!(sim.army_of(Faction::Enemy), Army::Fr);
+        assert_eq!(sim.army_of(Faction::Neutral), Army::Neutral);
+    }
+
+    #[test]
+    fn seize_seeds_the_us_vs_french_matchup() {
+        // The PvE debut (WS-A/WS-D): played US-side against a French OPFOR.
+        let mut sim = fresh();
+        seed_seize_mission(&mut sim);
+        assert_eq!(sim.army_of(Faction::Player), Army::Us);
+        assert_eq!(sim.army_of(Faction::Enemy), Army::Fr);
+    }
+
+    #[test]
+    fn debug_scenes_field_no_army_so_they_stay_byte_unchanged() {
+        // The duel/infantry debug scenes select NO army — every faction stays Army::Neutral. Because
+        // the selection is not folded into the per-tick checksum, a no-army scene is byte-identical to
+        // before factions existed (their golden checksums are unmoved — see `ballistic_pipeline_*` and
+        // the sim-runner duel/infantry goldens). This pins that the seeders leave them non-aligned.
+        let mut duel_sim = fresh();
+        seed_duel(&mut duel_sim);
+        let mut inf_sim = fresh();
+        seed_infantry(&mut inf_sim);
+        for sim in [&duel_sim, &inf_sim] {
+            for f in Faction::ALL {
+                assert_eq!(sim.army_of(f), Army::Neutral, "a debug scene fields no real army");
+            }
+        }
     }
 }
