@@ -157,11 +157,33 @@ pub enum ModelKind {
     /// A tank-shell tracer — a small bolt placed at an in-flight shell and yawed by its velocity,
     /// drawn with a hot emissive tint (tank embodiment P7, D55).
     Tracer,
+    // --- Faction cosmetic silhouettes (factions-plan WS-C, D68). Presentation-only per-army
+    // variants of the headline archetypes; [`crate::model_for_unit`] / [`crate::weapon_model_for`]
+    // resolve `(Army, kind)` to one of these. They never reach `core` (no checksum surface). New
+    // variants are APPENDED so the existing discriminants (the `model` field written into
+    // [`crate::UnitInstance`]) are untouched. ---
+    /// US Army infantry silhouette (rounded combat helmet, plate-carrier torso).
+    TrooperUs,
+    /// French Army infantry silhouette (flatter brimmed helmet, slimmer profile).
+    TrooperFr,
+    /// US M1 Abrams hull (long, low, flat — its [`TankTurretUs`](ModelKind::TankTurretUs) slews atop it).
+    TankUs,
+    /// US M1 Abrams turret (broad flat turret + long 120mm gun), yawed by `turret_yaw` (P7).
+    TankTurretUs,
+    /// French Leclerc hull (compact, steeper glacis — its [`TankTurretFr`](ModelKind::TankTurretFr) slews atop it).
+    TankFr,
+    /// French Leclerc turret (taller box + rear autoloader bustle), yawed by `turret_yaw` (P7).
+    TankTurretFr,
+    /// US M4 carbine first-person viewmodel.
+    WeaponRifleUs,
+    /// French FAMAS bullpup first-person viewmodel.
+    WeaponRifleFr,
 }
 
 impl ModelKind {
-    /// Every kind, in canonical (enum-discriminant) order.
-    pub const ALL: [ModelKind; 11] = [
+    /// Every kind, in canonical (enum-discriminant) order. Faction silhouettes (WS-C) are appended
+    /// after the shared kinds so existing discriminants stay put.
+    pub const ALL: [ModelKind; 19] = [
         ModelKind::Trooper,
         ModelKind::Tank,
         ModelKind::TankTurret,
@@ -173,6 +195,14 @@ impl ModelKind {
         ModelKind::Rock,
         ModelKind::Barricade,
         ModelKind::Tracer,
+        ModelKind::TrooperUs,
+        ModelKind::TrooperFr,
+        ModelKind::TankUs,
+        ModelKind::TankTurretUs,
+        ModelKind::TankFr,
+        ModelKind::TankTurretFr,
+        ModelKind::WeaponRifleUs,
+        ModelKind::WeaponRifleFr,
     ];
 
     /// The cooked `.mesh` bytes for every LOD tier, embedded at build time so they ride into the
@@ -236,6 +266,47 @@ impl ModelKind {
                 include_bytes!("../../assets/models/fx/tracer.lod1.mesh"),
                 include_bytes!("../../assets/models/fx/tracer.lod2.mesh"),
             ],
+            // --- Faction cosmetic silhouettes (WS-C) ---
+            ModelKind::TrooperUs => [
+                include_bytes!("../../assets/models/units/trooper_us.mesh"),
+                include_bytes!("../../assets/models/units/trooper_us.lod1.mesh"),
+                include_bytes!("../../assets/models/units/trooper_us.lod2.mesh"),
+            ],
+            ModelKind::TrooperFr => [
+                include_bytes!("../../assets/models/units/trooper_fr.mesh"),
+                include_bytes!("../../assets/models/units/trooper_fr.lod1.mesh"),
+                include_bytes!("../../assets/models/units/trooper_fr.lod2.mesh"),
+            ],
+            ModelKind::TankUs => [
+                include_bytes!("../../assets/models/units/tank_us.mesh"),
+                include_bytes!("../../assets/models/units/tank_us.lod1.mesh"),
+                include_bytes!("../../assets/models/units/tank_us.lod2.mesh"),
+            ],
+            ModelKind::TankTurretUs => [
+                include_bytes!("../../assets/models/units/tank_turret_us.mesh"),
+                include_bytes!("../../assets/models/units/tank_turret_us.lod1.mesh"),
+                include_bytes!("../../assets/models/units/tank_turret_us.lod2.mesh"),
+            ],
+            ModelKind::TankFr => [
+                include_bytes!("../../assets/models/units/tank_fr.mesh"),
+                include_bytes!("../../assets/models/units/tank_fr.lod1.mesh"),
+                include_bytes!("../../assets/models/units/tank_fr.lod2.mesh"),
+            ],
+            ModelKind::TankTurretFr => [
+                include_bytes!("../../assets/models/units/tank_turret_fr.mesh"),
+                include_bytes!("../../assets/models/units/tank_turret_fr.lod1.mesh"),
+                include_bytes!("../../assets/models/units/tank_turret_fr.lod2.mesh"),
+            ],
+            ModelKind::WeaponRifleUs => [
+                include_bytes!("../../assets/models/weapons/weapon_rifle_us.mesh"),
+                include_bytes!("../../assets/models/weapons/weapon_rifle_us.lod1.mesh"),
+                include_bytes!("../../assets/models/weapons/weapon_rifle_us.lod2.mesh"),
+            ],
+            ModelKind::WeaponRifleFr => [
+                include_bytes!("../../assets/models/weapons/weapon_rifle_fr.mesh"),
+                include_bytes!("../../assets/models/weapons/weapon_rifle_fr.lod1.mesh"),
+                include_bytes!("../../assets/models/weapons/weapon_rifle_fr.lod2.mesh"),
+            ],
         }
     }
 
@@ -262,6 +333,16 @@ impl ModelKind {
             ModelKind::Rock => [0.40, 0.40, 0.42],
             ModelKind::Barricade => [0.34, 0.30, 0.22],
             ModelKind::Tracer => [1.00, 0.60, 0.20], // hot orange; the renderer drives the per-shell glow
+            // --- Faction cosmetic silhouettes (WS-C). Mirrors COLORS in gen_models.py. A unit token's
+            // faction allegiance tint overrides this at draw time; these are the greybox fallbacks. ---
+            ModelKind::TrooperUs => [0.30, 0.34, 0.18],
+            ModelKind::TrooperFr => [0.27, 0.31, 0.20],
+            ModelKind::TankUs => [0.30, 0.31, 0.24],
+            ModelKind::TankTurretUs => [0.30, 0.31, 0.24], // matches the US hull
+            ModelKind::TankFr => [0.22, 0.27, 0.18],
+            ModelKind::TankTurretFr => [0.22, 0.27, 0.18], // matches the FR hull
+            ModelKind::WeaponRifleUs => [0.12, 0.12, 0.13],
+            ModelKind::WeaponRifleFr => [0.13, 0.13, 0.12],
         }
     }
 }

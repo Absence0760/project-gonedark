@@ -34,7 +34,7 @@
 //! alert HUD.
 
 use gonedark_core::alerts::AlertChannel;
-use gonedark_core::components::{Faction, UnitKind};
+use gonedark_core::components::{Army, Faction, UnitKind};
 use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::Visibility;
 use gonedark_core::snapshot::Snapshot;
@@ -182,19 +182,75 @@ const CONTROL_POINT_HALF: f32 = 2.2;
 /// tank and a 3.8 m soldier towering over the 1.5 m eye. True scale everywhere replaces it.)
 const TOKEN_SCALE: f32 = 1.0;
 
-/// The 3D token mesh for a snapshot unit: buildings are the camp structure; units map by their
-/// producible archetype (`Heavy`→tank, `Rifleman`/default→infantry). This is the honest greybox
-/// wiring now that the sim carries a per-unit [`UnitKind`] (snapshot `unit_kind`). Pure + testable.
-pub(crate) fn model_for_unit(building: bool, kind: UnitKind) -> mesh::ModelKind {
+/// The 3D token mesh for a snapshot unit, resolved from its [`Army`] identity + producible
+/// [`UnitKind`] / building flag (factions-plan WS-C, D68). Buildings are the camp structure; units
+/// map by archetype (`Heavy`/`Tank`→tank silhouette, `Rifleman`/`Medic`→infantry). The **army**
+/// selects the *silhouette*: a US-side rifleman is an M1-helmeted [`TrooperUs`](mesh::ModelKind::TrooperUs),
+/// a French tank is a Leclerc [`TankFr`](mesh::ModelKind::TankFr); [`Army::Neutral`] (legacy / debug
+/// scenes that never select an army) falls back to the original shared greybox, so a non-faction
+/// scene draws exactly as before factions existed.
+///
+/// This is **pure presentation** (invariant #6): the army never reaches `core` and adds no checksum
+/// surface — it only picks which committed `.mesh` the renderer draws. Pure + testable (no device).
+/// Per-army weapon viewmodels resolve through the sibling [`weapon_model_for`]; the human-readable
+/// army name through [`faction_name`]. Buildings are army-agnostic for now (camps share a silhouette);
+/// per-faction structures can layer on later without touching this seam.
+pub(crate) fn model_for_unit(army: Army, building: bool, kind: UnitKind) -> mesh::ModelKind {
+    use mesh::ModelKind as M;
     if building {
-        mesh::ModelKind::CampHq
-    } else {
-        match kind {
-            // The produced Tank reuses the same tank mesh (hull + independent turret) as the Heavy
-            // chassis token; the Medic is infantry, so it draws the trooper mesh (D65).
-            UnitKind::Heavy | UnitKind::Tank => mesh::ModelKind::Tank,
-            UnitKind::Rifleman | UnitKind::Medic => mesh::ModelKind::Trooper,
-        }
+        return M::CampHq;
+    }
+    // Is this archetype an infantry body or a tank chassis? (D65: the produced Tank reuses the Heavy
+    // chassis token; the Medic is infantry.)
+    let is_tank = matches!(kind, UnitKind::Heavy | UnitKind::Tank);
+    match (army, is_tank) {
+        (Army::Us, true) => M::TankUs,
+        (Army::Us, false) => M::TrooperUs,
+        (Army::Fr, true) => M::TankFr,
+        (Army::Fr, false) => M::TrooperFr,
+        // Neutral / non-aligned → the original shared greybox (byte-identical pre-factions behaviour).
+        (Army::Neutral, true) => M::Tank,
+        (Army::Neutral, false) => M::Trooper,
+    }
+}
+
+/// The first-person weapon viewmodel mesh for an embodied unit of the given [`Army`] (WS-C): the US
+/// Army carries an [`M4`](mesh::ModelKind::WeaponRifleUs) carbine, the French Army a
+/// [`FAMAS`](mesh::ModelKind::WeaponRifleFr) bullpup; [`Army::Neutral`] keeps the original shared
+/// rifle. Pure presentation (the gun you *see* — never the sim's [`UnitKind`]/weapon stats, which
+/// invariant #1/#7 keep army-agnostic). Pure + testable; [`Renderer::render_world_weapon`] picks the
+/// mesh from this once the host plumbs the embodied unit's army (WS-D).
+pub fn weapon_model_for(army: Army) -> mesh::ModelKind {
+    match army {
+        Army::Us => mesh::ModelKind::WeaponRifleUs,
+        Army::Fr => mesh::ModelKind::WeaponRifleFr,
+        Army::Neutral => mesh::ModelKind::WeaponRifle,
+    }
+}
+
+/// The human-readable faction name for an [`Army`] (WS-C) — for the army-select UI, the post-match
+/// shell, and embodied/command HUD labels. Presentation-only text; never sim state. (`Army::Neutral`
+/// is the non-aligned default of legacy/debug scenes, so it reads simply as "Neutral".)
+pub fn faction_name(army: Army) -> &'static str {
+    match army {
+        Army::Us => "US Army",
+        Army::Fr => "French Army",
+        Army::Neutral => "Neutral",
+    }
+}
+
+/// The independently-slewing turret mesh that seats atop a given hull silhouette, if any (WS-C / P7).
+/// Every tank silhouette — the shared [`Tank`](mesh::ModelKind::Tank) and the per-faction
+/// [`TankUs`](mesh::ModelKind::TankUs)/[`TankFr`](mesh::ModelKind::TankFr) — pairs with the matching
+/// turret; non-tank bodies have none. Keeps [`token_meshes`] from hard-coding the shared turret so a
+/// faction tank gets its own turret silhouette. Pure + testable.
+fn turret_for(hull: mesh::ModelKind) -> Option<mesh::ModelKind> {
+    use mesh::ModelKind as M;
+    match hull {
+        M::Tank => Some(M::TankTurret),
+        M::TankUs => Some(M::TankTurretUs),
+        M::TankFr => Some(M::TankTurretFr),
+        _ => None,
     }
 }
 
@@ -215,10 +271,12 @@ fn token_meshes(inst: &UnitInstance) -> Vec<(mesh::ModelKind, f32, f32)> {
     // drawing the wrong mesh.
     let kind = mesh::ModelKind::ALL[inst.model as usize];
     // True metre scale for every part. The tank hull and its turret therefore share one scale, so
-    // the turret (authored to seat on the hull at 1:1) sits correctly on the ring (P7).
+    // the turret (authored to seat on the hull at 1:1) sits correctly on the ring (P7). The turret
+    // silhouette matches the hull's army (WS-C): a US hull gets the US turret, a French hull the
+    // French one — [`turret_for`] resolves it (the shared tank keeps the shared turret).
     let mut parts = vec![(kind, TOKEN_SCALE, inst.hull_yaw)];
-    if kind == mesh::ModelKind::Tank {
-        parts.push((mesh::ModelKind::TankTurret, TOKEN_SCALE, inst.turret_yaw));
+    if let Some(turret) = turret_for(kind) {
+        parts.push((turret, TOKEN_SCALE, inst.turret_yaw));
     }
     parts
 }
@@ -411,8 +469,13 @@ pub fn interpolate_instances(
         }
         let half_extent = if b.building { BUILDING_HALF } else { UNIT_HALF };
         let health = fixed_to_f32(b.health).clamp(0.0, 1.0);
-        // Resolve the 3D token mesh from the sim's unit-kind / building flag (Heavy→tank etc.).
-        let model = model_for_unit(b.building, b.unit_kind) as u32;
+        // Resolve the 3D token mesh from the unit's army + unit-kind / building flag (Heavy→tank,
+        // US→Abrams/M1-trooper, FR→Leclerc/FELIN-trooper — WS-C). The render snapshot does not yet
+        // carry a per-unit army, so we draw the army-agnostic [`Army::Neutral`] silhouettes here
+        // (byte-identical to pre-factions). Flipping faction silhouettes on is a one-line change at
+        // this seam once WS-A/WS-D plumbs the per-side army (`sim.army_of(b.faction)`) into the
+        // snapshot — `model_for_unit` and the faction meshes/turrets are already in place + tested.
+        let model = model_for_unit(Army::Neutral, b.building, b.unit_kind) as u32;
         // Hull + turret facing, interpolated shortest-arc across the wrap seam (P7). Read from both
         // snapshots so a slewing turret tweens smoothly between ticks (invariant #4).
         let hull_yaw = interp_angle(a.hull_heading, b.hull_heading, alpha);
@@ -1372,7 +1435,7 @@ mod tests {
     //! factored into `interpolate_instances`.
 
     use super::*;
-    use gonedark_core::components::{Faction, Vec2};
+    use gonedark_core::components::{Army, Faction, Vec2};
     use gonedark_core::snapshot::{ControlPointSnapshot, ProjectileSnapshot, Snapshot, UnitSnapshot};
 
     const EPS: f32 = 1e-4;
@@ -1577,19 +1640,170 @@ mod tests {
 
     #[test]
     fn model_for_unit_maps_archetype_and_building() {
+        // Neutral (legacy / no-faction scenes) draws the original shared greybox — byte-identical to
+        // pre-factions behaviour.
         assert_eq!(
-            model_for_unit(false, UnitKind::Rifleman),
+            model_for_unit(Army::Neutral, false, UnitKind::Rifleman),
             mesh::ModelKind::Trooper
         );
-        assert_eq!(model_for_unit(false, UnitKind::Heavy), mesh::ModelKind::Tank);
-        // D65: the produced Tank reuses the tank mesh; the Medic is infantry (trooper mesh).
-        assert_eq!(model_for_unit(false, UnitKind::Tank), mesh::ModelKind::Tank);
-        assert_eq!(model_for_unit(false, UnitKind::Medic), mesh::ModelKind::Trooper);
-        // A building is the camp structure regardless of the (irrelevant) unit-kind tag.
         assert_eq!(
-            model_for_unit(true, UnitKind::Heavy),
+            model_for_unit(Army::Neutral, false, UnitKind::Heavy),
+            mesh::ModelKind::Tank
+        );
+        // D65: the produced Tank reuses the tank mesh; the Medic is infantry (trooper mesh).
+        assert_eq!(
+            model_for_unit(Army::Neutral, false, UnitKind::Tank),
+            mesh::ModelKind::Tank
+        );
+        assert_eq!(
+            model_for_unit(Army::Neutral, false, UnitKind::Medic),
+            mesh::ModelKind::Trooper
+        );
+        // A building is the camp structure regardless of the (irrelevant) unit-kind tag or army.
+        assert_eq!(
+            model_for_unit(Army::Neutral, true, UnitKind::Heavy),
             mesh::ModelKind::CampHq
         );
+        assert_eq!(
+            model_for_unit(Army::Us, true, UnitKind::Rifleman),
+            mesh::ModelKind::CampHq
+        );
+    }
+
+    /// WS-C: every `(Army, kind)` resolves to a faction silhouette — US → Abrams/M1 trooper, FR →
+    /// Leclerc/FELIN trooper — and Neutral keeps the shared greybox. The headline cosmetic-identity
+    /// table (factions-plan WS-C, D68).
+    #[test]
+    fn model_for_unit_resolves_each_army_to_its_silhouette() {
+        use mesh::ModelKind as M;
+        // US side.
+        assert_eq!(model_for_unit(Army::Us, false, UnitKind::Rifleman), M::TrooperUs);
+        assert_eq!(model_for_unit(Army::Us, false, UnitKind::Medic), M::TrooperUs);
+        assert_eq!(model_for_unit(Army::Us, false, UnitKind::Heavy), M::TankUs);
+        assert_eq!(model_for_unit(Army::Us, false, UnitKind::Tank), M::TankUs);
+        // French side.
+        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Rifleman), M::TrooperFr);
+        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Medic), M::TrooperFr);
+        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Heavy), M::TankFr);
+        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Tank), M::TankFr);
+    }
+
+    /// WS-C: the full `(Army, kind)` × building matrix resolves to *some* committed mesh and never
+    /// panics — and US/FR units are visually distinct from each other and from Neutral (the whole
+    /// point of cosmetic identity). Exercises every combination (the "no panic on unmapped" floor).
+    #[test]
+    fn model_for_unit_total_distinct_and_panic_free() {
+        for &kind in &[UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic] {
+            for &building in &[false, true] {
+                let neutral = model_for_unit(Army::Neutral, building, kind);
+                let us = model_for_unit(Army::Us, building, kind);
+                let fr = model_for_unit(Army::Fr, building, kind);
+                // Every resolved kind is a real library entry (index into ModelKind::ALL is valid).
+                for m in [neutral, us, fr] {
+                    assert!((m as usize) < mesh::ModelKind::ALL.len());
+                }
+                if building {
+                    // Buildings are army-agnostic for now (shared camp silhouette).
+                    assert_eq!(us, mesh::ModelKind::CampHq);
+                    assert_eq!(fr, mesh::ModelKind::CampHq);
+                } else {
+                    // A faction unit reads as a *different* silhouette from the shared greybox and
+                    // from the other army.
+                    assert_ne!(us, neutral, "{kind:?}: US unit differs from the shared greybox");
+                    assert_ne!(fr, neutral, "{kind:?}: FR unit differs from the shared greybox");
+                    assert_ne!(us, fr, "{kind:?}: US and FR units differ from each other");
+                }
+            }
+        }
+    }
+
+    /// WS-C: per-army weapon viewmodels — US M4, FR FAMAS, Neutral shared rifle — all distinct, with
+    /// every army resolving (no panic on unmapped). The embodied-view half of cosmetic identity.
+    #[test]
+    fn weapon_model_for_each_army_is_distinct() {
+        use mesh::ModelKind as M;
+        assert_eq!(weapon_model_for(Army::Us), M::WeaponRifleUs);
+        assert_eq!(weapon_model_for(Army::Fr), M::WeaponRifleFr);
+        assert_eq!(weapon_model_for(Army::Neutral), M::WeaponRifle);
+        let all: Vec<M> = Army::ALL.iter().map(|&a| weapon_model_for(a)).collect();
+        for (i, a) in all.iter().enumerate() {
+            assert!((*a as usize) < M::ALL.len());
+            for b in &all[i + 1..] {
+                assert_ne!(a, b, "each army's viewmodel is a distinct mesh");
+            }
+        }
+    }
+
+    /// WS-C: faction names cover every army and are distinct, human-readable strings.
+    #[test]
+    fn faction_name_covers_every_army() {
+        assert_eq!(faction_name(Army::Us), "US Army");
+        assert_eq!(faction_name(Army::Fr), "French Army");
+        assert_eq!(faction_name(Army::Neutral), "Neutral");
+        for &a in &Army::ALL {
+            assert!(!faction_name(a).is_empty(), "{a:?} has a name");
+        }
+    }
+
+    /// WS-C: a faction tank emits its army's turret silhouette (US hull → US turret, FR hull → FR
+    /// turret); the shared tank keeps the shared turret; non-tank bodies emit no turret.
+    #[test]
+    fn faction_tank_tokens_emit_matching_turret() {
+        use mesh::ModelKind as M;
+        let token = |model: M| {
+            let u = UnitInstance {
+                model: model as u32,
+                hull_yaw: 0.5,
+                turret_yaw: 1.2,
+                ..Default::default()
+            };
+            token_meshes(&u)
+        };
+        assert_eq!(
+            token(M::TankUs),
+            vec![(M::TankUs, TOKEN_SCALE, 0.5), (M::TankTurretUs, TOKEN_SCALE, 1.2)],
+            "a US tank emits the US hull + US turret"
+        );
+        assert_eq!(
+            token(M::TankFr),
+            vec![(M::TankFr, TOKEN_SCALE, 0.5), (M::TankTurretFr, TOKEN_SCALE, 1.2)],
+            "a French tank emits the French hull + French turret"
+        );
+        assert_eq!(
+            token(M::Tank),
+            vec![(M::Tank, TOKEN_SCALE, 0.5), (M::TankTurret, TOKEN_SCALE, 1.2)],
+            "the shared tank keeps the shared turret"
+        );
+        // Faction infantry is a single body part (no turret).
+        assert_eq!(token(M::TrooperUs), vec![(M::TrooperUs, TOKEN_SCALE, 0.5)]);
+        assert_eq!(token(M::TrooperFr), vec![(M::TrooperFr, TOKEN_SCALE, 0.5)]);
+    }
+
+    /// WS-C: every faction silhouette ModelKind has a committed asset-manifest entry carrying the
+    /// generator-pipeline provenance (`source`/`license`/`sha256`) — the script-not-binary rule
+    /// (D41/D46). Reads the committed `assets/models/manifest.json`.
+    #[test]
+    fn faction_models_have_manifest_entries() {
+        let manifest = include_str!("../../assets/models/manifest.json");
+        for name in [
+            "trooper_us",
+            "trooper_fr",
+            "tank_us",
+            "tank_turret_us",
+            "tank_fr",
+            "tank_turret_fr",
+            "weapon_rifle_us",
+            "weapon_rifle_fr",
+        ] {
+            assert!(
+                manifest.contains(&format!("\"name\": \"{name}\"")),
+                "manifest is missing a `{name}` entry"
+            );
+        }
+        // Provenance markers exist (license + generator source) — the script-not-binary record.
+        assert!(manifest.contains("\"license\": \"CC0-1.0\""));
+        assert!(manifest.contains("tools/models/gen_models.py"));
+        assert!(manifest.contains("\"sha256\""));
     }
 
     #[test]
