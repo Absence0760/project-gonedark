@@ -398,6 +398,44 @@ impl InSessionView {
 }
 
 // ===========================================================================
+// READ SIDE — match-setup army selection (factions-plan WS-D; NOT checksummed)
+// ===========================================================================
+
+/// What a native **army-select / match-setup** screen reads to render the current per-side army
+/// picks (factions-plan WS-D, [D68](../docs/decisions.md)). A presentation-safe DTO on the same
+/// footing as [`MatchSummary`] and the vocabulary views: it carries only the resolved [`Army`] tags,
+/// indexed by [`Faction::index`], so a future native screen can show *which* army each side fields.
+///
+/// **Structural safety (D34).** [`compose`](MatchSetupView::compose) is handed the *already-read*
+/// army tags — it never takes `&Sim`/`&World`. The host reads each side's pick via
+/// [`Sim::army_of`](crate::sim::Sim::army_of), which is **match-setup config, never folded into the
+/// per-tick checksum** (and lives in `Sim`, not `World`), so this read path holds no checksum-folded
+/// state and no world handle — it cannot perturb the sim or leak strategic intel, exactly like
+/// [`InSessionView`]. It is a presentation bundle, never a sim field.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct MatchSetupView {
+    /// Per-side army identity in fixed [`Faction::ALL`] order — a fixed-size array, allocation-free
+    /// and deterministically ordered by construction (mirrors [`MatchSummary::per_faction`]).
+    armies: [Army; FACTION_COUNT],
+}
+
+impl MatchSetupView {
+    /// Bundle the already-read per-side army picks for a match-setup screen. Takes the resolved
+    /// [`Army`] tags (the host reads them from [`Sim::army_of`](crate::sim::Sim::army_of), indexed by
+    /// [`Faction::index`]) — never `&Sim`/`&World` — so the read path is structurally free of sim
+    /// state and can never be folded into the checksum (D34). A pure move of presentation data.
+    pub fn compose(armies: [Army; FACTION_COUNT]) -> MatchSetupView {
+        MatchSetupView { armies }
+    }
+
+    /// The [`Army`] a given [`Faction`] currently fields — the live selection a screen renders.
+    /// [`Army::Neutral`] means that side has not yet picked a real army (the non-aligned default).
+    pub fn army_of(&self, faction: Faction) -> Army {
+        self.armies[faction.index()]
+    }
+}
+
+// ===========================================================================
 // CONTROL SIDE — typed intents (shell → core). Validates/shapes; NO game logic.
 // ===========================================================================
 
@@ -481,6 +519,56 @@ pub fn resolve_intent(intent: ShellIntent) -> ResolvedIntent {
             ResolvedIntent::Command(Command::SelectArmy { faction, army })
         }
     }
+}
+
+/// Why a [`ShellIntent::SelectArmy`] was refused at the seam (factions-plan WS-D). A typed reason so
+/// the native army-select screen can grey out / explain a pick instead of silently dropping it.
+/// Setup-eligibility only — never a game-rule/unit decision (the literal-executor brain stays in
+/// `core`, invariant #3, D34).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SelectArmyRejection {
+    /// The target side can't field a real army: [`Faction::Neutral`] is the non-aligned
+    /// props/control-point allegiance, never a commandable army (factions-plan WS-A). The only
+    /// selectable slots are the combatant factions.
+    NotACombatantSlot,
+    /// The match has already left setup (it is [`Running`](MatchPhase::Running) /
+    /// [`Paused`](MatchPhase::Paused) / [`Ended`](MatchPhase::Ended)). Army identity is match-setup
+    /// config chosen *before* the match starts; once it's underway the pick is too late and is a
+    /// no-op (the army state is untouched, so every peer stays in agreement — invariant #7).
+    MatchAlreadyStarted,
+}
+
+/// Resolve **and validate** a match-setup army pick against the current match phase (factions-plan
+/// WS-D) — the army-select screen's entry point. Unlike the bare [`resolve_intent`] (pure shaping,
+/// phase-blind), it enforces the setup-time eligibility the lobby needs: a pick is valid **only**
+/// for a *combatant* [`Faction`] slot and **only** while the match has [`MatchPhase::NotStarted`].
+///
+/// On success it returns exactly the lockstep-ordered [`ResolvedIntent::Command`]
+/// ([`Command::SelectArmy`]) that [`resolve_intent`] would — so success is byte-for-byte the same
+/// command the host feeds the stream, the validation only *gates* it. On failure it returns a typed
+/// [`SelectArmyRejection`] and the host **no-ops** the pick, leaving the per-side army state
+/// untouched (so peers never diverge on a rejected pick — invariant #7).
+///
+/// It checks *setup eligibility* only — which slot, which phase — and takes the host-owned
+/// [`MatchPhase`], **never** `&Sim`/`&World`: no sim access, no game-rule logic, no float (D34,
+/// invariants #1/#3). The sim still independently guards application of any command it receives.
+pub fn resolve_select_army(
+    faction: Faction,
+    army: Army,
+    phase: MatchPhase,
+) -> Result<ResolvedIntent, SelectArmyRejection> {
+    // The non-aligned side is never a selectable army slot (factions-plan WS-A: Neutral is props /
+    // control points, not a commandable side). Reject regardless of phase.
+    if faction == Faction::Neutral {
+        return Err(SelectArmyRejection::NotACombatantSlot);
+    }
+    // Army identity is set during setup only — once the match is live (or over) the pick is too late.
+    if phase != MatchPhase::NotStarted {
+        return Err(SelectArmyRejection::MatchAlreadyStarted);
+    }
+    // Eligible: shape it through the one canonical mapping so success can never drift from
+    // `resolve_intent` (single-sourced command construction).
+    Ok(resolve_intent(ShellIntent::SelectArmy { faction, army }))
 }
 
 // ===========================================================================
@@ -619,6 +707,136 @@ mod tests {
             }
             other => panic!("SelectArmy intent must map to Command::SelectArmy, got {other:?}"),
         }
+    }
+
+    // ---- WS-D: army selection → match-setup mapping, with setup-time validation ----
+
+    #[test]
+    fn resolve_select_army_valid_pick_resolves_to_the_command() {
+        // A combatant slot picked while the match is still in setup resolves to exactly the
+        // lockstep-ordered Command::SelectArmy the host feeds the stream.
+        for (faction, army) in [(Faction::Player, Army::Us), (Faction::Enemy, Army::Fr)] {
+            match resolve_select_army(faction, army, MatchPhase::NotStarted) {
+                Ok(ResolvedIntent::Command(Command::SelectArmy { faction: f, army: a })) => {
+                    assert_eq!(f, faction);
+                    assert_eq!(a, army);
+                }
+                other => panic!("valid pick must resolve to Command::SelectArmy, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_select_army_rejects_the_neutral_slot() {
+        // Neutral is the non-aligned props/control-point side — never a selectable army slot,
+        // regardless of phase (factions-plan WS-A).
+        for phase in [
+            MatchPhase::NotStarted,
+            MatchPhase::Running,
+            MatchPhase::Paused,
+            MatchPhase::Ended,
+        ] {
+            assert_eq!(
+                resolve_select_army(Faction::Neutral, Army::Us, phase).err(),
+                Some(SelectArmyRejection::NotACombatantSlot),
+                "Neutral is not a commandable army slot (phase {phase:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_select_army_rejects_once_the_match_has_started() {
+        // Army identity is setup-only: once the match is live/paused/ended the pick is too late and
+        // is rejected as a no-op (so no peer can change armies mid-match — invariant #7).
+        for phase in [MatchPhase::Running, MatchPhase::Paused, MatchPhase::Ended] {
+            assert_eq!(
+                resolve_select_army(Faction::Player, Army::Us, phase).err(),
+                Some(SelectArmyRejection::MatchAlreadyStarted),
+                "a pick in phase {phase:?} must be rejected as too-late"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_pick_flows_into_match_setup_state_and_a_rejected_pick_is_a_no_op() {
+        use crate::sim::Sim;
+        // A valid pick resolved through the seam, fed to the sim, lands in the per-side army state.
+        let mut sim = Sim::new(0);
+        let cmd = match resolve_select_army(Faction::Player, Army::Us, MatchPhase::NotStarted) {
+            Ok(ResolvedIntent::Command(c)) => c,
+            other => panic!("expected an Ok(Command), got {other:?}"),
+        };
+        sim.step(&[cmd]);
+        assert_eq!(sim.army_of(Faction::Player), Army::Us);
+        assert_eq!(sim.army_of(Faction::Enemy), Army::Neutral);
+
+        // A rejected pick (match already started) yields no command — the host no-ops it, so the
+        // per-side army state is left exactly as it was (Enemy stays Neutral).
+        assert!(resolve_select_army(Faction::Enemy, Army::Fr, MatchPhase::Running).is_err());
+        // (Nothing is fed to the sim on rejection.)
+        assert_eq!(sim.army_of(Faction::Enemy), Army::Neutral);
+    }
+
+    #[test]
+    fn match_setup_view_reflects_the_current_selection() {
+        use crate::sim::Sim;
+        // The presentation-safe read view mirrors the live per-side picks. The host reads each side
+        // via Sim::army_of (never &World) and composes the DTO.
+        let mut sim = Sim::new(0);
+        sim.set_army(Faction::Player, Army::Us);
+        sim.set_army(Faction::Enemy, Army::Fr);
+
+        let mut armies = [Army::Neutral; FACTION_COUNT];
+        for f in Faction::ALL {
+            armies[f.index()] = sim.army_of(f);
+        }
+        let view = MatchSetupView::compose(armies);
+
+        assert_eq!(view.army_of(Faction::Player), Army::Us);
+        assert_eq!(view.army_of(Faction::Enemy), Army::Fr);
+        assert_eq!(view.army_of(Faction::Neutral), Army::Neutral);
+        // The default view (no picks) reads Neutral everywhere — a screen renders "unselected".
+        let empty = MatchSetupView::default();
+        for f in Faction::ALL {
+            assert_eq!(empty.army_of(f), Army::Neutral);
+        }
+    }
+
+    #[test]
+    fn select_army_through_the_shell_is_checksum_neutral() {
+        use crate::sim::Sim;
+        // Driving a SelectArmy *through the shell seam* must leave the per-tick checksum stream
+        // byte-identical for an already-seeded scene: army identity is match-setup config, not folded
+        // into the checksum (its roster effect, WS-B, is what folds — invariants #1/#7). Two sims with
+        // an identical seeded unit step together; one also applies a seam-resolved army pick.
+        let seed = 0xD_5E1Eu64; // distinct seed for this test
+        let mut with = Sim::new(seed);
+        let mut without = Sim::new(seed);
+        for sim in [&mut with, &mut without] {
+            let e = sim.world.spawn();
+            let i = e.index as usize;
+            sim.world.kind[i] = EntityKind::Unit;
+            sim.world.faction[i] = Faction::Player;
+            sim.world.pos[i] = at(0, 0);
+        }
+        // The seam-resolved pick, applied on `with` only at setup.
+        let cmd = match resolve_select_army(Faction::Player, Army::Us, MatchPhase::NotStarted) {
+            Ok(ResolvedIntent::Command(c)) => c,
+            other => panic!("expected an Ok(Command), got {other:?}"),
+        };
+        with.step(&[cmd]);
+        without.step(&[]);
+        for t in 0..30u64 {
+            with.step(&[]);
+            without.step(&[]);
+            assert_eq!(
+                with.checksum(),
+                without.checksum(),
+                "a shell-driven army pick must not perturb the per-tick checksum at tick {t}"
+            );
+        }
+        // The selection is in fact recorded — it just lives outside the fold.
+        assert_eq!(with.army_of(Faction::Player), Army::Us);
     }
 
     #[test]
