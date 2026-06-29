@@ -27,7 +27,8 @@
 //! the lesson the playable sandbox teaches.
 
 use crate::components::{
-    Armor, Army, BuildingKind, EntityKind, Faction, Health, Stance, UnitKind, Vec2, Weapon,
+    Armor, Army, BuildingKind, EntityKind, Faction, Health, ShellKind, Stance, UnitKind, Vec2,
+    Weapon,
 };
 use crate::ecs::Entity;
 use crate::economy;
@@ -107,6 +108,9 @@ fn duel_gun() -> Weapon {
         // Starts fully settled (P5): a stationary duel tank fires dead-on. The bloom only grows if
         // the embodied player drives/traverses, then settles back at rest.
         dispersion: Fixed::ZERO,
+        // Loads AP by default (P6, D55) — solid-shot, the facet bounce/pen the duel demonstrates. A
+        // harness/sandbox can `SelectShell` HE/APHE to exercise splash without touching the seeder.
+        shell: ShellKind::Ap,
     }
 }
 
@@ -905,10 +909,11 @@ mod tests {
         // to the duel scene/gun/armour or the ballistic/facet math; an *unexpected* change here is a
         // desync, not a value to bless. (D67: re-pinned after the Weapon fold grew reserve +
         // reserve_max — every slot now folds two more u32, so the stream shifted by design.
-        // D55 P5: re-pinned again after the Weapon fold grew a `dispersion` word per slot. The duel
-        // tank fires from a standstill, so its dispersion stays 0 — the shells fly identically; only
-        // the raw stream value shifted by the added zero word, by design.)
-        assert_eq!(sum, 0x5581_f62f_c62c_7031);
+        // D55 P5+P6: re-pinned after the Weapon fold grew a `dispersion` word + a loaded-shell tag and
+        // the projectile fold grew a shell tag + splash pair per slot. The duel tank fires from a
+        // standstill (dispersion stays 0, AP is the default shell), so the shells fly identically;
+        // only the raw stream value shifted by the appended fields, by design.)
+        assert_eq!(sum, 0xad57_73c4_5e4d_08d7);
         // And it is reproducible run-to-run on this arch.
         assert_eq!(run_ballistic_duel(130), sum);
     }

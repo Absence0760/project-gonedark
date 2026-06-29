@@ -296,6 +296,89 @@ impl Default for Health {
     }
 }
 
+/// The kind of shell an embodied tank gun has loaded (tank embodiment P6, D55). Selected with
+/// [`Command::SelectShell`](crate::sim::Command::SelectShell) and carried as per-weapon sim state
+/// ([`Weapon::shell`]); it decides the **penetration / damage / splash** trade of the *next* shell the
+/// ballistic gun ([`projectile::fire_ballistic`](crate::projectile::fire_ballistic)) launches:
+///
+/// - [`Ap`](ShellKind::Ap) — armour-piercing solid shot: full penetration, point damage, **no
+///   splash**. The default (the zero tag), so every existing weapon loads `Ap` and a hitscan infantry
+///   weapon (which never reads `shell`) is behaviourally unaffected.
+/// - [`Aphe`](ShellKind::Aphe) — AP with an HE filler: pens nearly as well, then a **post-penetration**
+///   burst splashes a small radius — but only when the solid body actually penetrated (a bounce yields
+///   no burst). The duellist's shell: pen *and* a little area.
+/// - [`He`](ShellKind::He) — high-explosive: **low** penetration (it bounces off a tank's thick facets)
+///   but a **large**, unconditional frag burst — the anti-infantry / anti-cluster shell.
+///
+/// A plain `repr`-stable tag like [`Stance`]/[`UnitKind`]; the tag order is the wire/persist contract
+/// (it MUST match [`sim`](crate::sim)'s `shell_tag` + [`lockstep`](crate::lockstep)'s `put_shell`), so a
+/// `SelectShell` encoded on one peer decodes to the identical shell on every other (invariant #7). No
+/// float (invariant #1) — the per-shell numbers are exact `Fixed` ratios in [`ShellKind::stats`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ShellKind {
+    /// Armour-piercing solid shot — full pen, point damage, no splash. The zero-tag default.
+    #[default]
+    Ap,
+    /// AP + HE filler — strong pen plus a small **post-penetration** burst (only if it penned).
+    Aphe,
+    /// High-explosive — low pen, large unconditional frag burst (the anti-cluster shell).
+    He,
+}
+
+/// The fixed-point penetration / damage / splash parameters of one [`ShellKind`] (tank embodiment P6,
+/// D55) — the table-driven, exact-`Fixed` analogue of [`economy::unit_stats`](crate::economy::unit_stats).
+/// `pen_mul`/`damage_mul` scale the firing [`Weapon`]'s `penetration`/`damage` (so a bigger gun fires a
+/// proportionally bigger shell of every type); the `splash_*` pair describes the area burst. All exact
+/// rationals, no float (invariant #1).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ShellStats {
+    /// Multiplier on the weapon's [`penetration`](Weapon::penetration) for this shell.
+    pub pen_mul: Fixed,
+    /// Multiplier on the weapon's [`damage`](Weapon::damage) for the **direct** hit.
+    pub damage_mul: Fixed,
+    /// Radius of the area burst, in world units. `0` ⇒ no splash (point damage only — `Ap`).
+    pub splash_radius: Fixed,
+    /// Multiplier on the weapon's [`damage`](Weapon::damage) applied to each hostile (other than the
+    /// directly-hit body) within [`splash_radius`](ShellStats::splash_radius) of the impact.
+    pub splash_damage_mul: Fixed,
+}
+
+impl ShellKind {
+    /// This shell's fixed-point [`ShellStats`] — the per-kind pen/damage/splash table (P6). Playtest
+    /// baselines (exact ratios, no float): `Ap` is the pure-pen point shot; `Aphe` trades a little
+    /// penetration for a small post-pen burst; `He` trades most of its penetration for a big frag burst.
+    #[inline]
+    pub fn stats(self) -> ShellStats {
+        match self {
+            ShellKind::Ap => ShellStats {
+                pen_mul: Fixed::ONE,
+                damage_mul: Fixed::ONE,
+                splash_radius: Fixed::ZERO,
+                splash_damage_mul: Fixed::ZERO,
+            },
+            ShellKind::Aphe => ShellStats {
+                pen_mul: Fixed::from_ratio(3, 4),
+                damage_mul: Fixed::ONE,
+                splash_radius: Fixed::from_int(2),
+                splash_damage_mul: Fixed::from_ratio(1, 2),
+            },
+            ShellKind::He => ShellStats {
+                pen_mul: Fixed::from_ratio(1, 8),
+                damage_mul: Fixed::ONE,
+                splash_radius: Fixed::from_int(4),
+                splash_damage_mul: Fixed::from_ratio(3, 4),
+            },
+        }
+    }
+
+    /// Does this shell's splash fire **only after the direct hit penetrates** (the post-pen HE filler of
+    /// [`Aphe`](ShellKind::Aphe))? `He` detonates on contact regardless; `Ap` has no splash at all.
+    #[inline]
+    pub fn splash_is_post_pen(self) -> bool {
+        matches!(self, ShellKind::Aphe)
+    }
+}
+
 /// A weapon: how far it reaches, how hard it hits, and how often. A default (range 0) weapon
 /// never fires, so non-combatants and the Phase 1 mover are inert in `combat_system`.
 ///
@@ -374,6 +457,14 @@ pub struct Weapon {
     /// dispersion system gates on that, so every infantry/hitscan weapon keeps `dispersion == 0`
     /// (the default) and is byte-neutral. `Fixed`, no float (invariant #1).
     pub dispersion: Fixed,
+    /// The shell this gun currently has loaded (tank embodiment P6, D55). Switched by
+    /// [`Command::SelectShell`](crate::sim::Command::SelectShell) and read only by the ballistic fire
+    /// path ([`projectile::fire_ballistic`](crate::projectile::fire_ballistic)) to scale the launched
+    /// shell's pen/damage and set its splash ([`ShellKind::stats`]). [`ShellKind::Ap`] is the zero-tag
+    /// default, so every existing weapon — and every hitscan infantry weapon, which never reads it —
+    /// is behaviourally unchanged. It is per-tank sim state, so it **folds** into the checksum
+    /// (appended after `penetration`); a hitscan weapon's inert `Ap` adds one zero byte per slot.
+    pub shell: ShellKind,
 }
 
 /// Directional armour, in the same `Fixed` units a [`Weapon::penetration`] is measured in (tank

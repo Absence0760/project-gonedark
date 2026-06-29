@@ -15,7 +15,7 @@ use crate::checksum::Checksum;
 use crate::combat;
 use crate::components::{
     Armor, Army, Building, BuildingKind, EntityKind, Faction, Health, InputSource, Order, Posture,
-    ProductionItem, Stance, UnitKind, Vec2, Weapon, FACTION_COUNT,
+    ProductionItem, ShellKind, Stance, UnitKind, Vec2, Weapon, FACTION_COUNT,
 };
 use crate::economy::{self, Resources};
 use crate::ecs::{Entity, World, WorldComponents};
@@ -122,6 +122,15 @@ pub enum Command {
     /// [`Army`] tag), so a setup command decodes to the same army everywhere (invariant #7), exactly
     /// like a `Build`'s `BuildingKind`.
     SelectArmy { faction: Faction, army: Army },
+    /// Select the [`ShellKind`] an embodied tank's gun loads for its **next** shot (tank embodiment
+    /// P6, D55). Cycles AP / APHE / HE, changing the launched shell's penetration / damage / splash
+    /// ([`ShellKind::stats`], applied at fire time in
+    /// [`projectile::fire_ballistic`](crate::projectile::fire_ballistic)). Writes the per-weapon
+    /// `shell` field — folded per-tank sim state — so the decode is identical on every peer (the wire
+    /// codec carries the [`ShellKind`] tag, invariant #7). A **no-op mid-reload** (you can't swap the
+    /// chambered round while reloading) and on a dead/handle-stale unit. Harmless for a hitscan
+    /// infantry weapon: the field rides along but the hitscan path never reads it.
+    SelectShell { entity: Entity, shell: ShellKind },
 }
 
 /// The simulation: the deterministic world, the static terrain, per-faction resources, the
@@ -459,6 +468,18 @@ impl Sim {
                 // write, no float, no RNG).
                 self.armies[faction.index()] = army;
             }
+            Command::SelectShell { entity, shell } => {
+                // Swap the loaded shell for the next shot (tank embodiment P6). A no-op while a
+                // reload is in progress (`reload_left > 0`) — you can't change the chambered round
+                // mid-reload — and for a dead/stale handle. Writes only the folded `shell` field, so
+                // it is deterministic by construction (a plain tag write, no float, no RNG).
+                if self.world.is_alive(entity) {
+                    let w = &mut self.world.weapon[entity.index as usize];
+                    if w.reload_left == 0 {
+                        w.shell = shell;
+                    }
+                }
+            }
         }
     }
 
@@ -526,6 +547,10 @@ impl Sim {
             // Zero for every non-tank gun (the dispersion system gates on `muzzle_vel > 0`), so it
             // adds one zero word per slot and moves only an armoured-tank scene's stream value.
             sink.write_i32(w.dispersion.to_bits());
+            // Tank embodiment P6 (D55): the loaded shell (sim state — decides the next shot's
+            // pen/damage/splash). `Ap` (tag 0) for every existing weapon, so it appends one zero byte
+            // per slot. APPENDED after `penetration` (keep this last among the weapon fields).
+            sink.write_u8(shell_tag(w.shell));
             sink.write_i32(self.world.suppression[i].to_bits());
             match self.world.last_attacker[i] {
                 Some(e) => {
@@ -583,6 +608,11 @@ impl Sim {
             sink.write_i32(p.damage.to_bits());
             sink.write_i32(p.penetration.to_bits());
             sink.write_u32(p.lifetime as u32);
+            // Tank embodiment P6 (D55): the shell kind + its area burst, APPENDED after `lifetime`.
+            // Empty pool for any scene without a firing ballistic tank, so it is byte-neutral there.
+            sink.write_u8(shell_tag(p.shell));
+            sink.write_i32(p.splash_radius.to_bits());
+            sink.write_i32(p.splash_damage.to_bits());
         }
     }
 
@@ -730,6 +760,8 @@ impl Sim {
                 penetration: Fixed::from_bits(r.read_i32()?),
                 // Tank embodiment P5 (D55): mirror fold()'s dispersion word, in the same order.
                 dispersion: Fixed::from_bits(r.read_i32()?),
+                // Tank embodiment P6 (D55): mirror fold()'s loaded-shell tag (after `penetration`).
+                shell: read_shell(&mut r)?,
             });
             suppression.push(Fixed::from_bits(r.read_i32()?));
             last_attacker.push(read_opt_entity(&mut r)?);
@@ -789,6 +821,10 @@ impl Sim {
                 damage: Fixed::from_bits(r.read_i32()?),
                 penetration: Fixed::from_bits(r.read_i32()?),
                 lifetime: read_u16(&mut r)?,
+                // Tank embodiment P6 (D55): mirror fold()'s shell kind + area burst (after `lifetime`).
+                shell: read_shell(&mut r)?,
+                splash_radius: Fixed::from_bits(r.read_i32()?),
+                splash_damage: Fixed::from_bits(r.read_i32()?),
             });
         }
 
@@ -870,6 +906,8 @@ impl Sim {
 /// `income_period`), so a pre-factions snapshot is rejected, never misparsed against the new layout.
 /// Bumped 8→9 by tank embodiment P5 (D55): the per-slot `Weapon` fold grew a `dispersion` word, so a
 /// pre-P5 snapshot is rejected rather than misparsed against the longer slot layout.
+/// 8→9 by tank embodiment P6 (D55): the per-slot `Weapon` fold grew a loaded-shell tag and the
+/// projectile fold grew a shell tag + splash pair, so a pre-P6 snapshot is rejected, not misparsed.
 const SNAPSHOT_VERSION: u8 = 9;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
@@ -878,9 +916,9 @@ const MIN_CONTROL_POINT_BYTES: usize = 13;
 
 /// Smallest possible encoding of one in-flight [`Projectile`]: `pos2d` (2×i32) + `vel2d` (2×i32) +
 /// `height` (i32) + `vz` (i32) + `owner` (2×u32) + faction tag (u8) + `damage` (i32) +
-/// `penetration` (i32) + `lifetime` (u32) = 45 bytes. Rejects a garbage pool count before
-/// allocating (tank embodiment P3, D55).
-const MIN_PROJECTILE_BYTES: usize = 45;
+/// `penetration` (i32) + `lifetime` (u32) + shell tag (u8) + `splash_radius` (i32) + `splash_damage`
+/// (i32) = 54 bytes. Rejects a garbage pool count before allocating (tank embodiment P3, P6 D55).
+const MIN_PROJECTILE_BYTES: usize = 54;
 
 fn write_order<S: StateSink>(sink: &mut S, o: Order) {
     match o {
@@ -1118,6 +1156,27 @@ fn read_army(r: &mut Reader) -> Result<Army, DeserializeError> {
         0 => Army::Neutral,
         1 => Army::Us,
         2 => Army::Fr,
+        t => return Err(DeserializeError::BadTag(t)),
+    })
+}
+
+/// Shell-kind tag (tank embodiment P6, D55). MUST match lockstep.rs's `put_shell`/`get_shell` and the
+/// `ShellKind` discriminant order (the wire/persist contract) — a `SelectShell` command, the loaded
+/// `Weapon::shell`, and an in-flight `Projectile::shell` must all decode to the identical shell on
+/// every peer (invariant #7).
+fn shell_tag(s: ShellKind) -> u8 {
+    match s {
+        ShellKind::Ap => 0,
+        ShellKind::Aphe => 1,
+        ShellKind::He => 2,
+    }
+}
+
+fn read_shell(r: &mut Reader) -> Result<ShellKind, DeserializeError> {
+    Ok(match r.read_u8()? {
+        0 => ShellKind::Ap,
+        1 => ShellKind::Aphe,
+        2 => ShellKind::He,
         t => return Err(DeserializeError::BadTag(t)),
     })
 }
@@ -1513,5 +1572,149 @@ mod tests {
             neutral.last(),
             "US/FR produced units must fold differently from the Neutral baseline"
         );
+    }
+
+    // --- tank embodiment P6 (D55): SelectShell + per-shell fire ---------------------------------
+
+    /// Build a fresh sim with one **embodied ballistic tank** at the origin (facing +X) and two
+    /// clustered enemy infantry downrange — so an HE shell's splash has a neighbour to catch. The tank
+    /// already has `InputSource::Embodied`, so a `Fire` launches a real shell (`muzzle_vel > 0`).
+    fn ballistic_tank_scene() -> (Sim, Entity) {
+        let mut sim = Sim::new(0xB6B6_0006);
+        let tank = sim.world.spawn();
+        let ti = tank.index as usize;
+        sim.world.kind[ti] = EntityKind::Unit;
+        sim.world.faction[ti] = Faction::Player;
+        sim.world.input_source[ti] = InputSource::Embodied;
+        sim.world.pos[ti] = Vec2::ZERO;
+        sim.world.weapon[ti] = Weapon {
+            range: Fixed::from_int(40),
+            damage: Fixed::from_int(40),
+            cooldown_ticks: 4,
+            muzzle_vel: Fixed::from_int(2),
+            penetration: Fixed::from_int(20),
+            ..Default::default()
+        };
+        for (x, y) in [(6, 0), (6, 1)] {
+            let e = sim.world.spawn();
+            let i = e.index as usize;
+            sim.world.kind[i] = EntityKind::Unit;
+            sim.world.faction[i] = Faction::Enemy;
+            sim.world.pos[i] = Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
+            sim.world.health[i] = Health::full(Fixed::from_int(1000));
+            sim.world.stance[i] = Stance::HoldFire;
+        }
+        (sim, tank)
+    }
+
+    #[test]
+    fn select_shell_changes_the_loaded_shell() {
+        let (mut sim, tank) = ballistic_tank_scene();
+        let i = tank.index as usize;
+        assert_eq!(sim.world.weapon[i].shell, ShellKind::Ap, "defaults to AP");
+        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::He }]);
+        assert_eq!(sim.world.weapon[i].shell, ShellKind::He, "SelectShell loads HE");
+        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::Aphe }]);
+        assert_eq!(sim.world.weapon[i].shell, ShellKind::Aphe, "and switches again");
+    }
+
+    #[test]
+    fn select_shell_is_a_noop_mid_reload() {
+        let (mut sim, tank) = ballistic_tank_scene();
+        let i = tank.index as usize;
+        // Arm a magazine and put it mid-reload: the chambered round can't be swapped now.
+        sim.world.weapon[i].mag_size = 6;
+        sim.world.weapon[i].reload_left = 30;
+        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::He }]);
+        assert_eq!(sim.world.weapon[i].shell, ShellKind::Ap, "no swap while reloading");
+        // Once the reload finishes, the swap takes.
+        sim.world.weapon[i].reload_left = 0;
+        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::He }]);
+        assert_eq!(sim.world.weapon[i].shell, ShellKind::He, "swaps once loaded");
+    }
+
+    #[test]
+    fn select_shell_for_a_dead_handle_is_a_noop() {
+        // A stale handle must not panic or write anything — just advance the tick.
+        let mut sim = Sim::new(0);
+        let stale = Entity { index: 0, generation: 9 };
+        sim.step(&[Command::SelectShell { entity: stale, shell: ShellKind::He }]);
+        assert_eq!(sim.tick_count(), 1);
+    }
+
+    #[test]
+    fn selected_shell_flows_into_the_launched_projectile() {
+        // SelectShell then Fire in the same tick: the command order applies the selection first, so the
+        // shell launched this tick is the selected kind, carrying its splash.
+        let (mut sim, tank) = ballistic_tank_scene();
+        // Move the enemies far away so the shell does not impact (and despawn) on this first tick.
+        for i in 0..sim.world.capacity() {
+            if sim.world.is_index_alive(i) && sim.world.faction[i] == Faction::Enemy {
+                sim.world.pos[i] = Vec2::new(Fixed::from_int(30), Fixed::ZERO);
+            }
+        }
+        sim.step(&[
+            Command::SelectShell { entity: tank, shell: ShellKind::He },
+            Command::Fire { entity: tank, dir: Vec2::new(Fixed::ONE, Fixed::ZERO) },
+        ]);
+        assert_eq!(sim.projectiles.len(), 1, "the HE shell is in flight");
+        let p = sim.projectiles[0];
+        assert_eq!(p.shell, ShellKind::He);
+        assert_eq!(p.splash_radius, Fixed::from_int(4), "HE carries its frag radius");
+        assert_eq!(p.penetration, Fixed::from_int(20) * Fixed::from_ratio(1, 8), "HE pen ×1/8");
+    }
+
+    /// 2-peer lockstep agreement with a `SelectShell` in the stream (invariant #7): two peers seed the
+    /// identical ballistic-tank scene and apply the identical command set each tick — selecting HE then
+    /// firing on a cadence. Their per-tick checksum streams must stay **bit-identical**: the selected
+    /// shell folds per-tank, and the HE shells + their splash resolve through the same fixed-point path
+    /// on both peers, so the streams never diverge.
+    #[test]
+    fn select_shell_two_peers_agree_in_lockstep() {
+        let cmds_for = |tank: Entity, tick: u64| -> Vec<Command> {
+            let mut c = Vec::new();
+            if tick == 0 {
+                c.push(Command::SelectShell { entity: tank, shell: ShellKind::He });
+            }
+            if tick.is_multiple_of(5) {
+                c.push(Command::Fire {
+                    entity: tank,
+                    dir: Vec2::new(Fixed::ONE, Fixed::ZERO),
+                });
+            }
+            c
+        };
+        let (mut a, ta) = ballistic_tank_scene();
+        let (mut b, tb) = ballistic_tank_scene();
+        assert_eq!(ta, tb, "identical seeding yields identical handles");
+        assert_eq!(a.checksum(), b.checksum(), "pre-step states agree");
+        for tick in 0..60u64 {
+            a.step(&cmds_for(ta, tick));
+            b.step(&cmds_for(tb, tick));
+            assert_eq!(a.checksum(), b.checksum(), "checksums must agree at tick {tick}");
+        }
+        // The HE selection actually bit (shells flew and splashed): at least one enemy lost health.
+        let hurt = (0..a.world.capacity()).any(|i| {
+            a.world.is_index_alive(i)
+                && a.world.faction[i] == Faction::Enemy
+                && a.world.health[i].cur < Fixed::from_int(1000)
+        });
+        assert!(hurt, "the HE shells should have damaged the enemy cluster");
+    }
+
+    #[test]
+    fn select_shell_survives_serialize_round_trip() {
+        // The loaded shell is folded per-tank sim state, so a serialize→deserialize restores it and the
+        // checksum is unmoved (it is the persist analogue of the fold round-trip).
+        let (mut sim, tank) = ballistic_tank_scene();
+        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::Aphe }]);
+        let bytes = sim.serialize();
+        let restored = Sim::deserialize(&bytes).expect("round-trips");
+        assert_eq!(
+            restored.world.weapon[tank.index as usize].shell,
+            ShellKind::Aphe,
+            "deserialize restores the loaded shell",
+        );
+        assert_eq!(restored.checksum(), sim.checksum(), "checksum is byte-identical");
     }
 }

@@ -24,7 +24,7 @@
 //! Phase-3 thermal budget; an overflow shot is dropped deterministically.
 
 use crate::combat::{facing_penetration_multiplier, is_enemy, SUPPRESSION_MAX, SUPPRESSION_PER_HIT};
-use crate::components::{Faction, Vec2};
+use crate::components::{Faction, ShellKind, Vec2};
 use crate::dispersion;
 use crate::ecs::{Entity, World};
 use crate::event::SimEvent;
@@ -97,6 +97,17 @@ pub struct Projectile {
     pub penetration: Fixed,
     /// Ticks of flight remaining before a forced despawn ([`DEFAULT_LIFETIME`] at launch).
     pub lifetime: u16,
+    /// Which [`ShellKind`] this shell is (tank embodiment P6, D55). Carried so impact can pick the
+    /// **post-pen vs unconditional** splash rule ([`ShellKind::splash_is_post_pen`]) and so a tracer
+    /// could be drawn per shell type. The pen/damage/splash *magnitudes* are already baked into
+    /// `penetration`/`damage`/`splash_*` at launch; this is the identity tag.
+    pub shell: ShellKind,
+    /// Area-burst radius in world units (`0` ⇒ no splash — `Ap`). From [`ShellStats::splash_radius`]
+    /// at launch (tank embodiment P6).
+    pub splash_radius: Fixed,
+    /// Damage dealt to each hostile (other than the directly-hit body) inside `splash_radius`, before
+    /// cover/armour mitigation. Already scaled by the gun's `damage` at launch (tank embodiment P6).
+    pub splash_damage: Fixed,
 }
 
 /// Faction tag for the fold (mirrors `sim`'s private encoder, kept local so the pool block is
@@ -192,6 +203,81 @@ fn apply_impact(
         amount: damage,
         pos: world.pos[target_idx],
     });
+
+    // Per-shell area burst (tank embodiment P6, D55). `Ap` carries `splash_radius == 0` so this is a
+    // pure point hit (no splash). `He` detonates its frag burst on contact unconditionally; `Aphe`'s
+    // post-penetration HE filler bursts ONLY if the solid body actually penetrated (`facing > 0`) — a
+    // bounce gives no burst ([`ShellKind::splash_is_post_pen`]). The burst is centred on the shell's
+    // impact point and index-ordered, so it is peer-identical (invariant #7).
+    if p.splash_radius > Fixed::ZERO {
+        let burst = if p.shell.splash_is_post_pen() {
+            facing > Fixed::ZERO
+        } else {
+            true
+        };
+        if burst {
+            apply_splash(world, terrain, p, target_idx, events);
+        }
+    }
+}
+
+/// Apply a shell's **area burst** to every living hostile within [`Projectile::splash_radius`] of its
+/// impact point, other than the directly-hit `primary_idx` (which already took the point hit). Each
+/// splashed unit takes `splash_damage`, cover-mitigated and run through the **same** armour-facing
+/// resolver as a direct shot — with the shot direction taken outward from the burst centre, so an
+/// angled tank still resists a flank/front splash (an unarmoured unit returns the facing multiplier
+/// `1.0`, so it is just cover-mitigated). Tank embodiment P6, D55.
+///
+/// Determinism (invariants #1, #7): fixed-point only, no sqrt; the candidate scan is **stable index
+/// order** and each independent saturating write lands the identical result on every peer. A target
+/// whose facing multiplier zeroes the damage (a bounce) is skipped — no zero-damage write or event.
+fn apply_splash(
+    world: &mut World,
+    terrain: &Terrain,
+    p: &Projectile,
+    primary_idx: usize,
+    events: &mut Vec<SimEvent>,
+) {
+    let center = p.pos2d;
+    let r_sq = p.splash_radius * p.splash_radius;
+    for j in 0..world.capacity() {
+        if j == primary_idx || !world.is_index_alive(j) {
+            continue;
+        }
+        if world.health[j].is_dead() {
+            continue;
+        }
+        // Hostile only — no friendly/neutral splash (mirrors the direct-hit `is_enemy` filter). A
+        // building inside the radius is a valid splash target, exactly as it is a direct target.
+        if !is_enemy(p.faction, world.faction[j]) {
+            continue;
+        }
+        let to = world.pos[j] - center;
+        if to.len_sq() > r_sq {
+            continue;
+        }
+        let mult = terrain.cover_at(world.pos[j]).damage_multiplier();
+        let facing =
+            facing_penetration_multiplier(to, world.hull_heading[j], p.penetration, world.armor[j]);
+        let dmg = p.splash_damage * mult * facing;
+        if dmg <= Fixed::ZERO {
+            continue; // a bounce (or zero-splash shell): no write, no event
+        }
+        let target = match world.entity(j) {
+            Some(e) => e,
+            None => continue,
+        };
+        world.health[j].cur -= dmg;
+        world.last_attacker[j] = Some(p.owner);
+        world.suppression[j] = (world.suppression[j] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
+        events.push(SimEvent::Damaged {
+            entity: target,
+            faction: world.faction[j],
+            source: p.owner,
+            amount: dmg,
+            pos: world.pos[j],
+        });
+    }
 }
 
 /// Launch a ballistic shell for an embodied `Fire` along `dir`, mirroring `resolve_fire`'s pre-fire
@@ -246,6 +332,10 @@ pub fn fire_ballistic(
     // Perturb the aim by the gun's current bloom (D55 P5). A settled gun (`dispersion == 0`) returns
     // `aim` unchanged and draws no RNG, so this launch stays byte-identical to the pre-P5 path.
     let scattered = dispersion::scatter_dir(aim, w.dispersion, rng);
+    // Per-shell pen/damage/splash (tank embodiment P6, D55): scale the gun's base penetration/damage
+    // by the loaded shell's multipliers and carry its splash onto the shell. `Ap` (the default) is
+    // ×1/×1 with zero splash, so an `Ap`-loaded gun launches exactly the pre-P6 shell.
+    let s = w.shell.stats();
     pool.push(Projectile {
         pos2d: world.pos[shooter_idx],
         vel2d: scattered.scale(w.muzzle_vel),
@@ -253,11 +343,15 @@ pub fn fire_ballistic(
         vz: LAUNCH_VZ,
         owner,
         faction: world.faction[shooter_idx],
-        damage: w.damage,
-        // Carry the weapon's armour penetration onto the shell (D55 P4); resolved against the
+        damage: w.damage * s.damage_mul,
+        // Carry the (shell-scaled) armour penetration onto the shell (D55 P4); resolved against the
         // target's `armor` facet at impact in `apply_impact`.
-        penetration: w.penetration,
+        penetration: w.penetration * s.pen_mul,
         lifetime: DEFAULT_LIFETIME,
+        // The loaded shell + its area burst (D55 P6). `splash_damage` scales with the gun's damage.
+        shell: w.shell,
+        splash_radius: s.splash_radius,
+        splash_damage: w.damage * s.splash_damage_mul,
     });
     // Spend a round + go on cooldown, identically to resolve_fire (the gate above guarantees
     // `ammo > 0` for a magazine weapon, so the decrement never underflows).
@@ -314,8 +408,9 @@ pub fn projectile_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::{Health, InputSource, Weapon};
+    use crate::components::{Armor, Health, InputSource, Weapon};
     use crate::terrain::{Cover, Terrain};
+    use crate::trig::{Angle, ANGLE_FULL};
 
     fn fx(n: i32) -> Fixed {
         Fixed::from_int(n)
@@ -344,6 +439,9 @@ mod tests {
             damage: fx(damage),
             penetration: Fixed::ZERO,
             lifetime: DEFAULT_LIFETIME,
+            shell: ShellKind::Ap,
+            splash_radius: Fixed::ZERO,
+            splash_damage: Fixed::ZERO,
         }
     }
 
@@ -571,6 +669,7 @@ mod tests {
             muzzle_vel: fx(2),
             penetration: Fixed::ZERO,
             dispersion: Fixed::ZERO,
+            shell: ShellKind::Ap,
         };
         let mut pool = Vec::new();
         let mut rng = Rng::new(1);
@@ -609,6 +708,7 @@ mod tests {
             muzzle_vel: fx(2),
             penetration: Fixed::ZERO,
             dispersion: Fixed::ZERO,
+            shell: ShellKind::Ap,
         };
         let mut pool = Vec::new();
         let mut rng = Rng::new(1);
@@ -655,6 +755,7 @@ mod tests {
                 muzzle_vel: fx(2),
                 penetration: Fixed::ZERO,
                 dispersion: Fixed::ZERO,
+                shell: ShellKind::Ap,
             };
             // Fill the pool to the hard cap.
             let mut pool: Vec<Projectile> = (0..MAX_PROJECTILES)
@@ -670,5 +771,169 @@ mod tests {
         assert_eq!(len, MAX_PROJECTILES, "pool never exceeds the cap");
         assert_eq!(ammo, 5, "a dropped shot spends no ammo");
         assert_eq!(attempt(), (false, MAX_PROJECTILES, 5), "the drop is deterministic");
+    }
+
+    // --- tank embodiment P6: ShellKind pen / damage / splash ------------------------------------
+
+    /// An embodied ballistic gun bakes the **loaded shell's** pen/damage/splash multipliers
+    /// ([`ShellKind::stats`]) onto the launched shell (P6). `Ap` is the ×1/×1, zero-splash baseline;
+    /// `He` trades most of its penetration for a big frag burst.
+    #[test]
+    fn fire_ballistic_bakes_per_shell_pen_damage_and_splash() {
+        let mut world = World::new();
+        let e = world.spawn();
+        let i = e.index as usize;
+        world.input_source[i] = InputSource::Embodied;
+        let base = Weapon {
+            range: fx(20),
+            damage: fx(80),
+            cooldown_ticks: 0,
+            cooldown_left: 0,
+            mag_size: 0,
+            ammo: 0,
+            reload_ticks: 0,
+            reload_left: 0,
+            reserve: 0,
+            reserve_max: 0,
+            turret_speed: 0,
+            muzzle_vel: fx(2),
+            penetration: fx(40),
+            dispersion: Fixed::ZERO,
+            shell: ShellKind::He,
+        };
+        world.weapon[i] = base;
+        let east = Vec2::new(Fixed::ONE, Fixed::ZERO);
+        let mut pool = Vec::new();
+        let mut rng = Rng::new(1);
+        assert!(fire_ballistic(&mut world, i, east, &mut pool, &mut rng));
+        let he = pool[0];
+        assert_eq!(he.shell, ShellKind::He);
+        assert_eq!(he.penetration, fx(40) * Fixed::from_ratio(1, 8), "HE pen ×1/8 = 5");
+        assert_eq!(he.damage, fx(80), "HE direct damage ×1");
+        assert_eq!(he.splash_radius, fx(4), "HE splash radius");
+        assert_eq!(he.splash_damage, fx(80) * Fixed::from_ratio(3, 4), "HE splash ×3/4 = 60");
+
+        // Swap to AP: full pen, full point damage, and NO splash — the pre-P6 shell exactly.
+        world.weapon[i].shell = ShellKind::Ap;
+        let mut pool = Vec::new();
+        assert!(fire_ballistic(&mut world, i, east, &mut pool, &mut rng));
+        let ap = pool[0];
+        assert_eq!(ap.shell, ShellKind::Ap);
+        assert_eq!(ap.penetration, fx(40), "AP keeps full pen");
+        assert_eq!(ap.damage, fx(80), "AP full point damage");
+        assert_eq!(ap.splash_radius, Fixed::ZERO, "AP has no splash radius");
+        assert_eq!(ap.splash_damage, Fixed::ZERO, "AP has no splash damage");
+    }
+
+    /// `Ap` is a pure point hit: the directly-struck body takes damage, an adjacent unit takes none
+    /// (`splash_radius == 0`).
+    #[test]
+    fn ap_shell_is_point_damage_with_no_splash() {
+        let mut world = World::new();
+        let primary = spawn_target(&mut world, 2, 0, Faction::Enemy, 1000);
+        let neighbour = spawn_target(&mut world, 2, 1, Faction::Enemy, 1000); // 1 away — would be splashed
+        let mut pool = vec![shell(0, 0, fx(2), 25)]; // bare shell() defaults to Ap, zero splash
+        let mut events = Vec::new();
+        run(&mut world, &mut pool, &mut events, Fixed::ZERO);
+        assert_eq!(world.health[primary].cur, fx(975), "AP point hit lands");
+        assert_eq!(world.health[neighbour].cur, fx(1000), "AP never splashes a neighbour");
+    }
+
+    /// `He` deals its point hit, then a frag burst that damages in-radius hostiles and spares
+    /// out-of-radius ones (the load-bearing "out-of-radius units take no HE splash" property).
+    #[test]
+    fn he_shell_splashes_in_radius_only() {
+        let mut world = World::new();
+        let primary = spawn_target(&mut world, 2, 0, Faction::Enemy, 1000);
+        let near = spawn_target(&mut world, 2, 2, Faction::Enemy, 1000); // 2 from impact → inside radius 4
+        let far = spawn_target(&mut world, 2, 9, Faction::Enemy, 1000); // 9 from impact → outside
+        let he = Projectile {
+            shell: ShellKind::He,
+            splash_radius: fx(4),
+            splash_damage: fx(20),
+            ..shell(0, 0, fx(2), 50)
+        };
+        let mut pool = vec![he];
+        let mut events = Vec::new();
+        run(&mut world, &mut pool, &mut events, Fixed::ZERO);
+        assert_eq!(world.health[primary].cur, fx(950), "HE direct point hit");
+        assert_eq!(world.health[near].cur, fx(980), "in-radius neighbour takes the splash");
+        assert_eq!(world.health[far].cur, fx(1000), "out-of-radius unit takes no HE splash");
+    }
+
+    /// `Aphe` against an unarmoured body **penetrates**, so its post-pen HE filler bursts: the body
+    /// takes the direct hit AND an in-radius neighbour takes the post-pen splash ("APHE both").
+    #[test]
+    fn aphe_pens_unarmoured_then_post_pen_splashes() {
+        let mut world = World::new();
+        let primary = spawn_target(&mut world, 2, 0, Faction::Enemy, 1000);
+        let near = spawn_target(&mut world, 2, 2, Faction::Enemy, 1000); // 2 from impact → inside radius 2
+        let aphe = Projectile {
+            shell: ShellKind::Aphe,
+            penetration: fx(50),
+            splash_radius: fx(2),
+            splash_damage: fx(15),
+            ..shell(0, 0, fx(2), 40)
+        };
+        let mut pool = vec![aphe];
+        let mut events = Vec::new();
+        run(&mut world, &mut pool, &mut events, Fixed::ZERO);
+        assert_eq!(world.health[primary].cur, fx(960), "APHE direct pen");
+        assert_eq!(world.health[near].cur, fx(985), "post-pen HE filler splashes the neighbour");
+    }
+
+    /// `Aphe`'s post-pen burst is gated on the direct hit penetrating: a shell that **bounces** off a
+    /// tank's thick frontal facet deals no direct damage AND no post-pen splash.
+    #[test]
+    fn aphe_bounce_yields_no_direct_and_no_post_pen_splash() {
+        let mut world = World::new();
+        let primary = spawn_target(&mut world, 2, 0, Faction::Enemy, 1000);
+        // Armour it and face it −X, so a +X shell strikes the thick front facet.
+        world.armor[primary] = Armor { front: fx(40), side: fx(16), rear: fx(8) };
+        world.hull_heading[primary] = Angle(ANGLE_FULL / 2);
+        let near = spawn_target(&mut world, 2, 2, Faction::Enemy, 1000); // unarmoured neighbour in radius
+        let aphe = Projectile {
+            shell: ShellKind::Aphe,
+            penetration: fx(18), // 2·18 ≤ 40 → bounces off the front
+            splash_radius: fx(2),
+            splash_damage: fx(15),
+            ..shell(0, 0, fx(2), 40)
+        };
+        let mut pool = vec![aphe];
+        let mut events = Vec::new();
+        run(&mut world, &mut pool, &mut events, Fixed::ZERO);
+        assert_eq!(world.health[primary].cur, fx(1000), "a frontal bounce deals no direct damage");
+        assert_eq!(world.health[near].cur, fx(1000), "no penetration ⇒ no post-pen splash");
+        // (The direct hit still emits a 0-damage `Damaged` on a bounce — pre-existing P4 behaviour —
+        // but the post-pen splash never fires, which is the property under test here.)
+        assert!(pool.is_empty(), "the shell is still consumed on impact");
+    }
+
+    /// HE splash is index-ordered and reproducible: two identical worlds splashed by an identical
+    /// shell end with bit-identical health in every slot (determinism, invariants #1/#7).
+    #[test]
+    fn he_splash_is_deterministic_in_index_order() {
+        let build = || {
+            let mut world = World::new();
+            spawn_target(&mut world, 2, 0, Faction::Enemy, 1000);
+            spawn_target(&mut world, 2, 2, Faction::Enemy, 1000);
+            spawn_target(&mut world, 3, 1, Faction::Enemy, 1000);
+            spawn_target(&mut world, 1, 1, Faction::Enemy, 1000);
+            world
+        };
+        let he = || Projectile {
+            shell: ShellKind::He,
+            splash_radius: fx(4),
+            splash_damage: fx(20),
+            ..shell(0, 0, fx(2), 50)
+        };
+        let mut w1 = build();
+        let mut w2 = build();
+        let mut ev = Vec::new();
+        run(&mut w1, &mut vec![he()], &mut ev, Fixed::ZERO);
+        run(&mut w2, &mut vec![he()], &mut ev, Fixed::ZERO);
+        for i in 0..w1.capacity() {
+            assert_eq!(w1.health[i].cur, w2.health[i].cur, "slot {i} health must match");
+        }
     }
 }

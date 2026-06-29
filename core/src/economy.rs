@@ -13,8 +13,8 @@
 //! intact — the sim's checksum folds `Resources` by that shape.
 
 use crate::components::{
-    Army, Building, BuildingKind, EntityKind, Faction, Health, Order, ProductionItem, Stance,
-    UnitKind, Vec2, Weapon, FACTION_COUNT,
+    Army, Building, BuildingKind, EntityKind, Faction, Health, Order, ProductionItem, ShellKind,
+    Stance, UnitKind, Vec2, Weapon, FACTION_COUNT,
 };
 use crate::ecs::{Entity, World};
 use crate::event::SimEvent;
@@ -266,6 +266,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
                 // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
                 dispersion: Fixed::ZERO,
+                // Loads AP by default (P6, D55): inert for a hitscan unit (`muzzle_vel == 0` never
+                // reads `shell`); the field just rides along, byte-folded as a zero tag.
+                shell: ShellKind::Ap,
             },
         ),
         UnitKind::Heavy => (
@@ -293,6 +296,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
                 // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
                 dispersion: Fixed::ZERO,
+                // Loads AP by default (P6, D55): inert for a hitscan unit (`muzzle_vel == 0` never
+                // reads `shell`); the field just rides along, byte-folded as a zero tag.
+                shell: ShellKind::Ap,
             },
         ),
         // A produced armoured vehicle (D65). High HP + a hard, slow gun + an independent turret slew
@@ -321,6 +327,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
                 // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
                 dispersion: Fixed::ZERO,
+                // Loads AP by default (P6, D55): inert for a hitscan unit (`muzzle_vel == 0` never
+                // reads `shell`); the field just rides along, byte-folded as a zero tag.
+                shell: ShellKind::Ap,
             },
         ),
         // A support unit (D65): NO offensive weapon (range 0 ⇒ combat never acquires a target for
@@ -345,6 +354,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
                 // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
                 dispersion: Fixed::ZERO,
+                // Loads AP by default (P6, D55): inert for a hitscan unit (`muzzle_vel == 0` never
+                // reads `shell`); the field just rides along, byte-folded as a zero tag.
+                shell: ShellKind::Ap,
             },
         ),
     }

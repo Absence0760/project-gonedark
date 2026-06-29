@@ -274,10 +274,11 @@ mod tests {
         assert_eq!(
             simulate(200).checksums.last().copied(),
             // D67: re-pinned after the Weapon fold grew reserve + reserve_max (two more u32/slot).
-            // D55 P5: re-pinned again after the fold grew a per-slot `dispersion` word. The duel
-            // tank fires from a standstill (dispersion stays 0 → identical shells); only the raw
-            // stream value shifted by the added zero word, by design.
-            Some(0xb8ba_b3c4_9522_393e),
+            // D55 P5+P6: re-pinned after the fold grew a per-slot `dispersion` word + a loaded-shell
+            // tag and the projectile fold grew a shell tag + splash pair. The duel tank fires from a
+            // standstill (dispersion stays 0, AP default → identical shells); only the raw stream
+            // value shifted by the appended fields, by design.
+            Some(0xa305_29bf_ef6d_5432),
         );
     }
 
