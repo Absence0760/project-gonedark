@@ -1,9 +1,13 @@
 # Tank embodiment plan — the War Thunder-flavoured tank
 
-**Status: IN PROGRESS (D55) — P1–P4 + P7 landed (see §6); P5/P6/P8/P9 remain.** A
-`UnitKind::Tank` already exists as of [D65](../decisions.md), but as an *unarmoured, hitscan*
-production unit — distinct from this plan's armoured/ballistic embodied tank; that covers the
-"Tank unit kind + economy stats" half of P9, leaving P9's armour block + ballistic gun + sniper/zoom.
+**Status: IN PROGRESS (D55) — P1–P8 landed and tested (see §6); P9 PARTIAL.** The
+`UnitKind::Tank` archetype + economy-stats half of P9 shipped via [D65](../decisions.md), but as
+an *unarmoured, hitscan* production unit (`penetration == 0`, `muzzle_vel == 0`, no `Armor`).
+What remains of P9: the produced tank's **armour block + ballistic gun**, and the
+**sniper/zoom gun-sight view** (not built anywhere in render/engine yet). Landing the ballistic
+gun will expose the latent AI-fire design fork documented in
+[Q20](../open-questions.md#q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan)
+— resolve it before the produced-tank ballistic gun ships.
 Phasing for turning the embodied tank from "infantry-FPS-in-a-tank-
 shaped-token" into a real **vehicle**: independent hull + turret control, a reticle that
 blooms when you move and settles when you hold, and a penetration-vs-armour-facing combat
@@ -174,13 +178,16 @@ P1  trig: atan2 + rotate_toward (turret slew math)      ── DONE (committed, 
 P2  hull_heading + turret_yaw + hull inertia + AimTurret/DriveHull + AI slew   ── DONE (c1e4059)
 P3  ballistic projectile pool: flight + drop + impact detection (muzzle_vel > 0)   ── DONE (4fbe31b)
 P4  Armor + Weapon.penetration + facing multiplier, resolved AT IMPACT (ALL-UNIT rewrite)   ── DONE (dc8ce4e)
-P5  dispersion / aim-time bloom: settle-to-center scatter on Fire
-P6  ShellKind AP/APHE/HE + SelectShell + per-shell pen/damage/splash
+P5  dispersion / aim-time bloom: settle-to-center scatter on Fire   ── DONE
+P6  ShellKind AP/APHE/HE + SelectShell + per-shell pen/damage/splash   ── DONE
 P7  render: turret mesh node + shortest-arc angle interp + tracer/projectile draw ── DONE
     (turret mesh + hull/turret yaw in snapshot, shortest-arc interp; shell tracers via a
     `tracer` mesh extrapolated from the projectile snapshot, embodied pass) (inv #4)
-P8  HUD: hull-relative turret indicator, dispersion reticle, LEAD pip, shell selector, reload ring
+P8  HUD: hull-relative turret indicator, dispersion reticle, LEAD pip, shell selector,
+    reload ring   ── DONE
 P9  tank UnitKind archetype + economy stats + sniper/zoom view
+    (PARTIAL — D65 ships the archetype + stats as unarmoured/hitscan;
+    armour block + ballistic gun + sniper/zoom remain; see Q20 before shipping ballistic gun)
 ─────────────────────────────────────────────────────────────────────────
 DEFERRED (own decision later): module+crew damage (tracks/breech/ammo-rack),
 commander's-optics third view.
@@ -191,9 +198,11 @@ order is why ballistics-first avoids hitscan-then-projectile rework). P5–P6 ar
 P7–P9 make it legible and playable. Each lands with unit tests in the same commit; **P3 and P4
 must keep `determinism.yml`'s arch matrix green** (invariant #7 — projectiles and the damage
 rewrite are both checksummed sim state). High-blast-radius phases (P2, P3, P4, P6) run through
-`/safe-edit`. **P1–P4 done; P7 landed early** (turret mesh node + shortest-arc yaw interp, then
-shell tracers) — it is a pure render seam with no dependency on P5/P6, so the already-simulated
-hull/turret slew and the in-flight shells are now actually visible. **P5 is next.**
+`/safe-edit`. **P1–P8 done.** P7 landed early (turret mesh node + shortest-arc yaw interp, then shell
+tracers) — a pure render seam, no dependency on P5/P6. P5 (dispersion bloom — settle-to-zero
+scatter), P6 (ShellKind AP/APHE/HE + SelectShell), and P8 (hull-relative turret indicator,
+dispersion reticle, LEAD pip, shell selector, reload ring) followed. **P9 is the remaining scope
+— see §9.**
 
 ---
 
@@ -260,7 +269,7 @@ more.
 
 ## 9. Status & next step
 
-**P1–P4 are committed and green.** P1 (`trig::atan2`/`rotate_toward`, `a5812fb`); **P2** hull/turret
+**P1–P8 are committed and green.** P1 (`trig::atan2`/`rotate_toward`, `a5812fb`); **P2** hull/turret
 heading + inertia + `AimTurret`/`DriveHull` + AI `heading_system` (`c1e4059`); **P3** the
 fixed-point ballistic projectile pool — travel time + drop via projectile-local height, impact
 applies the existing cover-mitigated damage, embodied-only (`4fbe31b`); **P4** the all-unit armour
@@ -271,8 +280,17 @@ review caught a real `WIRE_VERSION` desync-on-skew bug, and the P4 review caught
 overflow in the facet compare (now i64) + a fold-coverage gap (now perturbing every armour facet)
 before commit. Verified: **301 core tests** green dev+release, the **2-peer lockstep runner agrees
 over 300 ticks** with no desync, `WIRE_VERSION` 6 (unchanged — P4 adds no command),
-`SNAPSHOT_VERSION` 5→6.
+`SNAPSHOT_VERSION` 5→6. **P5** (dispersion bloom — settle-to-zero scatter, bounded draw from the
+`combat` `&mut Rng`), **P6** (ShellKind AP/APHE/HE + SelectShell + per-shell pen/damage/splash),
+and **P8** (HUD: hull-relative turret indicator, dispersion reticle, LEAD pip, shell selector,
+reload ring) followed — each committed and tested.
 
-**P5 is next** — dispersion / aim-time bloom: a reticle that grows under motion/traverse, settles at
-rest, and a fully-settled gun fires dead-on (zero scatter), with the bounded scatter drawn from
-`combat`'s reserved deterministic `&mut Rng`.
+**P9 is the remaining scope.** The `UnitKind::Tank` archetype + economy-stats half landed via
+[D65](../decisions.md) as an *unarmoured, hitscan* production unit (`penetration == 0`,
+`muzzle_vel == 0`, no `Armor`). What remains: the produced tank's **armour block + ballistic gun**
+(the full War-Thunder-capable vehicle this plan specifies) and the **sniper/zoom gun-sight view**
+(a new render path, not yet started). Before the produced-tank ballistic gun ships, resolve the
+latent AI-fire design fork in
+[Q20](../open-questions.md#q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan):
+the same gun is hitscan when AI-driven and ballistic when embodied — dormant today because D65's
+produced tank is deliberately `muzzle_vel == 0`, but live the moment P9's ballistic gun lands.

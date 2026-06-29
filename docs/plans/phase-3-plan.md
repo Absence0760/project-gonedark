@@ -18,11 +18,13 @@
 > seam) and the **honest AI consult** (the scripted commander, config-gated default-OFF, chases a
 > gone-dark hostile only within what `detectable_embodiment` reveals — invariant #6/#3 structural).
 > **B's host-side RTT estimator** also landed: a pure `engine::net_tuning` EWMA + hysteresis seam
-> that drives `Lockstep::propose_delay` (the live RTT *sample feed* is the one remaining stub —
-> production needs a `pal-desktop` transport ping/pong, not a new `core` wire frame).
+> that drives `Lockstep::propose_delay`. **The live RTT sample feed has also landed** —
+> `pal-desktop::pingpong` (`PingPongTransport` / `RttMeter`) multiplexes ping/pong traffic over any
+> inner `Transport`, measures wall-clock RTT, and feeds `Game::observe_rtt`; kept outside
+> `core::lockstep` so `core` stays clock-free and float-free.
 > **Still open / gated (not on more code):** **A** — rayon-into-`core` (needs a decision *and* is
 > unjustified at ~3.7 ms) and the dual-rate re-eval (D21, **needs on-device thermal numbers**);
-> **B** — the RTT *sample source* (transport ping/pong) + relay/matchmaking ([Q9](../open-questions.md));
+> **B** — relay/matchmaking ([Q9](../open-questions.md)) (RTT ping/pong sample source now landed — see above);
 > **C** — the Wi-Fi↔cellular **handoff** (**blocked on a QUIC transport**); **D** — the *two-human*
 > mind game itself (**needs the net layer** — two networked humans). These are gated on decisions, a
 > physical device, a QUIC transport, or a second human — not on more core code.
@@ -233,10 +235,12 @@ checksum byte-identical with prediction on vs off."*
    `Lockstep::propose_delay` on a networked session. Lives in `engine` (not `pal-desktop` — `engine`
    can't depend on `pal-desktop`; it's host glue already using host-side floats), so `core` only ever
    receives an integer delay. 14 tests, dev + release; single-player (delay-0, no transport) untouched.
-   **Still owed:** the live RTT *sample source* — a transport-level ping/pong measured in `pal-desktop`
-   feeding `observe_rtt` (deliberately **not** a new `core::lockstep` wire frame; until it exists the
-   estimator stays inert and never fabricates a delay change); relay / matchmaking
-   ([Q9](../open-questions.md)) untouched.
+   **RTT sample source** ✅ **DONE** — `pal-desktop::pingpong` (`PingPongTransport` / `RttMeter`):
+   multiplexes ping/pong over any inner `Transport` (1-byte envelope, stripped before delivery so
+   lockstep bytes round-trip byte-identical), measures wall-clock RTT, feeds `observe_rtt`. Kept
+   outside `core::lockstep` so `core` stays clock-free. All logic in pure free fns + the
+   clock-free `RttMeter`; fully testable with a fake clock + `LoopbackTransport`. **Still owed:**
+   relay / matchmaking ([Q9](../open-questions.md)).
 
 ---
 

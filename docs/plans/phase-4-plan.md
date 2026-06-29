@@ -189,15 +189,15 @@ testing rule). `/safe-edit` (embodiment/fairness blast radius).
 > **Landed:** `render::tiers` (the `QualityTier` Low/Mid/High enum → `TierParams`, plus the pure
 > `next_resolution_scale` dyn-res and `thermal_backoff` policy fns) and `engine::tuning`
 > (`RenderTuning`, the controller `Game` owns). The thermal/power signal crosses a new **PAL** seam
-> (`pal::ThermalSensor` → `ThermalState`/`PowerState`), implemented as a synthetic stub in
-> `pal-desktop` — **owed:** a real `pal-android` reader (`PowerManager.getThermalStatus()` /
-> `BatteryManager`), which is where the on-device 200-unit numbers that may reopen the
-> **[D21](../decisions.md) dual-rate** question come from (record via `/decision` when measured). The
-> load-bearing guard test steps the same scripted sim across Low/Mid/High × {Nominal,Fair,Serious,
-> Critical} and asserts a byte-identical checksum stream — a tier is a *rendering* choice, never a
-> sim input (invariant #1/#4). `core` untouched + float-free; `code-reviewer` CLEAN. **Owed glue:**
-> wiring `resolution_scale` to an actual intermediate render target (the decision logic is done +
-> tested; only the wgpu plumbing is deferred).
+> (`pal::ThermalSensor` → `ThermalState`/`PowerState`). The real **`pal-android` reader has landed**
+> (`pal-android/src/thermal.rs` — `PowerManager.getThermalStatus()` / `BatteryManager`) — this is
+> where the on-device 200-unit numbers that may reopen the **[D21](../decisions.md) dual-rate**
+> question come from (record via `/decision` when measured). The load-bearing guard test steps the
+> same scripted sim across Low/Mid/High × {Nominal,Fair,Serious,Critical} and asserts a
+> byte-identical checksum stream — a tier is a *rendering* choice, never a sim input (invariant
+> #1/#4). `core` untouched + float-free; `code-reviewer` CLEAN. **Dyn-res glue landed** —
+> `resolution_scale` is now wired to a real intermediate render target + upscale blit in
+> `render/src/lib.rs`.
 
 **Goal:** make the game hold frame rate and thermal budget on **mid-range arm64**, retiring the
 Phase 1/3 flagship-only caveat (D22/D21: validated on S24 only; mid-range frame-rate/thermal and
@@ -231,7 +231,8 @@ the 200-unit power budget were explicitly deferred here).
 > secret added; tests use an in-memory sink so the suite is green **without Docker/Postgres** (CI +
 > clone-and-run stay green). 18 unit + 7 HTTP + 1 doctest; `code-reviewer` CLEAN after making the
 > validation-ordering test load-bearing + adding the body cap. **Deferred:** the native consent
-> *screen* (D32 chrome), the accounts backend, and the real Postgres `TelemetrySink`.
+> *screen* (D32 chrome) and the accounts backend. The real **Postgres `TelemetrySink` has landed**
+> (feature-gated, `server/src/postgres.rs`) — production wiring still needs the accounts backend.
 
 **Goal:** stand up telemetry + live-ops scaffolding that is **consent-respecting by construction**,
 per [`infrastructure.md`](../infrastructure.md) — built so a player who hasn't consented emits

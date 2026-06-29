@@ -1,12 +1,17 @@
 # PvE campaign plan — the first shippable product
 
-> **Status: PLAN.** Design locked in [`pve-campaign.md`](../pve-campaign.md) +
+> **Status: IN PROGRESS — WS-A & WS-D shipped and live-wired; WS-E shipped; WS-C & WS-B
+> host-side only.** WS-A (mission/objective core — `engine/src/objectives.rs`,
+> `core::scenario::seed_seize_mission`, `render::objective_hud`) and WS-D (HUD layout editor —
+> `engine/src/hud_layout.rs`) are built, tested, and wired into the live host. WS-E (difficulty /
+> modifiers / briefing — `core/src/mission_tuning.rs`) is built and threaded into
+> `core::commander`. WS-C's sim model + fairness/checksum proofs (`core/src/gunsmith.rs`) and
+> pre-match UI seam (`engine/src/loadout_ui.rs`) are built and tested, but **the chosen loadout is
+> not yet applied at live match start** — that wiring is the remaining WS-C work. WS-B's
+> Operations-hub host model + persistence (`core/src/campaign.rs`, via `core::shell`) is built and
+> tested, but its **mission-select/briefing native shell is BLOCKED on [D32](../decisions.md)** and
+> the `MissionId→mission` registry is unbuilt. Design: [`pve-campaign.md`](../pve-campaign.md) +
 > [`customization.md`](../customization.md); decisions [D58](../decisions.md)–[D61](../decisions.md).
-> [D58](../decisions.md) resolved [Q5](../open-questions.md) → **PvE-first, PvP fast-follow**: the
-> single-player **Operations campaign** is the first shippable product and the onboarding surface
-> for *going dark* (invariant #6). This doc is the build sequencing the eventual code commits check
-> off against — the analogue of [`playability-plan.md`](playability-plan.md), scoped to net-new
-> *content*, not engine risk.
 
 ---
 
@@ -60,7 +65,7 @@ Each owns a new module where possible, following the repo's "extract a pure test
 (`engine`'s `command_ui`/`selection`/`tuning`; `render`'s `fog`/`hud`). Edits to shared hub files
 (`core/sim.rs`, `engine/lib.rs`) stay small, additive, region-disjoint.
 
-### WS-A — Mission/objective core *(the spine)*
+### WS-A — Mission/objective core *(the spine)* — **DONE**
 
 The first playable mission proves the loop. Everything else wraps this.
 
@@ -83,7 +88,7 @@ the `determinism.yml` cross-arch matrix stays green (the objective layer is host
 checksum surface — confirm the sim it observes is unchanged). This is the WS that most needs
 [`/check`](../../.claude/commands) + the test-gap-checker before commit.
 
-### WS-B — Operations hub
+### WS-B — Operations hub — **PARTIAL (host model built; native shell BLOCKED on [D32](../decisions.md))**
 
 - Node-graph meta-progression: a `Campaign`/`OperationNode` model (host/shell-side), unlock state
   (clearing a node opens successors), replay-at-higher-difficulty.
@@ -94,7 +99,7 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
 
 **Tests:** unlock-graph transitions; persistence round-trip of campaign progress.
 
-### WS-C — Gunsmith loadout
+### WS-C — Gunsmith loadout — **PARTIAL (sim model + UI seam built; live-spawn wiring gap)**
 
 - **Fixed-point attachment-delta model in `core`** (Q16.16, [D17](../decisions.md)): an integer
   attachment table applied to the weapon component **at match start** as match-setup input; folded
@@ -108,7 +113,7 @@ attachment combination strictly dominates another on the tracked stat axes; a ch
 peers with the same loadout stay bit-identical and different loadouts diverge *only* as expected
 sim state. This WS touches the sim → it rides the full determinism + 2-peer lockstep runners.
 
-### WS-D — HUD layout editor
+### WS-D — HUD layout editor — **DONE**
 
 - Per-layer (command vs embodied) drag/resize/opacity editor over the **existing** touch seams
   (`engine` `touch_controls` → intents + geometry; `render::touch_controls` screen-space pass,
@@ -121,7 +126,7 @@ sim state. This WS touches the sim → it rides the full determinism + 2-peer lo
 (host-testable, no winit/Android types); a guard test that no editable element exposes
 strategic-intel data while embodied.
 
-### WS-E — Difficulty + modifiers + narrative glue
+### WS-E — Difficulty + modifiers + narrative glue — **DONE**
 
 - A deterministic `difficulty` tier threaded into `commander_orders`
   ([`core/src/commander.rs`](../../core/src/commander.rs), [D39](../decisions.md)) — scales

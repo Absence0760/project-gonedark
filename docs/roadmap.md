@@ -174,16 +174,17 @@ model.
 > sockets yet). The snapshot format ([D28](decisions.md)) and **Q2** (enemy detection of "gone
 > dark", [D33](decisions.md): a tunable tell, default Subtle) are now both decided, and the
 > `core::detection` mechanism has landed; the *two-human* PvP mind game still needs the net layer.
-> **Three further codeable slices have now landed:** the **host-side RTT estimator** (a pure
-> `engine::net_tuning` EWMA + hysteresis seam driving the agreed `Lockstep::propose_delay`; the live
-> RTT *sample feed* is the one remaining stub), the **detection HUD** (`render::detection` + the pure
-> `engine::detection_markers` seam, invariant-#6-guarded), and the **honest AI consult** (the scripted
-> commander chases a gone-dark hostile, config-gated default-OFF, only within what detection reveals —
-> all default sim checksum streams verified bit-identical). What remains is **gated, not unwritten**:
-> the dual-rate D21 re-eval (**needs on-device thermal numbers**), the Wi-Fi↔cellular handoff
-> (**needs a QUIC transport**), the RTT sample source (a `pal-desktop` ping/pong), the two-human PvP
-> mind game (**needs the net layer**), and rayon-into-`core` (deliberately deferred — unjustified at
-> ~3.7 ms/tick and would need its own decision).
+> **Four further codeable slices have now landed:** the **host-side RTT estimator** (a pure
+> `engine::net_tuning` EWMA + hysteresis seam driving the agreed `Lockstep::propose_delay`), the
+> **RTT sample feed** (`pal-desktop::pingpong` — `PingPongTransport`/`RttMeter`, transport-level
+> ping/pong feeding `observe_rtt`; kept outside `core::lockstep` so `core` stays clock-free), the
+> **detection HUD** (`render::detection` + the pure `engine::detection_markers` seam,
+> invariant-#6-guarded), and the **honest AI consult** (the scripted commander chases a gone-dark
+> hostile, config-gated default-OFF, only within what detection reveals — all default sim checksum
+> streams verified bit-identical). What remains is **gated, not unwritten**: the dual-rate D21
+> re-eval (**needs on-device thermal numbers**), the Wi-Fi↔cellular handoff (**needs a QUIC
+> transport**), the two-human PvP mind game (**needs the net layer**), and rayon-into-`core`
+> (deliberately deferred — unjustified at ~3.7 ms/tick and would need its own decision).
 
 **Goal:** make it hold up at size and (if pursued) in multiplayer.
 
@@ -205,8 +206,8 @@ model.
   and would need its own decision (invariant #2).
 - [ ] **Wi-Fi↔cellular handoff** — blocked on a QUIC `pal::Transport` (only UDP has landed); the
   reconnect policy is already transport-agnostic and ready for it.
-- [ ] **Two-human PvP mind-game tuning** — needs the live net layer (sockets + the RTT sample feed /
-  matchmaking) so two networked humans actually face the dilemma.
+- [ ] **Two-human PvP mind-game tuning** — needs the live net layer (sockets + matchmaking) so two
+  networked humans actually face the dilemma.
 
 ## Phase 4 — Polish & ship
 
@@ -341,23 +342,28 @@ narrative depth ([Q16](open-questions.md)).
 
 > Net-new content pillar ([D58](decisions.md)–[D61](decisions.md)); design in
 > [`pve-campaign.md`](pve-campaign.md)/[`customization.md`](customization.md), build sequencing in
-> [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). All unchecked — this is the active design→build
-> frontier.
+> [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). WS-A, WS-D, and WS-E have landed; WS-B
+> and WS-C are partial — see the plan for per-WS status.
 
-- [ ] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
+- [x] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
   stream (generalizes [D38](decisions.md)'s `evaluate_outcome`); zero checksum surface; ships with
-  `core`/`engine` tests + determinism matrix green
-- [ ] **Mission 1 — *Seize*** ("10 troops, take the enemy base"): the first playable mission and
-  the going-dark teach beat
+  `core`/`engine` tests + determinism matrix green (code landed — `engine/src/objectives.rs`,
+  `core::scenario::seed_seize_mission`, `render::objective_hud`)
+- [x] **Mission 1 — *Seize*** ("10 troops, take the enemy base"): the first playable mission and
+  the going-dark teach beat (code landed — `core::scenario::seed_seize_mission`)
 - [ ] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
-  briefing (native shell, [D32](decisions.md))
+  briefing (native shell, [D32](decisions.md)) (PARTIAL — host model `core/src/campaign.rs` +
+  persistence built; native shell BLOCKED on [D32](decisions.md), `MissionId→mission` registry
+  unbuilt)
 - [ ] **Gunsmith loadout (WS-C)** — fixed-point sidegrade attachment model, checksum-folded, +
-  pre-match loadout UI ([D60](decisions.md))
-- [ ] **HUD layout editor (WS-D)** — per-layer drag/resize/opacity presets over the existing touch
+  pre-match loadout UI ([D60](decisions.md)) (PARTIAL — sim model `core/src/gunsmith.rs` + UI seam
+  `engine/src/loadout_ui.rs` built + tested; loadout not applied at live match start)
+- [x] **HUD layout editor (WS-D)** — per-layer drag/resize/opacity presets over the existing touch
   seams, presentation/input-only, invariant-#6-bounded ([D61](decisions.md); also tracked under
-  *UI / UX polish* below)
-- [ ] **Difficulty + modifiers (WS-E)** — deterministic `commander_orders` difficulty tier; rotating
-  scenario-parameter modifiers (never balance-number hacks)
+  *UI / UX polish* below) (code landed — `engine/src/hud_layout.rs`)
+- [x] **Difficulty + modifiers (WS-E)** — deterministic `commander_orders` difficulty tier; rotating
+  scenario-parameter modifiers (never balance-number hacks) (code landed —
+  `core/src/mission_tuning.rs`, threaded into `core::commander`)
 - [ ] **PvP fast-follow** — the multiplayer pillar on the same lockstep core (after the PvE loop is
   proven; Phase 3 netcode is the prerequisite)
 

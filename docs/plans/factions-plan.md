@@ -1,19 +1,18 @@
 # Factions plan — US Army vs French Army
 
-> **Status: IN PROGRESS — spine + identity layer landed; gunsmith pools + native selection remain.**
-> Direction locked in [D68](../decisions.md); design in [`factions.md`](../factions.md); the WS-B
-> stat-budget fork in [Q19](../open-questions.md) is now **resolved by [D71](../decisions.md)** (soft
-> asymmetry on logistics rhythm, not gun stats). This is the build sequencing for the faction system
-> [D68](../decisions.md) deliberately deferred — the analogue of
-> [`pve-campaign-plan.md`](pve-campaign-plan.md), scoped to net-new *identity content*, not engine risk.
-> **WS-0 prerequisite met** ([`combat-rebalance-plan.md`](combat-rebalance-plan.md) is COMPLETE).
-> **Landed:** **WS-A** (`Army` tag + persist/lockstep codecs, the spine), **WS-B** (per-faction rosters,
-> logistics-rhythm tilt — [D71](../decisions.md)), **WS-C** (per-faction cosmetic identity — US/FR
-> silhouettes/viewmodels/names via the scripted asset pipeline), and the buildable seam slice of **WS-D**
-> (army selection through the `core::shell` seam + a presentation-safe read view). **Remaining:** **WS-E**
-> (per-faction gunsmith pools, layers on [D60](../decisions.md)); WS-D's native army-select *screen*
-> (D32-blocked) and its PvE US-vs-FR OPFOR *scenario seeding*; and army-tilting the pre-placed scenario
-> starting troops.
+> **Status: IN PROGRESS — full faction system landed; only the D32-blocked native army-select screen
+> remains.** Direction locked in [D68](../decisions.md); design in [`factions.md`](../factions.md); the
+> WS-B stat-budget fork resolved by [D71](../decisions.md) (soft asymmetry on logistics rhythm, not gun
+> stats). **WS-0 prerequisite met** ([`combat-rebalance-plan.md`](combat-rebalance-plan.md) is COMPLETE).
+> **All five workstreams built:** **WS-A** (`Army` tag + persist/lockstep codecs — `Sim::army_of`,
+> codec round-trips), **WS-B** (per-faction rosters via `economy::unit_stats_for`, logistics-rhythm
+> tilt — [D71](../decisions.md)), **WS-C** (per-faction cosmetic identity — US/FR
+> silhouettes/viewmodels/names via `render::model_for_unit`), **WS-D** (army selection through the
+> `core::shell` seam + `core::shell::resolve_select_army`; PvE US-vs-FR OPFOR scenario seeding via
+> `core/src/scenario.rs` `set_army`/`spawn_rifleman` per-army loadout; army-tilted pre-placed starting
+> troops via `core::scenario`), **WS-E** (per-faction gunsmith pools — `gunsmith::pool_for`). **The
+> one remaining item** is WS-D's **native army-select screen** (D32-blocked — the in-engine seam is
+> built and ready, no native UI project exists yet).
 
 ---
 
@@ -62,7 +61,7 @@ per faction — re-tuning twice (before and after factions) is wasted measuremen
 
 **Exit:** the `--metrics` RPS + pin-before-kill properties hold on the shared roster.
 
-### WS-A — Faction identity model + codecs *(the spine)*
+### WS-A — Faction identity model + codecs *(the spine)* — **DONE**
 
 - **`core` — an `Army` tag** (`Us`/`Fr`, with a `Neutral`/none for non-aligned scenes), distinct from
   `Faction`. A per-side selection carried as match-setup state (each `Faction` in a match maps to one
@@ -76,7 +75,7 @@ lockstep test where both sides pick armies and the checksum streams agree; a no-
 stays byte-unchanged. Green **dev + release**; `determinism.yml` matrix green. This WS touches the sim
 codecs → [`/safe-edit`](../../.claude/commands).
 
-### WS-B — Per-faction rosters
+### WS-B — Per-faction rosters — **DONE**
 
 - **`economy::unit_stats` keyed by `(Army, archetype)`** — US and FR archetype sets (rifleman / heavy /
   vehicle / support, the shared skeleton from [`factions.md`](../factions.md) §2) with **tilts inside a
@@ -89,7 +88,7 @@ codecs → [`/safe-edit`](../../.claude/commands).
 checksum-folded; a metrics test that US-vs-FR equal-cost stays within the fairness band; 2-peer
 lockstep agreement with mismatched armies. Sim-touching → full determinism + lockstep runners.
 
-### WS-C — Cosmetic identity (presentation-only)
+### WS-C — Cosmetic identity (presentation-only) — **DONE**
 
 - Per-faction meshes/silhouettes/names via the asset pipeline ([D41](../decisions.md)/[D46](../decisions.md),
   script-not-binary) — M1 Abrams vs Leclerc, FAMAS vs M4 viewmodels, faction names/voicelines. `render`
@@ -100,7 +99,7 @@ lockstep agreement with mismatched armies. Sim-touching → full determinism + l
 **Tests:** the `(Army, kind)` → render-asset mapping (host-testable); an asset-manifest entry per new
 model (`source`/`license`/`sha256`).
 
-### WS-D — Faction selection + PvE integration
+### WS-D — Faction selection + PvE integration — **PARTIAL (seam + scenario seeding built; native screen BLOCKED on [D32](../decisions.md))**
 
 - **Army-select UI** in the native shell ([D32](../decisions.md)) through the `core::shell` seam; the
   choice flows into WS-A's match setup.
@@ -110,7 +109,7 @@ model (`source`/`license`/`sha256`).
 
 **Tests:** the selection → match-setup mapping; a campaign mission seeded US-vs-FR drives to a result.
 
-### WS-E — Per-faction gunsmith pools *(layers on [D60](../decisions.md))*
+### WS-E — Per-faction gunsmith pools *(layers on [D60](../decisions.md))* — **DONE**
 
 - Each army gunsmiths a **different weapon pool**; the gunsmith stays **sidegrade-only** ([D60](../decisions.md)),
   so this is identity without power creep. Composes with the gunsmith loadout WS in

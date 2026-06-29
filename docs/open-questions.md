@@ -468,3 +468,36 @@ campaign played US-side first. Defer the lock until after the [lethal-speed re-t
 **Plan:** [`factions-plan.md`](plans/factions-plan.md) (WS-0 = the rebalance prerequisite; WS-A
 identity tag + codecs; WS-B per-faction rosters; C/D/E cosmetics, selection + PvE OPFOR, gunsmith
 pools). The asymmetry fork above is the design gate on WS-B.
+
+---
+
+## Q20 — AI-controlled ballistic fire — does a produced/AI tank's gun travel, or stay hitscan? <a id="q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan"></a>
+
+When a produced (and thus sometimes-AI-controlled) unit carries `muzzle_vel > 0` — the armoured
+ballistic Tank of P9's remaining scope in
+[`tank-embodiment-plan.md`](plans/tank-embodiment-plan.md) — its shot is ballistic **only while
+embodied**. `core::sim`'s `Command::Fire` path calls `projectile::fire_ballistic` only when
+`muzzle_vel > 0` and `InputSource::Embodied`; the AI auto-resolver `combat::combat_system`
+resolves fire as instant hitscan and never reads `muzzle_vel` (`core/src/combat.rs`), and
+aim-bloom (dispersion) is grown only at embodied sites. So the **same gun is hitscan when
+AI-driven and ballistic when embodied**.
+
+This fork is currently **dormant**: the only produced `UnitKind::Tank` is deliberately
+`muzzle_vel == 0` + unarmoured ([D65](decisions.md)), so neither path fires a projectile. It
+manifests the moment P9's ballistic + armoured produced tank lands. Two options:
+
+| Option | For | Against |
+|---|---|---|
+| **(i) Ballistics embodied-only** — AI tank gun stays hitscan | Literal-executor friendly (invariant #3): AI tanks have no skill at leading targets, which is honest. No new sim writes. | Physically inconsistent: the same barrel is a laser or a cannon depending on who pulls the trigger. Visible in combat once AI tanks fire at range. |
+| **(ii) AI tanks also spawn projectiles** — teach `combat_system` to fire `Projectile`s for `muzzle_vel > 0` | Physically consistent: identical gun, identical shell, regardless of driver. Emergent: AI tanks can now be hit by return fire *in flight*. | Determinism-sensitive: new sim writes (projectile spawns from the AI resolver) must keep the lockstep checksum matrix green (invariant #7). More new code in a hot path. |
+
+Note that **armour facing is already consistent across all three fire paths** (AI hitscan, embodied
+hitscan, shell impact) — the `facing_penetration_multiplier` is applied at damage resolution in all
+cases (P4, `dc8ce4e`). This fork is strictly about **projectile travel**, not damage/armour.
+
+Resolve this **before** P9's produced-tank ballistic gun ships (cross-link:
+[`tank-embodiment-plan.md`](plans/tank-embodiment-plan.md) §9). The relevant invariants are #3
+(literal-executor AI — skill lives in the *order/stance vocabulary*, not autonomous unit cleverness)
+and #7 (lockstep checksum matrix must stay green across the arch matrix).
+
+**Current lean:** undecided.
