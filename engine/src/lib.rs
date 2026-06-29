@@ -2858,8 +2858,8 @@ impl Game {
         // 7. Render the interpolated snapshot, fog-filtered (world goes dark while embodied), into the
         // dyn-res scene target. In the embodied branch this LOADs the avatar over the world drawn in
         // 6b/6c; in command view it CLEARS to the lit slate and draws the ground grid + 3D tokens +
-        // quad UI (+ the command readout text, which rides the scaled scene — a thin tally; the heavy
-        // fragment cost is the 3D, and keeping `render` intact respects the existing architecture).
+        // quad UI. It also stashes the command-view tally for the readout, which is drawn LATER at
+        // native resolution (step 7c'') — NOT into this scaled scene target.
         self.renderer.render(
             device,
             queue,
@@ -2869,7 +2869,6 @@ impl Game {
             &visibility,
             sw,
             sh,
-            economy,
         );
 
         // 7a. Embodied weapon viewmodel (W5/D44): the first-person gun — the real `weapon_rifle`
@@ -2896,6 +2895,17 @@ impl Game {
         // chrome below (command panels, marquee, debug/detection tells, HUD, overlay, radial) LOADs
         // onto the swapchain AFTER this, so it stays crisp at native resolution — only the world scaled.
         self.renderer.present_scene(device, queue, view);
+
+        // 7b''. Command-view readout (W6) — the top-left unit/enemy/point tally + the optional
+        // resource/income lines — drawn at NATIVE swapchain resolution here, AFTER `present_scene`,
+        // with the rest of the chrome, so it stays crisp at any dyn-res `resolution_scale < 1.0`
+        // (it used to ride the scaled scene target inside `render` and upscale soft). The tally was
+        // stashed during step 7's `render` off this frame's fog-filtered draw set; the `economy` seam
+        // is the host-supplied banked-credits/income figures read from the (checksummed) sim. The
+        // real `world_dark` gates it: while embodied `readout_labels` returns an empty set, so the
+        // readout never paints over the dark frame (invariant #6) — a no-op then.
+        self.renderer
+            .render_readout(device, queue, view, economy, self.embodied);
 
         // 7c. Contextual command panel ("command and grow your camps"), top-right. Command view only
         // — never over the dark embodied frame (invariant #6). Its rows are derived from the current

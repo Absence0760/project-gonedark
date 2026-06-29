@@ -429,6 +429,30 @@ mod tests {
     }
 
     #[test]
+    fn layout_is_resolution_independent() {
+        // W10 relocation guard: the readout moved out of the (sub-native) dyn-res scene pass and is
+        // now drawn at native swapchain resolution AFTER the upscale blit. That relocation is only
+        // safe because the layout carries NO pixel/resolution input — every position and size is pure
+        // NDC, so rasterising at native vs at a scaled target changes only sharpness, never geometry.
+        // `readout_labels` takes no width/height at all, which pins the property: the same call yields
+        // byte-identical layout regardless of the render-target size it is later drawn into.
+        let t = Tally {
+            player_units: 7,
+            enemy_units: 4,
+            control_points: 3,
+        };
+        let a = readout_labels(&t, Some(econ(500, income_per_tick(3))), false);
+        let b = readout_labels(&t, Some(econ(500, income_per_tick(3))), false);
+        assert_eq!(a, b, "layout is a pure function of the tally/economy — no hidden size input");
+        for l in &a {
+            // NDC chrome with NDC glyph size — nothing here scales with the target's pixel dims, so
+            // the native-resolution draw lands in the exact same place the scaled one would have.
+            assert!(l.pos[0] >= -1.0 && l.pos[0] <= 1.0 && l.pos[1] >= -1.0 && l.pos[1] <= 1.0);
+            assert!(l.px_size > 0.0 && l.px_size <= 1.0, "glyph height is NDC, not pixels");
+        }
+    }
+
+    #[test]
     fn each_side_label_carries_its_faction_color() {
         let labels = readout_labels(&Tally::default(), None, false);
         // The player line leans blue, the enemy line leans red (so each reads as its side).
