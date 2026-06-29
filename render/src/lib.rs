@@ -51,6 +51,11 @@ mod hud;
 /// `TouchControlsRenderer`: the move stick + Fire/Crouch/Reload/Surface buttons, drawn as a LOAD
 /// pass over the dark embodied frame. Public so the host describes them via [`touch_controls::TouchControlsHud`].
 pub mod touch_controls;
+/// Embodied **tank** gunner-sight HUD (tank embodiment P8, D55). Owns `TankHudRenderer`: the
+/// hull-relative turret indicator, the dispersion reticle, the LEAD pip, and the reload ring, drawn
+/// as a LOAD pass over the dark embodied frame while the local player drives a tank. Public so the
+/// host fills the [`tank_hud::TankHudState`] from the embodied tank's (read-only) sim state.
+pub mod tank_hud;
 /// Band-select marquee. Owns `MarqueeRenderer`: the selection rectangle drawn in the command view
 /// while a band-drag is in flight. Public so the host can describe the box via [`marquee::Marquee`].
 pub mod marquee;
@@ -612,6 +617,9 @@ pub struct Renderer {
     /// The on-screen FPS touch-control HUD (Android). Drawn as a LOAD pass by
     /// [`Renderer::render_touch_controls`] when the local player is embodied on a touch device.
     touch_controls: touch_controls::TouchControlsRenderer,
+    /// The embodied **tank** gunner-sight HUD (tank embodiment P8). Drawn as a LOAD pass by
+    /// [`Renderer::render_tank_hud`] when the local player is embodied in a tank.
+    tank_hud: tank_hud::TankHudRenderer,
     /// The in-session shell overlay (Phase 4 WS-B). Drawn as a LOAD pass by
     /// [`Renderer::render_overlay`] when an in-session surface (pause/reconnect/summary) is up.
     overlay: overlay::OverlayRenderer,
@@ -772,6 +780,7 @@ impl Renderer {
 
         let hud = hud::HudRenderer::new(device, surface_format);
         let touch_controls = touch_controls::TouchControlsRenderer::new(device, surface_format);
+        let tank_hud = tank_hud::TankHudRenderer::new(device, surface_format);
         let overlay = overlay::OverlayRenderer::new(device, surface_format);
         let radial = radial::RadialRenderer::new(device, surface_format);
         let marquee = marquee::MarqueeRenderer::new(device, surface_format);
@@ -803,6 +812,7 @@ impl Renderer {
             projectiles: Vec::new(),
             hud,
             touch_controls,
+            tank_hud,
             overlay,
             radial,
             marquee,
@@ -1124,6 +1134,40 @@ impl Renderer {
     ) {
         self.hud
             .render_hitmarker(device, queue, view, last_hit_tick, tick);
+    }
+
+    /// Draw the embodied **tank** gunner-sight HUD (tank embodiment P8) on top of the current frame (a
+    /// LOAD pass — never clears): the hull-relative turret indicator, the dispersion reticle, the LEAD
+    /// pip, and the reload ring (geometry via [`tank_hud::TankHudRenderer`]), then the selected-shell
+    /// label through the shared [`text`](crate::text) pass. The host calls this only while the local
+    /// player is embodied in a tank. Presentation-only chrome with no world position — it reveals
+    /// nothing about unseen enemies and widens no fog beneath it (invariant #6); the renderer only
+    /// READS the [`tank_hud::TankHudState`] / `shell_label` it is handed (invariant #4).
+    ///
+    /// `shell_label` is the selected shell readout (e.g. "AP"). **W2 dependency:** until W2's
+    /// `ShellKind`/selected-shell field merges, the host passes a constant default; once merged it is a
+    /// one-line swap to the live selected-shell name.
+    pub fn render_tank_hud(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        state: &tank_hud::TankHudState,
+        shell_label: &str,
+    ) {
+        self.tank_hud.render(device, queue, view, state);
+        // Shell-selector readout: a short label under the reticle, drawn through the shared text pass.
+        if !shell_label.is_empty() {
+            self.text.queue(
+                shell_label,
+                [0.0, -0.62],
+                0.05,
+                text::Anchor::TopCenter,
+                [0.82, 0.86, 0.92],
+                0.92,
+            );
+            self.text.render(device, queue, view);
+        }
     }
 
     /// Draw the on-screen FPS touch-control HUD (move stick + Fire/Crouch/Reload/Surface) on top of
