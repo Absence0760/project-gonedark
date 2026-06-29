@@ -27,7 +27,8 @@
 //! the lesson the playable sandbox teaches.
 
 use crate::components::{
-    Armor, Army, BuildingKind, EntityKind, Faction, Health, Stance, UnitKind, Vec2, Weapon,
+    Armor, Army, BuildingKind, EntityKind, Faction, Health, ShellKind, Stance, UnitKind, Vec2,
+    Weapon,
 };
 use crate::ecs::Entity;
 use crate::economy;
@@ -104,6 +105,9 @@ fn duel_gun() -> Weapon {
         turret_speed: 0,
         muzzle_vel: DUEL_GUN_MUZZLE_VEL,
         penetration: DUEL_GUN_PENETRATION,
+        // Loads AP by default (P6, D55) — solid-shot, the facet bounce/pen the duel demonstrates. A
+        // harness/sandbox can `SelectShell` HE/APHE to exercise splash without touching the seeder.
+        shell: ShellKind::Ap,
     }
 }
 
@@ -894,8 +898,10 @@ mod tests {
         // Stable on every arch (fixed-point only). Recompute + re-pin only on an *intended* change
         // to the duel scene/gun/armour or the ballistic/facet math; an *unexpected* change here is a
         // desync, not a value to bless. (D67: re-pinned after the Weapon fold grew reserve +
-        // reserve_max — every slot now folds two more u32, so the stream shifted by design.)
-        assert_eq!(sum, 0x9ce4_c890_207f_57f1);
+        // reserve_max — every slot now folds two more u32, so the stream shifted by design.
+        // P6: re-pinned after the Weapon fold grew a loaded-shell tag + the projectile fold grew a
+        // shell tag + splash pair — both by design, so the duel stream shifted.)
+        assert_eq!(sum, 0x7488_5f27_2a29_0797);
         // And it is reproducible run-to-run on this arch.
         assert_eq!(run_ballistic_duel(130), sum);
     }

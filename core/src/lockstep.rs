@@ -26,7 +26,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::components::{Army, BuildingKind, Faction, Order, Stance, UnitKind, Vec2};
+use crate::components::{Army, BuildingKind, Faction, Order, ShellKind, Stance, UnitKind, Vec2};
 use crate::ecs::Entity;
 use crate::fixed::Fixed;
 use crate::sim::Command;
@@ -40,7 +40,9 @@ use crate::sim::Command;
 /// embodied tank `Command::AimTurret` (tag 14) + `Command::DriveHull` (tag 15) vocabulary; 7 added
 /// the match-setup `Command::SelectArmy` (tag 16) — the faction-identity selection (factions-plan
 /// WS-A) — so a pre-factions peer's frame is rejected at the handshake, not on `BadTag(16)` mid-game.
-const WIRE_VERSION: u8 = 7;
+/// 8 added the embodied tank `Command::SelectShell` (tag 17) — the AP/APHE/HE shell selection (tank
+/// embodiment P6, D55) — so a pre-P6 peer's frame is rejected at the handshake, not on `BadTag(17)`.
+const WIRE_VERSION: u8 = 8;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
 /// carry command sets, checksum reports, and delay-change proposals over the one wire format.
@@ -302,6 +304,25 @@ fn get_army(r: &mut Reader) -> Result<Army, DecodeError> {
     })
 }
 
+fn put_shell(w: &mut Writer, s: ShellKind) {
+    // Tags MUST match sim.rs's shell_tag (and the ShellKind discriminant order): a SelectShell command
+    // encoded on one peer has to decode to the identical shell on every other (invariant #7). Tank
+    // embodiment P6, D55.
+    w.u8(match s {
+        ShellKind::Ap => 0,
+        ShellKind::Aphe => 1,
+        ShellKind::He => 2,
+    });
+}
+fn get_shell(r: &mut Reader) -> Result<ShellKind, DecodeError> {
+    Ok(match r.u8()? {
+        0 => ShellKind::Ap,
+        1 => ShellKind::Aphe,
+        2 => ShellKind::He,
+        t => return Err(DecodeError::BadTag(t)),
+    })
+}
+
 fn put_command(w: &mut Writer, c: &Command) {
     match *c {
         Command::Move { entity, target } => {
@@ -388,6 +409,13 @@ fn put_command(w: &mut Writer, c: &Command) {
             put_faction(w, faction);
             put_army(w, army);
         }
+        Command::SelectShell { entity, shell } => {
+            // Embodied tank shell selection (tank embodiment P6, D55). Carries an Entity + a ShellKind
+            // tag; the tag scheme matches sim.rs's shell_tag so the decode is identical on every peer.
+            w.u8(17);
+            put_entity(w, entity);
+            put_shell(w, shell);
+        }
     }
 }
 
@@ -457,6 +485,10 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
         16 => Command::SelectArmy {
             faction: get_faction(r)?,
             army: get_army(r)?,
+        },
+        17 => Command::SelectShell {
+            entity: get_entity(r)?,
+            shell: get_shell(r)?,
         },
         t => return Err(DecodeError::BadTag(t)),
     })
@@ -1059,6 +1091,21 @@ mod tests {
             Command::SelectArmy {
                 faction: Faction::Neutral,
                 army: Army::Neutral,
+            },
+            // Tank P6: the embodied SelectShell must survive the wire codec — its Entity + ShellKind
+            // tags match sim.rs, so a shell selection decodes to the identical shell on every peer
+            // (invariant #7). Cover all three shell kinds.
+            Command::SelectShell {
+                entity: ent(10, 0),
+                shell: ShellKind::Ap,
+            },
+            Command::SelectShell {
+                entity: ent(10, 0),
+                shell: ShellKind::Aphe,
+            },
+            Command::SelectShell {
+                entity: ent(11, 2),
+                shell: ShellKind::He,
             },
             // Cover the remaining Order variants too.
             Command::SetOrder {

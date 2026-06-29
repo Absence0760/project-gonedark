@@ -274,7 +274,9 @@ mod tests {
         assert_eq!(
             simulate(200).checksums.last().copied(),
             // D67: re-pinned after the Weapon fold grew reserve + reserve_max (two more u32/slot).
-            Some(0xef4b_32dc_9f7d_973e),
+            // P6: re-pinned after the Weapon fold grew a loaded-shell tag + the projectile fold grew a
+            // shell tag + splash pair (tank embodiment P6, D55) — the stream shifted by design.
+            Some(0x35f8_f006_b4f8_7072),
         );
     }
 

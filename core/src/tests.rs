@@ -625,7 +625,7 @@ fn ecs_respawn_resets_component_arrays() {
     // Phase 1 fields AND every Phase 2 field, so a future `spawn()` that forgets to reset one
     // (silent stale-state desync on slot recycle) is caught here.
     use crate::components::{
-        Armor, Building, EntityKind, Faction, Health, ProductionItem, UnitKind, Weapon,
+        Armor, Building, EntityKind, Faction, Health, ProductionItem, ShellKind, UnitKind, Weapon,
     };
     let mut w = World::new();
     let a = w.spawn();
@@ -655,6 +655,8 @@ fn ecs_respawn_resets_component_arrays() {
         turret_speed: 9,
         muzzle_vel: Fixed::from_ratio(1, 4),
         penetration: Fixed::from_ratio(1, 5),
+        // A non-default loaded shell, so the fold/serialize round-trip exercises a real `shell` tag.
+        shell: ShellKind::Aphe,
     };
     w.posture[i] = crate::components::Posture::Crouched;
     w.suppression[i] = Fixed::HALF;
@@ -996,7 +998,7 @@ fn snapshot_carries_each_units_kind() {
 fn snapshot_carries_in_flight_projectiles_for_tracers() {
     // The render snapshot copies the in-flight shell pool so the renderer can draw tracers (P7).
     // Presentation only — not checksummed; here we just confirm the per-shell fields are mirrored.
-    use crate::components::Faction;
+    use crate::components::{Faction, ShellKind};
     use crate::projectile::Projectile;
     let mut sim = Sim::new(7);
     let owner = sim.world.spawn();
@@ -1010,6 +1012,9 @@ fn snapshot_carries_in_flight_projectiles_for_tracers() {
         damage: Fixed::from_int(25),
         penetration: Fixed::from_int(10),
         lifetime: 180,
+        shell: ShellKind::He,
+        splash_radius: Fixed::from_int(4),
+        splash_damage: Fixed::from_int(20),
     });
     let snap = sim.snapshot();
     assert_eq!(snap.projectiles.len(), 1, "the shell appears in the snapshot");
@@ -1621,6 +1626,7 @@ fn embodied_tank(sim: &mut Sim, x: i32, y: i32, muzzle_vel: i32, damage: i32, ra
         turret_speed: 200,
         muzzle_vel: Fixed::from_int(muzzle_vel),
         penetration: Fixed::ZERO,
+        shell: crate::components::ShellKind::Ap,
     };
     e
 }
@@ -1807,7 +1813,7 @@ fn snapshot_round_trip_preserves_in_flight_projectile_pool() {
 
 #[test]
 fn shell_resolves_armor_facet_at_impact_not_at_fire() {
-    use crate::components::{Armor, Health};
+    use crate::components::{Armor, Health, ShellKind};
     use crate::projectile::{
         projectile_system, Projectile, DEFAULT_LIFETIME, LAUNCH_VZ, MUZZLE_HEIGHT,
     };
@@ -1843,6 +1849,9 @@ fn shell_resolves_armor_facet_at_impact_not_at_fire() {
             damage: Fixed::from_int(50),
             penetration: Fixed::from_int(10),
             lifetime: DEFAULT_LIFETIME,
+            shell: ShellKind::Ap,
+            splash_radius: Fixed::ZERO,
+            splash_damage: Fixed::ZERO,
         }];
         let before = world.health[ti].cur;
         let mut events = Vec::new();

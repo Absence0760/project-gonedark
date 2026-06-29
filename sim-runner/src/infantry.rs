@@ -513,7 +513,9 @@ mod tests {
             simulate_scene(300).checksums.last().copied(),
             // D66: rifleman damage ×5 (6→30) moved the embodied-scene golden.
             // D67: re-pinned again after the Weapon fold grew reserve + reserve_max (two u32/slot).
-            Some(0x15a9_474e_f9aa_5402),
+            // P6: re-pinned after the Weapon fold grew a loaded-shell tag (tank embodiment P6, D55) —
+            // one byte/slot, so every scene's stream shifted by design.
+            Some(0xa621_8fa1_3c03_87a0),
         );
     }
 

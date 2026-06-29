@@ -646,7 +646,7 @@ pub fn resolve_fire(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::{Faction, Health, Stance, Vec2, Weapon};
+    use crate::components::{Faction, Health, ShellKind, Stance, Vec2, Weapon};
     use crate::ecs::Entity;
     use crate::terrain::{Cover, Terrain};
 
@@ -701,6 +701,7 @@ mod tests {
             turret_speed: 0,
             muzzle_vel: Fixed::ZERO,
             penetration: Fixed::ZERO,
+            shell: ShellKind::Ap,
         }
     }
 
@@ -722,6 +723,7 @@ mod tests {
             turret_speed: 0,
             muzzle_vel: Fixed::ZERO,
             penetration: Fixed::ZERO,
+            shell: ShellKind::Ap,
         }
     }
 
