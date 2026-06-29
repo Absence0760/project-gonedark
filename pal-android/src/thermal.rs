@@ -162,48 +162,67 @@ impl AndroidThermalSensor {
         let activity =
             unsafe { JObject::from_raw(self.app.activity_as_ptr() as jni::sys::jobject) };
 
-        // context.getSystemService("power") -> PowerManager; .getThermalStatus() : int
-        let power_name = env.new_string("power")?;
-        let power_mgr = env
-            .call_method(
-                &activity,
-                "getSystemService",
-                "(Ljava/lang/String;)Ljava/lang/Object;",
-                &[(&power_name).into()],
-            )?
-            .l()?;
-        let thermal_status = env
-            .call_method(&power_mgr, "getThermalStatus", "()I", &[])?
-            .i()?;
+        // Do the JNI reads in an inner closure so we can intercept *any* failure and clear the
+        // Java exception it may have left pending on this thread BEFORE returning. This is
+        // load-bearing, not cosmetic: a failed `call_method` (e.g. `getThermalStatus` raising
+        // `NoSuchMethodError` on a device/HAL below API 29 or without the thermal HAL) leaves a
+        // pending exception on the JVM thread, and the *next* JNI call anywhere — ART checks this
+        // — aborts the whole process ("JNI <call> called with pending exception"). The Rust-level
+        // `Err` fallback (default to Nominal) is worthless if the VM has already killed us. So on
+        // any error we swallow the pending exception here while `env` is still live; only then do
+        // the trait methods' safe defaults actually take effect.
+        let read = (|| -> Result<(i32, i32, i32), jni::errors::Error> {
+            // context.getSystemService("power") -> PowerManager; .getThermalStatus() : int
+            let power_name = env.new_string("power")?;
+            let power_mgr = env
+                .call_method(
+                    &activity,
+                    "getSystemService",
+                    "(Ljava/lang/String;)Ljava/lang/Object;",
+                    &[(&power_name).into()],
+                )?
+                .l()?;
+            let thermal_status = env
+                .call_method(&power_mgr, "getThermalStatus", "()I", &[])?
+                .i()?;
 
-        // context.getSystemService("batterymanager") -> BatteryManager; .getIntProperty(int):int
-        let battery_name = env.new_string("batterymanager")?;
-        let battery_mgr = env
-            .call_method(
-                &activity,
-                "getSystemService",
-                "(Ljava/lang/String;)Ljava/lang/Object;",
-                &[(&battery_name).into()],
-            )?
-            .l()?;
-        let battery_status = env
-            .call_method(
-                &battery_mgr,
-                "getIntProperty",
-                "(I)I",
-                &[JValue::Int(battery_property::STATUS)],
-            )?
-            .i()?;
-        let capacity = env
-            .call_method(
-                &battery_mgr,
-                "getIntProperty",
-                "(I)I",
-                &[JValue::Int(battery_property::CAPACITY)],
-            )?
-            .i()?;
+            // context.getSystemService("batterymanager") -> BatteryManager; .getIntProperty(int):int
+            let battery_name = env.new_string("batterymanager")?;
+            let battery_mgr = env
+                .call_method(
+                    &activity,
+                    "getSystemService",
+                    "(Ljava/lang/String;)Ljava/lang/Object;",
+                    &[(&battery_name).into()],
+                )?
+                .l()?;
+            let battery_status = env
+                .call_method(
+                    &battery_mgr,
+                    "getIntProperty",
+                    "(I)I",
+                    &[JValue::Int(battery_property::STATUS)],
+                )?
+                .i()?;
+            let capacity = env
+                .call_method(
+                    &battery_mgr,
+                    "getIntProperty",
+                    "(I)I",
+                    &[JValue::Int(battery_property::CAPACITY)],
+                )?
+                .i()?;
 
-        Ok((thermal_status, battery_status, capacity))
+            Ok((thermal_status, battery_status, capacity))
+        })();
+
+        if read.is_err() {
+            // Best-effort: clear any pending JVM exception so the caller's safe fallback can run
+            // without the next JNI call detonating the process. `exception_clear` is one of the
+            // few JNI calls valid while an exception is pending; ignore errors from the clear.
+            let _ = env.exception_clear();
+        }
+        read
     }
 }
 
