@@ -711,7 +711,7 @@ mod tests {
     /// RNG (no float, no `Sim::rng` draw), so this plays out identically on every run/arch.
     #[test]
     fn skirmish_plays_out_as_a_live_match_under_the_commander() {
-        use crate::commander::{commander_orders, COMMANDER_PERIOD};
+        use crate::commander::{commander_orders, CommanderConfig, COMMANDER_PERIOD};
         use crate::rng::Rng;
 
         let mut sim = fresh();
@@ -728,6 +728,8 @@ mod tests {
                     &sim.territory,
                     &sim.resources,
                     &mut enemy_rng,
+                    &CommanderConfig::default(),
+                    &[],
                     Faction::Enemy,
                     sim.tick_count(),
                 )

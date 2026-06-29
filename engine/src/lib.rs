@@ -20,8 +20,9 @@
 
 use glam::{Mat4, Vec3, Vec4};
 use gonedark_core::alerts::AlertChannel;
-use gonedark_core::commander::{self, COMMANDER_PERIOD};
+use gonedark_core::commander::{self, CommanderConfig, COMMANDER_PERIOD};
 use gonedark_core::components::{BuildingKind, EntityKind, Faction, Posture, Stance, UnitKind, Vec2};
+use gonedark_core::detection::{self, DetectionConfig, DetectionMemory};
 use gonedark_core::economy::{self, Resources};
 use gonedark_core::ecs::Entity;
 use gonedark_core::event::SimEvent;
@@ -1137,6 +1138,19 @@ pub struct Game {
     /// peer; this RNG is host-side planning input only, never sim state.
     commander_rng: Rng,
 
+    /// Tunables for the enemy commander (D — "tunable mechanism, not locked design"). Defaults to
+    /// `CommanderConfig::default()` (`hunt_embodied = false`), so the commander reproduces its
+    /// original behavior byte-for-byte and the default scenes' checksum streams are untouched. A
+    /// host opts into the gone-dark hunt via [`Game::set_commander_hunts_embodied`].
+    commander_config: CommanderConfig,
+
+    /// Host-local linger memory for the commander's detection consult (W3 / D). **Presentation-side
+    /// state, never sim state** — exactly like the HUD's `DetectionMemory`. The commander runs only
+    /// on the local host and its orders ride the lockstep stream to peers, so this host-private
+    /// memory can never desync lockstep (invariant #7). Only touched when `commander_config
+    /// .hunt_embodied` is set; otherwise it stays empty and unused.
+    commander_detection: DetectionMemory,
+
     /// The sim tick the embodied player last fired on, or `None` if they have not fired this match
     /// (W5). PRESENTATION ONLY — it drives the weapon viewmodel's muzzle-flash cue
     /// ([`gonedark_render::world::muzzle_flash_intensity`]); it is never read by the sim and never
@@ -1552,6 +1566,11 @@ impl Game {
             // Enemy commander RNG: own stream seeded `sim_seed ^ faction-id` (W3) — decoupled from
             // the checksummed sim RNG so a host-side draw can never advance/desync it.
             commander_rng: Rng::new(seed ^ Faction::Enemy.index() as u64),
+            // Commander tunables default OFF (byte-identical to the original commander); a host
+            // enables the gone-dark hunt via `set_commander_hunts_embodied`. The detection linger
+            // memory starts empty and is only used when that hunt is enabled.
+            commander_config: CommanderConfig::default(),
+            commander_detection: DetectionMemory::new(),
             // No shot fired yet → no muzzle flash (W5, presentation only).
             last_fire_tick: None,
             // No connecting shot yet → no hitmarker (WS-4, presentation only).
@@ -1752,6 +1771,15 @@ impl Game {
     /// backoff on the next [`Game::frame`]. Storing it is presentation-only; it never reaches the sim.
     pub fn set_thermal_state(&mut self, thermal: gonedark_pal::ThermalState) {
         self.thermal = thermal;
+    }
+
+    /// Opt the enemy commander into (or out of) the **gone-dark hunt** (D). When enabled, on each
+    /// commander tick the host derives the Enemy's detection tells (range + LoS bounded, honest) and
+    /// lets the commander chase a player who has gone dark. Default OFF — keeping it off reproduces
+    /// the original commander byte-for-byte (no checksum churn). A pure host-side knob; never sim
+    /// state, so flipping it perturbs only future planning, not the running checksum stream.
+    pub fn set_commander_hunts_embodied(&mut self, hunt: bool) {
+        self.commander_config.hunt_embodied = hunt;
     }
 
     /// The player's authoritative world position, read straight from the sim world (read
@@ -2248,11 +2276,30 @@ impl Game {
         // `tick_count()` (the next tick to step) keeps the cadence a pure function of sim state, so
         // it is identical across peers regardless of frame pacing.
         if self.sim.tick_count().is_multiple_of(COMMANDER_PERIOD) {
+            // Gone-dark hunt (config-gated, default OFF): when enabled, derive the commander's
+            // permitted intel from the SAME detection channel the player's HUD uses — for the Enemy
+            // as observer, so it learns only what range + LoS honestly reveal (invariant #6, no
+            // omniscient peek). Off → no detection call at all and an empty slice, so the emitted
+            // command stream is byte-identical to before (no checksum churn).
+            let tells = if self.commander_config.hunt_embodied {
+                detection::detectable_embodiment(
+                    &self.sim.world,
+                    &self.sim.terrain,
+                    &DetectionConfig::default(),
+                    Faction::Enemy,
+                    self.sim.tick_count(),
+                    &mut self.commander_detection,
+                )
+            } else {
+                Vec::new()
+            };
             let cmds = commander::commander_orders(
                 &self.sim.world,
                 &self.sim.territory,
                 &self.sim.resources,
                 &mut self.commander_rng,
+                &self.commander_config,
+                &tells,
                 Faction::Enemy,
                 self.sim.tick_count(),
             );
@@ -4862,6 +4909,8 @@ mod tests {
                 &sim.territory,
                 &sim.resources,
                 rng,
+                &CommanderConfig::default(),
+                &[],
                 faction,
                 sim.tick_count(),
             ));
