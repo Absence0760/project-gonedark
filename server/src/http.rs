@@ -60,10 +60,21 @@ pub struct AppState {
 
 impl AppState {
     /// Default state for local/dev: an in-memory sink + default live-ops config. The
-    /// Postgres-backed sink replaces `sink` here once `DATABASE_URL` wiring lands.
+    /// Postgres-backed sink replaces `sink` via [`AppState::with_sink`] when `DATABASE_URL`
+    /// wiring is enabled (the `postgres` feature).
     pub fn in_memory() -> Self {
         AppState {
             sink: Arc::new(InMemorySink::new()),
+            liveops: Arc::new(LiveOpsSource::new()),
+        }
+    }
+
+    /// State backed by a caller-provided sink (e.g. the Postgres sink) + default live-ops.
+    /// The sink is still reached only through the consent-gated [`ingest`] path — swapping the
+    /// implementation here does not change the gate.
+    pub fn with_sink(sink: Arc<dyn TelemetrySink>) -> Self {
+        AppState {
+            sink,
             liveops: Arc::new(LiveOpsSource::new()),
         }
     }

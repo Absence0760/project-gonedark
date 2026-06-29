@@ -25,6 +25,27 @@ tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "macros", "s
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 
+# Optional Postgres-backed TelemetrySink (Phase 4 WS-D deferred item). Behind the `postgres`
+# feature so the DEFAULT build/test/CI never compiles sqlx and needs no database — clone-and-run
+# stays green with zero setup (invariant #8 / CI floor). Inserts use sqlx's RUNTIME query API
+# (`sqlx::query(...)`, NOT the compile-time `query!` macros), so building needs no live DB and no
+# checked-in `.sqlx` cache. The `macros` feature is on only for `sqlx::migrate!`, which embeds the
+# SQL files under `migrations/` at compile time (file read, not a DB query). Runtime is Tokio
+# (already in use); rustls-ring avoids a system OpenSSL build dep. No credentials here —
+# connection comes from `DATABASE_URL` (non-secret local default in `.env.development`).
+sqlx = { version = "0.9.0", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
+    "postgres",
+    "json",
+    "migrate",
+    "macros",
+], optional = true }
+
+[features]
+# Enable the Postgres sink: `cargo build/test -p gonedark-server --features postgres`.
+postgres = ["dep:sqlx"]
+
 [dev-dependencies]
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "macros", "sync", "test-util"] }
 # `tower::ServiceExt::oneshot` drives the router in the HTTP integration test (no live socket).
