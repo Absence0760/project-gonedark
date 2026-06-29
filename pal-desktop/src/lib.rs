@@ -789,6 +789,43 @@ mod input_tests {
         assert_eq!(f.train_slot, None, "repeat doesn't latch a train");
         assert!(!f.upgrade_pressed, "repeat doesn't latch an upgrade");
     }
+
+    #[test]
+    fn embodied_crouch_and_reload_keys_latch_one_shot_then_clear() {
+        // The desktop mirror of the Android Crouch/Reload buttons: C → `crouch_pressed`, V →
+        // `reload_pressed`. Both are ONE-SHOT edges (the engine's `crouch_toggle_command` inverts
+        // posture off the authoritative sim state, so the host must emit a single edge, never a held
+        // level — a held crouch would flip posture every frame).
+        let mut input = DesktopInput::new();
+
+        input.on_key(KeyCode::KeyC, true, false);
+        let f = input.drain_frame();
+        assert!(f.crouch_pressed && !f.reload_pressed, "C → one crouch edge");
+        assert!(
+            !input.drain_frame().crouch_pressed,
+            "crouch edge cleared after one drain (a held key never re-toggles)"
+        );
+
+        input.on_key(KeyCode::KeyV, true, false);
+        let f = input.drain_frame();
+        assert!(f.reload_pressed && !f.crouch_pressed, "V → one reload edge");
+        assert!(
+            !input.drain_frame().reload_pressed,
+            "reload edge cleared after one drain"
+        );
+    }
+
+    #[test]
+    fn embodied_crouch_and_reload_keys_ignore_key_repeat() {
+        // Holding C/V (OS key-repeat) must NOT re-latch — same edge rule as embody/production, and
+        // load-bearing for crouch (a re-latch each repeat frame would thrash the posture toggle).
+        let mut input = DesktopInput::new();
+        input.on_key(KeyCode::KeyC, true, true);
+        input.on_key(KeyCode::KeyV, true, true);
+        let f = input.drain_frame();
+        assert!(!f.crouch_pressed, "repeat doesn't latch a crouch");
+        assert!(!f.reload_pressed, "repeat doesn't latch a reload");
+    }
 }
 
 #[cfg(test)]
