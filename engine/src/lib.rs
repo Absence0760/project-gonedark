@@ -82,8 +82,13 @@ pub mod session_shell;
 /// Render quality tuning (Phase 4 WS-C). Owns `RenderTuning`: the tier + dyn-res + thermal-backoff
 /// controller. A RENDERING choice only — never touches the sim (invariant #1/#4).
 pub mod tuning;
+/// Host-side RTT estimator + input-delay hysteresis (Phase 3 WS-B). Owns `RttDelayEstimator`: it
+/// smooths measured RTT (host-side `f64` EWMA) and decides when to ask `core::lockstep` to change
+/// the integer input delay. Floats stay here (engine glue), never `core`/sim (invariants #1/#2).
+pub mod net_tuning;
 
 pub use tuning::RenderTuning;
+pub use net_tuning::{DelayPolicy, RttDelayEstimator};
 
 /// The seed both hosts start the sim with, so desktop and Android run the bit-identical
 /// deterministic scene (invariant #1 / #7).
@@ -1108,6 +1113,14 @@ pub struct Game {
     /// (the layering is `engine -> {core, render, pal}`, invariant #2).
     transport: Option<Box<dyn Transport>>,
 
+    /// Host-side adaptive-input-delay estimator (Phase 3 WS-B). Smooths measured RTT and, when its
+    /// hysteresis gate fires, hands `lockstep` an integer delay target via `propose_delay`. Consulted
+    /// only on a NETWORKED session (`transport.is_some()`); single-player never proposes (no peer,
+    /// delay stays 0). The float EWMA lives here in `engine` glue, never `core` (invariants #1/#2);
+    /// `core` only ever sees the integer delay/guard. The RTT sample source is the host seam
+    /// [`Game::observe_rtt`] — see that method and `net_tuning`'s docs for the production source.
+    rtt_estimator: RttDelayEstimator,
+
     /// The in-session shell (Phase 4 WS-B): pause / surrender / post-match summary / reconnect
     /// prompt. Pure presentation/session state — it never mutates the sim. It drives the pause-
     /// halts-tick rule (single-player only) and which overlay `render` composites over the frame.
@@ -1540,6 +1553,9 @@ impl Game {
             lockstep: Lockstep::new(SP_PEER_COUNT, SP_LOCAL, SP_DELAY),
             // No remote → no real transport needed; the one-peer gate clears on local input alone.
             transport: None,
+            // Adaptive-delay estimator with the default policy. Inert until RTT samples arrive AND
+            // a transport is present (single-player never proposes a delay change). WS-B.
+            rtt_estimator: RttDelayEstimator::new(DelayPolicy::default()),
             // Single-player session (one peer), so a pause may halt the local tick accumulator.
             shell: InSessionShell::new(SP_PEER_COUNT == 1),
             match_events: Vec::new(),
@@ -1752,6 +1768,26 @@ impl Game {
     /// backoff on the next [`Game::frame`]. Storing it is presentation-only; it never reaches the sim.
     pub fn set_thermal_state(&mut self, thermal: gonedark_pal::ThermalState) {
         self.thermal = thermal;
+    }
+
+    /// Feed one measured network round-trip-time sample (seconds) into the adaptive-input-delay
+    /// estimator (Phase 3 WS-B). The host calls this with a transport-level RTT measurement; the
+    /// estimator smooths it (`f64` EWMA, host-side — never `core`) and, on a networked session,
+    /// `frame` may turn a sustained shift into a `Lockstep::propose_delay`. A no-op until a real
+    /// sample arrives, so an unmeasured session never changes its delay.
+    ///
+    /// **Sample source (the one stubbed seam):** production RTT comes from a transport-level
+    /// ping/pong measured in `pal-desktop`, NOT from a new `core::lockstep` wire frame (adding one
+    /// is out of WS-B scope — it touches the protocol). Until that ping/pong exists this method is
+    /// simply never called, leaving the estimator inert. See `net_tuning`'s module docs.
+    pub fn observe_rtt(&mut self, rtt_secs: f64) {
+        self.rtt_estimator.observe_rtt(rtt_secs);
+    }
+
+    /// The estimator's current smoothed RTT (seconds), or `None` if no sample has been observed —
+    /// a read-only host/test window into the adaptive-delay state.
+    pub fn smoothed_rtt_secs(&self) -> Option<f64> {
+        self.rtt_estimator.smoothed_rtt_secs()
     }
 
     /// The player's authoritative world position, read straight from the sim world (read
@@ -2329,6 +2365,26 @@ impl Game {
         // tick's per-peer input wasn't in hand (the seam's `stalled` observation; single-player at
         // delay 0 never stalls, so this is always false there). Feeds the reconnect prompt below.
         let lockstep_stalled = advanced < budget;
+
+        // Adaptive input delay (WS-B): on a NETWORKED session, fold the latest RTT into the
+        // estimator's decision and, when its hysteresis gate fires, ask lockstep to propose the new
+        // integer delay. The float EWMA lives in the estimator (engine glue); lockstep receives only
+        // the integer target + guard, so `core` stays float-free and platform-free (invariants
+        // #1/#2). The agreed change commits at a shipped effective tick identically on every peer.
+        // Single-player (transport `None`) never proposes — there is no peer and delay stays 0.
+        if self.transport.is_some() {
+            // The lockstep frontier drives the dwell clock (sim ticks, not wall-clock).
+            let now_tick = self.lockstep.submit_tick().max(self.lockstep.next_tick());
+            if let Some(target) = self
+                .rtt_estimator
+                .poll_decision(self.lockstep.delay(), now_tick)
+            {
+                let guard = self.rtt_estimator.guard_ticks();
+                // `AlreadyPending` just means a prior agreed change is still in flight; the next
+                // poll (after the dwell) retries, so the error is safely dropped here.
+                let _ = self.lockstep.propose_delay(target, guard);
+            }
+        }
 
         // Auto-surface on avatar death (invariant #5): if the possessed unit died this frame the
         // sim despawned it, so it is gone from the freshly-stepped snapshot (`self.curr`, refreshed
