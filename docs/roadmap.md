@@ -187,11 +187,26 @@ model.
 
 **Goal:** make it hold up at size and (if pursued) in multiplayer.
 
-- [ ] 200-unit stress tests; job-system parallelism; profiling on target hardware.
-- [ ] Deterministic lockstep netcode; input delay; per-tick checksum diffing in CI.
-- [ ] Reconnect/snapshot handling; Wi-Fi↔cellular handoff.
-- [ ] PvP attention mind-game tuning (enemy detection of "gone dark" — mechanism, HUD, and honest
-  AI consult all landed per [D33](decisions.md); the *two-human* tuning needs the live net layer).
+- [x] **200-unit stress tests** — deterministic `stress`/`stress:<n>` scene + `--time` timing mode;
+  flow-field caching + spatial-hash acquisition took 200 units from ~30 ms to **~3.7 ms/tick median**
+  on desktop; cross-arch `compare-stress` CI job.
+- [x] **Deterministic lockstep netcode; input delay; per-tick checksum diffing in CI** — sans-I/O
+  `core::lockstep` + wire codec + cross-client checksum agreement; RTT-adaptive `DelayChange` protocol
+  + the `engine::net_tuning` estimator; UDP transport; `net-sim-runner` + `compare-net` CI
+  ([D27](decisions.md)).
+- [x] **Reconnect/snapshot handling** — authoritative `core::persist` serialize/deserialize sharing
+  the checksum field-walk + `core::reconnect` snapshot-and-replay ([D28](decisions.md)).
+- [x] **PvP attention mind-game — mechanism, HUD, honest AI consult** — the `core::detection` tell
+  (`Hidden|Subtle|Marked`, default Subtle), the `render::detection` overlay, and the config-gated
+  commander consult ([D33](decisions.md)).
+- [ ] **Profiling on target hardware + the D21 dual-rate re-eval** — desktop numbers are in; the
+  on-device thermal/sustained measurement (and thus the global-60-vs-dual-rate call) needs a physical
+  mid-range device. Job-system (rayon) parallelism deliberately deferred — unjustified at ~3.7 ms/tick
+  and would need its own decision (invariant #2).
+- [ ] **Wi-Fi↔cellular handoff** — blocked on a QUIC `pal::Transport` (only UDP has landed); the
+  reconnect policy is already transport-agnostic and ready for it.
+- [ ] **Two-human PvP mind-game tuning** — needs the live net layer (sockets + the RTT sample feed /
+  matchmaking) so two networked humans actually face the dilemma.
 
 ## Phase 4 — Polish & ship
 
