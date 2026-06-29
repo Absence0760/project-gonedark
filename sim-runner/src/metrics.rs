@@ -24,8 +24,8 @@
 //! `<tick> <checksum>` stream.
 
 use gonedark_core::combat;
-use gonedark_core::components::{EntityKind, Faction, Stance, UnitKind, Vec2};
-use gonedark_core::economy::{self, Resources, HEAVY_COST, RIFLEMAN_COST};
+use gonedark_core::components::{Army, EntityKind, Faction, Stance, UnitKind, Vec2};
+use gonedark_core::economy::{self, unit_cost, Resources, HEAVY_COST, RIFLEMAN_COST};
 use gonedark_core::ecs::World;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::sim::Sim;
@@ -200,6 +200,62 @@ pub fn equal_cost_outcome(budget: i64, sep: i32) -> (u64, u32, u32) {
     )
 }
 
+// --- Cross-faction parity (factions-plan WS-B) ---------------------------------------------------
+
+/// Spawn a `kind` unit of `faction` drawing the **`army`-tilted** loadout
+/// ([`economy::unit_stats_for`]) at `(x, y)`, FireAtWill — the per-faction-roster analogue of
+/// [`spawn`]. Used by [`cross_faction_equal_cost`] to pit one army's roster against another's.
+fn spawn_army(sim: &mut Sim, x: i32, y: i32, faction: Faction, army: Army, kind: UnitKind) {
+    let (health, weapon) = economy::unit_stats_for(army, kind);
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    sim.world.kind[i] = EntityKind::Unit;
+    sim.world.faction[i] = faction;
+    sim.world.pos[i] = v(x, y);
+    sim.world.health[i] = health;
+    sim.world.weapon[i] = weapon;
+    sim.world.stance[i] = Stance::FireAtWill;
+}
+
+/// The **mirror-of-roles** equal-cost trade (factions-plan WS-B, the per-faction analogue of D30's
+/// unit-parity check): an equal-resource mass of `kind` drawn from `player_army` (Player side) vs
+/// the *same* archetype drawn from `enemy_army` (Enemy side), `sep` apart, run to a wipe. Because
+/// `unit_cost` is army-independent, an equal budget buys equal counts, so this isolates the per-army
+/// stat tilt. Returns `(end_tick, player_survivors, enemy_survivors)`.
+///
+/// **The fairness signal is swap-invariance** (see `cross_faction_mirror_is_swap_invariant`): a
+/// FireAtWill mass trade is a Lanchester square-law snowball that hands the Player side a fixed
+/// first-mover edge from index order alone, so the absolute survivor count is *not* the parity
+/// metric — the metric is that swapping which army each side fields leaves the outcome unchanged.
+/// A fair (power-neutral) roster is invariant under that swap; a power-creeping one is not.
+pub fn cross_faction_equal_cost(
+    kind: UnitKind,
+    budget: i64,
+    sep: i32,
+    player_army: Army,
+    enemy_army: Army,
+) -> (u64, u32, u32) {
+    let mut sim = Sim::new(0xFAC2_0B11);
+    let n = (budget / unit_cost(kind)) as i32;
+    for k in 0..n {
+        spawn_army(&mut sim, 0, k, Faction::Player, player_army, kind);
+        spawn_army(&mut sim, sep, k, Faction::Enemy, enemy_army, kind);
+    }
+    for t in 1..=8000u64 {
+        sim.step(&[]);
+        let p = alive_units(&sim.world, Faction::Player);
+        let e = alive_units(&sim.world, Faction::Enemy);
+        if p == 0 || e == 0 {
+            return (t, p, e);
+        }
+    }
+    (
+        8000,
+        alive_units(&sim.world, Faction::Player),
+        alive_units(&sim.world, Faction::Enemy),
+    )
+}
+
 /// Focus-fire suppression timing: `m` Riflemen firing into a tight enemy **cluster** (three
 /// Riflemen packed within [`combat::SUPPRESSION_RADIUS`]). Returns `(pin_tick, kill_tick)` —
 /// `pin_tick` is the first tick any *alive* cluster member reaches [`combat::SUPPRESSION_PIN`],
@@ -363,11 +419,119 @@ fn summary() {
             secs(kill)
         );
     }
+    // Cross-faction parity (factions-plan WS-B): the equal-cost mirror-of-roles trade must be
+    // SWAP-INVARIANT — fielding US-vs-FR gives the identical outcome to FR-vs-US and to the Neutral
+    // baseline. A `same` verdict means the per-army roster is power-neutral (asymmetry of feel, never
+    // power); a `MISMATCH` means a tilt leaked combat power and broke the fairness band.
+    eprintln!("# cross-faction parity (WS-B): swap-invariance of the equal-cost mirror trade");
+    for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank] {
+        for &sep in &[5i32, 9] {
+            let uf = cross_faction_equal_cost(kind, 2000, sep, Army::Us, Army::Fr);
+            let fu = cross_faction_equal_cost(kind, 2000, sep, Army::Fr, Army::Us);
+            let nn = cross_faction_equal_cost(kind, 2000, sep, Army::Neutral, Army::Neutral);
+            let fair = uf == fu && uf == nn;
+            eprintln!(
+                "{kind:?} sep{sep}: US/FR {uf:?}  FR/US {fu:?}  N/N {nn:?}  [{}]",
+                if fair { "fair: swap-invariant" } else { "MISMATCH: roster leaks power" }
+            );
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **Cross-faction parity (factions-plan WS-B, the per-faction analogue of D30's unit-parity
+    /// check).** The equal-cost mirror-of-roles trade must be **swap-invariant**: fielding US on the
+    /// Player side vs FR on the Enemy side gives the *identical* outcome to fielding FR on the Player
+    /// vs US on the Enemy — and the identical outcome to the no-army (Neutral) baseline. That zero
+    /// delta is the tightest possible fairness band: army identity contributes **no combat power**,
+    /// only feel (the logistics/turret tilt). A power-creeping roster would break this equality.
+    ///
+    /// Why swap-invariance rather than "even survivor counts": a `FireAtWill` mass trade is a
+    /// Lanchester square-law snowball, so the Player side wins by a fixed first-mover margin from
+    /// entity index order alone — independent of army. Swapping the armies cancels that artifact and
+    /// isolates the army's contribution, which a fair tilt leaves at exactly zero.
+    #[test]
+    fn cross_faction_mirror_is_swap_invariant() {
+        // Budget = 2000 buys a real mass of each archetype (20 rifles / 9 heavies / 5 tanks).
+        for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank] {
+            for &sep in &[3i32, 5, 9] {
+                let us_vs_fr = cross_faction_equal_cost(kind, 2000, sep, Army::Us, Army::Fr);
+                let fr_vs_us = cross_faction_equal_cost(kind, 2000, sep, Army::Fr, Army::Us);
+                let baseline = cross_faction_equal_cost(kind, 2000, sep, Army::Neutral, Army::Neutral);
+                assert_eq!(
+                    us_vs_fr, fr_vs_us,
+                    "{kind:?} sep{sep}: swapping armies changed the trade — the roster is NOT power-neutral"
+                );
+                assert_eq!(
+                    us_vs_fr, baseline,
+                    "{kind:?} sep{sep}: the per-army trade diverged from the Neutral baseline — the tilt added power"
+                );
+            }
+        }
+    }
+
+    /// Reload-pressure stress: a contrived long fight (tanks in heavy cover, ~840 ticks) that runs
+    /// long enough for the main gun to **empty and reload mid-fight** — the case where any logistics
+    /// tilt bites hardest. Swap-invariance must STILL hold, proving the tilt is power-neutral even
+    /// when exercised (the tank tilt is turret-slew-only — cosmetic per invariant #3 — precisely so a
+    /// shallow-magazine reload phase can't hand the faster-reloading army a snowball win).
+    #[test]
+    fn cross_faction_is_swap_invariant_under_reload_pressure() {
+        let run = |pa: Army, ea: Army| -> (u64, u32, u32) {
+            let mut sim = Sim::new(0x5057_A12D);
+            let mut terrain = Terrain::open();
+            for k in 0..2 {
+                for x in &[0, 7] {
+                    let (cx, cy) = terrain.cell_of(v(*x, k * 2));
+                    terrain.set_cover(cx, cy, Cover::Heavy);
+                }
+            }
+            sim.terrain = terrain;
+            for k in 0..2 {
+                spawn_army(&mut sim, 0, k * 2, Faction::Player, pa, UnitKind::Tank);
+                spawn_army(&mut sim, 7, k * 2, Faction::Enemy, ea, UnitKind::Tank);
+            }
+            for t in 1..=12000u64 {
+                sim.step(&[]);
+                let p = alive_units(&sim.world, Faction::Player);
+                let e = alive_units(&sim.world, Faction::Enemy);
+                if p == 0 || e == 0 {
+                    return (t, p, e);
+                }
+            }
+            (12000, alive_units(&sim.world, Faction::Player), alive_units(&sim.world, Faction::Enemy))
+        };
+        let us_fr = run(Army::Us, Army::Fr);
+        let fr_us = run(Army::Fr, Army::Us);
+        let baseline = run(Army::Neutral, Army::Neutral);
+        assert_eq!(us_fr, fr_us, "tank reload-pressure trade is not swap-invariant — the tilt carries power");
+        assert_eq!(us_fr, baseline, "tank reload-pressure trade diverged from the Neutral baseline");
+    }
+
+    /// The tilt is REAL, not a no-op (so the parity above is a genuine "feel without power", not a
+    /// trivially-identical roster): each combat archetype's US and FR loadouts differ in their
+    /// logistics axis, while every army's Medic and the Neutral baseline stay the shared `unit_stats`.
+    #[test]
+    fn per_army_loadouts_are_distinct_but_neutral_matches_baseline() {
+        for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank] {
+            let us = economy::unit_stats_for(Army::Us, kind).1;
+            let fr = economy::unit_stats_for(Army::Fr, kind).1;
+            assert_ne!(us, fr, "{kind:?}: US and FR loadouts must differ (a real roster, not a reskin)");
+            // The combat-power axes are SHARED (the fairness bound): same damage, cadence, range.
+            assert_eq!(us.damage, fr.damage, "{kind:?}: per-shot damage is shared (fairness)");
+            assert_eq!(us.cooldown_ticks, fr.cooldown_ticks, "{kind:?}: cadence is shared (fairness)");
+            assert_eq!(us.range, fr.range, "{kind:?}: range is shared (fairness)");
+            // Neutral is byte-for-byte the shared baseline.
+            assert_eq!(economy::unit_stats_for(Army::Neutral, kind), economy::unit_stats(kind));
+        }
+        // The Medic is shared across every army (no fair combat surface to tilt — see economy.rs).
+        for army in [Army::Neutral, Army::Us, Army::Fr] {
+            assert_eq!(economy::unit_stats_for(army, UnitKind::Medic), economy::unit_stats(UnitKind::Medic));
+        }
+    }
 
     /// A duel stepped twice from scratch yields the identical alive/HP series — the determinism
     /// property the whole metrics suite rests on (mirrors sim-runner's checksum determinism test).
