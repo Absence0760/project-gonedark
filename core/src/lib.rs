@@ -18,6 +18,7 @@ pub mod combat;
 pub mod commander;
 pub mod components;
 pub mod detection;
+pub mod dispersion;
 pub mod economy;
 pub mod ecs;
 pub mod event;

@@ -513,7 +513,10 @@ mod tests {
             simulate_scene(300).checksums.last().copied(),
             // D66: rifleman damage ×5 (6→30) moved the embodied-scene golden.
             // D67: re-pinned again after the Weapon fold grew reserve + reserve_max (two u32/slot).
-            Some(0x15a9_474e_f9aa_5402),
+            // D55 P5: re-pinned after the Weapon fold grew a per-slot `dispersion` word. This scene
+            // has no ballistic tank (every `muzzle_vel == 0`), so dispersion is untouched — only the
+            // raw stream value shifted by the added zero word, by design.
+            Some(0xa626_8a66_9dbe_6f12),
         );
     }
 

@@ -249,6 +249,11 @@ impl Sim {
         systems::resolve_building_collisions(&mut self.world);
         // Cosmetic AI hull/turret slew, AFTER movement sets this tick's velocity (D55 P2).
         systems::heading_system(&mut self.world);
+        // Tank aim-bloom settle (D55 P5): every tank gun's dispersion shrinks toward zero (pinpoint)
+        // when it holds still and steady. Bloom is added separately at the embodied drive/aim sites
+        // in `apply` (which ran above, in the command phase), so the per-tick net is bloom − settle.
+        // Gated on `muzzle_vel > 0`, so a tank-free scene is byte-unchanged.
+        crate::dispersion::dispersion_system(&mut self.world);
         combat::combat_system(
             &mut self.world,
             &self.terrain,
@@ -344,7 +349,17 @@ impl Sim {
                     if self.world.weapon[i].muzzle_vel > Fixed::ZERO
                         && self.world.input_source[i] == InputSource::Embodied
                     {
-                        projectile::fire_ballistic(&mut self.world, i, dir, &mut self.projectiles);
+                        // The shell's launch direction is perturbed by the gun's current dispersion
+                        // (D55 P5): a settled gun fires dead-on (zero scatter, no RNG draw), a
+                        // moving/just-traversed one sprays — `fire_ballistic` draws the bounded
+                        // offset from the reserved deterministic `rng` (invariant #7).
+                        projectile::fire_ballistic(
+                            &mut self.world,
+                            i,
+                            dir,
+                            &mut self.projectiles,
+                            &mut self.rng,
+                        );
                     } else {
                         combat::resolve_fire(
                             &mut self.world,
@@ -403,8 +418,18 @@ impl Sim {
                 {
                     let bearing = crate::trig::atan2(dir.y, dir.x);
                     let step = self.world.weapon[i].turret_speed as i32;
-                    self.world.turret_yaw[i] =
-                        crate::trig::rotate_toward(self.world.turret_yaw[i], bearing, step);
+                    let before = self.world.turret_yaw[i];
+                    let after = crate::trig::rotate_toward(before, bearing, step);
+                    self.world.turret_yaw[i] = after;
+                    // Tank embodiment P5 (D55): a turret that actually traversed this tick blooms the
+                    // aim reticle (no-op for a fixed mount / non-tank gun — `bloom` self-gates).
+                    if after != before {
+                        crate::dispersion::bloom(
+                            &mut self.world,
+                            i,
+                            crate::dispersion::DISPERSION_BLOOM_TRAVERSE,
+                        );
+                    }
                 }
             }
             Command::DriveHull { entity, dir } => {
@@ -416,6 +441,15 @@ impl Sim {
                     && self.world.input_source[i] == InputSource::Embodied
                 {
                     systems::drive_hull(&mut self.world, i, dir);
+                    // Tank embodiment P5 (D55): a hull that actually moved this tick blooms the aim
+                    // reticle (no-op for a non-tank gun — `bloom` self-gates on `muzzle_vel > 0`).
+                    if self.world.vel[i] != Vec2::ZERO {
+                        crate::dispersion::bloom(
+                            &mut self.world,
+                            i,
+                            crate::dispersion::DISPERSION_BLOOM_MOVE,
+                        );
+                    }
                 }
             }
             Command::SelectArmy { faction, army } => {
@@ -487,6 +521,11 @@ impl Sim {
             // Tank embodiment P4 (D55): weapon armour penetration (sim state — drives the facing
             // multiplier). Zero for every existing weapon, so byte-neutral until a tank is fielded.
             sink.write_i32(w.penetration.to_bits());
+            // Tank embodiment P5 (D55): current aim-time dispersion (reticle bloom). Real sim state —
+            // it blooms/settles each tick and perturbs a launched shell (`dispersion::scatter_dir`).
+            // Zero for every non-tank gun (the dispersion system gates on `muzzle_vel > 0`), so it
+            // adds one zero word per slot and moves only an armoured-tank scene's stream value.
+            sink.write_i32(w.dispersion.to_bits());
             sink.write_i32(self.world.suppression[i].to_bits());
             match self.world.last_attacker[i] {
                 Some(e) => {
@@ -689,6 +728,8 @@ impl Sim {
                 turret_speed: read_u16(&mut r)?,
                 muzzle_vel: Fixed::from_bits(r.read_i32()?),
                 penetration: Fixed::from_bits(r.read_i32()?),
+                // Tank embodiment P5 (D55): mirror fold()'s dispersion word, in the same order.
+                dispersion: Fixed::from_bits(r.read_i32()?),
             });
             suppression.push(Fixed::from_bits(r.read_i32()?));
             last_attacker.push(read_opt_entity(&mut r)?);
@@ -827,7 +868,9 @@ impl Sim {
 /// world. Independent of the lockstep wire version — different codec, different evolution. Bumped
 /// 7→8 by factions-plan WS-A: the wrapper grew a per-faction [`Army`] tag block (after
 /// `income_period`), so a pre-factions snapshot is rejected, never misparsed against the new layout.
-const SNAPSHOT_VERSION: u8 = 8;
+/// Bumped 8→9 by tank embodiment P5 (D55): the per-slot `Weapon` fold grew a `dispersion` word, so a
+/// pre-P5 snapshot is rejected rather than misparsed against the longer slot layout.
+const SNAPSHOT_VERSION: u8 = 9;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.

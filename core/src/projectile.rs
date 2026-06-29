@@ -25,10 +25,12 @@
 
 use crate::combat::{facing_penetration_multiplier, is_enemy, SUPPRESSION_MAX, SUPPRESSION_PER_HIT};
 use crate::components::{Faction, Vec2};
+use crate::dispersion;
 use crate::ecs::{Entity, World};
 use crate::event::SimEvent;
 use crate::fixed::Fixed;
 use crate::flow_field::HALF_EXTENT;
+use crate::rng::Rng;
 use crate::terrain::Terrain;
 
 /// Hard cap on shells in flight (the bounded ring of plan §6a). A single embodied tank can never
@@ -200,13 +202,21 @@ fn apply_impact(
 /// **zero `dir`** has no bearing → no shot (like `AimTurret`). When the pool is at
 /// [`MAX_PROJECTILES`] the shot is **dropped deterministically** (no spawn, no spend) — the thermal
 /// safety valve. On a successful launch the shell starts at the shooter's position and
-/// [`MUZZLE_HEIGHT`], its `vel2d` is the unit aim scaled to `muzzle_vel`, and the weapon spends a
-/// round + goes on cooldown exactly as `resolve_fire` does.
+/// [`MUZZLE_HEIGHT`], its `vel2d` is the (dispersion-perturbed) aim scaled to `muzzle_vel`, and the
+/// weapon spends a round + goes on cooldown exactly as `resolve_fire` does.
+///
+/// **Aim-time dispersion (D55 P5):** the launch direction is perturbed by the gun's current
+/// [`dispersion`](crate::components::Weapon::dispersion) via [`dispersion::scatter_dir`] before it is
+/// scaled to `muzzle_vel`. A **fully settled** gun (`dispersion == 0`) fires **dead-on** with no
+/// scatter and draws no RNG (byte-identical to the un-dispersed launch); a moving/just-traversed gun
+/// scatters within its bloom cone, the bounded offset drawn from the reserved deterministic `rng`
+/// (an integer draw — bit-identical on every peer, invariant #7).
 pub fn fire_ballistic(
     world: &mut World,
     shooter_idx: usize,
     dir: Vec2,
     pool: &mut Vec<Projectile>,
+    rng: &mut Rng,
 ) -> bool {
     if !world.is_index_alive(shooter_idx) {
         return false;
@@ -233,9 +243,12 @@ pub fn fire_ballistic(
         Some(e) => e,
         None => return false,
     };
+    // Perturb the aim by the gun's current bloom (D55 P5). A settled gun (`dispersion == 0`) returns
+    // `aim` unchanged and draws no RNG, so this launch stays byte-identical to the pre-P5 path.
+    let scattered = dispersion::scatter_dir(aim, w.dispersion, rng);
     pool.push(Projectile {
         pos2d: world.pos[shooter_idx],
-        vel2d: aim.scale(w.muzzle_vel),
+        vel2d: scattered.scale(w.muzzle_vel),
         height: MUZZLE_HEIGHT,
         vz: LAUNCH_VZ,
         owner,
@@ -557,9 +570,17 @@ mod tests {
             turret_speed: 100,
             muzzle_vel: fx(2),
             penetration: Fixed::ZERO,
+            dispersion: Fixed::ZERO,
         };
         let mut pool = Vec::new();
-        let fired = fire_ballistic(&mut world, i, Vec2::new(Fixed::ONE, Fixed::ZERO), &mut pool);
+        let mut rng = Rng::new(1);
+        let fired = fire_ballistic(
+            &mut world,
+            i,
+            Vec2::new(Fixed::ONE, Fixed::ZERO),
+            &mut pool,
+            &mut rng,
+        );
         assert!(fired);
         assert_eq!(pool.len(), 1);
         assert_eq!(pool[0].vel2d, Vec2::new(fx(2), Fixed::ZERO), "aim scaled to muzzle_vel");
@@ -587,24 +608,26 @@ mod tests {
             turret_speed: 100,
             muzzle_vel: fx(2),
             penetration: Fixed::ZERO,
+            dispersion: Fixed::ZERO,
         };
         let mut pool = Vec::new();
+        let mut rng = Rng::new(1);
         let east = Vec2::new(Fixed::ONE, Fixed::ZERO);
-        assert!(!fire_ballistic(&mut world, i, east, &mut pool), "no fire while hot");
+        assert!(!fire_ballistic(&mut world, i, east, &mut pool, &mut rng), "no fire while hot");
         // Cooldown clear but empty mag → still no fire.
         world.weapon[i].cooldown_left = 0;
         world.weapon[i].ammo = 0;
-        assert!(!fire_ballistic(&mut world, i, east, &mut pool), "empty mag dry-clicks");
+        assert!(!fire_ballistic(&mut world, i, east, &mut pool, &mut rng), "empty mag dry-clicks");
         // Mid-reload (ammo spent, reload_left counting down): a magazine weapon that is currently
         // reloading dry-clicks too — the same gate resolve_fire applies — no shell, no spend.
         world.weapon[i].reload_left = 10;
-        assert!(!fire_ballistic(&mut world, i, east, &mut pool), "mid-reload dry-clicks");
+        assert!(!fire_ballistic(&mut world, i, east, &mut pool, &mut rng), "mid-reload dry-clicks");
         assert_eq!(world.weapon[i].ammo, 0, "a mid-reload click spends nothing");
         assert!(pool.is_empty(), "no shell spawned mid-reload");
         world.weapon[i].reload_left = 0;
         // Reload it; a zero dir has no bearing → still no fire (and no spend).
         world.weapon[i].ammo = 3;
-        assert!(!fire_ballistic(&mut world, i, Vec2::ZERO, &mut pool), "zero aim → no shot");
+        assert!(!fire_ballistic(&mut world, i, Vec2::ZERO, &mut pool, &mut rng), "zero aim → no shot");
         assert_eq!(world.weapon[i].ammo, 3, "a dry/zero click spends nothing");
         assert!(pool.is_empty());
     }
@@ -631,12 +654,15 @@ mod tests {
                 turret_speed: 0,
                 muzzle_vel: fx(2),
                 penetration: Fixed::ZERO,
+                dispersion: Fixed::ZERO,
             };
             // Fill the pool to the hard cap.
             let mut pool: Vec<Projectile> = (0..MAX_PROJECTILES)
                 .map(|_| shell(0, 0, fx(2), 10))
                 .collect();
-            let fired = fire_ballistic(&mut world, i, Vec2::new(Fixed::ONE, Fixed::ZERO), &mut pool);
+            let mut rng = Rng::new(1);
+            let fired =
+                fire_ballistic(&mut world, i, Vec2::new(Fixed::ONE, Fixed::ZERO), &mut pool, &mut rng);
             (fired, pool.len(), world.weapon[i].ammo)
         }
         let (fired, len, ammo) = attempt();
