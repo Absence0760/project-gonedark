@@ -14,7 +14,7 @@
 //! anything, and the fairness guarantee (no strictly-dominant build) is proven in `core::gunsmith`,
 //! so *every* state this editor can reach is a fair sidegrade by construction.
 
-use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic, StatDelta};
+use gonedark_core::gunsmith::{Loadout, StatDelta};
 
 /// The editable attachment slots, in a fixed on-screen order (the order the UI lays them out and
 /// the order [`LoadoutSlot::ALL`] / a numeric slot index follow).
@@ -153,6 +153,7 @@ impl LoadoutEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gonedark_core::gunsmith::{Barrel, Magazine, Optic};
 
     #[test]
     fn new_editor_is_the_neutral_baseline() {

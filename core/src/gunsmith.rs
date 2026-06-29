@@ -73,6 +73,7 @@ impl StatDelta {
     /// `i32` bound, but saturating keeps it total and float-free); the [`Fixed`] axes use
     /// `Fixed`'s wrapping add, same as the rest of the sim.
     #[inline]
+    #[allow(clippy::should_implement_trait)] // intentionally inherent: saturating/wrapping, not std Add semantics
     pub fn add(self, o: StatDelta) -> StatDelta {
         StatDelta {
             range: self.range.wrapping_add(o.range),
