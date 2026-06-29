@@ -17,5 +17,5 @@ gonedark-core = { path = "../core" }
 gonedark-render = { path = "../render" }
 gonedark-pal = { path = "../pal" }
 wgpu = "29"
-glam = "0.30"
+glam = "0.33"
 log = "0.4"
