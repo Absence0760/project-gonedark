@@ -2766,6 +2766,22 @@ impl Game {
         self.renderer
             .prepare(&self.prev, &self.curr, alpha, &selected_indices);
 
+        // 6a'. Dynamic-resolution scene target (Phase 4 WS-C — the owed wgpu glue). The heavy 3D
+        // scene (the embodied sky/ground + world meshes, the command grid + 3D unit tokens, the
+        // avatar, the weapon viewmodel) renders into an OFFSCREEN intermediate sized by the dyn-res
+        // `resolution_scale`, then `present_scene` (below) upscales it to the swapchain; the HUD /
+        // overlay / panels draw natively AFTER, so only the world scales (chrome stays crisp). The
+        // scale is a PURE RENDERING choice (invariant #1/#4) — it never reaches the sim, so the
+        // per-tick checksum is byte-identical at every scale (the `tier_choice_is_sim_independent`
+        // guard). At scale 1.0 the intermediate is full-size → a 1:1 identity blit. The camera/view-
+        // proj keeps the NATIVE `width`/`height` (uniform scaling preserves aspect ratio); only the
+        // scene render target + its depth buffer take the scaled `(sw, sh)`.
+        let scene_scale = self.tuning.resolution_scale();
+        let (sw, sh) = self
+            .renderer
+            .ensure_scene_target(device, width, height, scene_scale);
+        let scene_view = self.renderer.scene_view();
+
         // 6b. Embodied first-person WORLD (W5): paint a real ground/sky UNDER the avatar so "world
         // goes dark" means losing INTEL, not staring at a black void (invariant #6). This is the
         // CLEARING pass of the embodied frame; the unit pass below then LOADs the avatar over it.
@@ -2784,7 +2800,7 @@ impl Game {
                 flash,
             );
             self.renderer
-                .render_world_sky(device, queue, view, &world_uniform);
+                .render_world_sky(device, queue, &scene_view, &world_uniform);
 
             // 6c. First-person world meshes: the static scenery/cover props AND the dynamic sim
             // units the avatar can SEE, drawn over the sky/ground (one shared depth pass so they
@@ -2798,12 +2814,12 @@ impl Game {
             self.renderer.render_world_meshes(
                 device,
                 queue,
-                view,
+                &scene_view,
                 &view_proj.to_cols_array_2d(),
                 eye,
                 &visibility,
-                width,
-                height,
+                sw,
+                sh,
             );
         }
 
@@ -2828,19 +2844,47 @@ impl Game {
             }
         });
 
-        // 7. Render the interpolated snapshot, fog-filtered (world goes dark while embodied). In the
-        // embodied branch this LOADs over the world drawn in 6b; in command view it CLEARS.
+        // 7. Render the interpolated snapshot, fog-filtered (world goes dark while embodied), into the
+        // dyn-res scene target. In the embodied branch this LOADs the avatar over the world drawn in
+        // 6b/6c; in command view it CLEARS to the lit slate and draws the ground grid + 3D tokens +
+        // quad UI (+ the command readout text, which rides the scaled scene — a thin tally; the heavy
+        // fragment cost is the 3D, and keeping `render` intact respects the existing architecture).
         self.renderer.render(
             device,
             queue,
-            view,
+            &scene_view,
             &camera,
             /* world_dark = */ self.embodied,
             &visibility,
-            width,
-            height,
+            sw,
+            sh,
             economy,
         );
+
+        // 7a. Embodied weapon viewmodel (W5/D44): the first-person gun — the real `weapon_rifle`
+        // greybox 3D mesh — over the world + avatar, with a muzzle flash that flares + recoils for a
+        // few ticks after the player fires. Drawn into the SAME dyn-res scene target as the world it
+        // sits in (so it scales with the scene, not the chrome), BEFORE `present_scene` below.
+        // Anchored in view space, so the host hands in the projection ALONE (the model matrix is the
+        // view-space placement); the projection uses native `width`/`height` (aspect is scale-
+        // invariant). No world position → reveals no intel (invariant #6). Only an *infantry* avatar
+        // shows it: the viewmodel is an infantry rifle, so a possessed tank (`Heavy`) draws none
+        // rather than a rifle floating in the cannon view (see `embodied_shows_rifle_viewmodel`).
+        if self.embodied
+            && embodied_shows_rifle_viewmodel(self.sim.world.unit_kind[self.player.index as usize])
+        {
+            let proj = embodied_proj(width, height).to_cols_array_2d();
+            let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
+            self.renderer
+                .render_world_weapon(device, queue, &scene_view, &proj, flash, sw, sh);
+        }
+
+        // 7b'. Present (Phase 4 WS-C): upscale the dyn-res scene target onto the swapchain `view`.
+        // EVERY scene pass (6b sky, 6c world meshes, 7 snapshot/avatar, 7a weapon) is now complete and
+        // lives in the intermediate; this blit stretches it to native (identity at scale 1.0). All
+        // chrome below (command panels, marquee, debug/detection tells, HUD, overlay, radial) LOADs
+        // onto the swapchain AFTER this, so it stays crisp at native resolution — only the world scaled.
+        self.renderer.present_scene(device, queue, view);
 
         // 7c. Contextual command panel ("command and grow your camps"), top-right. Command view only
         // — never over the dark embodied frame (invariant #6). Its rows are derived from the current
@@ -2879,22 +2923,6 @@ impl Game {
                 self.renderer
                     .render_embody_picker(device, queue, view, &view_desc);
             }
-        }
-
-        // 7a. Embodied weapon viewmodel (W5/D44): the first-person gun — the real `weapon_rifle`
-        // greybox 3D mesh — over the world + avatar, with a muzzle flash that flares + recoils for a
-        // few ticks after the player fires. Anchored in view space, so the host hands in the
-        // projection ALONE (the model matrix is the view-space placement). No world position →
-        // reveals no intel (invariant #6). Only an *infantry* avatar shows it: the viewmodel is an
-        // infantry rifle, so a possessed tank (`Heavy`) draws none rather than a rifle floating in
-        // the cannon view (see `embodied_shows_rifle_viewmodel`).
-        if self.embodied
-            && embodied_shows_rifle_viewmodel(self.sim.world.unit_kind[self.player.index as usize])
-        {
-            let proj = embodied_proj(width, height).to_cols_array_2d();
-            let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
-            self.renderer
-                .render_world_weapon(device, queue, view, &proj, flash, width, height);
         }
 
         // 7b. Command-view band-select marquee: while a drag is in flight, draw the selection box

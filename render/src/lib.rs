@@ -132,7 +132,14 @@ pub mod train_panel;
 /// host-testable RENDER decisions (invariant #1/#4: never a sim input) — see the module docs.
 pub mod tiers;
 
+/// Dynamic-resolution intermediate render target + upscale blit (Phase 4 WS-C). The wgpu wiring the
+/// `tiers`/`engine::tuning` `resolution_scale` policy drives: the heavy 3D scene renders into an
+/// offscreen texture sized by the scale, then this upscales it to the swapchain (chrome stays
+/// native). Render-only — never a sim input (invariant #1/#4).
+pub mod scene_target;
+
 pub use tiers::{next_resolution_scale, thermal_backoff, Backoff, QualityTier, TierParams};
+pub use scene_target::{needs_realloc, scene_target_dims, SceneTarget};
 
 /// Convert a Q16.16 fixed value to `f32` for the GPU. The ONLY sanctioned fixed→float hop.
 #[inline]
@@ -581,6 +588,11 @@ pub struct Renderer {
     depth_view: wgpu::TextureView,
     /// The `(width, height)` `depth_view` is currently sized for.
     depth_size: (u32, u32),
+    /// The dynamic-resolution intermediate scene target + its upscale-blit pipeline (Phase 4 WS-C).
+    /// The host renders the heavy 3D scene into [`scene_target::SceneTarget::view`] at the dyn-res
+    /// size ([`Renderer::ensure_scene_target`]) then upscales it to the swapchain
+    /// ([`Renderer::present_scene`]); chrome is drawn natively after. Render-only (invariant #1/#4).
+    scene_target: scene_target::SceneTarget,
 }
 
 impl Renderer {
@@ -707,6 +719,9 @@ impl Renderer {
         let mesh_lib = mesh::MeshLibrary::load(device);
         let mesh_pipeline = mesh::MeshPipeline::new(device, surface_format);
         let depth_view = mesh::create_depth_view(device, 1, 1);
+        // The dyn-res intermediate target + upscale-blit pipeline (Phase 4 WS-C). The texture is
+        // allocated lazily on the first `ensure_scene_target` (sized to the dyn-res scale).
+        let scene_target = scene_target::SceneTarget::new(device, surface_format);
 
         Renderer {
             pipeline,
@@ -731,6 +746,7 @@ impl Renderer {
             mesh_pipeline,
             depth_view,
             depth_size: (1, 1),
+            scene_target,
         }
     }
 
@@ -742,6 +758,47 @@ impl Renderer {
             self.depth_view = mesh::create_depth_view(device, size.0, size.1);
             self.depth_size = size;
         }
+    }
+
+    /// Ensure the dynamic-resolution intermediate scene target matches the swapchain `(width,
+    /// height)` drawn at `scale` (Phase 4 WS-C), recreating it only when the pixel size changes.
+    /// Returns the intermediate's `(w, h)` so the host can size the scene passes' depth buffer +
+    /// viewports to match it. Call this ONCE per frame before the scene passes; render those passes
+    /// into [`scene_view`](Self::scene_view), then upscale with [`present_scene`](Self::present_scene).
+    ///
+    /// `scale` is the host's `RenderTuning::resolution_scale()` — a pure RENDERING choice (invariant
+    /// #1/#4); it never reaches the sim, so the per-tick checksum is byte-identical at every scale.
+    pub fn ensure_scene_target(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> (u32, u32) {
+        self.scene_target.ensure(device, width, height, scale)
+    }
+
+    /// A view onto the dynamic-resolution intermediate (Phase 4 WS-C) — the host renders the heavy 3D
+    /// scene passes into this instead of the swapchain. Returns a cheap (Arc) clone, so the host can
+    /// hold it across the `&mut self` scene-pass calls without borrowing the renderer.
+    ///
+    /// # Panics
+    /// Panics if [`ensure_scene_target`](Self::ensure_scene_target) has not run this frame.
+    pub fn scene_view(&self) -> wgpu::TextureView {
+        self.scene_target.view()
+    }
+
+    /// Upscale the intermediate scene onto the swapchain `view` (Phase 4 WS-C) — a fullscreen blit
+    /// with a linear filter (identity at scale 1.0). The host calls this once, AFTER every scene pass
+    /// and BEFORE any chrome (HUD/overlay/text) pass, so the native-resolution chrome LOADs on top of
+    /// the upscaled scene. Render-only.
+    pub fn present_scene(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+    ) {
+        self.scene_target.present(device, queue, view);
     }
 
     /// Build render instances by interpolating between the previous and current sim snapshots
