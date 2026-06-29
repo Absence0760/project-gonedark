@@ -662,6 +662,14 @@ impl OverlayRenderer {
         }
     }
 
+    /// Set the viewport aspect (width / height) so the overlay's captions/numbers stay square in
+    /// pixels instead of stretching on a wide window. Forwarded to the owned text pass; the host calls
+    /// it once per frame before [`render`](OverlayRenderer::render). The centered panel quads stay raw
+    /// NDC (a modal centered on screen) — only the glyphs are corrected.
+    pub fn set_aspect(&mut self, aspect: f32) {
+        self.text.set_aspect(aspect);
+    }
+
     /// Draw the in-session overlay on top of `view` (a LOAD pass — never clears). Builds the quad
     /// set via [`overlay_quads`], uploads it, and records one LOAD render pass so the overlay
     /// composites over the (possibly dark) match frame. No-op for [`Overlay::None`].

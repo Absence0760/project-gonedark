@@ -1213,6 +1213,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         overlay: &overlay::Overlay,
     ) {
+        self.overlay.set_aspect(self.chrome_aspect);
         self.overlay.render(device, queue, view, overlay);
     }
 
