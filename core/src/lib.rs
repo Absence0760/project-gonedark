@@ -27,6 +27,7 @@ pub mod fog;
 pub mod gunsmith;
 pub mod heal;
 pub mod lockstep;
+pub mod mission_tuning;
 pub mod orders;
 pub mod persist;
 pub mod projectile;

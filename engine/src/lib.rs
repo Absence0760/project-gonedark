@@ -1969,6 +1969,22 @@ impl Game {
         self.commander_config.hunt_embodied = hunt;
     }
 
+    /// Set the enemy commander's **difficulty tier** (WS-E,
+    /// [`mission_tuning::Difficulty`](gonedark_core::mission_tuning::Difficulty)). The tier scales
+    /// the *seeded* planner's choices — production aggression, the Heavy reserve, and the army
+    /// re-plan cadence — never its knowledge (it reads nothing about the player going dark;
+    /// invariant #6 is structural). Default [`Veteran`] reproduces the original commander
+    /// byte-for-byte. A pure host-side planning knob — never sim state — so changing it perturbs
+    /// only future orders, not the running checksum stream. The Operations hub sets this per node.
+    pub fn set_commander_difficulty(&mut self, difficulty: gonedark_core::mission_tuning::Difficulty) {
+        self.commander_config.difficulty = difficulty;
+    }
+
+    /// The enemy commander's current difficulty tier (a read-only host/test window).
+    pub fn commander_difficulty(&self) -> gonedark_core::mission_tuning::Difficulty {
+        self.commander_config.difficulty
+    }
+
     /// The player's authoritative world position, read straight from the sim world (read
     /// only — the host never mutates sim state outside `Sim::step`). The snapshot carries no
     /// entity identity, so we read by index for the embodied camera.
