@@ -1,6 +1,11 @@
 # Test & feedback hardening plan — verify the game *plays*, not just *computes*
 
-> **Status: PLANNED (2026-06-28).** A focused push to close the one class of gap the
+> **Status: COMPLETE (2026-06-29).** All four workstreams landed (WS-1/TF-1 earlier this
+> cycle; WS-2/3/4 on 2026-06-29). The `viz-runner` suite now pixel-asserts firing, killing,
+> the dark-while-embodied fairness bar, and the hitmarker on a connecting shot; the host
+> input→`Command::Fire` pipeline (incl. camera-forward == fire-dir) is covered headless in
+> `cargo test`; and the embodied "I hit him" cue (hitmarker + SFX) ships off the
+> avatar-source `SimEvent::Damaged` stream. A focused push to close the one class of gap the
 > current test setup structurally cannot see. The deterministic-sim tooling is strong —
 > headless harnesses (`sim-runner`: phase2/stress/duel/infantry/matchup), a cross-arch
 > per-tick checksum matrix (`determinism.yml`), workspace unit tests, clippy/fmt/cargo-deny

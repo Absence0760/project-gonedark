@@ -344,20 +344,26 @@ narrative depth ([Q16](open-questions.md)).
 > sequencing: [`test-harness-plan.md`](plans/test-harness-plan.md). GPU-gated items stay local
 > smoke tests (like `viz-runner` today), never the no-GPU CI matrix. **Execution order:** start
 > with **TF-2** (don't build the combat viz on a red bar), then TF-1 → TF-4; TF-3 is independent.
-> (The TF-*n* numbers map to the plan's WS-*n*, not to build order.)
+> (The TF-*n* numbers map to the plan's WS-*n*, not to build order.) **Status: all four landed
+> (2026-06-29)** — the viz suite now pixel-proves firing, killing, the dark-while-embodied
+> fairness bar, and the hitmarker on a connecting shot; the input pipeline is covered headless.
 
 - [x] **TF-1 — Visual combat verification.** `viz-runner` now renders two combat scenarios
   through the real `Game::frame` path: `combat_muzzle` (command-view muzzle flash draws during a
   skirmish, pixel-asserted against a clean pre-combat baseline) and `embodied_kill` (holding fire
   while embodied kills enemies, asserted on `Game::alive_unit_count`). PNGs land in `target/viz/`
   for eyeballing. GPU-gated/local. *(plan WS-1)*
-- [ ] **TF-2 — Fix the standing embodied-dark viz FAIL.** Root-cause
-  `embodied_combat_strategic_map_stays_dark` (likely the avatar dies + ejects to command
-  mid-scenario; possibly a real fog leak). Fix honestly — never narrow the assertion
-  (invariant #6). *(plan WS-2)*
-- [ ] **TF-3 — Input-pipeline integration tests.** Cover mouse/key → yaw → `Command::Fire`
-  (the aim convention only verified by reading code), incl. camera-forward == fire-dir. No
-  GPU; ships in `cargo test`. *(plan WS-3)*
+- [x] **TF-2 — Fix the standing embodied-dark viz FAIL.** Root cause was a *scenario* bug,
+  not a fog leak: the avatar died and the host auto-surfaced to command (invariant #5), so the
+  asserted "embodied" frame was the post-ejection command view. The `viz-runner` scenario now
+  re-embodies a live unit and asserts only on a genuinely-embodied combat frame (new
+  `embodied_combat_frame_captured` guard); the `embodied_combat_strategic_map_stays_dark`
+  fairness thresholds were **not** weakened (now 0 non-marker player-blue px). *(plan WS-2)*
+- [x] **TF-3 — Input-pipeline integration tests.** Cover mouse/key → yaw → `Command::Fire`
+  through the real seam (new pure `engine::embodied_input_commands`), incl. the load-bearing
+  camera-forward == fire-dir "you hit what's under the crosshair" guarantee, the rightward-look
+  → `−Y` convention, and crouch cone-tightening — plus desktop crouch/reload key edges. No
+  GPU; ships in `cargo test` (dev + release). *(plan WS-3)*
 - [x] **TF-4 — In-game hit feedback.** The "I hit him" signal the game never sent: a centered
   hitmarker "X" + a one-shot hit SFX (`SoundId::HitConfirm`), derived from the pure
   `engine::avatar_landed_hit` seam over the deterministic `SimEvent::Damaged` stream where the
