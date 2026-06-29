@@ -26,7 +26,7 @@ jobs:
     name: workspace tests · ubuntu x86_64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `engine`/`render` pull `wgpu` and `app` pulls `winit`, so compiling their TEST
       # binaries links the Vulkan loader + Wayland/X11 libs (the tests themselves are pure

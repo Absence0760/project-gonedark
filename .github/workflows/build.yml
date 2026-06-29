@@ -38,7 +38,7 @@ jobs:
     name: checks · ubuntu (fmt)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # rust-toolchain.toml pins the compiler + the rustfmt component; rustup
       # auto-installs both on first cargo/rustfmt invocation — no setup action needed.
@@ -55,7 +55,7 @@ jobs:
     name: graphics build · ubuntu x86_64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # winit (Wayland + X11) and wgpu (Vulkan loader) need these to LINK a binary.
       # rlibs would compile without them, but `cargo build -p gonedark-app` emits an
@@ -130,7 +130,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Android NDK
         uses: nttld/setup-ndk@v1
