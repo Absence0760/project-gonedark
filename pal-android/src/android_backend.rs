@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gonedark_engine::{Game, DEFAULT_SEED};
+use gonedark_engine::{Game, OverlayClick, DEFAULT_SEED};
 use gonedark_pal::mix::{oneshot_sound, synth_bank, voice_from_cue, Mixer};
 use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Window, MAX_TOUCHES};
 
@@ -224,14 +224,33 @@ fn android_main(app: AndroidApp) {
 
         if window.surface_up {
             if let (Some(rhi), Some(game)) = (rhi.as_mut(), game.as_mut()) {
+                // Shell overlay buttons (pause / reconnect / post-match summary). A tap-up while an
+                // overlay is up belongs to that overlay, not the match world: hit-test it in NDC and
+                // either feed the resolved session action back to the shell (pause → Resume /
+                // Surrender) or — for the terminal summary's DISMISS — finish the NativeActivity,
+                // returning to the Compose title (the Android twin of the desktop ExitToTitle, D52).
+                // Done BEFORE the world-input blanking below so the same release can't also drive a
+                // selection underneath. Mirrors app/src/main.rs.
+                if input_frame.pointer_up {
+                    if let Some((px, py)) = input_frame.pointer {
+                        let (w, h) = rhi.size();
+                        let ndc = (2.0 * px / w as f32 - 1.0, 1.0 - 2.0 * py / h as f32);
+                        match game.overlay_click(ndc) {
+                            Some(OverlayClick::Session(action)) => {
+                                game.apply_session_action(action);
+                                input_frame.pointer_up = false;
+                                input_frame.pointer_down = false;
+                            }
+                            Some(OverlayClick::Dismiss) => finish_activity(&app),
+                            None => {}
+                        }
+                    }
+                }
                 // While a shell overlay (pause / reconnect / post-match summary) is up the match is
                 // frozen underneath it: blank this frame's world-driving input so stray touches
                 // behind the menu can't select units, fire the weapon, or pan the camera. Mirrors the
                 // desktop host (app/src/main.rs). Single-player pause also halts the tick via
-                // `halts_local_tick`; this stops *world input*, not the clock. The overlay's own
-                // buttons are not yet tappable on Android — wiring `overlay_click` + a JNI
-                // `Activity.finish()` leave-to-title path (the Android twin of D52's desktop-only
-                // ExitToTitle) is the next follow-up; until then back-to-resume is the way out.
+                // `halts_local_tick`; this stops *world input*, not the clock.
                 if game.shell_overlay_active() {
                     input_frame = InputFrame::default();
                 }
@@ -280,6 +299,37 @@ fn android_main(app: AndroidApp) {
     }
 
     info!("android_main: clean exit");
+}
+
+/// Finish the `NativeActivity` so Android tears the match down and returns to the launcher (the
+/// Compose `MainActivity` title) — the Android twin of the desktop ExitToTitle (D52), invoked when
+/// the post-match summary's DISMISS is tapped (`OverlayClick::Dismiss`). The `MainEvent::Destroy`
+/// that `Activity.finish()` triggers then breaks the run loop cleanly on the next poll.
+///
+/// Best-effort over JNI and **never fatal**: any attach/lookup failure is swallowed, and a pending
+/// JVM exception is cleared so a failed call can't abort the process on the next JNI op — the same
+/// discipline the thermal reader uses (see [`crate::thermal`]). This is un-constructible glue (no
+/// real `JNIEnv`/`Activity` off a device), so it is exempt from unit coverage; the click→action
+/// decision it serves (`overlay_click_action`) is host-tested in the `engine` crate.
+fn finish_activity(app: &AndroidApp) {
+    use jni::objects::JObject;
+    use jni::JavaVM;
+
+    // SAFETY: the pointers come from `android-activity`'s live `AndroidApp`, valid while the
+    // activity is running (same handles the thermal reader attaches through).
+    let vm = match unsafe { JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) } {
+        Ok(vm) => vm,
+        Err(_) => return,
+    };
+    let mut env = match vm.attach_current_thread() {
+        Ok(env) => env,
+        Err(_) => return,
+    };
+    let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+    // Activity.finish() : void. On any failure, clear the pending exception so we fail safe.
+    if env.call_method(&activity, "finish", "()V", &[]).is_err() {
+        let _ = env.exception_clear();
+    }
 }
 
 // ---------------------------------------------------------------------------------------
