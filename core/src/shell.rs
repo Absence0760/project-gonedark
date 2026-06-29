@@ -465,6 +465,27 @@ pub fn resolve_intent(intent: ShellIntent) -> ResolvedIntent {
     }
 }
 
+// ===========================================================================
+// READ SIDE — Operations-hub / campaign meta-progression (host-side; NOT checksummed)
+// ===========================================================================
+//
+// The out-of-match (native) shell reaches the campaign node-graph through this seam, exactly as it
+// reaches the order/stance vocabulary and match summary above. The model itself lives in
+// [`crate::campaign`] (it owns the persistence codec and the unlock graph); these re-exports make
+// `core::shell` the single import surface the shell uses for *all* meta-UI data.
+//
+// Like everything else on this read side it is **host-side, derived/owned state — never sim state,
+// never folded into the per-tick checksum** (invariants #1/#7). Campaign progress persists to its
+// own host blob ([`Campaign::serialize_progress`](crate::campaign::Campaign::serialize_progress)),
+// separate from the authoritative [`Sim::serialize`](crate::sim::Sim::serialize) snapshot, so
+// meta-progression can never leak into the checksum fold. See [`crate::campaign`] for the full
+// rationale and the **WS-A integration seam** ([`MissionId`] is opaque until the mission/objective
+// core lands).
+pub use crate::campaign::{
+    Briefing, Campaign, CampaignError, ClearOutcome, Difficulty, MissionId, MissionSelectEntry,
+    NodeId, NodeProgress, OperationNode,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
