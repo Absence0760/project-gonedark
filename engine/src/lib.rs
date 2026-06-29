@@ -775,6 +775,87 @@ fn crouch_toggle_command(
     })
 }
 
+/// The sim commands an embodied frame's resolved control intents produce, plus the two presentation
+/// side effects the caller ([`Game::frame`]) must apply itself (it holds the `Game`, this fn does
+/// not): `fired` → stamp the muzzle-flash tick, `surfaced` → flip the local camera back to command.
+struct EmbodiedCommands {
+    commands: Vec<Command>,
+    /// A `Command::Fire` was emitted this frame (the trigger was held) — drives `last_fire_tick`.
+    fired: bool,
+    /// A `Command::Surface` was emitted via the on-screen eject button (touch) — the host flips its
+    /// camera/embodiment state to match (desktop ejects through `map_input_commands` instead).
+    surfaced: bool,
+}
+
+/// Compose one embodied frame's already-resolved control intents (merged from EITHER the Android
+/// touch HUD or the desktop keyboard/mouse, upstream in [`Game::frame`]) into the sim commands they
+/// produce, for the possessed `player`. PURE (no `Game`/device) so the whole input→command pipeline —
+/// trigger→[`Command::Fire`] (aim quantized at the boundary), stick→[`Command::Locomote`], crouch
+/// toggle, reload, surface — is exercised end to end by a test without a GPU, mirroring exactly how
+/// `frame` wired these seams inline before. `yaw` is the post-look-integration heading;
+/// `currently_crouched`/`player_alive` are the authoritative sim reads the crouch toggle inverts off
+/// of (the caller guards the alive check, as `crouch_toggle_command` documents). Command order —
+/// fire, locomote, crouch, reload, surface — is preserved so the lockstep stream is byte-unchanged.
+#[allow(clippy::too_many_arguments)] // mirrors the per-control intents `Game::frame` resolves inline
+fn embodied_input_commands(
+    player: Entity,
+    yaw: f32,
+    move_axis: (f32, f32),
+    fire: bool,
+    crouch_edge: bool,
+    reload_edge: bool,
+    surface_edge: bool,
+    currently_crouched: bool,
+    player_alive: bool,
+) -> EmbodiedCommands {
+    let mut commands: Vec<Command> = Vec::new();
+
+    // Embodied fire (W1, invariant #5/#1): a pressed trigger emits a `Command::Fire` whose aim is the
+    // host yaw quantized to `Fixed` AT THE BOUNDARY (pure seam `fire::fire_command`). The cone-hitscan
+    // hit resolves sim-side, bit-identically on every peer. Embodied units never auto-fire.
+    let fired = if let Some(cmd) = fire::fire_command(player, yaw, fire) {
+        commands.push(cmd);
+        true
+    } else {
+        false
+    };
+
+    // Embodied locomotion (twin-stick): the WASD / virtual-stick `move_axis` becomes a
+    // camera-relative `Command::Locomote` whose world heading is quantized to `Fixed` AT THE BOUNDARY
+    // (pure seam `locomote::locomote_command`, exactly like the fire aim).
+    if let Some(cmd) = locomote::locomote_command(player, yaw, move_axis) {
+        commands.push(cmd);
+    }
+
+    // Crouch TOGGLE: derive the target posture from authoritative sim state (pure
+    // `crouch_toggle_command`), so a desktop key and the on-screen Crouch button share one path. Only
+    // when the avatar is alive — a dead handle has no posture to flip.
+    if player_alive {
+        if let Some(cmd) = crouch_toggle_command(player, crouch_edge, currently_crouched) {
+            commands.push(cmd);
+        }
+    }
+
+    // Reload: start a magazine reload (a no-op sim-side if there's no magazine / it's full / already
+    // reloading — see `combat`).
+    if reload_edge {
+        commands.push(Command::Reload { entity: player });
+    }
+
+    // Surface via the on-screen button (touch): two fingers now mean move+look, so the Surface
+    // button — not the two-finger gesture — ejects while embodied.
+    let surfaced = surface_edge;
+    if surfaced {
+        commands.push(Command::Surface { entity: player });
+    }
+
+    EmbodiedCommands {
+        commands,
+        fired,
+        surfaced,
+    }
+}
+
 /// Translate the engine-side touch layout + per-frame HUD state into the renderer's own
 /// [`TouchControlsHud`](gonedark_render::touch_controls::TouchControlsHud) description (px circles +
 /// pressed flags). PURE → host-testable. Keeps the layering one-way (`engine -> render`, invariant
@@ -2096,51 +2177,36 @@ impl Game {
         self.pitch = integrate_look_pitch(self.pitch, look_axis.1);
 
         if self.embodied {
-            // Embodied fire (W1, invariant #5/#1): a pressed trigger emits a `Command::Fire` whose
-            // aim is the host yaw quantized to `Fixed` AT THE BOUNDARY (pure seam
-            // `fire::fire_command`). Same lockstep stream as taps; the cone-hitscan hit resolves
-            // sim-side, bit-identically on every peer. Embodied units never auto-fire.
-            if let Some(cmd) = fire::fire_command(self.player, self.yaw, fire) {
-                commands.push(cmd);
+            // The whole embodied input→command pipeline lives in the pure `embodied_input_commands`
+            // seam (GPU-free, host-tested end to end): trigger→Fire (aim quantized at the boundary),
+            // stick→Locomote, crouch toggle, reload, surface — same lockstep stream as taps, the
+            // cone-hitscan / move resolved sim-side bit-identically on every peer. `frame` resolves
+            // only the authoritative sim reads (alive + posture) the seam can't, then applies the two
+            // presentation side effects it returns (the seam holds no `Game`).
+            let player_alive = self.sim.world.is_alive(self.player);
+            let crouched = player_alive
+                && self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
+            let out = embodied_input_commands(
+                self.player,
+                self.yaw,
+                move_axis,
+                fire,
+                crouch_edge,
+                reload_edge,
+                surface_edge,
+                crouched,
+                player_alive,
+            );
+            commands.extend(out.commands);
+            if out.fired {
                 // Stamp the muzzle-flash cue (W5, presentation only): the weapon viewmodel flares
                 // for a few ticks after this shot. Never read by the sim — it rides the host clock
                 // alongside the authoritative `Command::Fire`, not in place of it (invariant #4/#6).
                 self.last_fire_tick = Some(self.sim.tick_count());
             }
-
-            // Embodied locomotion (twin-stick): the WASD / virtual-stick `move_axis` becomes a
-            // camera-relative `Command::Locomote` whose world heading is quantized to `Fixed` AT
-            // THE BOUNDARY (pure seam `locomote::locomote_command`, exactly like the fire aim).
-            if let Some(cmd) = locomote::locomote_command(self.player, self.yaw, move_axis) {
-                commands.push(cmd);
-            }
-
-            // Crouch TOGGLE: derive the target posture from authoritative sim state (pure
-            // `crouch_toggle_command`), so a desktop key and the on-screen Crouch button share one
-            // path. The `Command::Crouch` rides the same lockstep stream as fire/locomote.
-            if self.sim.world.is_alive(self.player) {
-                let crouched =
-                    self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
-                if let Some(cmd) = crouch_toggle_command(self.player, crouch_edge, crouched) {
-                    commands.push(cmd);
-                }
-            }
-
-            // Reload: start a magazine reload (a no-op sim-side if there's no magazine / it's full /
-            // already reloading — see `combat`).
-            if reload_edge {
-                commands.push(Command::Reload {
-                    entity: self.player,
-                });
-            }
-
-            // Surface via the on-screen button (touch): two fingers now mean move+look, so the
-            // Surface button — not the two-finger gesture — ejects while embodied. The transition
-            // loop already ran THIS frame, so flip the camera state here directly (mirroring it).
-            if surface_edge {
-                commands.push(Command::Surface {
-                    entity: self.player,
-                });
+            if out.surfaced {
+                // The transition loop already ran THIS frame, so flip the camera state here directly
+                // (mirroring it) now that the on-screen Surface button emitted its eject.
                 self.embodied = false;
                 self.camera = CameraMode::TopDown;
                 self.touch.reset();
@@ -3765,6 +3831,197 @@ mod tests {
             clip_y(0.0),
             clip_y(-0.6)
         );
+    }
+
+    // --- WS-3: embodied input-pipeline INTEGRATION tests ------------------------------------------
+    //
+    // These exercise the REAL mouse/key → `Command::Fire` composition the combat harnesses skip
+    // (they construct `Command::Fire { dir }` directly). They drive the same seams `frame` wires —
+    // `integrate_look_yaw` → `embodied_input_commands` (→ `fire::fire_command`) and the camera
+    // `embodied_view_proj` — so a regression in the aim convention or trigger mapping fails here, with
+    // no GPU/display. Host-side floats are intentional (this crate is not the sim; the only value that
+    // crosses into `core` is the `Fixed`-quantized aim, invariant #1 unaffected).
+
+    /// One Fixed quantisation step, in world units — the tolerance a `(cos, sin)` aim is preserved to
+    /// at the float→`Fixed` boundary (`fire::fire_command`). A couple of steps of slack absorbs the
+    /// round-to-nearest on both components.
+    const QUANT_TOL: f32 = 2.0 / gonedark_core::fixed::Fixed::SCALE as f32;
+
+    /// Pull the `(x, y)` aim out of the single `Command::Fire` an embodied frame emitted, asserting it
+    /// targets `player`. Panics if the frame emitted no fire (the composition under test should).
+    fn fire_dir_of(out: &EmbodiedCommands, player: Entity) -> (f32, f32) {
+        let dir = out
+            .commands
+            .iter()
+            .find_map(|c| match c {
+                Command::Fire { entity, dir } => {
+                    assert_eq!(*entity, player, "the Fire must target the possessed unit");
+                    Some(*dir)
+                }
+                _ => None,
+            })
+            .expect("a held trigger must emit exactly one Command::Fire");
+        (fixed_to_f32(dir.x), fixed_to_f32(dir.y))
+    }
+
+    /// A held-fire `InputFrame` at a given yaw emits a `Command::Fire` whose quantized `dir` matches
+    /// the yaw's unit vector `(cos yaw, sin yaw)` to the `Fixed` tolerance — across several headings,
+    /// through the real `embodied_input_commands` seam `frame` calls. A released trigger emits none.
+    #[test]
+    fn held_fire_emits_aim_matching_yaw_through_the_seam() {
+        let player = test_player();
+        for &yaw in &[0.0_f32, 0.5, 1.0, 2.3, -1.2, 3.0, std::f32::consts::FRAC_PI_2] {
+            let out = embodied_input_commands(
+                player, yaw, (0.0, 0.0), true, false, false, false, false, true,
+            );
+            assert!(out.fired, "a held trigger sets the muzzle-flash `fired` flag");
+            let (ax, ay) = fire_dir_of(&out, player);
+            assert!(
+                (ax - yaw.cos()).abs() < QUANT_TOL && (ay - yaw.sin()).abs() < QUANT_TOL,
+                "yaw {yaw}: aim ({ax}, {ay}) must match (cos, sin) = ({}, {})",
+                yaw.cos(),
+                yaw.sin(),
+            );
+        }
+
+        // Trigger released → no Fire command, no muzzle-flash stamp.
+        let none = embodied_input_commands(
+            player, 1.0, (0.0, 0.0), false, false, false, false, false, true,
+        );
+        assert!(!none.fired);
+        assert!(!none.commands.iter().any(|c| matches!(c, Command::Fire { .. })));
+    }
+
+    /// THE load-bearing guarantee behind the targeting report: the embodied camera's forward
+    /// (`embodied_view_proj`'s look dir) AGREES with the `Command::Fire` aim. A world point placed at
+    /// the muzzle range *along the fire dir* must project to screen centre (NDC ≈ origin) under the
+    /// camera built from the SAME yaw — i.e. you hit what's under the crosshair. Swept across yaws so
+    /// an axis swap / sign flip / convention drift between the two seams fails loudly.
+    #[test]
+    fn camera_forward_agrees_with_fire_direction() {
+        let player = test_player();
+        let (w, h) = (800u32, 600u32);
+        for &yaw in &[0.0_f32, 0.4, 1.1, 2.0, -0.8, 3.1, -2.7] {
+            // Integrate a (zero) look delta exactly as `frame` does, then compose the fire command —
+            // the aim the sim will act on.
+            let yaw = integrate_look_yaw(yaw, 0.0);
+            let out = embodied_input_commands(
+                player, yaw, (0.0, 0.0), true, false, false, false, false, true,
+            );
+            let (ax, ay) = fire_dir_of(&out, player);
+
+            // Eye at an arbitrary spot; the camera looks level (pitch 0). A target one muzzle-range
+            // out ALONG THE FIRE DIR, at eye height, must sit dead centre.
+            let (ex, ey) = (3.0_f32, -2.0_f32);
+            let dist = 12.0_f32;
+            let vp = embodied_view_proj(ex, ey, yaw, 0.0, w, h);
+            let clip = vp * Vec4::new(ex + ax * dist, ey + ay * dist, EYE_HEIGHT, 1.0);
+            assert!(clip.w > 0.0, "yaw {yaw}: the aimed point must be in front of the camera");
+            let (ndc_x, ndc_y) = (clip.x / clip.w, clip.y / clip.w);
+            assert!(
+                ndc_x.abs() < 1e-2 && ndc_y.abs() < 1e-2,
+                "yaw {yaw}: the fire dir must land under the crosshair, got NDC ({ndc_x}, {ndc_y})",
+            );
+
+            // Negative control: the OPPOSITE bearing is behind the camera, never under the crosshair.
+            let behind = vp * Vec4::new(ex - ax * dist, ey - ay * dist, EYE_HEIGHT, 1.0);
+            assert!(
+                behind.w <= 0.0 || (behind.x / behind.w).abs() > 0.5,
+                "yaw {yaw}: aiming backwards must NOT centre on screen",
+            );
+        }
+    }
+
+    /// The look convention end to end, not just per-fn: a rightward look delta (`look_dx > 0`) swings
+    /// the *fire aim* toward world −Y (screen-right), a leftward delta toward +Y — `integrate_look_yaw`
+    /// composed with `fire::fire_command` via the real seam. Mirrors `frame`'s order (integrate, then
+    /// emit) and the standalone `look_is_not_inverted` per-fn test.
+    #[test]
+    fn rightward_look_aims_toward_minus_y_through_the_pipeline() {
+        let player = test_player();
+        let aim_after_look = |look_dx: f32| {
+            let yaw = integrate_look_yaw(0.0, look_dx);
+            let out = embodied_input_commands(
+                player, yaw, (0.0, 0.0), true, false, false, false, false, true,
+            );
+            fire_dir_of(&out, player)
+        };
+
+        // From level (yaw 0, aim +X): rightward look turns the aim toward −Y, still mostly forward.
+        let (rx, ry) = aim_after_look(50.0);
+        assert!(rx > 0.0 && ry < 0.0, "rightward look aims forward-and-right (−Y): ({rx}, {ry})");
+        // Leftward mirrors: toward +Y.
+        let (lx, ly) = aim_after_look(-50.0);
+        assert!(lx > 0.0 && ly > 0.0, "leftward look aims forward-and-left (+Y): ({lx}, {ly})");
+    }
+
+    /// Crouch (tighter cone) at the COMPOSITION level: the real input seams feed `core::combat`. The
+    /// aim comes from `fire::fire_command` and the posture flip from `crouch_toggle_command`; an
+    /// off-axis enemy inside the ~30° standing cone but outside the ~18° crouched one is clipped
+    /// standing and missed crouched. This stitches the input pipeline to the sim's cone resolution
+    /// (the combat harness's `crouched_cone_is_tighter` test drives `resolve_fire` with a hand-built
+    /// `dir`; this one proves the host's fire/crouch seams produce that behaviour).
+    #[test]
+    fn crouch_tightens_the_cone_through_the_input_pipeline() {
+        use gonedark_core::components::{Faction, InputSource, Posture, Vec2};
+        use gonedark_core::fixed::Fixed;
+
+        let mut world = World::new();
+        let terrain = gonedark_core::terrain::Terrain::open();
+
+        // Embodied player rifleman at the origin, armed from the shared stats. Disable the magazine
+        // and clear cooldown so the ONLY variable between the two shots is posture → cone width.
+        let shooter = world.spawn();
+        let si = shooter.index as usize;
+        let (health, weapon) = economy::unit_stats(UnitKind::Rifleman);
+        world.faction[si] = Faction::Player;
+        world.health[si] = health;
+        world.weapon[si] = weapon;
+        world.weapon[si].mag_size = 0;
+        world.input_source[si] = InputSource::Embodied;
+
+        // Off-axis enemy at (10, 5) — bearing ≈ 26.6° off the +X aim: inside the wide standing cone,
+        // outside the tight crouched one. Distance ≈ 11.18 < range 14 (and < crouched 17.5), so range
+        // is never the limiter — the cone is.
+        let enemy = world.spawn();
+        let ei = enemy.index as usize;
+        let (eh, _) = economy::unit_stats(UnitKind::Rifleman);
+        world.faction[ei] = Faction::Enemy;
+        world.pos[ei] = Vec2::new(Fixed::from_int(10), Fixed::from_int(5));
+        world.health[ei] = eh;
+        let full = world.health[ei].cur;
+
+        // The REAL input seam produces the aim from yaw 0 (aim +X).
+        let Command::Fire { dir, .. } = fire::fire_command(shooter, 0.0, true).unwrap() else {
+            panic!("a held trigger emits Fire");
+        };
+
+        // Standing: the wide hip-fire cone clips the off-axis enemy.
+        world.posture[si] = Posture::Standing;
+        world.weapon[si].cooldown_left = 0;
+        let mut events = Vec::new();
+        gonedark_core::combat::resolve_fire(&mut world, &terrain, si, dir, &mut events);
+        assert!(
+            world.health[ei].cur < full,
+            "standing cone is wide enough to clip the 26.6°-off enemy",
+        );
+
+        // Crouch via the real toggle seam (Standing → Crouched), reset the target + weapon, fire again.
+        let Command::Crouch { crouched, .. } = crouch_toggle_command(shooter, true, false).unwrap()
+        else {
+            panic!("a crouch edge emits Crouch");
+        };
+        assert!(crouched, "toggling off Standing crouches");
+        world.posture[si] = Posture::Crouched;
+        world.health[ei].cur = full;
+        world.weapon[si].cooldown_left = 0;
+        events.clear();
+        gonedark_core::combat::resolve_fire(&mut world, &terrain, si, dir, &mut events);
+        assert_eq!(
+            world.health[ei].cur, full,
+            "crouch tightens the cone past the off-axis bearing — same aim now misses",
+        );
+        assert!(events.is_empty(), "a missed crouched shot deals no damage");
     }
 
     /// Command pan maps the screen stick to world ground motion: `D` (+mx) pans +X, `W` (−my) pans
