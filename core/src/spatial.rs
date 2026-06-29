@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn spatial_query_matches_brute_force_over_seeded_field() {
         use crate::rng::Rng;
-        let mut rng = Rng::new(0xA5_5A_1234);
+        let mut rng = Rng::new(0xA55A_1234);
         let mut world = World::new();
         // 120 units at seeded integer + quarter-cell-fractional positions in [-60, 60).
         for _ in 0..120 {

@@ -1750,13 +1750,13 @@ mod tests {
         let mut proposed = false;
         let mut it = 0u64;
         loop {
-            for i in 0..2 {
-                while sessions[i].submit_tick() < target
-                    && sessions[i].submit_tick() <= sessions[i].next_tick() + lead_bound
+            for (i, session) in sessions.iter_mut().enumerate() {
+                while session.submit_tick() < target
+                    && session.submit_tick() <= session.next_tick() + lead_bound
                 {
-                    let t = sessions[i].submit_tick();
+                    let t = session.submit_tick();
                     let cmds = script(&h, i as PeerId, t, initial_delay);
-                    sessions[i].submit(cmds);
+                    session.submit(cmds);
                 }
             }
             if let Some((at, proposer, nd, guard)) = change {
