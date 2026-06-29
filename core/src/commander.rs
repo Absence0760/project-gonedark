@@ -28,6 +28,7 @@
 //! the one authoritative `Sim::apply` path.
 
 use crate::components::{EntityKind, Faction, Order, Stance, UnitKind, Vec2};
+use crate::detection::Tell;
 use crate::ecs::World;
 use crate::economy::{self, Resources};
 use crate::fixed::Fixed;
@@ -53,27 +54,60 @@ const MAX_QUEUE_DEPTH: usize = 2;
 /// unit when comfortably flush, so the commander doesn't bankrupt itself on one bruiser.
 const RESERVE: i64 = economy::RIFLEMAN_COST;
 
+/// Tunable knobs for the commander — a *mechanism*, not a frozen design (the D23/D26/D33 house
+/// style). Defaults reproduce the original, golden-checksum-stable behavior **byte-for-byte**, so
+/// adding a knob never perturbs the default `phase2`/`stress`/demo command streams.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct CommanderConfig {
+    /// When `true`, the commander may **consult the detection channel** and chase a hostile that
+    /// has "gone dark" (embodied). It reads ONLY the `tells` the caller derived from
+    /// [`detection::detectable_embodiment`](crate::detection::detectable_embodiment) for *this*
+    /// faction as observer — so it learns exactly what detection honestly permits (range +
+    /// line-of-sight bounded, with the `Subtle` linger) and **nothing more**: in `Hidden` mode, or
+    /// out of range / no LoS, the slice is empty and the commander reacts to nothing it could not
+    /// legitimately know. That structural bound — the commander cannot peek at `&World` for embodied
+    /// enemies itself, only consume the channel — is the point (invariant #6 fairness, "no
+    /// omniscient peek").
+    ///
+    /// **Defaults `false`** so the default scenes' lockstep command streams stay byte-identical;
+    /// enable it per-scene/per-difficulty to make the AI hunt a gone-dark player.
+    pub hunt_embodied: bool,
+}
+
 /// Survey the world and return the orders to feed the lockstep stream this tick — possibly empty
 /// (nothing affordable, no idle units, no targets). The host owns the RNG (its own stream,
 /// seeded `sim_seed ^ faction`) and passes it in by `&mut`; everything else is a read-only view
 /// of already-checksummed sim state. The caller pushes the result into the same `commands` Vec
 /// that drives `drive_lockstep`, *before* the lockstep step.
 ///
+/// `config` gates optional behavior; `tells` is the detection channel's output for `faction` as
+/// observer (the caller derives it from [`detection::detectable_embodiment`](crate::detection)).
+/// With `CommanderConfig::default()` and `tells == &[]`, the returned command list is **identical,
+/// byte-for-byte, to the original commander** — the default scenes' checksum streams are untouched.
+///
 /// Behavior loop (all "only existing order/economy commands", invariant #3):
 /// 1. **Reinforce.** For each built friendly camp, if the faction can afford a unit, queue one
 ///    (`QueueProduction`). Heavy when flush, else Rifleman — pure resource thresholds, no float.
-/// 2. **Capture.** Idle / freshly-produced units not already committed to a point are sent to
+/// 2. **Hunt the dark** *(only when `config.hunt_embodied`)*. If a hostile has gone dark
+///    (embodied) within what the detection channel HONESTLY reveals (a non-empty `tells`), a free
+///    unit is pressed toward its nearest tell's (last-seen) position ABOVE taking ground — a
+///    gone-dark player is the juiciest target. Empty `tells` (out of range / no LoS / `Hidden`) ⇒
+///    no reaction, so the AI never knows more than detection grants (invariant #6, no omniscient
+///    peek). Off by default → no effect on the default streams.
+/// 3. **Capture.** Idle / freshly-produced units not already committed to a point are sent to
 ///    the nearest neutral-or-enemy control point (`AttackMove` onto it) — taking ground is how
 ///    you out-produce the player.
-/// 3. **Attack.** Units with no point to take are pointed at the nearest hostile force
+/// 4. **Attack.** Units with no point to take are pointed at the nearest hostile force
 ///    (`AttackMove` toward the nearest enemy unit/building) so the line keeps pressing.
-/// 4. **Posture.** Any unit on `HoldFire` is bumped to `ReturnFire` so the commander's army
+/// 5. **Posture.** Any unit on `HoldFire` is bumped to `ReturnFire` so the commander's army
 ///    actually shoots back (a one-shot stance fix; idempotent thereafter).
 pub fn commander_orders(
     world: &World,
     territory: &Territory,
     resources: &Resources,
     rng: &mut Rng,
+    config: &CommanderConfig,
+    tells: &[Tell],
     faction: Faction,
     tick: u64,
 ) -> Vec<Command> {
@@ -153,6 +187,18 @@ pub fn commander_orders(
             continue;
         };
 
+        // Hunt the dark (config-gated, default OFF): a hostile that has gone dark (embodied) and is
+        // HONESTLY detectable — i.e. present in `tells`, which the caller bounded to range + LoS via
+        // the detection channel — is the priority target, above taking ground. `tells` is empty when
+        // detection reveals nothing (out of range / no LoS / `Hidden`), so this is a no-op then: the
+        // commander reacts only to what it could legitimately know (invariant #6, no omniscient peek).
+        if config.hunt_embodied {
+            if let Some(target) = nearest_tell(tells, pos) {
+                commands.push(Command::AttackMove { entity: e, target });
+                continue;
+            }
+        }
+
         // Prefer taking ground: nearest neutral/enemy control point.
         if let Some(target) = nearest_open_point(territory, pos, faction) {
             commands.push(Command::AttackMove { entity: e, target });
@@ -225,11 +271,30 @@ fn nearest_hostile(world: &World, pos: Vec2, faction: Faction) -> Option<Vec2> {
     best.map(|(_, t)| t)
 }
 
+/// Nearest gone-dark tell to `pos` by squared distance (no sqrt). `None` for an empty slice.
+/// Deterministic: stable slice order, ties break toward the earliest tell (`<` never displaces an
+/// equal-distance earlier one) — exactly the tie-break the other "nearest" scans use. Reads only
+/// the (presentation-derived but float-free) tell positions, never `&World` — so the commander's
+/// gone-dark knowledge is bounded by the detection channel that produced `tells`.
+fn nearest_tell(tells: &[Tell], pos: Vec2) -> Option<Vec2> {
+    let mut best: Option<(Fixed, Vec2)> = None;
+    for t in tells {
+        let d = (t.pos - pos).len_sq();
+        match best {
+            Some((bd, _)) if d >= bd => {}
+            _ => best = Some((d, t.pos)),
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::{Building, BuildingKind, Health};
+    use crate::components::{Building, BuildingKind, Health, InputSource};
+    use crate::detection::{detectable_embodiment, DetectionConfig, DetectionMemory, TellMode};
     use crate::ecs::{Entity, World};
+    use crate::terrain::{Cover, Terrain};
     use crate::territory::ControlPoint;
 
     fn at(x: i32, y: i32) -> Vec2 {
@@ -277,9 +342,9 @@ mod tests {
         let res = Resources::new(500);
 
         let mut rng_a = Rng::new(123);
-        let a = commander_orders(&world, &terr, &res, &mut rng_a, Faction::Enemy, 60);
+        let a = commander_orders(&world, &terr, &res, &mut rng_a, &CommanderConfig::default(), &[], Faction::Enemy, 60);
         let mut rng_b = Rng::new(123);
-        let b = commander_orders(&world, &terr, &res, &mut rng_b, Faction::Enemy, 60);
+        let b = commander_orders(&world, &terr, &res, &mut rng_b, &CommanderConfig::default(), &[], Faction::Enemy, 60);
 
         assert_eq!(a.len(), b.len(), "same inputs → same number of commands");
         // Commands are Copy/Debug; compare their debug forms field-for-field.
@@ -303,7 +368,7 @@ mod tests {
         let res = Resources::new(0); // no money → no production noise
 
         let mut rng = Rng::new(1);
-        let cmds = commander_orders(&world, &terr, &res, &mut rng, Faction::Enemy, 60);
+        let cmds = commander_orders(&world, &terr, &res, &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
 
         let captured = cmds.iter().any(|c| {
             matches!(c, Command::AttackMove { entity, target }
@@ -342,7 +407,7 @@ mod tests {
         let res = Resources::new(0);
 
         let mut rng = Rng::new(1);
-        let cmds = commander_orders(&world, &terr, &res, &mut rng, Faction::Enemy, 60);
+        let cmds = commander_orders(&world, &terr, &res, &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
         let attacked_near = cmds.iter().any(|c| {
             matches!(c, Command::AttackMove { entity, target } if *entity == u && *target == near)
         });
@@ -387,6 +452,8 @@ mod tests {
             &terr,
             &Resources::new(economy::RIFLEMAN_COST - 1),
             &mut rng,
+            &CommanderConfig::default(),
+            &[],
             Faction::Enemy,
             60,
         );
@@ -404,6 +471,8 @@ mod tests {
             &terr,
             &Resources::new(economy::RIFLEMAN_COST),
             &mut rng,
+            &CommanderConfig::default(),
+            &[],
             Faction::Enemy,
             60,
         );
@@ -435,6 +504,8 @@ mod tests {
             &terr,
             &Resources::new(economy::HEAVY_COST + RESERVE),
             &mut rng,
+            &CommanderConfig::default(),
+            &[],
             Faction::Enemy,
             60,
         );
@@ -459,6 +530,8 @@ mod tests {
             &terr,
             &Resources::new(10_000),
             &mut rng,
+            &CommanderConfig::default(),
+            &[],
             Faction::Enemy,
             60,
         );
@@ -480,7 +553,7 @@ mod tests {
         };
         let mut rng = Rng::new(1);
         let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, Faction::Enemy, 60);
+            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
         assert!(
             !cmds.iter().any(|c| matches!(c, Command::AttackMove { .. })),
             "a unit already on its capture point should be left alone: {cmds:?}"
@@ -498,7 +571,7 @@ mod tests {
         };
         let mut rng = Rng::new(1);
         let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, Faction::Enemy, 60);
+            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
         assert!(
             !cmds
                 .iter()
@@ -516,7 +589,7 @@ mod tests {
         let terr = Territory::empty();
         let mut rng = Rng::new(1);
         let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, Faction::Enemy, 60);
+            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
         assert!(
             cmds.iter().any(|c| matches!(c, Command::SetStance { entity, stance: Stance::ReturnFire }
                 if *entity == u)),
@@ -539,6 +612,8 @@ mod tests {
             &terr,
             &Resources::new(10_000),
             &mut rng,
+            &CommanderConfig::default(),
+            &[],
             Faction::Enemy,
             60,
         );
@@ -555,5 +630,289 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    // --- Gone-dark hunt (config-gated detection-channel consult) -----------------------------
+    //
+    // The commander may CONSULT the detection channel to chase a hostile that has gone dark
+    // (embodied) — but only within what detection HONESTLY permits (range + LoS, or `Hidden` →
+    // nothing). The behavior is gated behind `CommanderConfig::hunt_embodied`, default OFF, so the
+    // default scenes' command streams stay byte-identical (no golden-checksum churn).
+
+    /// Embodied (gone-dark) variant of `spawn_unit`: a possessed hero the detection channel can tell.
+    fn spawn_embodied(world: &mut World, faction: Faction, pos: Vec2) -> Entity {
+        let e = spawn_unit(world, faction, pos);
+        world.input_source[e.index as usize] = InputSource::Embodied;
+        e
+    }
+
+    /// A scene where an idle Enemy unit (which doubles as the detection observer) sits in plain,
+    /// in-range sight of a gone-dark Player hero, with a neutral point as the baseline objective.
+    /// Returns `(world, terrain, territory, hero_pos, point_pos)`.
+    fn hunt_scene() -> (World, Terrain, Territory, Vec2, Vec2) {
+        let mut world = World::new();
+        // The Enemy unit at the origin is BOTH the unit we task AND the faction's detection observer.
+        spawn_unit(&mut world, Faction::Enemy, at(0, 0));
+        let hero_pos = at(5, 0); // within the default tell_range (28), open LoS → detectable
+        spawn_embodied(&mut world, Faction::Player, hero_pos);
+        let point_pos = at(10, 0);
+        let terr = Territory {
+            points: vec![ControlPoint::neutral(point_pos)],
+        };
+        (world, Terrain::open(), terr, hero_pos, point_pos)
+    }
+
+    /// Derive the detection channel exactly as the host would, for `observer` over `world`/`terrain`.
+    fn tells_for(world: &World, terrain: &Terrain, mode: TellMode, observer: Faction) -> Vec<Tell> {
+        let config = DetectionConfig {
+            tell_mode: mode,
+            ..DetectionConfig::default()
+        };
+        let mut mem = DetectionMemory::new();
+        detectable_embodiment(world, terrain, &config, observer, 0, &mut mem)
+    }
+
+    /// 1. **Default-off → byte-identical.** With `hunt_embodied = false`, the commander emits the
+    ///    EXACT same command list whether or not detection tells are supplied — the gone-dark code
+    ///    is fully bypassed, so the default scenes' lockstep/checksum streams are untouched.
+    #[test]
+    fn hunt_disabled_is_byte_identical_regardless_of_tells() {
+        let (world, terrain, terr, _hero, _point) = hunt_scene();
+        let res = Resources::new(0); // no production noise
+        let tells = tells_for(&world, &terrain, TellMode::Subtle, Faction::Enemy);
+        assert!(!tells.is_empty(), "scene precondition: the hero IS detectable");
+
+        let mut rng = Rng::new(7);
+        let baseline = commander_orders(
+            &world,
+            &terr,
+            &res,
+            &mut rng,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            60,
+        );
+        // Same default (off) config, but now WITH a live tell present: must be ignored entirely.
+        let mut rng = Rng::new(7);
+        let with_tells_off = commander_orders(
+            &world,
+            &terr,
+            &res,
+            &mut rng,
+            &CommanderConfig {
+                hunt_embodied: false,
+            },
+            &tells,
+            Faction::Enemy,
+            60,
+        );
+        assert_eq!(
+            baseline.len(),
+            with_tells_off.len(),
+            "flag off must ignore tells → identical command count"
+        );
+        for (x, y) in baseline.iter().zip(with_tells_off.iter()) {
+            assert_eq!(
+                format!("{x:?}"),
+                format!("{y:?}"),
+                "flag off must emit a byte-identical command stream even with tells present"
+            );
+        }
+        // And the baseline genuinely heads for the capture point (so this test has real teeth).
+        assert!(
+            baseline
+                .iter()
+                .any(|c| matches!(c, Command::AttackMove { target, .. } if *target == _point)),
+            "baseline should capture the open point: {baseline:?}"
+        );
+    }
+
+    /// 2. **Enabled → reacts.** With `hunt_embodied = true` and a detectable gone-dark hostile, a
+    ///    free unit is pressed toward the hero's revealed position INSTEAD of the capture point — a
+    ///    different, sensible (honest) order responding to the tell.
+    #[test]
+    fn hunt_enabled_chases_detectable_gone_dark_hostile() {
+        let (world, terrain, terr, hero, point) = hunt_scene();
+        let res = Resources::new(0);
+        let tells = tells_for(&world, &terrain, TellMode::Subtle, Faction::Enemy);
+        assert!(!tells.is_empty(), "scene precondition: the hero IS detectable");
+
+        let mut rng = Rng::new(7);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &res,
+            &mut rng,
+            &CommanderConfig {
+                hunt_embodied: true,
+            },
+            &tells,
+            Faction::Enemy,
+            60,
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::AttackMove { target, .. } if *target == hero)),
+            "the commander should press toward the gone-dark hero at {hero:?}: {cmds:?}"
+        );
+        assert!(
+            !cmds
+                .iter()
+                .any(|c| matches!(c, Command::AttackMove { target, .. } if *target == point)),
+            "chasing the hero outranks capturing the point: {cmds:?}"
+        );
+    }
+
+    /// 3a. **Honest bound — out of range.** Flag ON, but the hero is beyond `tell_range`, so the
+    ///     detection channel reveals NOTHING (empty tells) and the commander does NOT react — it
+    ///     falls back to the ordinary capture plan. No omniscient peek.
+    #[test]
+    fn hunt_does_not_react_when_hostile_out_of_detection_range() {
+        let mut world = World::new();
+        spawn_unit(&mut world, Faction::Enemy, at(0, 0)); // observer + the unit we task
+        spawn_embodied(&mut world, Faction::Player, at(60, 0)); // far beyond default tell_range 28
+        let point = at(10, 0);
+        let terr = Territory {
+            points: vec![ControlPoint::neutral(point)],
+        };
+        let terrain = Terrain::open();
+        let tells = tells_for(&world, &terrain, TellMode::Subtle, Faction::Enemy);
+        assert!(
+            tells.is_empty(),
+            "out of range → detection legitimately reveals nothing"
+        );
+
+        let mut rng = Rng::new(7);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig {
+                hunt_embodied: true,
+            },
+            &tells,
+            Faction::Enemy,
+            60,
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::AttackMove { target, .. } if *target == point)),
+            "with no tell, the commander reverts to capturing the point: {cmds:?}"
+        );
+        assert!(
+            !cmds.iter().any(
+                |c| matches!(c, Command::AttackMove { target, .. } if *target == at(60, 0))
+            ),
+            "the commander must NOT know the secret hero position (no omniscient peek): {cmds:?}"
+        );
+    }
+
+    /// 3b. **Honest bound — line of sight blocked.** Flag ON and in range, but a wall blocks LoS, so
+    ///     the channel reveals nothing and the commander does not react.
+    #[test]
+    fn hunt_does_not_react_when_line_of_sight_blocked() {
+        let mut world = World::new();
+        spawn_unit(&mut world, Faction::Enemy, at(0, 0));
+        spawn_embodied(&mut world, Faction::Player, at(10, 0)); // in range, but...
+        let mut terrain = Terrain::open();
+        terrain.set_cover(69, 64, Cover::Heavy); // ...a wall strictly between (cells 64↔74)
+        assert!(!terrain.line_of_sight(at(0, 0), at(10, 0)));
+        let point = at(0, 12); // well outside the commit radius (6) so it IS a capture target
+        let terr = Territory {
+            points: vec![ControlPoint::neutral(point)],
+        };
+        let tells = tells_for(&world, &terrain, TellMode::Subtle, Faction::Enemy);
+        assert!(tells.is_empty(), "no LoS → detection reveals nothing");
+
+        let mut rng = Rng::new(7);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig {
+                hunt_embodied: true,
+            },
+            &tells,
+            Faction::Enemy,
+            60,
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::AttackMove { target, .. } if *target == point)),
+            "LoS-blocked → no reaction, ordinary capture plan: {cmds:?}"
+        );
+    }
+
+    /// 3c. **Honest bound — `Hidden` mode.** Even point-blank in plain sight, `TellMode::Hidden`
+    ///     yields no tells, so a commander that consults the channel gains ZERO knowledge — the
+    ///     "no omniscient peek" property is structural, not a discipline.
+    #[test]
+    fn hunt_gains_nothing_in_hidden_tell_mode() {
+        let (world, terrain, terr, _hero, point) = hunt_scene(); // hero in plain, in-range sight
+        let tells = tells_for(&world, &terrain, TellMode::Hidden, Faction::Enemy);
+        assert!(tells.is_empty(), "Hidden mode reveals nothing, ever");
+
+        let mut rng = Rng::new(7);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig {
+                hunt_embodied: true,
+            },
+            &tells,
+            Faction::Enemy,
+            60,
+        );
+        assert!(
+            cmds.iter()
+                .any(|c| matches!(c, Command::AttackMove { target, .. } if *target == point)),
+            "Hidden mode → the commander chases nothing, captures as usual: {cmds:?}"
+        );
+    }
+
+    /// 4. **Deterministic.** Identical inputs (world, tells, config, seed, tick) ⇒ identical command
+    ///    list, twice over — the gone-dark path adds no float and no nondeterminism.
+    #[test]
+    fn hunt_is_deterministic_for_identical_inputs() {
+        let (world, terrain, terr, _hero, _point) = hunt_scene();
+        let tells = tells_for(&world, &terrain, TellMode::Subtle, Faction::Enemy);
+        let cfg = CommanderConfig {
+            hunt_embodied: true,
+        };
+        let run = || {
+            let mut rng = Rng::new(99);
+            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &cfg, &tells, Faction::Enemy, 60)
+        };
+        let a = run();
+        let b = run();
+        assert_eq!(a.len(), b.len(), "same inputs → same command count");
+        for (x, y) in a.iter().zip(b.iter()) {
+            assert_eq!(format!("{x:?}"), format!("{y:?}"), "hunt command stream diverged");
+        }
+    }
+
+    /// The tell picker mirrors the other "nearest" scans: nearest by squared distance, stable
+    /// tie-break toward the earliest tell in the slice. (No sqrt, no float.)
+    #[test]
+    fn nearest_tell_picks_nearest_with_stable_tiebreak() {
+        let dummy = World::new().spawn(); // an entity handle; only `pos` matters to the picker
+        let t = |x: i32, y: i32| Tell {
+            unit: dummy,
+            pos: at(x, y),
+            age_ticks: 0,
+        };
+        // Strictly nearer wins regardless of order.
+        let tells = [t(40, 0), t(5, 0)];
+        assert_eq!(nearest_tell(&tells, at(0, 0)), Some(at(5, 0)));
+        // Equal distance → the earlier slice entry wins (stable).
+        let tied = [t(10, 0), t(-10, 0)];
+        assert_eq!(nearest_tell(&tied, at(0, 0)), Some(at(10, 0)));
+        // Empty slice → nothing.
+        assert_eq!(nearest_tell(&[], at(0, 0)), None);
     }
 }
