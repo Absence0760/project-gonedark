@@ -263,6 +263,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // No armour penetration (P4 default): full damage vs the unarmoured units it fights
                 // (multiplier 1.0); only bites against a future armoured kind. Balance unchanged.
                 penetration: Fixed::ZERO,
+                // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
+                // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
+                dispersion: Fixed::ZERO,
             },
         ),
         UnitKind::Heavy => (
@@ -287,6 +290,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 muzzle_vel: Fixed::ZERO,
                 // No armour penetration (P4 default) — unchanged balance vs unarmoured units.
                 penetration: Fixed::ZERO,
+                // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
+                // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
+                dispersion: Fixed::ZERO,
             },
         ),
         // A produced armoured vehicle (D65). High HP + a hard, slow gun + an independent turret slew
@@ -312,6 +318,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 turret_speed: 180,
                 muzzle_vel: Fixed::ZERO,
                 penetration: Fixed::ZERO,
+                // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
+                // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
+                dispersion: Fixed::ZERO,
             },
         ),
         // A support unit (D65): NO offensive weapon (range 0 ⇒ combat never acquires a target for
@@ -333,6 +342,9 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 turret_speed: 0,
                 muzzle_vel: Fixed::ZERO,
                 penetration: Fixed::ZERO,
+                // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
+                // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
+                dispersion: Fixed::ZERO,
             },
         ),
     }

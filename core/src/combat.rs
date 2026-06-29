@@ -701,6 +701,7 @@ mod tests {
             turret_speed: 0,
             muzzle_vel: Fixed::ZERO,
             penetration: Fixed::ZERO,
+            dispersion: Fixed::ZERO,
         }
     }
 
@@ -722,6 +723,7 @@ mod tests {
             turret_speed: 0,
             muzzle_vel: Fixed::ZERO,
             penetration: Fixed::ZERO,
+            dispersion: Fixed::ZERO,
         }
     }
 

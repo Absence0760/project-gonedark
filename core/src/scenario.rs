@@ -104,6 +104,9 @@ fn duel_gun() -> Weapon {
         turret_speed: 0,
         muzzle_vel: DUEL_GUN_MUZZLE_VEL,
         penetration: DUEL_GUN_PENETRATION,
+        // Starts fully settled (P5): a stationary duel tank fires dead-on. The bloom only grows if
+        // the embodied player drives/traverses, then settles back at rest.
+        dispersion: Fixed::ZERO,
     }
 }
 
@@ -901,8 +904,11 @@ mod tests {
         // Stable on every arch (fixed-point only). Recompute + re-pin only on an *intended* change
         // to the duel scene/gun/armour or the ballistic/facet math; an *unexpected* change here is a
         // desync, not a value to bless. (D67: re-pinned after the Weapon fold grew reserve +
-        // reserve_max — every slot now folds two more u32, so the stream shifted by design.)
-        assert_eq!(sum, 0x9ce4_c890_207f_57f1);
+        // reserve_max — every slot now folds two more u32, so the stream shifted by design.
+        // D55 P5: re-pinned again after the Weapon fold grew a `dispersion` word per slot. The duel
+        // tank fires from a standstill, so its dispersion stays 0 — the shells fly identically; only
+        // the raw stream value shifted by the added zero word, by design.)
+        assert_eq!(sum, 0x5581_f62f_c62c_7031);
         // And it is reproducible run-to-run on this arch.
         assert_eq!(run_ballistic_duel(130), sum);
     }

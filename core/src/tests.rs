@@ -655,6 +655,7 @@ fn ecs_respawn_resets_component_arrays() {
         turret_speed: 9,
         muzzle_vel: Fixed::from_ratio(1, 4),
         penetration: Fixed::from_ratio(1, 5),
+        dispersion: Fixed::from_ratio(1, 7),
     };
     w.posture[i] = crate::components::Posture::Crouched;
     w.suppression[i] = Fixed::HALF;
@@ -1621,6 +1622,7 @@ fn embodied_tank(sim: &mut Sim, x: i32, y: i32, muzzle_vel: i32, damage: i32, ra
         turret_speed: 200,
         muzzle_vel: Fixed::from_int(muzzle_vel),
         penetration: Fixed::ZERO,
+        dispersion: Fixed::ZERO,
     };
     e
 }
@@ -1797,6 +1799,145 @@ fn snapshot_round_trip_preserves_in_flight_projectile_pool() {
         tampered.checksum(),
         "the in-flight pool moves the checksum (folded, not ignored)"
     );
+}
+
+// ===========================================================================
+// Tank embodiment P5 (D55): aim-time dispersion — the reticle blooms under hull motion / turret
+// traverse, settles at rest, and a fully-settled gun fires dead-on (zero scatter). Here so the
+// checksum/persist + lockstep assertions ride the determinism arch matrix (invariant #7).
+// ===========================================================================
+
+/// `Weapon.dispersion` is real, checksummed sim state: it must survive serialize/deserialize AND
+/// genuinely perturb the per-tick checksum (the fold/deserialize symmetry for the new field).
+#[test]
+fn tank_dispersion_is_checksummed_and_round_trips() {
+    let mut sim = Sim::new(0xD15_9E55);
+    let u = sim.world.spawn();
+    let i = u.index as usize;
+    sim.world.weapon[i].dispersion = Fixed::from_ratio(3, 8);
+
+    let restored = Sim::deserialize(&sim.serialize()).expect("round-trip deserialize");
+    assert_eq!(
+        restored.world.weapon[i].dispersion,
+        Fixed::from_ratio(3, 8),
+        "dispersion round-trips through serialize/deserialize",
+    );
+    assert_eq!(restored.checksum(), sim.checksum(), "restored state checksums identically");
+
+    // It is genuinely folded, not ignored.
+    let base = sim.checksum();
+    sim.world.weapon[i].dispersion = Fixed::ZERO;
+    assert_ne!(base, sim.checksum(), "dispersion is checksummed");
+    sim.world.weapon[i].dispersion = Fixed::from_ratio(3, 8); // restore
+    assert_eq!(base, sim.checksum());
+}
+
+/// A driven tank's reticle blooms (grows) under hull motion and settles back toward zero (pinpoint)
+/// once the stick is released — the core P5 behaviour, end to end through `Sim::step`.
+#[test]
+fn embodied_tank_dispersion_blooms_on_drive_and_settles_at_rest() {
+    use crate::dispersion::DISPERSION_SETTLE;
+
+    let mut sim = Sim::new(0xB1009);
+    let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30); // muzzle_vel 2 ⇒ a real ballistic tank gun
+    let ti = tank.index as usize;
+    assert_eq!(sim.world.weapon[ti].dispersion, Fixed::ZERO, "starts settled");
+
+    // Drive forward for several ticks: dispersion must climb (each tick blooms more than it settles).
+    let mut prev = Fixed::ZERO;
+    for _ in 0..6 {
+        sim.step(&[Command::DriveHull { entity: tank, dir: v(1, 0) }]);
+        let now = sim.world.weapon[ti].dispersion;
+        assert!(now > prev, "bloom grows while driving: {prev:?} -> {now:?}");
+        prev = now;
+    }
+    let bloomed = sim.world.weapon[ti].dispersion;
+    assert!(bloomed > Fixed::ZERO, "a driving tank's reticle is blown open");
+
+    // Release the stick: dispersion settles back down, by exactly one settle step per idle tick.
+    sim.step(&[]);
+    let after_one = sim.world.weapon[ti].dispersion;
+    assert_eq!(after_one, bloomed - DISPERSION_SETTLE, "settles one step at rest");
+    for _ in 0..64 {
+        sim.step(&[]);
+    }
+    assert_eq!(
+        sim.world.weapon[ti].dispersion,
+        Fixed::ZERO,
+        "holding still settles all the way back to pinpoint",
+    );
+}
+
+/// Traversing the turret also blooms the reticle (the second growth source), through `Sim::step`.
+#[test]
+fn embodied_tank_turret_traverse_blooms() {
+    let mut sim = Sim::new(0x7A4_5E7);
+    let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30);
+    let ti = tank.index as usize;
+    assert_eq!(sim.world.weapon[ti].dispersion, Fixed::ZERO);
+    // Aim 90° off the hull: the turret slews (turret_speed > 0) → it traversed → bloom.
+    sim.step(&[Command::AimTurret { entity: tank, dir: v(0, 1) }]);
+    assert!(
+        sim.world.weapon[ti].dispersion > Fixed::ZERO,
+        "a traversing turret blooms the reticle",
+    );
+}
+
+/// A fully-settled embodied tank fires **dead-on** the aim: the launched shell's velocity is exactly
+/// the aim scaled to `muzzle_vel`, with zero scatter (the skill-honest "settled = pinpoint" property,
+/// asserted at exact fixed-point values).
+#[test]
+fn fully_settled_tank_fires_dead_on() {
+    let mut sim = Sim::new(0x5E771ED);
+    let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30);
+    let ti = tank.index as usize;
+    assert_eq!(sim.world.weapon[ti].dispersion, Fixed::ZERO, "settled");
+    sim.step(&[Command::Fire { entity: tank, dir: v(1, 0) }]);
+    assert_eq!(sim.projectiles.len(), 1, "a shell launched");
+    assert_eq!(
+        sim.projectiles[0].vel2d,
+        Vec2::new(Fixed::from_int(2), Fixed::ZERO),
+        "a settled gun fires exactly along the aim, scaled to muzzle_vel — zero scatter",
+    );
+}
+
+/// A bloomed gun's shot is deterministically scattered: two sims on one seed, driven then fired
+/// identically, agree on every per-tick checksum (the scatter rides the reserved sim RNG, folded —
+/// invariant #7), and the bloomed shell is genuinely deflected off the pinpoint line.
+#[test]
+fn scattered_fire_is_bit_identical_across_two_sims() {
+    fn build() -> (Sim, Entity) {
+        let mut sim = Sim::new(0x5CA7_7E55);
+        let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30);
+        let _enemy = passive_enemy(&mut sim, 40, 0);
+        (sim, tank)
+    }
+    // Drive to bloom the reticle, then fire — on both peers identically.
+    let drive_then_fire = |sim: &mut Sim, tank: Entity| {
+        for _ in 0..8 {
+            sim.step(&[Command::DriveHull { entity: tank, dir: v(1, 0) }]);
+        }
+        assert!(sim.world.weapon[tank.index as usize].dispersion > Fixed::ZERO, "blown open");
+        sim.step(&[Command::Fire { entity: tank, dir: v(1, 0) }]);
+    };
+    let (mut a, ta) = build();
+    let (mut b, tb) = build();
+    drive_then_fire(&mut a, ta);
+    drive_then_fire(&mut b, tb);
+    assert_eq!(a.checksum(), b.checksum(), "scattered fire is bit-identical across peers");
+    assert_eq!(a.projectiles.len(), 1, "a scattered shell is in flight");
+    // The bloomed shot is deflected off the dead-on +X line (a settled shot would be (2, 0) exactly).
+    assert_ne!(
+        a.projectiles[0].vel2d,
+        Vec2::new(Fixed::from_int(2), Fixed::ZERO),
+        "a moving gun's shell scatters off the pinpoint aim",
+    );
+    // ...and the two peers keep agreeing as the shell flies.
+    for _ in 0..12 {
+        a.step(&[]);
+        b.step(&[]);
+        assert_eq!(a.checksum(), b.checksum(), "in-flight scattered shell stays peer-identical");
+    }
 }
 
 // ===========================================================================

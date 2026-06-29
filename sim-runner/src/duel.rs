@@ -274,7 +274,10 @@ mod tests {
         assert_eq!(
             simulate(200).checksums.last().copied(),
             // D67: re-pinned after the Weapon fold grew reserve + reserve_max (two more u32/slot).
-            Some(0xef4b_32dc_9f7d_973e),
+            // D55 P5: re-pinned again after the fold grew a per-slot `dispersion` word. The duel
+            // tank fires from a standstill (dispersion stays 0 → identical shells); only the raw
+            // stream value shifted by the added zero word, by design.
+            Some(0xb8ba_b3c4_9522_393e),
         );
     }
 

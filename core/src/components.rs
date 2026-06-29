@@ -363,6 +363,17 @@ pub struct Weapon {
     /// target, where a low-penetration shot bounces off the thick frontal facet but pens the
     /// thinner flank/rear. `Fixed`, no float (invariant #1).
     pub penetration: Fixed,
+    /// Current **aim-time dispersion** (reticle bloom), in `Fixed` (tank embodiment P5, D55). Grows
+    /// while the tank's hull moves or its turret traverses ([`dispersion::bloom`](crate::dispersion::bloom))
+    /// and settles back toward zero when it holds still and steady
+    /// ([`dispersion::dispersion_system`](crate::dispersion::dispersion_system)); a launched shell's
+    /// direction is perturbed in proportion to it
+    /// ([`dispersion::scatter_dir`](crate::dispersion::scatter_dir)). A **fully settled** gun
+    /// (`dispersion == 0`) fires **dead-on** with **zero scatter** — mastery is waiting for the
+    /// reticle to settle. Meaningful only for a **ballistic tank gun** (`muzzle_vel > 0`): the
+    /// dispersion system gates on that, so every infantry/hitscan weapon keeps `dispersion == 0`
+    /// (the default) and is byte-neutral. `Fixed`, no float (invariant #1).
+    pub dispersion: Fixed,
 }
 
 /// Directional armour, in the same `Fixed` units a [`Weapon::penetration`] is measured in (tank
