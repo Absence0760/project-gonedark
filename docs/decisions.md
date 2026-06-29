@@ -1544,16 +1544,20 @@ invariant a structural property rather than a discipline.
 `tell_range`, and `tell_linger_ticks` are a starting point to move from play, like the D30 balance
 baseline); it does not resolve **[Q1](open-questions.md)** (how thin the thread back to command;
 lean: alerts-only) or **[Q3](open-questions.md)** (possession leashed vs global) — both stay open
-with their leans, and the detection mechanism is compatible with either. The **host/HUD wiring** (an
-enemy seeing the tell on screen) and a **scripted/PvE enemy that consults the channel** are
-follow-ups, not part of this `core` slice.
+with their leans, and the detection mechanism is compatible with either. The **host/HUD wiring**
+(`render::detection` + the pure `engine::detection_markers` seam, invariant-#6-guarded) and a
+**scripted/PvE enemy that consults the channel** (`CommanderConfig::hunt_embodied`, default OFF,
+range+LoS-honest) were the net-facing follow-ups to this `core` slice — both have since landed
+(see [`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream D").
 
 **Consequences:**
 - [`open-questions.md`](open-questions.md) **Q2** migrates to RESOLVED, pointing here.
 - A new `core::detection` module ships (config + `detectable_embodiment` + tests); the
   [`README.md`](../README.md) repo-map and [`phase-3-plan.md`](plans/phase-3-plan.md) workstream D are
-  updated. The mechanism is **single-client now**; the HUD wiring + a scripted enemy that reads the
-  channel are the net-facing follow-ups (the *actual* two-human mind game needs the net layer).
+  updated. The mechanism landed single-client first; the HUD wiring (`render::detection` +
+  `engine::detection_markers`) and the scripted enemy that reads the channel
+  (`CommanderConfig::hunt_embodied`, default OFF) have since landed as Phase 3 workstream-D
+  follow-ups. The *actual* two-human mind game still needs the live net layer.
 
 ---
 

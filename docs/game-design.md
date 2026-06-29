@@ -155,10 +155,11 @@ reactions.
 
 - **PvP is where this sings.** Two humans both face the same dilemma, so a mind game
   emerges: *read when your opponent has gone dark and punish it* — a flank, a base
-  poke, an expansion grab timed for when you guess they're blind. Whether blindness
-  is detectable by the enemy is an [open question](open-questions.md); even if it
-  isn't directly visible, it can be *inferred* (their units stopped getting new
-  orders; one unit is suddenly moving with superhuman precision).
+  poke, an expansion grab timed for when you guess they're blind. How detectable the
+  blindness is to an enemy is now settled ([`decisions.md`](decisions.md) D33): a tunable
+  tell, default Subtle — revealed only to an observer with a unit in range and LoS, fading
+  once that sightline is lost. Even without the tell it can be *inferred* (their units
+  stopped getting new orders; one unit is suddenly moving with superhuman precision).
 - **Single-player / PvE** simulates the same pressure: the AI runs its own attack
   timing and *happens* to punish you when you've overstayed and left an angle
   undefended. It should **not** be omnisciently "you're embodied, attack now" — that

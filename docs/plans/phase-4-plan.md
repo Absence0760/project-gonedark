@@ -4,10 +4,13 @@
 > (game systems, D23–D26/D29–D30, signed off D31) are done; **Phase 3 (scale & net) is still
 > running** ([`phase-3-plan.md`](phase-3-plan.md)) — its codeable surface has largely landed
 > (A: flow-field caching ~3.7 ms/tick; B: the full in-process→UDP lockstep stack + RTT-adaptive
-> delay; C: authoritative snapshot D28 + reconnect-by-replay; D: the `core::detection` tell D33),
-> but the **net-facing tail is not** — the host-side RTT/matchmaking/relay wiring, the
-> Wi-Fi↔cellular **handoff** (blocked on a QUIC transport), and the *two-human* PvP mind game all
-> still need the live net layer. **This matters for Phase 4:** several app-shell surfaces (lobby /
+> delay + the `engine::net_tuning` RTT-estimator host seam; C: authoritative snapshot D28 +
+> reconnect-by-replay; D: the `core::detection` tell D33 + the detection HUD (`render::detection`,
+> `engine::detection_markers`) + the honest AI consult (`CommanderConfig::hunt_embodied`)),
+> but the **net-facing tail is not** — the live RTT *sample source* (transport ping/pong in
+> `pal-desktop`), matchmaking/relay wiring, the Wi-Fi↔cellular **handoff** (blocked on a QUIC
+> transport), and the *two-human* PvP mind game all still need the live net layer. **This matters
+> for Phase 4:** several app-shell surfaces (lobby /
 > matchmaking, the in-session reconnect prompt, the PvP half of match setup) sit directly on top
 > of Phase 3 plumbing that hasn't shipped, so they are **blocked-by-Phase-3** here, not buildable
 > now. This doc is the product-of-record plan; it is sequenced by what is unblocked *today* and
@@ -58,7 +61,7 @@ is named explicitly.
 | 2 | **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a loss reads as *"I stayed too long."* | **[Q5](../open-questions.md)** (PvE is the natural teach surface); invariant #6 | **BLOCKED — [Q5](../open-questions.md).** The teach surface *is* the PvE-vs-PvP-first call; can't author the first-run beat before Q5 picks the first shippable mode. |
 | 3 | **Settings** | Graphics tiers (↔ device quality tiers, §4 WS-C), audio-mix levels, the touch-layout/rebind editor (configures the D14 scheme), desktop key/gamepad rebinds, **accessibility** | invariant #6 (accessibility) | **BLOCKED — native scaffold (D32).** Buildable in design terms (it configures shipped systems), but it is native UI on the seam, and it **owns the accessibility cues** (§5) that the going-dark channel's fairness depends on — so it can't be a thin afterthought. |
 | 4 | **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry | order/stance vocab (D25); **[Q5](../open-questions.md)** | **BLOCKED — [Q5](../open-questions.md) (PvP half).** The skirmish/PvE half rides shipped order/stance vocab (D25), but "PvP entry" depends on Q5 *and* Phase 3 net; mode select is undefined until Q5. |
-| 5 | **Lobby & matchmaking** (PvP) | Party/invite, connection-quality readout, ready-up. *Seam:* the net plumbing is Phase 3; only the surface is Phase 4 | **Phase 3 netcode** (D27 lockstep, host-RTT, relay/matchmaking); **[Q5](../open-questions.md)** | **BLOCKED — Phase 3 netcode + [Q5](../open-questions.md).** The connection-quality readout and ready-up sit on the host-side RTT estimator + relay/matchmaking that Phase 3 still owes; no PvP target until Q5. |
+| 5 | **Lobby & matchmaking** (PvP) | Party/invite, connection-quality readout, ready-up. *Seam:* the net plumbing is Phase 3; only the surface is Phase 4 | **Phase 3 netcode** (D27 lockstep, host-RTT, relay/matchmaking); **[Q5](../open-questions.md)** | **BLOCKED — Phase 3 netcode + [Q5](../open-questions.md).** The connection-quality readout and ready-up sit on the live RTT *sample source* (transport ping/pong — the one stub the landed `engine::net_tuning` estimator seam still needs) + relay/matchmaking that Phase 3 still owes; no PvP target until Q5. |
 | 6 | **Progression & profile** | Persistence, stats, cosmetic inventory | account/persistence backend ([`infrastructure.md`](../infrastructure.md)) | **BLOCKED — accounts/persistence backend.** The Postgres-backed accounts/entitlements service is scaffolding-only today ([`infrastructure.md`](../infrastructure.md)); no server code yet. |
 | 7 | **Store / IAP** | Cosmetic purchases, restore-purchases, receipts, refund paths | **[Q9](../open-questions.md)** (per-platform billing rails); **[Q11](../open-questions.md)** (hero cosmetics feed the catalog) | **BLOCKED — [Q9](../open-questions.md) + [Q11](../open-questions.md).** Billing rails (mandatory StoreKit/Play Billing on mobile; desktop Stripe-vs-Steam) are unresolved (Q9); the catalog has nothing to sell until the hero-asset source (Q11) is picked. Gated by surface 8 (consent) at runtime. |
 | 8 | **Consent & legal** | Telemetry/privacy consent, age gate, ToS/EULA — **gates** store + telemetry, so it precedes them | [`infrastructure.md`](../infrastructure.md) | **PARTIAL — the *gate* is buildable now, the *UI* is native.** The **consent-gate seam** (the boolean that telemetry + store check) ships now in `server` (§4 WS-D); the consent *screen* itself is native chrome on the seam (D32), blocked with the rest. Build the gate first so telemetry is structurally consent-respecting from its first byte. |
@@ -263,7 +266,7 @@ carries its own blocker from §2:
 | Onboarding / tutorial | **[Q5](../open-questions.md)** (PvE-vs-PvP-first defines the teach surface) |
 | Settings | owns the accessibility cues (§5) — must ship *with* them, not after |
 | Match setup | **[Q5](../open-questions.md)** (PvP half + mode select) |
-| Lobby & matchmaking | **Phase 3 netcode** (host-RTT, relay/matchmaking) + **[Q5](../open-questions.md)** |
+| Lobby & matchmaking | **Phase 3 netcode** (live RTT sample source, relay/matchmaking) + **[Q5](../open-questions.md)** |
 | Progression & profile | **accounts/persistence backend** ([`infrastructure.md`](../infrastructure.md)) |
 | Store / IAP | **[Q9](../open-questions.md)** (billing rails) + **[Q11](../open-questions.md)** (catalog content) |
 | Consent & legal | the *gate* ships in WS-D; the *screen* is blocked native chrome |

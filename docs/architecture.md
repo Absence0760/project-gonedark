@@ -260,8 +260,9 @@ scheduling (nearby/engaged squads re-evaluate every tick, distant idle squads ev
 
 ## Netcode — deterministic lockstep
 
-> **Topology decided ([`decisions.md`](decisions.md) D27); first slice landed
-> ([`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream B").** The lockstep loop + wire codec live in
+> **Topology decided ([`decisions.md`](decisions.md) D27); full in-process→UDP stack +
+> RTT-adaptive delay landed ([`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream B").** The
+> lockstep loop + wire codec live in
 > a new platform-free, **sans-I/O** `core::lockstep`: it produces/consumes opaque byte frames but
 > does no transport. The host moves the bytes via a `pal::Transport` trait (no socket type); two
 > concrete backends ship in `pal-desktop`: an in-process `LoopbackTransport` for dev/test and a
@@ -269,9 +270,11 @@ scheduling (nearby/engaged squads re-evaluate every tick, distant idle squads ev
 > concrete-in-the-backend split as D19/D20. `core` never names a socket (nor depends on `pal`); the
 > transport never names a `Command`. The in-process 2-client loop is done and verified against a
 > simulated lossy/jittery/reordering channel (per-tick checksums agree + match a no-network
-> reference). **Still pending:** QUIC/relay topology and Wi-Fi↔cellular socket handoff (UDP only so
-> far). Avatar-local prediction (D15) stays in the `engine` presentation path, never touching
-> sim state.
+> reference). RTT-adaptive delay uses an agreed `DelayChange` protocol; the `engine::net_tuning`
+> host seam converts measured RTT to integer-tick proposals via `Lockstep::propose_delay` (live RTT
+> *sample source* in `pal-desktop` still owed). **Still pending:** QUIC/relay topology and
+> Wi-Fi↔cellular socket handoff (UDP only so far). Avatar-local prediction (D15) stays in the
+> `engine` presentation path, never touching sim state.
 
 > **Reconnect snapshot format decided ([`decisions.md`](decisions.md) D28); landed
 > ([`phase-3-plan.md`](plans/phase-3-plan.md) §"Workstream C").** The authoritative resume snapshot is a

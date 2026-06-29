@@ -190,7 +190,8 @@ model.
 - [ ] 200-unit stress tests; job-system parallelism; profiling on target hardware.
 - [ ] Deterministic lockstep netcode; input delay; per-tick checksum diffing in CI.
 - [ ] Reconnect/snapshot handling; Wi-Fi↔cellular handoff.
-- [ ] PvP attention mind-game tuning (see open questions: enemy detection of "gone dark").
+- [ ] PvP attention mind-game tuning (enemy detection of "gone dark" — mechanism, HUD, and honest
+  AI consult all landed per [D33](decisions.md); the *two-human* tuning needs the live net layer).
 
 ## Phase 4 — Polish & ship
 
