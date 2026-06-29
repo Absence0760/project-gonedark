@@ -16,4 +16,4 @@ gonedark-engine = { path = "../engine" }
 gonedark-pal = { path = "../pal" }
 wgpu = "29"
 pollster = "0.4"
-png = "0.17"
+png = "0.18"
