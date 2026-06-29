@@ -37,6 +37,39 @@ pub enum EventKind {
     Surface,
 }
 
+impl EventKind {
+    /// Stable string for the `kind` column of the Postgres `telemetry_events` table (and any
+    /// other text serialization). Kept identical to the `snake_case` JSON wire form so the DB
+    /// value matches what the client sent — one vocabulary, not two. Pure + unit-tested so the
+    /// Postgres sink's row mapping is covered without a database (see the `as_db_str`/
+    /// `from_db_str` round-trip in this module's tests).
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            EventKind::SessionStart => "session_start",
+            EventKind::SessionEnd => "session_end",
+            EventKind::MatchStart => "match_start",
+            EventKind::MatchEnd => "match_end",
+            EventKind::Embody => "embody",
+            EventKind::Surface => "surface",
+        }
+    }
+
+    /// Inverse of [`EventKind::as_db_str`] — parse a `kind` column back to the typed enum.
+    /// Returns `None` for an unknown string (a row written by a newer schema), so a reader can
+    /// decide how to handle a forward-incompatible row rather than silently mismapping it.
+    pub fn from_db_str(s: &str) -> Option<EventKind> {
+        Some(match s {
+            "session_start" => EventKind::SessionStart,
+            "session_end" => EventKind::SessionEnd,
+            "match_start" => EventKind::MatchStart,
+            "match_end" => EventKind::MatchEnd,
+            "embody" => EventKind::Embody,
+            "surface" => EventKind::Surface,
+            _ => return None,
+        })
+    }
+}
+
 /// One telemetry event as it arrives on the wire and is stored. Deliberately flat and
 /// schema-stable: a typed [`EventKind`], an opaque client-supplied id + timestamp (the server
 /// does not mint these — keeps the scaffold dependency-free and lets the client dedupe), and a
@@ -235,5 +268,41 @@ mod tests {
     fn unknown_event_kind_is_rejected_at_schema() {
         let bad = r#"{"event_id":"x","kind":"not_a_kind","client_ts":"t"}"#;
         assert!(serde_json::from_str::<TelemetryEvent>(bad).is_err());
+    }
+
+    #[test]
+    fn db_str_round_trips_for_every_kind() {
+        // The pure row mapping the Postgres sink relies on: every kind must survive
+        // as_db_str -> from_db_str unchanged. Exhaustive so a new variant fails this test
+        // until its mapping is added (the `match` in as_db_str also forces a compile error).
+        for kind in [
+            EventKind::SessionStart,
+            EventKind::SessionEnd,
+            EventKind::MatchStart,
+            EventKind::MatchEnd,
+            EventKind::Embody,
+            EventKind::Surface,
+        ] {
+            assert_eq!(
+                EventKind::from_db_str(kind.as_db_str()),
+                Some(kind),
+                "{kind:?} must round-trip through its db string"
+            );
+        }
+    }
+
+    #[test]
+    fn db_str_matches_json_wire_form() {
+        // One vocabulary: the DB `kind` string equals the snake_case JSON tag, so a value
+        // written by the sink reads back as what the client sent.
+        let ev = sample(EventKind::MatchEnd);
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["kind"], ev.kind.as_db_str());
+    }
+
+    #[test]
+    fn from_db_str_rejects_unknown() {
+        assert_eq!(EventKind::from_db_str("not_a_kind"), None);
+        assert_eq!(EventKind::from_db_str(""), None);
     }
 }
