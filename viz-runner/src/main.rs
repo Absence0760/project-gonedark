@@ -216,8 +216,35 @@ fn is_alert_marker(p: [u8; 4]) -> bool {
 fn is_muzzle_flash(p: [u8; 4]) -> bool {
     p[0] > 248 && p[1] > 240 && (182..=214).contains(&p[2]) && (p[1] as i32 - p[2] as i32) > 32
 }
+/// A WS-4 hitmarker pixel (`render::hud` `HITMARKER_COLOR` = white `[1,1,1]`, sRGB ≈ (255,255,255)):
+/// a bright near-white where ALL THREE channels are high — crucially including BLUE. This is what
+/// makes it distinct from everything else in the embodied frame: the muzzle flash is a WARM yellow
+/// (blue stays ~196, see `is_muzzle_flash`); the FPS world is a muted, low-saturation blue-grey that
+/// never gets this bright; and the only near-white alert glyph (the pale-grey UnitLost marker) rides
+/// the screen-EDGE ring, never the center. So a high-blue near-white pixel at frame center reads
+/// only as the centered hitmarker "X".
+fn is_hitmarker(p: [u8; 4]) -> bool {
+    p[0] > 235 && p[1] > 235 && p[2] > 235
+}
 fn count(rgba: &[u8], f: impl Fn([u8; 4]) -> bool) -> usize {
     px(rgba).filter(|&p| f(p)).count()
+}
+/// Count pixels matching `f` inside a centered square crop of half-width `half` px. The hitmarker
+/// draws dead-center (NDC `(0,0)`), so cropping to the center isolates it from the edge-ring alert
+/// markers and the bottom-anchored weapon viewmodel — the established coarse-bucket viz style,
+/// localized in space rather than only in color.
+fn count_center(rgba: &[u8], half: u32, f: impl Fn([u8; 4]) -> bool) -> usize {
+    let (cx, cy) = (W / 2, H / 2);
+    let mut n = 0;
+    for y in cy.saturating_sub(half)..(cy + half).min(H) {
+        for x in cx.saturating_sub(half)..(cx + half).min(W) {
+            let i = ((y * W + x) * 4) as usize;
+            if f([rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]) {
+                n += 1;
+            }
+        }
+    }
+    n
 }
 fn dark_fraction(rgba: &[u8]) -> f32 {
     count(rgba, is_dark) as f32 / (rgba.len() / 4) as f32
@@ -677,10 +704,12 @@ fn main() {
     println!("[embodied_kill] holding fire while embodied kills the enemies under the crosshair");
     let mut g = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Infantry);
     advance(&mut g, 4, InputFrame::default(), &gpu, &view); // settle the camera/world
-    save_png(
-        "target/viz/embodied_kill_before.png",
-        &read_pixels(&gpu.device, &gpu.queue, &target),
-    );
+    let before = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/embodied_kill_before.png", &before);
+    // WS-4 baseline: BEFORE any shot connects there is no hitmarker, so the center crop holds no
+    // bright near-white. (The embodied world center is the muted blue-grey horizon.) This makes the
+    // hitmarker check below a real delta — the "X" appears where ~zero was.
+    let pre_hit_center = count_center(&before, 48, is_hitmarker);
     // The kill itself is judged on SIM state, not screen pixels: the embodied first-person frame
     // carries a warm muzzle-flash tint + a low-health vignette that defeat an enemy-red pixel count
     // (we render before/after PNGs for eyeballing, but assert on the authoritative entity count).
@@ -689,17 +718,37 @@ fn main() {
         fire: true,
         ..Default::default()
     };
-    advance_holding(&mut g, 160, fire, &gpu, &view); // ~2.6 s of trigger → the cone targets die
-    save_png(
-        "target/viz/embodied_kill_after.png",
-        &read_pixels(&gpu.device, &gpu.queue, &target),
-    );
+    // Hold the trigger ~2.6 s. A hitmarker flashes for HITMARKER_TICKS (10) per connecting shot and
+    // fades, so any single frame may fall in the gap between hits — sample the whole window and keep
+    // the frame with the most center hitmarker pixels (a fresh, full-bright "X"), exactly as the
+    // muzzle-flash scene samples its peak. That frame is the visual proof a shot CONNECTED.
+    let mut best_hit_center = 0usize;
+    let mut hit_frame: Vec<u8> = before.clone();
+    for _ in 0..160 {
+        advance_holding(&mut g, 1, fire.clone(), &gpu, &view);
+        let f = read_pixels(&gpu.device, &gpu.queue, &target);
+        let c = count_center(&f, 48, is_hitmarker);
+        if c >= best_hit_center {
+            best_hit_center = c;
+            hit_frame = f;
+        }
+    }
+    save_png("target/viz/embodied_kill_after.png", &hit_frame);
     let enemies_after = g.alive_unit_count(Faction::Enemy);
     check(
         &mut failures,
         "embodied_fire_kills_enemy",
         enemies_before > 0 && enemies_after < enemies_before,
         format!("alive enemy units {enemies_before} → {enemies_after} after sustained embodied fire (the targets you aimed at died)"),
+    );
+    // WS-4: the hitmarker "X" draws over the dark frame when the avatar's OWN shot connects — the
+    // "I hit him" signal the game never sent. The center crop goes from ~0 (pre-hit) to a clear
+    // count on a connecting frame (presentation feedback on the player's own action; invariant #6).
+    check(
+        &mut failures,
+        "embodied_hitmarker_on_connecting_shot",
+        pre_hit_center < 8 && best_hit_center > 20,
+        format!("center hitmarker px {pre_hit_center} pre-hit → {best_hit_center} peak while firing (the \"I hit him\" X drew on a connecting shot)"),
     );
 
     println!(

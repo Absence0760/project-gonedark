@@ -164,6 +164,10 @@ pub enum SoundId {
     Capture,
     /// A queued unit finished production.
     ProductionReady,
+    /// The embodied avatar's own shot connected — the "I hit him" hitmarker tick. Presentation
+    /// feedback on the player's OWN action (never map intel about an unseen enemy), invariant #6
+    /// (WS-4 in-game hit feedback).
+    HitConfirm,
 }
 
 /// One positioned sound for this frame's mix. Floats are fine here (platform side, not the sim):

@@ -146,6 +146,7 @@ pub fn synth_bank(sr: u32) -> HashMap<SoundId, Arc<Vec<f32>>> {
     bank.insert(SoundId::BaseHit, Arc::new(base_hit(sr)));
     bank.insert(SoundId::Capture, Arc::new(capture(sr)));
     bank.insert(SoundId::ProductionReady, Arc::new(production_ready(sr)));
+    bank.insert(SoundId::HitConfirm, Arc::new(hit_confirm(sr)));
     bank
 }
 
@@ -222,6 +223,19 @@ fn production_ready(sr: u32) -> Vec<f32> {
         .collect()
 }
 
+/// A crisp, very short two-tone tick — the embodied "I hit him" hitmarker confirmation. Higher and
+/// shorter than every other cue so it reads as a UI feedback blip, not a world event.
+fn hit_confirm(sr: u32) -> Vec<f32> {
+    let n = secs(sr, 0.05);
+    (0..n)
+        .map(|i| {
+            let t = i as f32 / n as f32;
+            let freq = if t < 0.5 { 1400.0 } else { 1900.0 }; // up-tick: confirmed
+            sine(sr, i, freq) * 0.5 * (1.0 - t)
+        })
+        .collect()
+}
+
 /// Map the legacy opaque `play_oneshot` id onto a [`SoundId`]. Shared so every backend's
 /// fire-and-forget path agrees (desktop/Android both call this).
 pub fn oneshot_sound(sound_id: u32) -> SoundId {
@@ -230,6 +244,7 @@ pub fn oneshot_sound(sound_id: u32) -> SoundId {
         2 => SoundId::BaseHit,
         3 => SoundId::Capture,
         4 => SoundId::ProductionReady,
+        5 => SoundId::HitConfirm,
         _ => SoundId::Gunfire,
     }
 }
@@ -396,6 +411,7 @@ mod tests {
             SoundId::BaseHit,
             SoundId::Capture,
             SoundId::ProductionReady,
+            SoundId::HitConfirm,
         ] {
             let buf = bank.get(&id).expect("sound present");
             assert!(!buf.is_empty(), "{id:?} buffer empty");
@@ -420,6 +436,7 @@ mod tests {
         assert_eq!(oneshot_sound(2), SoundId::BaseHit);
         assert_eq!(oneshot_sound(3), SoundId::Capture);
         assert_eq!(oneshot_sound(4), SoundId::ProductionReady);
+        assert_eq!(oneshot_sound(5), SoundId::HitConfirm);
         assert_eq!(oneshot_sound(0), SoundId::Gunfire);
         assert_eq!(oneshot_sound(99), SoundId::Gunfire);
     }

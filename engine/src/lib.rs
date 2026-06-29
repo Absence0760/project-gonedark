@@ -33,7 +33,7 @@ use gonedark_core::shell::{ConnectionStatus, LinkState, MatchOutcome};
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
 use gonedark_core::territory::ControlPoint;
-use gonedark_pal::{Audio, InputFrame, Transport};
+use gonedark_pal::{Audio, InputFrame, SoundId, Transport};
 use gonedark_render::marquee::Marquee;
 use gonedark_render::overlay::Overlay;
 use gonedark_render::radial::RadialMenu;
@@ -757,6 +757,21 @@ fn should_auto_surface(embodied: bool, avatar_present: bool) -> bool {
     embodied && !avatar_present
 }
 
+/// Did the embodied avatar land a hit this tick? True iff the player is `embodied` AND some
+/// `SimEvent::Damaged` in this frame's deterministic event stream names `avatar` as its `source` —
+/// i.e. the avatar's OWN shot dealt damage. PURE (no `Game`/device) so it is the unit-testable seam
+/// behind the WS-4 hit-feedback cue (the hitmarker + hit SFX).
+///
+/// Invariant #6: this keys STRICTLY on the avatar-as-source — feedback on the player's own action,
+/// not intel about an unseen enemy. It reads only the event stream (already-checksummed state copied
+/// out, never re-folded) + the local embodied flag; it mutates nothing and never enters `core`.
+fn avatar_landed_hit(events: &[SimEvent], avatar: Entity, embodied: bool) -> bool {
+    embodied
+        && events.iter().any(|e| {
+            matches!(*e, SimEvent::Damaged { source, .. } if source == avatar)
+        })
+}
+
 /// The embodied crouch button → a `Command::Crouch` for `player`, or `None` when no press edge
 /// fired this frame. PURE (no `Game`/device) so the toggle inversion is unit-testable. A press
 /// **edge** flips posture off the avatar's CURRENT (authoritative sim) crouched state — the host
@@ -1047,6 +1062,14 @@ pub struct Game {
     /// crosses into `core`. Set from the host-side `input.fire` edge in `frame`, alongside the
     /// `Command::Fire` the sim resolves authoritatively (invariant #4/#6: a render cue, not intel).
     last_fire_tick: Option<u64>,
+
+    /// The sim tick the embodied avatar's own shot last *connected* (dealt damage), or `None` if it
+    /// hasn't this match (WS-4). PRESENTATION ONLY — derived from the deterministic `SimEvent::Damaged`
+    /// stream where `source` is the avatar (the pure [`avatar_landed_hit`] seam) and the player is
+    /// embodied; it drives the centered hitmarker flash ([`gonedark_render::hud::hitmarker_marker`])
+    /// plus a one-shot hit SFX. It is feedback on the player's OWN action — never intel about an
+    /// unseen enemy — so it stays inside invariant #6, and never feeds the sim / never enters `core`.
+    last_hit_tick: Option<u64>,
 
     /// Per-frame-persistent touch-control state (the Android FPS HUD): which finger owns the move
     /// stick / look region + button-edge history. Drives the embodied intents from
@@ -1450,6 +1473,8 @@ impl Game {
             commander_rng: Rng::new(seed ^ Faction::Enemy.index() as u64),
             // No shot fired yet → no muzzle flash (W5, presentation only).
             last_fire_tick: None,
+            // No connecting shot yet → no hitmarker (WS-4, presentation only).
+            last_hit_tick: None,
             // No touches tracked yet; the HUD is only built on embodied touch frames.
             touch: touch_controls::TouchControls::new(),
             touch_hud: None,
@@ -2294,6 +2319,17 @@ impl Game {
         let tick = self.sim.tick_count();
         self.alerts
             .ingest(&frame_events, &self.sim.world, Faction::Player, tick);
+
+        // WS-4 — local hit feedback. The "I hit him" signal the game never sent: if the embodied
+        // avatar's OWN shot dealt damage this frame (the pure `avatar_landed_hit` seam over the
+        // deterministic event stream), stamp the hitmarker clock and fire a one-shot hit SFX. This
+        // is presentation feedback on the player's own action — keyed STRICTLY on the avatar as the
+        // damage `source`, never on intel about an unseen enemy — so it is invariant-#6-safe; it
+        // folds nothing into the sim (the events are already-checksummed copies, invariant #1/#7).
+        if avatar_landed_hit(&frame_events, self.player, self.embodied) {
+            self.last_hit_tick = Some(tick);
+            audio.play_oneshot(SoundId::HitConfirm as u32);
+        }
         // Accumulate this frame's events over the match so the post-match summary assembler can
         // tally produced/lost/killed (a presentation derivation; the events are already-checksummed
         // state copied out — never re-folded, invariant #7).
@@ -2541,6 +2577,13 @@ impl Game {
                 viewport,
                 tick,
             );
+            // 8'. WS-4 — the embodied hitmarker: a centered "X" flash confirming the player's OWN
+            // connecting shot, drawn over the dark frame. A no-op unless a hit is live in the fade
+            // window (`last_hit_tick`). Feedback on the player's own action, never map intel about an
+            // unseen enemy (invariant #6) — and screen-space chrome with no world position, so it
+            // widens no fog beneath it.
+            self.renderer
+                .render_hitmarker(device, queue, view, self.last_hit_tick, tick);
         }
 
         // 8a'. On a touch device, draw the on-screen FPS controls over the dark frame (the COD-style
@@ -3588,6 +3631,67 @@ mod tests {
             !should_auto_surface(false, true),
             "not embodied + present → nothing to do"
         );
+    }
+
+    /// WS-4 hit-feedback seam: `avatar_landed_hit` fires only when the player is embodied AND a
+    /// `Damaged` event names the avatar as its `source` (its own shot connected). It must ignore
+    /// damage dealt by OTHER units (no false hitmarker for an ally's kill) and damage TAKEN by the
+    /// avatar (being shot is not "I hit him"), and never fire while commanding.
+    #[test]
+    fn avatar_landed_hit_fires_only_on_avatar_source_while_embodied() {
+        use gonedark_core::fixed::Fixed;
+        let avatar = Entity { index: 3, generation: 1 };
+        let other = Entity { index: 9, generation: 0 };
+        let target = Entity { index: 12, generation: 2 };
+        let pos = Vec2::new(Fixed::from_int(4), Fixed::from_int(2));
+        let dmg = |source: Entity, entity: Entity| SimEvent::Damaged {
+            entity,
+            faction: Faction::Enemy,
+            source,
+            amount: Fixed::from_int(5),
+            pos,
+        };
+
+        // The canonical case: embodied, the avatar's own shot dealt damage.
+        assert!(
+            avatar_landed_hit(&[dmg(avatar, target)], avatar, true),
+            "embodied + avatar is the damage source → hit lands"
+        );
+        // Damage from someone else (an ally / another unit) is NOT the player's hit.
+        assert!(
+            !avatar_landed_hit(&[dmg(other, target)], avatar, true),
+            "another unit's damage must not register as the avatar's hit"
+        );
+        // Damage TAKEN by the avatar (avatar is the target, not the source) is not "I hit him".
+        assert!(
+            !avatar_landed_hit(&[dmg(other, avatar)], avatar, true),
+            "being shot is not a landed hit"
+        );
+        // Same avatar-source event, but commanding (not embodied) → no embodied hit cue.
+        assert!(
+            !avatar_landed_hit(&[dmg(avatar, target)], avatar, false),
+            "no hitmarker while commanding (the cue is an embodied-view affordance)"
+        );
+        // Mixed stream still detects the avatar's own hit among other events.
+        assert!(
+            avatar_landed_hit(
+                &[
+                    dmg(other, target),
+                    SimEvent::Killed { entity: target, faction: Faction::Enemy, source: other, pos },
+                    dmg(avatar, target),
+                ],
+                avatar,
+                true
+            ),
+            "the avatar's hit is found among unrelated events"
+        );
+        // Empty stream / non-Damaged events → no hit.
+        assert!(!avatar_landed_hit(&[], avatar, true));
+        assert!(!avatar_landed_hit(
+            &[SimEvent::UnitProduced { faction: Faction::Player, pos }],
+            avatar,
+            true
+        ));
     }
 
     /// The crouch button toggles posture off the avatar's CURRENT sim state: standing → crouch,

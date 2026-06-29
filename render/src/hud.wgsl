@@ -10,7 +10,7 @@ struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) local: vec2<f32>,             // the quad corner in [-1, 1] (interpolated)
-    @location(2) @interpolate(flat) shape: f32, // glyph id: 0 dot, 1 chevron, 2 triangle, 3 ring
+    @location(2) @interpolate(flat) shape: f32, // glyph: 0 dot, 1 chevron, 2 triangle, 3 ring, 4 hitmarker
 };
 
 // Per-vertex: a unit-quad corner in [-1, 1]^2. Per-instance: the marker center in NDC,
@@ -39,7 +39,8 @@ fn vs_main(
 // Shape the marker by its glyph id, returning a soft [0,1] coverage over the quad-local coord
 // `p` in [-1, 1]^2. A square block has no directional read and aliases hard (invariant #6 wants a
 // soft directional flash), so every glyph is masked with an anti-aliased `smoothstep` edge:
-//   0 = filled dot, 1 = chevron (points up = "incoming"), 2 = triangle, 3 = hollow ring.
+//   0 = filled dot, 1 = chevron (points up = "incoming"), 2 = triangle, 3 = hollow ring,
+//   4 = hitmarker (centered "X" — the player's own connecting shot).
 fn glyph_coverage(p: vec2<f32>, shape: f32) -> f32 {
     // `aa` is the half-width of the soft edge in local units (one quad ~ 2 units across).
     let aa = 0.14;
@@ -66,12 +67,27 @@ fn glyph_coverage(p: vec2<f32>, shape: f32) -> f32 {
         let half_w = (0.7 - p.y) * 0.6;
         let sides = 1.0 - smoothstep(half_w, half_w + aa, abs(p.x));
         return min(min(top, bottom), min(left, sides));
-    } else {
+    } else if shape < 3.5 {
         // Hollow ring: coverage between an inner and outer radius (a place you no longer hold).
         let r = length(p);
         let outer = 1.0 - smoothstep(0.82 - aa, 0.82 + aa, r);
         let inner = smoothstep(0.5 - aa, 0.5 + aa, r);
         return outer * inner;
+    } else {
+        // Hitmarker (shape 4): four short diagonal ticks forming an "X" with an empty center gap —
+        // the classic "I hit him" confirmation flash. Coverage near either diagonal (|x-y| or
+        // |x+y|), clipped between an inner gap radius and the outer edge so it reads as four ticks,
+        // not a solid X. (WS-4: feedback on the player's OWN shot, never map intel — invariant #6.)
+        let d1 = abs(p.x - p.y) * 0.70711;
+        let d2 = abs(p.x + p.y) * 0.70711;
+        let on_diag = max(
+            1.0 - smoothstep(0.12, 0.12 + aa, d1),
+            1.0 - smoothstep(0.12, 0.12 + aa, d2),
+        );
+        let r = length(p);
+        let gap = smoothstep(0.30 - aa, 0.30 + aa, r);    // empty center
+        let outer = 1.0 - smoothstep(0.92 - aa, 0.92 + aa, r);
+        return on_diag * gap * outer;
     }
 }
 
