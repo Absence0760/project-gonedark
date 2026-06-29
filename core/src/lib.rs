@@ -25,6 +25,7 @@ pub mod flow_field;
 pub mod fog;
 pub mod heal;
 pub mod lockstep;
+pub mod mission_tuning;
 pub mod orders;
 pub mod persist;
 pub mod projectile;
