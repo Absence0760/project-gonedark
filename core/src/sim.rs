@@ -14,8 +14,8 @@
 use crate::checksum::Checksum;
 use crate::combat;
 use crate::components::{
-    Armor, Building, BuildingKind, EntityKind, Faction, Health, InputSource, Order, Posture,
-    ProductionItem, Stance, UnitKind, Vec2, Weapon,
+    Armor, Army, Building, BuildingKind, EntityKind, Faction, Health, InputSource, Order, Posture,
+    ProductionItem, Stance, UnitKind, Vec2, Weapon, FACTION_COUNT,
 };
 use crate::economy::{self, Resources};
 use crate::ecs::{Entity, World, WorldComponents};
@@ -112,6 +112,16 @@ pub enum Command {
     /// magnitude is the analog throttle. EMBODIED-ONLY (`alive && Embodied`, else a no-op).
     /// Lockstep-streamed like the other embodied intents (invariant #7).
     DriveHull { entity: Entity, dir: Vec2 },
+    /// **Match-setup**: select which real-army identity ([`Army`]) `faction` fields (factions-plan
+    /// WS-A, [D68](../docs/decisions.md)). Writes the per-side army mapping
+    /// ([`Sim::set_army`](Sim::set_army)) — a host/lobby intent (the [`shell`](crate::shell) seam's
+    /// `SelectArmy` resolves to it, D34), normally issued at setup, before play. The army selection
+    /// is match-config, not per-tick state, so it is **not** folded into the per-tick checksum (its
+    /// gameplay effect — the per-army roster, WS-B — is what folds, invariant #7). Riding the
+    /// lockstep stream still makes the *decode* identical on every peer (the wire codec carries the
+    /// [`Army`] tag), so a setup command decodes to the same army everywhere (invariant #7), exactly
+    /// like a `Build`'s `BuildingKind`.
+    SelectArmy { faction: Faction, army: Army },
 }
 
 /// The simulation: the deterministic world, the static terrain, per-faction resources, the
@@ -144,6 +154,15 @@ pub struct Sim {
     /// per-accrual amount, so a held point still ~triples income — the D30 cost/stat constants are
     /// untouched.
     income_period: u32,
+    /// Per-side **army identity** selection — each [`Faction`] maps to one [`Army`] (factions-plan
+    /// WS-A, [D68](decisions.md)). Indexed by [`Faction::index`]. Like [`income_period`](Self::income_period)
+    /// /[`map_id`](Self::map_id) it is **static per-match config**: set at seed / `SelectArmy` /
+    /// deserialize time and never mutated by a system. So — exactly like those — it is carried in the
+    /// serialize WRAPPER but **not** folded into the per-tick checksum. Its *effect* (the per-army
+    /// roster a faction draws from, WS-B) is what folds, so two peers that picked different armies
+    /// diverge in spawned unit stats and the desync is caught there (invariant #7). Every faction
+    /// defaults to [`Army::Neutral`], so a scene that selects no army is byte-identical to before.
+    armies: [Army; FACTION_COUNT],
     rng: Rng,
     tick: u64,
 }
@@ -161,9 +180,28 @@ impl Sim {
             // Default full rate (accrue every tick) — identical income to before this lever existed,
             // so every existing scene's resources (and thus checksum) are byte-unchanged.
             income_period: 1,
+            // Non-aligned by default (factions-plan WS-A): a fresh sim fields no real army, so every
+            // existing scene's per-tick checksum is byte-unchanged until a scene/SelectArmy picks one.
+            armies: [Army::Neutral; FACTION_COUNT],
             rng: Rng::new(seed),
             tick: 0,
         }
+    }
+
+    /// The [`Army`] identity a [`Faction`] fields (factions-plan WS-A). [`Army::Neutral`] until a
+    /// scene seeder or a [`Command::SelectArmy`] selects one.
+    #[inline]
+    pub fn army_of(&self, faction: Faction) -> Army {
+        self.armies[faction.index()]
+    }
+
+    /// Select which [`Army`] a [`Faction`] fields — the per-side match-setup choice (factions-plan
+    /// WS-A). A scene seeder or the host (via [`Command::SelectArmy`] / the
+    /// [`shell`](crate::shell) seam) calls this. Match-config: it never folds into the per-tick
+    /// checksum (its roster effect, WS-B, is what folds — invariant #7).
+    #[inline]
+    pub fn set_army(&mut self, faction: Faction, army: Army) {
+        self.armies[faction.index()] = army;
     }
 
     /// Set the income accrual **period** (ticks between income accruals) — the scenario-local economy
@@ -379,6 +417,13 @@ impl Sim {
                     systems::drive_hull(&mut self.world, i, dir);
                 }
             }
+            Command::SelectArmy { faction, army } => {
+                // Match-setup: record the per-side army identity (factions-plan WS-A). Writes only
+                // the non-folded `armies` config, so applying it never moves the per-tick checksum —
+                // its roster effect (WS-B) is what folds. Deterministic by construction (a plain tag
+                // write, no float, no RNG).
+                self.armies[faction.index()] = army;
+            }
         }
     }
 
@@ -515,8 +560,15 @@ impl Sim {
         w.write_u8(SNAPSHOT_VERSION);
         w.write_u32(self.map_id as u32);
         // Income pace — scenario-local config, NOT in the fold (like map_id). Written here in the
-        // wrapper so the order is: version, map_id, income_period, capacity, fold(...).
+        // wrapper so the order is: version, map_id, income_period, armies, capacity, fold(...).
         w.write_u32(self.income_period);
+        // Per-side army identity (factions-plan WS-A) — match-setup config, like income_period: in
+        // the WRAPPER, NOT the per-tick fold (so a no-army scene's checksum is byte-unchanged; the
+        // roster effect, WS-B, is what folds — invariant #7). One tag byte per faction, in fixed
+        // `Faction::ALL` order.
+        for f in Faction::ALL {
+            w.write_u8(army_tag(self.armies[f.index()]));
+        }
         // Slot capacity, written in the wrapper (NOT in `fold`, so the checksum stream is
         // untouched). It is the number of slots `fold` emits and the length of `generation[]`;
         // deserialize needs it up front to drive the slot loop, since the fold's per-slot data is
@@ -566,6 +618,14 @@ impl Sim {
         // pure inverse (no clamp here, so re-serialize is byte-identical); economy_system clamps
         // 0 → 1 at the use site so a malformed period can never divide by zero.
         let income_period = r.read_u32()?;
+
+        // Per-side army identity (factions-plan WS-A) — mirror serialize's wrapper order (after
+        // income_period, before capacity). One tag byte per faction in fixed `Faction::ALL` order; a
+        // tag outside the enum is corruption (`BadTag`), never a silent wrong army.
+        let mut armies = [Army::Neutral; FACTION_COUNT];
+        for f in Faction::ALL {
+            armies[f.index()] = read_army(&mut r)?;
+        }
 
         // Slot capacity (written by `serialize` before the fold). Bound it against the remaining
         // bytes so a garbage value can't drive a huge pre-allocation; the smallest possible slot
@@ -749,6 +809,7 @@ impl Sim {
             projectiles,
             map_id,
             income_period,
+            armies,
             rng,
             tick,
         })
@@ -762,8 +823,10 @@ impl Sim {
 
 /// Authoritative-snapshot format version (D28). Bumped on any layout change so a stale snapshot is
 /// rejected ([`DeserializeError::BadVersion`]) rather than silently misparsed into a divergent
-/// world. Independent of the lockstep wire version — different codec, different evolution.
-const SNAPSHOT_VERSION: u8 = 7;
+/// world. Independent of the lockstep wire version — different codec, different evolution. Bumped
+/// 7→8 by factions-plan WS-A: the wrapper grew a per-faction [`Army`] tag block (after
+/// `income_period`), so a pre-factions snapshot is rejected, never misparsed against the new layout.
+const SNAPSHOT_VERSION: u8 = 8;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.
@@ -995,6 +1058,26 @@ fn unit_kind_tag(k: UnitKind) -> u8 {
     }
 }
 
+/// Army identity tag (factions-plan WS-A). MUST match lockstep.rs's `put_army`/`get_army` and
+/// [`Army::index`] (the tag order is the wire/persist contract) — a `SelectArmy` command encoded on
+/// one peer has to decode to the identical army on every other (invariant #7).
+fn army_tag(a: Army) -> u8 {
+    match a {
+        Army::Neutral => 0,
+        Army::Us => 1,
+        Army::Fr => 2,
+    }
+}
+
+fn read_army(r: &mut Reader) -> Result<Army, DeserializeError> {
+    Ok(match r.read_u8()? {
+        0 => Army::Neutral,
+        1 => Army::Us,
+        2 => Army::Fr,
+        t => return Err(DeserializeError::BadTag(t)),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1216,5 +1299,99 @@ mod tests {
             dir: Vec2::new(Fixed::ONE, Fixed::ZERO),
         }]);
         assert_eq!(sim.tick_count(), 1);
+    }
+
+    // --- factions WS-A: Army selection as match-setup config ---------------------------------
+
+    #[test]
+    fn army_defaults_to_neutral_for_every_faction() {
+        // A fresh sim fields no real army — so a pre-factions scene is identity-neutral (and its
+        // per-tick checksum is byte-unchanged, since `armies` is not folded).
+        let sim = Sim::new(0);
+        for f in Faction::ALL {
+            assert_eq!(sim.army_of(f), Army::Neutral);
+        }
+    }
+
+    #[test]
+    fn select_army_command_sets_the_per_side_identity() {
+        // The match-setup command writes the per-faction army mapping (US vs FR — D68). It reaches
+        // each side independently and is a plain config write (no entity, no float, no RNG).
+        let mut sim = Sim::new(0);
+        sim.step(&[
+            Command::SelectArmy {
+                faction: Faction::Player,
+                army: Army::Us,
+            },
+            Command::SelectArmy {
+                faction: Faction::Enemy,
+                army: Army::Fr,
+            },
+        ]);
+        assert_eq!(sim.army_of(Faction::Player), Army::Us);
+        assert_eq!(sim.army_of(Faction::Enemy), Army::Fr);
+        // The unselected side stays Neutral.
+        assert_eq!(sim.army_of(Faction::Neutral), Army::Neutral);
+    }
+
+    #[test]
+    fn select_army_is_checksum_neutral() {
+        // The army selection is match-config, NOT per-tick sim state: selecting an army must not move
+        // the per-tick checksum (its roster effect, WS-B, is what folds — invariant #1/#7). Two sims
+        // step identically; one also picks armies. Their checksum streams must stay bit-identical.
+        let seed = 0xFAC_A11u64;
+        let mut with = Sim::new(seed);
+        let mut without = Sim::new(seed);
+        with.step(&[
+            Command::SelectArmy {
+                faction: Faction::Player,
+                army: Army::Us,
+            },
+            Command::SelectArmy {
+                faction: Faction::Enemy,
+                army: Army::Fr,
+            },
+        ]);
+        without.step(&[]);
+        assert_eq!(
+            with.checksum(),
+            without.checksum(),
+            "selecting an army must not perturb the per-tick checksum"
+        );
+        // But the selection IS there (it just lives outside the fold).
+        assert_eq!(with.army_of(Faction::Player), Army::Us);
+    }
+
+    #[test]
+    fn army_selection_survives_the_snapshot_round_trip() {
+        // The per-side army identity rides the persist WRAPPER (like income_period/map_id), so a
+        // reconnecting peer resumes the same matchup — not silently reset to Neutral. fold↔deserialize
+        // round trip (factions-plan WS-A): re-serialize is byte-identical and the armies come back.
+        let mut sim = Sim::new(7);
+        sim.set_army(Faction::Player, Army::Us);
+        sim.set_army(Faction::Enemy, Army::Fr);
+        for _ in 0..10 {
+            sim.step(&[]);
+        }
+        let bytes = sim.serialize();
+        let restored = Sim::deserialize(&bytes).expect("army-selected sim round-trips");
+        assert_eq!(restored.army_of(Faction::Player), Army::Us, "US must survive resume");
+        assert_eq!(restored.army_of(Faction::Enemy), Army::Fr, "FR must survive resume");
+        assert_eq!(restored.army_of(Faction::Neutral), Army::Neutral);
+        assert_eq!(restored.checksum(), sim.checksum());
+        assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
+    }
+
+    #[test]
+    fn deserialize_rejects_a_bad_army_tag() {
+        // A garbage army tag in the wrapper is corruption (BadTag), never a silently-wrong identity.
+        let mut bytes = Sim::new(0).serialize();
+        // Wrapper layout: version(1) + map_id(4) + income_period(4) + armies(3). The first army tag
+        // is at byte index 9. Stuff an out-of-range tag there.
+        bytes[9] = 0x7F;
+        match Sim::deserialize(&bytes).err() {
+            Some(DeserializeError::BadTag(0x7F)) => {}
+            other => panic!("expected BadTag(0x7F) for a corrupt army tag, got {other:?}"),
+        }
     }
 }

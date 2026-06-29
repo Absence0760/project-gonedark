@@ -61,6 +61,14 @@ use crate::fog::Visibility;
 use crate::lockstep::{Desync, Lockstep};
 use crate::sim::Command;
 
+/// The faction-identity type ([`Army`](crate::components::Army)) re-exported through the seam, so a
+/// native match-setup shell reaches the US/FR selection vocabulary from the single `core::shell`
+/// import surface (factions-plan WS-A, D68) — the same single-sourcing as the order/stance vocab and
+/// the campaign types. It is plain presentation-safe data (a `repr`-stable tag, no float, no sim
+/// state); the actual per-side choice travels as a [`ShellIntent::SelectArmy`] → [`Command::SelectArmy`].
+/// (A `pub use` is also in scope locally, so the seam's [`ShellIntent`] names it directly.)
+pub use crate::components::Army;
+
 // ===========================================================================
 // READ SIDE — match lifecycle
 // ===========================================================================
@@ -419,6 +427,11 @@ pub enum ShellIntent {
     /// Request a reconnect/resync from the last authoritative snapshot. Session-control: the host
     /// drives [`reconnect`](crate::reconnect); the seam does no I/O.
     RequestReconnect,
+    /// **Match setup**: select which [`Army`] identity a [`Faction`] fields (US vs FR — factions-plan
+    /// WS-A, D68). The native lobby/army-select shell (WS-D) raises this; it resolves to a sim
+    /// [`Command::SelectArmy`] the host feeds the lockstep stream, so the matchup is set identically
+    /// on every peer (invariant #7). A coarse intent of `Copy` tag data — no float crosses the seam.
+    SelectArmy { faction: Faction, army: Army },
 }
 
 /// What a [`ShellIntent`] resolves to. Either a sim [`Command`] the host feeds the lockstep
@@ -462,6 +475,11 @@ pub fn resolve_intent(intent: ShellIntent) -> ResolvedIntent {
         ShellIntent::Resume => ResolvedIntent::Session(SessionAction::Resume),
         ShellIntent::Surrender => ResolvedIntent::Session(SessionAction::Surrender),
         ShellIntent::RequestReconnect => ResolvedIntent::Session(SessionAction::RequestReconnect),
+        // Match-setup army pick → a sim command (it must be lockstep-ordered so every peer agrees on
+        // the matchup), exactly like Embody/Surface — not a host-side session action.
+        ShellIntent::SelectArmy { faction, army } => {
+            ResolvedIntent::Command(Command::SelectArmy { faction, army })
+        }
     }
 }
 
@@ -584,6 +602,22 @@ mod tests {
         match resolve_intent(ShellIntent::Surface { entity: e }) {
             ResolvedIntent::Command(Command::Surface { entity }) => assert_eq!(entity, e),
             other => panic!("Surface intent must map to Command::Surface, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn select_army_intent_maps_to_a_sim_command() {
+        // The army-select intent (factions-plan WS-A) must resolve to a lockstep-ordered
+        // Command::SelectArmy (not a host-side session action) so every peer agrees on the matchup.
+        match resolve_intent(ShellIntent::SelectArmy {
+            faction: Faction::Player,
+            army: Army::Us,
+        }) {
+            ResolvedIntent::Command(Command::SelectArmy { faction, army }) => {
+                assert_eq!(faction, Faction::Player);
+                assert_eq!(army, Army::Us);
+            }
+            other => panic!("SelectArmy intent must map to Command::SelectArmy, got {other:?}"),
         }
     }
 

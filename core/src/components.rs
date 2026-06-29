@@ -155,6 +155,58 @@ impl Faction {
 /// Number of factions — the width of every per-faction array.
 pub const FACTION_COUNT: usize = 3;
 
+/// Which **real-army identity** a side fields — US Army vs French Army ([D68](../docs/decisions.md),
+/// factions-plan WS-A). This is a **third** concept, deliberately DISTINCT from [`Faction`]: a
+/// `Faction` is the *allegiance* tag combat resolves across (`Player`/`Enemy`/`Neutral`); an `Army`
+/// is the *identity* a side wears — which per-faction roster, silhouettes, and gunsmith pool it
+/// draws from. Each `Faction` in a match maps to one `Army` (the per-side selection lives in
+/// [`Sim`](crate::sim::Sim), reachable through the [`shell`](crate::shell) seam, D34).
+///
+/// It is **match-setup config**, not per-tick state: it is chosen once at setup and never mutated by
+/// a system, exactly like the income pace ([`Sim::set_income_period`](crate::sim::Sim::set_income_period)).
+/// So — like that lever — it is carried in the persist **wrapper** and across the lockstep wire, but
+/// it is **not** folded into the per-tick checksum: its *gameplay effect* (the per-army stat table,
+/// WS-B) is what folds, so a peer that selected a different army diverges in spawned unit stats and
+/// the desync is caught there (invariant #7), and a scene that never selects an army keeps the exact
+/// pre-factions per-tick checksum byte-for-byte.
+///
+/// [`Neutral`](Army::Neutral) is the non-aligned default for legacy / debug scenes that field no
+/// real army — `0`, the inert tag, mirroring [`Faction`]/[`UnitKind`]'s zero-is-default discipline.
+/// Plain `repr`-stable data, no float (invariant #1).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Army {
+    /// No real-army identity — non-aligned (legacy / debug scenes, neutral sides). The default, so a
+    /// scene that never selects an army behaves (and checksums) exactly as before factions existed.
+    #[default]
+    Neutral,
+    /// The US Army roster ([D68](../docs/decisions.md)).
+    Us,
+    /// The French Army roster ([D68](../docs/decisions.md)).
+    Fr,
+}
+
+impl Army {
+    /// Every army, in a fixed order — the stable index space for any per-army state (the WS-B stat
+    /// table). Iterating this is deterministic by construction, mirroring [`Faction::ALL`].
+    pub const ALL: [Army; 3] = [Army::Neutral, Army::Us, Army::Fr];
+
+    /// Dense index into per-army arrays (`[_; ARMY_COUNT]`). The tag order is load-bearing: it MUST
+    /// match the persist/wire codecs ([`sim`](crate::sim) `army_tag` + [`lockstep`](crate::lockstep)
+    /// `put_army`), so a selection encoded on one peer decodes to the identical army on every other
+    /// (invariant #7) — the same discipline as [`Faction::index`].
+    #[inline]
+    pub const fn index(self) -> usize {
+        match self {
+            Army::Neutral => 0,
+            Army::Us => 1,
+            Army::Fr => 2,
+        }
+    }
+}
+
+/// Number of armies — the width of every per-army array (WS-B's stat table).
+pub const ARMY_COUNT: usize = 3;
+
 /// What an entity *is*. Determines which systems act on it: `Unit`s move and fight,
 /// `Building`s are produced/upgraded and can be attacked (driving "base under attack").
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
