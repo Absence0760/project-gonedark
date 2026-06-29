@@ -1946,10 +1946,11 @@ impl Game {
     /// `frame` may turn a sustained shift into a `Lockstep::propose_delay`. A no-op until a real
     /// sample arrives, so an unmeasured session never changes its delay.
     ///
-    /// **Sample source (the one stubbed seam):** production RTT comes from a transport-level
-    /// ping/pong measured in `pal-desktop`, NOT from a new `core::lockstep` wire frame (adding one
-    /// is out of WS-B scope — it touches the protocol). Until that ping/pong exists this method is
-    /// simply never called, leaving the estimator inert. See `net_tuning`'s module docs.
+    /// **Sample source:** production RTT comes from the transport-level ping/pong in
+    /// `pal_desktop::PingPongTransport`, NOT from a new `core::lockstep` wire frame (adding one would
+    /// touch the protocol — explicitly out of scope). The host drains that transport's `RttSamples`
+    /// handle each frame and feeds every measured RTT here; on a single-player session (no transport)
+    /// this is simply never called, leaving the estimator inert. See `net_tuning`'s module docs.
     pub fn observe_rtt(&mut self, rtt_secs: f64) {
         self.rtt_estimator.observe_rtt(rtt_secs);
     }
