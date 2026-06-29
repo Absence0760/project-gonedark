@@ -45,7 +45,8 @@
 //! are free fns, unit-testable without a GPU — the `marquee_quads` / `grid_lines` pattern. The host
 //! turns each [`ReadoutLabel`] into a [`text::TextRenderer::queue`] call.
 
-use crate::text::Anchor;
+use crate::overlay::{OverlayQuad, QuadRole};
+use crate::text::{measure, Anchor};
 use crate::{faction_color, UnitInstance, FLAG_RING};
 use gonedark_core::components::Faction;
 // Compile-time CONSTS only — the truthful single source of the balance/tick numbers the displayed
@@ -223,6 +224,69 @@ pub fn readout_labels(
     }
 
     out
+}
+
+/// Inner padding (NDC) between the readout text and its backing card edge.
+const CARD_PAD_X: f32 = 0.020;
+const CARD_PAD_Y: f32 = 0.014;
+/// Backing-card fill + rim — shared with the contextual command panel's palette so the two HUD
+/// surfaces read as one designed set, not ad-hoc debug text.
+const CARD_BG: [f32; 3] = [0.05, 0.06, 0.09];
+const CARD_BG_ALPHA: f32 = 0.74;
+const CARD_RIM: [f32; 3] = [0.16, 0.18, 0.24];
+const CARD_RIM_ALPHA: f32 = 0.85;
+/// The rim quad extends this far past the card on each side to draw a thin border.
+const CARD_RIM_PAD: f32 = 0.008;
+
+/// A subtle backing card (rim behind a fill) sized to wrap `labels` with padding, so the top-left
+/// readout reads as a designed HUD element instead of bare colored text floating in the corner. Pure
+/// (no GPU) — the testable seam, mirroring [`crate::command_panel::command_panel_quads`]. `aspect`
+/// (width / height) sizes the card's width to the *on-screen* text footprint (the labels are
+/// aspect-corrected by the text pass), so the card hugs the lines on any window. Returns an empty vec
+/// for an empty label set (e.g. the dark embodied frame, where [`readout_labels`] emits nothing —
+/// invariant #6, so the card never paints over the dark frame either).
+pub fn readout_card(labels: &[ReadoutLabel], aspect: f32) -> Vec<OverlayQuad> {
+    let (Some(first), Some(last)) = (labels.first(), labels.last()) else {
+        return Vec::new();
+    };
+    // All readout lines share the same left edge and stack downward from `first` (TopLeft anchor →
+    // pos is each string box's top-left). Wrap from the first line's top to the last line's bottom.
+    let widest = labels
+        .iter()
+        .map(|l| measure(&l.text, l.px_size, aspect).0)
+        .fold(0.0_f32, f32::max);
+    let left = first.pos[0] - CARD_PAD_X;
+    let right = first.pos[0] + widest + CARD_PAD_X;
+    let top = first.pos[1] + CARD_PAD_Y;
+    let bottom = (last.pos[1] - last.px_size) - CARD_PAD_Y;
+    let cx = (left + right) * 0.5;
+    let cy = (top + bottom) * 0.5;
+    let hw = (right - left) * 0.5;
+    let hh = (top - bottom) * 0.5;
+    vec![
+        OverlayQuad {
+            cx,
+            cy,
+            hw: hw + CARD_RIM_PAD,
+            hh: hh + CARD_RIM_PAD,
+            r: CARD_RIM[0],
+            g: CARD_RIM[1],
+            b: CARD_RIM[2],
+            alpha: CARD_RIM_ALPHA,
+            role: QuadRole::PanelRim,
+        },
+        OverlayQuad {
+            cx,
+            cy,
+            hw,
+            hh,
+            r: CARD_BG[0],
+            g: CARD_BG[1],
+            b: CARD_BG[2],
+            alpha: CARD_BG_ALPHA,
+            role: QuadRole::Panel,
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -450,6 +514,51 @@ mod tests {
             assert!(l.pos[0] >= -1.0 && l.pos[0] <= 1.0 && l.pos[1] >= -1.0 && l.pos[1] <= 1.0);
             assert!(l.px_size > 0.0 && l.px_size <= 1.0, "glyph height is NDC, not pixels");
         }
+    }
+
+    // ---- readout_card ----
+
+    #[test]
+    fn empty_labels_make_no_card() {
+        // The dark embodied frame emits no labels (invariant #6) → no backing card either.
+        assert!(readout_card(&[], 1.0).is_empty());
+        assert!(readout_card(&readout_labels(&Tally::default(), None, true), 1.0).is_empty());
+    }
+
+    #[test]
+    fn card_is_a_rim_behind_a_fill_wrapping_the_labels() {
+        let labels = readout_labels(
+            &Tally {
+                player_units: 4,
+                enemy_units: 3,
+                control_points: 2,
+            },
+            Some(econ(91, income_per_tick(2))),
+            false,
+        );
+        let q = readout_card(&labels, 1.0);
+        assert_eq!(q.len(), 2, "rim + fill");
+        let (rim, fill) = (&q[0], &q[1]);
+        assert!(rim.hw > fill.hw && rim.hh > fill.hh, "rim larger than fill");
+        assert_eq!(fill.role, QuadRole::Panel);
+        assert_eq!(rim.role, QuadRole::PanelRim);
+        // The fill encloses every label's top-left corner with a margin (it is a backing card).
+        for l in &labels {
+            assert!(l.pos[0] >= fill.cx - fill.hw, "label left inside card");
+            assert!(l.pos[1] <= fill.cy + fill.hh, "label top inside card");
+            assert!(l.pos[1] - l.px_size >= fill.cy - fill.hh - 1e-6, "label bottom inside card");
+        }
+        // Anchored in the top-left quadrant, on screen.
+        assert!(fill.cx - fill.hw > -1.0 && fill.cy + fill.hh < 1.0);
+    }
+
+    #[test]
+    fn card_narrows_on_a_wide_viewport() {
+        // The labels shrink horizontally on a wide window, so the card tracks them (no dead space).
+        let labels = readout_labels(&Tally::default(), Some(econ(1234, income_per_tick(2))), false);
+        let sq = readout_card(&labels, 1.0);
+        let wide = readout_card(&labels, 16.0 / 9.0);
+        assert!(wide[1].hw < sq[1].hw, "card is narrower on a wide viewport");
     }
 
     #[test]

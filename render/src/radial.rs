@@ -373,6 +373,14 @@ impl RadialRenderer {
         }
     }
 
+    /// Set the viewport aspect (width / height) so the wedge labels stay square in pixels instead of
+    /// stretching on a wide window. Forwarded to the owned text pass; the host calls it once per frame
+    /// before [`render`](RadialRenderer::render). The ring geometry stays raw NDC by design (a slight
+    /// ellipse on a wide viewport, consistent with the HUD ring) — only the glyphs are corrected.
+    pub fn set_aspect(&mut self, aspect: f32) {
+        self.text.set_aspect(aspect);
+    }
+
     /// Draw the radial menu on top of `view` (a LOAD pass — never clears), labelling each wedge with
     /// a placeholder slot number (the host can't yet pass action names — see [`radial_labels`]).
     /// No-op when the menu has no slots.

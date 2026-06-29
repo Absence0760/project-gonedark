@@ -149,24 +149,32 @@ const GLYPH_SPACING_CELLS: usize = 1;
 /// Total cell advance of one character (glyph width + inter-glyph gap).
 const ADVANCE_CELLS: usize = glyph::COLS + GLYPH_SPACING_CELLS;
 
-/// The size in NDC of a single bitmap cell for a string drawn at `px_size` (cell height = the glyph
-/// height divided across [`ROWS_PER_GLYPH`] rows). Pure — no GPU. Returned as `(cell_w, cell_h)`;
-/// cells are square so the two are equal, but both are returned for call-site clarity.
-pub fn cell_size(px_size: f32) -> (f32, f32) {
-    let cell = px_size / glyph::ROWS_PER_GLYPH as f32;
-    (cell, cell)
+/// The size in NDC of a single bitmap cell for a string drawn at `px_size` on a viewport of the given
+/// `aspect` (width / height). The cell **height** is the glyph height divided across
+/// [`ROWS_PER_GLYPH`] rows; the **width** is that same height divided by `aspect`, so a cell that is
+/// square in NDC on a square viewport stays square *in pixels* on a wide one (NDC-x covers more pixels
+/// than NDC-y when `aspect > 1`). Without this, every glyph stretches horizontally by `aspect` on the
+/// typical wide desktop window — the chief reason the HUD read as amateurish. Pure — no GPU. Returned
+/// as `(cell_w, cell_h)`.
+pub fn cell_size(px_size: f32, aspect: f32) -> (f32, f32) {
+    let cell_h = px_size / glyph::ROWS_PER_GLYPH as f32;
+    // Guard a degenerate aspect (zero-height surface mid-resize) so we never divide by ~0.
+    let a = if aspect.abs() < 1e-6 { 1.0 } else { aspect };
+    (cell_h / a, cell_h)
 }
 
-/// The NDC bounding-box size `(width, height)` of `text` rendered at `px_size`. Width counts a full
-/// [`ADVANCE_CELLS`] per character but trims the trailing inter-glyph gap so the box hugs the last
-/// glyph; height is exactly `px_size`. An empty string measures to `(0, 0)`. Pure (no GPU) — the
+/// The NDC bounding-box size `(width, height)` of `text` rendered at `px_size` on a viewport of the
+/// given `aspect` (width / height). Width counts a full [`ADVANCE_CELLS`] per character but trims the
+/// trailing inter-glyph gap so the box hugs the last glyph; height is exactly `px_size`. The width is
+/// aspect-corrected (see [`cell_size`]) so it is the true on-screen footprint, which is what callers
+/// rely on to lay out / anchor a string. An empty string measures to `(0, 0)`. Pure (no GPU) — the
 /// testable measure seam.
-pub fn measure(text: &str, px_size: f32) -> (f32, f32) {
+pub fn measure(text: &str, px_size: f32, aspect: f32) -> (f32, f32) {
     let n = text.chars().count();
     if n == 0 {
         return (0.0, 0.0);
     }
-    let (cell_w, _) = cell_size(px_size);
+    let (cell_w, _) = cell_size(px_size, aspect);
     // n glyphs each ADVANCE_CELLS wide, minus the trailing gap (no glyph follows the last).
     let width_cells = n * ADVANCE_CELLS - GLYPH_SPACING_CELLS;
     (width_cells as f32 * cell_w, px_size)
@@ -203,17 +211,18 @@ pub struct CellInstance {
     pub alpha: f32,
 }
 
-/// Expand one [`TextItem`] into its lit-cell NDC quads. Pure (no GPU, no sim) — the testable layout
-/// seam. Glyphs lay out left-to-right from the anchored top-left corner; each character advances
-/// [`ADVANCE_CELLS`] cells; each lit bitmap cell becomes one [`CellInstance`]. Unknown characters
-/// and spaces light no cell but still advance, so spacing is stable. An empty string yields no
-/// cells.
-pub fn layout_cells(item: &TextItem) -> Vec<CellInstance> {
-    let size = measure(&item.text, item.px_size);
+/// Expand one [`TextItem`] into its lit-cell NDC quads on a viewport of the given `aspect`
+/// (width / height). Pure (no GPU, no sim) — the testable layout seam. Glyphs lay out left-to-right
+/// from the anchored top-left corner; each character advances [`ADVANCE_CELLS`] aspect-corrected
+/// cells (see [`cell_size`]); each lit bitmap cell becomes one [`CellInstance`] whose half-extents
+/// keep it square in pixels. Unknown characters and spaces light no cell but still advance, so
+/// spacing is stable. An empty string yields no cells.
+pub fn layout_cells(item: &TextItem, aspect: f32) -> Vec<CellInstance> {
+    let size = measure(&item.text, item.px_size, aspect);
     if size.0 <= 0.0 {
         return Vec::new();
     }
-    let (cell_w, cell_h) = cell_size(item.px_size);
+    let (cell_w, cell_h) = cell_size(item.px_size, aspect);
     let [ox, oy] = anchor_top_left(item.pos, size, item.anchor);
     let [r, g, b] = item.color;
 
@@ -287,6 +296,10 @@ pub struct TextRenderer {
     instance_cap: usize,
     /// Strings queued this frame (drained by [`render`](TextRenderer::render)).
     queued: Vec<TextItem>,
+    /// Viewport aspect (width / height) used to keep glyphs square in pixels. Set once per frame by
+    /// the host via [`set_aspect`](TextRenderer::set_aspect); defaults to `1.0` (square) so a caller
+    /// that never sets it gets the old square-NDC behaviour.
+    aspect: f32,
 }
 
 impl TextRenderer {
@@ -370,6 +383,17 @@ impl TextRenderer {
             instance_buf,
             instance_cap,
             queued: Vec::new(),
+            aspect: 1.0,
+        }
+    }
+
+    /// Set the viewport aspect (width / height) for this frame's glyph layout so text stays square in
+    /// pixels instead of stretching horizontally on a wide window. Cheap; the host calls it once per
+    /// frame before queuing/flushing. A non-finite or ~zero value is ignored (keeps the last good
+    /// aspect) so a mid-resize zero-height surface never collapses the text.
+    pub fn set_aspect(&mut self, aspect: f32) {
+        if aspect.is_finite() && aspect.abs() > 1e-6 {
+            self.aspect = aspect;
         }
     }
 
@@ -411,7 +435,8 @@ impl TextRenderer {
         view: &wgpu::TextureView,
     ) {
         let items = std::mem::take(&mut self.queued);
-        let cells: Vec<CellInstance> = items.iter().flat_map(layout_cells).collect();
+        let aspect = self.aspect;
+        let cells: Vec<CellInstance> = items.iter().flat_map(|it| layout_cells(it, aspect)).collect();
         if cells.is_empty() {
             return;
         }
@@ -531,51 +556,94 @@ mod tests {
 
     #[test]
     fn empty_string_measures_zero() {
-        assert_eq!(measure("", 0.07), (0.0, 0.0));
+        assert_eq!(measure("", 0.07, 1.0), (0.0, 0.0));
     }
 
     #[test]
     fn height_equals_px_size() {
-        let (_, h) = measure("HELLO", 0.07);
+        let (_, h) = measure("HELLO", 0.07, 1.0);
         assert!((h - 0.07).abs() < EPS);
     }
 
     #[test]
     fn single_glyph_width_is_glyph_cols() {
         // One glyph: COLS cells wide (no trailing inter-glyph gap).
-        let (cell_w, _) = cell_size(0.07);
-        let (w, _) = measure("A", 0.07);
+        let (cell_w, _) = cell_size(0.07, 1.0);
+        let (w, _) = measure("A", 0.07, 1.0);
         assert!((w - glyph::COLS as f32 * cell_w).abs() < EPS);
     }
 
     #[test]
     fn width_grows_by_advance_per_extra_glyph() {
-        let (cell_w, _) = cell_size(0.07);
-        let (w1, _) = measure("A", 0.07);
-        let (w2, _) = measure("AB", 0.07);
+        let (cell_w, _) = cell_size(0.07, 1.0);
+        let (w1, _) = measure("A", 0.07, 1.0);
+        let (w2, _) = measure("AB", 0.07, 1.0);
         // Adding one glyph adds exactly ADVANCE_CELLS cells of width.
         assert!((w2 - w1 - ADVANCE_CELLS as f32 * cell_w).abs() < EPS);
     }
 
     #[test]
     fn measure_scales_linearly_with_px_size() {
-        let (w1, h1) = measure("SCORE", 0.04);
-        let (w2, h2) = measure("SCORE", 0.08);
+        let (w1, h1) = measure("SCORE", 0.04, 1.0);
+        let (w2, h2) = measure("SCORE", 0.08, 1.0);
         assert!((w2 - 2.0 * w1).abs() < EPS, "double size → double width");
         assert!((h2 - 2.0 * h1).abs() < EPS, "double size → double height");
+    }
+
+    // ---- aspect correction (the fat-text-on-a-wide-window fix) ----
+
+    #[test]
+    fn glyph_cells_are_square_in_pixels_under_aspect() {
+        // The whole point: on a wide viewport a cell's NDC width is smaller than its NDC height by
+        // exactly `aspect`, so width·(screen_w/2) == height·(screen_h/2) — i.e. square *in pixels*.
+        for aspect in [1.0_f32, 16.0 / 9.0, 21.0 / 9.0, 0.5] {
+            let (cw, ch) = cell_size(0.07, aspect);
+            assert!((cw * aspect - ch).abs() < EPS, "cell_w·aspect == cell_h (square pixels)");
+        }
+    }
+
+    #[test]
+    fn measure_width_shrinks_with_aspect_but_height_holds() {
+        // A wider viewport narrows the NDC footprint of a string (so it stops stretching / overflowing
+        // its panel), while the height — which is screen-height-relative — is unchanged.
+        let (w_sq, h_sq) = measure("STANCE", 0.04, 1.0);
+        let (w_wide, h_wide) = measure("STANCE", 0.04, 16.0 / 9.0);
+        assert!(w_wide < w_sq, "string is narrower in NDC on a wide screen");
+        assert!((w_wide - w_sq * 9.0 / 16.0).abs() < EPS, "width scales by 1/aspect");
+        assert!((h_sq - h_wide).abs() < EPS, "height is aspect-independent");
+    }
+
+    #[test]
+    fn layout_cells_are_narrower_but_same_count_under_aspect() {
+        // Aspect changes geometry, never which cells light: a wide viewport packs the same glyph cells
+        // into a narrower run (each cell half-width shrinks), so text reads correctly, not stretched.
+        let sq = layout_cells(&item("ABC", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
+        let wide = layout_cells(&item("ABC", [0.0, 0.0], 0.07, Anchor::TopLeft), 16.0 / 9.0);
+        assert_eq!(sq.len(), wide.len(), "same lit cells regardless of aspect");
+        assert!(wide[0].hw < sq[0].hw, "cells are narrower on a wide screen");
+        assert!((wide[0].hh - sq[0].hh).abs() < EPS, "cell height is aspect-independent");
+    }
+
+    #[test]
+    fn degenerate_aspect_falls_back_to_square() {
+        // A zero / non-finite aspect (a mid-resize zero-height surface) must not divide by ~0 — it
+        // falls back to square so text still lays out finitely.
+        let (cw, ch) = cell_size(0.07, 0.0);
+        assert!((cw - ch).abs() < EPS, "zero aspect → square cells, not NaN/inf");
+        assert!(cw.is_finite());
     }
 
     // ---- anchoring ----
 
     #[test]
     fn top_left_anchor_is_identity() {
-        let size = measure("HI", 0.07);
+        let size = measure("HI", 0.07, 1.0);
         assert_eq!(anchor_top_left([0.2, 0.3], size, Anchor::TopLeft), [0.2, 0.3]);
     }
 
     #[test]
     fn top_center_centers_horizontally_keeps_top() {
-        let size = measure("HI", 0.07);
+        let size = measure("HI", 0.07, 1.0);
         let tl = anchor_top_left([0.0, 0.5], size, Anchor::TopCenter);
         assert!((tl[0] + size.0 * 0.5).abs() < EPS, "left edge is -w/2 from center");
         assert!((tl[1] - 0.5).abs() < EPS, "top y unchanged");
@@ -583,7 +651,7 @@ mod tests {
 
     #[test]
     fn center_anchor_box_straddles_pos() {
-        let size = measure("HI", 0.07);
+        let size = measure("HI", 0.07, 1.0);
         let tl = anchor_top_left([0.0, 0.0], size, Anchor::Center);
         // Top-left is up-and-left of center by half the box.
         assert!((tl[0] + size.0 * 0.5).abs() < EPS);
@@ -595,7 +663,7 @@ mod tests {
 
     #[test]
     fn bottom_center_puts_pos_at_baseline_center() {
-        let size = measure("HI", 0.07);
+        let size = measure("HI", 0.07, 1.0);
         let tl = anchor_top_left([0.1, -0.4], size, Anchor::BottomCenter);
         // Bottom edge (top y - h) is at pos.y, centered horizontally.
         assert!((tl[0] + size.0 * 0.5 - 0.1).abs() < EPS);
@@ -606,12 +674,12 @@ mod tests {
 
     #[test]
     fn empty_string_lays_out_no_cells() {
-        assert!(layout_cells(&item("", [0.0, 0.0], 0.07, Anchor::TopLeft)).is_empty());
+        assert!(layout_cells(&item("", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0).is_empty());
     }
 
     #[test]
     fn whitespace_only_lays_out_no_cells() {
-        assert!(layout_cells(&item("   ", [0.0, 0.0], 0.07, Anchor::TopLeft)).is_empty());
+        assert!(layout_cells(&item("   ", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0).is_empty());
     }
 
     #[test]
@@ -622,7 +690,7 @@ mod tests {
             .flat_map(|row| (0..glyph::COLS).map(move |col| (col, row)))
             .filter(|&(col, row)| glyph::is_lit(&bm, col, row))
             .count();
-        let cells = layout_cells(&item("1", [0.0, 0.0], 0.07, Anchor::TopLeft));
+        let cells = layout_cells(&item("1", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
         assert_eq!(cells.len(), expected);
     }
 
@@ -630,8 +698,8 @@ mod tests {
     fn space_in_middle_advances_without_cells() {
         // "A A" emits the same cells as "AA" would for the two A's, but the second A is shifted one
         // extra ADVANCE further right (the space). So total cell count == 2 * cells('A').
-        let a_cells = layout_cells(&item("A", [0.0, 0.0], 0.07, Anchor::TopLeft)).len();
-        let two = layout_cells(&item("A A", [0.0, 0.0], 0.07, Anchor::TopLeft));
+        let a_cells = layout_cells(&item("A", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0).len();
+        let two = layout_cells(&item("A A", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
         assert_eq!(two.len(), 2 * a_cells, "space lights nothing but advances");
     }
 
@@ -640,7 +708,7 @@ mod tests {
         let mut it = item("8", [0.0, 0.0], 0.07, Anchor::TopLeft);
         it.color = [0.2, 0.4, 0.6];
         it.alpha = 0.5;
-        let cells = layout_cells(&it);
+        let cells = layout_cells(&it, 1.0);
         assert!(!cells.is_empty());
         for c in &cells {
             assert_eq!([c.r, c.g, c.b], [0.2, 0.4, 0.6]);
@@ -653,9 +721,9 @@ mod tests {
         // Every lit cell's quad lies inside the string's anchored bounding box (a layout sanity
         // bound the host relies on when it anchors text to a button rect).
         let it = item("SCORE", [0.0, 0.0], 0.07, Anchor::Center);
-        let size = measure(&it.text, it.px_size);
+        let size = measure(&it.text, it.px_size, 1.0);
         let [ox, oy] = anchor_top_left(it.pos, size, it.anchor);
-        let cells = layout_cells(&it);
+        let cells = layout_cells(&it, 1.0);
         assert!(!cells.is_empty());
         for c in &cells {
             // The box spans [ox, ox+w] in x and [oy-h, oy] in y. Each cell's extent must fit.
@@ -670,7 +738,7 @@ mod tests {
     fn cells_are_screen_space_only() {
         // Fairness guard (invariant #6): text quads are NDC chrome, never world positions.
         let it = item("KILLS: 42", [0.0, 0.0], 0.06, Anchor::Center);
-        for c in layout_cells(&it) {
+        for c in layout_cells(&it, 1.0) {
             assert!(c.cx.is_finite() && c.cy.is_finite());
             assert!(c.cx >= -1.5 && c.cx <= 1.5, "cx in NDC range");
             assert!(c.cy >= -1.5 && c.cy <= 1.5, "cy in NDC range");
@@ -681,8 +749,8 @@ mod tests {
     fn first_glyph_top_left_cell_sits_at_anchor_corner() {
         // The leftmost-topmost lit cell of the first glyph aligns to the anchored top-left corner.
         let it = item("E", [0.0, 0.0], 0.07, Anchor::TopLeft); // 'E' lights its top-left cell
-        let (cell_w, cell_h) = cell_size(it.px_size);
-        let cells = layout_cells(&it);
+        let (cell_w, cell_h) = cell_size(it.px_size, 1.0);
+        let cells = layout_cells(&it, 1.0);
         // 'E' row 0 col 0 is lit → first cell center is half a cell in from the top-left corner.
         let top_left = cells
             .iter()

@@ -723,10 +723,9 @@ fn command_panel_view(
             },
         ));
     }
-    lines.push(PanelLine::new(
-        "[B] place   select a unit/camp for more",
-        LineStyle::Dim,
-    ));
+    // Two short hint lines instead of one long one, so the row never outruns the panel width.
+    lines.push(PanelLine::new("[B] PLACE A STRUCTURE", LineStyle::Dim));
+    lines.push(PanelLine::new("SELECT A CAMP FOR MORE", LineStyle::Dim));
     CommandPanelView {
         title: "BUILD".to_string(),
         lines,
@@ -3135,7 +3134,9 @@ impl Game {
                 slots: self.radial_menu.len(),
                 highlight: None,
             };
-            self.renderer.render_radial(device, queue, view, &menu);
+            // Label each wedge with its real command name from the vocabulary, not a slot number.
+            self.renderer
+                .render_radial(device, queue, view, &menu, &self.radial_menu);
         }
 
         // 9. Draw the in-session shell overlay (Phase 4 WS-B) LAST, over everything else — so the

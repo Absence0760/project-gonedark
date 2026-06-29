@@ -675,6 +675,10 @@ pub struct Renderer {
     /// being rasterised into the (possibly sub-native) dyn-res scene target and upscaled soft. Pure
     /// presentation state — three counts off the visible draw set, never a sim read (invariant #1/#4).
     readout_tally: readout::Tally,
+    /// Viewport aspect (width / height) of the most recent [`Renderer::render`], stashed so the chrome
+    /// passes that run AFTER it this frame (radial menu, etc.) keep their glyphs square in pixels too.
+    /// Pure presentation — never a sim input (invariant #1/#4). Defaults to `1.0` (square).
+    chrome_aspect: f32,
 }
 
 impl Renderer {
@@ -832,6 +836,7 @@ impl Renderer {
             depth_size: (1, 1),
             scene_target,
             readout_tally: readout::Tally::default(),
+            chrome_aspect: 1.0,
         }
     }
 
@@ -930,6 +935,13 @@ impl Renderer {
         height: u32,
     ) {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(camera));
+
+        // Keep screen-space chrome glyphs square in pixels: hand this frame's viewport aspect to the
+        // text pass (used by every chrome flush that follows — readout, command panel/bar, objective
+        // HUD, embody picker, tank shell label) and stash it for the radial pass, which runs later this
+        // frame. Pure presentation — it never reaches the sim (invariant #1/#4).
+        self.chrome_aspect = width.max(1) as f32 / height.max(1) as f32;
+        self.text.set_aspect(self.chrome_aspect);
 
         // Pick the draw set: the fog layer applies visibility (and the dark-frame avatar-only
         // rule) — see `render/src/fog.rs` (worker 1).
@@ -1208,14 +1220,22 @@ impl Renderer {
     /// delegating to [`radial::RadialRenderer`]. The host calls this only in the command view, when a
     /// held long-press has a menu open ([`radial::RadialMenu::slots`] > 0). It is screen-space chrome
     /// with no world position and is never drawn over the dark embodied frame (invariant #6).
+    ///
+    /// `names` are the live per-slot action labels from the host's command vocabulary
+    /// (`engine::Game::radial_menu`); each wedge is labelled with its real name instead of a
+    /// placeholder slot number. The labels are kept square in pixels by the aspect stashed from this
+    /// frame's [`Renderer::render`].
     pub fn render_radial(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         menu: &radial::RadialMenu,
+        names: &[&str],
     ) {
-        self.radial.render(device, queue, view, menu);
+        self.radial.set_aspect(self.chrome_aspect);
+        self.radial
+            .render_with_labels(device, queue, view, menu, Some(names));
     }
 
     /// Draw the band-select marquee on top of the current frame (a LOAD pass — never clears),
@@ -1367,6 +1387,13 @@ impl Renderer {
         let labels = readout::readout_labels(&self.readout_tally, economy, world_dark);
         if labels.is_empty() {
             return;
+        }
+        // A subtle backing card behind the corner stack so the readout reads as designed HUD chrome,
+        // not bare debug text — sized to this frame's aspect-corrected label footprint, drawn through
+        // the shared overlay quad pipeline BEFORE the text so the glyphs sit on top.
+        let card = readout::readout_card(&labels, self.chrome_aspect);
+        if !card.is_empty() {
+            self.overlay.draw_quads(device, queue, view, &card);
         }
         for label in labels {
             self.text.queue(

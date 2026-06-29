@@ -19,8 +19,12 @@ use crate::text::Anchor;
 const RIGHT: f32 = 0.97;
 /// Top edge of the panel.
 const TOP: f32 = 0.93;
-/// Panel half-width; the box spans `[RIGHT - 2·HALF_W, RIGHT]`.
-const HALF_W: f32 = 0.27;
+/// Panel half-width bounds. The box auto-sizes its width to the widest row it must hold (see
+/// [`box_geom`]) so text never spills past the right screen edge — a short troops summary stays
+/// compact and a long build row still fits — then clamps into `[MIN_HALF_W, MAX_HALF_W]` so a tiny
+/// panel still reads as a card and a very long row can't run off the left edge.
+const MIN_HALF_W: f32 = 0.20;
+const MAX_HALF_W: f32 = 0.46;
 /// Inner padding between the box edge and its content.
 const PAD: f32 = 0.022;
 /// Title text height.
@@ -109,17 +113,33 @@ pub struct PanelLabel {
     pub alpha: f32,
 }
 
-/// The box center + half-extents (NDC) for `n_lines` body rows, plus the inner-left `x` text starts
-/// from and the inner-top `y` the title starts at. Shared by [`command_panel_quads`] and
-/// [`command_panel_labels`] so the box and its text always agree.
-fn box_geom(n_lines: usize) -> (f32, f32, f32, f32, f32, f32) {
-    let inner_h = TITLE_SIZE + TITLE_GAP + n_lines as f32 * ROW_STEP;
+/// The box center + half-extents (NDC) for `view`, plus the inner-left `x` text starts from and the
+/// inner-top `y` the title starts at. Shared by [`command_panel_quads`] and [`command_panel_labels`]
+/// so the box and its text always agree.
+///
+/// The width auto-sizes to the widest line the panel must hold — the title (at [`TITLE_SIZE`]) or any
+/// body row (at [`ROW_SIZE`]) — plus inner padding, clamped to `[MIN_HALF_W, MAX_HALF_W]`. Widths are
+/// measured at aspect `1.0` (the *square-NDC* footprint, which is the widest a string can be — a wider
+/// viewport only narrows the on-screen text), so the box is sized for the worst case and the rows
+/// always fit inside it on any window. That removes the off-screen clipping that made the panel look
+/// broken. The right + top edges stay pinned (`RIGHT`/`TOP`), so the panel still hugs the corner and
+/// grows leftward/downward with its content.
+fn box_geom(view: &CommandPanelView) -> (f32, f32, f32, f32, f32, f32) {
+    let widest = std::iter::once(crate::text::measure(&view.title, TITLE_SIZE, 1.0).0)
+        .chain(
+            view.lines
+                .iter()
+                .map(|l| crate::text::measure(&l.text, ROW_SIZE, 1.0).0),
+        )
+        .fold(0.0_f32, f32::max);
+    let hw = ((widest + 2.0 * PAD) * 0.5).clamp(MIN_HALF_W, MAX_HALF_W);
+    let inner_h = TITLE_SIZE + TITLE_GAP + view.lines.len() as f32 * ROW_STEP;
     let hh = (inner_h + 2.0 * PAD) * 0.5;
-    let cx = RIGHT - HALF_W;
+    let cx = RIGHT - hw;
     let cy = TOP - hh;
-    let left = RIGHT - 2.0 * HALF_W + PAD;
+    let left = RIGHT - 2.0 * hw + PAD;
     let top_inner = TOP - PAD;
-    (cx, cy, HALF_W, hh, left, top_inner)
+    (cx, cy, hw, hh, left, top_inner)
 }
 
 /// The panel's background + rim quads (drawn through the overlay quad pipeline), auto-sized to the
@@ -128,7 +148,7 @@ pub fn command_panel_quads(view: &CommandPanelView) -> Vec<OverlayQuad> {
     if view.is_empty() {
         return Vec::new();
     }
-    let (cx, cy, hw, hh, _, _) = box_geom(view.lines.len());
+    let (cx, cy, hw, hh, _, _) = box_geom(view);
     vec![
         // Rim first (behind), then the panel fill on top — a crisp border.
         OverlayQuad {
@@ -162,7 +182,7 @@ pub fn command_panel_labels(view: &CommandPanelView) -> Vec<PanelLabel> {
     if view.is_empty() {
         return Vec::new();
     }
-    let (_, _, _, _, left, top_inner) = box_geom(view.lines.len());
+    let (_, _, _, _, left, top_inner) = box_geom(view);
     let mut out = Vec::with_capacity(view.lines.len() + 1);
     out.push(PanelLabel {
         text: view.title.clone(),
@@ -260,6 +280,44 @@ mod tests {
         assert!(ls[3].pos[1] < ls[2].pos[1]);
         // Everything shares the same left edge.
         assert!(ls.iter().all(|l| (l.pos[0] - ls[0].pos[0]).abs() < 1e-6));
+    }
+
+    #[test]
+    fn box_auto_widens_for_long_rows_but_stays_on_screen() {
+        // A long row grows the box wider than a short one (auto-width), yet the panel never runs off
+        // the left edge — the bug that made it look broken. Both keep the right edge pinned at RIGHT.
+        let short = command_panel_quads(&view("SEL", &[("3x RIFLE", LineStyle::Normal)]));
+        let long = command_panel_quads(&view(
+            "SELECTED — 3",
+            &[("STANCE: FIRE AT WILL", LineStyle::Normal)],
+        ));
+        assert!(long[1].hw > short[1].hw, "a longer row makes a wider box");
+        for q in long.iter().chain(short.iter()) {
+            // Right edge pinned; left edge stays inside the screen (> -1.0) so nothing clips off.
+            assert!((q.cx + q.hw - RIGHT).abs() < 1e-6 || (q.cx + q.hw - (RIGHT + RIM_PAD)).abs() < 1e-6);
+            assert!(q.cx - q.hw > -1.0, "left edge stays on screen (no off-screen clip)");
+        }
+    }
+
+    #[test]
+    fn rows_fit_inside_the_auto_sized_box() {
+        // The whole point of auto-width: every row's measured footprint fits within the box's inner
+        // width, so text can't spill past the panel edge on a square (worst-case) viewport.
+        let v = view(
+            "SELECTED — 3",
+            &[
+                ("3X RIFLEMAN", LineStyle::Normal),
+                ("STANCE: FIRE AT WILL", LineStyle::Normal),
+                ("E  EMBODY", LineStyle::Dim),
+            ],
+        );
+        let q = command_panel_quads(&v);
+        let fill = &q[1];
+        let inner_w = 2.0 * fill.hw - 2.0 * PAD;
+        for line in &v.lines {
+            let w = crate::text::measure(&line.text, ROW_SIZE, 1.0).0;
+            assert!(w <= inner_w + 1e-6, "row {:?} ({w}) fits inner width {inner_w}", line.text);
+        }
     }
 
     #[test]
