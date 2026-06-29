@@ -1,11 +1,19 @@
 # Factions plan — US Army vs French Army
 
-> **Status: PLAN.** Direction locked in [D68](../decisions.md); design in
-> [`factions.md`](../factions.md); specifics open in [Q19](../open-questions.md). This is the build
-> sequencing for the faction system [D68](../decisions.md) deliberately deferred — the analogue of
-> [`pve-campaign-plan.md`](pve-campaign-plan.md), scoped to net-new *identity content*, not engine
-> risk. **Gated on the shared-archetype balance landing first** ([`combat-rebalance-plan.md`](combat-rebalance-plan.md)
-> → WS-0 below).
+> **Status: IN PROGRESS — spine + identity layer landed; gunsmith pools + native selection remain.**
+> Direction locked in [D68](../decisions.md); design in [`factions.md`](../factions.md); the WS-B
+> stat-budget fork in [Q19](../open-questions.md) is now **resolved by [D71](../decisions.md)** (soft
+> asymmetry on logistics rhythm, not gun stats). This is the build sequencing for the faction system
+> [D68](../decisions.md) deliberately deferred — the analogue of
+> [`pve-campaign-plan.md`](pve-campaign-plan.md), scoped to net-new *identity content*, not engine risk.
+> **WS-0 prerequisite met** ([`combat-rebalance-plan.md`](combat-rebalance-plan.md) is COMPLETE).
+> **Landed:** **WS-A** (`Army` tag + persist/lockstep codecs, the spine), **WS-B** (per-faction rosters,
+> logistics-rhythm tilt — [D71](../decisions.md)), **WS-C** (per-faction cosmetic identity — US/FR
+> silhouettes/viewmodels/names via the scripted asset pipeline), and the buildable seam slice of **WS-D**
+> (army selection through the `core::shell` seam + a presentation-safe read view). **Remaining:** **WS-E**
+> (per-faction gunsmith pools, layers on [D60](../decisions.md)); WS-D's native army-select *screen*
+> (D32-blocked) and its PvE US-vs-FR OPFOR *scenario seeding*; and army-tilting the pre-placed scenario
+> starting troops.
 
 ---
 

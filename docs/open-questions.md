@@ -435,7 +435,17 @@ suppression + `SUPPRESSION_PIN` 1/2→3/8 ([D70](decisions.md)). Harness-confirm
 
 ---
 
-## Q19 — Faction roster specifics: how asymmetric is US Army vs French Army? <a id="q19--faction-roster-specifics"></a>
+## Q19 — Faction roster specifics: how asymmetric is US Army vs French Army? — RESOLVED ([D71](decisions.md)) <a id="q19--faction-roster-specifics"></a>
+
+> **Resolved by [D71](decisions.md):** **soft asymmetry**, with the tilt confined to **logistics rhythm**
+> (magazine / reload / reserve) — combat-power axes (damage, cadence, range, HP, penetration) stay shared,
+> because the equal-cost mass trade is a Lanchester square-law snowball that no gun-stat tilt survives. US =
+> deep-mag/long-reload; FR = shallow-mag/snappy-reload; tank identity is turret-slew only; Neutral ==
+> baseline. Campaign is played US-side with France as OPFOR ([D58](decisions.md)). Verified swap-invariant
+> against `sim-runner --metrics`. **Residual specifics still tracked in
+> [`factions-plan.md`](plans/factions-plan.md):** per-faction **gunsmith pools** (WS-E, layers on
+> [D60](decisions.md)) and army-tilting the pre-placed scenario starting troops (WS-C/WS-D follow-up). The
+> fork below is retained for the record.
 
 [D68](decisions.md) locks the **direction** — asymmetric factions modelled on real modern armies, US
 vs FR first, fairness-bounded — and [`factions.md`](factions.md) holds the design. The *specifics* are

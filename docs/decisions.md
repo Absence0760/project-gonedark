@@ -3281,3 +3281,58 @@ were updated for the suppression-moved numbers (directions unchanged). Five new 
 suppression tests + two `core::spatial` tests. **Deliberately deferred:** suppression as a function of
 *incoming volume* over a window (vs per-shot); cover/terrain modulating splash; per-faction suppression
 feel; tuning splash/pin again once the per-faction `unit_stats` land.
+
+## D71 — Factions WS-B: identity tilts on logistics rhythm, not gun stats (soft asymmetry, swap-invariant)
+
+**Decision:** Per-faction rosters (US Army vs French Army) are **soft-asymmetric** — every army fields the
+same shared archetype skeleton (rifleman / heavy / vehicle / support) — and the only axis that differs
+between armies is the **logistics rhythm** (magazine size / reload time / reserve depth). The
+**combat-power axes — damage, cadence, range, HP, penetration — are held strictly shared** across US and
+FR. The logistics tilt is scaled to keep **sustained DPS and reserve depth invariant** between the two:
+
+- **US** = deep-magazine / long-reload **sustained-fire** doctrine (M249/M240, M1 Abrams).
+- **FR** = shallow-magazine / snappy-reload **quick-swap** doctrine (FAMAS, Leclerc).
+- **Tank** identity is **turret-slew only** (cosmetic, [invariant #3](../CLAUDE.md)) — its shallow 6-shell
+  magazine makes *any* logistics tilt unfair under reload pressure, so it carries no stat tilt at all.
+- **Medic / support** is shared (no fair combat surface to tilt). **Neutral** army = **byte-identical** to
+  the pre-factions shared baseline.
+
+This realizes workstream **WS-B** of [`factions-plan.md`](plans/factions-plan.md) and **answers the
+WS-B stat-budget design gate** that was the open fork in [Q19](open-questions.md) — locking the **soft
+asymmetry** lean and pinning *where* the asymmetry lives. Implemented in `core::economy`
+(`unit_stats_for(Army, kind)`), folded into the per-tick checksum at production (wave-2 W6, `ff4a53a`).
+
+**Why:** the equal-cost mass infantry trade is a **Lanchester square-law snowball** — a small per-unit
+edge compounds with surviving body-count, so *any* tilt to the core combat axes flips the equal-cost
+matchup outside any fairness band. Measured, not felt: a 2-point Rifleman damage gap run 10-vs-0 produced
+non-monotonic outcome flips. A "soft gun tilt" therefore cannot stay fair. Logistics rhythm is the one
+axis that delivers a distinct *feel* (how a firefight breathes — burst-and-swap vs. lean-on-the-trigger)
+**without** changing the equal-cost kill math, because it is tuned to hold sustained DPS and reserve depth
+equal. The tank exception falls out of the same measurement: a shell-count tilt handed FR a tank-in-cover
+standoff 2-0 once shells deplete and reloads gate fire, so the tank keeps a purely cosmetic (turret-slew)
+identity. This keeps [invariant #1](../CLAUDE.md) (fixed-point), [invariant #3](../CLAUDE.md)
+(literal-executor — no autonomous unit smarts), and the [D30](decisions.md) cost-parity discipline, and it
+serves the [D68](decisions.md) US-vs-France direction (real-doctrine feel) without re-opening the
+[D69](decisions.md)/[D70](decisions.md) balance the rebalance just settled.
+
+**Why these numbers:** dialed against `sim-runner --metrics`, the same objective signal as
+[D30](decisions.md)/[D69](decisions.md)/[D70](decisions.md). A new `cross_faction_equal_cost` check
+asserts **swap-invariance**: the mirror-of-roles equal-cost trade is **bit-identical across US/FR, FR/US,
+and Neutral/Neutral** for every archetype and separation (zero army-power delta; the Player-side win is a
+fixed index-order artifact, identical in all three orderings), holding even under a reload-pressure tank
+standoff exercised long enough to deplete and reload shells.
+
+**Consequences:** `core::economy` gains `unit_stats_for(Army, kind)` (the production roster seam every peer
+spawns the bit-identical unit from); production now draws the producing faction's army roster, folded into
+the checksum so a mismatched-army peer desyncs at production (caught by the cross-arch + 2-peer lockstep
+runners, [invariant #7](../CLAUDE.md)). All tilt tables are `u16`/`Fixed::from_int` — float-free
+(determinism guard green). **Scope (honest caveat):** the change is the **production-roster seam only** —
+`scenario.rs` pre-placed *starting* troops still draw the shared `unit_stats`, so no shipping scene
+(`seed_skirmish`/`seed_seize`) runs US/FR production long enough to spawn a tilted unit, the
+Neutral-baseline scenes are byte-unchanged, and **no goldens moved**. Army-tilting the pre-placed starting
+troops is a clean WS-C/WS-D follow-up (it will move those scenes' checksums by design). Tests: +7
+`core::economy`/`sim` (Neutral==baseline; US/FR differ only on logistics; infantry tilt is
+DPS/depth-neutral; tank tilt is cosmetic turret-only; production spawns the producing army's roster; 2-peer
+mismatched-armies lockstep agreement; per-army roster diverges the checksum at production) and +3
+`sim-runner` metrics tests (swap-invariance, swap-invariance under reload pressure, distinct-but-Neutral-
+matches-baseline), with `cross_faction_equal_cost` wired into the `--metrics summary` digest.
