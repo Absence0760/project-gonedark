@@ -23,13 +23,15 @@
 //! pure pieces with the EWMA accumulator and the last-change bookkeeping; the caller supplies the
 //! current lockstep frontier tick, so even the dwell check stays clock-free.
 //!
-//! **RTT sample source (the one stubbed piece — see [`RttDelayEstimator::observe_rtt`]).** A real
-//! RTT needs a transport-level ping/pong, which would mean a new wire frame — explicitly out of
-//! scope here (it touches the `core::lockstep` protocol). So the sample input is a clean host seam:
-//! the host feeds measured RTTs in via `observe_rtt`, and the estimator → `propose_delay` path is
-//! complete and tested independent of where the number comes from. In production the sample should
-//! come from a transport-level ping/pong (a `pal-desktop` concern, not `core`); until that exists
-//! the estimator is simply inert (no samples → no proposals), so it never fabricates a delay change.
+//! **RTT sample source (see [`RttDelayEstimator::observe_rtt`]).** A real RTT needs a transport-level
+//! ping/pong — deliberately NOT a new `core::lockstep` wire frame (that would touch the protocol; RTT
+//! is a host/transport wall-clock concern). The sample input is a clean host seam: the host feeds
+//! measured RTTs in via `observe_rtt`, and the estimator → `propose_delay` path is complete and
+//! tested independent of where the number comes from. The production source is
+//! `pal_desktop::PingPongTransport` (a `pal-desktop` concern, not `core`): it multiplexes ping/pong
+//! over the lockstep transport and the host drains its `RttSamples` into `observe_rtt`. On a session
+//! with no transport (single-player) it is never fed, so the estimator stays inert (no samples → no
+//! proposals) and never fabricates a delay change.
 
 use gonedark_core::sim::TICK_HZ;
 

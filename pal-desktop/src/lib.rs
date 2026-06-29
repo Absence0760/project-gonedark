@@ -36,6 +36,19 @@ pub use audio::DesktopAudio;
 mod transport;
 pub use transport::{LoopbackTransport, UdpTransport};
 
+/// Transport-level RTT ping/pong (Phase 3 WS-B): the live sample source for `engine`'s
+/// adaptive-input-delay estimator. [`PingPongTransport`] wraps any [`gonedark_pal::Transport`],
+/// multiplexes its own tagged ping/pong datagrams over it, and surfaces measured round-trip times
+/// via a cloneable [`RttSamples`] handle the host drains into `Game::observe_rtt`. Deliberately NOT a
+/// `core::lockstep` wire frame — RTT is a host/transport wall-clock concern, kept out of the
+/// clock-free `core` (invariants #1/#2). The pure measurement logic ([`RttMeter`] + the frame codec)
+/// is unit-tested directly; [`SystemClock`] is the production wall clock.
+mod pingpong;
+pub use pingpong::{
+    decode, encode_ping, encode_pong, wrap_lockstep, Decoded, PingPongTransport, RttMeter,
+    RttSamples, SystemClock,
+};
+
 /// Owns the `wgpu` surface + device/queue for a `winit` window (D19). Built in the `app`'s
 /// `ApplicationHandler::resumed` from a window the `app` creates, then queried for the
 /// `&Device`/`&Queue`/`TextureFormat` the renderer needs (`render::Renderer::new(device,
