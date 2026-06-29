@@ -13,13 +13,19 @@
 > **UDP** transport, and **RTT-adaptive delay** via the agreed `DelayChange` protocol). **C** — the
 > authoritative snapshot (D28) and the **reconnect policy** (snapshot + buffered-command replay).
 > **D** — the gone-dark **detection** tell (`core::detection`, tunable `Hidden|Subtle|Marked`,
-> default Subtle — **Q2** resolved by [D33](../decisions.md)).
-> **Still open:** **A** — rayon-into-`core` (needs a decision *and* is unjustified at ~3.7 ms) and
-> the dual-rate re-eval (D21, needs on-device thermal numbers); **B** — the host-side RTT
-> estimator wiring + relay/matchmaking ([Q9](../open-questions.md)); **C** — the Wi-Fi↔cellular
-> **handoff** (blocked on a QUIC transport); **D** — the detection **HUD/AI wiring** (the core
-> mechanism landed; the *two-human* mind game needs the net layer). The remaining items are gated on
-> decisions, a physical device, or the net layer — not on more core code.
+> default Subtle — **Q2** resolved by [D33](../decisions.md)), plus the **detection HUD** (a
+> presentation-only command-view tell overlay, `render::detection` + the pure `engine::detection_markers`
+> seam) and the **honest AI consult** (the scripted commander, config-gated default-OFF, chases a
+> gone-dark hostile only within what `detectable_embodiment` reveals — invariant #6/#3 structural).
+> **B's host-side RTT estimator** also landed: a pure `engine::net_tuning` EWMA + hysteresis seam
+> that drives `Lockstep::propose_delay` (the live RTT *sample feed* is the one remaining stub —
+> production needs a `pal-desktop` transport ping/pong, not a new `core` wire frame).
+> **Still open / gated (not on more code):** **A** — rayon-into-`core` (needs a decision *and* is
+> unjustified at ~3.7 ms) and the dual-rate re-eval (D21, **needs on-device thermal numbers**);
+> **B** — the RTT *sample source* (transport ping/pong) + relay/matchmaking ([Q9](../open-questions.md));
+> **C** — the Wi-Fi↔cellular **handoff** (**blocked on a QUIC transport**); **D** — the *two-human*
+> mind game itself (**needs the net layer** — two networked humans). These are gated on decisions, a
+> physical device, a QUIC transport, or a second human — not on more core code.
 
 Phase 3 has four workstreams (`roadmap.md` §"Phase 3 — Scale & net"):
 
@@ -220,9 +226,17 @@ checksum byte-identical with prediction on vs off."*
    re-stamp/drop a command or stall. The no-change path is byte-identical (net stream
    `2684f7afb6e334e5` unchanged); headline tests drive a mid-run increase (under loss) + decrease,
    asserting both peers stay checksum-identical to each other *and* to a no-change reference;
-   determinism-auditor clean (no float/clock, no command-stream desync). **Still owed:** the
-   host-side RTT estimator + hysteresis that *calls* `propose_delay` (thin `pal-desktop`/`engine`
-   wiring, low determinism risk); relay / matchmaking ([Q9](../open-questions.md)) untouched.
+   determinism-auditor clean (no float/clock, no command-stream desync). **Host-side RTT estimator**
+   ✅ **DONE** — `engine::net_tuning`: a pure, clock-free `decide_delay`/`target_delay_ticks` seam
+   (EWMA of RTT seconds → tick delay; dead-band + min-dwell hysteresis so jitter can't thrash the
+   delay), wrapped in an `RttDelayEstimator` fed by `Game::observe_rtt` and polled in `frame` to call
+   `Lockstep::propose_delay` on a networked session. Lives in `engine` (not `pal-desktop` — `engine`
+   can't depend on `pal-desktop`; it's host glue already using host-side floats), so `core` only ever
+   receives an integer delay. 14 tests, dev + release; single-player (delay-0, no transport) untouched.
+   **Still owed:** the live RTT *sample source* — a transport-level ping/pong measured in `pal-desktop`
+   feeding `observe_rtt` (deliberately **not** a new `core::lockstep` wire frame; until it exists the
+   estimator stays inert and never fabricates a delay change); relay / matchmaking
+   ([Q9](../open-questions.md)) untouched.
 
 ---
 
@@ -302,9 +316,18 @@ in `Hidden` the derivation is empty even with a unit embodied in plain sight.*
 range+LoS-gated with an aging `tell_linger_ticks` lingering marker in `Subtle`; persistent in
 `Marked`; empty in `Hidden`), and a `DetectionMemory` for the linger (presentation state, never sim
 state). Tests cover the three modes, the linger/aging, and the load-bearing checksum-neutrality +
-`Hidden`-is-empty guards. **Still owed (net-facing follow-ups, not this slice):** the host/HUD wiring
-that draws the tell for an enemy, and a scripted/PvE enemy that *consults* the channel — the
-*actual* two-human mind game genuinely needs the net layer.
+`Hidden`-is-empty guards. **HUD wiring** ✅ **DONE** — `render::detection` draws the tell on the
+command view (a world-space marker pass; `Subtle` markers fade by their linger age), fed by the pure
+`engine::detection_markers` seam; invariant #6 is guarded two ways (the host only invokes it on the
+non-embodied command frame, *and* the seam returns empty whenever the view is dark), proven headless
+plus the live on-screen path. **AI consult** ✅ **DONE** — the scripted commander
+(`commander_orders`, `CommanderConfig::hunt_embodied`, **default OFF**) chases a gone-dark hostile,
+but *only* within what `detectable_embodiment` honestly reveals (range + LoS); empty tells ⇒ no
+reaction, so "no omniscient peek" (invariant #3/#6, D2) is structural, not discipline. Tests prove
+flag-off byte-identical streams, flag-on reaction, the range/LoS/`Hidden` honest bounds, and
+determinism; all default sim checksum streams (matchup/infantry/stress/net) verified bit-identical to
+the pre-merge base. **Still owed:** the *actual* two-human mind game — it genuinely needs the net
+layer (two networked humans), which is the gating dependency, not more core code.
 
 ---
 
