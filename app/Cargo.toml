@@ -34,7 +34,7 @@ gonedark-pal-desktop = { path = "../pal-desktop" }
 # android — its entry is `android_main`), so these sit under the not-android target alongside
 # pal-desktop. The shell holds no game logic; it drives the shared engine the same way the Android
 # Compose shell (D35) does (invariant #2).
-egui = "0.34"
+egui = "0.35"
 egui-wgpu = "0.34"
 egui-winit = "0.34"
 
