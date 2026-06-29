@@ -617,6 +617,454 @@
           "cooked_sha256": "4d76007a684c0555b99e995647e8a0e109fab12cf0cfd5d28645905c9a5210f8"
         }
       ]
+    },
+    {
+      "name": "trooper_us",
+      "category": "units",
+      "file": "units/trooper_us.glb",
+      "cooked": "units/trooper_us.mesh",
+      "description": "US Army infantry silhouette \u2014 rounded combat helmet, plate-carrier torso (WS-C).",
+      "base_color": [
+        0.3,
+        0.34,
+        0.18
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 34184,
+      "sha256": "8f2886e1eb9d6e0dc581b9f4296cca2bebd74c6320c959c3faa3acd505768b50",
+      "cooked_bytes": 42012,
+      "cooked_sha256": "36b414fa377bc7dc72637c9c58502df05a511eeded64d7d149e5fe60f974ed15",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/trooper_us.glb",
+          "cooked": "units/trooper_us.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 500,
+          "bytes": 34184,
+          "sha256": "8f2886e1eb9d6e0dc581b9f4296cca2bebd74c6320c959c3faa3acd505768b50",
+          "cooked_bytes": 42012,
+          "cooked_sha256": "36b414fa377bc7dc72637c9c58502df05a511eeded64d7d149e5fe60f974ed15"
+        },
+        {
+          "level": 1,
+          "file": "units/trooper_us.lod1.glb",
+          "cooked": "units/trooper_us.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 244,
+          "bytes": 5812,
+          "sha256": "8ea3d0d3f46e5356bae9adb0b642bde2506ab17608adeed5df34c040545a2783",
+          "cooked_bytes": 20508,
+          "cooked_sha256": "ae1793a80d9bca9f3e26d058648bf0eefd03cf3020b605047a7e610567724ed8"
+        },
+        {
+          "level": 2,
+          "file": "units/trooper_us.lod2.glb",
+          "cooked": "units/trooper_us.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 114,
+          "bytes": 3272,
+          "sha256": "006600261c87015a66a042842141596ba705c11736d273eac58f2305a32b398e",
+          "cooked_bytes": 9588,
+          "cooked_sha256": "e6b9f2eda39ba3cbe7663bc37ba44e059697f4ec7e52b06592e367820d534334"
+        }
+      ]
+    },
+    {
+      "name": "trooper_fr",
+      "category": "units",
+      "file": "units/trooper_fr.glb",
+      "cooked": "units/trooper_fr.mesh",
+      "description": "French Army infantry silhouette \u2014 flatter brimmed SPECTRA helmet, slimmer profile (WS-C).",
+      "base_color": [
+        0.27,
+        0.31,
+        0.2
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 35024,
+      "sha256": "47676c522c2a7742cc61a6c4d8e2e39fec6e5c80ee651f5fafd0318c466db2d3",
+      "cooked_bytes": 43020,
+      "cooked_sha256": "94a5af592f7682a1d767733f6943f1f69a8c0442a2dda46fc5038b9c89d02f14",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/trooper_fr.glb",
+          "cooked": "units/trooper_fr.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 512,
+          "bytes": 35024,
+          "sha256": "47676c522c2a7742cc61a6c4d8e2e39fec6e5c80ee651f5fafd0318c466db2d3",
+          "cooked_bytes": 43020,
+          "cooked_sha256": "94a5af592f7682a1d767733f6943f1f69a8c0442a2dda46fc5038b9c89d02f14"
+        },
+        {
+          "level": 1,
+          "file": "units/trooper_fr.lod1.glb",
+          "cooked": "units/trooper_fr.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 252,
+          "bytes": 5788,
+          "sha256": "c4d3f7f5f01a18b6bf8e8e36c6df89eadd2c2ca33e17deb7734d94231f8fc798",
+          "cooked_bytes": 21180,
+          "cooked_sha256": "a982b60785af4359fdd8e95fc27a14ea30768d3f6d00fa699e447284f98c441a"
+        },
+        {
+          "level": 2,
+          "file": "units/trooper_fr.lod2.glb",
+          "cooked": "units/trooper_fr.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 116,
+          "bytes": 2960,
+          "sha256": "c88270be8df378061f0b5bc4ddede1d324cf38901802f4fc64efd1ee5e14cb1d",
+          "cooked_bytes": 9756,
+          "cooked_sha256": "965bed2aaaee025192e1102ffd48b0fcb196eb8df40c93a9c3cafde0aca54929"
+        }
+      ]
+    },
+    {
+      "name": "tank_us",
+      "category": "units",
+      "file": "units/tank_us.glb",
+      "cooked": "units/tank_us.mesh",
+      "description": "US M1 Abrams hull \u2014 long, low, flat chassis with a sloped front glacis (WS-C).",
+      "base_color": [
+        0.3,
+        0.31,
+        0.24
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 4560,
+      "sha256": "e59e6ad69f43128ce427f9d39873a60d08b257e4e1095fbd2df98e6ae7f386d9",
+      "cooked_bytes": 4044,
+      "cooked_sha256": "1b9d99a00d1874dd5e8c7779326c60879f2bb93a0117c1ecd722a3b47e7a38cb",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/tank_us.glb",
+          "cooked": "units/tank_us.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 48,
+          "bytes": 4560,
+          "sha256": "e59e6ad69f43128ce427f9d39873a60d08b257e4e1095fbd2df98e6ae7f386d9",
+          "cooked_bytes": 4044,
+          "cooked_sha256": "1b9d99a00d1874dd5e8c7779326c60879f2bb93a0117c1ecd722a3b47e7a38cb"
+        },
+        {
+          "level": 1,
+          "file": "units/tank_us.lod1.glb",
+          "cooked": "units/tank_us.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 48,
+          "bytes": 1980,
+          "sha256": "f18181592fdd697e3efb5084887365075d35557c3949bfa976d5a8e0ab2a4c35",
+          "cooked_bytes": 4044,
+          "cooked_sha256": "1f0d92a3107e55c3401564d1533c87792c152b53b4dcdff6bcc09b97d047876e"
+        },
+        {
+          "level": 2,
+          "file": "units/tank_us.lod2.glb",
+          "cooked": "units/tank_us.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 48,
+          "bytes": 1980,
+          "sha256": "9f81712ed001f648c34e36bfb9e8f427afd4a4cd4f61baba6929249fc670814f",
+          "cooked_bytes": 4044,
+          "cooked_sha256": "d72056176813cd8852e658c5507200e8045eaa441885cd6a488ae544551434a0"
+        }
+      ]
+    },
+    {
+      "name": "tank_turret_us",
+      "category": "units",
+      "file": "units/tank_turret_us.glb",
+      "cooked": "units/tank_turret_us.mesh",
+      "description": "US M1 Abrams turret \u2014 broad flat turret + long 120mm gun, pivoting about the hull ring (WS-C/P7).",
+      "base_color": [
+        0.3,
+        0.31,
+        0.24
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 7196,
+      "sha256": "dfca449b9176f815b6548e0245c5886e39650e41774445798f348774194dda58",
+      "cooked_bytes": 8076,
+      "cooked_sha256": "9cfe2827e0c5130d5b09f81a9ac040eed5c7c238439ba3d6fc3eb4df6560769a",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/tank_turret_us.glb",
+          "cooked": "units/tank_turret_us.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 96,
+          "bytes": 7196,
+          "sha256": "dfca449b9176f815b6548e0245c5886e39650e41774445798f348774194dda58",
+          "cooked_bytes": 8076,
+          "cooked_sha256": "9cfe2827e0c5130d5b09f81a9ac040eed5c7c238439ba3d6fc3eb4df6560769a"
+        },
+        {
+          "level": 1,
+          "file": "units/tank_turret_us.lod1.glb",
+          "cooked": "units/tank_turret_us.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 48,
+          "bytes": 2048,
+          "sha256": "62591af6b4c65c56b15a2b2d51c1327bd33d2acd4aab3af2c622665b88a17b70",
+          "cooked_bytes": 4044,
+          "cooked_sha256": "08dee67c5938529124279fb0777fa298ebb96758b6a0b80735dd03ac1b00a05f"
+        },
+        {
+          "level": 2,
+          "file": "units/tank_turret_us.lod2.glb",
+          "cooked": "units/tank_turret_us.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 38,
+          "bytes": 1880,
+          "sha256": "c6b58397a799fda45538c309e1e31b2232e1733c39d098c4c63145923e8e6f7e",
+          "cooked_bytes": 3204,
+          "cooked_sha256": "ce01611b49d6ff59f4aab5325d852003f16ff9a7d5e9cf095657415924a41fe6"
+        }
+      ]
+    },
+    {
+      "name": "tank_fr",
+      "category": "units",
+      "file": "units/tank_fr.glb",
+      "cooked": "units/tank_fr.mesh",
+      "description": "French Leclerc hull \u2014 compact chassis with a steeper sloped glacis (WS-C).",
+      "base_color": [
+        0.22,
+        0.27,
+        0.18
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 4588,
+      "sha256": "8f424505259810590f4652686f9a255bb95619fe9f7d895f2b4f28c745cadf2e",
+      "cooked_bytes": 4044,
+      "cooked_sha256": "68063015c55b135d07364ff58c44a09ab8c83c8c2d62814256abdc4740dfcb77",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/tank_fr.glb",
+          "cooked": "units/tank_fr.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 48,
+          "bytes": 4588,
+          "sha256": "8f424505259810590f4652686f9a255bb95619fe9f7d895f2b4f28c745cadf2e",
+          "cooked_bytes": 4044,
+          "cooked_sha256": "68063015c55b135d07364ff58c44a09ab8c83c8c2d62814256abdc4740dfcb77"
+        },
+        {
+          "level": 1,
+          "file": "units/tank_fr.lod1.glb",
+          "cooked": "units/tank_fr.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 48,
+          "bytes": 1992,
+          "sha256": "a0a680642820d84787622570d349022a222e10a194ff6a95ab4412149103e03c",
+          "cooked_bytes": 4044,
+          "cooked_sha256": "35ce094bc9112e5fd501a3ada3c3f31580a0a2141f387f9513075e229dbdd493"
+        },
+        {
+          "level": 2,
+          "file": "units/tank_fr.lod2.glb",
+          "cooked": "units/tank_fr.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 48,
+          "bytes": 1992,
+          "sha256": "ff26fef7db9b01251eec8794fa9fa629242c1379b1481cc651cbc604a0b492c3",
+          "cooked_bytes": 4044,
+          "cooked_sha256": "18d1b41b9d4e6c611bdf0ee0ba9f53e0466983242fa673a31ce4baaadb519a76"
+        }
+      ]
+    },
+    {
+      "name": "tank_turret_fr",
+      "category": "units",
+      "file": "units/tank_turret_fr.glb",
+      "cooked": "units/tank_turret_fr.mesh",
+      "description": "French Leclerc turret \u2014 taller box with a rear autoloader bustle, pivoting about the hull ring (WS-C/P7).",
+      "base_color": [
+        0.22,
+        0.27,
+        0.18
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 7180,
+      "sha256": "45586e6782cf115f6768818385c922c050200f7895b68e57c41718efd7855711",
+      "cooked_bytes": 8076,
+      "cooked_sha256": "0d27e96876e0f0961333779f688a32593a91573a6b78a0409a5b300cab056aa7",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/tank_turret_fr.glb",
+          "cooked": "units/tank_turret_fr.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 96,
+          "bytes": 7180,
+          "sha256": "45586e6782cf115f6768818385c922c050200f7895b68e57c41718efd7855711",
+          "cooked_bytes": 8076,
+          "cooked_sha256": "0d27e96876e0f0961333779f688a32593a91573a6b78a0409a5b300cab056aa7"
+        },
+        {
+          "level": 1,
+          "file": "units/tank_turret_fr.lod1.glb",
+          "cooked": "units/tank_turret_fr.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 48,
+          "bytes": 2068,
+          "sha256": "5b636922c07ee7a7f541d04dffc9f32d2f4151ed3bf52b14ff0a894a91469a2a",
+          "cooked_bytes": 4044,
+          "cooked_sha256": "6b5765421c0bd5ed4239df6f0e40647df05d5069f123119353de01c034aac5ff"
+        },
+        {
+          "level": 2,
+          "file": "units/tank_turret_fr.lod2.glb",
+          "cooked": "units/tank_turret_fr.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 38,
+          "bytes": 1828,
+          "sha256": "c96b5323fbd55e3f2fcf351aadede1f036154dd72e11006bb7ac7d70110ea690",
+          "cooked_bytes": 3204,
+          "cooked_sha256": "a5f2f80f1522bbebc9b139ca1c48fcf3e7f1a68f0979d95d66e9b2777383ea17"
+        }
+      ]
+    },
+    {
+      "name": "weapon_rifle_us",
+      "category": "weapons",
+      "file": "weapons/weapon_rifle_us.glb",
+      "cooked": "weapons/weapon_rifle_us.mesh",
+      "description": "US M4 carbine viewmodel \u2014 conventional layout, magazine forward of the grip, flat-top rail (WS-C).",
+      "base_color": [
+        0.12,
+        0.12,
+        0.13
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 12324,
+      "sha256": "860adb3829e257998240a3f637cc9ec56042d29c32a4e021909213aacfad90ba",
+      "cooked_bytes": 15132,
+      "cooked_sha256": "8c8c0c46cb757560e936afdb1e98b6fb628ac283ca38d6dadf456f947c4b0601",
+      "lods": [
+        {
+          "level": 0,
+          "file": "weapons/weapon_rifle_us.glb",
+          "cooked": "weapons/weapon_rifle_us.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 180,
+          "bytes": 12324,
+          "sha256": "860adb3829e257998240a3f637cc9ec56042d29c32a4e021909213aacfad90ba",
+          "cooked_bytes": 15132,
+          "cooked_sha256": "8c8c0c46cb757560e936afdb1e98b6fb628ac283ca38d6dadf456f947c4b0601"
+        },
+        {
+          "level": 1,
+          "file": "weapons/weapon_rifle_us.lod1.glb",
+          "cooked": "weapons/weapon_rifle_us.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 84,
+          "bytes": 2800,
+          "sha256": "bb861109d35d3b4ca495b4936324a18942843ea4f7318f3073243dec1705ec05",
+          "cooked_bytes": 7068,
+          "cooked_sha256": "05104fba556ecc47917c967859725dc8654794bb35374751e84541179cc5d03f"
+        },
+        {
+          "level": 2,
+          "file": "weapons/weapon_rifle_us.lod2.glb",
+          "cooked": "weapons/weapon_rifle_us.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 7,
+          "bytes": 1264,
+          "sha256": "54e402382cd185d25ba51f64c1ca9570f3f5bf1e89861b85fb1efd44bec9846c",
+          "cooked_bytes": 600,
+          "cooked_sha256": "b850fabc788170bca5c78ff6808198550411dcde5d5e7160d5e08b920add1990"
+        }
+      ]
+    },
+    {
+      "name": "weapon_rifle_fr",
+      "category": "weapons",
+      "file": "weapons/weapon_rifle_fr.glb",
+      "cooked": "weapons/weapon_rifle_fr.mesh",
+      "description": "French FAMAS bullpup viewmodel \u2014 magazine behind the grip, full-length carry handle (WS-C).",
+      "base_color": [
+        0.13,
+        0.13,
+        0.12
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 9728,
+      "sha256": "bd0a0e8542fee040678a25cca7bb1a37b40cdc3b0f3b1720a7a28dbb4a1f73e1",
+      "cooked_bytes": 11100,
+      "cooked_sha256": "d8c1b9778919a5acc029e6460c88e353d5b85eb8da3509fb485096a6b88bc66b",
+      "lods": [
+        {
+          "level": 0,
+          "file": "weapons/weapon_rifle_fr.glb",
+          "cooked": "weapons/weapon_rifle_fr.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 132,
+          "bytes": 9728,
+          "sha256": "bd0a0e8542fee040678a25cca7bb1a37b40cdc3b0f3b1720a7a28dbb4a1f73e1",
+          "cooked_bytes": 11100,
+          "cooked_sha256": "d8c1b9778919a5acc029e6460c88e353d5b85eb8da3509fb485096a6b88bc66b"
+        },
+        {
+          "level": 1,
+          "file": "weapons/weapon_rifle_fr.lod1.glb",
+          "cooked": "weapons/weapon_rifle_fr.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 52,
+          "bytes": 2200,
+          "sha256": "bc267bf421b7470e8d0382fd9b22df58b08b21f06ec4e9fba0d063219d2a4403",
+          "cooked_bytes": 4380,
+          "cooked_sha256": "271e6090b5ed1cfceb7c1ac9322def324a8a2273d95f2f5f654306a6fcff4470"
+        },
+        {
+          "level": 2,
+          "file": "weapons/weapon_rifle_fr.lod2.glb",
+          "cooked": "weapons/weapon_rifle_fr.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 42,
+          "bytes": 1972,
+          "sha256": "163bf63e7d3cd04489e057d6cde93bce66b62b2b8782c75b90226f7aa9ddf720",
+          "cooked_bytes": 3540,
+          "cooked_sha256": "1efae9240dc3922388407605dcc3232ea648bf33054d773ac20dec138a376ceb"
+        }
+      ]
     }
   ]
 }

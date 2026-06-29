@@ -274,6 +274,17 @@ COLORS = {
     "rock": (0.40, 0.40, 0.42),        # grey boulder
     "barricade": (0.34, 0.30, 0.22),   # sandbag berm cover
     "tracer": (1.00, 0.60, 0.20),      # hot orange shell tracer (renderer adds the glow)
+    # --- Faction cosmetic silhouettes (factions-plan WS-C, D68). Presentation-only: per-army
+    # silhouettes/names never reach `core` and add no checksum surface. The geometry carries the
+    # read; the tint reinforces it. US = NATO olive/CARC grey-green; FR = French army green. ---
+    "trooper_us": (0.30, 0.34, 0.18),       # US infantry — olive (OCP era)
+    "trooper_fr": (0.27, 0.31, 0.20),       # FR infantry — French army green
+    "tank_us": (0.30, 0.31, 0.24),          # M1 Abrams — CARC tan/grey-green hull
+    "tank_turret_us": (0.30, 0.31, 0.24),   # Abrams turret — matches the hull
+    "tank_fr": (0.22, 0.27, 0.18),          # Leclerc — darker French green hull
+    "tank_turret_fr": (0.22, 0.27, 0.18),   # Leclerc turret — matches the hull
+    "weapon_rifle_us": (0.12, 0.12, 0.13),  # M4 carbine — gunmetal
+    "weapon_rifle_fr": (0.13, 0.13, 0.12),  # FAMAS bullpup — warmer gunmetal
 }
 
 
@@ -293,6 +304,15 @@ CATEGORY = {
     "tree": "props",
     "rock": "props",
     "tracer": "fx",
+    # Faction cosmetic silhouettes (WS-C) — same role-based categories as their shared kin.
+    "trooper_us": "units",
+    "trooper_fr": "units",
+    "tank_us": "units",
+    "tank_turret_us": "units",
+    "tank_fr": "units",
+    "tank_turret_fr": "units",
+    "weapon_rifle_us": "weapons",
+    "weapon_rifle_fr": "weapons",
 }
 
 
@@ -426,6 +446,134 @@ def build_barricade():
     return weld("barricade", parts, mat)
 
 
+# --- Faction cosmetic silhouettes (factions-plan WS-C, D68) -----------------------------------
+# Per-army, presentation-only variants of the headline archetypes. The renderer maps
+# `(Army, kind) → ModelKind` (render/src/lib.rs::model_for_unit) exactly as it maps bare `UnitKind`,
+# so a US-side rifleman draws `trooper_us` and a French tank draws `tank_fr` (+ `tank_turret_fr`).
+# These NEVER reach `core` — silhouettes/names add zero checksum surface (invariant #1/#7 untouched).
+# Geometry stays in the SAME local frame as the shared kin it replaces (Z-up, base z≈0; tank barrel
+# +X with the turret-ring pivot at the hull origin; rifle receiver at origin, barrel +X) so the
+# existing placement/token math (`token_meshes`, `weapon_view_model`) works unchanged.
+
+
+def build_trooper_us():
+    # US infantry: ACH/ECH rounded helmet, plate-carrier bulked torso. Boxy greybox, olive.
+    mat = make_material("trooper_us", rgba("trooper_us"))
+    parts = [
+        box((0.42, 0.26, 0.20), (0, 0, 0.75)),                 # hips
+        box((0.50, 0.30, 0.72), (0, 0, 1.10)),                 # torso (plate carrier — bulkier)
+        sphere(0.17, (0, 0, 1.60)),                            # head + rounded combat helmet
+        box((0.40, 0.30, 0.08), (0, 0, 1.70)),                # helmet brow / NVG-mount slab
+        cyl(0.09, 0.70, (0.13, 0, 0.35)),                      # leg R
+        cyl(0.09, 0.70, (-0.13, 0, 0.35)),                     # leg L
+        cyl(0.08, 0.60, (0.30, 0, 1.10), rot=(math.radians(8), 0, 0)),   # arm R
+        cyl(0.08, 0.60, (-0.30, 0, 1.10), rot=(math.radians(8), 0, 0)),  # arm L
+    ]
+    return weld("trooper_us", parts, mat)
+
+
+def build_trooper_fr():
+    # French infantry (FELIN): SPECTRA helmet (flatter, brimmed), slimmer profile, French green.
+    mat = make_material("trooper_fr", rgba("trooper_fr"))
+    parts = [
+        box((0.40, 0.24, 0.20), (0, 0, 0.75)),                 # hips
+        box((0.44, 0.26, 0.70), (0, 0, 1.10)),                 # torso (slimmer)
+        sphere(0.15, (0, 0, 1.58)),                            # head
+        box((0.34, 0.34, 0.07), (0, 0, 1.66)),                # flatter helmet dome + slight brim
+        box((0.40, 0.16, 0.05), (0.0, 0.10, 1.62)),           # brim accent (forward)
+        cyl(0.09, 0.70, (0.12, 0, 0.35)),                      # leg R
+        cyl(0.09, 0.70, (-0.12, 0, 0.35)),                     # leg L
+        cyl(0.07, 0.62, (0.27, 0, 1.10), rot=(math.radians(8), 0, 0)),   # arm R
+        cyl(0.07, 0.62, (-0.27, 0, 1.10), rot=(math.radians(8), 0, 0)),  # arm L
+    ]
+    return weld("trooper_fr", parts, mat)
+
+
+def build_tank_us():
+    # M1 Abrams HULL: long, low, flat — a broad chassis with a flat front glacis. Turret is the
+    # separate `tank_us_turret` model (slews independently, P7). Pivot at local origin like `tank`.
+    mat = make_material("tank_us", rgba("tank_us"))
+    parts = [
+        box((3.6, 1.9, 0.55), (0, 0, 0.55)),                   # long flat hull
+        box((1.0, 1.9, 0.30), (1.55, 0, 0.45), rot=(0, math.radians(18), 0)),  # sloped front glacis
+        box((3.7, 0.50, 0.55), (0, 1.00, 0.35)),               # track R (long)
+        box((3.7, 0.50, 0.55), (0, -1.00, 0.35)),              # track L
+    ]
+    return weld("tank_us", parts, mat)
+
+
+def build_tank_turret_us():
+    # M1 Abrams TURRET: large, low, wide, angular slab with a long 120 mm gun. Pivot at hull origin,
+    # barrel +X (turret_yaw 0 == hull 0); seated on the hull top (z≈0.85).
+    mat = make_material("tank_turret_us", rgba("tank_turret_us"))
+    parts = [
+        box((2.0, 1.7, 0.55), (-0.15, 0, 1.05)),               # broad flat turret
+        box((0.7, 1.7, 0.30), (1.05, 0, 1.05), rot=(0, math.radians(-12), 0)),  # sloped gun mantlet
+        cyl(0.10, 2.10, (1.5, 0, 1.05), rot=(0, math.radians(90), 0)),  # long 120mm barrel, +X
+        box((0.5, 0.5, 0.18), (-0.9, 0.5, 1.40)),              # commander's cupola/CITV
+    ]
+    return weld("tank_turret_us", parts, mat)
+
+
+def build_tank_fr():
+    # Leclerc HULL: more compact than the Abrams, cleaner sloped front. Separate turret model.
+    mat = make_material("tank_fr", rgba("tank_fr"))
+    parts = [
+        box((3.0, 1.7, 0.60), (0, 0, 0.58)),                   # compact hull
+        box((0.9, 1.7, 0.34), (1.35, 0, 0.50), rot=(0, math.radians(24), 0)),  # steeper glacis
+        box((3.1, 0.46, 0.58), (0, 0.88, 0.36)),               # track R
+        box((3.1, 0.46, 0.58), (0, -0.88, 0.36)),              # track L
+    ]
+    return weld("tank_fr", parts, mat)
+
+
+def build_tank_turret_fr():
+    # Leclerc TURRET: cleaner, taller box with a prominent rear bustle (autoloader) — a distinctly
+    # different silhouette from the Abrams' broad flat turret. Pivot at hull origin, barrel +X.
+    mat = make_material("tank_turret_fr", rgba("tank_turret_fr"))
+    parts = [
+        box((1.5, 1.3, 0.62), (-0.10, 0, 1.10)),               # main turret box (taller)
+        box((1.0, 1.4, 0.55), (-1.05, 0, 1.05)),               # rear bustle (autoloader) — overhangs
+        cyl(0.09, 1.90, (1.35, 0, 1.12), rot=(0, math.radians(90), 0)),  # 120mm barrel, +X
+        box((0.4, 0.4, 0.40), (-0.3, 0.45, 1.55)),             # roof sight mast
+    ]
+    return weld("tank_turret_fr", parts, mat)
+
+
+def build_weapon_rifle_us():
+    # M4 carbine viewmodel: conventional layout — receiver at origin, barrel forward (+X), magazine
+    # BELOW/forward of the grip, collapsible stock to the rear, flat-top rail on top. Modelled in the
+    # same frame as `weapon_rifle` so `weapon_view_model` re-bases +X→forward unchanged.
+    mat = make_material("weapon_rifle_us", rgba("weapon_rifle_us"))
+    parts = [
+        box((0.46, 0.06, 0.11), (0.0, 0, 0)),                  # upper/lower receiver
+        box((0.40, 0.05, 0.04), (0.0, 0, 0.085)),              # flat-top picatinny rail
+        cyl(0.018, 0.46, (0.42, 0, 0), rot=(0, math.radians(90), 0)),  # barrel (forward)
+        cyl(0.03, 0.18, (0.30, 0, -0.02), rot=(0, math.radians(90), 0)),  # handguard
+        box((0.06, 0.05, 0.20), (0.02, 0, -0.14)),             # STANAG magazine (curved, forward of grip)
+        box((0.07, 0.05, 0.14), (-0.10, 0, -0.10), rot=(0, math.radians(-14), 0)),  # pistol grip
+        box((0.22, 0.05, 0.10), (-0.34, 0, 0.0)),              # collapsible stock
+    ]
+    return weld("weapon_rifle_us", parts, mat)
+
+
+def build_weapon_rifle_fr():
+    # FAMAS bullpup viewmodel: the headline-distinct rifle silhouette — magazine BEHIND the grip
+    # (toward the stock), a tall full-length carry handle on top, short overall. Receiver at origin,
+    # barrel +X, same frame as `weapon_rifle`.
+    mat = make_material("weapon_rifle_fr", rgba("weapon_rifle_fr"))
+    parts = [
+        box((0.50, 0.07, 0.15), (-0.05, 0, 0)),                # bullpup body (action sits at the rear)
+        box((0.34, 0.03, 0.10), (-0.02, 0, 0.16)),             # tall full-length carry handle (the FAMAS tell)
+        box((0.02, 0.03, 0.10), (0.15, 0, 0.11)),              # front handle post
+        box((0.02, 0.03, 0.10), (-0.19, 0, 0.11)),             # rear handle post
+        cyl(0.016, 0.34, (0.38, 0, 0.0), rot=(0, math.radians(90), 0)),  # thin barrel (forward)
+        box((0.05, 0.05, 0.16), (-0.20, 0, -0.12)),            # magazine BEHIND the grip (bullpup)
+        box((0.06, 0.05, 0.13), (0.02, 0, -0.10), rot=(0, math.radians(-10), 0)),  # pistol grip (forward of mag)
+    ]
+    return weld("weapon_rifle_fr", parts, mat)
+
+
 MODELS = [
     ("trooper", build_trooper,
      "Greybox infantry unit — boxy humanoid (hips/torso/head/limbs)."),
@@ -449,6 +597,23 @@ MODELS = [
      "Cover prop — a stepped two-course sandbag berm."),
     ("tracer", build_tracer,
      "Tank-shell tracer — a small +X-elongated bolt, placed at the shell and yawed by velocity (P7)."),
+    # Faction cosmetic silhouettes (WS-C, D68) — presentation-only per-army variants.
+    ("trooper_us", build_trooper_us,
+     "US Army infantry silhouette — rounded combat helmet, plate-carrier torso (WS-C)."),
+    ("trooper_fr", build_trooper_fr,
+     "French Army infantry silhouette — flatter brimmed SPECTRA helmet, slimmer profile (WS-C)."),
+    ("tank_us", build_tank_us,
+     "US M1 Abrams hull — long, low, flat chassis with a sloped front glacis (WS-C)."),
+    ("tank_turret_us", build_tank_turret_us,
+     "US M1 Abrams turret — broad flat turret + long 120mm gun, pivoting about the hull ring (WS-C/P7)."),
+    ("tank_fr", build_tank_fr,
+     "French Leclerc hull — compact chassis with a steeper sloped glacis (WS-C)."),
+    ("tank_turret_fr", build_tank_turret_fr,
+     "French Leclerc turret — taller box with a rear autoloader bustle, pivoting about the hull ring (WS-C/P7)."),
+    ("weapon_rifle_us", build_weapon_rifle_us,
+     "US M4 carbine viewmodel — conventional layout, magazine forward of the grip, flat-top rail (WS-C)."),
+    ("weapon_rifle_fr", build_weapon_rifle_fr,
+     "French FAMAS bullpup viewmodel — magazine behind the grip, full-length carry handle (WS-C)."),
 ]
 
 
