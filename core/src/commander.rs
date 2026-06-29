@@ -101,6 +101,7 @@ pub struct CommanderConfig {
 ///    (`AttackMove` toward the nearest enemy unit/building) so the line keeps pressing.
 /// 5. **Posture.** Any unit on `HoldFire` is bumped to `ReturnFire` so the commander's army
 ///    actually shoots back (a one-shot stance fix; idempotent thereafter).
+#[allow(clippy::too_many_arguments)] // honest read-only inputs; bundling them buys no clarity
 pub fn commander_orders(
     world: &World,
     territory: &Territory,
