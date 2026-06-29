@@ -1,0 +1,253 @@
+//! Command-view **on-screen touch buttons** — the RTS half's mobile input affordance.
+//!
+//! The desktop arms build/train/upgrade off the B/R/H/U keys; on a touchscreen there is no
+//! keyboard, so the matching `InputFrame` intents (`train_slot` / `upgrade_pressed` /
+//! `building_slot`) had no way to be set — the buttons were "deferred" (see the `InputFrame` field
+//! docs). This is that deferred surface: a row of labelled buttons along the bottom of the command
+//! view. A tap inside a button arms the same intent the desktop key does.
+//!
+//! Split along the CLAUDE.md *"extract the pure logic to a testable seam"* rule, exactly like the
+//! embodied [`touch_controls`](crate::touch_controls): the **geometry + hit-test live here** (plain
+//! pixel math, no GPU / no winit / no android types → host-unit-tested below); the engine converts
+//! the layout to render's [`CommandBarView`](gonedark_render::command_bar::CommandBarView) (px → NDC)
+//! and the renderer just draws it (invariant #2 — render never sees this module). Because both the
+//! hit shapes *and* the drawn shapes derive from the **same** layout, the button you see is the
+//! button you tap (the no-drift discipline the embodied HUD also keeps).
+//!
+//! Command view only — never built or drawn while embodied (invariant #6: these are command-layer
+//! actions; the embodied view stays dark).
+
+use gonedark_render::command_bar::{CommandBarButton, CommandBarView};
+
+/// One command-view action a button arms. The engine maps each to an `InputFrame` command intent
+/// (Train\* → `train_slot`, `Upgrade` → `upgrade_pressed`); the slot integers live at that boundary,
+/// not here, so this seam stays vocabulary-agnostic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandButton {
+    /// Queue a Rifleman at the active camp.
+    TrainRifleman,
+    /// Queue a Heavy at the active camp.
+    TrainHeavy,
+    /// Upgrade the active camp one tier.
+    Upgrade,
+}
+
+impl CommandButton {
+    /// The on-button label (short, legible at the touch size).
+    fn label(self) -> &'static str {
+        match self {
+            CommandButton::TrainRifleman => "RIFLE",
+            CommandButton::TrainHeavy => "HEAVY",
+            CommandButton::Upgrade => "UPGRADE",
+        }
+    }
+
+    /// The fixed left-to-right order the bar lays buttons out in.
+    const ORDER: [CommandButton; 3] = [
+        CommandButton::TrainRifleman,
+        CommandButton::TrainHeavy,
+        CommandButton::Upgrade,
+    ];
+}
+
+/// A screen-space rectangle in pixels — a button's hit shape (and, converted to NDC, its draw shape).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Rect {
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+}
+
+impl Rect {
+    #[inline]
+    fn contains(&self, x: f32, y: f32) -> bool {
+        x >= self.x0 && x < self.x1 && y >= self.y0 && y < self.y1
+    }
+    #[inline]
+    fn cx(&self) -> f32 {
+        0.5 * (self.x0 + self.x1)
+    }
+    #[inline]
+    fn cy(&self) -> f32 {
+        0.5 * (self.y0 + self.y1)
+    }
+    #[inline]
+    fn hw(&self) -> f32 {
+        0.5 * (self.x1 - self.x0)
+    }
+    #[inline]
+    fn hh(&self) -> f32 {
+        0.5 * (self.y1 - self.y0)
+    }
+}
+
+/// The laid-out command bar: each [`CommandButton`] with its pixel hit rect, for the current
+/// viewport. Rebuilt cheaply each frame from `(width, height)`; the engine hit-tests taps against it
+/// and converts it to the render view, so the two never disagree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommandBarLayout {
+    buttons: Vec<(CommandButton, Rect)>,
+}
+
+impl CommandBarLayout {
+    /// Lay the buttons out as a left-aligned row hugging the bottom edge. Sizes scale with the
+    /// smaller viewport dimension so the bar reads the same on any aspect/DPI (the embodied HUD
+    /// scales the same way). The right side of the screen is left clear (it is the drag/aim zone
+    /// while embodied — keeping the command bar off it avoids a muscle-memory clash).
+    pub fn new(width: u32, height: u32) -> Self {
+        let w = width as f32;
+        let h = height as f32;
+        let m = w.min(h).max(1.0);
+        let bw = m * 0.20; // button width (wide enough for the longest label, "UPGRADE")
+        let bh = m * 0.085; // button height
+        let gap = m * 0.02;
+        let margin = m * 0.03;
+        let y1 = (h - margin).max(bh);
+        let y0 = y1 - bh;
+        let buttons = CommandButton::ORDER
+            .iter()
+            .enumerate()
+            .map(|(i, &kind)| {
+                let x0 = margin + i as f32 * (bw + gap);
+                (
+                    kind,
+                    Rect {
+                        x0,
+                        y0,
+                        x1: x0 + bw,
+                        y1,
+                    },
+                )
+            })
+            .collect();
+        CommandBarLayout { buttons }
+    }
+
+    /// Which button (if any) a tap at pixel `(x, y)` lands in. The first containing rect wins; the
+    /// layout never overlaps buttons, so the result is unambiguous.
+    pub fn button_at(&self, x: f32, y: f32) -> Option<CommandButton> {
+        self.buttons
+            .iter()
+            .find(|(_, r)| r.contains(x, y))
+            .map(|(k, _)| *k)
+    }
+
+    /// Convert the pixel layout to the renderer's NDC [`CommandBarView`]. `(+y` up, origin center).
+    /// The same `(width, height)` used to build the layout MUST be passed so the NDC boxes line up
+    /// with the hit rects exactly (no drift).
+    pub fn to_view(&self, width: u32, height: u32) -> CommandBarView {
+        let w = (width as f32).max(1.0);
+        let h = (height as f32).max(1.0);
+        let buttons = self
+            .buttons
+            .iter()
+            .map(|(kind, r)| CommandBarButton {
+                ndc_x: 2.0 * r.cx() / w - 1.0,
+                ndc_y: 1.0 - 2.0 * r.cy() / h,
+                half_x: r.hw() / w * 2.0,
+                half_y: r.hh() / h * 2.0,
+                label: kind.label().to_string(),
+            })
+            .collect();
+        CommandBarView { buttons }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const W: u32 = 2340;
+    const H: u32 = 1080;
+
+    #[test]
+    fn a_tap_in_each_button_center_resolves_to_that_button() {
+        let bar = CommandBarLayout::new(W, H);
+        for (kind, r) in &bar.buttons {
+            assert_eq!(
+                bar.button_at(r.cx(), r.cy()),
+                Some(*kind),
+                "center of {kind:?} should hit it"
+            );
+        }
+    }
+
+    #[test]
+    fn taps_outside_the_bar_hit_nothing() {
+        let bar = CommandBarLayout::new(W, H);
+        // Top-center (the map), and far right (the embodied drag zone) — both clear of the bar.
+        assert_eq!(bar.button_at(W as f32 * 0.5, H as f32 * 0.2), None);
+        assert_eq!(bar.button_at(W as f32 - 1.0, H as f32 * 0.5), None);
+        // Just above the row.
+        let top = bar.buttons[0].1.y0;
+        assert_eq!(bar.button_at(bar.buttons[0].1.cx(), top - 5.0), None);
+    }
+
+    #[test]
+    fn the_gap_between_two_buttons_is_dead_space() {
+        let bar = CommandBarLayout::new(W, H);
+        let (_, a) = bar.buttons[0];
+        let (_, b) = bar.buttons[1];
+        let mid_x = 0.5 * (a.x1 + b.x0);
+        assert!(a.x1 < b.x0, "buttons don't overlap");
+        assert_eq!(bar.button_at(mid_x, a.cy()), None, "the gap hits nothing");
+    }
+
+    #[test]
+    fn the_three_actions_lay_out_left_to_right_in_order() {
+        let bar = CommandBarLayout::new(W, H);
+        let kinds: Vec<_> = bar.buttons.iter().map(|(k, _)| *k).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                CommandButton::TrainRifleman,
+                CommandButton::TrainHeavy,
+                CommandButton::Upgrade,
+            ]
+        );
+        // Strictly increasing left edge.
+        assert!(bar.buttons[0].1.x0 < bar.buttons[1].1.x0);
+        assert!(bar.buttons[1].1.x0 < bar.buttons[2].1.x0);
+    }
+
+    #[test]
+    fn the_view_has_one_labelled_button_per_action_inside_ndc() {
+        let bar = CommandBarLayout::new(W, H);
+        let view = bar.to_view(W, H);
+        assert_eq!(view.buttons.len(), 3);
+        assert_eq!(view.buttons[0].label, "RIFLE");
+        assert_eq!(view.buttons[1].label, "HEAVY");
+        assert_eq!(view.buttons[2].label, "UPGRADE");
+        for b in &view.buttons {
+            assert!((-1.0..=1.0).contains(&b.ndc_x), "x in NDC");
+            assert!((-1.0..=1.0).contains(&b.ndc_y), "y in NDC");
+            assert!(b.half_x > 0.0 && b.half_y > 0.0);
+            assert!(b.ndc_y < 0.0, "the bar sits in the bottom half");
+        }
+    }
+
+    #[test]
+    fn hit_rect_and_drawn_box_agree_no_drift() {
+        // The NDC box the renderer draws must map back to the same pixel rect the hit-test uses.
+        let bar = CommandBarLayout::new(W, H);
+        let view = bar.to_view(W, H);
+        for ((_, r), b) in bar.buttons.iter().zip(view.buttons.iter()) {
+            let px_cx = (b.ndc_x + 1.0) * 0.5 * W as f32;
+            let px_cy = (1.0 - b.ndc_y) * 0.5 * H as f32;
+            assert!((px_cx - r.cx()).abs() < 0.5, "center x round-trips");
+            assert!((px_cy - r.cy()).abs() < 0.5, "center y round-trips");
+        }
+    }
+
+    #[test]
+    fn layout_scales_with_viewport_and_stays_on_screen() {
+        for (w, h) in [(1280u32, 720u32), (2340, 1080), (800, 1600)] {
+            let bar = CommandBarLayout::new(w, h);
+            for (_, r) in &bar.buttons {
+                assert!(r.x0 >= 0.0 && r.x1 <= w as f32, "within width {w}");
+                assert!(r.y0 >= 0.0 && r.y1 <= h as f32, "within height {h}");
+            }
+        }
+    }
+}

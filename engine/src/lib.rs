@@ -84,6 +84,11 @@ mod locomote;
 /// screen-space layout the renderer draws. The testable logic `pal-android` can't host. Public so
 /// the renderer (and a host) can read the layout/HUD geometry.
 pub mod touch_controls;
+/// Command-view on-screen touch buttons (build / train / upgrade) — the RTS half's mobile input
+/// affordance. Owns the pure `CommandBarLayout` seam: a bottom row of labelled buttons, hit-tested
+/// per tap, that arm the same `InputFrame` command intents the desktop drives off the B/R/H/U keys
+/// (which had no touch path before). Pure geometry + hit-test (host-tested), command view only.
+pub mod command_touch;
 /// HUD layout editor (PvE-campaign plan WS-D). Owns `HudLayoutProfile`: the per-layer (command vs
 /// embodied) drag/resize/opacity editor layered over the existing touch seams, with saved presets +
 /// reset-to-default and a pure `resolve_embodied` seam (saved layout → `TouchLayout` geometry +
@@ -2228,6 +2233,31 @@ impl Game {
             }
         }
 
+        // Command-view on-screen buttons (build / train / upgrade) — the mobile path for the
+        // command intents the desktop arms off the B/R/H/U keys (touch had no way to set them). A
+        // tap-up inside a bar button arms the matching `InputFrame` intent and is CONSUMED (the
+        // pointer + tap edges are cleared) so the same release can't also select/deselect units
+        // underneath — the same "a click on a button belongs to the button" rule the overlay uses.
+        // The hit shapes come from the SAME `CommandBarLayout` the renderer draws from below (no
+        // drift). Command view only — never while embodied (invariant #6).
+        if !self.embodied && input.pointer_up {
+            if let Some((px, py)) = input.pointer {
+                if let Some(btn) = command_touch::CommandBarLayout::new(width, height).button_at(px, py)
+                {
+                    match btn {
+                        command_touch::CommandButton::TrainRifleman => input.train_slot = Some(0),
+                        command_touch::CommandButton::TrainHeavy => input.train_slot = Some(1),
+                        command_touch::CommandButton::Upgrade => input.upgrade_pressed = true,
+                    }
+                    input.pointer = None;
+                    input.pointer_up = false;
+                    input.pointer_down = false;
+                    input.command_tap = false;
+                    input.command_click = false;
+                }
+            }
+        }
+
         // 1. Map input → sim commands (applied on the first step of this frame). The pure
         // mapping (tap-to-move + state-resolved embody/surface toggle) lives in the free
         // `map_input_commands`; here we apply the resulting embodiment state transition.
@@ -2922,6 +2952,14 @@ impl Game {
             );
             self.renderer
                 .render_command_panel(device, queue, view, &panel_view);
+
+            // Command-view touch button bar (build / train / upgrade) along the bottom — the mobile
+            // affordance for the intents the hit-test above reads. Built from the SAME
+            // `CommandBarLayout::new(width, height)` so the drawn boxes are exactly the tap targets.
+            // Command view only (this whole block is `!self.embodied`); the embodied view stays dark.
+            let bar_view = command_touch::CommandBarLayout::new(width, height).to_view(width, height);
+            self.renderer
+                .render_command_bar(device, queue, view, &bar_view);
         }
 
         // 7c'. Objective HUD (PvE WS-A), top-left. Command view only — never over the dark embodied

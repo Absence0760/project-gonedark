@@ -87,6 +87,11 @@ pub mod picker;
 /// the host can describe it via [`command_panel::CommandPanelView`].
 pub mod command_panel;
 
+/// Command-view **touch button bar** (build / train / upgrade). The mobile affordance for the RTS
+/// half: a row of labelled buttons along the bottom that arm the command intents the desktop drives
+/// off keys. Public so the host fills [`command_bar::CommandBarView`] from its hit-test layout.
+pub mod command_bar;
+
 /// Screen-space text pass (W4). Owns `TextRenderer`: a baked bitmap-glyph LOAD pass that draws
 /// labels/numbers at an NDC position with a size + color. Public so the host and other render passes
 /// can `queue` strings (e.g. radial action names, summary numbers, button labels) and flush them.
@@ -1282,6 +1287,32 @@ impl Renderer {
         let quads = command_panel::command_panel_quads(panel);
         self.overlay.draw_quads(device, queue, view, &quads);
         for l in command_panel::command_panel_labels(panel) {
+            self.text
+                .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
+        }
+        self.text.render(device, queue, view);
+    }
+
+    /// Draw the command-view **touch button bar** (build / train / upgrade) along the bottom. The
+    /// host fills the [`command_bar::CommandBarView`] from its `command_touch` hit-test layout
+    /// (pixel rects → NDC), so the buttons drawn here are the exact shapes the engine hit-tests
+    /// taps against (no drift). Box quads through the shared overlay pipeline + centered labels
+    /// through the W4 text pass — the same construction as [`render_command_panel`](Self::
+    /// render_command_panel). Command view only (the caller gates on `!embodied`); a no-op on an
+    /// empty bar.
+    pub fn render_command_bar(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        bar: &command_bar::CommandBarView,
+    ) {
+        if bar.is_empty() {
+            return;
+        }
+        let quads = command_bar::command_bar_quads(bar);
+        self.overlay.draw_quads(device, queue, view, &quads);
+        for l in command_bar::command_bar_labels(bar) {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
         }
