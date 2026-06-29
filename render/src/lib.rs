@@ -593,6 +593,12 @@ pub struct Renderer {
     /// size ([`Renderer::ensure_scene_target`]) then upscales it to the swapchain
     /// ([`Renderer::present_scene`]); chrome is drawn natively after. Render-only (invariant #1/#4).
     scene_target: scene_target::SceneTarget,
+    /// The command-view unit/enemy/point tally derived during the last [`Renderer::render`] from the
+    /// fog-filtered draw set. Stashed so the corner readout text can be drawn by
+    /// [`Renderer::render_readout`] at NATIVE swapchain resolution AFTER [`present_scene`], rather than
+    /// being rasterised into the (possibly sub-native) dyn-res scene target and upscaled soft. Pure
+    /// presentation state — three counts off the visible draw set, never a sim read (invariant #1/#4).
+    readout_tally: readout::Tally,
 }
 
 impl Renderer {
@@ -747,6 +753,7 @@ impl Renderer {
             depth_view,
             depth_size: (1, 1),
             scene_target,
+            readout_tally: readout::Tally::default(),
         }
     }
 
@@ -843,13 +850,19 @@ impl Renderer {
         fog: &Visibility,
         width: u32,
         height: u32,
-        economy: Option<readout::EconomyReadout>,
     ) {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(camera));
 
         // Pick the draw set: the fog layer applies visibility (and the dark-frame avatar-only
         // rule) — see `render/src/fog.rs` (worker 1).
         let draw_set: Vec<UnitInstance> = fog::visible_instances(&self.instances, fog, world_dark);
+
+        // Stash the command-view tally derived from the fog-filtered draw set, so the corner readout
+        // text can be drawn at NATIVE resolution by `render_readout` AFTER `present_scene` instead of
+        // riding the (possibly sub-native) dyn-res scene target and upscaling soft. Pure count of the
+        // visible set — no new sim read (invariant #4). While embodied this is the avatar-only set, but
+        // `readout_labels` withholds the readout over the dark frame anyway (invariant #6).
+        self.readout_tally = readout::tally(&draw_set);
 
         if world_dark {
             // Embodied: LOAD the avatar over the first-person world the host already drew. No grid,
@@ -909,25 +922,10 @@ impl Renderer {
         // 3. The 2D quad UI (LOAD), with token bodies suppressed so the meshes show through.
         self.draw_quads(device, queue, view, &quad_set, wgpu::LoadOp::Load);
 
-        // Command-view readouts (W6): a unit/enemy/point tally derived from the SAME fog-filtered
-        // draw set (the un-flagged copy) — no new sim read — laid out as corner labels and drawn via
-        // the W4 text pass over the command frame. Screen-space chrome only (invariant #6). The
-        // `economy` seam is the host-supplied `EconomyReadout` (banked credits + income; the renderer
-        // has no sim read, so the host reads it off the sim and hands it in). Both the tally and the
-        // economy lines are gated by the real `world_dark`: while embodied `readout_labels` returns an
-        // EMPTY set, so the command readout never draws over the dark frame (invariant #6).
-        let t = readout::tally(&draw_set);
-        for label in readout::readout_labels(&t, economy, world_dark) {
-            self.text.queue(
-                label.text,
-                label.pos,
-                label.px_size,
-                label.anchor,
-                label.color,
-                label.alpha,
-            );
-        }
-        self.text.render(device, queue, view);
+        // The command-view readout text is NOT drawn here: it is screen-space chrome and must stay
+        // crisp at any dyn-res `resolution_scale < 1.0`, so the host draws it via `render_readout`
+        // onto the NATIVE swapchain AFTER `present_scene`, alongside the rest of the chrome. The tally
+        // it needs was stashed above (`self.readout_tally`) from this frame's fog-filtered draw set.
     }
 
     /// Clear the frame to the lit command-view slate and draw the ground grid (W6) — the command
@@ -1205,6 +1203,42 @@ impl Renderer {
         for l in objective_hud::objective_hud_labels(hud) {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
+        }
+        self.text.render(device, queue, view);
+    }
+
+    /// Draw the command-view **readout** — the top-left unit/enemy/point tally (and the optional,
+    /// host-supplied resource/income lines) — on top of the current frame (a LOAD text pass; never
+    /// clears). The tally was derived during the preceding [`Renderer::render`] from this frame's
+    /// fog-filtered draw set ([`readout_tally`](Self::readout_tally)); the host hands in the
+    /// [`readout::EconomyReadout`] economy seam and the live `world_dark` state, and
+    /// [`readout::readout_labels`] lays the lines out. **Drawn at NATIVE swapchain resolution** — the
+    /// host calls this AFTER [`present_scene`](Self::present_scene), with the rest of the chrome, so
+    /// the readout stays crisp at any dyn-res `resolution_scale < 1.0` instead of being rasterised into
+    /// the sub-native scene target and upscaled soft. Fairness (invariant #6): `readout_labels` returns
+    /// an EMPTY set while embodied, so the command readout never draws over the dark frame — a no-op
+    /// then. Screen-space chrome with no world position.
+    pub fn render_readout(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        economy: Option<readout::EconomyReadout>,
+        world_dark: bool,
+    ) {
+        let labels = readout::readout_labels(&self.readout_tally, economy, world_dark);
+        if labels.is_empty() {
+            return;
+        }
+        for label in labels {
+            self.text.queue(
+                label.text,
+                label.pos,
+                label.px_size,
+                label.anchor,
+                label.color,
+                label.alpha,
+            );
         }
         self.text.render(device, queue, view);
     }
