@@ -282,6 +282,7 @@ impl Sim {
             &mut self.rng,
             self.tick,
             self.income_period,
+            &self.armies,
         );
         self.tick += 1;
     }
@@ -1393,5 +1394,81 @@ mod tests {
             Some(DeserializeError::BadTag(0x7F)) => {}
             other => panic!("expected BadTag(0x7F) for a corrupt army tag, got {other:?}"),
         }
+    }
+
+    // --- factions WS-B: per-faction rosters fold into the checksum --------------------------------
+
+    /// Build a deterministic two-camp production scene where the Player fields `pa` and the Enemy
+    /// fields `ea`, each operational camp queued to produce one Rifleman. Pure / fixed-point, so two
+    /// peers constructing it bit-identically diverge only where the per-army roster legitimately does.
+    fn production_scene(pa: Army, ea: Army) -> (Sim, u16) {
+        let mut sim = Sim::new(0x600D_A2A0);
+        sim.set_army(Faction::Player, pa);
+        sim.set_army(Faction::Enemy, ea);
+        sim.resources = Resources::new(100_000);
+        let p = Vec2::new(Fixed::from_int(-10), Fixed::ZERO);
+        let e = Vec2::new(Fixed::from_int(10), Fixed::ZERO);
+        let pcamp =
+            economy::build(&mut sim.world, &mut sim.resources, Faction::Player, BuildingKind::Camp, p)
+                .expect("player camp affordable");
+        let ecamp =
+            economy::build(&mut sim.world, &mut sim.resources, Faction::Enemy, BuildingKind::Camp, e)
+                .expect("enemy camp affordable");
+        // Make both operational, then queue one Rifleman each (the produced unit's per-army stats are
+        // what folds into the checksum).
+        sim.world.building[pcamp.index as usize].build_ticks_left = 0;
+        sim.world.building[ecamp.index as usize].build_ticks_left = 0;
+        assert!(economy::queue_production(&mut sim.world, &mut sim.resources, pcamp, UnitKind::Rifleman));
+        assert!(economy::queue_production(&mut sim.world, &mut sim.resources, ecamp, UnitKind::Rifleman));
+        (sim, economy::prod_time(UnitKind::Rifleman, 0))
+    }
+
+    /// The per-tick checksum stream of a scene over `ticks` ticks (no commands — the production
+    /// countdown drives it).
+    fn checksum_stream(mut sim: Sim, ticks: u16) -> Vec<u64> {
+        let mut out = Vec::with_capacity(ticks as usize + 1);
+        out.push(sim.checksum());
+        for _ in 0..ticks {
+            sim.step(&[]);
+            out.push(sim.checksum());
+        }
+        out
+    }
+
+    /// **2-peer lockstep with MISMATCHED armies (factions-plan WS-B).** Two peers each run the
+    /// identical scene where the Player fields the US Army and the Enemy the French Army — different
+    /// rosters on the two sides. Their per-tick checksum streams must stay **bit-identical**: the
+    /// per-army stat table is the same fixed-point data on every peer, so a US camp and an FR camp
+    /// produce the bit-identical unit on both peers (invariant #1/#7). This is the lockstep agreement
+    /// the cross-platform matrix rests on, now exercised with two armies in the same match.
+    #[test]
+    fn two_peers_agree_with_mismatched_armies() {
+        let ticks = production_scene(Army::Us, Army::Fr).1 + 4;
+        let peer_a = checksum_stream(production_scene(Army::Us, Army::Fr).0, ticks);
+        let peer_b = checksum_stream(production_scene(Army::Us, Army::Fr).0, ticks);
+        assert_eq!(peer_a, peer_b, "two peers with the same US-vs-FR matchup must agree every tick");
+        // And the stream actually advances (the rifles spawn, state changes) — not a frozen sim.
+        assert_ne!(peer_a.first(), peer_a.last(), "production must move the checksum");
+    }
+
+    /// The per-army roster genuinely **folds into the checksum** (the desync-catch of invariant #7):
+    /// a US-vs-FR match and a non-aligned (Neutral) match share the byte-identical checksum until the
+    /// rifles spawn — then DIVERGE, because the US/FR units carry the army-tilted (logistics) loadout
+    /// while the Neutral units carry the baseline. So two peers that picked different armies are
+    /// caught at the production tick, exactly as intended.
+    #[test]
+    fn per_army_roster_diverges_the_checksum_at_production() {
+        let (_, ptime) = production_scene(Army::Us, Army::Fr);
+        let ticks = ptime + 4;
+        let armed = checksum_stream(production_scene(Army::Us, Army::Fr).0, ticks);
+        let neutral = checksum_stream(production_scene(Army::Neutral, Army::Neutral).0, ticks);
+        // Identical before any unit spawns (armies are not folded; only their spawned-unit stats are).
+        assert_eq!(armed[0], neutral[0], "pre-production state is army-agnostic");
+        // But the final state differs — the produced units' per-army stats moved the fold.
+        assert_ne!(
+            armed.last(),
+            neutral.last(),
+            "US/FR produced units must fold differently from the Neutral baseline"
+        );
     }
 }

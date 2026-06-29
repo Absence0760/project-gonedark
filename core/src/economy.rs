@@ -13,8 +13,8 @@
 //! intact — the sim's checksum folds `Resources` by that shape.
 
 use crate::components::{
-    Building, BuildingKind, EntityKind, Faction, Health, Order, ProductionItem, Stance, UnitKind,
-    Vec2, Weapon, FACTION_COUNT,
+    Army, Building, BuildingKind, EntityKind, Faction, Health, Order, ProductionItem, Stance,
+    UnitKind, Vec2, Weapon, FACTION_COUNT,
 };
 use crate::ecs::{Entity, World};
 use crate::event::SimEvent;
@@ -338,6 +338,111 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
     }
 }
 
+// ===========================================================================
+// PER-FACTION ROSTERS (factions-plan WS-B, D68). The shared archetype skeleton
+// (Rifleman / Heavy / Tank / Medic) is the same on every army; an army's identity
+// is a **tilt** layered on the [`unit_stats`] baseline, NOT a separate roster —
+// invariant #2 (one shared core, faction = content + a table).
+//
+// FAIRNESS BAND (pillar 4 / D30 unit-parity discipline — asymmetry of FEEL, never
+// POWER), and WHY the tilt is on logistics, not the gun:
+//   The equal-cost mass trade with `FireAtWill` is a **Lanchester square-law snowball** —
+//   a tiny edge in per-shot damage or cadence compounds to a near-total wipe (MEASURED:
+//   a 2-point damage gap on the Rifleman runs 10-vs-0). So the snowball-sensitive
+//   combat axes — **damage, cooldown, HP, range, penetration** — are held IDENTICAL across
+//   US and FR. There is no fair "soft gun tilt" on a mirror mass trade; the harness proves it.
+//
+//   The identity lives instead on the **logistics rhythm** — magazine depth, reload length,
+//   reserve loadout, and (cosmetic, invariant #3) turret slew — scaled to keep **sustained
+//   DPS and reload-depth invariant** (`mag` and `reload_ticks` move together by the same
+//   ratio, and `reserve` keeps the same mag-count). US fields the sustained-fire doctrine
+//   (deeper magazine, longer reload — the M249/M240 belt, M1 Abrams); FR the quick-swap
+//   doctrine (shorter magazine, snappier reload — the FAMAS/HK416F bullpup, Leclerc
+//   autoloader turret). Two same-role units put out the *same* fire and trade *evenly*; they
+//   only diverge in reload cadence and loadout depth — a real feel/doctrine difference that
+//   shows up in sustained and embodied play, never as combat power. The cross-faction
+//   equal-cost "mirror of roles" trade therefore stays inside a TIGHT band (the per-faction
+//   analogue of D30's unit-parity check), MEASURED against `sim-runner --metrics`
+//   (`metrics::cross_faction_equal_cost`), not asserted by feel.
+//
+// All integer / fixed-point (invariant #1). The tilt touches `mag_size`/`ammo`,
+// `reload_ticks`, `reserve`/`reserve_max` (all `u16`) and `turret_speed` (`u16`) — every one
+// folds into the per-tick checksum via the spawned unit's `Weapon`, so two peers that picked
+// different armies diverge in spawned-unit stats and the desync is caught there (invariant #7).
+//
+// The MEDIC carries NO tilt: it is a non-combatant (it heals via `crate::heal`, never fights)
+// with no magazine and an HP-only sim surface, so any nudge would be *uncompensated power* on
+// a unit that cannot trade — a fairness violation, not feel. Every army still fields the Medic;
+// its identity is presentation-only (WS-C, silhouette/voicelines). `Army::Neutral` carries no
+// tilt either: it is the shared baseline, so every legacy / non-aligned scene spawns
+// byte-for-byte the pre-factions unit.
+// ===========================================================================
+
+/// A per-army **logistics tilt** over the shared [`unit_stats`] baseline: the magazine depth,
+/// reload length, reserve loadout, and turret slew an army's variant of an archetype carries.
+/// All other fields (damage, cooldown, range, HP, penetration) stay the shared baseline — the
+/// fairness bound (see the module note). Zero-valued fields mean "no logistics tilt" (the Medic,
+/// any `Neutral` unit), leaving the baseline untouched.
+#[derive(Clone, Copy)]
+struct LogisticsTilt {
+    mag_size: u16,
+    reload_ticks: u16,
+    reserve: u16,
+    turret_speed: u16,
+}
+
+/// The per-army logistics tilt for an `(army, kind)`, or `None` for the shared baseline (Neutral,
+/// or any army's non-combatant Medic). Each tilt holds **sustained DPS and reload-depth invariant**
+/// vs the baseline (`mag`/`reload` scale together; `reserve` keeps the same mag-count), so it is
+/// power-neutral by construction and the mirror trade stays in the fairness band.
+///
+/// Integer-only (invariant #1); every field is a `u16`.
+const fn faction_logistics_tilt(army: Army, kind: UnitKind) -> Option<LogisticsTilt> {
+    match (army, kind) {
+        // Shared baseline: the non-aligned default and every army's (non-combatant) Medic.
+        (Army::Neutral, _) | (_, UnitKind::Medic) => None,
+        // Rifleman (baseline mag 30 / reload 90 / reserve 180). US +20 % magazine (deeper belt,
+        // longer reload); FR −20 % (snappier swap). Both keep 6 mags of reserve and the same
+        // sustained rate (mag/reload scale together) → power-neutral.
+        (Army::Us, UnitKind::Rifleman) => Some(LogisticsTilt { mag_size: 36, reload_ticks: 108, reserve: 216, turret_speed: 0 }),
+        (Army::Fr, UnitKind::Rifleman) => Some(LogisticsTilt { mag_size: 24, reload_ticks: 72, reserve: 144, turret_speed: 0 }),
+        // Heavy (baseline mag 50 / reload 138 / reserve 200, the support-weapon belt). US deeper
+        // belt + longer reload (M249/M240); FR lighter (Minimi/AANF1). 4 reloads of reserve each.
+        (Army::Us, UnitKind::Heavy) => Some(LogisticsTilt { mag_size: 60, reload_ticks: 166, reserve: 240, turret_speed: 0 }),
+        (Army::Fr, UnitKind::Heavy) => Some(LogisticsTilt { mag_size: 40, reload_ticks: 110, reserve: 160, turret_speed: 0 }),
+        // Tank: the main-gun magazine (baseline mag 6 / reload 240 / reserve 24) is too SHALLOW for a
+        // fair logistics tilt — with only ~6 ready shells, any difference in shell count / reload
+        // length shifts the reload PHASE enough that the Lanchester snowball lets the faster-reloading
+        // side win a long fight (MEASURED: a US-7/280 vs FR-5/200 tilt handed the FR side a contrived
+        // tank-in-cover standoff 2-0). So the tank keeps the SHARED gun/magazine and tilts only its
+        // **turret slew** — cosmetic by invariant #3 (the slew never picks targets, the AI turret just
+        // tracks the hull), so it is provably zero combat power: US the heavier manual-loader turret
+        // (M1 Abrams, slower slew); FR the autoloader turret (Leclerc, quicker slew).
+        (Army::Us, UnitKind::Tank) => Some(LogisticsTilt { mag_size: 6, reload_ticks: 240, reserve: 24, turret_speed: 160 }),
+        (Army::Fr, UnitKind::Tank) => Some(LogisticsTilt { mag_size: 6, reload_ticks: 240, reserve: 24, turret_speed: 200 }),
+    }
+}
+
+/// Per-(army, archetype) combat stats a produced unit spawns with (factions-plan WS-B). The
+/// [`Army::Neutral`] baseline is exactly [`unit_stats`] (every legacy scene unchanged); `Us`/`Fr`
+/// apply the fairness-banded **logistics tilt** ([`faction_logistics_tilt`]) on top — magazine,
+/// reload, reserve, and turret only; the snowball-sensitive gun stats (damage/cooldown/range/HP)
+/// stay shared so the mirror trade stays fair (see the module note). Every army fields every
+/// archetype — there is no missing role. Determinism: the table is fixed-point and identical on
+/// every peer, so a given `(army, kind)` spawns the bit-identical unit everywhere (invariant #1/#7).
+pub fn unit_stats_for(army: Army, kind: UnitKind) -> (Health, Weapon) {
+    let (health, mut weapon) = unit_stats(kind);
+    if let Some(tilt) = faction_logistics_tilt(army, kind) {
+        weapon.mag_size = tilt.mag_size;
+        weapon.ammo = tilt.mag_size; // spawns with a full magazine (mirrors `unit_stats`)
+        weapon.reload_ticks = tilt.reload_ticks;
+        weapon.reserve = tilt.reserve;
+        weapon.reserve_max = tilt.reserve;
+        weapon.turret_speed = tilt.turret_speed;
+    }
+    (health, weapon)
+}
+
 /// Per-faction resource purse. Indexed by [`Faction::index`]; plain `i64` so there is no
 /// float money in the deterministic sim. SHAPE IS PINNED (checksum folds `amounts`).
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -455,6 +560,7 @@ pub fn queue_production(
 
 /// Advance one tick of economy: income from held territory, construction, upgrades, and
 /// production (spawning finished units). STUB (worker 3) — no-op so the scaffold compiles.
+#[allow(clippy::too_many_arguments)] // honest sim inputs; bundling them buys no clarity
 pub fn economy_system(
     world: &mut World,
     resources: &mut Resources,
@@ -463,6 +569,7 @@ pub fn economy_system(
     rng: &mut Rng,
     tick: u64,
     income_period: u32,
+    armies: &[Army; FACTION_COUNT],
 ) {
     let _ = rng;
 
@@ -516,7 +623,12 @@ pub fn economy_system(
     for (camp_i, unit_kind) in completed {
         let faction = world.faction[camp_i];
         let pos = world.pos[camp_i];
-        let (health, weapon) = unit_stats(unit_kind);
+        // Draw the spawned unit's stats from the PRODUCING faction's army roster (factions-plan
+        // WS-B): a US camp fields the US variant, an FR camp the FR variant; a non-aligned camp
+        // (`Army::Neutral`) spawns the shared baseline, byte-identical to before factions. These
+        // per-army stats fold into the checksum, so two peers that picked different armies diverge
+        // here and the desync is caught (invariant #7).
+        let (health, weapon) = unit_stats_for(armies[faction.index()], unit_kind);
         let e = world.spawn();
         let ei = e.index as usize;
         world.kind[ei] = EntityKind::Unit;
@@ -536,6 +648,11 @@ mod tests {
     use super::*;
     use crate::territory::ControlPoint;
 
+    /// The non-aligned per-side army map — every faction fields the shared baseline roster, so a
+    /// production run through `economy_system` spawns byte-identical pre-factions units. The
+    /// per-army roster draw is covered by the dedicated WS-B tests below.
+    const NEUTRAL_ARMIES: [Army; FACTION_COUNT] = [Army::Neutral; FACTION_COUNT];
+
     fn empty_terr() -> Territory {
         Territory::empty()
     }
@@ -545,7 +662,7 @@ mod tests {
         let mut rng = Rng::new(1);
         // Full income rate (tick 0, period 1 ⇒ accrue every call), the pre-lever behaviour these
         // tests were written against. The income-period gate is covered separately.
-        economy_system(world, res, terr, &mut events, &mut rng, 0, 1);
+        economy_system(world, res, terr, &mut events, &mut rng, 0, 1, &NEUTRAL_ARMIES);
         events
     }
 
@@ -871,7 +988,7 @@ mod tests {
         for t in 0..(3 * period as u64) {
             let before = res.get(Faction::Player);
             let mut events = Vec::new();
-            economy_system(&mut world, &mut res, &terr, &mut events, &mut rng, t, period);
+            economy_system(&mut world, &mut res, &terr, &mut events, &mut rng, t, period, &NEUTRAL_ARMIES);
             let gained = res.get(Faction::Player) - before;
             if t.is_multiple_of(period as u64) {
                 assert_eq!(gained, per_accrual, "tick {t} is a boundary → full accrual");
@@ -886,7 +1003,7 @@ mod tests {
         // A period of 0 is clamped to 1 (every tick), and never panics on the modulo.
         let mut r2 = Resources::new(0);
         let mut ev = Vec::new();
-        economy_system(&mut world, &mut r2, &terr, &mut ev, &mut rng, 7, 0);
+        economy_system(&mut world, &mut r2, &terr, &mut ev, &mut rng, 7, 0, &NEUTRAL_ARMIES);
         assert_eq!(r2.get(Faction::Player), per_accrual, "period 0 clamps to full rate");
     }
 
@@ -1107,5 +1224,150 @@ mod tests {
                 && world.unit_kind[j] == UnitKind::Medic
         });
         assert!(medic.is_some(), "the Barracks produced a Medic into the world");
+    }
+
+    // --- factions WS-B: per-faction rosters --------------------------------------------------------
+
+    /// Run one economy tick with an explicit per-side army map (production draws the producing
+    /// faction's roster). Float-free, like [`tick`].
+    fn tick_armies(
+        world: &mut World,
+        res: &mut Resources,
+        terr: &Territory,
+        armies: &[Army; FACTION_COUNT],
+    ) -> Vec<SimEvent> {
+        let mut events = Vec::new();
+        let mut rng = Rng::new(1);
+        economy_system(world, res, terr, &mut events, &mut rng, 0, 1, armies);
+        events
+    }
+
+    /// The number of full magazines a baseline loadout carries in reserve (`reserve / mag_size`).
+    fn mag_count(kind: UnitKind) -> u16 {
+        let w = unit_stats(kind).1;
+        w.reserve / w.mag_size
+    }
+
+    /// The [`Army::Neutral`] roster is byte-for-byte the shared [`unit_stats`] baseline, for EVERY
+    /// archetype — so a legacy / non-aligned scene spawns exactly the pre-factions unit (its golden
+    /// checksum is unmoved).
+    #[test]
+    fn neutral_army_roster_is_the_shared_baseline() {
+        for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic] {
+            assert_eq!(
+                unit_stats_for(Army::Neutral, kind),
+                unit_stats(kind),
+                "{kind:?}: Neutral must equal the shared baseline"
+            );
+        }
+    }
+
+    /// The US and FR rosters are genuinely DISTINCT (a real roster, not a reskin) but the asymmetry
+    /// is **feel, never power**: the snowball-sensitive combat axes — per-shot damage, cadence, range,
+    /// and HP — are SHARED; only the logistics axis (magazine / reload / reserve / turret slew) tilts.
+    /// This is the per-stat fairness bound the `--metrics` swap-invariance proves at the trade level.
+    #[test]
+    fn us_and_fr_differ_only_on_the_logistics_axis() {
+        for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank] {
+            let (uh, uw) = unit_stats_for(Army::Us, kind);
+            let (fh, fw) = unit_stats_for(Army::Fr, kind);
+            assert_ne!(uw, fw, "{kind:?}: US and FR loadouts must differ");
+            // Shared combat-power axes (the fairness bound).
+            assert_eq!(uh, fh, "{kind:?}: HP is shared");
+            assert_eq!(uw.damage, fw.damage, "{kind:?}: per-shot damage is shared");
+            assert_eq!(uw.cooldown_ticks, fw.cooldown_ticks, "{kind:?}: cadence is shared");
+            assert_eq!(uw.range, fw.range, "{kind:?}: range is shared");
+            assert_eq!(uw.penetration, fw.penetration, "{kind:?}: penetration is shared");
+        }
+        // The Medic is non-combatant: shared across every army (no fair combat surface to tilt).
+        for army in [Army::Neutral, Army::Us, Army::Fr] {
+            assert_eq!(unit_stats_for(army, UnitKind::Medic), unit_stats(UnitKind::Medic));
+        }
+    }
+
+    /// The infantry logistics tilt is **power-neutral by construction**: US carries the deeper
+    /// magazine / longer reload (sustained-fire doctrine), FR the shorter / snappier one, but both
+    /// keep the SAME number of reserve magazines AND the same reload/magazine ratio — so sustained DPS
+    /// and reload-depth are invariant (the magazine only changes the reload *rhythm*, never the rate).
+    #[test]
+    fn infantry_logistics_tilt_is_dps_and_depth_neutral() {
+        for kind in [UnitKind::Rifleman, UnitKind::Heavy] {
+            let base = unit_stats(kind).1;
+            let us = unit_stats_for(Army::Us, kind).1;
+            let fr = unit_stats_for(Army::Fr, kind).1;
+            // Doctrine direction: US deeper magazine, FR shallower.
+            assert!(us.mag_size > base.mag_size && base.mag_size > fr.mag_size, "{kind:?}: US deep, FR shallow magazine");
+            assert!(us.reload_ticks > base.reload_ticks && base.reload_ticks > fr.reload_ticks, "{kind:?}: reload tracks magazine depth");
+            // A full magazine at spawn (mirrors `unit_stats`), and the SAME reserve mag-count for both.
+            for w in [us, fr] {
+                assert_eq!(w.ammo, w.mag_size, "{kind:?}: spawns with a full magazine");
+                assert_eq!(w.reserve, w.reserve_max, "{kind:?}: spawns with a full reserve");
+                assert_eq!(w.reserve / w.mag_size, mag_count(kind), "{kind:?}: same reserve mag-count → same depth");
+            }
+            // Reload/magazine ratio preserved (sustained DPS invariant) to within the integer
+            // rounding of the reload tick (≤1 tick: e.g. the Heavy's 138/50 ratio at mag 60 rounds
+            // 165.6→166). Cross-multiplied so the check is pure integer (invariant #1).
+            for w in [us, fr] {
+                let lhs = (w.reload_ticks as i64) * (base.mag_size as i64);
+                let rhs = (base.reload_ticks as i64) * (w.mag_size as i64);
+                assert!((lhs - rhs).abs() <= (w.mag_size as i64), "{kind:?}: reload/mag ratio held (sustained DPS invariant)");
+            }
+        }
+    }
+
+    /// The tank tilt is **turret-slew only** — cosmetic per invariant #3 (the slew never picks
+    /// targets), so its gun, magazine, reload, and reserve stay the shared baseline. (The shallow
+    /// 6-shell magazine makes any logistics tilt on the tank unfair under reload pressure — see the
+    /// module note and the `--metrics` reload-pressure test — so the identity lives on the turret.)
+    #[test]
+    fn tank_tilt_is_cosmetic_turret_only() {
+        let base = unit_stats(UnitKind::Tank).1;
+        let us = unit_stats_for(Army::Us, UnitKind::Tank).1;
+        let fr = unit_stats_for(Army::Fr, UnitKind::Tank).1;
+        for w in [us, fr] {
+            assert_eq!(w.mag_size, base.mag_size, "tank magazine is shared");
+            assert_eq!(w.reload_ticks, base.reload_ticks, "tank reload is shared");
+            assert_eq!(w.reserve, base.reserve, "tank reserve is shared");
+            assert_eq!(w.damage, base.damage, "tank gun is shared");
+        }
+        // Only the (cosmetic) turret slew differs: US slower manual-loader, FR quicker autoloader.
+        assert!(us.turret_speed < fr.turret_speed, "US turret slews slower than FR (cosmetic identity)");
+        assert_ne!(us.turret_speed, base.turret_speed);
+    }
+
+    /// PRODUCTION draws the **producing faction's army roster** (the canonical "every peer spawns the
+    /// bit-identical unit from a fixed table" seam): a US camp fields the US Rifleman variant, an FR
+    /// camp the FR one, a non-aligned camp the baseline — and the spawned `Weapon` (which folds into
+    /// the checksum) reflects it. This is what makes two peers with mismatched armies diverge in a way
+    /// the per-tick checksum catches (invariant #7).
+    #[test]
+    fn production_spawns_the_producing_armys_roster() {
+        let produce_for = |army: Army| -> Weapon {
+            let mut world = World::new();
+            let mut res = Resources::new(CAMP_BUILD_COST + RIFLEMAN_COST);
+            let camp = build(&mut world, &mut res, Faction::Player, BuildingKind::Camp, Vec2::ZERO).unwrap();
+            let terr = empty_terr();
+            let armies = {
+                let mut a = [Army::Neutral; FACTION_COUNT];
+                a[Faction::Player.index()] = army;
+                a
+            };
+            for _ in 0..CAMP_BUILD_TICKS {
+                tick_armies(&mut world, &mut res, &terr, &armies);
+            }
+            assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+            for _ in 0..prod_time(UnitKind::Rifleman, 0) {
+                tick_armies(&mut world, &mut res, &terr, &armies);
+            }
+            let u = (0..world.capacity())
+                .find(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)
+                .expect("a rifleman spawned");
+            world.weapon[u]
+        };
+        assert_eq!(produce_for(Army::Us), unit_stats_for(Army::Us, UnitKind::Rifleman).1, "US camp fields the US variant");
+        assert_eq!(produce_for(Army::Fr), unit_stats_for(Army::Fr, UnitKind::Rifleman).1, "FR camp fields the FR variant");
+        assert_eq!(produce_for(Army::Neutral), unit_stats(UnitKind::Rifleman).1, "non-aligned camp fields the baseline");
+        // The point of the roster: the US and FR produced units genuinely differ.
+        assert_ne!(produce_for(Army::Us), produce_for(Army::Fr), "the two armies produce distinct units");
     }
 }

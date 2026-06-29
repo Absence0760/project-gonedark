@@ -1500,6 +1500,7 @@ mod tests {
             &mut rng,
             0,
             1,
+            &[crate::components::Army::Neutral; crate::components::FACTION_COUNT],
         );
         let units = (0..world.capacity())
             .filter(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)
