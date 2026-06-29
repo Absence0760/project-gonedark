@@ -3020,6 +3020,42 @@ impl Game {
             // widens no fog beneath it.
             self.renderer
                 .render_hitmarker(device, queue, view, self.last_hit_tick, tick);
+
+            // 8''. While embodied in a TANK, draw the gunner-sight HUD (tank embodiment P8): the
+            // hull-relative turret indicator, the dispersion reticle, the LEAD pip, and the reload
+            // ring, plus the selected-shell label. Gated to a vehicle with an independent turret
+            // (`turret_speed > 0`) so infantry embodiment is unaffected. A read-only presentation
+            // derivation of the avatar's (authoritative) weapon + headings — the renderer never
+            // mutates the sim (invariant #4); it carries no world position, so it widens no fog
+            // beneath the dark frame (invariant #6).
+            let pidx = self.player.index as usize;
+            if self.sim.world.is_alive(self.player)
+                && self.sim.world.weapon[pidx].turret_speed > 0
+            {
+                let w = &self.sim.world.weapon[pidx];
+                // Angle → f32 radians (no interpolation needed for the compass chevron).
+                let to_rad = |a| gonedark_render::interp_angle(a, a, 0.0);
+                let state = gonedark_render::tank_hud::TankHudState {
+                    hull_rad: to_rad(self.sim.world.hull_heading[pidx]),
+                    turret_rad: to_rad(self.sim.world.turret_yaw[pidx]),
+                    reload_left: w.reload_left,
+                    reload_ticks: w.reload_ticks,
+                    // W1 (P5) adds `Weapon::dispersion`; until merged, feed a settled gun (0.0). Swap
+                    // to `fixed_to_f32(w.dispersion)` once the field lands.
+                    dispersion: 0.0,
+                    // Lead-pip target selection + camera-axis projection is host glue (no tracked
+                    // target wired yet → the pip stays dormant). The shell speed is real.
+                    target_rel_vel: (0.0, 0.0),
+                    target_range: 0.0,
+                    muzzle_vel: fixed_to_f32(w.muzzle_vel),
+                    world_to_ndc: 0.0,
+                    aspect: (width.max(1) as f32) / (height.max(1) as f32),
+                };
+                // W2 (P6) adds `ShellKind`/the selected-shell field; until merged, a constant default.
+                let shell_label = "AP";
+                self.renderer
+                    .render_tank_hud(device, queue, view, &state, shell_label);
+            }
         }
 
         // 8a'. On a touch device, draw the on-screen FPS controls over the dark frame (the COD-style
