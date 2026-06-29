@@ -60,6 +60,12 @@ mod build_ui;
 /// `train_commands` / `rally_point` seams are reachable for the host to wire (mirrors the pub
 /// `readout` / `train_panel` render seams); the integrator routes the commands into the loop.
 pub mod train_ui;
+/// Pre-match gunsmith loadout UI (WS-C, D60). Owns `LoadoutEditor`: the command-layer surface that
+/// holds the player's current `core::gunsmith::Loadout` and turns a slot+direction UI input into a
+/// new selection. Pure presentation/state — it NEVER touches the sim; the chosen loadout is handed
+/// to the scenario seeder, which applies it to the spawned weapon at match start
+/// (`core::gunsmith::Loadout::apply_to_weapon`). Public so the host can wire the on-screen gunsmith.
+pub mod loadout_ui;
 /// Camp-upgrade UI intent. Owns `upgrade_commands`: an "upgrade the selected camp" tap →
 /// `Command::Upgrade` (the "growth" half of command-and-grow). Pure intent, never mutates the sim.
 /// Public so a host/integrator can wire the on-screen Upgrade button into the command stream.

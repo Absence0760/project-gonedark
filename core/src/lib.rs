@@ -23,6 +23,7 @@ pub mod event;
 pub mod fixed;
 pub mod flow_field;
 pub mod fog;
+pub mod gunsmith;
 pub mod heal;
 pub mod lockstep;
 pub mod orders;
