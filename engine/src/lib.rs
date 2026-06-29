@@ -89,6 +89,11 @@ pub mod hud_layout;
 /// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
 /// session state — never mutates sim state. Public so a host (and tests) can drive it.
 pub mod session_shell;
+/// Host-side mission objectives (PvE WS-A): the `Objective`/`ObjectiveSet` layer that OBSERVES the
+/// sim (the per-tick event stream + derived faction reads) to drive a mission's win/lose + HUD,
+/// without ever mutating sim state — so it adds NO checksum/desync surface (invariant #1/#7). Owns
+/// the *Seize* mission-1 wiring + the HUD-view mapper. Public so a host (and tests) can drive it.
+pub mod objectives;
 /// Render quality tuning (Phase 4 WS-C). Owns `RenderTuning`: the tier + dyn-res + thermal-backoff
 /// controller. A RENDERING choice only — never touches the sim (invariant #1/#4).
 pub mod tuning;
@@ -1162,6 +1167,12 @@ pub struct Game {
     /// already-checksummed state copied out — never re-folded; invariant #7).
     match_events: Vec<SimEvent>,
 
+    /// The host-side mission objectives (PvE WS-A). It OBSERVES the sim each tick (the event stream +
+    /// derived faction reads) to drive the mission win/lose + the objective HUD, and NEVER mutates
+    /// the sim — so it adds no checksum/desync surface (invariant #1/#7). Empty for the
+    /// skirmish/sandbox scenes (no HUD, no objective-driven end).
+    objectives: objectives::ObjectiveSet,
+
     /// Render quality-tuning controller (Phase 4 WS-C): the active tier + the running
     /// dynamic-resolution scale + the thermal backoff. A RENDERING choice only — it reads frame
     /// timing + the host-reported thermal state and NEVER touches the sim, so the per-tick checksum
@@ -1270,6 +1281,12 @@ pub enum Scene {
     /// in the player rifleman: aim/crouch/fire at a row of dummies to feel range / cone / cover /
     /// line-of-sight. A debug scene, not a real match.
     Infantry,
+    /// The PvE *Seize* mission ("10 troops, take the base",
+    /// [`gonedark_core::scenario::seed_seize_mission`]) — the first campaign mission (WS-A). Booted
+    /// in the command view with a live host-side [`objectives::ObjectiveSet`]: ten Player Riflemen,
+    /// no base (production disabled), against an enemy camp + garrison; win by eliminating the enemy,
+    /// lose all ten and it's over. The objective HUD shows progress.
+    Mission1,
 }
 
 impl Scene {
@@ -1281,6 +1298,7 @@ impl Scene {
             "skirmish" | "match" => Some(Scene::Skirmish),
             "duel" => Some(Scene::Duel),
             "infantry" => Some(Scene::Infantry),
+            "mission1" | "seize" => Some(Scene::Mission1),
             _ => None,
         }
     }
@@ -1372,6 +1390,20 @@ fn seed_default_scene(sim: &mut Sim) -> (Entity, bool) {
 fn seed_skirmish_scene(sim: &mut Sim) -> (Entity, bool) {
     let s = gonedark_core::scenario::seed_skirmish(sim);
     (s.player_troop, false)
+}
+
+/// Seed the **PvE *Seize* mission** (WS-A, "10 troops, take the base") and return `(player,
+/// start_embodied, objectives)`. Seeds the shared `core::scenario::seed_seize_mission` scene (ten
+/// Player Riflemen, no base, an enemy camp + garrison) and builds the host-side
+/// [`objectives::ObjectiveSet::mission_one`] that watches it — win by eliminating the Enemy, lose by
+/// losing all ten. The `player` is the first of the ten troops (the embodiable/selectable handle);
+/// booted in the command view. GPU-free, so it is host-tested directly. The objective layer only
+/// OBSERVES the sim — it is never folded into the checksum (invariant #1/#7).
+fn seed_seize_mission_scene(sim: &mut Sim) -> (Entity, bool, objectives::ObjectiveSet) {
+    let m = gonedark_core::scenario::seed_seize_mission(sim);
+    let objectives = objectives::ObjectiveSet::mission_one(m.enemy_strength());
+    let player = m.troops[0];
+    (player, false, objectives)
 }
 
 /// Seed the **two-tank hitbox duel** and return `(player, start_embodied)`. Seeds the shared
@@ -1624,11 +1656,26 @@ impl Game {
         scene: Scene,
     ) -> Self {
         let mut sim = Sim::new(seed);
-        let (player, start_embodied) = match scene {
-            Scene::Default => seed_default_scene(&mut sim),
-            Scene::Skirmish => seed_skirmish_scene(&mut sim),
-            Scene::Duel => seed_duel_scene(&mut sim),
-            Scene::Infantry => seed_infantry_scene(&mut sim),
+        // Most scenes carry no objectives (empty set → no HUD, no objective win/lose); the PvE
+        // mission seeds a live `ObjectiveSet` that OBSERVES the sim (never mutates it).
+        let (player, start_embodied, objectives) = match scene {
+            Scene::Mission1 => seed_seize_mission_scene(&mut sim),
+            Scene::Default => {
+                let (p, e) = seed_default_scene(&mut sim);
+                (p, e, objectives::ObjectiveSet::default())
+            }
+            Scene::Skirmish => {
+                let (p, e) = seed_skirmish_scene(&mut sim);
+                (p, e, objectives::ObjectiveSet::default())
+            }
+            Scene::Duel => {
+                let (p, e) = seed_duel_scene(&mut sim);
+                (p, e, objectives::ObjectiveSet::default())
+            }
+            Scene::Infantry => {
+                let (p, e) = seed_infantry_scene(&mut sim);
+                (p, e, objectives::ObjectiveSet::default())
+            }
         };
         // The debug overlay defaults on for the sandboxes (their whole point), off for a real
         // match; F3 toggles it either way.
@@ -1673,6 +1720,8 @@ impl Game {
             // Single-player session (one peer), so a pause may halt the local tick accumulator.
             shell: InSessionShell::new(SP_PEER_COUNT == 1),
             match_events: Vec::new(),
+            // Host-side mission objectives (PvE WS-A). Set by the mission scene; empty otherwise.
+            objectives,
             // Render quality tuning (Phase 4 WS-C). Default to the High tier — the flagship profile
             // Phase 1 validated on (D22); a host wires its device-class tier (and the Settings
             // "graphics tiers" surface) via `set_tier`. RENDER-only state (invariant #1/#4).
@@ -1788,34 +1837,24 @@ impl Game {
     /// off the checksummed sim world in the stable [`Faction::ALL`] index space. A read-only scan of
     /// already-checksummed state: it folds nothing new, so deriving it can never perturb the per-tick
     /// checksum or desync (invariants #1/#7). The inputs the host-side win-condition evaluator reads.
+    /// Delegates to [`objectives::faction_forces`] — the single source of this derivation, shared with
+    /// the objective layer so there is one elimination/territory read, not two.
     fn faction_forces(&self, faction: Faction) -> FactionForces {
-        let w = &self.sim.world;
-        let mut alive_units = 0u32;
-        let mut buildings = 0u32;
-        for i in 0..w.capacity() {
-            if !w.is_index_alive(i) || w.faction[i] != faction {
-                continue;
-            }
-            match w.kind[i] {
-                EntityKind::Unit => alive_units += 1,
-                EntityKind::Building => buildings += 1,
-            }
-        }
-        FactionForces {
-            alive_units,
-            buildings,
-            // Territory points this faction holds (the timeout primary tiebreak).
-            territory_held: self
-                .sim
-                .territory
-                .points
-                .iter()
-                .filter(|cp| cp.owner == faction)
-                .count() as u32,
-            // The per-faction banked purse (economy `amounts` is `[i64; FACTION_COUNT]`) — no float
-            // money (invariant #1). The timeout secondary tiebreak.
-            resources_total: self.sim.resources.get(faction),
-        }
+        objectives::faction_forces(&self.sim, faction)
+    }
+
+    /// The host-side mission [`ObjectiveSet`](objectives::ObjectiveSet) for the active scene (empty
+    /// for the skirmish/sandbox scenes). Read-only — the host/UI reads it for the objective HUD,
+    /// briefing, or a campaign result; it OBSERVES the sim and is never folded into the checksum.
+    pub fn objectives(&self) -> &objectives::ObjectiveSet {
+        &self.objectives
+    }
+
+    /// Where the current mission stands ([`MissionStatus`](objectives::MissionStatus)): `Active` for
+    /// a scene with no objectives or a live mission, `Won`/`Lost` once the objective layer decides.
+    /// A pure read of the host-side `ObjectiveSet`; touches no sim state.
+    pub fn mission_status(&self) -> objectives::MissionStatus {
+        self.objectives.status()
     }
 
     /// The match outcome *right now*, or `None` while the match is still ongoing. A pure host-side
@@ -2613,6 +2652,17 @@ impl Game {
         // state copied out — never re-folded, invariant #7).
         self.match_events.extend_from_slice(&frame_events);
 
+        // Host-side mission objectives (PvE WS-A): fold this frame's events + the derived per-faction
+        // forces into the `ObjectiveSet` so it advances progress and flips completed/failed. It only
+        // OBSERVES the sim (the events are already-checksummed copies; the forces are a read-only
+        // scan) and mutates no sim state, so it adds NO checksum/desync surface (invariant #1/#7). A
+        // no-op for scenes with no objectives (skirmish/sandbox). The HUD reads the updated set below.
+        if !self.objectives.is_empty() {
+            let forces = objectives::faction_forces_all(&self.sim);
+            let ctx = objectives::ObserveCtx::new(&frame_events, &forces, self.sim.tick_count());
+            self.objectives.observe(&ctx);
+        }
+
         // Evaluate the win/lose condition from the (already-checksummed) end-state this frame and,
         // once it is decided, end the match into the post-match summary surface. `match_outcome` is
         // a pure read — derives each combatant's forces and runs the unit-tested `evaluate_outcome`
@@ -2784,6 +2834,17 @@ impl Game {
             );
             self.renderer
                 .render_command_panel(device, queue, view, &panel_view);
+        }
+
+        // 7c'. Objective HUD (PvE WS-A), top-left. Command view only — never over the dark embodied
+        // frame (invariant #6: the objective is command-layer information). A thin presentation
+        // surface over the host-side `ObjectiveSet`: the pure `objective_hud_view` maps the current
+        // objective + progress to the render view, drawn through the W4 text pass + overlay box. The
+        // set OBSERVES the sim (it folds nothing), so this draws without touching the checksum. A
+        // no-op on an empty set (skirmish/sandbox scenes draw nothing).
+        if !self.embodied && !self.objectives.is_empty() {
+            let hud = objectives::objective_hud_view(&self.objectives);
+            self.renderer.render_objective_hud(device, queue, view, &hud);
         }
 
         // 7a''. Embody picker (command view): when open, draw the list of selected units the player
@@ -3095,6 +3156,8 @@ mod tests {
         assert_eq!(Scene::parse("match"), Some(Scene::Skirmish));
         assert_eq!(Scene::parse("duel"), Some(Scene::Duel));
         assert_eq!(Scene::parse("infantry"), Some(Scene::Infantry));
+        assert_eq!(Scene::parse("mission1"), Some(Scene::Mission1));
+        assert_eq!(Scene::parse("seize"), Some(Scene::Mission1));
         assert_eq!(Scene::parse("nope"), None);
         assert_eq!(Scene::default(), Scene::Default);
         // The debug sandboxes default the overlay on; a real match (skirmish/demo) leaves it off.

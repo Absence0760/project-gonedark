@@ -410,6 +410,122 @@ pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
     }
 }
 
+// --- The *Seize* archetype: mission 1, "10 troops, take the base" (PvE WS-A) ---------------------
+//
+// The first PvE campaign mission (pve-campaign-plan WS-A). Unlike the skirmish — a two-base economy
+// match — this is a **fixed-force assault**: ten player Riflemen and no base of their own, against
+// one enemy camp (the base to take) defended by a small garrison. Production is OFF on both sides
+// (no purse, a slow income drip), so the fight is decided by the ten troops you start with, not by
+// out-producing the enemy. The *objective* layer that watches this scene live (capture-or-eliminate
+// the base; fail = lose all ten) is **host-side** and never folds into the checksum — see
+// `engine::objectives`. This seeder is the pure-`core` half: the same fixed-point, single-sourced
+// world every surface seeds bit-identically (invariant #1/#2), exactly like `seed_skirmish`.
+
+/// The player's ten troops spawn around `(SEIZE_PLAYER_X, 0)` on the west; the enemy base sits at
+/// `(SEIZE_BASE_X, 0)` on the east — a real no-man's-land to cross under fire.
+pub const SEIZE_PLAYER_X: i32 = -22;
+/// X of the enemy base camp (the objective), on the east.
+pub const SEIZE_BASE_X: i32 = 24;
+/// How many troops the player commands in mission 1 ("10 troops"). A fixed force — there is no
+/// production, so this is the whole army for the whole mission.
+pub const SEIZE_TROOPS: usize = 10;
+
+/// Garrison placements **relative to the enemy base**, in stable spawn order. A small defending
+/// force around the camp the assault has to break through. Length is the garrison size.
+const SEIZE_GARRISON_OFFSETS: [(i32, i32); 4] = [(-5, 4), (-5, -4), (-9, 0), (-1, 7)];
+
+/// The handles a seeded *Seize* mission hands back: the player's ten troops, the enemy base camp
+/// (capture-or-destroy to win), and its garrison. The host embodies/commands `troops`; the
+/// objective layer watches the Enemy faction for elimination and the Player faction for a wipe.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SeizeMission {
+    /// The player's ten Riflemen (no base — production is disabled), in stable spawn order.
+    pub troops: Vec<Entity>,
+    /// The enemy base camp — the objective. Operational (it would produce, but the empty purse
+    /// disables that); destroying it (with the garrison) eliminates the Enemy and wins the mission.
+    pub enemy_base: Entity,
+    /// The garrison defending the base — FireAtWill Riflemen, in stable spawn order.
+    pub garrison: Vec<Entity>,
+}
+
+impl SeizeMission {
+    /// The enemy's total destroyable strength — the garrison plus the base camp. The objective
+    /// layer uses this as the elimination progress goal ("N of M cleared") for the HUD.
+    pub fn enemy_strength(&self) -> u32 {
+        self.garrison.len() as u32 + 1
+    }
+}
+
+/// Seed `sim` with the *Seize* mission ("10 troops, take the base") and return its [`SeizeMission`]
+/// handles. Ten Player Riflemen on the west (no base — production is disabled), one operational
+/// Enemy base camp on the east defended by a small FireAtWill garrison. Both purses are empty and
+/// the income drip is throttled, so neither side reinforces: the mission is decided by the opening
+/// ten troops. The player troops start `ReturnFire` (they fight back if engaged but don't auto-roam
+/// — invariant #3); the host commands them in.
+///
+/// Pure, deterministic, fixed-point (invariant #1): spawn order is fixed (troops, then the base,
+/// then the garrison) and every value is integer / `Fixed`, so two seeds of a fresh `Sim` are
+/// bit-identical — the single-sourcing property the played mission and any headless driver rest on.
+pub fn seed_seize_mission(sim: &mut Sim) -> SeizeMission {
+    // Production OFF: no purse for either side and a slow income drip, so this stays a fixed-force
+    // assault rather than an economy race. The player has no camp at all (so it cannot produce); the
+    // enemy camp is the objective and, with an empty purse, its commander cannot reinforce.
+    sim.set_income_period(600);
+
+    // Ten Player Riflemen in a 2x5 block on the west, full produced HP, ReturnFire, facing the base.
+    let troop_hp = economy::unit_stats(UnitKind::Rifleman).0.max;
+    let mut troops = Vec::with_capacity(SEIZE_TROOPS);
+    for col in 0..5 {
+        for &row_y in &[-2, 2] {
+            let x = SEIZE_PLAYER_X - col * 2;
+            troops.push(spawn_rifleman(
+                sim,
+                at((x, row_y)),
+                Faction::Player,
+                Stance::ReturnFire,
+                troop_hp,
+                Angle(0), // +X, toward the base
+            ));
+        }
+    }
+
+    // The enemy base camp (the objective). Built through the canonical `economy::build` path from a
+    // temporary one-camp purse so its HP/Building fields match a produced camp, then made operational
+    // and the purse reset to empty (production disabled).
+    sim.resources = economy::Resources::new(economy::CAMP_BUILD_COST);
+    let enemy_base = economy::build(
+        &mut sim.world,
+        &mut sim.resources,
+        Faction::Enemy,
+        BuildingKind::Camp,
+        at((SEIZE_BASE_X, 0)),
+    )
+    .expect("the temporary seed purse covers exactly one camp");
+    sim.world.building[enemy_base.index as usize].build_ticks_left = 0;
+    // Empty both purses: no production for either side (the fixed-force assault).
+    sim.resources = economy::Resources::new(0);
+
+    // A small garrison defending the base — FireAtWill Riflemen (they engage the assault on sight),
+    // facing the incoming player line.
+    let mut garrison = Vec::with_capacity(SEIZE_GARRISON_OFFSETS.len());
+    for &(dx, dy) in &SEIZE_GARRISON_OFFSETS {
+        garrison.push(spawn_rifleman(
+            sim,
+            at((SEIZE_BASE_X + dx, dy)),
+            Faction::Enemy,
+            Stance::FireAtWill,
+            troop_hp,
+            Angle(ANGLE_FULL / 2), // −X, toward the player line
+        ));
+    }
+
+    SeizeMission {
+        troops,
+        enemy_base,
+        garrison,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -769,5 +885,72 @@ mod tests {
         assert_eq!(sum, 0x9ce4_c890_207f_57f1);
         // And it is reproducible run-to-run on this arch.
         assert_eq!(run_ballistic_duel(130), sum);
+    }
+
+    // --- the *Seize* mission (PvE WS-A, mission 1) -----------------------------------------------
+
+    #[test]
+    fn seize_seeds_ten_player_troops_no_player_base() {
+        let mut sim = fresh();
+        let m = seed_seize_mission(&mut sim);
+        assert_eq!(m.troops.len(), SEIZE_TROOPS, "the player commands exactly ten troops");
+        // Exactly ten Player units, and NO Player building (production is disabled — no camp).
+        assert_eq!(unit_count(&sim, Faction::Player), SEIZE_TROOPS);
+        for &t in &m.troops {
+            let i = t.index as usize;
+            assert_eq!(sim.world.kind[i], EntityKind::Unit);
+            assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+            assert_eq!(sim.world.faction[i], Faction::Player);
+            assert_eq!(sim.world.stance[i], Stance::ReturnFire);
+        }
+        let player_buildings = (0..sim.world.capacity()).filter(|&i| {
+            sim.world.is_index_alive(i)
+                && sim.world.kind[i] == EntityKind::Building
+                && sim.world.faction[i] == Faction::Player
+        });
+        assert_eq!(player_buildings.count(), 0, "the player has no base — it cannot produce");
+    }
+
+    #[test]
+    fn seize_seeds_an_operational_enemy_base_and_garrison() {
+        let mut sim = fresh();
+        let m = seed_seize_mission(&mut sim);
+        let b = m.enemy_base.index as usize;
+        assert_eq!(sim.world.kind[b], EntityKind::Building);
+        assert_eq!(sim.world.faction[b], Faction::Enemy);
+        assert_eq!(sim.world.building[b].kind, BuildingKind::Camp);
+        assert_eq!(sim.world.building[b].build_ticks_left, 0, "the base starts operational");
+        assert!(sim.world.building[b].queue.is_empty(), "no pre-queued production");
+        assert_eq!(sim.world.pos[b].x, Fixed::from_int(SEIZE_BASE_X));
+        // The garrison defends FireAtWill; the base + garrison is the enemy strength the objective
+        // tracks for the HUD progress bar.
+        assert!(!m.garrison.is_empty(), "the base has a defending garrison");
+        for &g in &m.garrison {
+            let i = g.index as usize;
+            assert_eq!(sim.world.faction[i], Faction::Enemy);
+            assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+            assert_eq!(sim.world.stance[i], Stance::FireAtWill);
+        }
+        assert_eq!(m.enemy_strength(), m.garrison.len() as u32 + 1, "garrison + the base camp");
+    }
+
+    #[test]
+    fn seize_disables_production_empty_purses() {
+        let mut sim = fresh();
+        let _ = seed_seize_mission(&mut sim);
+        // No purse for either side — neither can produce, so the mission is a fixed-force assault.
+        assert_eq!(sim.resources.get(Faction::Player), 0);
+        assert_eq!(sim.resources.get(Faction::Enemy), 0);
+    }
+
+    #[test]
+    fn seize_seeding_is_deterministic() {
+        // Single-sourcing: two seeds of a fresh Sim are bit-identical (invariant #1), so the played
+        // mission and any headless objective-driver agree.
+        let mut a = fresh();
+        let mut b = fresh();
+        seed_seize_mission(&mut a);
+        seed_seize_mission(&mut b);
+        assert_eq!(a.checksum(), b.checksum());
     }
 }

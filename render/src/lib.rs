@@ -107,6 +107,12 @@ pub mod terrain;
 /// renderer already holds, laid out as corner labels for the W4 text pass — no new sim read. Public
 /// so the `tally` / `readout_labels` seams are reachable; the `Renderer` drives the text.
 pub mod readout;
+/// In-match objective HUD (PvE WS-A) — a thin top-left presentation surface for the current mission
+/// objective + progress, drawn through the W4 text pass + the overlay quad pipeline (the
+/// [`command_panel`] pattern, opposite corner). Pure layout of a host-supplied [`objective_hud::
+/// ObjectiveHudView`]; the host-side `engine::objectives` OBSERVES the sim to fill it, so nothing
+/// here reads or folds sim state (invariant #1/#7). Public so the layout seams are reachable.
+pub mod objective_hud;
 /// Command-view upgrade panel — the readable per-camp tier display ("growth" half of command-and-
 /// grow). Pure derivation of current tier / next-tier cost / production-speed effect / affordability
 /// from a camp level + resources. No sim read (invariant #4); public so the `upgrade_view` seam (the
@@ -1114,6 +1120,32 @@ impl Renderer {
         let quads = command_panel::command_panel_quads(panel);
         self.overlay.draw_quads(device, queue, view, &quads);
         for l in command_panel::command_panel_labels(panel) {
+            self.text
+                .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
+        }
+        self.text.render(device, queue, view);
+    }
+
+    /// Draw the in-match **objective HUD** (PvE WS-A) — a thin top-left panel showing the current
+    /// mission objective + progress. The host derives the rows from its host-side `ObjectiveSet`
+    /// (which observes the sim, never mutates it) and hands them in via [`objective_hud::
+    /// ObjectiveHudView`]; this draws the box through the shared overlay quad pipeline and the text
+    /// through the W4 text pass — exactly like [`render_command_panel`](Self::render_command_panel),
+    /// anchored to the opposite corner. Command-view only (never over the dark frame, invariant #6);
+    /// a no-op on an empty view.
+    pub fn render_objective_hud(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        hud: &objective_hud::ObjectiveHudView,
+    ) {
+        if hud.is_empty() {
+            return;
+        }
+        let quads = objective_hud::objective_hud_quads(hud);
+        self.overlay.draw_quads(device, queue, view, &quads);
+        for l in objective_hud::objective_hud_labels(hud) {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
         }
