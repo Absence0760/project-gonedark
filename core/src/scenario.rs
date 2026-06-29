@@ -215,7 +215,14 @@ fn spawn_rifleman(
     hp: Fixed,
     hull: Angle,
 ) -> Entity {
-    let (_default_hp, weapon) = economy::unit_stats(UnitKind::Rifleman);
+    // Pre-placed troops draw their loadout from their faction's per-Army roster (factions-plan
+    // WS-B/WS-D): a US-side troop spawns the US logistics variant, a FR OPFOR troop the FR variant,
+    // read through the matchup the scene already seeded with `set_army` (`sim.army_of`). A no-army
+    // (legacy / debug) scene resolves [`Army::Neutral`], whose roster IS the shared `unit_stats`
+    // baseline — so those scenes spawn the byte-identical pre-factions unit (WS-A discipline). The
+    // tilt is logistics-only (mag/reload/reserve/turret); damage/cooldown/range/HP stay shared, so
+    // the matchup stays fair (D71). Read before the mutable spawn so the immutable borrow is done.
+    let (_default_hp, weapon) = economy::unit_stats_for(sim.army_of(faction), UnitKind::Rifleman);
     let e = sim.world.spawn();
     let i = e.index as usize;
     sim.world.kind[i] = EntityKind::Unit;
@@ -1004,5 +1011,139 @@ mod tests {
                 assert_eq!(sim.army_of(f), Army::Neutral, "a debug scene fields no real army");
             }
         }
+    }
+
+    // --- factions WS-D: army-tilted pre-placed starting troops --------------------------------
+    //
+    // WS-A/WS-D seed the US-vs-FR *matchup* (above); these pin that the pre-placed starting troops
+    // are actually *composed from* each side's per-Army roster (WS-B's `unit_stats_for`): a US-side
+    // opening force spawns the US logistics variant, a FR OPFOR force the FR variant — not the bare
+    // shared baseline. A no-army (legacy) scene keeps the byte-identical baseline loadout.
+
+    #[test]
+    fn skirmish_pre_places_army_correct_starting_troops() {
+        // The US player troop and FR enemy troop each spawn their OWN army's roster variant — the
+        // exact `unit_stats_for(army, Rifleman)` loadout the produced units would field, so seeded
+        // and produced troops match on each side.
+        let mut sim = fresh();
+        let s = seed_skirmish(&mut sim);
+
+        let us_rifle = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
+        assert_eq!(sim.world.weapon[s.player_troop.index as usize], us_rifle, "US player troop fields the US variant");
+        assert_eq!(sim.world.weapon[s.enemy_troop.index as usize], fr_rifle, "FR OPFOR troop fields the FR variant");
+        // The two armies' opening troops are *distinct* (the logistics tilt makes them read apart),
+        // and neither is the shared baseline.
+        let baseline = economy::unit_stats(UnitKind::Rifleman).1;
+        assert_ne!(us_rifle, fr_rifle, "the two armies' troops differ");
+        assert_ne!(us_rifle, baseline, "the US troop is tilted off the baseline");
+        assert_ne!(fr_rifle, baseline, "the FR troop is tilted off the baseline");
+    }
+
+    #[test]
+    fn seize_pre_places_an_army_correct_opening_force() {
+        // The PvE *Seize* mission: every one of the ten player troops is US-rostered, every garrison
+        // defender is FR-rostered — a US assault force vs a French OPFOR garrison, each statted from
+        // its own army (WS-B/WS-D).
+        let mut sim = fresh();
+        let m = seed_seize_mission(&mut sim);
+
+        let us_rifle = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
+        for &t in &m.troops {
+            assert_eq!(sim.world.weapon[t.index as usize], us_rifle, "every US assault troop fields the US variant");
+        }
+        for &g in &m.garrison {
+            assert_eq!(sim.world.weapon[g.index as usize], fr_rifle, "every FR garrison defender fields the FR variant");
+        }
+        assert_ne!(us_rifle, fr_rifle, "the assault and the garrison read as different armies");
+    }
+
+    #[test]
+    fn legacy_infantry_troops_keep_the_byte_identical_baseline_loadout() {
+        // The WS-A discipline at the loadout level: a no-army scene (the infantry sandbox) spawns the
+        // EXACT shared `unit_stats` baseline weapon for every troop — byte-for-byte the pre-factions
+        // unit. (This is what keeps the duel/infantry sim-runner goldens unmoved.)
+        let mut sim = fresh();
+        let inf = seed_infantry(&mut sim);
+        let baseline = economy::unit_stats(UnitKind::Rifleman).1;
+        for e in [inf.player, inf.open, inf.cover, inf.walled, inf.far, inf.flank] {
+            assert_eq!(sim.world.weapon[e.index as usize], baseline, "a no-army troop keeps the baseline loadout");
+        }
+    }
+
+    /// Drive the US-vs-FR *Seize* mission to a result and return `(final_checksum, enemy_cleared)`:
+    /// the player's ten US troops attack-move onto the French base while the enemy commander defends,
+    /// run until the garrison is broken or `max_ticks` elapses. Deterministic by construction (the
+    /// commander reads only checksummed state + its own seeded stream; every value is fixed-point), so
+    /// this is the lockstep building block the agreement test below replays.
+    fn drive_us_vs_fr_seize(max_ticks: u64) -> (u64, u32) {
+        use crate::commander::{commander_orders, CommanderConfig, COMMANDER_PERIOD};
+        use crate::components::Stance;
+        use crate::rng::Rng;
+
+        let mut sim = fresh();
+        let m = seed_seize_mission(&mut sim);
+        let base_pos = sim.world.pos[m.enemy_base.index as usize];
+        let mut enemy_rng = Rng::new(0xD0E1 ^ Faction::Enemy.index() as u64);
+
+        // Tick 0: order the US force to assault the French base (FireAtWill + attack-move onto it).
+        for &t in &m.troops {
+            sim.world.stance[t.index as usize] = Stance::FireAtWill;
+        }
+        let opening: Vec<Command> = m
+            .troops
+            .iter()
+            .map(|&t| Command::AttackMove { entity: t, target: base_pos })
+            .collect();
+        sim.step(&opening);
+
+        let alive = |sim: &Sim, e: Entity| sim.world.is_alive(e);
+        for _ in 1..max_ticks {
+            // The French OPFOR is driven by the scripted commander on its cadence (defending its base).
+            let cmds = if sim.tick_count().is_multiple_of(COMMANDER_PERIOD) {
+                commander_orders(
+                    &sim.world,
+                    &sim.territory,
+                    &sim.resources,
+                    &mut enemy_rng,
+                    &CommanderConfig::default(),
+                    &[],
+                    Faction::Enemy,
+                    sim.tick_count(),
+                )
+            } else {
+                Vec::new()
+            };
+            sim.step(&cmds);
+            // "Drives to a result": stop once the whole French garrison is down (the assault broke it).
+            if m.garrison.iter().all(|&g| !alive(&sim, g)) {
+                break;
+            }
+        }
+        let cleared = m.garrison.iter().filter(|&&g| !alive(&sim, g)).count() as u32;
+        (sim.checksum(), cleared)
+    }
+
+    /// End-to-end exit criterion (factions-plan WS-D): *"a campaign mission seeded US-vs-FR drives to
+    /// a result."* The US assault force engages the French OPFOR garrison and the fight resolves —
+    /// and, the lockstep property (invariant #7), two independent runs of the same seeded scene +
+    /// scripted input agree bit-for-bit on the final checksum. (A desync between the two armies'
+    /// tilted loadouts would surface here as a checksum disagreement, not a silent drift.)
+    #[test]
+    fn us_vs_fr_seize_drives_to_a_result_with_agreeing_checksums() {
+        let (sum_a, cleared_a) = drive_us_vs_fr_seize(2000);
+        let (sum_b, cleared_b) = drive_us_vs_fr_seize(2000);
+        // Two peers seeding the identical US-vs-FR scene and replaying the identical input land on the
+        // same world (the cross-client checksum agreement the matrix enforces).
+        assert_eq!(sum_a, sum_b, "the US-vs-FR mission is deterministic across runs (lockstep parity)");
+        assert_eq!(cleared_a, cleared_b, "both runs reach the identical result");
+        // It actually *reaches a result*: the US assault clears the entire French garrison (the
+        // mission progresses to an outcome, not a frozen stalemate).
+        let m_strength = {
+            let mut probe = fresh();
+            seed_seize_mission(&mut probe).garrison.len() as u32
+        };
+        assert_eq!(cleared_a, m_strength, "the US assault broke the whole French OPFOR garrison");
     }
 }
