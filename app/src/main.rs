@@ -13,7 +13,7 @@
 //! egui shell, and the wall clock that feeds per-frame `dt` into the engine's fixed-tick accumulator.
 
 use gonedark_engine::{Game, OverlayClick, Scene, DEFAULT_SEED};
-use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface};
+use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface, DesktopThermalSensor};
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -44,6 +44,11 @@ struct App {
     input: DesktopInput,
     /// The desktop audio sink handed into `Game::frame` for the embodied mix (worker 3).
     audio: DesktopAudio,
+    /// The desktop PAL thermal sensor (Phase 4 WS-C) handed into `Game::frame` so the render-tuning
+    /// loop reacts to heat. On the dev workstation this is the synthetic stub (defaults to `Nominal`,
+    /// `forced` drives the backoff for dev); on Android the real `PowerManager`/`BatteryManager`
+    /// reader stands in its place. Render-only — it never feeds the sim (invariant #1/#4).
+    thermal: DesktopThermalSensor,
     last_frame: Instant,
 
     /// Whether the OS cursor is currently locked+hidden. Tracked so we only call the (relatively
@@ -73,6 +78,7 @@ impl App {
             screen: Screen::Title,
             input: DesktopInput::new(),
             audio: DesktopAudio::new(),
+            thermal: DesktopThermalSensor::new(),
             last_frame: Instant::now(),
             cursor_captured: false,
             alt_held: false,
@@ -241,6 +247,7 @@ impl App {
                             surface.queue(),
                             &view,
                             &mut self.audio,
+                            &self.thermal,
                         );
                         surface.present(frame);
                     }

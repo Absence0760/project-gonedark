@@ -1185,9 +1185,11 @@ pub struct Game {
     /// stream is byte-identical at every tier (invariant #1/#4).
     tuning: RenderTuning,
 
-    /// The latest thermal state the host reported through the PAL (invariant #2 — the platform
-    /// signal crosses the seam, never `core`). The host calls [`Game::set_thermal_state`] from its
-    /// `pal::ThermalSensor`; defaults to `Nominal` (the desktop stub's value) until it does.
+    /// The latest thermal state read from the platform's PAL `ThermalSensor` (invariant #2 — the
+    /// platform signal crosses the seam, never `core`). [`Game::frame`] refreshes it every frame by
+    /// querying the `&dyn ThermalSensor` the host passes in (desktop's synthetic stub, Android's real
+    /// `PowerManager` reader); it is a render-tuning cache for the heartbeat/log read-back, never a
+    /// sim input. Defaults to `Nominal` until the first frame queries the sensor.
     thermal: gonedark_pal::ThermalState,
 
     /// The enemy commander's OWN deterministic RNG (W3). Seeded `sim_seed ^ faction-id` so it is
@@ -1933,9 +1935,11 @@ impl Game {
         self.tuning.fps_cap()
     }
 
-    /// Report the platform thermal state, read by the host from its `pal::ThermalSensor` (invariant
-    /// #2: the platform signal crosses the PAL seam, never `core`). Consulted by the render-cost
-    /// backoff on the next [`Game::frame`]. Storing it is presentation-only; it never reaches the sim.
+    /// Manually override the cached platform thermal state (invariant #2: a platform signal that
+    /// crosses the PAL seam, never `core`). Render-only and presentation-only — it never reaches the
+    /// sim. **Note:** [`Game::frame`] now *pulls* the state from the host's `&dyn ThermalSensor` each
+    /// frame and overwrites this cache, so a value pushed here lasts only until the next frame; it is
+    /// a test/diagnostic hook, not the production path (the sensor is the source of truth).
     pub fn set_thermal_state(&mut self, thermal: gonedark_pal::ThermalState) {
         self.thermal = thermal;
     }
@@ -2103,6 +2107,13 @@ impl Game {
     ///
     /// All host-float work; the only thing crossing into the sim is the Fixed-quantized
     /// command set (invariant #1).
+    ///
+    /// `thermal` is the host's PAL [`ThermalSensor`](gonedark_pal::ThermalSensor) (desktop's
+    /// synthetic stub, Android's real `PowerManager`/`BatteryManager` reader). The frame queries it
+    /// once and feeds the reading into the render-tuning controller — a RENDERING input only
+    /// (invariant #1/#4): it moves dyn-res / the FPS cap, never the sim. Passed per frame as a
+    /// `&dyn` trait object exactly like `audio`, so `engine` stays free of any concrete backend
+    /// (invariant #2).
     #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
@@ -2113,6 +2124,7 @@ impl Game {
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         audio: &mut dyn Audio,
+        thermal: &dyn gonedark_pal::ThermalSensor,
     ) {
         let (width, height) = viewport;
         // A local, mutable copy of this frame's input so the embody picker (below) can CONSUME the
@@ -2120,18 +2132,17 @@ impl Game {
         // layers downstream never also handle a tap the player aimed at the picker.
         let mut input = input.clone();
 
-        // 0. Render quality tuning (Phase 4 WS-C): observe this frame's wall-clock `dt` + the
-        // host-reported thermal state and ease the dynamic-resolution scale / FPS cap to hold the
-        // frame budget. PURELY a rendering decision (invariant #1/#4) — it reads frame timing and a
-        // PAL-reported thermal signal (invariant #2), touches only `self.tuning`, and never the sim,
-        // so the per-tick checksum stream below is byte-identical at every tier. The budget paces to
-        // the thermal FPS cap when one is active, else the 60 Hz baseline.
-        let budget_secs = match self.tuning.fps_cap() {
-            Some(cap) if cap > 0 => 1.0 / cap as f32,
-            _ => 1.0 / TICK_HZ as f32,
-        };
-        self.tuning
-            .observe_frame(dt_secs, self.thermal, budget_secs);
+        // 0. Render quality tuning (Phase 4 WS-C): query the PAL thermal sensor and observe this
+        // frame's wall-clock `dt`, easing the dynamic-resolution scale / FPS cap to hold the frame
+        // budget. PURELY a rendering decision (invariant #1/#4) — it reads frame timing and the
+        // PAL-reported thermal signal *through the trait* (invariant #2), touches only `self.tuning`,
+        // and never the sim, so the per-tick checksum stream below is byte-identical at every tier.
+        // The seam paces the budget to the thermal FPS cap when one is active, else the 60 Hz
+        // baseline; the per-frame `thermal.thermal_state()` read it does is the thin platform glue.
+        // We cache the reading in `self.thermal` for the heartbeat/log read-back.
+        self.thermal = self
+            .tuning
+            .observe_frame_from_sensor(thermal, dt_secs, TICK_HZ);
 
         // 0b. Command-camera pan + zoom (presentation only — never touches the sim). While in the
         // command view the WASD/stick `move_axis` pans the ground focus and the wheel `scroll` zooms

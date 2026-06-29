@@ -13,7 +13,7 @@
 
 use std::collections::VecDeque;
 
-use gonedark_pal::ThermalState;
+use gonedark_pal::{ThermalSensor, ThermalState};
 use gonedark_render::tiers::{next_resolution_scale, thermal_backoff, Backoff, QualityTier};
 
 /// How many recent frame times the dyn-res controller averages over. A short window so it reacts to
@@ -118,13 +118,68 @@ impl RenderTuning {
             next_resolution_scale(self.recent.make_contiguous(), budget_secs, self.scale, &effective);
         self.scale
     }
+
+    /// Observe one presented frame, reading the thermal bucket from the PAL [`ThermalSensor`] rather
+    /// than a caller-supplied [`ThermalState`]. **This is the seam that wires the platform thermal
+    /// signal into the render-tuning loop** (invariant #2): the engine reads heat *through the PAL
+    /// trait* — the same way it only ever touches the GPU through `Rhi` and audio through `Audio` —
+    /// so no platform/sensor code leaks into `core`. It paces the frame budget to the active thermal
+    /// FPS cap when one is up (so dyn-res chases the *capped* rate), else to `baseline_hz` (the 60 Hz
+    /// sim baseline), then drives [`observe_frame`](Self::observe_frame). Returns the
+    /// [`ThermalState`] it read so the host can cache/log it.
+    ///
+    /// Heat is a RENDERING input ONLY (invariant #1/#4): this moves the dyn-res scale + FPS cap,
+    /// never the sim — the per-tick checksum is byte-identical at every thermal state (the
+    /// `tier_choice_is_sim_independent` guard asserts it). The pure logic here is unit-tested with a
+    /// scripted fake sensor; the real per-frame `sensor.thermal_state()` call site inside
+    /// `Game::frame` is thin, wgpu-bound (un-constructible) glue.
+    pub fn observe_frame_from_sensor(
+        &mut self,
+        sensor: &dyn ThermalSensor,
+        dt: f32,
+        baseline_hz: u32,
+    ) -> ThermalState {
+        let thermal = sensor.thermal_state();
+        let budget_secs = match self.fps_cap() {
+            Some(cap) if cap > 0 => 1.0 / cap as f32,
+            _ => 1.0 / baseline_hz as f32,
+        };
+        self.observe_frame(dt, thermal, budget_secs);
+        thermal
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     const EPS: f32 = 1e-5;
+
+    /// A scriptable [`ThermalSensor`] test double: the reported state can be changed between frames,
+    /// so a test can drive a *sequence* of buckets through `observe_frame_from_sensor` exactly as a
+    /// real PAL backend would report rising/falling heat. `thermal_state` takes `&self`, so the
+    /// scripted state lives behind a `Cell`.
+    struct FakeThermalSensor {
+        state: Cell<ThermalState>,
+    }
+
+    impl FakeThermalSensor {
+        fn new(state: ThermalState) -> Self {
+            FakeThermalSensor {
+                state: Cell::new(state),
+            }
+        }
+        fn set(&self, state: ThermalState) {
+            self.state.set(state);
+        }
+    }
+
+    impl ThermalSensor for FakeThermalSensor {
+        fn thermal_state(&self) -> ThermalState {
+            self.state.get()
+        }
+    }
 
     fn approx(a: f32, b: f32) -> bool {
         (a - b).abs() < EPS
@@ -235,5 +290,78 @@ mod tests {
         t.observe_frame(0.0, ThermalState::Nominal, 1.0 / 60.0);
         t.observe_frame(f32::NAN, ThermalState::Nominal, 1.0 / 60.0);
         assert!(approx(t.resolution_scale(), start));
+    }
+
+    // --- the PAL ThermalSensor → tuning wiring seam (W9) ---
+
+    #[test]
+    fn from_sensor_returns_the_read_state_and_matches_a_direct_observe() {
+        // The sensor-driven path must be exactly `observe_frame` fed the sensor's reading. Drive two
+        // controllers in lockstep — one through the sensor seam, one with the same state passed
+        // directly — and assert identical scale + the returned state echoes what the sensor reported.
+        let sensor = FakeThermalSensor::new(ThermalState::Nominal);
+        let mut via_sensor = RenderTuning::new(QualityTier::Mid);
+        let mut direct = RenderTuning::new(QualityTier::Mid);
+        for state in [
+            ThermalState::Nominal,
+            ThermalState::Fair,
+            ThermalState::Serious,
+            ThermalState::Critical,
+        ] {
+            sensor.set(state);
+            let read = via_sensor.observe_frame_from_sensor(&sensor, 0.020, 60);
+            assert_eq!(read, state, "the seam must return the bucket it read");
+            // Mirror the seam's own budget pacing (capped rate when a cap is up, else baseline).
+            let budget = match direct.fps_cap() {
+                Some(c) if c > 0 => 1.0 / c as f32,
+                _ => 1.0 / 60.0,
+            };
+            direct.observe_frame(0.020, state, budget);
+            assert!(
+                approx(via_sensor.resolution_scale(), direct.resolution_scale()),
+                "sensor-driven scale must equal the equivalent direct observe"
+            );
+        }
+    }
+
+    #[test]
+    fn rising_heat_from_the_sensor_caps_fps_and_drops_below_the_tier_floor() {
+        // A scripted heat ramp through the SENSOR must drive the same backoff a direct
+        // `Critical` observe does: an FPS cap appears and dyn-res is allowed below the tier floor.
+        let sensor = FakeThermalSensor::new(ThermalState::Nominal);
+        let mut t = RenderTuning::new(QualityTier::High);
+        let tier_floor = QualityTier::High.params().res_scale_floor;
+
+        // Nominal: no cap.
+        for _ in 0..8 {
+            t.observe_frame_from_sensor(&sensor, 0.040, 60);
+        }
+        assert_eq!(t.fps_cap(), None, "nominal heat must not cap");
+
+        // The sensor reports Critical (the host polled hotter silicon): the seam paces to the
+        // emergent 30 Hz cap and the floor loosens for survival.
+        sensor.set(ThermalState::Critical);
+        for _ in 0..40 {
+            t.observe_frame_from_sensor(&sensor, 0.040, 60);
+        }
+        assert_eq!(t.fps_cap(), Some(30), "critical heat from the sensor must cap FPS");
+        assert!(
+            t.resolution_scale() < tier_floor,
+            "critical heat may drop dyn-res below the tier floor, got {}",
+            t.resolution_scale()
+        );
+    }
+
+    #[test]
+    fn cooling_sensor_lets_the_cap_clear() {
+        // Heat then cool through the sensor: once it reports Nominal again the FPS cap clears (the
+        // backoff is recomputed every frame from the *current* reading, not latched).
+        let sensor = FakeThermalSensor::new(ThermalState::Critical);
+        let mut t = RenderTuning::new(QualityTier::High);
+        t.observe_frame_from_sensor(&sensor, 0.040, 60);
+        assert_eq!(t.fps_cap(), Some(30));
+        sensor.set(ThermalState::Nominal);
+        t.observe_frame_from_sensor(&sensor, 0.040, 60);
+        assert_eq!(t.fps_cap(), None, "a cooled sensor must clear the cap");
     }
 }

@@ -20,7 +20,7 @@
 
 use gonedark_core::components::Faction;
 use gonedark_engine::{Game, Scene, DEFAULT_SEED};
-use gonedark_pal::{Audio, AudioCue, InputFrame};
+use gonedark_pal::{Audio, AudioCue, InputFrame, ThermalSensor, ThermalState};
 
 const W: u32 = 512;
 const H: u32 = 512;
@@ -35,6 +35,16 @@ struct NullAudio;
 impl Audio for NullAudio {
     fn play_oneshot(&mut self, _sound_id: u32) {}
     fn submit_mix(&mut self, _cues: &[AudioCue]) {}
+}
+
+/// A nominal, never-throttling thermal sensor (the viz only cares about pixels, not the render
+/// backoff). `Game::frame` requires an `&dyn ThermalSensor`; this reports `Nominal` every frame so
+/// the tuning loop stays at full quality during a viz run.
+struct NullThermal;
+impl ThermalSensor for NullThermal {
+    fn thermal_state(&self) -> ThermalState {
+        ThermalState::Nominal
+    }
 }
 
 /// Surfaceless GPU context.
@@ -267,6 +277,7 @@ fn advance(game: &mut Game, n: u32, first: InputFrame, gpu: &Gpu, view: &wgpu::T
             &gpu.queue,
             view,
             &mut NullAudio,
+            &NullThermal,
         );
     }
 }
@@ -283,6 +294,7 @@ fn advance_holding(game: &mut Game, n: u32, held: InputFrame, gpu: &Gpu, view: &
             &gpu.queue,
             view,
             &mut NullAudio,
+            &NullThermal,
         );
     }
 }
@@ -371,6 +383,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     g.frame(
         &band_up,
@@ -380,6 +393,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     // Settle a few frames so the highlighted units render steadily, then read back.
     advance(&mut g, 4, InputFrame::default(), &gpu, &view);
@@ -408,6 +422,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     g.frame(
         &band_up,
@@ -417,6 +432,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     advance(&mut g, 2, InputFrame::default(), &gpu, &view);
     // Baseline: the selection is up but no long-press → no radial chrome on the frame.
@@ -437,6 +453,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     let radial = read_pixels(&gpu.device, &gpu.queue, &target);
     save_png("target/viz/radial.png", &radial);
@@ -478,6 +495,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     g.frame(
         &hold,
@@ -487,6 +505,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     let drag = read_pixels(&gpu.device, &gpu.queue, &target);
     save_png("target/viz/marquee.png", &drag);
@@ -525,6 +544,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     advance(&mut g, 2, InputFrame::default(), &gpu, &view); // settle, before combat raises alerts
     let dark_frame = read_pixels(&gpu.device, &gpu.queue, &target);
@@ -583,6 +603,7 @@ fn main() {
         &gpu.queue,
         &view,
         &mut NullAudio,
+        &NullThermal,
     );
     // Capture a no-alert baseline of the SAME embodied scene first (the world + avatar, before any
     // alerts), so the marker delta isolates the HUD overlay rather than the world itself.
@@ -611,6 +632,7 @@ fn main() {
             &gpu.queue,
             &view,
             &mut NullAudio,
+            &NullThermal,
         );
         // Only a frame that is embodied AND has no shell overlay (pause / post-match summary) up is
         // a valid sample of the dark first-person combat view.

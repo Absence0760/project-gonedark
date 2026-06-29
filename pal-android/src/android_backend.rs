@@ -97,14 +97,17 @@ fn android_main(app: AndroidApp) {
     let _ = storage.read("settings");
     audio.play_oneshot(0);
 
-    // Real WS-C thermal/battery reader (Phase 4): poll once at startup so the JNI path is linked
-    // and the first on-device reading lands in logcat — these are the numbers that may reopen the
-    // D21 dual-rate question (phase-4-plan §C). It is a render-tuning *signal*, never a sim input
-    // (invariant #1/#4): nothing here feeds `game.frame`. The decision logic is the host-tested
-    // pure mappers in `crate::thermal`; this is only the (un-testable) JNI fetch.
+    // Real WS-C thermal/battery reader (Phase 4): the live render-tuning signal. Built once here and
+    // passed into every `game.frame(...)` below, so the engine's `RenderTuning` controller reacts to
+    // on-device heat (FPS cap + dyn-res floor) — these are the numbers that may reopen the D21
+    // dual-rate question (phase-4-plan §C). It is a render-tuning *signal*, NEVER a sim input
+    // (invariant #1/#4): the engine reads it through the PAL `ThermalSensor` trait (invariant #2) and
+    // the per-tick checksum is unaffected. The decision logic is the host-tested pure mappers in
+    // `crate::thermal`; this is only the (un-testable) JNI fetch. Poll once now so the first reading
+    // lands in logcat and the JNI path is linked before frame one.
+    let thermal = crate::thermal::AndroidThermalSensor::new(app.clone());
     {
         use gonedark_pal::ThermalSensor;
-        let thermal = crate::thermal::AndroidThermalSensor::new(app.clone());
         info!(
             "thermal: initial state {:?} | power {:?}",
             thermal.thermal_state(),
@@ -245,6 +248,7 @@ fn android_main(app: AndroidApp) {
                         rhi.queue(),
                         &view,
                         &mut audio,
+                        &thermal,
                     );
                     rhi.present(frame);
 
