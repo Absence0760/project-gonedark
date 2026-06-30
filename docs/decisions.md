@@ -1770,7 +1770,10 @@ carve-out), so no return-to-title path is added here.
 
 **What this does NOT decide:** it does **not** settle the match-config handoff (army/map/mode) across
 the seam — that ships with **match-setup**, **[Q5](open-questions.md)**-blocked (surface 4).
-**Settings** is a no-op placeholder until the Settings surface (surface 3) lands. It adds **no**
+**Settings** is a no-op placeholder until the Settings surface (surface 3) lands. *(Superseded by
+[D75](#d75--desktop-settings--profile--about-surfaces-land-phase-4-surface-3-partial-audio--look-prefs-wired):
+the desktop Settings/Profile/About screens have since landed and master/SFX volume + look-sensitivity
+are wired — surface 3 is now PARTIAL on desktop.)* It adds **no**
 return-to-title path (leaving a match is the in-session shell's Surrender/leave flow, the
 [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
 carve-out under avatar-only fog, not this screen) and does **not** change the in-session shell (still
@@ -3439,3 +3442,52 @@ never more). Verified on the RTX 3070 via the offscreen `viz-runner` (all visual
 radial/readout/command-bar labels render crisp mixed-case). Follow-on visual work (world lighting +
 tonemap/fog, post-processing, HUD icons via Inkscape, ground/detail textures via ImageMagick, richer
 greybox meshes via Blender) builds on this `theme` foundation.
+
+## D75 — Desktop Settings / Profile / About surfaces land (Phase 4 surface 3, partial), audio + look prefs wired
+
+**Decision.** Build the desktop out-of-match utility screens the [D36](#d36--the-desktop-app-shell-an-egui-boot--title-title-screen-desktop-sibling-of-d35)
+title shell stubbed as no-ops, and reorganise the landing screen into a real HUD. Three screens, drawn
+in the same egui shell over a live 3D backdrop: a **Settings** screen (audio master/SFX/music, look
+sensitivity + invert-Y, fullscreen, a render-quality choice), a **Profile** screen (callsign, faction
+preference, lifetime record), and an **About / field manual** (the one-line pitch, the *real* default
+keymap grouped by layer, the build stamp). Two prefs are **wired through to the host**: **master + SFX
+volume** scale the desktop audio sink (`DesktopAudio::set_gains` → the new `pal::mix::scaled_gain`), and
+**look sensitivity + invert-Y** shape the desktop look input (`DesktopInput::set_look_prefs` →
+`scale_look`), both pushed each match frame. The title screen itself is re-laid as an anchored HUD
+(brand top-left, Settings/Profile chips top-right, the Campaign/PvE/PvP play cluster bottom-left, build
+stamp opposite) over an animated `render::title_backdrop` 3D diorama (parallax to the cursor).
+
+This advances phase-4 **surface 3 (Settings)** from BLOCKED to **PARTIAL (desktop)**, and reaches into
+**surface 6 (Progression & profile)** for a local, pre-account slice.
+
+**Why.** [D36](#d36--the-desktop-app-shell-an-egui-boot--title-title-screen-desktop-sibling-of-d35)
+shipped the desktop title shell but left every utility button a placeholder; the user asked to make the
+landing screen real and then to actually wire the prefs. Settings is *"buildable in design terms — it
+configures shipped systems"* ([`phase-4-plan.md`](plans/phase-4-plan.md) surface 3), and audio gain +
+mouse sensitivity are exactly those shipped systems (the `pal` audio mix, the `pal-desktop` input
+mapper) — they need no new backend. Wiring them now proves the host-pref → PAL path end-to-end before
+the heavier surface-3 pieces that genuinely gate on other work.
+
+**Determinism.** None — entirely host-side presentation ([invariant #1/#2](../CLAUDE.md)). The volume
+prefs feed only the `pal` audio sink; the sensitivity/invert prefs scale the host `look_axis` *before*
+the engine boundary, and the embodied look they feed is quantized to `Fixed` at the command boundary, so
+per-player sensitivity **cannot** diverge the lockstep stream (reviewed via `/check`). No `core` type
+changes, no new sim reads, the per-tick checksum stream is untouched. All new decision/format/validation
+logic is pure and unit-tested (`resolve_title_action`/`apply_settings_action`/`apply_profile_action`,
+`scaled_gain`, `scale_look`, `sanitize_callsign`, `win_rate_pct`, the quality/faction cyclers,
+`controls_reference`); the egui drawing + wgpu compositing stay the [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)/D36
+device-gated glue. The `title_backdrop` renderer is render-side float ([invariant #4](../CLAUDE.md)),
+self-contained, with a unit-tested parallax/view-proj seam and a `viz-runner` screenshot scene.
+
+**Consequences / scope boundary.** **Wired now:** master + SFX volume, look sensitivity + invert-Y
+(desktop). **Dormant prefs** (stored + on-screen but not yet consumed): **music volume** (no music cue
+exists to scale) and **render-quality** (not yet routed into [`render::tiers`](architecture.md)) —
+`SettingsState`'s doc states exactly what is wired vs not. **Still unbuilt on surface 3:** accessibility
+cues (the going-dark fairness channel, invariant #6), the touch-layout / key-rebind editor, gamepad
+rebinds — these keep the surface **PARTIAL, not LANDED**. **Profile is local-only:** no account /
+persistence backend (surface 6 stays BLOCKED on that, [`infrastructure.md`](infrastructure.md)); the
+lifetime record is a host counter not yet written by the post-match summary, and nothing survives a
+restart. Android's Compose shell ([D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen))
+is unchanged (no Settings/Profile there yet) — desktop-only landing. Ships with the three screens, the
+two pref-wiring paths, the title-HUD + backdrop, and their tests (app 35, pal-desktop 47, pal mix;
+dev + release + `audio` feature all green).

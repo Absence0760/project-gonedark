@@ -222,8 +222,11 @@ model.
 > **"Boot & title" has now landed on both Android and desktop** — the **Android Compose landing
 > screen** ([D35](decisions.md)) and the **desktop egui title screen** ([D36](decisions.md)), each
 > the first native surface buildable once the seam landed; only the **iOS** Boot & title shell is
-> still pending (no iOS target at all). The remaining surfaces stay pending — Settings, onboarding,
-> match setup, lobby, store, and consent — deferred behind missing per-platform UI projects and the
+> still pending (no iOS target at all). **Desktop Settings is now partial** — the egui Settings /
+> Profile / About screens landed with audio master/SFX volume + look sensitivity wired into the host
+> ([D75](decisions.md); music volume + graphics tiers stay dormant, accessibility + the rebind editor
+> still owed). The remaining surfaces stay pending — onboarding, match setup, lobby, store, and consent
+> — deferred behind missing per-platform UI projects and the
 > [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
 
 **Goal:** wrap the game in everything that ships *around* the match — the app shell, the
