@@ -712,6 +712,76 @@ pub fn model_matrix(translation: [f32; 3], scale: f32, yaw: f32) -> [[f32; 4]; 4
     ]
 }
 
+/// `fract` in the GPU sense: `x - floor(x)`, the fractional part toward negative infinity (so it is
+/// always in `[0, 1)`, even for negative `x`). Matches WGSL's `fract`.
+#[inline]
+fn fract(x: f32) -> f32 {
+    x - x.floor()
+}
+
+/// One lattice-corner hash for the procedural [`surface_mottle`] noise — a transcendental-free
+/// multiply/`fract` hash (Dave-Hoskins style). **Mirror of `mesh.wgsl::hash_lattice`** (kept
+/// formula-identical so this Rust side is a faithful golden reference for the shader); the renderer
+/// never calls this — the GPU runs the WGSL copy. Maps integer (or any) lattice coords to `[0, 1)`.
+#[inline]
+fn hash_lattice(c: [f32; 3]) -> f32 {
+    let mut p = [
+        fract(c[0] * 0.1031),
+        fract(c[1] * 0.1030),
+        fract(c[2] * 0.0973),
+    ];
+    // p += dot(p, p.yxz + 33.33)
+    let d = p[0] * (p[1] + 33.33) + p[1] * (p[0] + 33.33) + p[2] * (p[2] + 33.33);
+    p[0] += d;
+    p[1] += d;
+    p[2] += d;
+    fract((p[0] + p[1]) * p[2])
+}
+
+/// Trilinearly-interpolated value noise over the integer lattice, `[0, 1]`. **Mirror of
+/// `mesh.wgsl::value_noise`.** Smoothstep weights give C1 continuity so the mottle has no lattice
+/// seams.
+#[inline]
+fn value_noise(x: [f32; 3]) -> f32 {
+    let i = [x[0].floor(), x[1].floor(), x[2].floor()];
+    let f = [fract(x[0]), fract(x[1]), fract(x[2])];
+    // smoothstep weights t*t*(3 - 2t)
+    let u = [
+        f[0] * f[0] * (3.0 - 2.0 * f[0]),
+        f[1] * f[1] * (3.0 - 2.0 * f[1]),
+        f[2] * f[2] * (3.0 - 2.0 * f[2]),
+    ];
+    let corner = |dx: f32, dy: f32, dz: f32| hash_lattice([i[0] + dx, i[1] + dy, i[2] + dz]);
+    let mix = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let x00 = mix(corner(0.0, 0.0, 0.0), corner(1.0, 0.0, 0.0), u[0]);
+    let x10 = mix(corner(0.0, 1.0, 0.0), corner(1.0, 1.0, 0.0), u[0]);
+    let x01 = mix(corner(0.0, 0.0, 1.0), corner(1.0, 0.0, 1.0), u[0]);
+    let x11 = mix(corner(0.0, 1.0, 1.0), corner(1.0, 1.0, 1.0), u[0]);
+    let y0 = mix(x00, x10, u[1]);
+    let y1 = mix(x01, x11, u[1]);
+    mix(y0, y1, u[2])
+}
+
+/// Low-contrast procedural surface mottle in `~[-0.5, 0.5]`, sampled at a world(-ish)-space point.
+/// **Mirror of `mesh.wgsl::surface_mottle`** — the shader multiplies the per-instance tint by
+/// `1 + surface_mottle(p) * amplitude` so flat greybox facets read as worn material (faint
+/// camo/grime/wear) rather than flat paint. Two octaves (a low-frequency body + a finer break-up).
+///
+/// This is the golden reference + the unit-tested contract for the shader copy: it is **bounded**
+/// (so the multiplier stays low-contrast and can't blow out the muted palette), **deterministic**,
+/// **finite** for any finite input, and **non-constant** across space. The renderer itself never
+/// calls it — it exists so the in-shader noise has a testable, documented twin (the same
+/// keep-in-step pattern as [`ModelKind::base_color`] mirroring `gen_models.py`).
+pub fn surface_mottle(p: [f32; 3]) -> f32 {
+    let n1 = value_noise([p[0] * 0.6, p[1] * 0.6, p[2] * 0.6]);
+    let n2 = value_noise([
+        p[0] * 1.9 + 11.3,
+        p[1] * 1.9 + 5.1,
+        p[2] * 1.9 + 7.7,
+    ]);
+    (n1 - 0.5) * 0.66 + (n2 - 0.5) * 0.34
+}
+
 #[cfg(test)]
 mod tests {
     //! `render` is the float boundary (invariant #1), so `f32` math is fair game. These exercise
@@ -892,6 +962,77 @@ mod tests {
             naga::valid::Capabilities::all(),
         );
         validator.validate(&module).expect("mesh.wgsl must validate");
+    }
+
+    // ---- procedural surface mottle (mirrors mesh.wgsl) ----
+
+    /// The mottle is **bounded** to ~[-0.5, 0.5] across a wide spatial sweep — the load-bearing
+    /// contract: the shader does `tint * (1 + mottle * 0.16)`, so an out-of-band value would blow
+    /// out the muted palette. (Each octave is `(value_noise - 0.5)` with value_noise in [0,1], so
+    /// the weighted sum 0.66 + 0.34 = 1 bounds the result to [-0.5, 0.5]; a tiny eps for float slop.)
+    #[test]
+    fn surface_mottle_is_bounded() {
+        let mut lo = f32::INFINITY;
+        let mut hi = f32::NEG_INFINITY;
+        let mut k = 0;
+        for ix in -40..40 {
+            for iy in -40..40 {
+                // Vary z deterministically too so we cover 3D, including negatives and fractions.
+                let z = (k as f32) * 0.13 - 6.0;
+                let m = surface_mottle([ix as f32 * 0.37, iy as f32 * 0.41, z]);
+                assert!(m.is_finite(), "mottle finite at {ix},{iy} -> {m}");
+                lo = lo.min(m);
+                hi = hi.max(m);
+                k += 1;
+            }
+        }
+        assert!(lo >= -0.5 - 1e-4 && hi <= 0.5 + 1e-4, "mottle in [-0.5,0.5], got [{lo},{hi}]");
+        // Low-contrast but genuinely varying: it must span a usable range, not collapse to a constant.
+        assert!(hi - lo > 0.2, "mottle varies across space (span {})", hi - lo);
+    }
+
+    /// Deterministic: same point → same value (no time/global state). Required for a stable,
+    /// non-shimmering material and for the shader twin to be a faithful reference.
+    #[test]
+    fn surface_mottle_is_deterministic() {
+        for p in [[0.0, 0.0, 0.0], [3.2, -1.7, 4.9], [-12.5, 8.1, 0.3]] {
+            assert_eq!(surface_mottle(p), surface_mottle(p), "deterministic at {p:?}");
+        }
+    }
+
+    /// Finite for extreme / negative / large inputs — the weapon viewmodel feeds view-space
+    /// positions and tokens feed far world coords, so the noise must never produce NaN/Inf.
+    #[test]
+    fn surface_mottle_is_finite_at_extremes() {
+        for p in [
+            [0.0, 0.0, 0.0],
+            [-1000.0, 1000.0, -500.0],
+            [1e6, -1e6, 1e5],
+            [0.0001, -0.0001, 0.0],
+        ] {
+            assert!(surface_mottle(p).is_finite(), "finite at {p:?}");
+        }
+    }
+
+    /// Continuity: the smoothstep-interpolated value noise has no lattice seams — a tiny step in
+    /// position yields a tiny step in output (so the mottle reads as smooth wear, not blocky tiles).
+    #[test]
+    fn surface_mottle_is_continuous() {
+        let base = [4.3, -2.1, 1.6];
+        let m0 = surface_mottle(base);
+        let m1 = surface_mottle([base[0] + 0.01, base[1], base[2]]);
+        assert!((m0 - m1).abs() < 0.05, "small step → small change ({m0} vs {m1})");
+    }
+
+    /// The internal value noise stays within its declared [0,1] band (the corner hash is a `fract`,
+    /// and trilinear interpolation of values in [0,1] stays in [0,1]).
+    #[test]
+    fn value_noise_in_unit_range() {
+        for i in 0..200 {
+            let t = i as f32 * 0.137;
+            let v = value_noise([t, t * 1.7 - 3.0, 9.0 - t]);
+            assert!((0.0..=1.0).contains(&v), "value_noise in [0,1], got {v}");
+        }
     }
 
     #[test]
