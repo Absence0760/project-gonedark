@@ -3368,3 +3368,38 @@ bounded projectile ring (§6a) now caps AI-originated shells too and `log()`s on
 ballistic-gun worker builds against this contract. Ships with: a test that an AI tank with `muzzle_vel > 0`
 spawns a traveling projectile (near target hit *later* than hitscan), that `muzzle_vel == 0` units still
 hitscan unchanged (golden), and a 2-peer lockstep agreement over the AI-ballistic-fire path on one seed.
+
+## D73 — Infantry anti-tank counter is a new dedicated AT infantry unit (restores the armour RPS triangle)
+
+**Decision.** Wave-1's P9 armour block made the produced `UnitKind::Tank` immune to small-arms (a
+Rifleman's `penetration == 0` shot bounces every facet — [W1], D72/economy). The counter is a **new
+dedicated anti-tank infantry archetype** — a fragile, slow-firing bazooka/AT-team `UnitKind` carrying
+`penetration > 0` — **not** giving an existing unit penetration (would muddy the measured Rifleman↔Heavy
+RPS, [D69](decisions.md)/[D70](decisions.md)) and **not** an embodied-only AT weapon (would leave AI
+infantry unable to answer an AI tank push). This restores the classic Company-of-Heroes triangle:
+**AT-infantry beats armour, massed infantry beats AT-infantry, armour beats infantry.**
+
+**Role / balance contract.** The AT unit pens the tank's **frontal** facet (so it is a real threat head-on,
+not just a flank-poke) — i.e. `2 · penetration ≥ TANK_ARMOR_FRONT (40)`, so `penetration ≥ 20` — but is
+**fragile** (low HP), **slow** (long cooldown / few ready rounds, D67 logistics), and **weak vs massed
+infantry** (poor anti-personnel DPS), so equal-cost it loses to riflemen. Numbers are dialed against
+`sim-runner --metrics` (the [D30](decisions.md) cost-parity signal), and the AT↔tank and AT↔rifle
+matchups are locked with measured assertions. It is **unarmoured** (infantry — `unit_armor` default), and
+per-faction stats route through `economy::unit_stats_for` like every other archetype ([D71](decisions.md),
+held within the fairness band).
+
+**Determinism / blast radius.** A new `UnitKind` variant is invariant-#7-sensitive: it crosses the lockstep
+wire (a `QueueProduction` command) and the snapshot. The variant gets a **new codec tag** in
+`lockstep::put/get_unit_kind` mirrored in `sim::unit_kind_tag` (append-only: existing tags 0–3 unchanged,
+AT = 4), and **both versions bump** — `WIRE_VERSION 8 → 9` and `SNAPSHOT_VERSION 9 → 10` — so a
+mismatched-build peer fails the handshake rather than silently desyncing. Every exhaustive `match UnitKind`
+(economy, sim, combat, heal, commander, gunsmith, scenario, render `model_for_unit`/train panels, engine
+train UI) gains its arm. Float-free (invariant #1); kept green across `determinism.yml`'s arch matrix and
+the 2-peer lockstep runner. High blast radius → built via `/safe-edit`-style review.
+
+**Consequences.** Players (and the scripted commander) can now train an answer to armour; the
+`components.rs` `UnitKind::Tank` doc comment (which still says the armoured tank "remains the duel scene's
+domain until an anti-tank counter exists") is corrected — the counter now exists. Ships with: the new arm
+across all matches (compile-exhaustive), codec round-trip for tag 4, a 2-peer lockstep agreement that
+produces and fights an AT unit, and the measured AT↔tank (frontal pen) + AT↔rifle (loses equal-cost)
+balance assertions.
