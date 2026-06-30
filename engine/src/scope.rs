@@ -49,7 +49,7 @@ pub const SCOPE_VISIBLE_T: f32 = 0.02;
 /// [`fire::fire_command`]'s trigger gate), so the command view never zooms and a dead avatar is
 /// inert. As of WS-A `can_ads` is true for **any** living embodied unit (infantry iron-sight ADS to
 /// [`ADS_FOV_DEG`] *and* the tank gun-sight to [`SCOPED_FOV_DEG`]) — the host chooses the target FOV
-/// + whether to draw the scope-overlay chrome (tank only) from the possessed unit's kind. Holding
+/// and whether to draw the scope-overlay chrome (tank only) from the possessed unit's kind. Holding
 /// ADS while not embodied is inert.
 #[inline]
 pub fn zoom_active(embodied: bool, can_ads: bool, aim_held: bool) -> bool {

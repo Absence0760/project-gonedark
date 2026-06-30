@@ -1228,6 +1228,7 @@ impl Renderer {
     /// Delegates to [`impact::ImpactRenderer`]. The host projects the world hit point (the avatar's
     /// own connecting shot) through the camera and derives `intensity` from the fade clock; a no-op
     /// once the burst has faded. Feedback on the player's own action, never intel (invariant #6).
+    #[allow(clippy::too_many_arguments)]
     pub fn render_impact(
         &mut self,
         device: &wgpu::Device,

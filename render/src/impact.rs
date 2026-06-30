@@ -254,6 +254,7 @@ impl ImpactRenderer {
     /// Draw the impact burst at NDC `(ndc_x, ndc_y)` for `intensity` over `view` (an additive LOAD
     /// pass — never clears). Builds the live instance set via [`impact_instances`], uploads it, and
     /// records one render pass. A no-op once the burst has faded (`intensity <= 0` → empty builder).
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         device: &wgpu::Device,
