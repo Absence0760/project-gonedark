@@ -266,9 +266,15 @@ Built once WS-A lands *and* per-platform UI projects exist (SwiftUI / Jetpack Co
 shell — none in the repo today; **no iOS build target exists at all** per Phase 3). Each surface
 carries its own blocker from §2:
 
+> **Android Compose parity:** the desktop egui shell has since grown several surfaces (Settings/
+> Profile/About [D75](../decisions.md), gunsmith, campaign mission-select) that Android's Compose
+> shell still lacks — the gap, its linchpin (a Compose→`NativeActivity` launch-config seam), and the
+> tiered build order are planned in [`compose-shell-parity.md`](compose-shell-parity.md)
+> ([D78](../decisions.md)/[D79](../decisions.md)).
+
 | Surface | Blocker (beyond the WS-A seam + missing native project) |
 |---|---|
-| Boot & title | **LANDED (Android [D35](../decisions.md) + desktop [D36](../decisions.md))** (Compose title/landing screen on Android; egui title screen on desktop); only the **iOS** native shell still pending (no iOS target) |
+| Boot & title | **LANDED (Android [D35](../decisions.md) + desktop [D36](../decisions.md))** (Compose title/landing screen on Android; egui title screen on desktop); Android now trails desktop by several waves — parity planned in [`compose-shell-parity.md`](compose-shell-parity.md); only the **iOS** native shell still pending (no iOS target) |
 | Onboarding / tutorial | **[Q5](../open-questions.md)** (PvE-vs-PvP-first defines the teach surface) |
 | Settings | owns the accessibility cues (§5) — must ship *with* them, not after |
 | Match setup | **[Q5](../open-questions.md)** (PvP half + mode select) |

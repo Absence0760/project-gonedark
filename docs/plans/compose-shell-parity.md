@@ -1,0 +1,199 @@
+# Compose shell parity plan — bringing Android's out-of-match shell up to desktop
+
+> **Status: PLANNED.** The Android landing/title surface ([D35](../decisions.md)) is still at
+> its day-one form — a flat three-button Compose screen — while the desktop egui shell
+> ([D36](../decisions.md)) has since grown several feature waves (art-directed title over a live
+> 3D backdrop, real Settings/Profile/About, the gunsmith, the Operations-hub mission-select +
+> briefing). This doc is the product-of-record plan for closing that gap. It sequences by what is
+> unblocked *today* and is updated as slices land. Scope is **Android Compose only**; iOS has no
+> native target at all (Phase 3), and PvP/lobby/store/consent surfaces stay blocked per
+> [`phase-4-plan.md`](phase-4-plan.md) §2.
+
+---
+
+## 1. Why Android is behind (it's structural, not a regression)
+
+Per [D32](../decisions.md), out-of-match chrome is **native per-platform** — Android's surfaces
+are Kotlin/Jetpack-Compose and **cannot** be shared from the desktop egui shell
+(`app/src/shell.rs`). "Parity" therefore means *re-authoring* each desktop surface in Compose, not
+wiring up shared code. The only thing both platforms share is the engine (`engine::Game`) and the
+GPU-free, logic-free [`core::shell`](../../core/src/shell.rs) seam ([D34](../decisions.md)).
+
+Both shells landed together — Android `d148cb0` (D35), desktop `bf2acf0` (D36) — but only the
+desktop side received follow-on work (`a528e2c` theme, `15c95d8` 3D-backdrop title, `d52a07b`
+Settings/Profile/About, `3766778` campaign wiring). There are **no `feat(android)` commits touching
+`TitleScreen.kt`/`MainActivity.kt` after `d148cb0`**. The Compose title is frozen at D35; the egui
+shell is ~4 waves ahead. That divergence is the entire gap.
+
+There is also a structural difference desktop doesn't have. On desktop the shell and engine are
+**one process, one `App`**: Deploy just calls `Game::new_scene_with_loadout(...)` in-process
+(`app/src/main.rs:492`), and live settings are pushed into the running game every frame
+(`set_look_prefs`/`set_gains`, `app/src/main.rs:367-373`). On Android the Compose shell
+(`MainActivity`) and the engine (`NativeActivity` → `android_main`) are **separate activities**, and
+today the hand-off carries **nothing**: `MainActivity.kt:41` does a bare
+`startActivity(NativeActivity)`, and `pal-android/src/android_backend.rs:154` calls
+`Game::new(device, format, DEFAULT_SEED)` with no config.
+
+**That missing config hand-off is the linchpin.** Most of the gap is not "draw more Compose" — it
+is "there is no way to tell the engine what to launch." Build that seam first and three surfaces
+unblock at once.
+
+---
+
+## 2. The concrete delta (desktop → Android)
+
+| Capability | Desktop | Android today |
+|---|---|---|
+| Live 3D animated title backdrop | `shell.rs:802-809` (`render::title_backdrop`) | flat `MaterialTheme.background` (`TitleScreen.kt:45`) |
+| Top-level play modes | CAMPAIGN / PvE / PvP (`TitleAction`, `shell.rs:27`) | one generic START (`TitleScreen.kt:78`) |
+| Settings (audio/look) | real, wired ([D75](../decisions.md), `shell.rs:247`) | **no-op stub** (`MainActivity.kt:32`) |
+| Profile | callsign/faction/record (`shell.rs:375`) | absent |
+| About / field-manual | `draw_about` (`shell.rs:850`) | absent |
+| Gunsmith / loadout | `engine::loadout_ui`, read at Deploy (`main.rs:484`) | absent — boots `DEFAULT_SEED` default match |
+| Campaign mission-select + briefing | `Screen::MissionSelect`/`Briefing` (`main.rs`) | absent |
+
+Input handling for what Android *does* show is fine (the three buttons work). The gap is missing
+surfaces, not broken ones.
+
+---
+
+## 3. Tier 0 — the launch-config seam (foundation, build first)
+
+A typed launch config that crosses **Compose → `NativeActivity` → `android_main`**, replacing the
+bare `Game::new(…DEFAULT_SEED)`.
+
+```
+ ┌─────────────┐  Intent extras (LaunchConfig)  ┌───────────────┐  parse  ┌──────────────────────┐
+ │ Compose     │ ─────────────────────────────► │ NativeActivity│ ──────► │ android_main         │
+ │ MainActivity│   scene/mission id, loadout,    │ (intent)      │         │ Game::new_scene_with │
+ │             │   difficulty, audio/look prefs  │               │         │ _loadout(...)        │
+ └─────────────┘                                 └───────────────┘         └──────────────────────┘
+```
+
+- **Kotlin side:** a `LaunchConfig` data class serialized into `Intent` extras at `startMatch()`.
+- **Rust side:** `android_main` reads the extras off the activity's intent (JNI via the
+  `android-activity` `AndroidApp`) and calls `Game::new_scene_with_loadout(...)` — the *exact* call
+  desktop already uses (`main.rs:492`) — instead of `Game::new(...)`. The engine entry path then
+  matches desktop.
+- **Why Intent extras, not a Storage-PAL file:** the config is produced out-of-match (Compose) and
+  consumed once at match start — a one-shot launch payload, not live shared state. Intent extras are
+  the right tool; no Storage round-trip needed.
+- **Not netcode-blocked.** This is plumbing across the Activity boundary; it has no Phase-3
+  dependency. Highest leverage piece in the plan.
+
+**Test seam (CLAUDE.md floor):** a pure Kotlin `LaunchConfig` encode/decode round-trip gets a JVM
+test (the `BuildStampTest.kt` pattern); the Rust extra-parse gets a host-testable parse fn + unit
+test — extracted off the JNI glue exactly as `pal-android/thermal.rs` split the pure mapping from
+the JNI reader.
+
+---
+
+## 4. Tier 1 — buildable now (Settings/Profile/About need *nothing* from Tier 0)
+
+| Surface | Desktop reference | Compose work | Scope notes |
+|---|---|---|---|
+| **Settings** (audio + look subset) | `SettingsState` `shell.rs:247`; applied `main.rs:367-373` | sliders (master/SFX/music, sensitivity), invert-Y, quality; persist via **DataStore**; fold values into the Tier-0 `LaunchConfig` | [D75](../decisions.md) shipped this subset on desktop, so it's explicitly buildable. **Accessibility cues + touch-layout/rebind editor stay BLOCKED** (phase-4-plan §2/§5) — ship audio/look, flag the rest. |
+| **Profile** | `ProfileState` `shell.rs:375`; `sanitize_callsign`/`win_rate_pct` | callsign field, faction picker, lifetime record; DataStore persist | fully buildable |
+| **About / field-manual** | `draw_about` `shell.rs:850`, `ControlRow` `shell.rs:470` | static content screen reached from Settings | lowest-risk surface — good first slice to prove the nav graph + test-seam pattern |
+| **Title mode-split** | `TitleAction`/`resolve_title_action` `shell.rs:27-94` | CAMPAIGN / PvE / PvP buttons + a Compose nav graph | buttons are trivial; CAMPAIGN/PvE route to Tier 2; **PvP → a "blocked" notice** (match-setup is Q5/Phase-3) |
+
+---
+
+## 5. Tier 2 — buildable once Tier 0 lands (config-seam-blocked, NOT netcode-blocked)
+
+| Surface | Desktop reference | What Tier 0 unblocks |
+|---|---|---|
+| **Gunsmith / loadout** | `engine::loadout_ui::LoadoutEditor`; `draw_loadout` `main.rs:287`, read at Deploy `main.rs:484` | a Compose gunsmith edits the loadout; Deploy packs it into `LaunchConfig`; engine already accepts it |
+| **Campaign: mission-select + briefing** | `Screen::MissionSelect`/`Briefing(NodeId)`; `draw_mission_select`/`draw_briefing` | Compose mission-select + briefing (difficulty cycler); launch packs `NodeId` + tier into `LaunchConfig`; campaign system already lives in `engine` |
+
+These are gated **only** on the Activity-boundary config seam — split out from the genuinely-blocked
+items so they aren't mistaken for Phase-3 work.
+
+---
+
+## 6. Explicitly BLOCKED — do not attempt under this plan
+
+So these aren't confused with "just unbuilt":
+
+- **PvP match setup** (army/map/mode) — Q5 / Phase-3 netcode.
+- **Lobby & matchmaking** — Phase-3 netcode.
+- **Settings: accessibility cues + touch-layout/rebind editor** — phase-4-plan §5; the going-dark
+  fairness cues (invariant #6) must ship *with* the editor, not as an afterthought.
+- **Store / IAP** — Q9 (billing) + Q11 (catalog).
+- **Consent & legal UI** — the gate ships in `server`; the screen is blocked native chrome.
+
+---
+
+## 7. The 3D title backdrop — the awkward one (→ D78)
+
+Desktop's title paints a live animated `render::title_backdrop::TitleBackdrop` (a **wgpu** scene,
+`shell.rs:802-809`) with cursor→NDC parallax, then composites egui over it. Compose has **no wgpu
+surface** — the Android title is a flat `MaterialTheme.background` (`TitleScreen.kt:45`). Three
+options:
+
+1. **Richer flat/animated Compose backdrop** (gradient, drifting vector motif, Compose animation) —
+   cheap, ~80% of the perceived polish, no engine surface. **Recommended.**
+2. **Embed a wgpu `SurfaceView`** behind Compose to run the real `TitleBackdrop` — high cost (a
+   second render surface in the shell process, lifecycle/threading), and it partly re-litigates the
+   D32 native-chrome split.
+3. **Accept the backdrop as desktop-only chrome** and don't chase pixel parity.
+
+Locked as **option 1** in [D78](../decisions.md).
+
+---
+
+## 8. Pure-seam duplication — Kotlin vs single-source (→ D79)
+
+Compose UI is test-exempt, but every pure decision/validation fn gets extracted to a plain-Kotlin
+seam with a JVM test — the `BuildStamp.kt` pattern. That means re-implementing the desktop seams
+(`resolve_title_action`, `sanitize_callsign`, `win_rate_pct`, settings `clamp`, the bounds
+`SENS_MIN/MAX`, `CALLSIGN_MAX`) in Kotlin. D32 sanctions chrome forking, but **numeric bounds and
+validation rules drifting between platforms would be a real consistency/fairness bug**, not just a
+style nit. Two paths:
+
+- **Re-implement in Kotlin with JVM tests + a synced-constants discipline** — light, idiomatic, no
+  JNI on the hot UI path. **Recommended.**
+- **Single-source the bounds/validation in `core::shell` and call over JNI** — invariant-#2-pure but
+  heavy for trivial presentation helpers, and drags JNI into out-of-match chrome.
+
+Locked as the light path in [D79](../decisions.md), with the bounds mirrored from `core` and a JVM
+test asserting them so drift is caught.
+
+---
+
+## 9. Test discipline (carry every surface)
+
+- Compose `@Composable` UI is exempt (un-unit-testable glue, like winit/android event glue in the
+  engine) — but its **pure logic is not**. Each surface lands its decision/validation seam as plain
+  Kotlin with a `src/test` JVM test, mirroring `BuildStamp.kt`/`BuildStampTest.kt`.
+- The Rust `LaunchConfig` parse (Tier 0) lands a host-side parse fn + unit test, off the JNI glue.
+- No determinism/lockstep surface is touched (this is chrome + one launch payload), so the
+  cross-platform checksum matrix is unaffected — call that out in each commit so it isn't assumed.
+
+---
+
+## 10. Suggested sequencing (each a scoped commit)
+
+1. **Tier 0** — `LaunchConfig` seam (Kotlin encode + Rust parse, both tested); engine entry switches
+   to `Game::new_scene_with_loadout`. *Highest leverage.*
+2. **About / field-manual** — lowest-risk Compose surface; proves the nav graph + test-seam pattern.
+3. **Profile** — DataStore persistence + `sanitize_callsign`/`win_rate_pct` Kotlin seams + JVM tests.
+4. **Settings** (audio/look subset) — sliders, DataStore, fold into `LaunchConfig`; flag
+   accessibility/rebind out-of-scope.
+5. **Title mode-split + backdrop** (D78 option 1) — CAMPAIGN/PvE/PvP buttons; PvP → blocked notice.
+6. **Gunsmith** (Tier 2) — Compose loadout editor → `LaunchConfig`.
+7. **Campaign mission-select + briefing** (Tier 2).
+
+---
+
+## 11. Decisions this plan needs (record via `/decision`)
+
+- **[D78](../decisions.md) — Android title backdrop** ✅ RECORDED — Compose-native animated backdrop
+  (option 1), not an embedded wgpu surface.
+- **[D79](../decisions.md) — pure-seam duplication** ✅ RECORDED — re-implement the chrome
+  decision/validation seams in Kotlin with JVM tests + mirrored-from-`core` bounds, rather than a
+  JNI single-source.
+
+See [`phase-4-plan.md`](phase-4-plan.md) §2 (surface table), [D32](../decisions.md) (native-shell
+split), [D34](../decisions.md) (the `core::shell` seam), [D35](../decisions.md)/[D36](../decisions.md)
+(the two Boot & title shells).

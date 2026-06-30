@@ -3608,3 +3608,55 @@ the build; user-generated/mod terrain ([`roadmap.md`](roadmap.md) PC-4) needs a 
 known later concern, and a peer lacking a referenced terrain id fails the match-setup handshake
 **explicitly**. This **unblocks CT-G's terrain half** (Q22 no longer gates it; the placement half was
 already unblocked). Net: novel battlefields — terrain included — become **scripted, lintable content**.
+
+## D78 — Android title backdrop is Compose-native, not an embedded wgpu surface
+
+**Decision.** The Android Compose landing screen ([D35](#d35--first-native-app-shell-surface-the-android-compose-boot--title-landing-screen))
+gets its visual depth from a **Compose-native animated backdrop** (a gradient + drifting vector
+motif, driven by Compose animation), **not** by embedding a `wgpu` `SurfaceView` to run the
+desktop's live 3D `render::title_backdrop::TitleBackdrop`. The Android title stays pure Compose
+chrome; pixel-for-pixel parity with the desktop 3D backdrop is explicitly *not* a goal. (Recorded
+ahead of the work in [`compose-shell-parity.md`](plans/compose-shell-parity.md) §7.)
+
+**Why.** The desktop backdrop is a wgpu scene composited under egui — but on Android the title is a
+separate Compose `MainActivity`, with the engine (and its only wgpu surface) living in a *different*
+`NativeActivity`. Bringing the real 3D backdrop to the Compose title would mean standing up a second
+render surface inside the shell process — its own device, lifecycle, and threading — which is a large
+cost for a static screen and partly re-litigates the [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
+native-chrome split (the whole point of which is that out-of-match chrome is *cheap* native UI, not
+engine rendering). A Compose-native animated backdrop buys ~80% of the perceived polish at a tiny
+fraction of the cost and keeps the shell a pure-Compose surface. The decision is **reversible**: if a
+shipped title ever genuinely needs the live 3D scene, option 2 (an embedded `SurfaceView`) remains
+open — this just declines to pay for it now.
+
+**Consequences.** Desktop and Android title screens will look deliberately different (3D scene vs.
+animated 2D motif); that is accepted, not a parity bug. No engine/render change is needed on the
+Android path — the backdrop is authored entirely in Compose.
+
+## D79 — Android shell's pure decision/validation seams are re-implemented in Kotlin (with tests), not single-sourced over JNI
+
+**Decision.** The pure decision/validation logic behind the Android out-of-match shell
+(title-action routing, callsign sanitisation, win-rate math, settings clamping, and the numeric
+bounds `SENS_MIN`/`SENS_MAX`, `CALLSIGN_MAX`) is **re-implemented in plain Kotlin and covered by JVM
+unit tests** — the [`BuildStamp.kt`](../android/app/src/main/java/com/jaredhoward/goingdark/BuildStamp.kt)
+pattern — **not** single-sourced in `core::shell` and called over JNI. The shared *numeric bounds*
+are mirrored from `core` with a JVM test asserting the mirrored values, so a drift between platforms
+is caught in CI rather than shipping as a silent inconsistency. (Recorded ahead of the work in
+[`compose-shell-parity.md`](plans/compose-shell-parity.md) §8.)
+
+**Why.** [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
+already establishes that out-of-match *chrome* forks per platform — only the game (sim, netcode,
+order/stance vocabulary) is single-sourced in `core` (invariant #2). These seams are presentation
+helpers (sanitise a display name, route a button press, clamp a slider), not game logic: they make
+no unit decisions, fold into no checksum, and have no determinism obligation. Dragging JNI onto the
+hot Compose UI path to single-source a string-trim is disproportionate. The genuine risk is not the
+logic forking but the **shared constants** drifting (a sensitivity range or callsign cap that differs
+across platforms is a real fairness/consistency bug) — so that, and only that, is pinned with a
+mirrored-constants test. The desktop egui shell already keeps these as pure Rust seams
+(`app/src/shell.rs`); Kotlin gets the symmetric treatment.
+
+**Consequences.** Each Android shell surface lands its decision/validation seam as testable Kotlin
+alongside the (exempt) Compose UI, keeping the CLAUDE.md "logic ships with tests" floor intact for
+the shell. The bounds live in one place per platform with a cross-check test; if `core` ever changes
+a bound, the Kotlin mirror test fails until updated. Single-sourcing over JNI stays available as a
+later option if the duplicated surface ever grows beyond trivial helpers.
