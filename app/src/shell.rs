@@ -11,6 +11,9 @@
 //!    glue is exempt from unit tests (CLAUDE.md: thin, un-constructible-in-test platform glue), so
 //!    the real logic is pushed down into the pure seam where it *is* tested.
 
+use gonedark_core::campaign::{
+    Campaign, Difficulty, MissionSelectEntry, NodeId, NodeProgress,
+};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_pal_desktop::DesktopRenderSurface;
 use gonedark_render::title_backdrop::TitleBackdrop;
@@ -43,6 +46,20 @@ pub enum HostTransition {
     /// Switch the host to the pre-match gunsmith / loadout screen. Start now lands here first; the
     /// screen's **Deploy** is what subsequently creates the `Game` (carrying the chosen loadout).
     OpenLoadout,
+    /// Switch the host to the **Operations-hub mission-select** screen — the PvE campaign entry
+    /// (`docs/pve-campaign.md`, D58). Reached from the title's CAMPAIGN button; the player picks a
+    /// node tile there, which opens its [`OpenBriefing`](HostTransition::OpenBriefing).
+    OpenMissionSelect,
+    /// Switch the host to the **briefing** screen for a campaign node (the "launch this mission"
+    /// surface). Carries the [`NodeId`] the mission-select tile resolved to.
+    OpenBriefing(NodeId),
+    /// Queue the campaign mission for `node` at the chosen replay `difficulty`, then route through
+    /// the gunsmith (the player still picks a loadout) before the match starts. The host stashes the
+    /// pending launch and switches to the loadout screen; the gunsmith's **Deploy** then creates the
+    /// `Game` for this node (see [`EnterMatch`](HostTransition::EnterMatch)). The `difficulty` is the
+    /// campaign-tier the **clear** is recorded against on a win — *not* the commander-AI tier (that
+    /// stays the mission's authored tier; the 4→3 mapping is open question Q21).
+    LaunchMission { node: NodeId, difficulty: Difficulty },
     /// Lazily create `engine::Game` and switch the host to the in-match screen.
     EnterMatch,
     /// Switch the host to the Settings screen (audio / video / controls preferences).
@@ -65,12 +82,13 @@ pub enum HostTransition {
 /// Map a title action to the host transition it triggers (the pure run-loop decision).
 pub fn resolve_title_action(action: TitleAction) -> HostTransition {
     match action {
-        // All three play modes currently share the ONE gunsmith→match flow: each opens the gunsmith
-        // so the player picks a loadout first, and Deploy from the gunsmith is what creates the
-        // `Game`. PvP/PvE/Campaign mode divergence (netcode lobby vs scripted-AI scenario vs the
-        // Operations-hub campaign, `docs/pve-campaign.md`) is future work — there are no separate
-        // mode systems today, so they deliberately fold to the same transition here.
-        TitleAction::Campaign | TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenLoadout,
+        // CAMPAIGN now opens the Operations-hub mission-select (the PvE pillar, D58) — the player
+        // picks a node, reads its briefing, and launches it (still through the gunsmith). PvE/PvP
+        // keep the direct gunsmith→match flow: there is no PvP lobby or standalone-skirmish picker
+        // yet, so each still folds straight to the loadout screen (their mode divergence is future
+        // work, exactly as before).
+        TitleAction::Campaign => HostTransition::OpenMissionSelect,
+        TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenLoadout,
         TitleAction::Settings => HostTransition::OpenSettings,
         TitleAction::Profile => HostTransition::OpenProfile,
         TitleAction::Quit => HostTransition::Exit,
@@ -493,6 +511,98 @@ pub fn controls_reference() -> &'static [ControlRow] {
     ROWS
 }
 
+// ---- The Operations-hub mission-select screen — pure seam (unit-tested) -------------------------
+
+/// An action the mission-select (Operations-hub) screen can emit in a frame. The hub reads the
+/// campaign through [`Campaign::mission_select`] (host-side, never the sim — invariants #1/#7); the
+/// only outcomes are launching a node's briefing or backing out to the title.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MissionSelectAction {
+    /// Open the briefing for the clicked node (only ever a *playable* node — see [`playable_node`]).
+    OpenNode(NodeId),
+    /// Return to the title screen.
+    Back,
+}
+
+/// The node a mission-select **tile** click resolves to — `Some(node)` only when the tile is
+/// playable ([`NodeProgress::is_playable`]: Available **or** already-Cleared/replayable), `None` for
+/// a Locked tile. This is the single gate the egui builder routes every tile click through, so a
+/// locked tile can never launch even if it somehow reports a click. Pure — unit-tested without a GPU
+/// (the rendering of the tile is the exempt glue; this *decision* is what's tested).
+pub fn playable_node(entry: &MissionSelectEntry) -> Option<NodeId> {
+    entry.progress.is_playable().then_some(entry.node)
+}
+
+// ---- The briefing screen — pure seam (unit-tested) ----------------------------------------------
+
+/// An action the briefing screen can emit in a frame. `CycleDifficulty` advances the host-side
+/// replay-tier selector (a stay-on-screen edit); `Deploy`/`Back` are screen transitions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BriefingAction {
+    /// Advance the selected replay difficulty to the next tier (wrapping).
+    CycleDifficulty,
+    /// Launch this mission with the currently-selected difficulty (routes through the gunsmith).
+    Deploy,
+    /// Return to the mission-select hub.
+    Back,
+}
+
+/// The screen-level outcome of a [`BriefingAction`] once applied — what the host run loop switches
+/// on. Separated from the egui glue so it is unit-testable without a window, mirroring
+/// [`LoadoutStep`] / [`SettingsStep`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BriefingOutcome {
+    /// Stay on the briefing (a difficulty edit, or nothing this frame).
+    Stay,
+    /// Launch the mission at the selected campaign `difficulty` (recorded against the **clear** on a
+    /// win; the commander-AI tier stays the mission's authored one — Q21).
+    Launch { difficulty: Difficulty },
+    /// Return to the mission-select hub.
+    Back,
+}
+
+/// The next campaign [`Difficulty`] tier, wrapping through [`Difficulty::ALL`]
+/// (`Recruit → Regular → Veteran → Elite → Recruit`). Pure helper for the briefing's difficulty
+/// cycler — `core::campaign::Difficulty` derives `Ord` but ships no `next`, so the shell owns the
+/// cycle order here (and tests it). ASCII-free of any sim concern; this is presentation only.
+pub fn next_difficulty(d: Difficulty) -> Difficulty {
+    let all = Difficulty::ALL;
+    let i = all.iter().position(|&x| x == d).unwrap_or(0);
+    all[(i + 1) % all.len()]
+}
+
+/// The human-readable label for a campaign [`Difficulty`] tier (the briefing's difficulty cycler
+/// readout). `core::campaign::Difficulty::id` returns a stable key (`"recruit"`…) for localization;
+/// the shell owns the display string. ASCII only so it can never tofu in egui's default font. Pure —
+/// unit-tested.
+pub fn difficulty_label(d: Difficulty) -> &'static str {
+    match d {
+        Difficulty::Recruit => "Recruit",
+        Difficulty::Regular => "Regular",
+        Difficulty::Veteran => "Veteran",
+        Difficulty::Elite => "Elite",
+    }
+}
+
+/// Apply a [`BriefingAction`], advancing the host-side `selected` replay tier in place on a cycle and
+/// reporting the resulting screen step. Pure (no egui/window) — the briefing's testable decision
+/// seam, mirroring [`apply_loadout_action`]. `Deploy` carries the *current* selection out as the
+/// launch tier (the host records it against `Campaign::clear` on a win); the enemy commander's
+/// aggression is **not** taken from here — it stays the mission's authored tier (the 4-tier campaign
+/// → 3-tier commander mapping is open question Q21).
+pub fn apply_briefing_action(action: BriefingAction, selected: &mut Difficulty) -> BriefingOutcome {
+    match action {
+        BriefingAction::CycleDifficulty => {
+            *selected = next_difficulty(*selected);
+            BriefingOutcome::Stay
+        }
+        BriefingAction::Deploy => BriefingOutcome::Launch {
+            difficulty: *selected,
+        },
+        BriefingAction::Back => BriefingOutcome::Back,
+    }
+}
+
 // ---- The "going-dark" palette + theme -----------------------------------------------------------
 
 // A near-black field, dim chrome, one amber alert accent (the game's directional-alert colour).
@@ -741,6 +851,33 @@ impl EguiShell {
         let stamp = self.stamp.clone();
         self.run_and_paint(surface, true, |ui| about_ui(ui, &stamp).then_some(()))
             .is_some()
+    }
+
+    /// Draw the Operations-hub **mission-select** screen for one frame and return the
+    /// [`MissionSelectAction`] used, if any. `campaign` is the host-side campaign model (read-only
+    /// here — it is never sim state, never checksummed). Over the live 3D backdrop, same as the
+    /// other out-of-match screens. Pure presentation — the tile-launchable gate lives in the pure
+    /// [`playable_node`] seam, this is the device-gated glue.
+    pub fn draw_mission_select(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+        campaign: &Campaign,
+    ) -> Option<MissionSelectAction> {
+        self.run_and_paint(surface, true, |ui| mission_select_ui(ui, campaign))
+    }
+
+    /// Draw the **briefing** screen for `node` for one frame and return the [`BriefingAction`] used,
+    /// if any. Reads the node's briefing through [`Campaign::briefing`]; `selected` is the host-side
+    /// replay-tier selector the difficulty cycler edits in place. Over the backdrop. Pure
+    /// presentation — the decision logic is the pure [`apply_briefing_action`] seam.
+    pub fn draw_briefing(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+        campaign: &Campaign,
+        node: NodeId,
+        selected: Difficulty,
+    ) -> Option<BriefingAction> {
+        self.run_and_paint(surface, true, |ui| briefing_ui(ui, campaign, node, selected))
     }
 
     /// Run one egui frame (`build` lays out the UI and returns this frame's action) and paint the
@@ -1378,6 +1515,159 @@ fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
     back
 }
 
+/// One mission-select tile: a status pill (Locked/Available/Cleared, colour-coded) beside the node
+/// title as a full-width button. A **playable** node (Available or already-Cleared/replayable) is an
+/// enabled button that emits [`MissionSelectAction::OpenNode`]; a **Locked** node renders disabled and
+/// cannot be clicked. The launchable decision is the pure [`playable_node`] seam (double-guarded on
+/// the click), so this is the exempt egui glue. Returns the action on a click. ASCII status text only.
+fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Option<MissionSelectAction> {
+    use egui::{Button, Label, RichText};
+    let playable = playable_node(entry).is_some();
+    let (status, status_color) = match entry.progress {
+        NodeProgress::Locked => ("LOCKED".to_string(), MUTED),
+        NodeProgress::Available => ("AVAILABLE".to_string(), AMBER),
+        NodeProgress::Cleared { best } => {
+            // U+00B7 middle dot — the one non-ASCII glyph proven to render in egui's default font.
+            (format!("CLEARED \u{00B7} {}", difficulty_label(best)), ASH)
+        }
+    };
+    let title_color = if playable { BONE } else { MUTED };
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [150.0, 36.0],
+            Label::new(RichText::new(status).color(status_color).size(TYPE_CAPTION).strong()),
+        );
+        let button = Button::new(
+            RichText::new(entry.title.clone()).color(title_color).size(TYPE_BODY).strong(),
+        )
+        .min_size([280.0, 36.0].into());
+        clicked = ui.add_enabled(playable, button).clicked();
+    });
+    clicked
+        .then(|| playable_node(entry).map(MissionSelectAction::OpenNode))
+        .flatten()
+}
+
+/// The immediate-mode Operations-hub mission-select screen: the campaign's nodes as
+/// status-coded tiles in a card over the backdrop, then BACK. Reads
+/// [`Campaign::mission_select`] (host-side, never the sim); each tile's launchability + the click
+/// routing go through the pure [`playable_node`] seam. Glue.
+fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Option<MissionSelectAction> {
+    use egui::RichText;
+    let mut action = None;
+
+    over_backdrop_screen(ui, 0.07, |ui| {
+        ui.set_min_width(500.0);
+        screen_banner(ui, "OPERATIONS", 130.0);
+        ui.label(
+            RichText::new(
+                "Clear an operation to open the next. A cleared operation can be replayed at a \
+                 higher tier.",
+            )
+            .color(ASH)
+            .size(TYPE_BODY),
+        );
+        ui.add_space(16.0);
+
+        card_frame().show(ui, |ui| {
+            let entries = campaign.mission_select();
+            for (i, entry) in entries.iter().enumerate() {
+                if let Some(act) = mission_tile(ui, entry) {
+                    action = Some(act);
+                }
+                if i + 1 < entries.len() {
+                    ui.add_space(8.0);
+                }
+            }
+        });
+
+        ui.add_space(20.0);
+        if menu_button(ui, "BACK", Emphasis::Tertiary) {
+            action = Some(MissionSelectAction::Back);
+        }
+    });
+
+    action
+}
+
+/// The immediate-mode briefing screen for one campaign node: the title, the briefing copy, a replay
+/// **difficulty** cycler (the host-side `selected` tier), the clear status, then DEPLOY / BACK.
+/// Reads the node through [`Campaign::briefing`]; the discrete controls return a [`BriefingAction`]
+/// the pure [`apply_briefing_action`] seam resolves. An out-of-range node degrades to a BACK-only
+/// card. Glue.
+fn briefing_ui(
+    ui: &mut egui::Ui,
+    campaign: &Campaign,
+    node: NodeId,
+    selected: Difficulty,
+) -> Option<BriefingAction> {
+    use egui::{Button, Label, RichText};
+    let mut action = None;
+
+    over_backdrop_screen(ui, 0.07, |ui| {
+        ui.set_min_width(500.0);
+        let Some(b) = campaign.briefing(node) else {
+            // The hub only opens playable, in-range nodes, so this is purely defensive.
+            screen_banner(ui, "BRIEFING", 110.0);
+            ui.label(RichText::new("No such operation.").color(ASH).size(TYPE_BODY));
+            ui.add_space(16.0);
+            if menu_button(ui, "BACK", Emphasis::Primary) {
+                action = Some(BriefingAction::Back);
+            }
+            return;
+        };
+
+        screen_banner(ui, &b.title.to_uppercase(), 130.0);
+        ui.label(RichText::new(b.briefing.clone()).color(ASH).size(TYPE_BODY));
+        ui.add_space(16.0);
+
+        card_frame().show(ui, |ui| {
+            // Difficulty cycler — the replay tier the CLEAR is recorded against on a win. (The enemy
+            // commander's aggression is NOT taken from here; it stays the mission's authored tier —
+            // the 4-tier campaign → 3-tier commander mapping is open question Q21.)
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [120.0, 32.0],
+                    Label::new(RichText::new("Difficulty").color(BONE).size(TYPE_BODY)),
+                );
+                if ui
+                    .add_sized(
+                        [200.0, 32.0],
+                        Button::new(
+                            RichText::new(difficulty_label(selected)).color(AMBER).size(TYPE_BODY).strong(),
+                        ),
+                    )
+                    .clicked()
+                {
+                    action = Some(BriefingAction::CycleDifficulty);
+                }
+            });
+            ui.add_space(8.0);
+            // Clear status — `replayable` once cleared, with the best tier so far.
+            let status = match b.progress {
+                NodeProgress::Cleared { best } => {
+                    format!("Cleared at {} -- replay to raise your best.", difficulty_label(best))
+                }
+                NodeProgress::Available => "Not yet cleared.".to_string(),
+                NodeProgress::Locked => "Locked.".to_string(),
+            };
+            ui.label(RichText::new(status).color(MUTED).size(TYPE_CAPTION));
+        });
+
+        ui.add_space(20.0);
+        if menu_button(ui, "DEPLOY", Emphasis::Primary) {
+            action = Some(BriefingAction::Deploy);
+        }
+        ui.add_space(10.0);
+        if menu_button(ui, "BACK", Emphasis::Tertiary) {
+            action = Some(BriefingAction::Back);
+        }
+    });
+
+    action
+}
+
 #[cfg(test)]
 mod tests {
     //! The pure seam only — the egui glue (`EguiShell`/`title_ui`/`loadout_ui`/`run_and_paint`) needs
@@ -1408,11 +1698,20 @@ mod tests {
     }
 
     #[test]
-    fn every_play_mode_opens_the_gunsmith() {
-        // All three play modes currently share the one gunsmith→match flow (mode divergence is
-        // future work), so each must route through the loadout screen first — Deploy from there is
-        // what creates the `Game`.
-        for mode in [TitleAction::Campaign, TitleAction::Pve, TitleAction::Pvp] {
+    fn campaign_opens_the_operations_hub() {
+        // CAMPAIGN now routes to the Operations-hub mission-select (the PvE pillar, D58), not
+        // straight to the gunsmith.
+        assert_eq!(
+            resolve_title_action(TitleAction::Campaign),
+            HostTransition::OpenMissionSelect
+        );
+    }
+
+    #[test]
+    fn pve_and_pvp_still_open_the_gunsmith() {
+        // PvE/PvP keep the direct gunsmith→match flow (no lobby / skirmish picker yet) — each routes
+        // through the loadout screen first, and Deploy from there creates the `Game`.
+        for mode in [TitleAction::Pve, TitleAction::Pvp] {
             assert_eq!(
                 resolve_title_action(mode),
                 HostTransition::OpenLoadout,
@@ -1798,5 +2097,104 @@ mod tests {
                 "the {layer} layer must have at least one binding"
             );
         }
+    }
+
+    // ---- The Operations-hub mission-select + briefing pure seams ---------------------------------
+
+    use gonedark_core::campaign::{MissionId, OperationNode};
+
+    /// A small A -> B chain campaign: A is a root (Available), B is gated behind A (Locked).
+    fn chain_campaign() -> Campaign {
+        Campaign::new(vec![
+            OperationNode::new(NodeId(0), MissionId(1), "Alpha", "take the outpost"),
+            OperationNode::new(NodeId(1), MissionId(2), "Bravo", "hold the ridge")
+                .requires([NodeId(0)]),
+        ])
+    }
+
+    #[test]
+    fn campaign_routes_through_the_mission_select_then_briefing() {
+        // The full title -> hub -> briefing wiring at the seam level: CAMPAIGN opens the hub, a hub
+        // tile opens a briefing for that node.
+        assert_eq!(
+            resolve_title_action(TitleAction::Campaign),
+            HostTransition::OpenMissionSelect
+        );
+    }
+
+    #[test]
+    fn only_playable_tiles_resolve_to_a_node() {
+        let campaign = chain_campaign();
+        let entries = campaign.mission_select();
+        // Node A is Available → playable → resolves to its own NodeId.
+        assert_eq!(entries[0].progress, NodeProgress::Available);
+        assert_eq!(playable_node(&entries[0]), Some(NodeId(0)));
+        // Node B is Locked → not playable → a click resolves to nothing (can't launch what you can't
+        // play), even though the tile exists.
+        assert_eq!(entries[1].progress, NodeProgress::Locked);
+        assert_eq!(playable_node(&entries[1]), None);
+    }
+
+    #[test]
+    fn cleared_tiles_stay_playable_for_replay() {
+        let mut campaign = chain_campaign();
+        // Clear A → it becomes Cleared (replayable) and B unlocks (Available). Both are now playable.
+        campaign.clear(NodeId(0), Difficulty::Regular).unwrap();
+        let entries = campaign.mission_select();
+        assert!(matches!(entries[0].progress, NodeProgress::Cleared { .. }));
+        assert_eq!(playable_node(&entries[0]), Some(NodeId(0)), "a cleared node replays");
+        assert_eq!(entries[1].progress, NodeProgress::Available);
+        assert_eq!(playable_node(&entries[1]), Some(NodeId(1)));
+    }
+
+    #[test]
+    fn difficulty_cycles_through_all_four_tiers_and_wraps() {
+        // The briefing's cycler walks every campaign tier exactly once, then wraps.
+        let mut d = Difficulty::Recruit;
+        let mut seen = Vec::new();
+        for _ in 0..Difficulty::ALL.len() {
+            seen.push(d);
+            d = next_difficulty(d);
+        }
+        for tier in Difficulty::ALL {
+            assert!(seen.contains(&tier), "{tier:?} must appear in the cycle");
+        }
+        assert_eq!(d, Difficulty::Recruit, "the cycle wraps back to the start");
+    }
+
+    #[test]
+    fn difficulty_labels_are_distinct_ascii() {
+        let labels: Vec<&str> = Difficulty::ALL.iter().map(|&d| difficulty_label(d)).collect();
+        assert!(labels.iter().all(|l| l.is_ascii() && !l.is_empty()));
+        let mut sorted = labels.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), labels.len(), "every tier has a distinct label");
+    }
+
+    #[test]
+    fn briefing_cycle_advances_the_selection_and_stays() {
+        let mut selected = Difficulty::Recruit;
+        let step = apply_briefing_action(BriefingAction::CycleDifficulty, &mut selected);
+        assert_eq!(step, BriefingOutcome::Stay);
+        assert_eq!(selected, Difficulty::Regular, "cycle advances the live selection");
+    }
+
+    #[test]
+    fn briefing_deploy_carries_the_selected_tier_and_back_leaves() {
+        let mut selected = Difficulty::Veteran;
+        // Deploy reports the launch with the current selection (recorded against the clear on a win);
+        // it does NOT mutate the selection.
+        assert_eq!(
+            apply_briefing_action(BriefingAction::Deploy, &mut selected),
+            BriefingOutcome::Launch { difficulty: Difficulty::Veteran }
+        );
+        assert_eq!(selected, Difficulty::Veteran);
+        // Back is a screen transition that leaves the selection alone.
+        assert_eq!(
+            apply_briefing_action(BriefingAction::Back, &mut selected),
+            BriefingOutcome::Back
+        );
+        assert_eq!(selected, Difficulty::Veteran);
     }
 }

@@ -21,6 +21,12 @@ audio = ["gonedark-pal-desktop/audio"]
 [dependencies]
 gonedark-engine = { path = "../engine" }
 gonedark-pal = { path = "../pal" }
+# The Operations-hub campaign model + its read DTOs (`core::campaign`, re-exported through
+# `core::shell`) the out-of-match shell drives the PvE mission-select / briefing surfaces from
+# (PvE WS-B, D58). `core` is the GPU-free, platform-free shared crate (invariant #2), so a host
+# shell depending on it for presentation DTOs is within bounds — exactly as it reads the gunsmith
+# loadout model. The mission *registry* (`MissionId -> runnable mission`) lives in `engine`.
+gonedark-core = { path = "../core" }
 winit = "0.30"
 wgpu = "29"
 

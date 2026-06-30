@@ -13,9 +13,13 @@
 //! This binary owns only the desktop concerns: the window, the wgpu surface, input plumbing, the
 //! egui shell, and the wall clock that feeds per-frame `dt` into the engine's fixed-tick accumulator.
 
+use gonedark_core::campaign::{Campaign, Difficulty, NodeId};
 use gonedark_engine::loadout_ui::LoadoutEditor;
+use gonedark_engine::mission_registry::{default_campaign, default_registry, MissionRegistry};
+use gonedark_engine::objectives::MissionStatus;
 use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
 use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface, DesktopThermalSensor};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
@@ -26,9 +30,9 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, Window
 
 mod shell;
 use shell::{
-    apply_loadout_action, apply_profile_action, apply_settings_action, build_channel, build_stamp,
-    resolve_title_action, EguiShell, HostTransition, LoadoutStep, ProfileState, ProfileStep,
-    SettingsState, SettingsStep,
+    apply_briefing_action, apply_loadout_action, apply_profile_action, apply_settings_action,
+    build_channel, build_stamp, resolve_title_action, BriefingOutcome, EguiShell, HostTransition,
+    LoadoutStep, MissionSelectAction, ProfileState, ProfileStep, SettingsState, SettingsStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -44,6 +48,12 @@ enum Screen {
     Settings,
     /// The out-of-match player Profile screen. State lives on [`App::profile`].
     Profile,
+    /// The Operations-hub **mission-select** screen (PvE campaign, D58). Reads [`App::campaign`];
+    /// carries no data of its own.
+    MissionSelect,
+    /// The **briefing** screen for one campaign node. Carries the [`NodeId`] whose briefing it shows;
+    /// the replay-tier selector lives on [`App::briefing_difficulty`].
+    Briefing(NodeId),
     /// The About / controls-reference screen (reached from Settings). Static content, no host state.
     About,
     // `Game` is large (the renderer + sim state); box it so the idle `Title` variant doesn't carry
@@ -98,10 +108,41 @@ struct App {
     settings: SettingsState,
     /// Host-side player identity + lifetime record shown on the Profile screen. Presentation only.
     profile: ProfileState,
+
+    /// The Operations-hub campaign model (PvE WS-B, D58) the mission-select / briefing screens read
+    /// and a win advances. **Host-side meta-progression — never sim state, never in the per-tick
+    /// checksum** (invariants #1/#7): its progress persists to its own host blob
+    /// (`Campaign::serialize_progress`), separate from any sim snapshot. Initialised from
+    /// `default_campaign()` and loaded from disk at startup.
+    campaign: Campaign,
+    /// The host-side `MissionId -> runnable mission` registry (`default_registry()`). Consulted when
+    /// a node is launched to find the mission's authored enemy-commander tier (a host-side planning
+    /// knob, never sim state) — see [`HostTransition::LaunchMission`].
+    registry: MissionRegistry,
+    /// The replay-tier selector shown on the active briefing screen (the campaign 4-tier
+    /// coordinate). Reset when a briefing opens; its value is recorded against `Campaign::clear` on a
+    /// win. Presentation only.
+    briefing_difficulty: Difficulty,
+    /// A campaign mission queued for launch (`node` + the player's chosen replay `difficulty`), set
+    /// when a briefing's DEPLOY routes through the gunsmith, consumed when the match is created. The
+    /// `difficulty` is the campaign tier the **clear** is recorded against — not the commander tier.
+    pending_launch: Option<(NodeId, Difficulty)>,
+    /// The campaign mission backing the *running* match, if any (`node` + the chosen replay
+    /// `difficulty`), so a win can record the clear. `None` for non-campaign matches (PvE/PvP, debug
+    /// scenes). Carried across the in-match screen; cleared on exit-to-title.
+    active_mission: Option<(NodeId, Difficulty)>,
+    /// Whether the current match's clear has already been recorded — so a win is recorded exactly
+    /// once even though `mission_status()` reads `Won` every subsequent frame. Reset at match start.
+    mission_recorded: bool,
 }
 
 impl App {
     fn new(scene: Scene) -> Self {
+        // The shipped Operations-hub campaign + its mission registry (PvE WS-B). Load any persisted
+        // progress over the fresh graph — a missing/corrupt blob just leaves it at the start (the
+        // load is all-or-nothing, never partial). Host-side meta-state only (invariants #1/#7).
+        let mut campaign = default_campaign();
+        load_campaign_progress(&mut campaign);
         App {
             surface: None,
             shell: None,
@@ -117,6 +158,12 @@ impl App {
             loadout: LoadoutEditor::new(),
             settings: SettingsState::default(),
             profile: ProfileState::default(),
+            campaign,
+            registry: default_registry(),
+            briefing_difficulty: Difficulty::default(),
+            pending_launch: None,
+            active_mission: None,
+            mission_recorded: false,
         }
     }
 
@@ -274,6 +321,39 @@ impl App {
                     }
                 }
             }
+            Screen::MissionSelect => {
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) = sh.draw_mission_select(surface, &self.campaign) {
+                        transition = match action {
+                            // A playable tile → open that node's briefing (the click was already
+                            // gated to playable nodes by the pure `playable_node` seam).
+                            MissionSelectAction::OpenNode(node) => {
+                                Some(HostTransition::OpenBriefing(node))
+                            }
+                            MissionSelectAction::Back => Some(HostTransition::ExitToTitle),
+                        };
+                    }
+                }
+            }
+            Screen::Briefing(node) => {
+                let node = *node;
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) =
+                        sh.draw_briefing(surface, &self.campaign, node, self.briefing_difficulty)
+                    {
+                        // The difficulty cycler edits the live selection in place (Stay); Deploy
+                        // queues the launch through the gunsmith; Back returns to the hub.
+                        transition = match apply_briefing_action(action, &mut self.briefing_difficulty)
+                        {
+                            BriefingOutcome::Stay => None,
+                            BriefingOutcome::Launch { difficulty } => {
+                                Some(HostTransition::LaunchMission { node, difficulty })
+                            }
+                            BriefingOutcome::Back => Some(HostTransition::OpenMissionSelect),
+                        };
+                    }
+                }
+            }
             Screen::About => {
                 if let Some(sh) = self.shell.as_mut() {
                     // BACK from About returns to Settings (where it was opened from).
@@ -342,6 +422,26 @@ impl App {
                         surface.present(frame);
                     }
                 }
+                // Record a campaign clear the first frame this match reads `Won`. The clear advances
+                // host-side meta-progression and persists to its own blob — it is **never** sim state
+                // and never folded into the per-tick checksum (invariants #1/#7), so it cannot
+                // desync. `mission_status()` is a pure read of the host-side objective layer; a loss
+                // (or exit) records nothing. `self.campaign` / `self.active_mission` are disjoint
+                // fields from the `game` borrow above, so this split borrow is fine.
+                if !self.mission_recorded {
+                    if let Some((node, difficulty)) = self.active_mission {
+                        if game.mission_status() == MissionStatus::Won {
+                            // The campaign tier the player chose is what the clear records (the
+                            // commander-AI tier stayed the mission's authored one — Q21). A rejected
+                            // clear (shouldn't happen for a launched, playable node) is simply not
+                            // persisted.
+                            if self.campaign.clear(node, difficulty).is_ok() {
+                                persist_campaign(&self.campaign);
+                            }
+                            self.mission_recorded = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -352,18 +452,63 @@ impl App {
                 self.screen = Screen::Loadout;
                 self.last_frame = Instant::now();
             }
+            // CAMPAIGN → the Operations-hub mission-select (PvE pillar, D58).
+            Some(HostTransition::OpenMissionSelect) => {
+                self.screen = Screen::MissionSelect;
+                self.last_frame = Instant::now();
+            }
+            // A hub tile → that node's briefing. Reset the replay-tier selector to the lowest tier
+            // the node offers (its briefing lists `available_difficulties` lowest-first); fall back to
+            // the default for a (defensive) out-of-range node.
+            Some(HostTransition::OpenBriefing(node)) => {
+                self.briefing_difficulty = self
+                    .campaign
+                    .briefing(node)
+                    .and_then(|b| b.available_difficulties.first().copied())
+                    .unwrap_or_default();
+                self.screen = Screen::Briefing(node);
+                self.last_frame = Instant::now();
+            }
+            // A briefing's DEPLOY: queue the campaign launch, then route through the gunsmith exactly
+            // like any other Start. The gunsmith's Deploy lands on `EnterMatch`, which consumes
+            // `pending_launch` to boot the mission and remember the node for clear-recording.
+            Some(HostTransition::LaunchMission { node, difficulty }) => {
+                self.pending_launch = Some((node, difficulty));
+                self.screen = Screen::Loadout;
+                self.last_frame = Instant::now();
+            }
             Some(HostTransition::EnterMatch) => {
                 let surface = self.surface.as_ref().expect("surface exists in resumed");
-                // Field the player's chosen gunsmith loadout at match start (WS-C, D60). For scenes
-                // that carry no player loadout it is inert; `Loadout::STANDARD` (the untouched editor)
-                // reproduces `new_scene` exactly, so this is a strict superset of the old call.
-                let game = Game::new_scene_with_loadout(
-                    surface.device(),
-                    surface.format(),
-                    DEFAULT_SEED,
-                    self.scene,
-                    self.loadout.current(),
-                );
+                let device = surface.device();
+                let format = surface.format();
+                let loadout = self.loadout.current();
+                // A campaign launch was queued (briefing → gunsmith → here): boot the mission scene
+                // and apply the mission's authored enemy-commander tier (a host-side planning knob,
+                // never sim state). Otherwise field the host's CLI `scene` exactly as before — a
+                // strict superset of the old call. The campaign tier the player picked is carried in
+                // `active_mission` for clear-recording, NOT pushed into the commander (that stays the
+                // authored tier — the 4→3 tier mapping is open question Q21).
+                let game = if let Some((node, difficulty)) = self.pending_launch.take() {
+                    let mut game = Game::new_scene_with_loadout(
+                        device,
+                        format,
+                        DEFAULT_SEED,
+                        Scene::Mission1,
+                        loadout,
+                    );
+                    if let Some(def) = self.registry.resolve_node(&self.campaign, node) {
+                        game.set_commander_difficulty(def.briefing.difficulty);
+                    }
+                    self.active_mission = Some((node, difficulty));
+                    game
+                } else {
+                    // Field the player's chosen gunsmith loadout at match start (WS-C, D60). For
+                    // scenes that carry no player loadout it is inert; `Loadout::STANDARD` (the
+                    // untouched editor) reproduces `new_scene` exactly.
+                    self.active_mission = None;
+                    Game::new_scene_with_loadout(device, format, DEFAULT_SEED, self.scene, loadout)
+                };
+                self.mission_recorded = false;
                 self.screen = Screen::InMatch(Box::new(game));
                 // Don't charge the time spent on the title/gunsmith screens to the first sim tick.
                 self.last_frame = Instant::now();
@@ -385,8 +530,14 @@ impl App {
             Some(HostTransition::ToggleFullscreen) => self.toggle_fullscreen(),
             Some(HostTransition::Exit) => event_loop.exit(),
             // Return to the title screen, dropping any `Game` (the post-match DISMISS path, and the
-            // gunsmith's BACK — which has no `Game` yet, so this is just a screen swap there).
+            // gunsmith's BACK — which has no `Game` yet, so this is just a screen swap there). Clear
+            // any campaign launch/active mission so a later non-campaign Start can't inherit a stale
+            // node (a gunsmith BACK abandons a queued campaign launch; a match exit ends the active
+            // one — its clear, if any, was already recorded the frame the match was Won).
             Some(HostTransition::ExitToTitle) => {
+                self.pending_launch = None;
+                self.active_mission = None;
+                self.mission_recorded = false;
                 self.screen = Screen::Title;
                 self.last_frame = Instant::now();
             }
@@ -444,11 +595,13 @@ impl ApplicationHandler for App {
         // nothing leaks between the shell and the sim.)
         match self.screen {
             // The egui shell owns input on every out-of-match screen (title, gunsmith, settings,
-            // profile, about).
+            // profile, mission-select, briefing, about).
             Screen::Title
             | Screen::Loadout
             | Screen::Settings
             | Screen::Profile
+            | Screen::MissionSelect
+            | Screen::Briefing(_)
             | Screen::About => {
                 if let (Some(sh), Some(surface)) = (self.shell.as_mut(), self.surface.as_ref()) {
                     sh.on_window_event(surface.window(), &event);
@@ -513,6 +666,59 @@ fn scene_token(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// The campaign-progress blob filename, under the host data dir (see [`campaign_dir`]).
+const CAMPAIGN_PROGRESS_FILE: &str = "campaign.dat";
+
+/// Resolve the host directory the campaign-progress blob lives in, from the two env vars the real
+/// [`campaign_progress_path`] reads: prefer `$XDG_DATA_HOME/gonedark`, else `$HOME/.local/share/
+/// gonedark`, else `None` (no writable home → progress simply isn't persisted this session). Pure
+/// (no env / no fs), so it is unit-tested without touching the real filesystem — the env read +
+/// `fs` calls around it are the exempt host glue. There is no pre-existing settings/profile
+/// persistence in this binary to mirror, so this picks the conventional XDG data location.
+fn campaign_dir(xdg_data_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    if let Some(x) = xdg_data_home.filter(|s| !s.is_empty()) {
+        return Some(Path::new(x).join("gonedark"));
+    }
+    if let Some(h) = home.filter(|s| !s.is_empty()) {
+        return Some(Path::new(h).join(".local/share/gonedark"));
+    }
+    None
+}
+
+/// The full path to the campaign-progress blob, or `None` when no writable home dir is known. Reads
+/// the environment (the impure part) and defers the decision to the pure [`campaign_dir`] seam.
+fn campaign_progress_path() -> Option<PathBuf> {
+    let xdg = std::env::var("XDG_DATA_HOME").ok();
+    let home = std::env::var("HOME").ok();
+    campaign_dir(xdg.as_deref(), home.as_deref()).map(|d| d.join(CAMPAIGN_PROGRESS_FILE))
+}
+
+/// Persist the campaign's progress to its **own host blob** (`Campaign::serialize_progress`),
+/// creating the data dir if needed. Best-effort: a write failure is logged-by-silence (we never
+/// crash the match on a save error) — the progress is in memory regardless. This blob is **separate**
+/// from any sim snapshot and never folded into the per-tick checksum (invariants #1/#7). Glue (fs).
+fn persist_campaign(campaign: &Campaign) {
+    let Some(path) = campaign_progress_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, campaign.serialize_progress());
+}
+
+/// Load persisted campaign progress over `campaign`'s fresh topology, if a blob exists. A missing
+/// file or a malformed/topology-skewed blob is ignored (the load is all-or-nothing — `apply_progress`
+/// never partially applies), leaving the campaign at its start. Glue (fs).
+fn load_campaign_progress(campaign: &mut Campaign) {
+    let Some(path) = campaign_progress_path() else {
+        return;
+    };
+    if let Ok(bytes) = std::fs::read(&path) {
+        let _ = campaign.apply_progress(&bytes);
+    }
 }
 
 fn main() {
@@ -584,5 +790,40 @@ mod scene_arg_tests {
         assert_eq!(scene_token(&args(&["--fullscreen"])), None);
         // `--scene` with no following value: nothing to take.
         assert_eq!(scene_token(&args(&["--scene"])), None);
+    }
+}
+
+#[cfg(test)]
+mod campaign_path_tests {
+    //! The campaign-progress *directory* resolution is the only logic worth testing here; the env
+    //! read + `std::fs` calls that wrap it (`persist_campaign`/`load_campaign_progress`) are thin,
+    //! filesystem-touching glue, exempt per the crate's testable-seam convention.
+    use super::campaign_dir;
+    use std::path::Path;
+
+    #[test]
+    fn prefers_xdg_data_home_when_set() {
+        let dir = campaign_dir(Some("/data"), Some("/home/me")).unwrap();
+        assert_eq!(dir, Path::new("/data/gonedark"));
+    }
+
+    #[test]
+    fn falls_back_to_home_local_share() {
+        // No XDG (absent or empty) → $HOME/.local/share/gonedark.
+        assert_eq!(
+            campaign_dir(None, Some("/home/me")).unwrap(),
+            Path::new("/home/me/.local/share/gonedark")
+        );
+        assert_eq!(
+            campaign_dir(Some(""), Some("/home/me")).unwrap(),
+            Path::new("/home/me/.local/share/gonedark")
+        );
+    }
+
+    #[test]
+    fn no_writable_home_yields_none() {
+        // Neither var usable → progress simply isn't persisted (None), never a panic.
+        assert_eq!(campaign_dir(None, None), None);
+        assert_eq!(campaign_dir(Some(""), Some("")), None);
     }
 }
