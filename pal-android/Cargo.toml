@@ -35,6 +35,13 @@ gonedark-pal = { path = "../pal" }
 # the desktop host does (sim + render + fixed-tick + cameras); only the surface/input/
 # lifecycle below is Android-specific. Android-target-only because it pulls render+wgpu.
 gonedark-engine = { path = "../engine" }
+# The deterministic sim core, for `gunsmith::Loadout` — the InitWindow glue maps the launch
+# config's slot indices (opt/bar/mag) into a `Loadout` and fields it via
+# `Game::new_scene_with_loadout` (Compose shell parity, Tier 0). Host-safe (no platform deps)
+# and already in the lock via `gonedark-engine`, which depends on it the same way; this just
+# promotes it to a direct dep so the loadout type is nameable here. Kept under the android
+# target table because the only call site lives in the android-gated `android_backend`.
+gonedark-core = { path = "../core" }
 # NativeActivity/GameActivity entry point + lifecycle/input event pump. The
 # `native-activity` feature selects the NativeActivity flavor (matches the
 # AndroidManifest below). android_main is generated/exported by this crate's macros.

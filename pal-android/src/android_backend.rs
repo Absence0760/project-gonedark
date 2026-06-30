@@ -27,8 +27,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
-use gonedark_pal::mix::{oneshot_sound, synth_bank, voice_from_cue, Mixer};
+use gonedark_pal::mix::{oneshot_sound, scaled_gain, synth_bank, voice_from_cue, Mixer};
 use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Window, MAX_TOUCHES};
 
 // Bring oboe's stream-control traits into scope for the methods used below (`get_sample_rate`
@@ -86,7 +87,17 @@ fn android_main(app: AndroidApp) {
     // config so every (re)build inside this process is consistent. Absent/malformed → a default
     // config (Scene::Skirmish, the real match — desktop's default boot), never a crash.
     let launch = read_launch_config(&app);
-    info!("launch config: scene={:?}", launch.scene);
+    info!(
+        "launch config: scene={:?} loadout=({},{},{}) vol={}% sfx={}% sens={} invy={}",
+        launch.scene,
+        launch.optic,
+        launch.barrel,
+        launch.magazine,
+        launch.master_pct,
+        launch.sfx_pct,
+        launch.sens_x100,
+        launch.invert_y,
+    );
 
     // On-device frame-rate + sim-checksum heartbeat (Phase 1 exit criterion: "running at
     // target frame rate on a target phone"). Throttled to ~one logcat line per second so it
@@ -104,6 +115,21 @@ fn android_main(app: AndroidApp) {
     // Sanity-touch the stub PAL services so the deferred impls are linked, not dead code.
     let _ = storage.read("settings");
     audio.play_oneshot(0);
+
+    // Apply the launch config's audio/look prefs at the PAL boundary (Compose shell parity, Tier 0
+    // §5) — host/presentation only, never the sim (invariants #1/#2), exactly as the desktop shell
+    // pushes them into `pal-desktop` outside the deterministic input frame. Done once here (the prefs
+    // are match-setup, not per-tick); the audio scaling then rides every queued voice via the shared
+    // `gonedark_pal::mix::scaled_gain`, mirroring `pal-desktop::audio::set_gains`. The pure
+    // percent→gain / ×100→multiplier decode lives in the host-tested `crate::launch` mappers.
+    audio.set_gains(
+        crate::launch::pct_to_gain(launch.master_pct),
+        crate::launch::pct_to_gain(launch.sfx_pct),
+    );
+    input.set_look_prefs(
+        crate::launch::sens_x100_to_f32(launch.sens_x100),
+        launch.invert_y,
+    );
 
     // Real WS-C thermal/battery reader (Phase 4): the live render-tuning signal. Built once here and
     // passed into every `game.frame(...)` below, so the engine's `RenderTuning` controller reacts to
@@ -159,16 +185,27 @@ fn android_main(app: AndroidApp) {
                                 // Compose shell asked for (Tier 0). Same seed as desktop → the
                                 // bit-identical deterministic scene. An unknown scene token falls
                                 // back to the real playable match (Skirmish), matching the desktop
-                                // host's default boot. (Loadout/audio/look prefs the wire also
-                                // carries are owed to the gunsmith/settings integration — for now
-                                // they tolerant-decode to defaults, so `new_scene` fields the neutral
-                                // Standard loadout, byte-identical to the pre-parity boot.)
+                                // host's default boot. The wire's gunsmith indices (opt/bar/mag,
+                                // already clamped 0..=2 by the parser) map straight into the slot
+                                // enums' `ALL` order and field the player's chosen build at match
+                                // start via `new_scene_with_loadout` (WS-C / D60). For Skirmish the
+                                // loadout is inert (no player loadout in that scene); for the
+                                // campaign's `mission1` it applies to the player's troops as
+                                // deterministic match-setup input — closing the gunsmith→mission loop.
+                                // `Loadout::STANDARD` (all-zero indices) reproduces the pre-parity
+                                // boot byte-for-byte.
                                 let scene = Scene::parse(&launch.scene).unwrap_or(Scene::Skirmish);
-                                game = Some(Game::new_scene(
+                                let loadout = Loadout {
+                                    optic: Optic::ALL[launch.optic as usize],
+                                    barrel: Barrel::ALL[launch.barrel as usize],
+                                    magazine: Magazine::ALL[launch.magazine as usize],
+                                };
+                                game = Some(Game::new_scene_with_loadout(
                                     new_rhi.device(),
                                     new_rhi.format(),
                                     DEFAULT_SEED,
                                     scene,
+                                    loadout,
                                 ));
                                 rhi = Some(new_rhi);
                                 last_frame = Instant::now();
@@ -516,6 +553,22 @@ pub struct AndroidInput {
     /// after `poll` and routes it to `Game::toggle_pause`, exactly as the desktop host handles Esc
     /// outside the sim keymap.
     back_pressed: bool,
+    /// Player look prefs from the Compose shell's Settings, pushed by the host via
+    /// [`set_look_prefs`](Self::set_look_prefs) after the launch config is read (host/presentation
+    /// only, never the sim — invariants #1/#2, exactly as `pal-desktop` keeps them out of the
+    /// deterministic input). `look_sensitivity` is a multiplier (`1.0` = stock); `invert_y` flips the
+    /// embodied pitch axis. Default `1.0` / `false` (a stock pass-through).
+    ///
+    /// **NOT YET APPLIED — see [`set_look_prefs`](Self::set_look_prefs).** They are stored (so the
+    /// host wiring is real and the values are logged) but do not yet shape the embodied look on
+    /// Android, because the embodied look delta is produced *inside* the engine's `touch_controls`
+    /// seam from raw finger positions and is not exposed at this PAL boundary as a scalar to scale.
+    /// `#[allow(dead_code)]`: written by `set_look_prefs` but not yet read — the application point is
+    /// an engine-crate seam this PAL-only change can't touch (the TODO on `set_look_prefs`).
+    #[allow(dead_code)]
+    look_sensitivity: f32,
+    #[allow(dead_code)]
+    invert_y: bool,
 }
 
 impl AndroidInput {
@@ -525,7 +578,38 @@ impl AndroidInput {
             frame: InputFrame::default(),
             multi_touch: false,
             back_pressed: false,
+            look_sensitivity: 1.0,
+            invert_y: false,
         }
+    }
+
+    /// Set the player's embodied look prefs (Compose shell Settings). `sensitivity` is the look
+    /// multiplier decoded from the launch config's ×100 wire value via
+    /// [`crate::launch::sens_x100_to_f32`] (`1.0` = stock); `invert_y` flips the embodied pitch axis.
+    /// The host calls this once after reading the launch config. The mirror of
+    /// `pal-desktop::set_look_prefs`.
+    ///
+    /// **HONEST STUB — stores the prefs but does NOT yet apply them on Android.** Desktop scales the
+    /// raw *mouse-look delta* at drain time (`pal-desktop::scale_look`) because that delta is produced
+    /// at the desktop PAL boundary. On Android the embodied look delta is **not** produced here: this
+    /// backend forwards the raw down-finger set (`capture_touches` → [`InputFrame::touches`]), and the
+    /// engine's pure `touch_controls::TouchControls::update` seam derives the drag-look `look_delta`
+    /// from those raw finger *positions* inside the engine — `input.look_axis` is ignored while
+    /// embodied (see `engine`'s embodied-input branch). So there is no scalar look axis at this PAL
+    /// boundary to multiply, and scaling the raw touch coordinates would corrupt the stick centers and
+    /// button hit-tests (position-based, not delta-based). Applying sensitivity/invert cleanly
+    /// therefore needs a multiplier plumbed *into* `engine::touch_controls` (the touch-look seam), or
+    /// for that seam to emit a boundary-scalable `look_delta` — both are engine-crate changes, out of
+    /// scope for this PAL-only task (and a risky edit to force). Wired honestly instead: the values
+    /// are captured + logged so the plumbing is complete the moment the engine seam grows a
+    /// sensitivity input.
+    /// TODO(compose-parity Tier 1): thread `look_sensitivity`/`invert_y` into
+    ///   `engine::touch_controls::TouchControls::update` (scale + pitch-flip the derived `look_delta`),
+    ///   then apply them here / there and add an engine-side unit test, the touch twin of
+    ///   `pal-desktop::scale_look`.
+    pub fn set_look_prefs(&mut self, sensitivity: f32, invert_y: bool) {
+        self.look_sensitivity = sensitivity;
+        self.invert_y = invert_y;
     }
 
     /// Take (and clear) the pending **back-gesture** edge — the host calls this once per loop after
@@ -957,6 +1041,13 @@ impl AndroidRhi {
 /// `[audio] disabled (silent)` fallback line).
 pub struct AndroidAudio {
     inner: Option<AndroidAudioActive>,
+    /// Player volume prefs (`[0, 1]`) from the Compose shell's Settings, pushed by the host via
+    /// [`set_gains`](Self::set_gains) once the launch config is read. Default `1.0` (a pass-through)
+    /// so a backend nobody configures (the startup sanity `play_oneshot`, tests) renders the unscaled
+    /// mix. Applied per cue at queue time through the shared [`scaled_gain`] seam — the exact mirror of
+    /// `pal-desktop::audio::DesktopAudio`.
+    master: f32,
+    sfx: f32,
 }
 
 /// The live oboe output stream (kept alive by ownership), the shared mixer the realtime callback
@@ -1014,25 +1105,41 @@ impl Default for AndroidAudio {
 impl AndroidAudio {
     /// Open the AAudio output stream; on any failure degrade to a silent no-op (invariant #8).
     pub fn new() -> Self {
-        match AndroidAudioActive::open() {
-            Ok(active) => AndroidAudio {
-                inner: Some(active),
-            },
+        let inner = match AndroidAudioActive::open() {
+            Ok(active) => Some(active),
             Err(e) => {
                 warn!("[audio] disabled (silent): {e}");
-                AndroidAudio { inner: None }
+                None
             }
+        };
+        AndroidAudio {
+            inner,
+            master: 1.0,
+            sfx: 1.0,
         }
     }
 
-    /// Queue one voice for `sound`, panned by `azimuth`, scaled by `gain`, low-passed when
-    /// `muffled` — via the shared `gonedark_pal::mix` render math (identical to desktop).
+    /// Set the master / SFX volume prefs (`[0, 1]`, validated at the Compose shell's Settings
+    /// boundary and decoded from the launch config's integer percents via
+    /// [`crate::launch::pct_to_gain`]). The host calls this once after reading the launch config;
+    /// cues queued afterwards are scaled by `master * sfx`. The exact mirror of
+    /// `pal-desktop::audio::DesktopAudio::set_gains`.
+    pub fn set_gains(&mut self, master: f32, sfx: f32) {
+        self.master = master;
+        self.sfx = sfx;
+    }
+
+    /// Queue one voice for `sound`, panned by `azimuth`, scaled by `gain` **and** the player's
+    /// master/SFX volumes, low-passed when `muffled` — via the shared `gonedark_pal::mix` render math
+    /// (identical to desktop). The pan/gain/muffle derivation is `voice_from_cue`; the player-volume
+    /// scaling is the shared [`scaled_gain`], exactly as `pal-desktop::audio` does.
     fn queue(&self, sound: SoundId, azimuth: f32, gain: f32, muffled: bool) {
         let Some(active) = &self.inner else { return };
         let Some(samples) = active.bank.get(&sound) else {
             return;
         };
-        let voice = voice_from_cue(Arc::clone(samples), azimuth, gain, muffled);
+        let g = scaled_gain(gain, self.master, self.sfx);
+        let voice = voice_from_cue(Arc::clone(samples), azimuth, g, muffled);
         if let Ok(mut mixer) = active.mixer.lock() {
             mixer.push(voice);
         }

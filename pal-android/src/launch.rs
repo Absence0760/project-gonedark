@@ -161,6 +161,35 @@ fn parse_bool(value: &str, fallback: bool) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------------------
+// Pure wire-primitive → backend-unit mappers.
+//
+// The wire stays float-free (integer percents / ×100 sensitivity — invariant #1 lives in the
+// sim, but the wire mirrors that discipline so the JVM and Rust ends agree exactly). The audio /
+// input backends, by contrast, want `f32` gains/multipliers. These two pure helpers do that one
+// conversion, host-compiled + unit-tested below, exactly mirroring the desktop semantics:
+//   * `pct_to_gain` mirrors `app::shell::SettingsState`'s percent→`[0,1]` gain (the value
+//     `pal-desktop::audio::set_gains` then feeds `gonedark_pal::mix::scaled_gain`).
+//   * `sens_x100_to_f32` mirrors the desktop sensitivity slider's ×100 wire → `f32` multiplier
+//     (the value `pal-desktop::set_look_prefs` applies in `scale_look`).
+// They carry no game logic and never touch the sim — the android glue calls them once at startup
+// to seed the backend setters.
+// ---------------------------------------------------------------------------------------
+
+/// Map an integer volume percent (`0..=`[`GAIN_PCT_MAX`], already clamped by the parser) into the
+/// `f32` linear gain `[0.0, 1.0]` the audio backend's `set_gains` wants. `0 → 0.0`, `100 → 1.0`.
+/// Mirrors the desktop Settings percent→gain conversion so both platforms scale audio identically.
+pub fn pct_to_gain(pct: u8) -> f32 {
+    pct as f32 / 100.0
+}
+
+/// Map the ×100 wire sensitivity ([`SENS_MIN`]`..=`[`SENS_MAX`], already clamped by the parser)
+/// into the `f32` look-sensitivity multiplier the input backend's `set_look_prefs` wants
+/// (`100 → 1.0` = stock, `250 → 2.5`). Mirrors the desktop sensitivity slider's ×100→`f32` decode.
+pub fn sens_x100_to_f32(x: u16) -> f32 {
+    x as f32 / 100.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,5 +282,38 @@ mod tests {
     #[test]
     fn duplicate_keys_last_wins() {
         assert_eq!(parse_launch_config("opt=1;opt=2").optic, 2);
+    }
+
+    // ---- pure wire-primitive → backend-unit mappers --------------------------------------
+
+    #[test]
+    fn pct_to_gain_maps_percent_to_unit_interval() {
+        assert_eq!(pct_to_gain(0), 0.0);
+        assert_eq!(pct_to_gain(100), 1.0);
+        assert!((pct_to_gain(80) - 0.8).abs() < 1e-6);
+        assert!((pct_to_gain(50) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pct_to_gain_matches_the_default_config() {
+        // The shipped default (80%) decodes to 0.8 on both audio buses.
+        let d = LaunchConfig::default();
+        assert!((pct_to_gain(d.master_pct) - 0.8).abs() < 1e-6);
+        assert!((pct_to_gain(d.sfx_pct) - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sens_x100_to_f32_decodes_the_multiplier() {
+        // Stock (100) is a 1.0 pass-through; the slider bounds map to 0.1..=3.0.
+        assert!((sens_x100_to_f32(100) - 1.0).abs() < 1e-6);
+        assert!((sens_x100_to_f32(SENS_MIN) - 0.1).abs() < 1e-6);
+        assert!((sens_x100_to_f32(SENS_MAX) - 3.0).abs() < 1e-6);
+        assert!((sens_x100_to_f32(250) - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sens_x100_to_f32_matches_the_default_config() {
+        // The shipped default (sens_x100 = 100) decodes to the 1.0 stock multiplier.
+        assert!((sens_x100_to_f32(LaunchConfig::default().sens_x100) - 1.0).abs() < 1e-6);
     }
 }
