@@ -117,6 +117,19 @@ enum Which {
 }
 
 impl Which {
+    /// The lower-case scenario token (round-trips with [`Which::parse`]). Used in the
+    /// machine-readable `timing-json` line so the harness scripts can attribute a run to its
+    /// scene without scraping the Rust `Debug` form. Host-side reporting only.
+    fn token(self) -> String {
+        match self {
+            Which::Phase2 => "phase2".to_string(),
+            Which::Stress(n) => format!("stress:{n}"),
+            Which::Duel => "duel".to_string(),
+            Which::Infantry => "infantry".to_string(),
+            Which::Matchup => "matchup".to_string(),
+        }
+    }
+
     fn parse(token: &str) -> Option<Which> {
         match token {
             "phase2" => Some(Which::Phase2),
@@ -401,27 +414,87 @@ fn emit(sim: &Sim) {
     println!("{} {:016x}", sim.tick_count(), sim.checksum());
 }
 
-/// Print per-tick wall-clock distribution to stderr. Host-side only; the stdout checksum stream
-/// is untouched, so timing can never affect determinism.
-fn report_timing(which: Which, durations: &[u128]) {
-    if durations.is_empty() {
-        eprintln!("--time: no ticks measured");
-        return;
+/// Per-tick wall-clock distribution, computed host-side from the raw micros samples. Pure (no
+/// I/O, no sim access), so it is unit-testable. Fields stay in **micros** (integer) until a
+/// formatter converts to ms — the only float is in the host-side reporting layer, never in core
+/// (invariant #1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TimingStats {
+    ticks: usize,
+    min_us: u128,
+    median_us: u128,
+    p99_us: u128,
+    max_us: u128,
+    mean_us: u128,
+}
+
+impl TimingStats {
+    /// Compute the distribution from raw per-tick micros. `None` when nothing was measured (so
+    /// callers print the "no ticks" notice rather than indexing an empty slice / dividing by 0).
+    fn from_durations(durations: &[u128]) -> Option<TimingStats> {
+        if durations.is_empty() {
+            return None;
+        }
+        let mut sorted = durations.to_vec();
+        sorted.sort_unstable();
+        let n = sorted.len();
+        let pct = |p: usize| sorted[(n.saturating_sub(1) * p) / 100];
+        let sum: u128 = sorted.iter().sum();
+        Some(TimingStats {
+            ticks: n,
+            min_us: sorted[0],
+            median_us: pct(50),
+            p99_us: pct(99),
+            max_us: sorted[n - 1],
+            mean_us: sum / n as u128,
+        })
     }
-    let mut sorted = durations.to_vec();
-    sorted.sort_unstable();
-    let n = sorted.len();
-    let pct = |p: usize| sorted[(n.saturating_sub(1) * p) / 100];
-    let sum: u128 = sorted.iter().sum();
-    let us = |u: u128| u as f64 / 1000.0;
-    eprintln!(
-        "timing {which:?} over {n} ticks (ms): min {:.3} median {:.3} p99 {:.3} max {:.3} mean {:.3}",
-        us(sorted[0]),
-        us(pct(50)),
-        us(pct(99)),
-        us(sorted[n - 1]),
-        us(sum / n as u128),
-    );
+
+    /// The human-readable line (wording unchanged from the original `report_timing`, so the
+    /// `desktop:sim:stress` output stays stable). Host-side ms conversion only.
+    fn human_line(&self, which: Which) -> String {
+        let ms = |u: u128| u as f64 / 1000.0;
+        format!(
+            "timing {which:?} over {} ticks (ms): min {:.3} median {:.3} p99 {:.3} max {:.3} mean {:.3}",
+            self.ticks,
+            ms(self.min_us),
+            ms(self.median_us),
+            ms(self.p99_us),
+            ms(self.max_us),
+            ms(self.mean_us),
+        )
+    }
+
+    /// A stable, single-line machine-readable form the on-device harness scripts parse instead
+    /// of scraping the human line. Plain JSON object (no serde dep); ms values, `scenario` is the
+    /// lower-case scene token. Host-side reporting only — emitted to stderr, never stdout, so the
+    /// checksum stream and determinism are untouched.
+    fn json_line(&self, which: Which) -> String {
+        let ms = |u: u128| u as f64 / 1000.0;
+        format!(
+            "timing-json {{\"scenario\":\"{}\",\"ticks\":{},\"min_ms\":{:.3},\"median_ms\":{:.3},\"p99_ms\":{:.3},\"max_ms\":{:.3},\"mean_ms\":{:.3}}}",
+            which.token(),
+            self.ticks,
+            ms(self.min_us),
+            ms(self.median_us),
+            ms(self.p99_us),
+            ms(self.max_us),
+            ms(self.mean_us),
+        )
+    }
+}
+
+/// Print the per-tick wall-clock distribution to stderr: the existing human line, then a stable
+/// `timing-json` line for the harness scripts. Host-side only; the stdout checksum stream is
+/// untouched, so timing can never affect determinism.
+fn report_timing(which: Which, durations: &[u128]) {
+    match TimingStats::from_durations(durations) {
+        None => eprintln!("--time: no ticks measured"),
+        Some(stats) => {
+            eprintln!("{}", stats.human_line(which));
+            eprintln!("{}", stats.json_line(which));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -497,6 +570,65 @@ mod tests {
             full_stream(Which::Stress(200), 1)[0],
             "checksum should change as the sim advances"
         );
+    }
+
+    #[test]
+    fn which_token_roundtrips() {
+        // The token used in the timing-json line round-trips through the CLI parser, so a script
+        // that reads `"scenario":"…"` sees a value that re-runs the same scene.
+        for which in [
+            Which::Phase2,
+            Which::Stress(200),
+            Which::Stress(50),
+            Which::Duel,
+            Which::Infantry,
+            Which::Matchup,
+        ] {
+            assert_eq!(Which::parse(&which.token()), Some(which));
+        }
+    }
+
+    #[test]
+    fn timing_stats_empty_is_none() {
+        assert_eq!(TimingStats::from_durations(&[]), None);
+    }
+
+    #[test]
+    fn timing_stats_distribution() {
+        // 1..=100 micros: percentiles follow the (n-1)*p/100 index rule the runner uses.
+        let d: Vec<u128> = (1..=100).collect();
+        let s = TimingStats::from_durations(&d).expect("non-empty");
+        assert_eq!(s.ticks, 100);
+        assert_eq!(s.min_us, 1);
+        assert_eq!(s.max_us, 100);
+        assert_eq!(s.median_us, 50); // sorted[(99*50)/100] = sorted[49] = 50
+        assert_eq!(s.p99_us, 99); //    sorted[(99*99)/100] = sorted[98] = 99
+        assert_eq!(s.mean_us, 50); //   5050 / 100
+    }
+
+    #[test]
+    fn timing_human_line_is_stable() {
+        // 1, 2, 3 ms samples. n=3, n-1=2: median = sorted[(2*50)/100]=sorted[1]=2ms,
+        // p99 = sorted[(2*99)/100]=sorted[1]=2ms, max = sorted[2]=3ms, mean = 2ms.
+        let s = TimingStats::from_durations(&[1000, 2000, 3000]).unwrap();
+        assert_eq!(
+            s.human_line(Which::Stress(200)),
+            "timing Stress(200) over 3 ticks (ms): min 1.000 median 2.000 p99 2.000 max 3.000 mean 2.000"
+        );
+    }
+
+    #[test]
+    fn timing_json_line_is_parseable() {
+        let s = TimingStats::from_durations(&[1000, 2000, 3000]).unwrap();
+        let line = s.json_line(Which::Stress(200));
+        // Stable prefix + the exact key the harness greps for the budget verdict.
+        assert!(line.starts_with("timing-json {"), "got: {line}");
+        assert!(line.contains("\"scenario\":\"stress:200\""), "got: {line}");
+        assert!(line.contains("\"ticks\":3"), "got: {line}");
+        assert!(line.contains("\"median_ms\":2.000"), "got: {line}");
+        assert!(line.contains("\"p99_ms\":2.000"), "got: {line}");
+        assert!(line.contains("\"max_ms\":3.000"), "got: {line}");
+        assert!(line.ends_with('}'), "got: {line}");
     }
 
     #[test]

@@ -29,6 +29,8 @@ ANDROID — cross-compiled arm64, run on a phone/emulator over adb
   pnpm android:dev          Install + launch + stream logcat on the target device (inner loop)
   pnpm android:logcat       Tail the app's on-device logs (tag `gonedark`)
   pnpm android:checksum     Prove on-device arm64 determinism vs the host (300 ticks default)
+  pnpm android:stress       Profile on-device 200-unit sim cost (ms/tick vs 16.6 ms budget) + diff vs host
+  pnpm android:fps          Capture the running app's heartbeat: sustained FPS + thermal summary (30s default)
 
 ASSETS — content tooling on this machine (needs Blender 5.x on PATH)
   pnpm assets:models        Generate greybox .glb + cooked .mesh models + manifest (D41/D44)
