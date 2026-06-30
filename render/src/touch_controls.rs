@@ -23,16 +23,20 @@ pub enum TouchGlyph {
     Crouch,
     Reload,
     Surface,
+    /// Aim-down-sight (ADS) — a sniper-scope reticle. Drawn only for a unit that has a gun-sight
+    /// (the engine omits this button otherwise; the W2 turret/tank gate, wave-2 W6).
+    Aim,
 }
 
 impl TouchGlyph {
-    /// The shader `shape` id for this glyph (2..5; 0/1 are the stick ring/thumb).
+    /// The shader `shape` id for this glyph (2..6; 0/1 are the stick ring/thumb).
     fn shape(self) -> f32 {
         match self {
             TouchGlyph::Fire => 2.0,
             TouchGlyph::Crouch => 3.0,
             TouchGlyph::Reload => 4.0,
             TouchGlyph::Surface => 5.0,
+            TouchGlyph::Aim => 6.0,
         }
     }
 }
@@ -78,6 +82,9 @@ pub struct TouchControlsHud {
     pub crouch: TouchButton,
     pub reload: TouchButton,
     pub surface: TouchButton,
+    /// The aim-down-sight (ADS / zoom) button — `None` when the embodied unit has no gun-sight, so
+    /// the button only appears for a scope-capable avatar (the engine mirrors W2's `has_scope` gate).
+    pub aim: Option<TouchButton>,
 }
 
 /// One overlay quad ready to upload. `repr(C)` + `Pod` so it streams into the per-instance vertex
@@ -107,6 +114,7 @@ const FIRE_COL: [f32; 3] = [0.95, 0.32, 0.28];
 const CROUCH_COL: [f32; 3] = [0.45, 0.78, 0.80];
 const RELOAD_COL: [f32; 3] = [0.96, 0.74, 0.32];
 const SURFACE_COL: [f32; 3] = [0.86, 0.88, 0.92];
+const AIM_COL: [f32; 3] = [0.70, 0.86, 0.58];
 
 /// Resting / pressed / toggle-active alpha for a button (pressed or active reads brighter).
 const IDLE_ALPHA: f32 = 0.42;
@@ -136,6 +144,7 @@ fn button_quad(b: &TouchButton, w: f32, h: f32) -> TouchQuad {
         TouchGlyph::Crouch => CROUCH_COL,
         TouchGlyph::Reload => RELOAD_COL,
         TouchGlyph::Surface => SURFACE_COL,
+        TouchGlyph::Aim => AIM_COL,
     };
     let base_a = if b.pressed || b.active {
         HOT_ALPHA
@@ -163,7 +172,7 @@ pub fn build_quads(hud: &TouchControlsHud) -> Vec<TouchQuad> {
     let (wi, hi) = hud.viewport;
     let w = wi.max(1) as f32;
     let h = hi.max(1) as f32;
-    let mut quads = Vec::with_capacity(6);
+    let mut quads = Vec::with_capacity(7);
 
     if let Some(s) = hud.stick {
         let op = s.opacity.clamp(0.0, 1.0);
@@ -201,6 +210,10 @@ pub fn build_quads(hud: &TouchControlsHud) -> Vec<TouchQuad> {
     quads.push(button_quad(&hud.crouch, w, h));
     quads.push(button_quad(&hud.reload, w, h));
     quads.push(button_quad(&hud.surface, w, h));
+    // The ADS button only exists for a scope-capable avatar (gated host-side); skip it otherwise.
+    if let Some(aim) = hud.aim {
+        quads.push(button_quad(&aim, w, h));
+    }
     quads
 }
 
@@ -394,18 +407,45 @@ mod tests {
             crouch: btn(700.0, 430.0, TouchGlyph::Crouch),
             reload: btn(950.0, 250.0, TouchGlyph::Reload),
             surface: btn(940.0, 40.0, TouchGlyph::Surface),
+            // A scope-less default avatar: no ADS button (the engine sets `Some` only for a tank).
+            aim: None,
         }
     }
 
     #[test]
-    fn four_buttons_without_a_stick_yields_four_quads() {
+    fn four_buttons_without_a_stick_or_scope_yields_four_quads() {
         let q = build_quads(&hud());
-        assert_eq!(q.len(), 4);
+        assert_eq!(q.len(), 4, "no stick and no scope → just the four core buttons");
         // Glyph ids in order: fire, crouch, reload, surface.
         assert_eq!(q[0].shape, 2.0);
         assert_eq!(q[1].shape, 3.0);
         assert_eq!(q[2].shape, 4.0);
         assert_eq!(q[3].shape, 5.0);
+    }
+
+    #[test]
+    fn a_scope_capable_avatar_adds_the_ads_button_last() {
+        // For a tank (has a gun-sight) the engine fills `aim` → a fifth button, shape id 6, drawn
+        // after the core four. A scope-less unit leaves it `None` (covered above), so it never shows.
+        let mut h = hud();
+        h.aim = Some(btn(700.0, 310.0, TouchGlyph::Aim));
+        let q = build_quads(&h);
+        assert_eq!(q.len(), 5, "the ADS button adds one quad");
+        assert_eq!(q[4].shape, 6.0, "ADS reticle is shape id 6, drawn last");
+        // It carries its own color (a secondary cue), not Fire's.
+        assert_eq!([q[4].r, q[4].g, q[4].b], AIM_COL);
+    }
+
+    #[test]
+    fn a_pressed_ads_button_reads_hot() {
+        let mut h = hud();
+        h.aim = Some(btn(700.0, 310.0, TouchGlyph::Aim));
+        // Holding ADS lights it, exactly like a held Fire.
+        if let Some(a) = h.aim.as_mut() {
+            a.pressed = true;
+        }
+        let q = build_quads(&h);
+        assert_eq!(q[4].a, HOT_ALPHA, "held ADS reads at the hot alpha");
     }
 
     #[test]

@@ -942,6 +942,7 @@ fn render_touch_hud(
     hud: &touch_controls::TouchHud,
     viewport: (u32, u32),
     crouched: bool,
+    has_scope: bool,
     opacity: &hud_layout::Opacity,
 ) -> gonedark_render::touch_controls::TouchControlsHud {
     use gonedark_render::touch_controls as r;
@@ -986,6 +987,19 @@ fn render_touch_hud(
             false,
             opacity.surface,
         ),
+        // The ADS button only appears for a scope-capable avatar — the W2 turret/tank gate
+        // (`has_scope`). Drawn at full opacity (the HUD-editor doesn't expose it yet; that's a later
+        // polish, like the command-view palette buttons). A scope-less avatar leaves it `None`, so
+        // the renderer never draws an inert ADS control.
+        aim: has_scope.then(|| {
+            button(
+                &layout.aim,
+                r::TouchGlyph::Aim,
+                hud.aim_pressed,
+                false,
+                1.0,
+            )
+        }),
     }
 }
 
@@ -2563,7 +2577,7 @@ impl Game {
         // `input.touches`) or the desktop keyboard/mouse `InputFrame` fields. The touch seam runs
         // only while embodied and only when fingers are down; otherwise the on-screen HUD is cleared
         // (the GUI is Android-only, and never drawn in the command view).
-        let (look_axis, move_axis, fire, crouch_edge, reload_edge, surface_edge) =
+        let (look_axis, move_axis, fire, aim, crouch_edge, reload_edge, surface_edge) =
             if self.embodied && input.touch_count > 0 {
                 // Resolve the active HUD-editor preset to the embodied control geometry (WS-D). The
                 // draw step below re-resolves the SAME profile + viewport, so the hit shapes the
@@ -2576,6 +2590,10 @@ impl Game {
                     out.look_delta,
                     out.move_axis,
                     out.fire,
+                    // ADS comes from the on-screen button (the held zoom signal), the touch twin of
+                    // the desktop right-mouse `input.aim`. The `has_scope` gate below still decides
+                    // whether it does anything (W2's turret/tank gate), so a scope-less tap is inert.
+                    out.aim,
                     out.crouch_edge,
                     out.reload_edge,
                     out.surface_edge,
@@ -2586,6 +2604,7 @@ impl Game {
                     input.look_axis,
                     input.move_axis,
                     input.fire,
+                    input.aim, // desktop right-mouse ADS (held); unused in the command view
                     input.crouch_pressed,
                     input.reload_pressed,
                     false, // desktop ejects via the Q-key surface path in `map_input_commands`
@@ -2607,7 +2626,7 @@ impl Game {
         let has_scope = self.embodied
             && self.sim.world.is_alive(self.player)
             && self.sim.world.weapon[self.player.index as usize].turret_speed > 0;
-        let zoom_active = scope::zoom_active(self.embodied, has_scope, input.aim);
+        let zoom_active = scope::zoom_active(self.embodied, has_scope, aim);
         self.aim_zoom_t = scope::step_zoom_t(self.aim_zoom_t, zoom_active, dt_secs, scope::ZOOM_RATE);
 
         if self.embodied {
@@ -3310,8 +3329,16 @@ impl Game {
                 let layout = resolved.layout;
                 let crouched = self.sim.world.is_alive(self.player)
                     && self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
-                let rhud =
-                    render_touch_hud(&layout, &hud_state, viewport, crouched, &resolved.opacity);
+                // `has_scope` was resolved above (the W2 turret/tank gate) and is still in scope —
+                // reuse it so the ADS button is drawn only where the zoom actually applies.
+                let rhud = render_touch_hud(
+                    &layout,
+                    &hud_state,
+                    viewport,
+                    crouched,
+                    has_scope,
+                    &resolved.opacity,
+                );
                 self.renderer
                     .render_touch_controls(device, queue, view, &rhud);
             }
@@ -4596,9 +4623,11 @@ mod tests {
             crouch_pressed: false,
             reload_pressed: false,
             surface_pressed: false,
+            aim_pressed: true,
         };
         let op = hud_layout::Opacity::default();
-        let r = render_touch_hud(&layout, &hud, (1280, 720), /* crouched = */ true, &op);
+        // A scope-capable avatar (`has_scope = true`) gets the ADS button.
+        let r = render_touch_hud(&layout, &hud, (1280, 720), /* crouched = */ true, true, &op);
         assert!(r.stick.is_some(), "active stick → a stick view");
         let s = r.stick.unwrap();
         assert_eq!((s.base_x, s.base_y), (120.0, 600.0));
@@ -4609,12 +4638,17 @@ mod tests {
         assert!(!r.crouch.pressed);
         // Button circles pass straight through from the layout (pixels).
         assert_eq!((r.fire.cx, r.fire.cy, r.fire.r), (layout.fire.cx, layout.fire.cy, layout.fire.r));
+        // The ADS button shows for a scope unit, carries the held flash + the layout circle.
+        let a = r.aim.expect("scope-capable avatar → an ADS button");
+        assert!(a.pressed, "held ADS carries the pressed flash");
+        assert_eq!((a.cx, a.cy, a.r), (layout.aim.cx, layout.aim.cy, layout.aim.r));
 
-        // No active stick → no stick view drawn.
+        // No active stick → no stick view drawn; a scope-LESS avatar (`has_scope = false`) hides ADS.
         let hud2 = touch_controls::TouchHud::default();
-        let r2 = render_touch_hud(&layout, &hud2, (1280, 720), false, &op);
+        let r2 = render_touch_hud(&layout, &hud2, (1280, 720), false, false, &op);
         assert!(r2.stick.is_none());
         assert!(!r2.crouch.active);
+        assert!(r2.aim.is_none(), "a unit with no gun-sight gets no ADS button (W2 turret gate)");
     }
 
     /// One-shot/edge commands force a sub-tick catch-up; held/continuous ones (locomote, fire) do
