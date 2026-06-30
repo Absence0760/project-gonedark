@@ -59,6 +59,21 @@ fn unproject(ndc: vec2<f32>, depth: f32) -> vec3<f32> {
     return w.xyz / w.w;
 }
 
+// Deterministic value hashes (Dave Hoskins) used for the procedural night-sky starfield. They are a
+// pure function of a grid CELL coordinate (itself a function of the view ray), so the stars are
+// stable frame to frame — no time input means no crawl/shimmer (fairness #6). `hash21` is mirrored
+// in world.rs (`star_hash21`) and unit-tested off-GPU; keep the two in lockstep.
+fn hash21(p: vec2<f32>) -> f32 {
+    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
+    p3 += dot(p3, vec3<f32>(p3.y, p3.z, p3.x) + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+fn hash22(p: vec2<f32>) -> vec2<f32> {
+    var p3 = fract(vec3<f32>(p.x, p.y, p.x) * vec3<f32>(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, vec3<f32>(p3.y, p3.z, p3.x) + 33.33);
+    return fract((vec2<f32>(p3.x, p3.x) + vec2<f32>(p3.y, p3.z)) * vec2<f32>(p3.z, p3.y));
+}
+
 @fragment
 fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     // Reconstruct the world-space ray for this pixel: a near point and a far point through the
@@ -142,22 +157,66 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
         return vec4<f32>(mix(ground, haze, fog), 1.0);
     }
 
-    // Sky: a richer multi-stop vertical gradient (zenith → mid → horizon) with a subtle warm haze
-    // glow hugging the skyline, so the dome reads as atmospheric depth rather than a flat two-colour
-    // ramp. Driven by the ray's elevation (dir.z), clamped so the band reads even when looking
-    // level/slightly down. Kept a MUTED low-saturation blue-grey (channels track within ~0.06) so the
-    // alert-HUD markers and avatar still pop and no channel is misread as faction intel (invariant #6).
+    // SKY (above the horizon): a real night-battlefield atmosphere with depth — a multi-stop vertical
+    // gradient, layered distance-haze banding hugging the skyline, a cold low moon that reads as the
+    // dim KEY LIGHT the ground is lit by, a restrained warm horizon glow, and a faint deterministic
+    // star sprinkle. Kept MUTED and low-saturation (cold blues/greys, channels track closely) so the
+    // alert-HUD markers and the amber avatar still pop and no channel reads as faction intel
+    // (invariant #6). Mood matches the title backdrop: dark, cold, with a thread of amber at the rim.
     // Palette aligned to gonedark_render::theme INK/PANEL (WGSL can't import the consts; see theme.rs).
     let elev = clamp(dir.z, 0.0, 1.0);
-    let zenith = vec3<f32>(0.025, 0.040, 0.090); // deep night-blue overhead (toward theme::INK)
-    let mid_sky = vec3<f32>(0.075, 0.095, 0.140); // body of the dome
-    let horizon = vec3<f32>(0.150, 0.175, 0.215); // pale haze at the skyline
-    // Two smoothstep stops: horizon→mid over the low band, mid→zenith over the upper band.
-    let lower = mix(horizon, mid_sky, smoothstep(0.0, 0.22, elev));
-    var sky = mix(lower, zenith, smoothstep(0.18, 0.85, elev));
-    // A soft warm haze glow concentrated just above the horizon for a sense of distant light.
-    let glow = (1.0 - smoothstep(0.0, 0.20, elev)) * 0.06;
-    sky += vec3<f32>(0.9, 0.7, 0.5) * glow;
+
+    // Base vertical gradient. The HORIZON stop is exactly the colour the ground branch dissolves into
+    // (its `haze` = (0.16,0.18,0.22)), so the sky/ground seam is seamless.
+    let zenith = vec3<f32>(0.020, 0.034, 0.078);  // deep night-blue overhead (toward theme::INK)
+    let mid_sky = vec3<f32>(0.066, 0.086, 0.130); // body of the dome
+    let horizon = vec3<f32>(0.160, 0.180, 0.220); // == ground haze, for a clean seam
+    let lower = mix(horizon, mid_sky, smoothstep(0.0, 0.20, elev));
+    var sky = mix(lower, zenith, smoothstep(0.16, 0.85, elev));
+
+    // Layered atmospheric haze banding: two soft cool bands stacked just above the skyline give the
+    // dome distance/depth (dust-and-distance) without lifting the overall brightness much.
+    let band1 = (1.0 - smoothstep(0.0, 0.10, elev)) * 0.055;
+    let band2 = (1.0 - smoothstep(0.04, 0.32, elev)) * 0.030;
+    sky += vec3<f32>(0.12, 0.14, 0.17) * (band1 + band2);
+
+    // Cold low moon — the dim key light the ground is lit by (same +x/+y quadrant as the ground
+    // branch's key_dir, so the world reads as lit BY this). A crisp cold disc, a tight inner halo,
+    // and a wide bloom that bleeds into the surrounding haze, giving the dome a light source and a
+    // sense of place. Cold blue-white, never warm (would otherwise compete with the alert palette).
+    let moon_dir = normalize(vec3<f32>(0.62, 0.18, 0.30));
+    let md = max(dot(dir, moon_dir), 0.0);
+    let moon_core = smoothstep(0.9980, 0.9994, md); // crisp disc (~2–3.6° radius)
+    let moon_halo = pow(md, 300.0) * 0.60;          // tight inner glow
+    let moon_bloom = pow(md, 14.0) * 0.12;          // wide atmospheric bleed (the key-light wash)
+    let moon_col = vec3<f32>(0.62, 0.68, 0.78);     // cold blue-white
+    sky += moon_col * (moon_core + moon_halo + moon_bloom);
+
+    // A restrained WARM horizon glow for the title-backdrop amber mood — a thin thread of distant
+    // light at the skyline, kept dim so it never reads as an alert marker.
+    let warm = (1.0 - smoothstep(0.0, 0.18, elev)) * 0.045;
+    sky += vec3<f32>(0.9, 0.66, 0.42) * warm;
+
+    // Faint deterministic stars: a pure function of the view ray (no time → no crawl/shimmer). A
+    // view-stable planar projection of the upper hemisphere is gridded; one hash-jittered star per
+    // cell, sparsened so only a sprinkle lights. Stars fade IN with elevation (none in the hazy
+    // horizon band) and are washed out under the moon bloom. Cold and faint — far below the
+    // HUD/hitmarker brightness so they never read as intel or trip the centred hitmarker.
+    let star_up = smoothstep(0.14, 0.46, elev);
+    if (star_up > 0.0) {
+        let proj = dir.xy / (dir.z + 0.55);      // view-stable dome projection (dir.z > 0 here)
+        let scale = 26.0;
+        let cell = floor(proj * scale);
+        let f = fract(proj * scale);
+        let star_pos = hash22(cell);              // jittered sub-cell position
+        let d = length(f - star_pos);
+        let bright = hash21(cell + vec2<f32>(17.0, 3.0));
+        let lit = step(0.82, bright);             // ~18% of cells host a star
+        let point = (1.0 - smoothstep(0.0, 0.055, d)) * lit * (bright - 0.5);
+        let star = point * star_up * (1.0 - moon_bloom * 5.0);
+        sky += vec3<f32>(0.55, 0.62, 0.72) * clamp(star, 0.0, 0.45);
+    }
+
     return vec4<f32>(sky, 1.0);
 }
 

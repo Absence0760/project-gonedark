@@ -118,6 +118,49 @@ impl WorldUniform {
     }
 }
 
+/// `x - floor(x)` — the fractional part, matching WGSL `fract`. Pulled out so the night-sky hash
+/// mirror below reads like its shader twin.
+#[inline]
+fn fract(x: f32) -> f32 {
+    x - x.floor()
+}
+
+/// Hermite smoothstep in `[0,1]` (the GLSL/WGSL `smoothstep`), used by the moon-glow mirror.
+#[inline]
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Deterministic 2D→1D value hash (Dave Hoskins `hash12`), the **reference implementation** of
+/// `world.wgsl`'s `hash21`. The embodied night-sky starfield is a pure function of the view ray
+/// through this hash, so the stars are STABLE frame to frame — there is no time input, so they
+/// cannot crawl or shimmer (fairness #6). The WGSL copy is validated by naga but cannot run on the
+/// CPU; this mirror lets the determinism + range properties be unit-tested off-GPU. Keep the two in
+/// lockstep (same constants, same operation order).
+pub fn star_hash21(x: f32, y: f32) -> f32 {
+    let mut p = [fract(x * 0.1031), fract(y * 0.1031), fract(x * 0.1031)];
+    // dot(p, p.yzx + 33.33)
+    let d = p[0] * (p[1] + 33.33) + p[1] * (p[2] + 33.33) + p[2] * (p[0] + 33.33);
+    p[0] += d;
+    p[1] += d;
+    p[2] += d;
+    fract((p[0] + p[1]) * p[2])
+}
+
+/// Moon disc + halo + bloom intensity from `cos_ang`, the cosine of the angle between the view ray
+/// and the moon direction — the **reference implementation** of the moon term in `world.wgsl`'s sky
+/// branch. Monotonic non-decreasing in `cos_ang` (brightest when the ray points dead at the moon),
+/// and zero when the ray points away (`cos_ang <= 0`). Pure `f32` so the disc/halo shaping is
+/// unit-testable without a GPU. Keep in lockstep with the shader's `moon_core/halo/bloom`.
+pub fn moon_glow(cos_ang: f32) -> f32 {
+    let md = cos_ang.max(0.0);
+    let core = smoothstep(0.9980, 0.9994, md);
+    let halo = md.powf(300.0) * 0.60;
+    let bloom = md.powf(14.0) * 0.12;
+    core + halo + bloom
+}
+
 /// Screen-space NDC anchor of the **shaped muzzle flash** (WS-A) — where the flare blooms relative to
 /// the lower-right weapon viewmodel's muzzle. Pure presentation constant; the flare is drawn here so
 /// it reads as light coming off the gun the player is holding (no world position → no intel, #6).
@@ -672,5 +715,68 @@ mod tests {
         validator
             .validate(&module)
             .expect("world.wgsl must validate");
+    }
+
+    // ---- night-sky starfield hash (determinism) ----
+
+    #[test]
+    fn star_hash_is_deterministic() {
+        // The "no crawl/shimmer" property (fairness #6) rests on the hash being a pure function of
+        // the cell: the SAME input must always give the SAME value (the shader has no time input, so
+        // re-evaluating the same ray every frame yields the same star).
+        for &(x, y) in &[(0.0, 0.0), (3.0, 7.0), (-12.0, 41.0), (123.5, -8.25)] {
+            assert_eq!(star_hash21(x, y), star_hash21(x, y), "hash must be stable for ({x},{y})");
+        }
+    }
+
+    #[test]
+    fn star_hash_is_in_unit_range() {
+        // `fract` keeps the output in [0,1), so the `step`/brightness logic in the shader is sound.
+        for i in 0..200 {
+            let x = i as f32 * 1.37 - 50.0;
+            let y = (i as f32 * 0.91).sin() * 64.0; // spread of inputs (sin is a test-only float)
+            let h = star_hash21(x, y);
+            assert!((0.0..1.0).contains(&h), "hash {h} out of [0,1) for ({x},{y})");
+        }
+    }
+
+    #[test]
+    fn star_hash_decorrelates_neighbour_cells() {
+        // Adjacent grid cells must hash to clearly different values, or the stars would clump into a
+        // visible lattice instead of a natural sprinkle. Sample a patch and require it isn't constant.
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for cx in 0..8 {
+            for cy in 0..8 {
+                let h = star_hash21(cx as f32, cy as f32);
+                min = min.min(h);
+                max = max.max(h);
+            }
+        }
+        assert!(max - min > 0.5, "neighbour cells should span the range, got spread {}", max - min);
+    }
+
+    // ---- moon glow shaping ----
+
+    #[test]
+    fn moon_glow_is_dark_away_from_the_moon() {
+        // Rays pointing away from (or perpendicular to) the moon get no moon light.
+        assert_eq!(moon_glow(0.0), 0.0, "perpendicular ray is dark");
+        assert_eq!(moon_glow(-1.0), 0.0, "ray pointing away is dark");
+        assert!(moon_glow(0.5) < 1e-3, "well off-axis is essentially dark");
+    }
+
+    #[test]
+    fn moon_glow_brightens_toward_the_disc() {
+        // Monotonic: the closer the ray points to the moon, the brighter — a real key-light source.
+        let off = moon_glow(0.95);
+        let near = moon_glow(0.999);
+        let edge = moon_glow(0.9985);
+        let center = moon_glow(1.0);
+        assert!(near > off, "glow rises toward the moon ({near} !> {off})");
+        assert!(center > near, "the disc is brightest ({center} !> {near})");
+        assert!(center >= edge && edge >= off, "monotone across the disc edge");
+        // The crisp disc lights fully at the centre (core 1.0 + halo + bloom).
+        assert!(center > 1.0, "disc core peaks bright, got {center}");
     }
 }
