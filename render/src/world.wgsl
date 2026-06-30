@@ -74,35 +74,68 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     if (dir.z < -0.0005 && eye.z > 0.0) {
         let t = -eye.z / dir.z; // distance to the z=0 plane
         let hit = eye + dir * t;
+        let p = hit.xy;
 
         // Distance fog: the floor fades into the horizon haze with distance so there is a real
         // sense of depth/motion rather than an infinite hard plane.
-        let dist = length(hit.xy - eye.xy);
+        let dist = length(p - eye.xy);
         let fog = clamp(dist / 80.0, 0.0, 1.0);
 
-        // A grid on the floor: bright lines on a ~2-unit lattice give parallax/heading cues as the
-        // avatar moves. `fwidth` keeps the lines a constant screen width (anti-aliased).
+        // The baked ground map is a seamless HEIGHTFIELD (tools/textures/gen_textures.py: macro
+        // swell + meso undulation + fine grit). Sample it at THREE world-space scales for albedo
+        // tonal variation. `textureSampleLevel` (LOD 0) keeps the sample legal in this branch's
+        // non-uniform control flow.
+        let h_macro = textureSampleLevel(ground_tex, ground_samp, p / 38.0, 0.0).r;
+        let h_meso = textureSampleLevel(ground_tex, ground_samp, p / 7.5, 0.0).r;
+        let h_fine = textureSampleLevel(ground_tex, ground_samp, p / 2.1, 0.0).r;
+
+        // Per-pixel surface NORMAL by finite-differencing the MESO height at small world-XY
+        // offsets: the gradient of the heightfield becomes a tilt, so a dim key light gives the
+        // floor real relief. Relief fades out with distance (the finite differences would alias
+        // into shimmer far away), flattening the floor toward the horizon haze.
+        let relief = 1.0 - clamp(dist / 42.0, 0.0, 1.0);
+        let eps = 0.16;
+        let scl = 7.5;
+        let hL = textureSampleLevel(ground_tex, ground_samp, (p - vec2<f32>(eps, 0.0)) / scl, 0.0).r;
+        let hR = textureSampleLevel(ground_tex, ground_samp, (p + vec2<f32>(eps, 0.0)) / scl, 0.0).r;
+        let hD = textureSampleLevel(ground_tex, ground_samp, (p - vec2<f32>(0.0, eps)) / scl, 0.0).r;
+        let hU = textureSampleLevel(ground_tex, ground_samp, (p + vec2<f32>(0.0, eps)) / scl, 0.0).r;
+        let amp = 2.3 * relief; // height amplitude → relief strength
+        let n = normalize(vec3<f32>(-(hR - hL) * amp, -(hU - hD) * amp, 1.0));
+
+        // Lighting: a dim directional KEY (mostly from above so the floor stays lit) plus a high
+        // AMBIENT term. Ambient is kept high on purpose — the embodied floor must ALWAYS read and
+        // never crush to black, so nothing can hide in shadow (fairness, invariant #6).
+        let key_dir = normalize(vec3<f32>(0.32, 0.22, 0.92));
+        let lambert = max(dot(n, key_dir), 0.0);
+        let ambient = 0.66;
+        let key = 0.46;
+        let shade = ambient + key * lambert;
+
+        // Earthy albedo: blend damp dark mud ↔ drier lighter dirt by the MACRO height, so the
+        // large swells read as wetter lows and drier rises. Both tones are LOW-saturation and DARK
+        // (channels track within a narrow warm range, like the old slate) so no channel reads as
+        // faction intel and the HUD/avatar still pop (invariant #6). Meso + fine add a subtle
+        // tonal grain centred on 1.0 (fine fades with distance to avoid shimmer).
+        let mud = vec3<f32>(0.090, 0.082, 0.072);  // damp dark earth (the lows)
+        let dirt = vec3<f32>(0.155, 0.143, 0.122); // drier lighter dirt (the rises)
+        let macro_t = smoothstep(0.32, 0.74, h_macro);
+        var albedo = mix(mud, dirt, macro_t);
+        let tone = 1.0 + (h_meso - 0.5) * 0.20 + (h_fine - 0.5) * 0.14 * relief;
+        albedo = albedo * clamp(tone, 0.78, 1.22);
+
+        var ground = albedo * shade;
+
+        // DEMOTED grid: a faint lattice on a ~2-unit cell, kept only as a heading/parallax cue. It
+        // is a low, cool ADDITIVE lift (no longer a bright line colour) and fades out with distance,
+        // so it reads as a subtle lattice over the terrain rather than the dominant feature.
         let cell = 2.0;
-        let g = abs(fract(hit.xy / cell - 0.5) - 0.5);
-        let line_w = fwidth(hit.xy / cell);
+        let g = abs(fract(p / cell - 0.5) - 0.5);
+        let line_w = fwidth(p / cell);
         let grid2 = min(g / max(line_w, vec2<f32>(1e-4)), vec2<f32>(1.0));
         let line = 1.0 - min(grid2.x, grid2.y);
-
-        // Ground detail: sample the seamless noise map at TWO world-space scales — a coarse octave
-        // for slow macro tonal variation and a fine octave for near-field grain — and combine them
-        // into a brightness modulation centred on 1.0. `textureSampleLevel` (LOD 0) keeps the sample
-        // legal in this branch's non-uniform control flow. The fine grain fades out with distance
-        // (it would alias into shimmer far away), leaving only the gentle macro variation near the
-        // horizon. Subtle by design: the floor reads as grounded terrain, never busy.
-        let coarse = textureSampleLevel(ground_tex, ground_samp, hit.xy / 26.0, 0.0).r;
-        let fine = textureSampleLevel(ground_tex, ground_samp, hit.xy / 5.5, 0.0).r;
-        let fine_fade = 1.0 - clamp(dist / 30.0, 0.0, 1.0);
-        let detail = (coarse - 0.5) * 0.26 + (fine - 0.5) * 0.18 * fine_fade;
-        let tint = clamp(1.0 + detail, 0.7, 1.3);
-
-        let floor_base = vec3<f32>(0.10, 0.12, 0.14) * tint; // dark earthy slate, detail-modulated
-        let floor_line = vec3<f32>(0.28, 0.34, 0.40);        // lighter grid line (kept crisp)
-        let ground = mix(floor_base, floor_line, line);
+        let grid_fade = 1.0 - clamp(dist / 24.0, 0.0, 1.0);
+        ground += vec3<f32>(0.045, 0.055, 0.070) * line * grid_fade;
 
         // Horizon haze the floor dissolves into (matches the bottom of the sky gradient).
         let haze = vec3<f32>(0.16, 0.18, 0.22);

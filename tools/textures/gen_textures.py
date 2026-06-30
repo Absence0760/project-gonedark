@@ -11,17 +11,20 @@ source of record; the raw textures are regenerable artifacts (sha256 pinned belo
                                     bytemuck only, the same rule as the D74 font atlas)
   * assets/textures/manifest.json — provenance (source / license / sha256 / dims / channels)
 
-Currently one texture is baked: `ground` — a two-octave value-noise detail map sampled by the
-embodied first-person floor shader (`render/src/world.wgsl`) to modulate the ground brightness so
-the floor reads as grounded terrain instead of a flat slate. It tiles seamlessly so it can be
-repeated across the world plane without visible seams.
+Currently one texture is baked: `ground` — a **multi-octave seamless HEIGHTFIELD** sampled by the
+embodied first-person floor shader (`render/src/world.wgsl`). The shader treats the R8 value as a
+terrain *height*: it tiles the map at several world scales for albedo tonal variation, and
+reconstructs a per-pixel surface normal by finite-differencing the height so a dim key light gives
+the floor real relief instead of a flat slate. It tiles seamlessly so it can be repeated across the
+world plane without visible seams.
 
 ## The seamless trick
 
 ImageMagick `+noise Random` is NOT tiling on its own. The fix: blur it with `-virtual-pixel tile`,
 so the blur convolution **wraps around the edges** — the blurred (and therefore the final) result
-tiles with no seam. We blend a coarse octave and a finer octave (both wrap-blurred) for a bit of
-structure, then `-normalize` for full contrast. `-seed` makes `+noise` reproducible, so the bytes
+tiles with no seam. We build THREE wrap-blurred octaves — a coarse *macro* swell, a *meso*
+metre-scale undulation, and a *fine* grit — and blend them (macro dominates, then mid, then a touch
+of grit), then `-normalize` for full contrast. `-seed` makes `+noise` reproducible, so the bytes
 (and the sha256 below) are stable for a given ImageMagick build.
 
 Render-only (invariants #1/#4): the texture is a pure presentation derivation — it never touches
@@ -46,31 +49,45 @@ OUT_DIR = Path(__file__).resolve().parents[2] / "assets" / "textures"
 
 
 def bake_ground(png_path: Path, gray_path: Path) -> bytes:
-    """Bake the seamless two-octave ground detail map → PNG (inspection) + raw R8 (engine)."""
-    # Two wrap-blurred noise octaves blended, then normalised. `-virtual-pixel tile` makes every
-    # blur wrap at the edges, so the result tiles seamlessly. One `magick` invocation:
-    #   ( coarse octave )  ( fine octave )  -average  -normalize
+    """Bake the seamless multi-octave ground HEIGHTFIELD → PNG (inspection) + raw R8 (engine)."""
+    # Three wrap-blurred noise octaves blended, then normalised. `-virtual-pixel tile` makes every
+    # blur wrap at the edges, so the result tiles seamlessly. The octaves are blended stepwise
+    # (each `-compose blend -composite` folds the next octave into the running result):
+    #   ( macro swell )  ( meso undulation )  blend 62/38  →  ( fine grit )  blend 82/18  →  normalize
+    # Macro dominates the silhouette (broad swells), meso adds the metre-scale relief the shader
+    # finite-differences into a normal, fine grit keeps near-field texture without dominating.
     subprocess.run(
         [
             "magick",
-            # coarse octave — large soft blobs (the macro tonal variation)
+            # macro octave — broad soft swells (the large-scale terrain silhouette)
             "(",
             "-size", f"{SIZE}x{SIZE}", "xc:",
             "-seed", str(SEED), "+noise", "Random",
             "-colorspace", "Gray",
-            "-virtual-pixel", "tile", "-blur", "0x9",
+            "-virtual-pixel", "tile", "-blur", "0x16",
             "-auto-level",
             ")",
-            # fine octave — small grain (the micro detail), a different seed so it is uncorrelated
+            # meso octave — metre-scale undulation (what the shader lights as relief), own seed
             "(",
             "-size", f"{SIZE}x{SIZE}", "xc:",
             "-seed", str(SEED + 1), "+noise", "Random",
             "-colorspace", "Gray",
-            "-virtual-pixel", "tile", "-blur", "0x2",
+            "-virtual-pixel", "tile", "-blur", "0x7",
             "-auto-level",
             ")",
-            # blend the octaves (coarse dominates), then stretch to full contrast
-            "-define", "compose:args=65,35",
+            # fold meso into macro (macro sets the silhouette, meso carries the relief)
+            "-define", "compose:args=55,45",
+            "-compose", "blend", "-composite",
+            # fine octave — small grit (near-field micro detail), a third uncorrelated seed
+            "(",
+            "-size", f"{SIZE}x{SIZE}", "xc:",
+            "-seed", str(SEED + 2), "+noise", "Random",
+            "-colorspace", "Gray",
+            "-virtual-pixel", "tile", "-blur", "0x2.4",
+            "-auto-level",
+            ")",
+            # fold a light dusting of grit onto the swell+undulation, then stretch to full contrast
+            "-define", "compose:args=88,12",
             "-compose", "blend", "-composite",
             "-normalize",
             "-depth", "8",
