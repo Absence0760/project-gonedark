@@ -2798,7 +2798,8 @@ events feeding the existing `MatchSummary` and a new in-match objective HUD; a `
 parameter threaded into the commander. First code slice (objective evaluator + mission 1, with
 `core`/`engine` tests green dev+release and the determinism matrix green) is
 [`pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-A. Deferred: mission authoring format
-([Q15](open-questions.md)), narrative depth ([Q16](open-questions.md)).
+([Q15](open-questions.md) — since **resolved** by [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)),
+narrative depth ([Q16](open-questions.md)).
 
 ---
 
@@ -3491,3 +3492,69 @@ restart. Android's Compose shell ([D35](#d35--first-native-app-shell-surface-the
 is unchanged (no Settings/Profile there yet) — desktop-only landing. Ships with the three screens, the
 two pref-wiring paths, the title-HUD + backdrop, and their tests (app 35, pal-desktop 47, pal mix;
 dev + release + `audio` feature all green).
+
+## D76 — Mission/scenario authoring format: external RON data files behind a host-side loader (resolves Q15)
+
+**Decision.** Missions and battlefields become **external RON data files**, not Rust scenario
+builders and not a scripting VM. A mission ships as a `*.mission.ron` file; the spatial half of a
+mission (terrain id, control points, cover-prop placement, spawn zones) factors out into a
+`*.map.ron` **battlefield** file a mission references, so one battlefield backs many missions (the
+Operations-hub replay model, [`pve-campaign.md`](pve-campaign.md) §2). This resolves
+[Q15](open-questions.md) in favour of its standing lean (RON, serde-native), with Lua/scripting
+explicitly deferred to a possible second pass.
+
+The **load-bearing architecture call** is *where the data layer lives*: **host-side, in `engine`,
+never in `core`.** `core` today carries **no serde dependency** and must stay that way (invariant
+#2 — `core` depends on no non-sim crates). So the format lands as two pieces:
+
+1. **`core` grows a deterministic, serde-free `ScenarioBuilder` API** — a thin typed builder over
+   the spawn/build primitives the hand-written `core::scenario` seeders already call privately
+   (spawn a `UnitKind` at a cell with a `Faction`/`Stance`, `economy::build` a camp, `set_income`,
+   `set_army`, place a control point). Programmatic, fixed-point, no parser. The existing
+   `seed_seize_mission` becomes one caller of this builder rather than bespoke code.
+2. **`engine` grows a host-side loader (`engine::mission_format`)** that owns the serde/RON
+   dependency, parses a `*.mission.ron`/`*.map.ron` into a validated `MissionSpec`/`MapSpec`, and
+   drives the `core` builder. This is the **exact split the objective system already uses**
+   ([D59](#d59--the-operations-hub-campaign--a-host-side-objective-system)): the deterministic
+   primitive lives in `core`; the host-side content layer that *selects and parameterizes* it lives
+   in `engine`.
+
+**Why.** Missions are the campaign's **content volume** — the thing we author the most of — and the
+battlefield format is the gate on *extensive* maps for both PvE and PvP. A recompile-per-mission
+loop (the Rust-builder option) throttles that hard and demands a Rust toolchain to write a level;
+it is also the single biggest amplifier of Rust's weak engine hot-reload ([D10](#d10--engine-language-rust)
+tradeoff, [`roadmap.md`](roadmap.md) dev-workflow scripting lane). RON over Lua because it is
+**serde-native** — the schema is a `#[derive(Deserialize)]`, with no scripting VM, no new runtime,
+and no iOS-JIT problem ([`platforms.md`](platforms.md)); it is designer-editable, hot-reloadable,
+and diffs cleanly in git. A mission is *data*, not *behaviour*, so it doesn't need a language; the
+moment a scripted set-piece genuinely needs control flow (a Halo beat, [Q16](open-questions.md)),
+the Lua second pass is the documented escalation, layered on the same loader.
+
+**Determinism.** The loader is the **float airlock**, and this is the property that keeps the format
+safe under invariants #1/#7. Every numeric field parses as an **integer** — positions as integer
+cells, distances/rates/HP as fixed-point milli-units folded straight into `Fixed` via
+`Fixed::from_*` — and there is **no `f32`/`f64` path from a file into the sim**. The schema is
+`deny_unknown_fields` + range-validated, so malformed or out-of-range input **fails loudly at load,
+host-side**, never silently desyncs. The determinism guard greps the loader like any sim-adjacent
+code. Critically, the **data file never enters the per-tick checksum** — only the seeded `Sim` state
+does, identical to how a hand-written seeder works today, so the cross-arch `determinism.yml` matrix
+covers a data-loaded mission exactly as it covers `seed_skirmish` with **zero new fold surface**.
+The proof obligation is a round-trip test: the data-loaded *Seize* mission must build a `Sim`
+**byte-identical** to the code-built `seed_seize_mission` (same opening checksum), so the format is
+demonstrably a faithful re-expression, not a new code path.
+
+**Consequences.** Mission/map authoring moves from engineer-recompile to designer-edit-a-file — the
+unblock the content pillar exists for. `engine::mission_registry` gains a **data-backed path**:
+`MissionDef`s load from a content directory of `*.mission.ron` instead of hardcoded
+`MissionDef::new(...)` calls; the existing hardcoded `default_registry()` stays as the
+test/fallback baseline and the round-trip oracle. Battlefields become first-class reusable artifacts
+(`*.map.ron`), which is what "extensive battlefields" requires for PvE *and* PvP (a PvP skirmish is
+the same `MapSpec` with two human commanders instead of a scripted one — the format is mode-agnostic;
+PvP's remaining gap is the live net layer, Phase 3, not the content layer). Hot-reload of content
+files between matches becomes the primary mitigation for Rust's weak engine reload (D10,
+[`roadmap.md`](roadmap.md)). The remaining `ObjectiveKind` archetypes already modelled in
+`engine::objectives` (Hold/Survive, Push, Assassinate/Escort — [D59](#d59--the-operations-hub-campaign--a-host-side-objective-system))
+become **expressible in the format** rather than requiring new code per mission. The native
+Operations-hub mission-select/briefing shell stays [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)-blocked
+(unchanged by this) — this decision unblocks *authoring* content, not *presenting* the campaign menu.
+Build sequencing, workstreams, and the validation harness: **[`content-tooling-plan.md`](plans/content-tooling-plan.md)**.

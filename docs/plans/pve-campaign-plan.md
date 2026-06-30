@@ -102,9 +102,9 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
 - Node-graph meta-progression: a `Campaign`/`OperationNode` model (host/shell-side), unlock state
   (clearing a node opens successors), replay-at-higher-difficulty.
 - Mission-select + briefing surface in the **native shell** ([D32](../decisions.md)) reached through
-  the `core::shell` seam ([D34](../decisions.md)); progress persisted **outside** the checksum fold
-  (campaign metadata alongside `Sim::serialize`, or a separate host file — [Q15](../open-questions.md)
-  informs which).
+  the `core::shell` seam ([D34](../decisions.md)); progress persisted **outside** the checksum fold as
+  **a separate host file** (campaign metadata, not sim state) — the host-side content model
+  [D76](../decisions.md) locks in.
 
 **Tests:** unlock-graph transitions; persistence round-trip of campaign progress.
 

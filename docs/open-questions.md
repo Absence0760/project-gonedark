@@ -330,23 +330,33 @@ that least disturbs invariant #6.
 
 ---
 
-## Q15 — Mission authoring format: Rust builders or external data files? <a id="q15--mission-authoring-format"></a>
+## Q15 — Mission authoring format: Rust builders or external data files? — RESOLVED ([D76](decisions.md)) <a id="q15--mission-authoring-format"></a>
+
+> **Resolved by [D76](decisions.md):** **external RON data files** (the standing lean), behind a
+> **host-side loader in `engine`** that drives a new **serde-free `ScenarioBuilder` in `core`** — the
+> same `core`-primitive / `engine`-content split the objective system already uses
+> ([D59](decisions.md)). `core` keeps **no serde dependency** (invariant #2). The loader is the
+> **float airlock**: every numeric field parses as an integer → `Fixed` (no `f32`/`f64` path into the
+> sim), with a `deny_unknown_fields` range-validated schema that fails loudly at load, so a mission
+> file **cannot** smuggle a float into the sim (invariant #1) or add checksum surface (only the
+> seeded `Sim` enters the per-tick checksum, exactly as a hand-written seeder does — invariant #7).
+> **Battlefields** factor out into reusable `*.map.ron` files a mission references (one map → many
+> missions). Lua/scripting is the documented **second pass**, deferred until a scenario genuinely
+> needs control flow ([Q16](#q16--narrative-depth)). Build sequencing:
+> [`content-tooling-plan.md`](plans/content-tooling-plan.md).
 
 Missions are **data** ([D59](decisions.md)) — a parameterized scenario + an objective set. *Where
-that data lives* is open.
+that data lives* was the open fork; the chosen option (external data file) is the second row below.
 
 | Option | Upside | Cost / risk |
 |---|---|---|
 | **Rust scenario builders** (like [`sim-runner`](../sim-runner/src/main.rs) today) | Type-safe, no parser, zero new deps; the pattern already exists | Every mission edit is a recompile; designers need Rust; missions ship in the binary |
-| **External data file** (RON / Lua) | Hot-reloadable, designer-editable, fits the dev-workflow scripting lane ([`roadmap.md`](roadmap.md)); missions become content, not code | A schema + loader to build and validate; must stay deterministic (no float leakage from the data into the sim — invariant #1) |
+| **External data file** (RON / Lua) ← **chosen (RON), [D76](decisions.md)** | Hot-reloadable, designer-editable, fits the dev-workflow scripting lane ([`roadmap.md`](roadmap.md)); missions become content, not code | A schema + loader to build and validate; must stay deterministic (no float leakage from the data into the sim — invariant #1) |
 
 **Why it matters:** missions are the campaign's *content volume* — the thing we'll author the most
-of. A recompile-per-mission loop throttles that; a data format is the primary mitigation for Rust's
-weak engine hot-reload ([D10](decisions.md) tradeoff, [`roadmap.md`](roadmap.md) dev workflow).
-
-**Current lean:** external data file (RON for a first pass — serde-native, no scripting VM), so
-mission design iterates without a recompile. Validate the loader rejects any non-fixed-point input
-so authored data can't smuggle a float into the sim.
+of, and (via `*.map.ron`) the gate on *extensive* battlefields for PvE and PvP. A recompile-per-mission
+loop throttles that; a data format is the primary mitigation for Rust's weak engine hot-reload
+([D10](decisions.md) tradeoff, [`roadmap.md`](roadmap.md) dev workflow).
 
 ---
 
@@ -531,3 +541,33 @@ coordinate is inert until a mapping consumes it.
 Resolve before campaign replay ships as a player-facing feature. Relevant invariants: #1 (any
 tier→tuning mapping stays fixed-point + checksum-folded), #3/#6 (the commander stays honest, never
 omniscient, at every tier). Cross-link: [`pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-B/WS-E.
+
+---
+
+## Q22 — Terrain representation: a built-in map-id registry or embedded terrain data? <a id="q22--terrain-representation"></a>
+
+Surfaced by the procedural map generator ([`content-tooling-plan.md`](plans/content-tooling-plan.md)
+CT-G): generating *novel battlefields* wants novel **terrain**, but terrain is the one piece of a map
+that is **not yet data**. `core::terrain` is a `MapId` (`u16`) **registry** — `Terrain::from_map_id`
+reconstructs the cover/LoS grid from an id, and the reconnect snapshot ([D28](decisions.md)) serializes
+**only the map-id, not the grid**. So a generated `*.map.ron` can place cover-props / control-points /
+spawns over an *existing* terrain id, but cannot define a *new* terrain layout without either new code
+or a format change. (Cover, control points, and spawns are already pure placement data —
+[D76](decisions.md); this question is **only** about the terrain heightfield/cover grid itself.)
+
+| Option | For | Against |
+|---|---|---|
+| **(i) Registry of built-in ids** — each new terrain is a new `Terrain::from_map_id` arm | No `persist` change; smallest blast radius; reuses what ships today | Every terrain is a **recompile** and ships in the binary — defeats the data-file goal *for terrain* (the generator can't make new ground) |
+| **(ii) Embed the grid in the map data** — `MapSpec` carries the fixed-point cover grid; `persist` serializes it **by value** | Terrain becomes authorable/generatable data like everything else; maps are self-contained | Bigger reconnect snapshots; `persist`/reconnect ([D28](decisions.md)) must serialize the whole grid; more determinism surface to keep folded (invariant #7) |
+| **(iii) Content-addressed terrain** — map data carries the grid, `persist` serializes a **content-hash id**, peers rebuild from a shared content set | Reconnect snapshots stay lean (id only, like today) **and** terrain is authorable; rides the content set [D76](decisions.md) already introduces | Needs a content-distribution assumption (both peers hold the terrain file); a missing/mismatched id is a hard fail to handle |
+
+**Why it matters:** it's the gate on *novel* generated terrain (vs. reusing a handful of base fields),
+and it touches reconnect/persist determinism ([D28](decisions.md), invariant #7) and the fixed-point
+airlock (invariant #1) — so it can't be picked casually. It blocks **nothing else**: CT-G's placement
+half (props/CP/spawns over an existing terrain id) ships without resolving this.
+
+**Current lean:** **(iii) content-addressed** — it keeps reconnect snapshots lean *and* makes terrain
+authorable, and the shared content set is already a thing [D76](decisions.md)'s data-file model
+introduces. Decide **before CT-G's terrain half ships**; the placement half needs none of it.
+Cross-link: [`content-tooling-plan.md`](plans/content-tooling-plan.md) CT-G, [D28](decisions.md),
+[D76](decisions.md).

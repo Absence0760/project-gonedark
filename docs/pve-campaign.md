@@ -163,10 +163,11 @@ objective** — none of them reopen a locked invariant or add sim/desync surface
 - **Co-op?** Lockstep already supports N peers, so co-op PvE (shared command, or one
   commander + others embodying) is *architecturally* free-ish — but it's a real design fork
   (whose fog? whose orders?). Parked as [Q14](open-questions.md); single-commander first.
-- **Mission authoring format.** Missions are data; whether that data is Rust scenario
-  builders (like [`sim-runner`](../sim-runner/src/main.rs) today) or an external
-  hot-reloadable file (RON/Lua, the dev-workflow scripting lane) is [Q15](open-questions.md).
-  Lean: data-file, so design iterates without a recompile.
+- **Mission authoring format.** Missions are data; *where that data lives* was [Q15](open-questions.md),
+  now **resolved** ([D76](decisions.md)): external **RON files** behind a host-side `engine` loader
+  (the float airlock) driving a serde-free `core::scenario::ScenarioBuilder`, with battlefields
+  factored into reusable `*.map.ron`. Design iterates without a recompile. Build-out:
+  [`content-tooling-plan.md`](plans/content-tooling-plan.md).
 - **Narrative depth.** Light briefings now; a full authored arc is [Q16](open-questions.md),
   expandable without restructuring the hub.
 - **Not yet built.** This is the *design*; the first code slice (the objective evaluator +

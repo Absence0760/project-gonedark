@@ -305,8 +305,9 @@ streams.
 
 **Sequencing:** A is the spine (a playable first mission proves the loop); B wraps it into a
 campaign; C/D/E layer on. WS-A is the natural next code slice after this design lands. Open forks
-threaded through: co-op ([Q14](open-questions.md)), mission authoring format ([Q15](open-questions.md)),
-narrative depth ([Q16](open-questions.md)).
+threaded through: co-op ([Q14](open-questions.md)) and narrative depth ([Q16](open-questions.md)); the
+mission **authoring format** is now **resolved** (Q15 → [D76](decisions.md): RON data files behind a
+host-side loader — build-out in [`content-tooling-plan.md`](plans/content-tooling-plan.md)).
 
 ---
 
@@ -550,8 +551,8 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
   high-refresh / high-DPI support — the settings depth a PC player expects.
 - [ ] **PC-3 — Replays & spectating (a determinism freebie).** A match is a seed + an input log
   (invariant #1), so replay + spectator view are *cheap* and a real PC / e-sports differentiator.
-- [ ] **PC-4 — Mods / data-driven content.** Missions/scenarios are already data
-  ([Q15](open-questions.md)); exposing them as moddable content is how StarCraft/Total War lasted
+- [ ] **PC-4 — Mods / data-driven content.** Missions/scenarios become external **RON data files**
+  ([D76](decisions.md), [`content-tooling-plan.md`](plans/content-tooling-plan.md)); exposing them as moddable content is how StarCraft/Total War lasted
   decades — a PC-only longevity lever.
 - [ ] **PC-5 — RTS depth & mastery proof.** The closing item for the *RTS skill ceiling / mastery*
   row the PC scoreboard concedes as LAG "until we prove it's real" ([`positioning-pc.md`](positioning/positioning-pc.md)
