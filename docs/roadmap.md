@@ -144,8 +144,12 @@ model.
 > world ([D40](decisions.md)), plus in-match text — without disturbing the signed-off systems;
 > by-hand feel and the art pass are still owed. **The D30 balance baseline has since been
 > overhauled** — D66 made combat lethal (×5 damage, ~1.5 s rifle TTK) and D67 added finite per-unit
-> ammo + resupply; inter-unit balance at that lethal speed is reopened as
-> [Q18](open-questions.md) (the [combat-rebalance plan](plans/combat-rebalance-plan.md)).
+> ammo + resupply; inter-unit balance at that lethal speed was reopened as [Q18](open-questions.md)
+> and is now **resolved/landed** ([combat-rebalance plan](plans/combat-rebalance-plan.md) COMPLETE):
+> D69 restored the Rifleman↔Heavy RPS (Heavy 280/90 → 300/100) and D70 added area suppression that
+> pins a cluster before the kill — both harness-measured and re-pinned in `--metrics`. D72 (AI tanks
+> also fire traveling projectiles) and D73 (a dedicated anti-tank infantry unit, restoring the armour
+> RPS triangle) followed on the same lethal-combat arc.
 
 **Goal:** the actual game.
 
@@ -307,7 +311,9 @@ streams.
 campaign; C/D/E layer on. WS-A is the natural next code slice after this design lands. Open forks
 threaded through: co-op ([Q14](open-questions.md)) and narrative depth ([Q16](open-questions.md)); the
 mission **authoring format** is now **resolved** (Q15 → [D76](decisions.md): RON data files behind a
-host-side loader — build-out in [`content-tooling-plan.md`](plans/content-tooling-plan.md)).
+host-side loader — build-out in [`content-tooling-plan.md`](plans/content-tooling-plan.md)), and the
+**terrain representation** with it (Q22 → [D77](decisions.md): maps carry their own grid and `persist`
+serializes a content-hash map id, so a mission's terrain travels in its data file with zero registry).
 
 ---
 
@@ -411,8 +417,14 @@ host-side loader — build-out in [`content-tooling-plan.md`](plans/content-tool
 
 - [x] In-match command HUD, selection rim, embodied alert HUD ([D24](decisions.md)/[D26](decisions.md))
 - [x] Native title screens — Android Compose ([D35](decisions.md)) + desktop egui ([D36](decisions.md))
-- [ ] **Visual-design pass** on the command HUD — consistent iconography, type scale,
-  spacing, colour language (so it looks intentional, not greybox)
+- [~] **Visual-design pass** on the command HUD — consistent iconography, type scale, spacing,
+  colour language (so it looks intentional, not greybox). **Foundation + first wave landed**
+  ([D74](decisions.md): the `render::theme` palette/type/space source-of-truth + an anti-aliased font
+  atlas; plus dimensional greybox lighting + a cinematic present grade, rounded-card panel chrome,
+  ground detail textures, art-directed chamfered meshes, Inkscape-baked command-bar HUD icons, a
+  live-backdrop landing screen, and a scripted launcher icon). Remaining game-feel/readability work is
+  sequenced in the **[visual-design plan](plans/visual-design-plan.md)** (CP-2 / CP-3 / CP-9 +
+  accessibility cues).
 - [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface).
   **Now scoped as the CoD-Mobile/MLBB HUD layout editor** — per-layer drag/resize/opacity presets,
   presentation/input-only, invariant-#6-bounded ([D61](decisions.md); PvE pillar WS-D)
@@ -496,9 +508,14 @@ host-side loader — build-out in [`content-tooling-plan.md`](plans/content-tool
 > (more unit/vehicle variety toward the "growing" spectacle row) rides the PvE content pillar +
 > the scripted asset pipeline ([`content-pipeline.md`](content-pipeline.md)) — and is now also
 > carried by the **factions pillar** ([D68](decisions.md), [`factions.md`](factions.md),
-> [`factions-plan.md`](plans/factions-plan.md), open fork [Q19](open-questions.md)): real-army
-> asymmetric rosters (US Army vs French Army) are a distinct, fairness-bounded workstream layered
-> over `UnitKind`, gated on the [combat rebalance](plans/combat-rebalance-plan.md) ([Q18](open-questions.md)) landing first.
+> [`factions-plan.md`](plans/factions-plan.md), [Q19](open-questions.md) RESOLVED via
+> [D71](decisions.md)): real-army asymmetric rosters (US Army vs French Army) are a distinct,
+> fairness-bounded workstream layered over `UnitKind`. Its WS-0 gate (the
+> [combat rebalance](plans/combat-rebalance-plan.md), [Q18](open-questions.md)) has **cleared**, and
+> **WS-A–E have all landed** (the `Army` tag + persist/lockstep codecs, per-faction rosters tilted on
+> logistics rhythm not gun stats per [D71](decisions.md), per-faction cosmetic identity, the
+> `core::shell` army-select seam, and per-faction gunsmith pools) — the **one remaining item** is the
+> native army-select *screen*, blocked on the same D32 native-shell gap as the rest of the app shell.
 
 - [ ] **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
   ([D60](decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,
@@ -507,11 +524,13 @@ host-side loader — build-out in [`content-tooling-plan.md`](plans/content-tool
 - [ ] **CP-2 — Embodied game-feel bar (launch-critical).** A focused gunplay pass so a Delta
   Force player doesn't bounce in ten seconds: hit feedback (impact/hitmarker/damage-direction),
   recoil/kick readability, responsive ADS, audio-coupled firing. **Presentation/feel only — never
-  sim state (#4).** Define a written "good-enough floor" and playtest against it.
+  sim state (#4).** Define a written "good-enough floor" and playtest against it. *Scoped as WS-A of
+  the [visual-design plan](plans/visual-design-plan.md).*
 - [ ] **CP-3 — Animation/fidelity floor (conceded tier).** A "not jarring" floor — coherent
   locomotion/fire/death anims on the greybox so the eye-level view reads as a *place* — via the
   scripted pipeline ([`content-pipeline.md`](content-pipeline.md), [D41](decisions.md)/[D46](decisions.md)).
-  **Explicitly not UE5 parity**; we concede photoreal fidelity and compete on the hybrid.
+  **Explicitly not UE5 parity**; we concede photoreal fidelity and compete on the hybrid. *Scoped as
+  WS-B of the [visual-design plan](plans/visual-design-plan.md).*
 - [ ] **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (PvE WS-D,
   [D61](decisions.md)) + a touch-target/rebind pass so controls feel CoD-Mobile-class. *Overlaps
   the touch-layout editor under UI/UX polish above.*
@@ -539,7 +558,8 @@ host-side loader — build-out in [`content-tooling-plan.md`](plans/content-tool
   on the command HUD* under UI/UX polish above (which is the icon/type/colour layer). Bounded by
   invariant #3 (depth lives in the **order/stance vocabulary**, never smarter unit AI) and #6 (no
   strategic intel leaks while embodied). *Launch-important — it gates whether the command half lands
-  for the shooter-first audience the storefront sends us.*
+  for the shooter-first audience the storefront sends us. Scoped as WS-C of the
+  [visual-design plan](plans/visual-design-plan.md).*
 
 **PC-facing parity** — meeting a seated, genre-literate player's expectations without forking the
 game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
@@ -552,8 +572,9 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
 - [ ] **PC-3 — Replays & spectating (a determinism freebie).** A match is a seed + an input log
   (invariant #1), so replay + spectator view are *cheap* and a real PC / e-sports differentiator.
 - [ ] **PC-4 — Mods / data-driven content.** Missions/scenarios become external **RON data files**
-  ([D76](decisions.md), [`content-tooling-plan.md`](plans/content-tooling-plan.md)); exposing them as moddable content is how StarCraft/Total War lasted
-  decades — a PC-only longevity lever.
+  ([D76](decisions.md), [`content-tooling-plan.md`](plans/content-tooling-plan.md)) and maps carry
+  their own content-addressed terrain ([D77](decisions.md)); exposing them as moddable content is how
+  StarCraft/Total War lasted decades — a PC-only longevity lever.
 - [ ] **PC-5 — RTS depth & mastery proof.** The closing item for the *RTS skill ceiling / mastery*
   row the PC scoreboard concedes as LAG "until we prove it's real" ([`positioning-pc.md`](positioning/positioning-pc.md)
   §7): the **order/stance vocabulary** + the **"when do I dare go dark" timing** must form a genuine,

@@ -4,7 +4,8 @@
 > remains.** Direction locked in [D68](../decisions.md); design in [`factions.md`](../factions.md); the
 > WS-B stat-budget fork resolved by [D71](../decisions.md) (soft asymmetry on logistics rhythm, not gun
 > stats). **WS-0 prerequisite met** ([`combat-rebalance-plan.md`](combat-rebalance-plan.md) is COMPLETE).
-> **All five workstreams built:** **WS-A** (`Army` tag + persist/lockstep codecs — `Sim::army_of`,
+> **WS-A/B/C/E built; WS-D's seam + scenario seeding built (only its native army-select screen is
+> D32-blocked):** **WS-A** (`Army` tag + persist/lockstep codecs — `Sim::army_of`,
 > codec round-trips), **WS-B** (per-faction rosters via `economy::unit_stats_for`, logistics-rhythm
 > tilt — [D71](../decisions.md)), **WS-C** (per-faction cosmetic identity — US/FR
 > silhouettes/viewmodels/names via `render::model_for_unit`), **WS-D** (army selection through the
