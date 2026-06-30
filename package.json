@@ -28,6 +28,8 @@
     "android:dev": "scripts/android.sh run",
     "android:logcat": "scripts/android.sh logcat",
     "android:checksum": "scripts/android-checksum.sh",
+    "android:stress": "scripts/android-stress.sh",
+    "android:fps": "scripts/android-fps.sh",
 
     "assets:models": "blender --background --python tools/models/gen_models.py",
     "assets:font": "python3 tools/fonts/gen_hud_font.py",

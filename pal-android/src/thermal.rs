@@ -118,6 +118,21 @@ pub fn power_state_from_battery(status: i32, capacity_percent: i32) -> PowerStat
     }
 }
 
+/// The stable one-word wire label for a [`ThermalState`], used in the per-second `heartbeat:`
+/// logcat line the on-device FPS/thermal harness (`scripts/android-fps.sh`) parses to track
+/// thermal *escalation across the capture window* (the D21 dual-rate datum). Kept as an explicit
+/// pure fn — not `{:?}` — so the on-the-wire contract the script greps is decoupled from the
+/// `Debug` derive and pinned by [`thermal_label_is_stable`]. Matches the `Debug` spelling today by
+/// design (the startup `thermal:` line still uses `{:?}`), so both lines read identically.
+pub fn thermal_label(state: ThermalState) -> &'static str {
+    match state {
+        ThermalState::Nominal => "Nominal",
+        ThermalState::Fair => "Fair",
+        ThermalState::Serious => "Serious",
+        ThermalState::Critical => "Critical",
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // JNI reader (android-only, un-constructible on a host → exempt from unit coverage).
 // ---------------------------------------------------------------------------------------
@@ -308,6 +323,26 @@ mod tests {
                 ThermalState::Nominal,
                 "out-of-range status {status} must fail safe to Nominal"
             );
+        }
+    }
+
+    #[test]
+    fn thermal_label_is_stable() {
+        // The exact wire spelling the heartbeat emits and android-fps.sh greps — pinned here so a
+        // refactor of the `Debug` derive (or the enum) can't silently change the harness contract.
+        assert_eq!(thermal_label(ThermalState::Nominal), "Nominal");
+        assert_eq!(thermal_label(ThermalState::Fair), "Fair");
+        assert_eq!(thermal_label(ThermalState::Serious), "Serious");
+        assert_eq!(thermal_label(ThermalState::Critical), "Critical");
+        // And it agrees with the `{:?}` form the one-time startup `thermal:` line uses, so the two
+        // logcat lines never disagree on a state's name.
+        for s in [
+            ThermalState::Nominal,
+            ThermalState::Fair,
+            ThermalState::Serious,
+            ThermalState::Critical,
+        ] {
+            assert_eq!(thermal_label(s), format!("{s:?}"));
         }
     }
 

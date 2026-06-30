@@ -274,18 +274,24 @@ fn android_main(app: AndroidApp) {
                     rhi.present(frame);
 
                     // Heartbeat: count this presented frame, then ~once per second emit a
-                    // single line with achieved FPS + the read-only sim tick/checksum. The
-                    // checksum read is `&self`, safe to call now that `game.frame` (which
-                    // took `&mut self`) has returned. Nothing here feeds back into the sim.
+                    // single line with achieved FPS + the read-only sim tick/checksum + the
+                    // current thermal bucket. The checksum read is `&self`, safe to call now
+                    // that `game.frame` (which took `&mut self`) has returned; the thermal read
+                    // is the same `&thermal` sensor we just passed into `game.frame`. Nothing
+                    // here feeds back into the sim. The per-second `thermal <State>` field lets
+                    // `scripts/android-fps.sh` track thermal *escalation across the window* (the
+                    // D21 dual-rate datum) rather than only the one-time startup `thermal:` line.
                     frame_count += 1;
                     frames_since_report += 1;
                     let elapsed = now.duration_since(last_report);
                     if elapsed >= Duration::from_secs(1) {
+                        use gonedark_pal::ThermalSensor;
                         let fps = frames_since_report as f32 / elapsed.as_secs_f32();
                         info!(
-                            "heartbeat: {fps:.1} fps | frame {n} | tick {t} | checksum {c:016x}",
+                            "heartbeat: {fps:.1} fps | frame {n} | tick {t} | thermal {therm} | checksum {c:016x}",
                             n = frame_count,
                             t = game.tick_count(),
+                            therm = crate::thermal::thermal_label(thermal.thermal_state()),
                             c = game.checksum(),
                         );
                         frames_since_report = 0;
