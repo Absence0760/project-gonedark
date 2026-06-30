@@ -325,11 +325,13 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 shell: ShellKind::Ap,
             },
         ),
-        // A produced armoured vehicle (D65). High HP + a hard, slow gun + an independent turret slew
-        // (cosmetic). UNARMOURED on purpose: with `penetration == 0` an armoured tank would bounce
-        // every Rifleman shot (no anti-tank counter exists yet), which would break the rifle-centric
-        // skirmish — the full armoured/ballistic tank stays the duel scene's. `muzzle_vel == 0` keeps
-        // it hitscan, so auto-combat resolves it exactly like the other produced units.
+        // A produced armoured vehicle — the full War-Thunder-capable tank of plan P9 (D65 archetype +
+        // the armour block, wave-1 W1, and the ballistic gun, wave-1 W4/D72). High HP, directional
+        // armour (`unit_armor` above), a hard slow gun, and an independent turret slew. The gun is
+        // ballistic (`muzzle_vel > 0`), so auto-combat fires a traveling shell, not hitscan — and with
+        // armour now real, a Rifleman's `penetration == 0` shot bounces every facet, so the produced
+        // tank is killable only by a penetrating gun (another tank, or an embodied AT shot). This is
+        // the intended armoured end-state that replaces the D65 unarmoured/hitscan stopgap.
         UnitKind::Tank => (
             Health::full(Fixed::from_int(300)),
             Weapon {
