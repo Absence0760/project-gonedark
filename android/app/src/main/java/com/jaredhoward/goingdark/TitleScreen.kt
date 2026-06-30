@@ -1,6 +1,7 @@
 package com.jaredhoward.goingdark
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -25,24 +25,37 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
 
 /**
  * The landing / title screen — D32 app-shell surface 1 ("Boot & title"). Pure presentation: the
- * title, a tagline, the three top-level actions, and a build/version stamp. It carries **no** game
- * state and never touches the sim; "Start" hands off to the engine through the host (MainActivity),
- * the one place the shell crosses into the shared core (via the `core::shell` seam, D34).
+ * title, a tagline, the top-level play-mode split, the utility/secondary actions, and a build/version
+ * stamp. It carries **no** game state and never touches the sim; the play-mode buttons hand off to the
+ * engine through the host (MainActivity), the one place the shell crosses into the shared core (via
+ * the `core::shell` seam, D34).
  *
- * Actions are passed in as callbacks so the screen is host-agnostic and previewable without an
- * Activity. The menu behind Start is intentionally lean: **Settings** is a placeholder until the
- * Settings surface lands, and the deeper menu (match setup, lobby) is Q5/Phase-3-blocked
- * (phase-4-plan §2).
+ * Mirrors the desktop egui title (`app/src/shell.rs`): the same top-level split — **CAMPAIGN / PvE /
+ * PvP** — plus **SETTINGS / PROFILE / FIELD MANUAL** and **QUIT**. The click→route decision lives in
+ * the pure [resolveTitleAction] seam (D79), so this composable is host-agnostic, previewable without
+ * an Activity, and emits only callbacks. Behind the chrome sits the animated Compose-native
+ * [TitleBackdrop] (D78 option 1) — a 2D motif, deliberately *not* the desktop's live 3D scene.
+ *
+ * Actions are passed in as callbacks so the screen stays decoupled from the host nav graph. PvP routes
+ * to a "blocked" notice today (match setup is Q5/Phase-3); the host owns that, not this screen.
  */
 @Composable
 fun TitleScreen(
     versionStamp: String,
-    onStart: () -> Unit,
+    onCampaign: () -> Unit,
+    onPve: () -> Unit,
+    onPvp: () -> Unit,
     onSettings: () -> Unit,
+    onProfile: () -> Unit,
+    onAbout: () -> Unit,
     onQuit: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+    // The animated backdrop sits behind everything; the content Column stacks over it. A Box (not a
+    // Surface) so the backdrop's own dark field shows through — the backdrop owns the background fill.
+    Box(modifier = modifier.fillMaxSize()) {
+        TitleBackdrop(Modifier.fillMaxSize())
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -75,17 +88,48 @@ fun TitleScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                // The top-level play-mode split, mirroring the desktop title. CAMPAIGN is the one
+                // filled call-to-action; PvE / PvP are neutral secondaries (their mode divergence is
+                // future work — see resolveTitleAction).
                 Button(
-                    onClick = onStart,
+                    onClick = onCampaign,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
-                    Text("START", letterSpacing = 2.sp)
+                    Text("CAMPAIGN", letterSpacing = 2.sp)
                 }
+                OutlinedButton(
+                    onClick = onPve,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                ) {
+                    Text("PvE", letterSpacing = 2.sp)
+                }
+                OutlinedButton(
+                    onClick = onPvp,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                ) {
+                    Text("PvP", letterSpacing = 2.sp)
+                }
+
+                Spacer(Modifier.height(6.dp))
+
+                // The secondary / utility actions, quieter than the play modes.
                 OutlinedButton(
                     onClick = onSettings,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
                     Text("SETTINGS", letterSpacing = 2.sp)
+                }
+                OutlinedButton(
+                    onClick = onProfile,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                ) {
+                    Text("PROFILE", letterSpacing = 2.sp)
+                }
+                TextButton(
+                    onClick = onAbout,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                ) {
+                    Text("FIELD MANUAL", letterSpacing = 2.sp)
                 }
                 TextButton(
                     onClick = onQuit,
@@ -112,8 +156,12 @@ private fun TitleScreenPreview() {
     GoingDarkTheme {
         TitleScreen(
             versionStamp = buildStamp("dev", "0.0.0"),
-            onStart = {},
+            onCampaign = {},
+            onPve = {},
+            onPvp = {},
             onSettings = {},
+            onProfile = {},
+            onAbout = {},
             onQuit = {},
         )
     }

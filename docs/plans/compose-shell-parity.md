@@ -99,7 +99,15 @@ the JNI reader.
 
 ---
 
-## 4. Tier 1 — buildable now (Settings/Profile/About need *nothing* from Tier 0)
+## 4. Tier 1 — buildable now (Settings/Profile/About need *nothing* from Tier 0) — ✅ LANDED
+
+> **Status: LANDED.** All four surfaces ship as stateless Compose screens + pure JVM-tested seams,
+> wired through a `MainActivity` `ShellRoute` navigator (the Compose twin of the desktop `Screen`
+> enum). Settings (audio/look subset, integer-wire-aligned), Profile (callsign/faction/record),
+> About/field-manual, and the title **mode-split** (CAMPAIGN/PvE/PvP + SETTINGS/PROFILE/FIELD-MANUAL)
+> over a D78 animated Compose backdrop. Accessibility cues + touch-rebind editor remain out of scope
+> (phase-4-plan §5). Verified: `:app:compileDebugKotlin` + `:app:testDebugUnitTest` green (63 tests).
+
 
 | Surface | Desktop reference | Compose work | Scope notes |
 |---|---|---|---|
@@ -111,6 +119,13 @@ the JNI reader.
 ---
 
 ## 5. Tier 2 — buildable once Tier 0 lands (config-seam-blocked, NOT netcode-blocked)
+
+> **Gunsmith: ✅ LANDED.** The Compose gunsmith screen + `LoadoutSelection` seam ship; the three
+> slot indices (labels verbatim from `core::gunsmith`) pack straight into the `opt`/`bar`/`mag` wire
+> keys at Deploy. **Campaign mission-select + briefing: still pending** — the next parity surface
+> (all three play modes currently open the gunsmith and Deploy into Skirmish, mirroring the desktop
+> title's current fold-to-loadout behaviour).
+
 
 | Surface | Desktop reference | What Tier 0 unblocks |
 |---|---|---|
