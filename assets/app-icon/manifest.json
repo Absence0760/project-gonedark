@@ -1,0 +1,111 @@
+{
+  "name": "Going Dark \u2014 app launcher icon",
+  "generator": "tools/icons/gen_app_icon.py",
+  "source": "Original CLI-authored SVG geometry (no third-party art).",
+  "license": "CC0-1.0",
+  "palette": {
+    "ink": "#07090C",
+    "amber": "#E0791F",
+    "avatar": "#FFD13D",
+    "hairline": "#1A2129"
+  },
+  "svg_sources": {
+    "foreground": "assets/app-icon/svg/foreground.svg",
+    "background": "assets/app-icon/svg/background.svg",
+    "legacy": "assets/app-icon/svg/legacy.svg"
+  },
+  "artifacts": [
+    {
+      "path": "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "sha256": "489f2d8f1b713d3d5341fbcd3ddf99322c11ddf801c48e93b7501c00be268f1f"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+      "sha256": "489f2d8f1b713d3d5341fbcd3ddf99322c11ddf801c48e93b7501c00be268f1f"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher.png",
+      "sha256": "4a2b4a10afd84c37303bac3e29389776fe1e16d7aacac368d0e76c54c1717464"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher_background.png",
+      "sha256": "070f16e6c74dffe88f0cde72db012d052b2f50ff439f977d8e947453b3d9ff09"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png",
+      "sha256": "9bdfb18d47e122c06ae79da9a9ac6260b2e34d334f37df09a2eac1e0592aa71d"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png",
+      "sha256": "8f9b5628de961bc742dd9678b049da0965651eecb05a373ae4daf192d69c4328"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher.png",
+      "sha256": "38c7b2dca2904e56228c2346892b09abe8e2498bf3b99aa0f1c43285e5f6fd0f"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher_background.png",
+      "sha256": "f4bf044066763d2745d401df04487b5cd6adbb73923b07c0dba34ec27c9a2262"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher_foreground.png",
+      "sha256": "ff9e3ae49f56571fddbfad729a97747afb9387af109605a4a2d2c67c9b3ad4dd"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png",
+      "sha256": "f9592dcae8f6b48223cc6e81b1a3a136b45fe03e4a87c55ed0cfa06602be1259"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher.png",
+      "sha256": "c0a5b93cbc3f71dfc444200414951a2399e506d8add3f71cc043355f5d3c9717"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_background.png",
+      "sha256": "143b45964149d094948d64d3c0cfb2d800428e4660a7a867732c9b60c8639716"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_foreground.png",
+      "sha256": "ab8687b24077ba29a11f5a68620bd67c2d5242d5762b53ee223cbfaef1113720"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png",
+      "sha256": "5e812954f7be974c83a26b2e0ca33bd9be9353c3fb8b11ae16a4924655ddf91a"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png",
+      "sha256": "00da27664f9b36b8a8037bfe4db5de84989701cdc1b5f5506f845d4dacb73a3e"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_background.png",
+      "sha256": "090aa6a9b2578e82ad29a7b2bd87e25334442461d12d6cd24d55e5c60afdf5fa"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_foreground.png",
+      "sha256": "48a767efa2c5d6ccfecbb288288d6d6a3eab9a24fe52ad1e3c6d64e985219e26"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png",
+      "sha256": "5496fe1c38188f32b9f25402d3933eb3e80386f10c2b7bc48d983f6315c51b91"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png",
+      "sha256": "6d283f78e45707b7ce7feddbee9ef8acc3ce2915684debf2e800b6b12c92a3f6"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_background.png",
+      "sha256": "1cf8d0cf53cb179570f16af3f8e7102fb5fcd8d439c6c5a8a204776f6c17c09e"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png",
+      "sha256": "4520799fec0cd84a907802d90dba0fe7977564246edea443c926f28266c35754"
+    },
+    {
+      "path": "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png",
+      "sha256": "fbf121b86b3d3a17da2d02aa1d69a980c8bb9eba0d42929667c559893002ffb9"
+    },
+    {
+      "path": "assets/app-icon/ic_launcher-playstore.png",
+      "sha256": "27c6bc250514caaf81b073161f31e0764610c2601fe75f5d2109761ed8b0170f"
+    }
+  ]
+}
