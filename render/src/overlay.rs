@@ -71,6 +71,9 @@ pub enum QuadRole {
     /// A slightly larger, lighter quad behind a [`Panel`](QuadRole::Panel) — a crisp rim/border so
     /// the panel reads over the dim frame.
     PanelRim,
+    /// A soft, dark, heavily-feathered quad behind a panel's rim — a drop shadow that lifts the
+    /// card off the dim frame. Drawn first of the panel stack so the rim + panel composite over it.
+    PanelShadow,
     /// A neutral actionable choice slot (e.g. Resume / Leave / dismiss). Hit-tested by the
     /// native/touch layer at the quad's NDC rect.
     Button,
@@ -98,7 +101,14 @@ pub struct OverlayQuad {
     pub role: QuadRole,
 }
 
-/// The GPU-uploadable slice of an [`OverlayQuad`] (drops the CPU-only `role`). `repr(C)` + `Pod`.
+/// The GPU-uploadable slice of an [`OverlayQuad`] (drops the CPU-only `role`, adds the derived
+/// card-styling params). `repr(C)` + `Pod`.
+///
+/// **CPU↔GPU lockstep:** the field order here MUST match, one-for-one, the per-instance
+/// `@location`s in `overlay.wgsl`'s `vs_main` AND the `vertex_attr_array` in [`OverlayRenderer::new`]
+/// — the three move together. The trailing `radius`/`gradient`/`softness`/`aspect` are *derived*
+/// from the quad's [`QuadRole`] + size (see [`quad_style`]) and the renderer's aspect, not stored on
+/// the public [`OverlayQuad`], so the layout seam + its callers in `lib.rs` stay untouched.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 struct OverlayInstance {
@@ -110,10 +120,22 @@ struct OverlayInstance {
     g: f32,
     b: f32,
     alpha: f32,
+    /// Corner radius (NDC-y units), clamped to the quad's half-extent in [`quad_style`].
+    radius: f32,
+    /// Vertical-gradient amount in `[0, 1]` (top of the quad reads slightly lighter).
+    gradient: f32,
+    /// Edge softness (NDC-y): ~0 for a crisp card edge, larger for a feathered drop shadow.
+    softness: f32,
+    /// Viewport aspect (width / height) so the SDF corners stay round in pixels, not egg-shaped.
+    aspect: f32,
 }
 
 impl OverlayQuad {
-    fn instance(&self) -> OverlayInstance {
+    /// Build the GPU instance, folding in the per-role card styling ([`quad_style`]) and the
+    /// renderer's `aspect`. The styling is derived (not stored on the quad) so the pure layout seam
+    /// and the `lib.rs` panel callers that build [`OverlayQuad`] literals need no new fields.
+    fn instance(&self, aspect: f32) -> OverlayInstance {
+        let style = quad_style(self.role, self.hw, self.hh);
         OverlayInstance {
             cx: self.cx,
             cy: self.cy,
@@ -123,7 +145,64 @@ impl OverlayQuad {
             g: self.g,
             b: self.b,
             alpha: self.alpha,
+            radius: style.radius,
+            gradient: style.gradient,
+            softness: style.softness,
+            aspect,
         }
+    }
+}
+
+/// The derived card-styling params for a quad, computed purely from its [`QuadRole`] + NDC
+/// half-extent so the look is data-driven and unit-testable without a GPU. Floats are render-side
+/// only (invariant #1/#4).
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct QuadStyle {
+    /// Corner radius in NDC-y units, clamped to `<= min(hw, hh)` so it can never overrun the rect.
+    radius: f32,
+    /// Vertical-gradient amount in `[0, 1]`.
+    gradient: f32,
+    /// Edge softness in NDC-y units (`>= 0`); large only for the drop shadow.
+    softness: f32,
+}
+
+/// Card corner radius (NDC-y) for panels/rim — the rounded-rect "card" look.
+const CORNER_PANEL: f32 = 0.045;
+/// Corner radius (NDC-y) for buttons — a touch tighter than a panel.
+const CORNER_BUTTON: f32 = 0.022;
+/// How far past the panel the drop shadow's soft edge feathers (NDC-y).
+const SHADOW_SOFTNESS: f32 = 0.055;
+
+/// Derive a quad's [`QuadStyle`] from its role + half-extent. Pure: the corner radius is always
+/// clamped to `<= min(hw, hh)` (so it cannot exceed the rect), the gradient to `[0, 1]`, and the
+/// softness to `>= 0`. This is the testable seam for the card styling.
+fn quad_style(role: QuadRole, hw: f32, hh: f32) -> QuadStyle {
+    let min_half = hw.min(hh).max(0.0);
+    // (raw corner radius, gradient amount, edge softness) per role, before clamping.
+    let (raw_radius, gradient, softness): (f32, f32, f32) = match role {
+        // A flat full-screen darkening — square, no gradient, crisp.
+        QuadRole::Scrim => (0.0, 0.0, 0.0),
+        // Cards: rounded corners + a faint top-lighter gradient. The rim rounds a hair tighter than
+        // its pad so the border tracks the panel's curve; the panel itself reads as a lit card.
+        QuadRole::Panel => (CORNER_PANEL, 0.55, 0.0),
+        QuadRole::PanelRim => (CORNER_PANEL + PANEL_RIM_PAD, 0.0, 0.0),
+        // The drop shadow: very rounded + heavily feathered, no gradient.
+        QuadRole::PanelShadow => (CORNER_PANEL + 0.04, 0.0, SHADOW_SOFTNESS),
+        // Buttons: rounded with a clear lit gradient (the primary slot a touch stronger).
+        QuadRole::Button => (CORNER_BUTTON, 0.5, 0.0),
+        QuadRole::ButtonPrimary => (CORNER_BUTTON, 0.65, 0.0),
+        // Accent strips: pill ends (radius = the strip's half-height) + a gentle gradient.
+        QuadRole::Accent | QuadRole::Warning | QuadRole::Win | QuadRole::Loss => {
+            (min_half, 0.4, 0.0)
+        }
+        // Data bars get rounded (pill) ends so they read as deliberate gauges; the track is flatter.
+        QuadRole::DataBar | QuadRole::TerritoryBar | QuadRole::ResourceBar => (min_half, 0.35, 0.0),
+        QuadRole::BarTrack => (min_half, 0.0, 0.0),
+    };
+    QuadStyle {
+        radius: raw_radius.clamp(0.0, min_half),
+        gradient: gradient.clamp(0.0, 1.0),
+        softness: softness.max(0.0),
     }
 }
 
@@ -168,10 +247,11 @@ fn color(role: QuadRole) -> [f32; 3] {
         QuadRole::DataBar => theme::DATA_KILLS, // blue: kills
         QuadRole::TerritoryBar => theme::DATA_TERRITORY, // green: territory held
         QuadRole::ResourceBar => theme::DATA_RESOURCE, // amber: resources banked
-        QuadRole::BarTrack => [0.20, 0.22, 0.28], // faint track behind a data bar
+        QuadRole::BarTrack => theme::HAIRLINE,  // faint track behind a data bar
         QuadRole::PanelRim => theme::RIM,       // a lighter border behind the panel
+        QuadRole::PanelShadow => [0.0, 0.0, 0.0], // a black, soft drop shadow lifting the card
         QuadRole::Button => theme::PANEL_RAISED, // a neutral choice slot
-        QuadRole::ButtonPrimary => [0.30, 0.45, 0.70], // the affirmative choice slot
+        QuadRole::ButtonPrimary => theme::AMBER, // the warm, affirmative call-to-action slot
     }
 }
 
@@ -226,10 +306,27 @@ fn surface_choices(overlay: &Overlay) -> &'static [QuadRole] {
     }
 }
 
-/// Emit a panel with its rim — the rim (a slightly larger, lighter quad) goes first so the panel
-/// composites over it, leaving a thin readable border ("border = outer quad first", the same
-/// pattern [`push_tracked_bar`] uses). `alpha` applies to the panel; the rim is opaque chrome.
+/// How far the drop shadow extends past the panel's half-extent (NDC) before it feathers out.
+const PANEL_SHADOW_PAD: f32 = 0.045;
+/// The drop shadow is nudged slightly downward so the card reads as lit from above.
+const PANEL_SHADOW_DROP: f32 = 0.02;
+/// Opacity of the (black) drop shadow over the scrim — subtle; the soft feather does the work.
+const PANEL_SHADOW_ALPHA: f32 = 0.5;
+
+/// Emit a panel as a card: a soft drop shadow, then its rim, then the panel body — back-to-front so
+/// each composites over the last ("border/shadow = outer quad first", the same pattern
+/// [`push_tracked_bar`] uses). The shadow + rim are opaque-chrome anchors; `alpha` applies to the
+/// panel fill. The shadow is slightly larger than the rim and dropped a touch so the card lifts off
+/// the dim frame; the rim leaves a thin readable border; the shader rounds + gradient-shades each.
 fn push_panel_with_rim(out: &mut Vec<OverlayQuad>, alpha: f32) {
+    out.push(quad(
+        0.0,
+        -PANEL_SHADOW_DROP,
+        PANEL_HW + PANEL_SHADOW_PAD,
+        PANEL_HH + PANEL_SHADOW_PAD,
+        PANEL_SHADOW_ALPHA,
+        QuadRole::PanelShadow,
+    ));
     out.push(quad(
         0.0,
         0.0,
@@ -575,6 +672,10 @@ pub struct OverlayRenderer {
     /// The shared text pass (W4) — the overlay owns one so its panels carry real labels/numbers
     /// without the host wiring a separate call. Flushed at the end of [`OverlayRenderer::render`].
     text: TextRenderer,
+    /// Viewport aspect (width / height), set via [`set_aspect`](OverlayRenderer::set_aspect) once per
+    /// frame and folded into every uploaded instance so the SDF rounded corners stay round in pixels
+    /// (not egg-shaped) on a wide window. Defaults to 1.0 (square — the viz viewport).
+    aspect: f32,
 }
 
 impl OverlayRenderer {
@@ -600,12 +701,17 @@ impl OverlayRenderer {
         let instance_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<OverlayInstance>() as u64,
             step_mode: wgpu::VertexStepMode::Instance,
-            // 1=center(vec2), 2=half(vec2), 3=color(vec3), 4=alpha(f32).
+            // 1=center(vec2), 2=half(vec2), 3=color(vec3), 4=alpha, 5=radius, 6=gradient,
+            // 7=softness, 8=aspect. MUST stay in lockstep with `OverlayInstance` + `overlay.wgsl`.
             attributes: &wgpu::vertex_attr_array![
                 1 => Float32x2,
                 2 => Float32x2,
                 3 => Float32x3,
-                4 => Float32
+                4 => Float32,
+                5 => Float32,
+                6 => Float32,
+                7 => Float32,
+                8 => Float32
             ],
         };
 
@@ -660,6 +766,7 @@ impl OverlayRenderer {
             instance_buf,
             instance_cap,
             text,
+            aspect: 1.0,
         }
     }
 
@@ -668,6 +775,7 @@ impl OverlayRenderer {
     /// it once per frame before [`render`](OverlayRenderer::render). The centered panel quads stay raw
     /// NDC (a modal centered on screen) — only the glyphs are corrected.
     pub fn set_aspect(&mut self, aspect: f32) {
+        self.aspect = aspect;
         self.text.set_aspect(aspect);
     }
 
@@ -720,7 +828,8 @@ impl OverlayRenderer {
         if quads.is_empty() {
             return;
         }
-        let instances: Vec<OverlayInstance> = quads.iter().map(|q| q.instance()).collect();
+        let instances: Vec<OverlayInstance> =
+            quads.iter().map(|q| q.instance(self.aspect)).collect();
 
         if instances.len() > self.instance_cap {
             let new_cap = instances.len().next_power_of_two();
@@ -825,19 +934,25 @@ mod tests {
     }
 
     #[test]
-    fn paused_is_scrim_rim_panel() {
+    fn paused_is_scrim_shadow_rim_panel() {
         let q = overlay_quads(&Overlay::Paused);
-        // Scrim, then the panel rim, then the panel itself (border = outer quad first).
+        // Scrim, then the soft drop shadow, then the panel rim, then the panel (back-to-front so
+        // each composites over the last — shadow/border = outer quad first).
         assert_eq!(q[0].role, QuadRole::Scrim);
-        assert_eq!(q[1].role, QuadRole::PanelRim);
-        assert_eq!(q[2].role, QuadRole::Panel);
-        // The scrim spans the whole screen; the panel is centered and smaller, the rim larger.
+        assert_eq!(q[1].role, QuadRole::PanelShadow);
+        assert_eq!(q[2].role, QuadRole::PanelRim);
+        assert_eq!(q[3].role, QuadRole::Panel);
+        // The scrim spans the whole screen; the panel is centered and smaller, rim + shadow larger.
         assert_eq!((q[0].hw, q[0].hh), (1.0, 1.0));
-        assert!(q[2].hw < 1.0 && q[2].hh < 1.0);
-        assert_eq!((q[2].cx, q[2].cy), (0.0, 0.0));
+        assert!(q[3].hw < 1.0 && q[3].hh < 1.0);
+        assert_eq!((q[3].cx, q[3].cy), (0.0, 0.0));
+        assert!(
+            q[2].hw > q[3].hw && q[2].hh > q[3].hh,
+            "rim is larger than the panel"
+        );
         assert!(
             q[1].hw > q[2].hw && q[1].hh > q[2].hh,
-            "rim is larger than the panel"
+            "shadow is larger than the rim"
         );
     }
 
@@ -1398,6 +1513,114 @@ mod tests {
             assert!(l.pos[1] >= -1.5 && l.pos[1] <= 1.5, "label y in NDC range");
             assert!(l.size > 0.0, "label has a positive size");
         }
+    }
+
+    // ---- card styling (quad_style) ----
+
+    /// Every role the overlay draws, so the styling invariants below can sweep the whole vocabulary.
+    const ALL_ROLES: &[QuadRole] = &[
+        QuadRole::Scrim,
+        QuadRole::Panel,
+        QuadRole::Accent,
+        QuadRole::Warning,
+        QuadRole::Win,
+        QuadRole::Loss,
+        QuadRole::DataBar,
+        QuadRole::TerritoryBar,
+        QuadRole::ResourceBar,
+        QuadRole::BarTrack,
+        QuadRole::PanelRim,
+        QuadRole::PanelShadow,
+        QuadRole::Button,
+        QuadRole::ButtonPrimary,
+    ];
+
+    /// The corner radius can never overrun the rect: for *every* role and a range of half-extents
+    /// (including a degenerate sliver), `radius <= min(hw, hh)`. This is the load-bearing clamp that
+    /// keeps the SDF rounded-rect well-formed.
+    #[test]
+    fn quad_style_radius_never_exceeds_half_size() {
+        let sizes = [(0.001, 0.001), (0.01, 0.035), (0.18, 0.045), (0.5, 0.32)];
+        for &role in ALL_ROLES {
+            for &(hw, hh) in &sizes {
+                let s = quad_style(role, hw, hh);
+                let min_half = hw.min(hh);
+                assert!(
+                    s.radius <= min_half + 1e-6 && s.radius >= 0.0,
+                    "{role:?} radius {} must be in [0, {min_half}] for ({hw},{hh})",
+                    s.radius
+                );
+            }
+        }
+    }
+
+    /// The gradient amount stays in `[0, 1]` and the softness stays non-negative for every role —
+    /// the shader treats both as such, so out-of-range values would render wrong.
+    #[test]
+    fn quad_style_gradient_and_softness_are_bounded() {
+        for &role in ALL_ROLES {
+            let s = quad_style(role, 0.5, 0.32);
+            assert!(
+                (0.0..=1.0).contains(&s.gradient),
+                "{role:?} gradient {} out of [0,1]",
+                s.gradient
+            );
+            assert!(s.softness >= 0.0, "{role:?} softness {} < 0", s.softness);
+        }
+    }
+
+    /// The scrim is a flat full-screen darkening — no rounding, no gradient, no feather; everything
+    /// else stays crisp except the drop shadow, which is the only role that feathers its edge.
+    #[test]
+    fn scrim_is_flat_and_only_shadow_is_soft() {
+        let scrim = quad_style(QuadRole::Scrim, 1.0, 1.0);
+        assert_eq!(scrim, QuadStyle { radius: 0.0, gradient: 0.0, softness: 0.0 });
+        for &role in ALL_ROLES {
+            let s = quad_style(role, 0.5, 0.32);
+            if role == QuadRole::PanelShadow {
+                assert!(s.softness > 0.0, "the drop shadow feathers its edge");
+            } else {
+                assert_eq!(s.softness, 0.0, "{role:?} has a crisp (un-feathered) edge");
+            }
+        }
+    }
+
+    /// Panels and buttons get a real corner radius (a rounded card), and the data bars + their
+    /// tracks get pill ends (radius == the bar's half-height), so they read as deliberate gauges.
+    #[test]
+    fn cards_round_and_bars_get_pill_ends() {
+        assert!(quad_style(QuadRole::Panel, PANEL_HW, PANEL_HH).radius > 0.0);
+        assert!(quad_style(QuadRole::Button, BUTTON_HW, BUTTON_HH).radius > 0.0);
+        // A wide, short bar: min(hw, hh) == hh, so the radius is the half-height (pill ends).
+        for role in [
+            QuadRole::DataBar,
+            QuadRole::TerritoryBar,
+            QuadRole::ResourceBar,
+            QuadRole::BarTrack,
+        ] {
+            let s = quad_style(role, BAR_MAX_HW, BAR_HH);
+            assert!(
+                (s.radius - BAR_HH).abs() < 1e-6,
+                "{role:?} pill radius {} should equal the bar half-height {BAR_HH}",
+                s.radius
+            );
+        }
+    }
+
+    /// The GPU instance carries the derived styling: the same quad styled differently by role, and
+    /// the renderer's aspect is folded in verbatim so corners stay round on a wide window.
+    #[test]
+    fn instance_folds_in_style_and_aspect() {
+        let panel = quad(0.0, 0.0, PANEL_HW, PANEL_HH, 0.9, QuadRole::Panel);
+        let inst = panel.instance(1.6);
+        let style = quad_style(QuadRole::Panel, PANEL_HW, PANEL_HH);
+        assert_eq!(inst.radius, style.radius);
+        assert_eq!(inst.gradient, style.gradient);
+        assert_eq!(inst.softness, style.softness);
+        assert_eq!(inst.aspect, 1.6);
+        // The geometry/color still passes straight through (layout/anchors unchanged).
+        assert_eq!((inst.cx, inst.cy, inst.hw, inst.hh), (0.0, 0.0, PANEL_HW, PANEL_HH));
+        assert_eq!(inst.alpha, 0.9);
     }
 
     #[test]
