@@ -21,7 +21,7 @@
 //! ## The pure seam
 //!
 //! All layout math — which lines exist and each line's world rectangle — lives in the free
-//! [`grid_lines`] fn so it is unit-testable without a GPU, exactly the `marquee_quads` / `layout_cells`
+//! [`grid_lines`] fn so it is unit-testable without a GPU, exactly the `marquee_quads` / `layout_glyphs`
 //! pattern. [`TerrainRenderer::render`] is the only GPU-touching code and is exercised by the
 //! offscreen `viz-runner`, not the no-GPU CI matrix.
 

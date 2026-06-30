@@ -9,26 +9,29 @@
 //! the unit/HUD/overlay/radial passes for a shader source. Float side of invariant #4: every number
 //! here is already an `f32` (the Q16.16 → f32 hop happened in `core` callers, never in `core`).
 //!
-//! ## Why a baked bitmap-font atlas (no new deps)
+//! ## An anti-aliased font atlas (decisions.md D74 — supersedes the 5×7 bitmap)
 //!
-//! The lightest viable glyph approach: a **5×7 bitmap font baked into the binary as a `const`
-//! table** ([`glyph::ROWS`]). Each visible glyph emits one tiny alpha-blended quad **per lit cell**
-//! (the shader paints solid cells, [`fog`](crate)-style). No texture atlas to upload, no sampler,
-//! no image-decode, and crucially **no new crate** — `wgpu_text`/`glyphon`/`ab_glyph` would each
-//! drag in font-rasterization + atlas-management dependencies for what the UI needs here, which is
-//! short uppercase labels and integer counts (button names, kill/territory/resource numbers, radial
-//! action names). A cell-quad font is coarse but perfectly legible at HUD sizes and keeps the
-//! render crate's dependency surface exactly where it is (`wgpu` + `bytemuck`).
+//! The text was originally a 5×7 bit-packed bitmap, one solid quad per lit cell — coarse,
+//! uppercase-only, no punctuation, and the single biggest "this looks like a prototype" tell in the
+//! HUD. It is now a **fixed-cell monospace atlas** of the full printable ASCII range (0x20..0x7E,
+//! lowercase + punctuation included), baked by `tools/fonts/gen_hud_font.py` from Liberation Mono
+//! Bold via ImageMagick. The atlas ships as raw R8 coverage bytes (`assets/fonts/hud_atlas.gray`)
+//! `include_bytes!`d straight in — so the render crate stays `wgpu` + `bytemuck` only (**no**
+//! png-decode / font-rasterisation crate). Each glyph emits **one** quad that samples its cell from
+//! the atlas; anti-aliased edges blend smoothly at any HUD size, and the dependency surface is
+//! unchanged.
 //!
-//! If a future screen needs proportional/anti-aliased body text, swapping the cell emitter for an
-//! atlas-sampling shader is a localized change behind the same [`TextRenderer::queue`] API.
+//! The `FONT_*` consts below are the **contract with the generator** — they MUST match the `grid`
+//! block in `assets/fonts/manifest.json`. The [`atlas_matches_metrics`](tests) test pins the
+//! `include_bytes!`d blob's length to `ATLAS_W * ATLAS_H`, so a generator/metrics drift fails
+//! `cargo test` rather than corrupting glyphs at runtime.
 //!
 //! ## The pure seam
 //!
-//! All layout/measure math — glyph advance, line width, anchor positioning, and the cell → NDC
-//! expansion — lives in free fns ([`measure`], [`layout_cells`]) so it is unit-testable without a
-//! GPU, exactly the `overlay_quads` / `marker_for` pattern. [`TextRenderer::render`] is the only
-//! GPU-touching code and is exercised by the offscreen `viz-runner`, not the no-GPU CI matrix.
+//! All layout/measure math — glyph advance, line width, anchor positioning, and the glyph → NDC +
+//! atlas-UV expansion — lives in free fns ([`measure`], [`layout_glyphs`]) so it is unit-testable
+//! without a GPU, exactly the `overlay_quads` / `marker_for` pattern. [`TextRenderer::render`] is the
+//! only GPU-touching code and is exercised by the offscreen `viz-runner`, not the no-GPU CI matrix.
 
 use wgpu::util::DeviceExt;
 
@@ -61,123 +64,73 @@ pub struct TextItem {
     pub alpha: f32,
 }
 
-/// The bitmap font: a 5-wide × 7-tall cell grid per glyph, bit-packed one `u8` per row (the low 5
-/// bits, MSB = leftmost column). Only the glyphs the in-match UI needs are baked: A–Z, 0–9, and a
-/// little punctuation (space, `:`, `/`, `-`, `.`, `%`, `+`). Lowercase maps to uppercase (the UI is
-/// all-caps), and any unknown glyph renders as blank (advancing like a space) so a host can never
-/// panic the renderer with an odd character.
-pub mod glyph {
-    /// Cell grid dimensions (columns × rows) of one glyph.
-    pub const COLS: usize = 5;
-    pub const ROWS_PER_GLYPH: usize = 7;
+// ---- Font-atlas metrics — the contract with tools/fonts/gen_hud_font.py ------------------------
+//
+// A fixed-cell monospace grid: glyph `cp` lives at index `cp - FIRST_CP`, laid out row-major across
+// `ATLAS_COLS` columns. These MUST match the `grid` block in `assets/fonts/manifest.json`.
 
-    /// One bit-packed glyph: 7 rows, low 5 bits each (MSB = leftmost column, bit set = lit cell).
-    pub type Bitmap = [u8; ROWS_PER_GLYPH];
+/// First codepoint baked into the atlas (ASCII space).
+pub const FIRST_CP: u32 = 0x20;
+/// Last codepoint baked into the atlas (ASCII tilde).
+pub const LAST_CP: u32 = 0x7E;
+/// Number of glyphs in the atlas (printable ASCII).
+pub const GLYPH_COUNT: u32 = LAST_CP - FIRST_CP + 1; // 95
+/// Atlas grid columns / rows.
+pub const ATLAS_COLS: u32 = 16;
+pub const ATLAS_ROWS: u32 = 6; // ceil(95 / 16)
+/// One cell's pixel size in the atlas.
+pub const CELL_W: u32 = 28;
+pub const CELL_H: u32 = 44;
+/// Full atlas pixel size.
+pub const ATLAS_W: u32 = ATLAS_COLS * CELL_W; // 448
+pub const ATLAS_H: u32 = ATLAS_ROWS * CELL_H; // 264
 
-    /// A blank glyph (space / unknown) — advances but lights no cell.
-    pub const BLANK: Bitmap = [0; ROWS_PER_GLYPH];
+/// The baked R8 coverage atlas (raw `ATLAS_W * ATLAS_H` bytes, one luminance byte per texel). Raw
+/// (not PNG) so the render crate needs no image-decode dependency.
+const ATLAS_BYTES: &[u8] = include_bytes!("../../assets/fonts/hud_atlas.gray");
 
-    /// Look up the bitmap for a character. Lowercase folds to uppercase; unknown → [`BLANK`].
-    pub fn bitmap(c: char) -> Bitmap {
-        let c = c.to_ascii_uppercase();
-        match c {
-            ' ' => BLANK,
-            'A' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
-            'B' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
-            'C' => [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
-            'D' => [0b11100, 0b10010, 0b10001, 0b10001, 0b10001, 0b10010, 0b11100],
-            'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
-            'F' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
-            'G' => [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111],
-            'H' => [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
-            'I' => [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
-            'J' => [0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100],
-            'K' => [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
-            'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
-            'M' => [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
-            'N' => [0b10001, 0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001],
-            'O' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-            'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
-            'Q' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
-            'R' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
-            'S' => [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110],
-            'T' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
-            'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
-            'V' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
-            'W' => [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001],
-            'X' => [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
-            'Y' => [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
-            'Z' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
-            '0' => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
-            '1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
-            '2' => [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111],
-            '3' => [0b11111, 0b00010, 0b00100, 0b00010, 0b00001, 0b10001, 0b01110],
-            '4' => [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
-            '5' => [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
-            '6' => [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
-            '7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
-            '8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
-            '9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
-            ':' => [0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b00000],
-            '/' => [0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000],
-            '-' => [0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000],
-            '.' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100],
-            '%' => [0b11001, 0b11010, 0b00010, 0b00100, 0b01000, 0b01011, 0b10011],
-            '+' => [0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000],
-            _ => BLANK,
-        }
-    }
+/// A glyph cell's width:height ratio — the monospace advance per character is this fraction of the
+/// cell height (`px_size`). 28/44 ≈ 0.636, so strings are a touch tighter than the old 6/7 bitmap
+/// advance (less panel overflow, never more).
+const GLYPH_ASPECT: f32 = CELL_W as f32 / CELL_H as f32;
 
-    /// Whether `(col, row)` is a lit cell in `bitmap`. `col` is 0 (left) .. `COLS`, `row` is 0 (top)
-    /// .. `ROWS_PER_GLYPH`.
-    #[inline]
-    pub fn is_lit(bitmap: &Bitmap, col: usize, row: usize) -> bool {
-        if col >= COLS || row >= ROWS_PER_GLYPH {
-            return false;
-        }
-        // MSB of the low 5 bits is the leftmost column.
-        let mask = 1u8 << (COLS - 1 - col);
-        bitmap[row] & mask != 0
+/// Map a character to its zero-based atlas glyph index, or `None` if it is not a drawable glyph
+/// (out of the printable ASCII range — it still advances like a space, but emits no quad). ASCII
+/// space itself maps to `None` here too: its atlas cell is blank, so skipping the quad is both
+/// correct and cheaper.
+pub fn glyph_index(c: char) -> Option<u32> {
+    let cp = c as u32;
+    if cp <= FIRST_CP || cp > LAST_CP {
+        // `<= FIRST_CP` folds space (and any control char) into "advance only, no quad".
+        None
+    } else {
+        Some(cp - FIRST_CP)
     }
 }
 
-/// One blank column of spacing between adjacent glyphs, expressed in cells. The glyph is [`COLS`]
-/// (5) cells wide, so each character advances 6 cells. Named so the measure math and the cell
-/// layout agree by construction.
-const GLYPH_SPACING_CELLS: usize = 1;
-
-/// Total cell advance of one character (glyph width + inter-glyph gap).
-const ADVANCE_CELLS: usize = glyph::COLS + GLYPH_SPACING_CELLS;
-
-/// The size in NDC of a single bitmap cell for a string drawn at `px_size` on a viewport of the given
-/// `aspect` (width / height). The cell **height** is the glyph height divided across
-/// [`ROWS_PER_GLYPH`] rows; the **width** is that same height divided by `aspect`, so a cell that is
-/// square in NDC on a square viewport stays square *in pixels* on a wide one (NDC-x covers more pixels
-/// than NDC-y when `aspect > 1`). Without this, every glyph stretches horizontally by `aspect` on the
-/// typical wide desktop window — the chief reason the HUD read as amateurish. Pure — no GPU. Returned
-/// as `(cell_w, cell_h)`.
+/// The size in NDC of one glyph cell for a string drawn at `px_size` on a viewport of the given
+/// `aspect` (width / height). The cell **height** is `px_size`; the **width** is `px_size *
+/// GLYPH_ASPECT` divided by `aspect`, so a glyph keeps its true 28:44 proportion *in pixels* on a
+/// wide window instead of stretching horizontally (the chief reason the old HUD read as amateurish).
+/// Pure — no GPU. Returned as `(cell_w, cell_h)`.
 pub fn cell_size(px_size: f32, aspect: f32) -> (f32, f32) {
-    let cell_h = px_size / glyph::ROWS_PER_GLYPH as f32;
+    let cell_h = px_size;
     // Guard a degenerate aspect (zero-height surface mid-resize) so we never divide by ~0.
     let a = if aspect.abs() < 1e-6 { 1.0 } else { aspect };
-    (cell_h / a, cell_h)
+    (px_size * GLYPH_ASPECT / a, cell_h)
 }
 
 /// The NDC bounding-box size `(width, height)` of `text` rendered at `px_size` on a viewport of the
-/// given `aspect` (width / height). Width counts a full [`ADVANCE_CELLS`] per character but trims the
-/// trailing inter-glyph gap so the box hugs the last glyph; height is exactly `px_size`. The width is
-/// aspect-corrected (see [`cell_size`]) so it is the true on-screen footprint, which is what callers
-/// rely on to lay out / anchor a string. An empty string measures to `(0, 0)`. Pure (no GPU) — the
-/// testable measure seam.
+/// given `aspect` (width / height). Monospace: width is `char_count` full cell advances (each cell
+/// already carries its inter-glyph bearing), aspect-corrected (see [`cell_size`]); height is exactly
+/// `px_size`. An empty string measures to `(0, 0)`. Pure (no GPU) — the testable measure seam.
 pub fn measure(text: &str, px_size: f32, aspect: f32) -> (f32, f32) {
     let n = text.chars().count();
     if n == 0 {
         return (0.0, 0.0);
     }
     let (cell_w, _) = cell_size(px_size, aspect);
-    // n glyphs each ADVANCE_CELLS wide, minus the trailing gap (no glyph follows the last).
-    let width_cells = n * ADVANCE_CELLS - GLYPH_SPACING_CELLS;
-    (width_cells as f32 * cell_w, px_size)
+    (n as f32 * cell_w, px_size)
 }
 
 /// The top-left NDC corner of the string box, given its `pos`, measured size, and [`Anchor`]. Pure
@@ -193,31 +146,46 @@ pub fn anchor_top_left(pos: [f32; 2], size: (f32, f32), anchor: Anchor) -> [f32;
     }
 }
 
-/// One lit cell, expanded to an NDC quad ready to upload. `repr(C)` + `Pod` so it streams straight
-/// into the per-instance vertex buffer; the field order MUST match `text.wgsl`'s instance attributes
-/// and the `vertex_attr_array` in [`TextRenderer::new`].
+/// One glyph, expanded to an NDC quad + its atlas-UV rect, ready to upload. `repr(C)` + `Pod` so it
+/// streams straight into the per-instance vertex buffer; the field order MUST match `text.wgsl`'s
+/// instance attributes and the `vertex_attr_array` in [`TextRenderer::new`].
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct CellInstance {
+pub struct GlyphInstance {
     /// Cell center in NDC.
     pub cx: f32,
     pub cy: f32,
-    /// Cell half-extent in NDC (square cells).
+    /// Cell half-extent in NDC.
     pub hw: f32,
     pub hh: f32,
+    /// Atlas UV of the cell's top-left corner ([0,1]).
+    pub u0: f32,
+    pub v0: f32,
+    /// Atlas UV size of one cell ([0,1]).
+    pub du: f32,
+    pub dv: f32,
     pub r: f32,
     pub g: f32,
     pub b: f32,
     pub alpha: f32,
 }
 
-/// Expand one [`TextItem`] into its lit-cell NDC quads on a viewport of the given `aspect`
+/// The atlas UV rect (origin + size) of glyph `index`. Pure — the cell grid math, unit-tested.
+fn glyph_uv(index: u32) -> ([f32; 2], [f32; 2]) {
+    let col = index % ATLAS_COLS;
+    let row = index / ATLAS_COLS;
+    let du = 1.0 / ATLAS_COLS as f32;
+    let dv = 1.0 / ATLAS_ROWS as f32;
+    ([col as f32 * du, row as f32 * dv], [du, dv])
+}
+
+/// Expand one [`TextItem`] into its per-glyph NDC quads on a viewport of the given `aspect`
 /// (width / height). Pure (no GPU, no sim) — the testable layout seam. Glyphs lay out left-to-right
-/// from the anchored top-left corner; each character advances [`ADVANCE_CELLS`] aspect-corrected
-/// cells (see [`cell_size`]); each lit bitmap cell becomes one [`CellInstance`] whose half-extents
-/// keep it square in pixels. Unknown characters and spaces light no cell but still advance, so
-/// spacing is stable. An empty string yields no cells.
-pub fn layout_cells(item: &TextItem, aspect: f32) -> Vec<CellInstance> {
+/// from the anchored top-left corner; each character advances one aspect-corrected cell (see
+/// [`cell_size`]); each drawable glyph becomes one [`GlyphInstance`] carrying its atlas-UV rect.
+/// Spaces and out-of-range characters advance but emit no quad, so spacing is stable. An empty
+/// string yields no glyphs.
+pub fn layout_glyphs(item: &TextItem, aspect: f32) -> Vec<GlyphInstance> {
     let size = measure(&item.text, item.px_size, aspect);
     if size.0 <= 0.0 {
         return Vec::new();
@@ -228,35 +196,33 @@ pub fn layout_cells(item: &TextItem, aspect: f32) -> Vec<CellInstance> {
 
     let mut out = Vec::new();
     for (gi, ch) in item.text.chars().enumerate() {
-        let bitmap = glyph::bitmap(ch);
-        // Left edge of this glyph's cell box, in NDC (+x right).
-        let glyph_x = ox + (gi * ADVANCE_CELLS) as f32 * cell_w;
-        for row in 0..glyph::ROWS_PER_GLYPH {
-            for col in 0..glyph::COLS {
-                if !glyph::is_lit(&bitmap, col, row) {
-                    continue;
-                }
-                // Cell center: column steps +x from the glyph's left edge; row steps -y from the
-                // box top (row 0 is the top of the glyph).
-                let cx = glyph_x + (col as f32 + 0.5) * cell_w;
-                let cy = oy - (row as f32 + 0.5) * cell_h;
-                out.push(CellInstance {
-                    cx,
-                    cy,
-                    hw: cell_w * 0.5,
-                    hh: cell_h * 0.5,
-                    r,
-                    g,
-                    b,
-                    alpha: item.alpha,
-                });
-            }
-        }
+        let Some(index) = glyph_index(ch) else {
+            continue; // space / unknown: advance only
+        };
+        let ([u0, v0], [du, dv]) = glyph_uv(index);
+        // Cell center: column steps +x from the anchored left edge; the row is one line tall, so the
+        // center sits half a cell below the box top (+y up → top is larger y).
+        let cx = ox + (gi as f32 + 0.5) * cell_w;
+        let cy = oy - cell_h * 0.5;
+        out.push(GlyphInstance {
+            cx,
+            cy,
+            hw: cell_w * 0.5,
+            hh: cell_h * 0.5,
+            u0,
+            v0,
+            du,
+            dv,
+            r,
+            g,
+            b,
+            alpha: item.alpha,
+        });
     }
     out
 }
 
-/// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-cell half-size).
+/// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-glyph half-size).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct QuadVertex {
@@ -282,9 +248,9 @@ const QUAD_VERTS: [QuadVertex; 6] = [
 
 const INITIAL_CAP: usize = 256;
 
-/// Screen-space text renderer. Owns its own pipeline + buffers (separate from the unit/HUD/overlay/
-/// radial passes so they never contend for a shader). Alpha-blended LOAD pass: composites over the
-/// already-rendered frame.
+/// Screen-space text renderer. Owns its own pipeline + buffers + font-atlas texture (separate from
+/// the unit/HUD/overlay/radial passes so they never contend for a shader). Alpha-blended LOAD pass:
+/// composites over the already-rendered frame.
 ///
 /// Usage: [`queue`](TextRenderer::queue) one or more strings during a frame, then call
 /// [`render`](TextRenderer::render) once to flush them all in a single LOAD pass. The queue is
@@ -294,6 +260,13 @@ pub struct TextRenderer {
     quad_buf: wgpu::Buffer,
     instance_buf: wgpu::Buffer,
     instance_cap: usize,
+    /// The font-atlas texture + sampler bind group (group 0 of the pipeline).
+    atlas_bind_group: wgpu::BindGroup,
+    /// The atlas texture, kept so the raw coverage bytes can be uploaded lazily on the first
+    /// [`render`](TextRenderer::render) (the construction path has only a `device`, not a `queue`).
+    atlas_tex: wgpu::Texture,
+    /// Whether the atlas coverage bytes have been written to [`atlas_tex`](Self::atlas_tex) yet.
+    atlas_uploaded: bool,
     /// Strings queued this frame (drained by [`render`](TextRenderer::render)).
     queued: Vec<TextItem>,
     /// Viewport aspect (width / height) used to keep glyphs square in pixels. Set once per frame by
@@ -303,17 +276,80 @@ pub struct TextRenderer {
 }
 
 impl TextRenderer {
-    /// Build the text pipeline against the swapchain `surface_format`. The `device` is borrowed
-    /// (D19). Alpha blending so glyph cells composite over the frame.
+    /// Build the text pipeline against the swapchain `surface_format`, allocating the font-atlas R8
+    /// texture. The `device` is borrowed (D19); the atlas coverage bytes are uploaded lazily on the
+    /// first [`render`](TextRenderer::render) (the only path that has a `queue`). Alpha blending so
+    /// glyphs composite over the frame.
     pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gonedark.text_shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("text.wgsl").into()),
         });
 
+        // --- font atlas texture (R8 coverage); bytes written lazily on first render() ---
+        let atlas_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gonedark.text_atlas"),
+            size: wgpu::Extent3d {
+                width: ATLAS_W,
+                height: ATLAS_H,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let atlas_view = atlas_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("gonedark.text_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+        let bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("gonedark.text_atlas_bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let atlas_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gonedark.text_atlas_bg"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gonedark.text_pipeline_layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -323,14 +359,16 @@ impl TextRenderer {
             attributes: &wgpu::vertex_attr_array![0 => Float32x2],
         };
         let instance_layout = wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<CellInstance>() as u64,
+            array_stride: std::mem::size_of::<GlyphInstance>() as u64,
             step_mode: wgpu::VertexStepMode::Instance,
-            // 1=center(vec2), 2=half(vec2), 3=color(vec3), 4=alpha(f32).
+            // 1=center(vec2), 2=half(vec2), 3=uv0(vec2), 4=uv_size(vec2), 5=color(vec3), 6=alpha(f32).
             attributes: &wgpu::vertex_attr_array![
                 1 => Float32x2,
                 2 => Float32x2,
-                3 => Float32x3,
-                4 => Float32
+                3 => Float32x2,
+                4 => Float32x2,
+                5 => Float32x3,
+                6 => Float32
             ],
         };
 
@@ -372,7 +410,7 @@ impl TextRenderer {
         let instance_cap = INITIAL_CAP;
         let instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gonedark.text_instance_vbo"),
-            size: (instance_cap * std::mem::size_of::<CellInstance>()) as u64,
+            size: (instance_cap * std::mem::size_of::<GlyphInstance>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -382,9 +420,40 @@ impl TextRenderer {
             quad_buf,
             instance_buf,
             instance_cap,
+            atlas_bind_group,
+            atlas_tex,
+            atlas_uploaded: false,
             queued: Vec::new(),
             aspect: 1.0,
         }
+    }
+
+    /// Upload the baked R8 coverage atlas into the texture, once. Called on the first
+    /// [`render`](Self::render) (the construction path has no `queue`); a no-op thereafter.
+    fn ensure_atlas_uploaded(&mut self, queue: &wgpu::Queue) {
+        if self.atlas_uploaded {
+            return;
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.atlas_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            ATLAS_BYTES,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(ATLAS_W),
+                rows_per_image: Some(ATLAS_H),
+            },
+            wgpu::Extent3d {
+                width: ATLAS_W,
+                height: ATLAS_H,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.atlas_uploaded = true;
     }
 
     /// Set the viewport aspect (width / height) for this frame's glyph layout so text stays square in
@@ -425,9 +494,9 @@ impl TextRenderer {
         self.queued.len()
     }
 
-    /// Flush all queued strings: expand each to its lit cells, upload, and record one LOAD render
+    /// Flush all queued strings: expand each to its glyph quads, upload, and record one LOAD render
     /// pass so the text composites over the already-rendered frame. Drains the queue (so the next
-    /// frame starts empty) even when nothing is drawn. No-op (beyond draining) if no cells result.
+    /// frame starts empty) even when nothing is drawn. No-op (beyond draining) if no glyphs result.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
@@ -436,22 +505,24 @@ impl TextRenderer {
     ) {
         let items = std::mem::take(&mut self.queued);
         let aspect = self.aspect;
-        let cells: Vec<CellInstance> = items.iter().flat_map(|it| layout_cells(it, aspect)).collect();
-        if cells.is_empty() {
+        let glyphs: Vec<GlyphInstance> =
+            items.iter().flat_map(|it| layout_glyphs(it, aspect)).collect();
+        if glyphs.is_empty() {
             return;
         }
+        self.ensure_atlas_uploaded(queue);
 
-        if cells.len() > self.instance_cap {
-            let new_cap = cells.len().next_power_of_two();
+        if glyphs.len() > self.instance_cap {
+            let new_cap = glyphs.len().next_power_of_two();
             self.instance_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gonedark.text_instance_vbo"),
-                size: (new_cap * std::mem::size_of::<CellInstance>()) as u64,
+                size: (new_cap * std::mem::size_of::<GlyphInstance>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             self.instance_cap = new_cap;
         }
-        queue.write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(&cells));
+        queue.write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(&glyphs));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gonedark.text_encoder"),
@@ -474,9 +545,10 @@ impl TextRenderer {
                 occlusion_query_set: None,
             });
             pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.atlas_bind_group, &[]);
             pass.set_vertex_buffer(0, self.quad_buf.slice(..));
             pass.set_vertex_buffer(1, self.instance_buf.slice(..));
-            pass.draw(0..QUAD_VERTS.len() as u32, 0..cells.len() as u32);
+            pass.draw(0..QUAD_VERTS.len() as u32, 0..glyphs.len() as u32);
         }
         queue.submit(std::iter::once(encoder.finish()));
     }
@@ -486,7 +558,7 @@ impl TextRenderer {
 mod tests {
     //! `render` is the float boundary, so f32 layout math is fair game. `TextRenderer::new` needs a
     //! real `wgpu::Device` (no display in CI), so the pipeline path is untested; the testable
-    //! layout/measure math is factored into [`measure`], [`anchor_top_left`], and [`layout_cells`].
+    //! layout/measure math is factored into [`measure`], [`anchor_top_left`], and [`layout_glyphs`].
 
     use super::*;
 
@@ -503,53 +575,48 @@ mod tests {
         }
     }
 
-    // ---- glyph table ----
+    // ---- atlas / metrics contract ----
 
     #[test]
-    fn lowercase_folds_to_uppercase() {
-        assert_eq!(glyph::bitmap('a'), glyph::bitmap('A'));
-        assert_eq!(glyph::bitmap('z'), glyph::bitmap('Z'));
+    fn atlas_matches_metrics() {
+        // The baked atlas blob length MUST equal the grid metrics — a guard against the generator
+        // and these consts drifting (which would shear every glyph's UV).
+        assert_eq!(GLYPH_COUNT, LAST_CP - FIRST_CP + 1);
+        assert!(ATLAS_COLS * ATLAS_ROWS >= GLYPH_COUNT, "grid holds every glyph");
+        assert_eq!(ATLAS_W, ATLAS_COLS * CELL_W);
+        assert_eq!(ATLAS_H, ATLAS_ROWS * CELL_H);
+        assert_eq!(
+            ATLAS_BYTES.len(),
+            (ATLAS_W * ATLAS_H) as usize,
+            "raw R8 atlas size must match ATLAS_W*ATLAS_H — regenerate with `pnpm assets:font`"
+        );
     }
 
     #[test]
-    fn space_and_unknown_are_blank() {
-        assert_eq!(glyph::bitmap(' '), glyph::BLANK);
-        assert_eq!(glyph::bitmap('~'), glyph::BLANK);
-        assert_eq!(glyph::bitmap('\u{1F600}'), glyph::BLANK);
+    fn glyph_index_covers_printable_ascii_and_folds_space() {
+        assert_eq!(glyph_index(' '), None, "space advances but emits no quad");
+        assert_eq!(glyph_index('!'), Some(1)); // 0x21 - 0x20
+        assert_eq!(glyph_index('A'), Some('A' as u32 - FIRST_CP));
+        assert_eq!(glyph_index('a'), Some('a' as u32 - FIRST_CP));
+        assert_eq!(glyph_index('~'), Some(GLYPH_COUNT - 1));
+        assert_eq!(glyph_index('\u{1F600}'), None, "out-of-range emits no quad");
+        assert_eq!(glyph_index('\n'), None, "control char emits no quad");
     }
 
     #[test]
-    fn known_glyphs_light_some_cells() {
-        // Every printable label glyph must have at least one lit cell (else it's invisible).
-        for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:/-.%+".chars() {
-            let bm = glyph::bitmap(c);
-            let lit: usize = (0..glyph::ROWS_PER_GLYPH)
-                .flat_map(|row| (0..glyph::COLS).map(move |col| (col, row)))
-                .filter(|&(col, row)| glyph::is_lit(&bm, col, row))
-                .count();
-            assert!(lit > 0, "glyph {c:?} lights no cells");
+    fn every_glyph_uv_lies_inside_the_atlas() {
+        for idx in 0..GLYPH_COUNT {
+            let ([u0, v0], [du, dv]) = glyph_uv(idx);
+            assert!(u0 >= 0.0 && u0 + du <= 1.0 + EPS, "u in [0,1] for glyph {idx}");
+            assert!(v0 >= 0.0 && v0 + dv <= 1.0 + EPS, "v in [0,1] for glyph {idx}");
         }
     }
 
     #[test]
-    fn is_lit_reads_left_to_right_msb_first() {
-        // Row pattern 0b10000 lights only the leftmost column (col 0), nothing else.
-        let bm: glyph::Bitmap = [0b10000, 0, 0, 0, 0, 0, 0];
-        assert!(glyph::is_lit(&bm, 0, 0), "col 0 (leftmost) is lit");
-        for col in 1..glyph::COLS {
-            assert!(!glyph::is_lit(&bm, col, 0), "col {col} is dark");
-        }
-        // 0b00001 lights only the rightmost column (col 4).
-        let bm2: glyph::Bitmap = [0b00001, 0, 0, 0, 0, 0, 0];
-        assert!(glyph::is_lit(&bm2, glyph::COLS - 1, 0), "rightmost lit");
-        assert!(!glyph::is_lit(&bm2, 0, 0), "leftmost dark");
-    }
-
-    #[test]
-    fn is_lit_out_of_range_is_false() {
-        let bm: glyph::Bitmap = [0b11111; 7];
-        assert!(!glyph::is_lit(&bm, glyph::COLS, 0), "col past width");
-        assert!(!glyph::is_lit(&bm, 0, glyph::ROWS_PER_GLYPH), "row past height");
+    fn distinct_glyphs_get_distinct_uv_origins() {
+        let a = glyph_uv(glyph_index('A').unwrap()).0;
+        let b = glyph_uv(glyph_index('B').unwrap()).0;
+        assert_ne!(a, b);
     }
 
     // ---- measure ----
@@ -566,20 +633,18 @@ mod tests {
     }
 
     #[test]
-    fn single_glyph_width_is_glyph_cols() {
-        // One glyph: COLS cells wide (no trailing inter-glyph gap).
+    fn single_glyph_width_is_one_cell() {
         let (cell_w, _) = cell_size(0.07, 1.0);
         let (w, _) = measure("A", 0.07, 1.0);
-        assert!((w - glyph::COLS as f32 * cell_w).abs() < EPS);
+        assert!((w - cell_w).abs() < EPS);
     }
 
     #[test]
-    fn width_grows_by_advance_per_extra_glyph() {
+    fn width_grows_by_one_cell_per_extra_glyph() {
         let (cell_w, _) = cell_size(0.07, 1.0);
         let (w1, _) = measure("A", 0.07, 1.0);
         let (w2, _) = measure("AB", 0.07, 1.0);
-        // Adding one glyph adds exactly ADVANCE_CELLS cells of width.
-        assert!((w2 - w1 - ADVANCE_CELLS as f32 * cell_w).abs() < EPS);
+        assert!((w2 - w1 - cell_w).abs() < EPS, "monospace advance is one cell");
     }
 
     #[test]
@@ -590,22 +655,30 @@ mod tests {
         assert!((h2 - 2.0 * h1).abs() < EPS, "double size → double height");
     }
 
+    #[test]
+    fn space_counts_toward_width_but_not_glyphs() {
+        // Measure counts every char (monospace), but layout emits no quad for the space.
+        let (w_ab, _) = measure("AB", 0.07, 1.0);
+        let (w_a_b, _) = measure("A B", 0.07, 1.0);
+        let (cell_w, _) = cell_size(0.07, 1.0);
+        assert!((w_a_b - w_ab - cell_w).abs() < EPS, "the space is one cell of advance");
+    }
+
     // ---- aspect correction (the fat-text-on-a-wide-window fix) ----
 
     #[test]
-    fn glyph_cells_are_square_in_pixels_under_aspect() {
-        // The whole point: on a wide viewport a cell's NDC width is smaller than its NDC height by
-        // exactly `aspect`, so width·(screen_w/2) == height·(screen_h/2) — i.e. square *in pixels*.
+    fn glyph_cells_keep_native_proportion_in_pixels_under_aspect() {
+        // On a wide viewport the cell's NDC width is smaller than px_size*GLYPH_ASPECT by exactly
+        // `aspect`, so cell_w·aspect == px_size·GLYPH_ASPECT — i.e. the glyph keeps its 28:44 shape
+        // *in pixels*, never stretched.
         for aspect in [1.0_f32, 16.0 / 9.0, 21.0 / 9.0, 0.5] {
             let (cw, ch) = cell_size(0.07, aspect);
-            assert!((cw * aspect - ch).abs() < EPS, "cell_w·aspect == cell_h (square pixels)");
+            assert!((cw * aspect - ch * GLYPH_ASPECT).abs() < EPS);
         }
     }
 
     #[test]
     fn measure_width_shrinks_with_aspect_but_height_holds() {
-        // A wider viewport narrows the NDC footprint of a string (so it stops stretching / overflowing
-        // its panel), while the height — which is screen-height-relative — is unchanged.
         let (w_sq, h_sq) = measure("STANCE", 0.04, 1.0);
         let (w_wide, h_wide) = measure("STANCE", 0.04, 16.0 / 9.0);
         assert!(w_wide < w_sq, "string is narrower in NDC on a wide screen");
@@ -614,23 +687,19 @@ mod tests {
     }
 
     #[test]
-    fn layout_cells_are_narrower_but_same_count_under_aspect() {
-        // Aspect changes geometry, never which cells light: a wide viewport packs the same glyph cells
-        // into a narrower run (each cell half-width shrinks), so text reads correctly, not stretched.
-        let sq = layout_cells(&item("ABC", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
-        let wide = layout_cells(&item("ABC", [0.0, 0.0], 0.07, Anchor::TopLeft), 16.0 / 9.0);
-        assert_eq!(sq.len(), wide.len(), "same lit cells regardless of aspect");
-        assert!(wide[0].hw < sq[0].hw, "cells are narrower on a wide screen");
-        assert!((wide[0].hh - sq[0].hh).abs() < EPS, "cell height is aspect-independent");
+    fn layout_is_narrower_but_same_glyph_count_under_aspect() {
+        let sq = layout_glyphs(&item("ABC", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
+        let wide = layout_glyphs(&item("ABC", [0.0, 0.0], 0.07, Anchor::TopLeft), 16.0 / 9.0);
+        assert_eq!(sq.len(), wide.len(), "same glyphs regardless of aspect");
+        assert!(wide[0].hw < sq[0].hw, "glyphs are narrower on a wide screen");
+        assert!((wide[0].hh - sq[0].hh).abs() < EPS, "glyph height is aspect-independent");
     }
 
     #[test]
     fn degenerate_aspect_falls_back_to_square() {
-        // A zero / non-finite aspect (a mid-resize zero-height surface) must not divide by ~0 — it
-        // falls back to square so text still lays out finitely.
-        let (cw, ch) = cell_size(0.07, 0.0);
-        assert!((cw - ch).abs() < EPS, "zero aspect → square cells, not NaN/inf");
-        assert!(cw.is_finite());
+        let (cw, _ch) = cell_size(0.07, 0.0);
+        assert!(cw.is_finite(), "zero aspect must not divide by ~0");
+        assert!(cw > 0.0);
     }
 
     // ---- anchoring ----
@@ -653,10 +722,6 @@ mod tests {
     fn center_anchor_box_straddles_pos() {
         let size = measure("HI", 0.07, 1.0);
         let tl = anchor_top_left([0.0, 0.0], size, Anchor::Center);
-        // Top-left is up-and-left of center by half the box.
-        assert!((tl[0] + size.0 * 0.5).abs() < EPS);
-        assert!((tl[1] - size.1 * 0.5).abs() < EPS);
-        // The box center is exactly pos: top-left x + w/2 == 0, top-left y - h/2 == 0.
         assert!((tl[0] + size.0 * 0.5).abs() < EPS);
         assert!((tl[1] - size.1 * 0.5).abs() < EPS);
     }
@@ -665,104 +730,95 @@ mod tests {
     fn bottom_center_puts_pos_at_baseline_center() {
         let size = measure("HI", 0.07, 1.0);
         let tl = anchor_top_left([0.1, -0.4], size, Anchor::BottomCenter);
-        // Bottom edge (top y - h) is at pos.y, centered horizontally.
         assert!((tl[0] + size.0 * 0.5 - 0.1).abs() < EPS);
         assert!((tl[1] - size.1 - (-0.4)).abs() < EPS, "bottom edge at pos.y");
     }
 
-    // ---- layout_cells ----
+    // ---- layout_glyphs ----
 
     #[test]
-    fn empty_string_lays_out_no_cells() {
-        assert!(layout_cells(&item("", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0).is_empty());
+    fn empty_string_lays_out_no_glyphs() {
+        assert!(layout_glyphs(&item("", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0).is_empty());
     }
 
     #[test]
-    fn whitespace_only_lays_out_no_cells() {
-        assert!(layout_cells(&item("   ", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0).is_empty());
+    fn whitespace_only_lays_out_no_glyphs() {
+        assert!(layout_glyphs(&item("   ", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0).is_empty());
     }
 
     #[test]
-    fn cell_count_matches_lit_bitmap_cells() {
-        // "1" lights a known number of cells; the layout emits exactly that many instances.
-        let bm = glyph::bitmap('1');
-        let expected: usize = (0..glyph::ROWS_PER_GLYPH)
-            .flat_map(|row| (0..glyph::COLS).map(move |col| (col, row)))
-            .filter(|&(col, row)| glyph::is_lit(&bm, col, row))
-            .count();
-        let cells = layout_cells(&item("1", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
-        assert_eq!(cells.len(), expected);
+    fn glyph_count_matches_drawable_chars() {
+        // "A B" has 3 chars but only 2 drawable glyphs (the space emits nothing).
+        let g = layout_glyphs(&item("A B", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
+        assert_eq!(g.len(), 2);
     }
 
     #[test]
-    fn space_in_middle_advances_without_cells() {
-        // "A A" emits the same cells as "AA" would for the two A's, but the second A is shifted one
-        // extra ADVANCE further right (the space). So total cell count == 2 * cells('A').
-        let a_cells = layout_cells(&item("A", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0).len();
-        let two = layout_cells(&item("A A", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
-        assert_eq!(two.len(), 2 * a_cells, "space lights nothing but advances");
+    fn space_advances_without_a_glyph() {
+        // "A A" emits two glyphs, the second shifted two cells right (its own + the space).
+        let g = layout_glyphs(&item("A A", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
+        assert_eq!(g.len(), 2);
+        let (cell_w, _) = cell_size(0.07, 1.0);
+        assert!((g[1].cx - g[0].cx - 2.0 * cell_w).abs() < EPS, "second A is two cells over");
     }
 
     #[test]
-    fn cells_carry_item_color_and_alpha() {
+    fn glyphs_carry_item_color_and_alpha() {
         let mut it = item("8", [0.0, 0.0], 0.07, Anchor::TopLeft);
         it.color = [0.2, 0.4, 0.6];
         it.alpha = 0.5;
-        let cells = layout_cells(&it, 1.0);
-        assert!(!cells.is_empty());
-        for c in &cells {
-            assert_eq!([c.r, c.g, c.b], [0.2, 0.4, 0.6]);
-            assert!((c.alpha - 0.5).abs() < EPS);
+        let g = layout_glyphs(&it, 1.0);
+        assert!(!g.is_empty());
+        for q in &g {
+            assert_eq!([q.r, q.g, q.b], [0.2, 0.4, 0.6]);
+            assert!((q.alpha - 0.5).abs() < EPS);
         }
     }
 
     #[test]
-    fn cells_stay_within_the_measured_box() {
-        // Every lit cell's quad lies inside the string's anchored bounding box (a layout sanity
-        // bound the host relies on when it anchors text to a button rect).
+    fn glyphs_carry_their_atlas_uv() {
+        let g = layout_glyphs(&item("A", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
+        let ([u0, v0], [du, dv]) = glyph_uv(glyph_index('A').unwrap());
+        assert!((g[0].u0 - u0).abs() < EPS);
+        assert!((g[0].v0 - v0).abs() < EPS);
+        assert!((g[0].du - du).abs() < EPS);
+        assert!((g[0].dv - dv).abs() < EPS);
+    }
+
+    #[test]
+    fn glyphs_stay_within_the_measured_box() {
         let it = item("SCORE", [0.0, 0.0], 0.07, Anchor::Center);
         let size = measure(&it.text, it.px_size, 1.0);
         let [ox, oy] = anchor_top_left(it.pos, size, it.anchor);
-        let cells = layout_cells(&it, 1.0);
-        assert!(!cells.is_empty());
-        for c in &cells {
-            // The box spans [ox, ox+w] in x and [oy-h, oy] in y. Each cell's extent must fit.
-            assert!(c.cx - c.hw >= ox - EPS, "cell left within box");
-            assert!(c.cx + c.hw <= ox + size.0 + EPS, "cell right within box");
-            assert!(c.cy + c.hh <= oy + EPS, "cell top within box");
-            assert!(c.cy - c.hh >= oy - size.1 - EPS, "cell bottom within box");
+        let g = layout_glyphs(&it, 1.0);
+        assert!(!g.is_empty());
+        for q in &g {
+            assert!(q.cx - q.hw >= ox - EPS, "glyph left within box");
+            assert!(q.cx + q.hw <= ox + size.0 + EPS, "glyph right within box");
+            assert!(q.cy + q.hh <= oy + EPS, "glyph top within box");
+            assert!(q.cy - q.hh >= oy - size.1 - EPS, "glyph bottom within box");
         }
     }
 
     #[test]
-    fn cells_are_screen_space_only() {
+    fn glyphs_are_screen_space_only() {
         // Fairness guard (invariant #6): text quads are NDC chrome, never world positions.
         let it = item("KILLS: 42", [0.0, 0.0], 0.06, Anchor::Center);
-        for c in layout_cells(&it, 1.0) {
-            assert!(c.cx.is_finite() && c.cy.is_finite());
-            assert!(c.cx >= -1.5 && c.cx <= 1.5, "cx in NDC range");
-            assert!(c.cy >= -1.5 && c.cy <= 1.5, "cy in NDC range");
+        for q in layout_glyphs(&it, 1.0) {
+            assert!(q.cx.is_finite() && q.cy.is_finite());
+            assert!(q.cx >= -1.5 && q.cx <= 1.5, "cx in NDC range");
+            assert!(q.cy >= -1.5 && q.cy <= 1.5, "cy in NDC range");
         }
     }
 
     #[test]
-    fn first_glyph_top_left_cell_sits_at_anchor_corner() {
-        // The leftmost-topmost lit cell of the first glyph aligns to the anchored top-left corner.
-        let it = item("E", [0.0, 0.0], 0.07, Anchor::TopLeft); // 'E' lights its top-left cell
+    fn first_glyph_sits_at_anchor_corner() {
+        let it = item("E", [0.0, 0.0], 0.07, Anchor::TopLeft);
         let (cell_w, cell_h) = cell_size(it.px_size, 1.0);
-        let cells = layout_cells(&it, 1.0);
-        // 'E' row 0 col 0 is lit → first cell center is half a cell in from the top-left corner.
-        let top_left = cells
-            .iter()
-            .min_by(|a, b| {
-                // smallest cy first (topmost), then smallest cx (leftmost)
-                b.cy.partial_cmp(&a.cy)
-                    .unwrap()
-                    .then(a.cx.partial_cmp(&b.cx).unwrap())
-            })
-            .unwrap();
-        assert!((top_left.cx - cell_w * 0.5).abs() < EPS, "first cell half-cell from left");
-        assert!((top_left.cy - (-cell_h * 0.5)).abs() < EPS, "first cell half-cell down from top");
+        let g = layout_glyphs(&it, 1.0);
+        assert_eq!(g.len(), 1);
+        assert!((g[0].cx - cell_w * 0.5).abs() < EPS, "first glyph half-cell from left");
+        assert!((g[0].cy - (-cell_h * 0.5)).abs() < EPS, "first glyph half-cell down from top");
     }
 
     #[test]

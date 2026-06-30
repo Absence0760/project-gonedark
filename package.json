@@ -30,6 +30,7 @@
     "android:checksum": "scripts/android-checksum.sh",
 
     "assets:models": "blender --background --python tools/models/gen_models.py",
+    "assets:font": "python3 tools/fonts/gen_hud_font.py",
 
     "test": "cargo test --workspace --exclude gonedark-pal-android",
     "lint": "cargo clippy --workspace --exclude gonedark-pal-android -- -D warnings",

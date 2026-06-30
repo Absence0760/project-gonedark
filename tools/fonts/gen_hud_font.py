@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""Generate the HUD glyph atlas — the anti-aliased font that replaces the legacy 5x7 bitmap.
+
+Script-not-binary (decisions.md D41/D46): this generator + the manifest entry are the committed
+source of record; the atlas is a regenerable artifact. It renders a fixed-cell **monospace** atlas
+of the printable ASCII range (0x20..0x7E) from a system TTF using ImageMagick — one glyph centred in
+each cell of a COLS x ROWS grid — and emits:
+
+  * assets/fonts/hud_atlas.png    — the packed atlas (8-bit grey; for inspection / diffing)
+  * assets/fonts/hud_atlas.gray   — raw R8 alpha bytes (ATLAS_W * ATLAS_H), what render/ include_bytes!s
+                                    so the render crate needs NO png-decode dependency (keeps it
+                                    wgpu + bytemuck only, the D-note in text.rs)
+  * assets/fonts/manifest.json    — provenance (source / license / sha256), the auditable record
+
+The grid metrics below are the contract with `render::text` — the FONT_* consts there MUST match.
+Monospace means a single advance and trivial cell -> UV math (no per-glyph metrics table needed).
+
+Run: `pnpm assets:font` (or `python3 tools/fonts/gen_hud_font.py`). Requires ImageMagick on PATH.
+"""
+
+import hashlib
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+# ---- The contract with render::text (FONT_* consts there must match) ----------------------------
+FONT_PATH = "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Bold.ttf"
+FONT_NAME = "Liberation Mono Bold"
+FONT_LICENSE = "SIL OFL 1.1"  # Liberation fonts are OFL-licensed — redistribution-clean.
+FIRST_CP = 0x20  # space
+LAST_CP = 0x7E  # tilde
+GLYPH_COUNT = LAST_CP - FIRST_CP + 1  # 95 printable ASCII glyphs
+COLS = 16
+ROWS = (GLYPH_COUNT + COLS - 1) // COLS  # 6
+CELL_W = 28
+CELL_H = 44
+POINTSIZE = 34
+BASELINE_NUDGE = 3  # push the glyph down a few px so descenders (g, p, y) fit the cell
+ATLAS_W = COLS * CELL_W  # 448
+ATLAS_H = ROWS * CELL_H  # 264
+
+OUT_DIR = Path(__file__).resolve().parents[2] / "assets" / "fonts"
+
+
+def draw_escape(ch: str) -> str:
+    """Escape one glyph for an ImageMagick `-draw "text x,y '...'"` single-quoted string.
+
+    `-draw text` does C-style backslash escaping and is single-quote delimited, so a literal
+    backslash and a literal apostrophe must be escaped. Everything else (including `%`, which only
+    bites `-annotate`/`label:`, not `-draw text`) passes through literally.
+    """
+    return ch.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def render_glyph(ch: str, out_png: Path) -> None:
+    """Render one glyph, white on black, centred in a CELL_W x CELL_H tile (argv — no shell)."""
+    subprocess.run(
+        [
+            "magick",
+            "-size", f"{CELL_W}x{CELL_H}",
+            "xc:black",
+            "-font", FONT_PATH,
+            "-pointsize", str(POINTSIZE),
+            "-fill", "white",
+            "-gravity", "center",
+            "-draw", f"text 0,{BASELINE_NUDGE} '{draw_escape(ch)}'",
+            "-depth", "8",
+            str(out_png),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def main() -> int:
+    if not Path(FONT_PATH).exists():
+        print(f"font not found: {FONT_PATH}", file=sys.stderr)
+        return 1
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    tiles_dir = OUT_DIR / "_tiles"
+    tiles_dir.mkdir(exist_ok=True)
+
+    # One tile per codepoint, named by zero-based glyph index so the montage order is exact.
+    tile_paths = []
+    for idx in range(GLYPH_COUNT):
+        ch = chr(FIRST_CP + idx)
+        tile = tiles_dir / f"g{idx:03d}.png"
+        render_glyph(ch, tile)
+        tile_paths.append(str(tile))
+
+    # Pack tiles into a COLS x ROWS grid with zero spacing/border → exact CELL grid.
+    atlas_png = OUT_DIR / "hud_atlas.png"
+    subprocess.run(
+        [
+            "montage", *tile_paths,
+            "-tile", f"{COLS}x{ROWS}",
+            "-geometry", f"{CELL_W}x{CELL_H}+0+0",
+            "-background", "black",
+            "-depth", "8",
+            str(atlas_png),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    # Flatten to a single-channel 8-bit grey atlas of the exact atlas size, then dump raw R8 bytes.
+    atlas_gray = OUT_DIR / "hud_atlas.gray"
+    subprocess.run(
+        [
+            "magick", str(atlas_png),
+            "-colorspace", "Gray",
+            "-resize", f"{ATLAS_W}x{ATLAS_H}!",
+            "-depth", "8",
+            f"gray:{atlas_gray}",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    raw = atlas_gray.read_bytes()
+    expected = ATLAS_W * ATLAS_H
+    if len(raw) != expected:
+        print(f"raw atlas is {len(raw)} bytes, expected {expected}", file=sys.stderr)
+        return 1
+
+    # Clean up the per-glyph tiles (the atlas + raw + manifest are the committed artifacts).
+    for t in tile_paths:
+        Path(t).unlink()
+    tiles_dir.rmdir()
+
+    manifest = {
+        "note": (
+            "HUD glyph atlas, generated by tools/fonts/gen_hud_font.py (decisions.md D41/D46). "
+            "A fixed-cell monospace atlas of printable ASCII (0x20..0x7E); render::text uploads "
+            "hud_atlas.gray as an R8 texture and samples one cell per glyph. The FONT_* metrics in "
+            "render::text MUST match the grid fields below. Render-only; regenerate with "
+            "`pnpm assets:font`."
+        ),
+        "font": FONT_NAME,
+        "source": f"{FONT_NAME} ({FONT_PATH})",
+        "license": FONT_LICENSE,
+        "author": "Red Hat / Liberation fonts project (rendered via ImageMagick)",
+        "first_codepoint": FIRST_CP,
+        "glyph_count": GLYPH_COUNT,
+        "grid": {
+            "cols": COLS,
+            "rows": ROWS,
+            "cell_w": CELL_W,
+            "cell_h": CELL_H,
+            "atlas_w": ATLAS_W,
+            "atlas_h": ATLAS_H,
+            "pointsize": POINTSIZE,
+        },
+        "png_bytes": atlas_png.stat().st_size,
+        "png_sha256": hashlib.sha256(atlas_png.read_bytes()).hexdigest(),
+        "gray_bytes": len(raw),
+        "gray_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    (OUT_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+    print(f"atlas {ATLAS_W}x{ATLAS_H}  {GLYPH_COUNT} glyphs  {len(raw)} raw bytes")
+    print(f"gray sha256 {manifest['gray_sha256']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

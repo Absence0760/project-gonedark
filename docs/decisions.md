@@ -3403,3 +3403,39 @@ domain until an anti-tank counter exists") is corrected — the counter now exis
 across all matches (compile-exhaustive), codec round-trip for tag 4, a 2-peer lockstep agreement that
 produces and fights an AT unit, and the measured AT↔tank (frontal pen) + AT↔rifle (loses equal-cost)
 balance assertions.
+
+## D74 — Visual-design foundation: a central theme + an anti-aliased font atlas (replaces the 5×7 bitmap)
+
+**Decision.** Stand up the renderer's first deliberate art-direction layer, advancing the
+[`roadmap.md`](roadmap.md) "visual-design pass … so it looks intentional, not greybox" backlog item.
+Two pieces: **(1)** a single `render::theme` module is now the source of truth for the palette, type
+scale, and spacing — the ~15 hand-tuned colour consts scattered across `lib.rs`, the `overlay`
+`QuadRole` map, and the per-panel HUD modules now reference it, and its ink/panel/text/amber ramp is
+aligned to the desktop title-shell palette (`app/src/shell.rs`) so the egui chrome and the in-match
+`wgpu` HUD finally share one identity. **(2)** the in-match text pass swaps its legacy **5×7 uppercase
+bitmap** for a **fixed-cell monospace anti-aliased font atlas** (printable ASCII 0x20–0x7E, lowercase
++ punctuation), baked by `tools/fonts/gen_hud_font.py` from Liberation Mono Bold via ImageMagick.
+
+**Why.** The 5×7 bitmap — uppercase-only, no punctuation, one solid quad per lit cell — was the single
+biggest "this is a prototype" tell in the HUD, and the per-module colour sprawl meant nothing read as
+art-directed. The user explicitly asked to push the look toward near-final, which reopens the original
+"baked bitmap, no font deps" call documented in `render::text`. This keeps the *spirit* of that call —
+the atlas ships as **raw R8 coverage bytes** (`assets/fonts/hud_atlas.gray`) `include_bytes!`d straight
+in, so the render crate stays **`wgpu` + `bytemuck` only**: no png-decode, no font-rasterisation, no
+atlas-management crate. Script-not-binary ([D41](decisions.md)/[D46](decisions.md)): the generator +
+the `assets/fonts/manifest.json` provenance entry (source / OFL licence / sha256) are the committed
+record; the atlas is a regenerable artifact (`pnpm assets:font`).
+
+**Determinism.** None — this is entirely the render-side float boundary ([invariant #1/#4](../CLAUDE.md)).
+No `core`/sim type changes, no new sim reads; the per-tick checksum stream is untouched. Text remains
+NDC chrome carrying no world position ([invariant #6](../CLAUDE.md)).
+
+**Consequences.** `render::text` keeps its public API (`queue`/`render`/`set_aspect`/`measure`/`Anchor`),
+so every caller (radial, readout, panels, overlay, post-match) is unchanged; it now owns an R8 atlas
+texture uploaded lazily on the first `render` (the construction path has no `queue`). The `FONT_*`
+metrics in `render::text` are the contract with the generator and are pinned by a test against the
+baked blob's length. Monospace advance is a touch tighter than the old bitmap (less panel overflow,
+never more). Verified on the RTX 3070 via the offscreen `viz-runner` (all visual assertions green; the
+radial/readout/command-bar labels render crisp mixed-case). Follow-on visual work (world lighting +
+tonemap/fog, post-processing, HUD icons via Inkscape, ground/detail textures via ImageMagick, richer
+greybox meshes via Blender) builds on this `theme` foundation.
