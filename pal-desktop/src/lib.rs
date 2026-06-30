@@ -262,6 +262,11 @@ pub struct DesktopInput {
     // mechanics): C toggles crouch, V starts a reload. One-shot, cleared on drain.
     crouch_latch: bool,
     reload_latch: bool,
+    // Embodied aim-down-sight / zoom: a HELD/level signal driven by the RIGHT mouse button while
+    // embodied (the genre-standard ADS button). The command view consumes the right button as an
+    // edge (`command_latch`) and ignores `aim`; the embodied view consumes `aim` (held) and ignores
+    // `command_click` — so the two never collide on one button. Tracks the button level, not an edge.
+    aim_held: bool,
 }
 
 impl Default for DesktopInput {
@@ -289,6 +294,7 @@ impl Default for DesktopInput {
             upgrade_latch: false,
             crouch_latch: false,
             reload_latch: false,
+            aim_held: false,
         }
     }
 }
@@ -373,9 +379,17 @@ impl DesktopInput {
                     self.release_latch = true; // edge: drag/tap completed
                 }
             }
-            // Right-click commands the current selection — latch the press edge (with the cursor
-            // already tracked in `pointer`). Released state needs no signal.
-            MouseButton::Right if pressed => self.command_latch = true,
+            // Right button: in the command view its PRESS edge commands the current selection (D42,
+            // latched with the cursor already tracked in `pointer`); while embodied its HELD level is
+            // aim-down-sight / zoom. Track both — the consumers are mode-exclusive (the engine reads
+            // `command_click` only in the command view and `aim` only while embodied), so one button
+            // is unambiguous.
+            MouseButton::Right => {
+                if pressed {
+                    self.command_latch = true;
+                }
+                self.aim_held = pressed;
+            }
             _ => {}
         }
     }
@@ -480,6 +494,9 @@ impl DesktopInput {
             move_axis: (mx, my),
             look_axis: (self.look_dx, self.look_dy),
             fire: self.fire,
+            // Aim-down-sight / zoom rides the right button (held); the command view ignores `aim`,
+            // so it never collides with the right-click command edge above.
+            aim: self.aim_held,
             crouch_pressed: self.crouch_latch,
             reload_pressed: self.reload_latch,
             // No on-screen touch controls on desktop — the embodied GUI is Android-only.

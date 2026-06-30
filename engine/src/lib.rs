@@ -80,6 +80,11 @@ mod fire;
 /// `Command::Locomote` (camera-relative twin-stick), quantizing the world heading to `Fixed` at
 /// the boundary (invariant #1, exactly like `fire`).
 mod locomote;
+/// Embodied **sniper / zoom gun-sight** seam (tank embodiment P9). Owns the pure zoom math —
+/// input→zoom-intent gate (`zoom_active`), the FOV interpolation (`step_zoom_t` / `zoom_fov_deg`),
+/// and the magnification readout (`zoom_magnification`). Presentation/input only (invariants #4/#5):
+/// it narrows the embodied camera FOV + drives the `render::scope` overlay, never touching the sim.
+mod scope;
 /// On-screen FPS touch controls (the COD-style embodied HUD). Owns the pure `TouchControls` seam:
 /// raw multi-touch points → embodied intents (`move_axis`/look/fire/crouch/reload/surface) + the
 /// screen-space layout the renderer draws. The testable logic `pal-android` can't host. Public so
@@ -350,11 +355,19 @@ const EMBODIED_FOV_DEG: f32 = 60.0;
 const EMBODIED_NEAR: f32 = 0.05;
 const EMBODIED_FAR: f32 = 500.0;
 
-/// The embodied perspective projection alone (no view), for the viewport. The weapon viewmodel is
-/// placed in *view space*, so it needs the projection by itself (D44).
-fn embodied_proj(width: u32, height: u32) -> Mat4 {
+/// The embodied perspective projection alone (no view), for the viewport, at an explicit `fov_deg`
+/// (so the sniper/zoom gun-sight can narrow it; P9). The weapon viewmodel is placed in *view space*,
+/// so it needs the projection by itself (D44).
+fn embodied_proj_fov(width: u32, height: u32, fov_deg: f32) -> Mat4 {
     let aspect = width.max(1) as f32 / height.max(1) as f32;
-    Mat4::perspective_rh(EMBODIED_FOV_DEG.to_radians(), aspect, EMBODIED_NEAR, EMBODIED_FAR)
+    Mat4::perspective_rh(fov_deg.to_radians(), aspect, EMBODIED_NEAR, EMBODIED_FAR)
+}
+
+/// The embodied perspective projection at the un-zoomed base FOV ([`EMBODIED_FOV_DEG`]). Test-only:
+/// production paths thread the live (possibly zoomed) FOV via [`embodied_proj_fov`].
+#[cfg(test)]
+fn embodied_proj(width: u32, height: u32) -> Mat4 {
+    embodied_proj_fov(width, height, EMBODIED_FOV_DEG)
 }
 
 /// Whether the embodied first-person frame draws the handheld rifle viewmodel (W5/D44) for a
@@ -374,7 +387,24 @@ fn embodied_shows_rifle_viewmodel(kind: UnitKind) -> bool {
 /// Embodied perspective view-projection (free fn — eye position + yaw/pitch + viewport only, no
 /// `Game`/device needed): eye at the possessed unit's position, raised by `EYE_HEIGHT`, looking out
 /// along the current `yaw` (heading) and `pitch` (up/down tilt, radians; +up, −down).
+/// Test-only base-FOV wrapper; production paths thread the live FOV via [`embodied_view_proj_fov`].
+#[cfg(test)]
 fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, pitch: f32, width: u32, height: u32) -> Mat4 {
+    embodied_view_proj_fov(eye_x, eye_y, yaw, pitch, width, height, EMBODIED_FOV_DEG)
+}
+
+/// Embodied perspective view-projection at an explicit `fov_deg` — the zoom-aware twin of
+/// [`embodied_view_proj`] (the sniper/zoom gun-sight narrows `fov_deg` toward [`scope::SCOPED_FOV_DEG`],
+/// P9). Same eye/look construction; only the projection's field of view changes.
+fn embodied_view_proj_fov(
+    eye_x: f32,
+    eye_y: f32,
+    yaw: f32,
+    pitch: f32,
+    width: u32,
+    height: u32,
+    fov_deg: f32,
+) -> Mat4 {
     let eye = Vec3::new(eye_x, eye_y, EYE_HEIGHT);
     // Spherical look direction: pitch tilts the (yaw) heading up/down about the horizon. Already
     // unit-length (cos²+sin² folds to 1), but normalize defensively against fp drift.
@@ -382,7 +412,7 @@ fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, pitch: f32, width: u32, 
     let dir = Vec3::new(yaw.cos() * cp, yaw.sin() * cp, sp).normalize();
     let target = eye + dir;
 
-    let proj = embodied_proj(width, height);
+    let proj = embodied_proj_fov(width, height, fov_deg);
     let view = Mat4::look_at_rh(eye, target, Vec3::Z);
     proj * view
 }
@@ -1144,6 +1174,14 @@ pub struct Game {
     /// pitch never enters fire/locomote, only the first-person view direction.
     pitch: f32,
 
+    /// Sniper/zoom gun-sight interpolation `t` in `[0, 1]` (tank embodiment P9): `0` = hip (base
+    /// FOV), `1` = full aim-down-sight (`scope::SCOPED_FOV_DEG`). Eased each frame toward the held
+    /// ADS input by [`scope::step_zoom_t`]. PRESENTATION ONLY — it narrows the embodied camera FOV
+    /// and drives the `render::scope` overlay; it never enters the sim and adds no checksum surface
+    /// (invariants #4/#5/#7). A narrower FOV reveals *less* of the world, so the zoom stays fair
+    /// (invariant #6).
+    aim_zoom_t: f32,
+
     /// Command-camera ground focus (the world point centered on screen) and framed half-extent
     /// (zoom). Presentation only — the RTS camera pans (`cam_focus_*`) and zooms (`cam_half_extent`)
     /// with no effect on the sim. Updated from `move_axis`/`scroll` each command-view frame.
@@ -1780,6 +1818,7 @@ impl Game {
             },
             yaw: 0.0,
             pitch: EMBODIED_PITCH_DEFAULT,
+            aim_zoom_t: 0.0,
             cam_focus_x: 0.0,
             cam_focus_y: 0.0,
             cam_half_extent: TOPDOWN_HALF_EXTENT,
@@ -2155,7 +2194,14 @@ impl Game {
             let p = self.player_pos();
             (fixed_to_f32(p.x), fixed_to_f32(p.y))
         };
-        embodied_view_proj(px, py, self.yaw, self.pitch, width, height)
+        embodied_view_proj_fov(px, py, self.yaw, self.pitch, width, height, self.embodied_fov_deg())
+    }
+
+    /// The embodied camera FOV (degrees) for this frame — the base [`EMBODIED_FOV_DEG`] narrowed by
+    /// the current sniper/zoom gun-sight `aim_zoom_t` (tank embodiment P9). At hip it is the base
+    /// FOV; aiming down sight eases it toward [`scope::SCOPED_FOV_DEG`]. Pure presentation.
+    fn embodied_fov_deg(&self) -> f32 {
+        scope::zoom_fov_deg(EMBODIED_FOV_DEG, scope::SCOPED_FOV_DEG, self.aim_zoom_t)
     }
 
     /// Command-view orthographic view-projection at the current pan focus + zoom — thin wrapper
@@ -2551,6 +2597,18 @@ impl Game {
         // up); pitch is clamped shy of vertical (see `integrate_look_*`).
         self.yaw = integrate_look_yaw(self.yaw, look_axis.0);
         self.pitch = integrate_look_pitch(self.pitch, look_axis.1);
+
+        // Sniper/zoom gun-sight (tank embodiment P9, presentation only): ease the embodied camera
+        // FOV toward the held aim-down-sight input. The zoom engages only while embodied in a unit
+        // with a gun-sight (the tank — an independent turret), so infantry embodiment and the command
+        // view are unaffected and the FOV simply restores to base when ADS is released or you eject.
+        // `aim_zoom_t` is host presentation state — it never enters the sim (invariants #4/#5), and a
+        // narrower FOV reveals *less* of the world, so the zoom stays fair (invariant #6).
+        let has_scope = self.embodied
+            && self.sim.world.is_alive(self.player)
+            && self.sim.world.weapon[self.player.index as usize].turret_speed > 0;
+        let zoom_active = scope::zoom_active(self.embodied, has_scope, input.aim);
+        self.aim_zoom_t = scope::step_zoom_t(self.aim_zoom_t, zoom_active, dt_secs, scope::ZOOM_RATE);
 
         if self.embodied {
             // The whole embodied input→command pipeline lives in the pure `embodied_input_commands`
@@ -3021,7 +3079,9 @@ impl Game {
         if self.embodied
             && embodied_shows_rifle_viewmodel(self.sim.world.unit_kind[self.player.index as usize])
         {
-            let proj = embodied_proj(width, height).to_cols_array_2d();
+            // Match the world camera's current FOV (the sniper/zoom gun-sight may have narrowed it,
+            // P9) so the view-space gun never drifts from the world it sits in.
+            let proj = embodied_proj_fov(width, height, self.embodied_fov_deg()).to_cols_array_2d();
             let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
             self.renderer
                 .render_world_weapon(device, queue, &scene_view, &proj, flash, sw, sh);
@@ -3215,6 +3275,25 @@ impl Game {
                 let shell_label = "AP";
                 self.renderer
                     .render_tank_hud(device, queue, view, &state, shell_label);
+            }
+
+            // 8'''. Sniper/zoom gun-sight overlay (tank embodiment P9): while aiming down sight the
+            // first-person FOV has narrowed (above), so draw the scope chrome — the vignette tunnel,
+            // aperture ring, crosshair, center dot, and the magnification readout — over the dark
+            // frame. Gated on `aim_zoom_t` (only the tank ever zooms, since the FOV step gates on an
+            // independent turret), so infantry embodiment is unaffected. A read-only presentation
+            // overlay with no world position: it narrows (never widens) the visible frustum and
+            // surfaces no strategic-map intel (invariant #6); the renderer never mutates the sim
+            // (invariant #4).
+            if self.aim_zoom_t > scope::SCOPE_VISIBLE_T {
+                let scope_state = gonedark_render::scope::ScopeState {
+                    aspect: (width.max(1) as f32) / (height.max(1) as f32),
+                    zoom_t: self.aim_zoom_t,
+                };
+                let magnification =
+                    scope::zoom_magnification(EMBODIED_FOV_DEG, self.embodied_fov_deg());
+                self.renderer
+                    .render_scope(device, queue, view, &scope_state, magnification);
             }
         }
 
