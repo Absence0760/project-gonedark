@@ -32,6 +32,7 @@
     "assets:models": "blender --background --python tools/models/gen_models.py",
     "assets:font": "python3 tools/fonts/gen_hud_font.py",
     "assets:textures": "python3 tools/textures/gen_textures.py",
+    "assets:icons": "python3 tools/icons/gen_icons.py",
 
     "test": "cargo test --workspace --exclude gonedark-pal-android",
     "lint": "cargo clippy --workspace --exclude gonedark-pal-android -- -D warnings",

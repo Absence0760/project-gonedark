@@ -106,6 +106,12 @@ pub mod command_bar;
 /// can `queue` strings (e.g. radial action names, summary numbers, button labels) and flush them.
 pub mod text;
 
+/// Screen-space icon pass. Owns `IconRenderer`: a baked icon-atlas LOAD pass (the visual sibling of
+/// `text`) that draws small tactical icons (infantry / armor / build / upgrade / resources / …) at an
+/// NDC position with a size + tint, beside the otherwise text-only command-view labels. Public so the
+/// host and HUD modules can `queue` icons and flush them.
+pub mod icon;
+
 /// Cooked greybox mesh loading + GPU upload (D44). Owns the cooked-`.mesh` parser, the embedded
 /// model library ([`mesh::MeshLibrary`]), the depth-texture helper, and the pure `model_matrix`
 /// transform math the 3D mesh passes (weapon viewmodel + command-view unit tokens) build on.
@@ -666,6 +672,10 @@ pub struct Renderer {
     /// (unit/enemy/point counts) as a final LOAD pass over the command frame. Other hosts still own
     /// their own `TextRenderer` for menus/summaries; this one is dedicated to the command readouts.
     text: text::TextRenderer,
+    /// The screen-space icon pass, owned here so the command-view chrome (the command bar's
+    /// train/upgrade buttons) can draw a small tactical icon beside each label as a LOAD pass. The
+    /// visual sibling of [`text`](Self::text); command-view chrome only (invariant #6).
+    icon: icon::IconRenderer,
     /// Embedded greybox mesh library (D44): the cooked `.mesh` for every [`mesh::ModelKind`],
     /// parsed + uploaded once. The weapon viewmodel and command-view unit tokens draw from it.
     mesh_lib: mesh::MeshLibrary,
@@ -815,6 +825,9 @@ impl Renderer {
         // The detection-tell overlay likewise reuses the command view-projection camera layout.
         let detection = detection::DetectionRenderer::new(device, surface_format, &camera_layout);
         let text = text::TextRenderer::new(device, surface_format);
+        // The icon pass shares the text pass's construction shape (own pipeline + lazily-uploaded
+        // atlas); it draws the command-bar button icons as a LOAD pass over the command frame.
+        let icon = icon::IconRenderer::new(device, surface_format);
         // Cooked greybox meshes + the shared 3D mesh pipeline + an initial (placeholder) depth
         // buffer; the depth buffer is resized to the surface on the first mesh pass (D44).
         let mesh_lib = mesh::MeshLibrary::load(device);
@@ -845,6 +858,7 @@ impl Renderer {
             world,
             terrain,
             text,
+            icon,
             mesh_lib,
             mesh_pipeline,
             depth_view,
@@ -957,6 +971,8 @@ impl Renderer {
         // frame. Pure presentation — it never reaches the sim (invariant #1/#4).
         self.chrome_aspect = width.max(1) as f32 / height.max(1) as f32;
         self.text.set_aspect(self.chrome_aspect);
+        // The icon pass aspect-corrects the same way so command-bar icons stay square in pixels.
+        self.icon.set_aspect(self.chrome_aspect);
 
         // Pick the draw set: the fog layer applies visibility (and the dark-frame avatar-only
         // rule) — see `render/src/fog.rs` (worker 1).
@@ -1390,6 +1406,15 @@ impl Renderer {
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
         }
         self.text.render(device, queue, view);
+        // A small tactical icon at each button's left inset (a unit-type / upgrade glyph beside the
+        // label) so the bar reads as designed chrome, not text-only. Aspect-corrected to stay square
+        // in pixels (the bar's NDC layout is filled by the engine from the same hit rects). Drawn as a
+        // LOAD pass over the labels — command-view chrome only (invariant #6).
+        self.icon.set_aspect(self.chrome_aspect);
+        for it in command_bar::command_bar_icons(bar) {
+            self.icon.queue_item(it);
+        }
+        self.icon.render(device, queue, view);
     }
 
     /// Draw the in-match **objective HUD** (PvE WS-A) — a thin top-left panel showing the current

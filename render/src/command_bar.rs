@@ -12,6 +12,7 @@
 //! GPU-free, so it is host-unit-tested below.
 
 use crate::command_panel::PanelLabel;
+use crate::icon::{IconItem, IconKind};
 use crate::overlay::{OverlayQuad, QuadRole};
 use crate::text::Anchor;
 
@@ -27,6 +28,13 @@ const RIM: [f32; 3] = [0.30, 0.34, 0.44];
 const LABEL_COLOR: [f32; 3] = crate::theme::BONE;
 /// NDC rim thickness added around each button's fill (a crisp border, like the panels' rim).
 const RIM_PAD: f32 = 0.006;
+
+/// Icon cell height in NDC — a touch larger than [`LABEL_SIZE`] so the glyph reads as an icon, not a
+/// letter. The icon pass keeps it square in pixels (aspect-corrected at draw time).
+const ICON_SIZE: f32 = 0.060;
+/// Where the icon sits horizontally inside a button: a fraction of the button's half-width left of
+/// center, so it tucks into the left inset and clears the centered label (even the longest, "UPGRADE").
+const ICON_CENTER_FRAC: f32 = 0.78;
 
 /// One drawable command button: its center + half-extents in **NDC** (filled by the engine from its
 /// pixel hit rect) plus the label.
@@ -102,6 +110,40 @@ pub fn command_bar_labels(view: &CommandBarView) -> Vec<PanelLabel> {
         .collect()
 }
 
+/// Map a button label to the tactical icon that belongs beside it (and its tint). The engine fills
+/// labels from `command_touch::CommandButton::label` ("RIFLE" / "HEAVY" / "UPGRADE"); an unrecognised
+/// label gets no icon (returns `None`), so the bar degrades gracefully if the vocabulary grows. Unit-
+/// type buttons take the player-faction blue; the upgrade button takes the amber signal accent — both
+/// from `theme`, so the icon language matches the rest of the HUD. Pure + GPU-free → unit-tested.
+fn icon_for_label(label: &str) -> Option<(IconKind, [f32; 3])> {
+    match label {
+        "RIFLE" => Some((IconKind::Infantry, crate::theme::PLAYER)),
+        "HEAVY" => Some((IconKind::Armor, crate::theme::PLAYER)),
+        "UPGRADE" => Some((IconKind::Upgrade, crate::theme::AMBER)),
+        _ => None,
+    }
+}
+
+/// The bar's icons — one small glyph tucked into each button's left inset, beside its centered label.
+/// A button whose label has no mapped icon ([`icon_for_label`]) simply contributes none. Empty view ⇒
+/// no icons. The icon center sits `ICON_CENTER_FRAC` of the half-width left of the button center; the
+/// icon pass aspect-corrects the width so it stays square in pixels. Pure + GPU-free → unit-tested.
+pub fn command_bar_icons(view: &CommandBarView) -> Vec<IconItem> {
+    view.buttons
+        .iter()
+        .filter_map(|b| {
+            let (kind, tint) = icon_for_label(&b.label)?;
+            Some(IconItem {
+                kind,
+                pos: [b.ndc_x - b.half_x * ICON_CENTER_FRAC, b.ndc_y],
+                size: ICON_SIZE,
+                tint,
+                alpha: 1.0,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,6 +164,7 @@ mod tests {
         assert!(v.is_empty());
         assert!(command_bar_quads(&v).is_empty());
         assert!(command_bar_labels(&v).is_empty());
+        assert!(command_bar_icons(&v).is_empty());
     }
 
     #[test]
@@ -147,5 +190,60 @@ mod tests {
         assert_eq!(labels[0].text, "RIFLE");
         assert_eq!(labels[0].anchor, Anchor::Center);
         assert_eq!(labels[0].pos, [v.buttons[0].ndc_x, v.buttons[0].ndc_y]);
+    }
+
+    #[test]
+    fn each_known_button_gets_its_icon_tucked_left() {
+        let v = CommandBarView {
+            buttons: vec![btn("RIFLE"), btn("HEAVY"), btn("UPGRADE")],
+        };
+        let icons = command_bar_icons(&v);
+        assert_eq!(icons.len(), 3, "every mapped label gets one icon");
+        assert_eq!(icons[0].kind, IconKind::Infantry);
+        assert_eq!(icons[1].kind, IconKind::Armor);
+        assert_eq!(icons[2].kind, IconKind::Upgrade);
+        for (icon, b) in icons.iter().zip(&v.buttons) {
+            assert!(icon.pos[0] < b.ndc_x, "icon sits left of the button center");
+            assert!(
+                icon.pos[0] > b.ndc_x - b.half_x,
+                "icon stays inside the button's left edge"
+            );
+            assert_eq!(
+                icon.pos[1], b.ndc_y,
+                "icon is vertically centered in the button"
+            );
+            assert!(icon.size > 0.0);
+            assert_eq!(icon.alpha, 1.0);
+        }
+    }
+
+    #[test]
+    fn unit_icons_take_player_tint_upgrade_takes_amber() {
+        let v = CommandBarView {
+            buttons: vec![btn("RIFLE"), btn("UPGRADE")],
+        };
+        let icons = command_bar_icons(&v);
+        assert_eq!(
+            icons[0].tint,
+            crate::theme::PLAYER,
+            "unit button → faction blue"
+        );
+        assert_eq!(
+            icons[1].tint,
+            crate::theme::AMBER,
+            "upgrade button → amber accent"
+        );
+    }
+
+    #[test]
+    fn unknown_labels_contribute_no_icon() {
+        // A label outside the mapped vocabulary degrades to no icon (the bar still draws its box+label).
+        let v = CommandBarView {
+            buttons: vec![btn("RIFLE"), btn("MYSTERY"), btn("UPGRADE")],
+        };
+        let icons = command_bar_icons(&v);
+        assert_eq!(icons.len(), 2, "only the two recognised labels get icons");
+        assert_eq!(icons[0].kind, IconKind::Infantry);
+        assert_eq!(icons[1].kind, IconKind::Upgrade);
     }
 }
