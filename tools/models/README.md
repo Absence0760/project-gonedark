@@ -4,11 +4,22 @@ Scripted, license-clean greybox models for the publishable build — see
 [`decisions.md` D41](../../docs/decisions.md) and
 [`content-pipeline.md` §2/§5/§6](../../docs/content-pipeline.md).
 
-These are **placeholders**, not art: blocky primitives welded into one mesh per object,
-exported as `.glb` into a category subfolder under
-[`../../assets/models/`](../../assets/models/) with a license manifest. They read fine as
-top-down RTS tokens; the honest weak axis is eye-level FPS credibility (the two-view filter,
-§4) — that's the accepted placeholder trade, fixed later by the mid/hero art pass.
+These are **placeholders**, not art: primitives welded into one mesh per object, exported as
+`.glb` into a category subfolder under [`../../assets/models/`](../../assets/models/) with a
+license manifest. They read fine as top-down RTS tokens; the honest weak axis is eye-level FPS
+credibility (the two-view filter, §4) — that's the accepted placeholder trade, fixed later by
+the mid/hero art pass.
+
+A silhouette pass sharpens the eye-level read **within the same tri budget** (no LOD0 grows
+past the ~1200 infantry/tank ceiling): troopers carry a real neck + broad shoulder yoke
+tapering to a narrower waist with the forearms brought forward into a weapon-ready pose (so they
+read as a rifleman, not a coat-rack); the tank turrets seat on a ring foot with a sloped mantlet
++ coax MG; the rifle viewmodels gain a low-profile optic. The faction silhouette tells are
+preserved (US rounded helmet / long-flat Abrams + broad turret / M4 mag-forward; FR flat-brimmed
+SPECTRA / compact Leclerc + rear autoloader bustle + sight mast / FAMAS bullpup carry-handle).
+One budget note: at the chamfer's 40° angle limit, cylinder side edges stay un-beveled only at
+**≥10 facets** (a 9- or 8-gon's wider inter-facet angle trips the limit and bevels every edge,
+*adding* geometry) — so limbs/wheels/barrels stay at `verts=10`, rings at `12`.
 
 ## Layout
 

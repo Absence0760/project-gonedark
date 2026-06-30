@@ -379,28 +379,31 @@ def rgba(name):
 
 def build_trooper():
     mat = make_material("trooper", rgba("trooper"))  # olive
-    # Boxy humanoid, but with the silhouette tells that read as a soldier even at eye level: a
-    # rounded combat helmet capping the head, a chest-plate slab over the torso, and a backpack
-    # behind. Limbs taper (shoulders > forearms, thighs > calves) so it stops reading as a coat-rack.
+    # Boxy humanoid, proportioned to read as a soldier at eye level rather than a coat-rack: a
+    # narrow waist tapering up to a broad shoulder yoke (chest > hips), a real neck under a rounded
+    # combat helmet, a plate-carrier chest slab + backpack, and arms brought forward into a
+    # weapon-ready pose (forearms meet across the chest) so the silhouette reads "rifleman at the
+    # ready", not "arms hanging at the sides". Limbs taper (thighs > calves) and legs run full-length.
     parts = [
-        box((0.40, 0.24, 0.20), (0, 0, 0.75)),                 # hips
-        box((0.45, 0.26, 0.46), (0, 0, 0.98)),                 # lower torso
-        box((0.48, 0.30, 0.30), (0, -0.01, 1.30)),             # chest (plate carrier — bulkier, deeper)
-        box((0.36, 0.14, 0.30), (0, 0.20, 1.28)),              # front plate slab
-        box((0.30, 0.20, 0.40), (0, -0.20, 1.18)),             # backpack
-        sphere(0.15, (0, 0, 1.56), segments=10, rings=6),      # head
-        icosphere(0.18, (0, 0, 1.64), subdivisions=1),         # rounded combat helmet (faceted dome)
-        box((0.34, 0.30, 0.06), (0, 0.02, 1.71)),              # helmet brow / NVG-mount slab
-        cyl(0.10, 0.40, (0.12, 0, 0.55), verts=10),            # thigh R
-        cyl(0.10, 0.40, (-0.12, 0, 0.55), verts=10),           # thigh L
-        cyl(0.08, 0.40, (0.12, 0, 0.18), verts=10),            # calf R
-        cyl(0.08, 0.40, (-0.12, 0, 0.18), verts=10),           # calf L
-        box((0.16, 0.18, 0.10), (0.12, 0.04, 0.02)),           # boot R
-        box((0.16, 0.18, 0.10), (-0.12, 0.04, 0.02)),          # boot L
-        cyl(0.08, 0.34, (0.30, 0, 1.30), verts=10),            # upper arm R
-        cyl(0.08, 0.34, (-0.30, 0, 1.30), verts=10),           # upper arm L
-        cyl(0.06, 0.36, (0.30, 0.04, 0.96), rot=(math.radians(14), 0, 0), verts=10),   # forearm R
-        cyl(0.06, 0.36, (-0.30, 0.04, 0.96), rot=(math.radians(14), 0, 0), verts=10),  # forearm L
+        box((0.34, 0.24, 0.26), (0, 0, 0.82)),                 # hips / waist (narrow)
+        box((0.42, 0.27, 0.32), (0, 0, 1.08)),                 # midriff (widening up)
+        box((0.48, 0.32, 0.40), (0, -0.01, 1.40)),             # chest (plate carrier — bulkiest)
+        box((0.58, 0.32, 0.14), (0, -0.01, 1.58)),             # shoulder yoke (broad — the soldier read)
+        box((0.36, 0.14, 0.34), (0, 0.21, 1.40)),              # front plate slab
+        box((0.30, 0.20, 0.46), (0, -0.21, 1.32)),             # backpack
+        cyl(0.075, 0.12, (0, 0, 1.66), verts=8),               # neck
+        sphere(0.135, (0, 0, 1.76), segments=8, rings=5),      # head
+        icosphere(0.175, (0, 0, 1.80), subdivisions=1),        # rounded combat helmet (faceted dome)
+        box((0.34, 0.32, 0.06), (0, 0.02, 1.82)),              # helmet brow / NVG-mount slab
+        cyl(0.105, 0.84, (0.12, 0, 0.48), verts=10),           # leg R (single tapered limb)
+        cyl(0.105, 0.84, (-0.12, 0, 0.48), verts=10),          # leg L
+        box((0.16, 0.20, 0.10), (0.12, 0.05, 0.02)),           # boot R
+        box((0.16, 0.20, 0.10), (-0.12, 0.05, 0.02)),          # boot L
+        cyl(0.075, 0.34, (0.28, -0.02, 1.36), rot=(0, math.radians(10), 0), verts=10),  # upper arm R
+        cyl(0.075, 0.34, (-0.28, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10),  # upper arm L
+        # Forearms angled forward + inward so the hands meet across the chest (weapon-ready).
+        cyl(0.06, 0.36, (0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),    # forearm R
+        cyl(0.06, 0.36, (-0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm L
     ]
     return weld("trooper", parts, mat, bevel=0.02)
 
@@ -415,15 +418,18 @@ def build_tank():
     parts = [
         box((3.0, 1.6, 0.55), (0, 0, 0.62)),                   # upper hull
         box((0.9, 1.6, 0.34), (1.35, 0, 0.52), rot=(0, math.radians(22), 0)),  # sloped front glacis
+        box((0.55, 1.6, 0.38), (-1.45, 0, 0.60), rot=(0, math.radians(-18), 0)),  # rear hull plate (sloped)
         box((3.2, 0.45, 0.50), (0, 0.85, 0.35)),               # track R
         box((3.2, 0.45, 0.50), (0, -0.85, 0.35)),              # track L
         box((3.3, 0.50, 0.12), (0, 0.85, 0.62)),               # track guard / fender R
         box((3.3, 0.50, 0.12), (0, -0.85, 0.62)),              # track guard / fender L
     ]
     # Road wheels: faceted drums proud of each track — break the slab side into a running-gear read.
+    # Idler/sprocket at each end are slightly larger so the running gear reads front-to-back. Keep
+    # verts=10 — at 8 the 45° inter-facet angle trips the chamfer's 40° limit and bevels every edge.
     for side in (0.85, -0.85):
-        for i, x in enumerate((-1.1, -0.55, 0.0, 0.55, 1.1)):
-            parts.append(cyl(0.22, 0.12, (x, side, 0.24),
+        for x, r in ((-1.2, 0.26), (-0.6, 0.21), (0.0, 0.21), (0.6, 0.21), (1.2, 0.26)):
+            parts.append(cyl(r, 0.12, (x, side, 0.26),
                              rot=(math.radians(90), 0, 0), verts=10))
     return weld("tank", parts, mat, bevel=0.05)
 
@@ -436,10 +442,12 @@ def build_tank_turret():
     # yaw = turret_yaw therefore slews it about the ring. Barrel points +X (turret_yaw 0 == hull 0).
     mat = make_material("tank_turret", rgba("tank_turret"))  # dark green (matches the hull)
     parts = [
+        cyl(0.58, 0.12, (0, 0, 0.86), verts=12),               # ring base (drops into the hull socket)
         box((1.4, 1.2, 0.50), (-0.2, 0, 1.05)),                # turret box (centred behind the ring)
         box((0.55, 1.0, 0.34), (0.45, 0, 1.02), rot=(0, math.radians(-14), 0)),  # sloped gun mantlet
         box((0.9, 1.3, 0.22), (-0.45, 0, 0.98)),               # rear stowage bustle (overhangs)
         cyl(0.22, 0.16, (-0.45, 0.0, 1.38), verts=12),         # commander's cupola
+        cyl(0.10, 0.22, (-0.10, 0.40, 1.34), verts=8),         # coaxial / loader's MG mount
         cyl(0.10, 1.60, (1.2, 0, 1.05), rot=(0, math.radians(90), 0)),  # barrel, forward along +X
         cyl(0.13, 0.20, (0.55, 0, 1.05), rot=(0, math.radians(90), 0), verts=12),  # bore-evacuator collar
     ]
@@ -485,11 +493,14 @@ def build_weapon_rifle():
     parts = [
         box((0.46, 0.06, 0.11), (0.0, 0, 0)),                  # upper/lower receiver
         box((0.40, 0.05, 0.035), (0.0, 0, 0.082)),             # flat-top picatinny rail
-        cyl(0.03, 0.20, (0.26, 0, -0.01), rot=(0, math.radians(90), 0), verts=10),  # handguard
+        box((0.07, 0.05, 0.05), (-0.04, 0, 0.125)),            # optic body (low-profile red-dot)
+        box((0.05, 0.055, 0.025), (-0.04, 0, 0.16)),           # optic hood
+        cyl(0.032, 0.22, (0.26, 0, -0.012), rot=(0, math.radians(90), 0), verts=12),  # ribbed handguard
+        box((0.20, 0.066, 0.012), (0.26, 0, -0.05)),           # handguard underrail (M-LOK slab)
         cyl(0.018, 0.46, (0.42, 0, 0), rot=(0, math.radians(90), 0), verts=10),  # barrel
         box((0.02, 0.03, 0.07), (0.40, 0, 0.05)),              # front sight post
         cyl(0.035, 0.06, (0.64, 0, 0), rot=(0, math.radians(90), 0), verts=10),  # muzzle device
-        box((0.07, 0.05, 0.20), (-0.02, 0, -0.14)),            # magazine (curved STANAG read)
+        box((0.07, 0.05, 0.22), (-0.02, 0, -0.15), rot=(0, math.radians(8), 0)),  # magazine (canted STANAG)
         box((0.20, 0.05, 0.085), (-0.32, 0, 0.0)),             # collapsible stock
         box((0.06, 0.045, 0.05), (-0.20, 0, 0.05)),            # cheek riser
         box((0.06, 0.05, 0.14), (-0.10, 0, -0.10), rot=(0, math.radians(-14), 0)),  # grip
@@ -579,43 +590,57 @@ def build_barricade():
 
 
 def build_trooper_us():
-    # US infantry: ACH/ECH rounded helmet, plate-carrier bulked torso. Boxy greybox, olive.
+    # US infantry: ACH/ECH rounded helmet, plate-carrier bulked torso. Same proportioned skeleton as
+    # the base trooper (narrow waist → broad shoulder yoke, neck, weapon-ready arms), but bulkier
+    # through the chest/shoulders and a fuller rounded helmet — the US silhouette tell. Olive.
     mat = make_material("trooper_us", rgba("trooper_us"))
     parts = [
-        box((0.42, 0.26, 0.20), (0, 0, 0.75)),                 # hips
-        box((0.50, 0.30, 0.72), (0, 0, 1.10)),                 # torso (plate carrier — bulkier)
-        box((0.38, 0.16, 0.34), (0, 0.20, 1.22)),              # front plate slab
-        box((0.32, 0.22, 0.42), (0, -0.22, 1.16)),             # backpack
-        sphere(0.15, (0, 0, 1.58), segments=10, rings=6),      # head
-        icosphere(0.19, (0, 0, 1.64), subdivisions=1),         # rounded ACH/ECH combat helmet
-        box((0.40, 0.30, 0.07), (0, 0.02, 1.72)),              # helmet brow / NVG-mount slab
-        cyl(0.10, 0.70, (0.13, 0, 0.35)),                      # leg R
-        cyl(0.10, 0.70, (-0.13, 0, 0.35)),                     # leg L
-        box((0.17, 0.20, 0.10), (0.13, 0.04, 0.02)),           # boot R
-        box((0.17, 0.20, 0.10), (-0.13, 0.04, 0.02)),          # boot L
-        cyl(0.08, 0.60, (0.30, 0, 1.10), rot=(math.radians(8), 0, 0)),   # arm R
-        cyl(0.08, 0.60, (-0.30, 0, 1.10), rot=(math.radians(8), 0, 0)),  # arm L
+        box((0.36, 0.26, 0.26), (0, 0, 0.82)),                 # hips / waist
+        box((0.44, 0.29, 0.32), (0, 0, 1.08)),                 # midriff
+        box((0.52, 0.34, 0.42), (0, -0.01, 1.40)),             # chest (plate carrier — bulkiest)
+        box((0.62, 0.34, 0.15), (0, -0.01, 1.59)),             # shoulder yoke (broadest — US bulk)
+        box((0.40, 0.16, 0.36), (0, 0.22, 1.40)),              # front plate slab
+        box((0.32, 0.22, 0.46), (0, -0.22, 1.32)),             # backpack
+        cyl(0.08, 0.12, (0, 0, 1.66), verts=8),                # neck
+        sphere(0.14, (0, 0, 1.76), segments=8, rings=5),       # head
+        icosphere(0.185, (0, 0, 1.80), subdivisions=1),        # rounded ACH/ECH combat helmet
+        box((0.40, 0.32, 0.07), (0, 0.02, 1.82)),              # helmet brow / NVG-mount slab
+        cyl(0.11, 0.84, (0.13, 0, 0.48), verts=10),            # leg R (single tapered limb)
+        cyl(0.11, 0.84, (-0.13, 0, 0.48), verts=10),           # leg L
+        box((0.17, 0.20, 0.10), (0.13, 0.05, 0.02)),           # boot R
+        box((0.17, 0.20, 0.10), (-0.13, 0.05, 0.02)),          # boot L
+        cyl(0.08, 0.34, (0.30, -0.02, 1.36), rot=(0, math.radians(10), 0), verts=10),   # upper arm R
+        cyl(0.08, 0.34, (-0.30, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10),  # upper arm L
+        cyl(0.065, 0.36, (0.19, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm R
+        cyl(0.065, 0.36, (-0.19, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),  # forearm L
     ]
     return weld("trooper_us", parts, mat, bevel=0.02)
 
 
 def build_trooper_fr():
     # French infantry (FELIN): SPECTRA helmet (flatter, brimmed), slimmer profile, French green.
+    # Same proportioned skeleton as the base trooper, but narrower through the chest/shoulders and a
+    # flat brimmed helmet instead of a rounded dome — the French silhouette tell.
     mat = make_material("trooper_fr", rgba("trooper_fr"))
     parts = [
-        box((0.40, 0.24, 0.20), (0, 0, 0.75)),                 # hips
-        box((0.44, 0.26, 0.70), (0, 0, 1.10)),                 # torso (slimmer)
-        box((0.30, 0.14, 0.32), (0, 0.18, 1.20)),              # front plate slab (slimmer)
-        box((0.28, 0.18, 0.38), (0, -0.18, 1.16)),             # backpack
-        sphere(0.15, (0, 0, 1.58), segments=10, rings=6),      # head
-        cyl(0.18, 0.16, (0, 0, 1.66), verts=12),               # flatter SPECTRA helmet dome
-        box((0.40, 0.18, 0.05), (0.0, 0.10, 1.62)),            # brim accent (forward)
-        cyl(0.09, 0.70, (0.12, 0, 0.35)),                      # leg R
-        cyl(0.09, 0.70, (-0.12, 0, 0.35)),                     # leg L
-        box((0.16, 0.20, 0.10), (0.12, 0.04, 0.02)),           # boot R
-        box((0.16, 0.20, 0.10), (-0.12, 0.04, 0.02)),          # boot L
-        cyl(0.07, 0.62, (0.27, 0, 1.10), rot=(math.radians(8), 0, 0)),   # arm R
-        cyl(0.07, 0.62, (-0.27, 0, 1.10), rot=(math.radians(8), 0, 0)),  # arm L
+        box((0.32, 0.23, 0.26), (0, 0, 0.82)),                 # hips / waist (narrow)
+        box((0.40, 0.26, 0.32), (0, 0, 1.08)),                 # midriff
+        box((0.44, 0.29, 0.40), (0, -0.01, 1.40)),             # chest (slimmer carrier)
+        box((0.54, 0.29, 0.13), (0, -0.01, 1.58)),             # shoulder yoke (narrower — FR slim)
+        box((0.30, 0.14, 0.34), (0, 0.19, 1.40)),              # front plate slab (slimmer)
+        box((0.28, 0.19, 0.42), (0, -0.19, 1.30)),             # backpack
+        cyl(0.07, 0.12, (0, 0, 1.66), verts=8),                # neck
+        sphere(0.135, (0, 0, 1.75), segments=8, rings=5),      # head
+        cyl(0.185, 0.13, (0, 0, 1.80), verts=10),              # flatter SPECTRA helmet dome
+        box((0.40, 0.20, 0.05), (0.0, 0.11, 1.77)),            # brim accent (forward — the FR tell)
+        cyl(0.10, 0.84, (0.12, 0, 0.48), verts=10),            # leg R (single tapered limb)
+        cyl(0.10, 0.84, (-0.12, 0, 0.48), verts=10),           # leg L
+        box((0.16, 0.20, 0.10), (0.12, 0.05, 0.02)),           # boot R
+        box((0.16, 0.20, 0.10), (-0.12, 0.05, 0.02)),          # boot L
+        cyl(0.07, 0.34, (0.27, -0.02, 1.36), rot=(0, math.radians(10), 0), verts=10),   # upper arm R
+        cyl(0.07, 0.34, (-0.27, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10),  # upper arm L
+        cyl(0.06, 0.36, (0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),    # forearm R
+        cyl(0.06, 0.36, (-0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm L
     ]
     return weld("trooper_fr", parts, mat, bevel=0.02)
 
@@ -633,8 +658,9 @@ def build_tank_us():
         box((3.8, 0.56, 0.12), (0, -1.00, 0.62)),              # track guard / fender L
     ]
     for side in (1.00, -1.00):
-        for x in (-1.3, -0.78, -0.26, 0.26, 0.78, 1.3):
-            parts.append(cyl(0.23, 0.12, (x, side, 0.24),
+        for x, r in ((-1.55, 0.27), (-0.93, 0.23), (-0.31, 0.23),
+                     (0.31, 0.23), (0.93, 0.23), (1.55, 0.27)):
+            parts.append(cyl(r, 0.12, (x, side, 0.26),
                              rot=(math.radians(90), 0, 0), verts=10))  # road wheel
     return weld("tank_us", parts, mat, bevel=0.05)
 
@@ -644,10 +670,13 @@ def build_tank_turret_us():
     # barrel +X (turret_yaw 0 == hull 0); seated on the hull top (z≈0.85).
     mat = make_material("tank_turret_us", rgba("tank_turret_us"))
     parts = [
+        cyl(0.68, 0.12, (0, 0, 0.80), verts=12),               # ring base (drops into the hull socket)
         box((2.0, 1.7, 0.55), (-0.15, 0, 1.05)),               # broad flat turret
         box((0.7, 1.7, 0.30), (1.05, 0, 1.05), rot=(0, math.radians(-12), 0)),  # sloped gun mantlet
+        box((1.1, 1.5, 0.16), (-0.7, 0, 0.86)),                # rear turret bustle rack (low, broad)
         cyl(0.10, 2.10, (1.5, 0, 1.05), rot=(0, math.radians(90), 0)),  # long 120mm barrel, +X
         box((0.5, 0.5, 0.18), (-0.9, 0.5, 1.40)),              # commander's cupola/CITV
+        cyl(0.09, 0.22, (-0.5, -0.55, 1.42), verts=8),         # loader's M240 MG
         cyl(0.13, 0.20, (0.45, 0, 1.05), rot=(0, math.radians(90), 0), verts=12),  # bore-evacuator collar
     ]
     return weld("tank_turret_us", parts, mat, bevel=0.04)
@@ -659,14 +688,15 @@ def build_tank_fr():
     parts = [
         box((3.0, 1.7, 0.60), (0, 0, 0.58)),                   # compact hull
         box((0.9, 1.7, 0.34), (1.35, 0, 0.50), rot=(0, math.radians(24), 0)),  # steeper glacis
+        box((0.5, 1.7, 0.40), (-1.45, 0, 0.58), rot=(0, math.radians(-20), 0)),  # rear hull plate
         box((3.1, 0.46, 0.58), (0, 0.88, 0.36)),               # track R
         box((3.1, 0.46, 0.58), (0, -0.88, 0.36)),              # track L
         box((3.2, 0.52, 0.12), (0, 0.88, 0.64)),               # track guard / fender R
         box((3.2, 0.52, 0.12), (0, -0.88, 0.64)),              # track guard / fender L
     ]
     for side in (0.88, -0.88):
-        for x in (-1.1, -0.55, 0.0, 0.55, 1.1):
-            parts.append(cyl(0.22, 0.12, (x, side, 0.25),
+        for x, r in ((-1.1, 0.25), (-0.55, 0.21), (0.0, 0.21), (0.55, 0.21), (1.1, 0.25)):
+            parts.append(cyl(r, 0.12, (x, side, 0.25),
                              rot=(math.radians(90), 0, 0), verts=10))  # road wheel
     return weld("tank_fr", parts, mat, bevel=0.05)
 
@@ -676,10 +706,13 @@ def build_tank_turret_fr():
     # different silhouette from the Abrams' broad flat turret. Pivot at hull origin, barrel +X.
     mat = make_material("tank_turret_fr", rgba("tank_turret_fr"))
     parts = [
+        cyl(0.62, 0.12, (0, 0, 0.83), verts=12),               # ring base (drops into the hull socket)
         box((1.5, 1.3, 0.62), (-0.10, 0, 1.10)),               # main turret box (taller)
+        box((0.5, 1.1, 0.30), (0.85, 0, 1.06), rot=(0, math.radians(-12), 0)),  # sloped gun mantlet
         box((1.0, 1.4, 0.55), (-1.05, 0, 1.05)),               # rear bustle (autoloader) — overhangs
         cyl(0.09, 1.90, (1.35, 0, 1.12), rot=(0, math.radians(90), 0)),  # 120mm barrel, +X
-        box((0.4, 0.4, 0.40), (-0.3, 0.45, 1.55)),             # roof sight mast
+        box((0.4, 0.4, 0.40), (-0.3, 0.45, 1.55)),             # roof sight mast (the Leclerc tell)
+        cyl(0.08, 0.20, (-0.3, -0.45, 1.42), verts=8),         # remote MG mount
         cyl(0.12, 0.20, (0.42, 0, 1.12), rot=(0, math.radians(90), 0), verts=12),  # bore-evacuator collar
     ]
     return weld("tank_turret_fr", parts, mat, bevel=0.04)
@@ -693,8 +726,10 @@ def build_weapon_rifle_us():
     parts = [
         box((0.46, 0.06, 0.11), (0.0, 0, 0)),                  # upper/lower receiver
         box((0.40, 0.05, 0.04), (0.0, 0, 0.085)),              # flat-top picatinny rail
+        box((0.07, 0.05, 0.05), (-0.05, 0, 0.13)),             # optic body (low-profile red-dot)
+        box((0.05, 0.055, 0.025), (-0.05, 0, 0.165)),          # optic hood
         cyl(0.018, 0.46, (0.42, 0, 0), rot=(0, math.radians(90), 0)),  # barrel (forward)
-        cyl(0.03, 0.18, (0.30, 0, -0.02), rot=(0, math.radians(90), 0)),  # handguard
+        cyl(0.032, 0.20, (0.30, 0, -0.02), rot=(0, math.radians(90), 0), verts=12),  # ribbed handguard
         box((0.06, 0.05, 0.20), (0.02, 0, -0.14)),             # STANAG magazine (curved, forward of grip)
         box((0.07, 0.05, 0.14), (-0.10, 0, -0.10), rot=(0, math.radians(-14), 0)),  # pistol grip
         box((0.22, 0.05, 0.10), (-0.34, 0, 0.0)),              # collapsible stock
