@@ -13,18 +13,25 @@
 
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_pal_desktop::DesktopRenderSurface;
+use gonedark_render::title_backdrop::TitleBackdrop;
 use winit::window::Window;
 
 // ---- The pure seam (unit-tested) ----------------------------------------------------------------
 
-/// A top-level action the player can pick on the title screen.
+/// A top-level action the player can pick on the title screen. The three play modes all open the
+/// gunsmith→match flow today; their divergence is future work (see [`resolve_title_action`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TitleAction {
-    /// Start a match — opens the pre-match gunsmith / loadout screen (Deploy from there enters the
-    /// shared engine).
-    Start,
+    /// The PvE story campaign — the first shippable pillar (`docs/pve-campaign.md`, D58).
+    Campaign,
+    /// A standalone PvE skirmish against the scripted enemy commander.
+    Pve,
+    /// Player-vs-player — the lockstep-netcode match.
+    Pvp,
     /// Open settings (a placeholder until the Settings surface lands).
     Settings,
+    /// Open the player profile / progression surface (a no-op placeholder until it lands).
+    Profile,
     /// Quit the app.
     Quit,
 }
@@ -40,6 +47,8 @@ pub enum HostTransition {
     EnterMatch,
     /// Open the (not-yet-built) settings surface — a no-op placeholder today.
     OpenSettings,
+    /// Open the (not-yet-built) player profile / progression surface — a no-op placeholder today.
+    OpenProfile,
     /// Tear down and exit the app.
     Exit,
     /// Leave the current match and return to the title screen — the post-match summary's DISMISS,
@@ -50,10 +59,14 @@ pub enum HostTransition {
 /// Map a title action to the host transition it triggers (the pure run-loop decision).
 pub fn resolve_title_action(action: TitleAction) -> HostTransition {
     match action {
-        // Start no longer enters the match directly — it opens the gunsmith so the player picks a
-        // loadout first; Deploy from the gunsmith is what creates the `Game`.
-        TitleAction::Start => HostTransition::OpenLoadout,
+        // All three play modes currently share the ONE gunsmith→match flow: each opens the gunsmith
+        // so the player picks a loadout first, and Deploy from the gunsmith is what creates the
+        // `Game`. PvP/PvE/Campaign mode divergence (netcode lobby vs scripted-AI scenario vs the
+        // Operations-hub campaign, `docs/pve-campaign.md`) is future work — there are no separate
+        // mode systems today, so they deliberately fold to the same transition here.
+        TitleAction::Campaign | TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenLoadout,
         TitleAction::Settings => HostTransition::OpenSettings,
+        TitleAction::Profile => HostTransition::OpenProfile,
         TitleAction::Quit => HostTransition::Exit,
     }
 }
@@ -141,14 +154,29 @@ pub fn build_channel(debug_assertions: bool) -> &'static str {
     }
 }
 
+/// Convert an egui pointer position (logical points, origin top-left, y down) into the title
+/// backdrop's NDC ([-1, 1] on both axes, origin centre, **y up**) given the surface size in the same
+/// logical points. Pure arithmetic — extracted from the [`EguiShell`] glue exactly so the cursor
+/// mapping the 3D backdrop reacts to is unit-tested (the wgpu compositing around it is exempt). This
+/// is host presentation math, not sim — the f32s here never touch `core` (invariant #1 is about the
+/// sim, not the renderer's float boundary).
+pub fn pointer_to_ndc(pos: [f32; 2], size_points: [f32; 2]) -> [f32; 2] {
+    // Guard a zero/negative extent (a not-yet-sized surface) so we never divide by zero.
+    let w = if size_points[0] > 0.0 { size_points[0] } else { 1.0 };
+    let h = if size_points[1] > 0.0 { size_points[1] } else { 1.0 };
+    [(pos[0] / w) * 2.0 - 1.0, 1.0 - (pos[1] / h) * 2.0]
+}
+
 // ---- The "going-dark" palette + theme -----------------------------------------------------------
 
 // A near-black field, dim chrome, one amber alert accent (the game's directional-alert colour).
 // These five base values (INK/PANEL/BONE/ASH/AMBER) are kept **bit-identical to the canonical
 // renderer palette** documented in `render/src/theme.rs` (gonedark_render::theme) so the out-of-match
-// egui chrome and the in-match wgpu HUD read as one art-directed identity. The `app` crate does not
-// depend on `gonedark-render`, so we mirror the hex here rather than take a crate dep just for
-// colours — but the two must move together (see the doc-hex annotations in theme.rs).
+// egui chrome and the in-match wgpu HUD read as one art-directed identity. (`app` now *does* depend
+// on `gonedark-render` — for the 3D title backdrop, see [`EguiShell`] — but we still mirror the hex
+// here rather than pull the colour table through that dep: egui wants `Color32`, render wants linear
+// `[f32; 4]`, and this egui chrome predates the dep. The two palettes must still move together; see
+// the doc-hex annotations in theme.rs.)
 const INK: egui::Color32 = egui::Color32::from_rgb(0x07, 0x09, 0x0C);
 const PANEL: egui::Color32 = egui::Color32::from_rgb(0x12, 0x18, 0x20);
 const BONE: egui::Color32 = egui::Color32::from_rgb(0xE7, 0xEC, 0xEF);
@@ -159,6 +187,13 @@ const AMBER: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x79, 0x1F);
 const PANEL_RAISED: egui::Color32 = egui::Color32::from_rgb(0x1B, 0x25, 0x31);
 const RIM: egui::Color32 = egui::Color32::from_rgb(0x29, 0x30, 0x42);
 const MUTED: egui::Color32 = egui::Color32::from_rgb(0x61, 0x68, 0x75);
+// A semi-opaque PANEL for chrome floated over the live 3D title backdrop: the PANEL hue at ~88%
+// alpha (224/255) so the moving sky reads faintly behind a card without costing text legibility.
+// Only the title screen (which has a backdrop behind it) uses it; the loadout screen keeps the
+// opaque PANEL. `Color32` stores PREMULTIPLIED alpha and only `from_rgba_premultiplied` is `const`,
+// so the channels here are PANEL (0x12/0x18/0x20) already multiplied by 224/255 (→ 16/21/28); this
+// is the const-fn equivalent of `from_rgba_unmultiplied(0x12, 0x18, 0x20, 224)`.
+const PANEL_GLASS: egui::Color32 = egui::Color32::from_rgba_premultiplied(16, 21, 28, 224);
 
 // The desktop-shell type scale (egui point sizes). One small, fixed ramp so every screen shares a
 // heading/body/caption hierarchy instead of each call site picking an ad-hoc glyph size — the
@@ -274,6 +309,11 @@ pub struct EguiShell {
     state: egui_winit::State,
     renderer: egui_wgpu::Renderer,
     stamp: String,
+    /// The live 3D title backdrop (`render` crate). Painted behind the title-screen egui pass (which
+    /// then composites with `LoadOp::Load`). `Option` so a future fallible build could degrade to a
+    /// flat-clear title without panicking the shell — the pinned `new` is infallible today, so it is
+    /// always `Some`. Only the title screen uses it; the loadout screen clears its own ink panel.
+    backdrop: Option<TitleBackdrop>,
 }
 
 impl EguiShell {
@@ -303,11 +343,16 @@ impl EguiShell {
         );
         let renderer = egui_wgpu::Renderer::new(device, format, egui_wgpu::RendererOptions::default());
 
+        // Build the live 3D title backdrop against the same device/format the egui pass and the
+        // engine share. Infallible per the pinned API, so always `Some` today.
+        let backdrop = Some(TitleBackdrop::new(device, format));
+
         EguiShell {
             ctx,
             state,
             renderer,
             stamp,
+            backdrop,
         }
     }
 
@@ -322,7 +367,9 @@ impl EguiShell {
         // Clone the stamp so the immediate-mode closure doesn't alias the `&mut self` borrow
         // `run_and_paint` takes.
         let stamp = self.stamp.clone();
-        self.run_and_paint(surface, |ui| title_ui(ui, &stamp))
+        // `with_backdrop = true`: paint the live 3D backdrop into the frame first, then composite the
+        // title HUD over it (`LoadOp::Load`).
+        self.run_and_paint(surface, true, |ui| title_ui(ui, &stamp))
     }
 
     /// Draw the pre-match gunsmith / loadout screen for one frame and return the [`LoadoutAction`]
@@ -333,7 +380,9 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         editor: &LoadoutEditor,
     ) -> Option<LoadoutAction> {
-        self.run_and_paint(surface, |ui| loadout_ui(ui, editor))
+        // `with_backdrop = false`: the gunsmith keeps its opaque ink panel (it has no 3D backdrop),
+        // so the egui pass clears as before — no regression to `draw_loadout`.
+        self.run_and_paint(surface, false, |ui| loadout_ui(ui, editor))
     }
 
     /// Run one egui frame (`build` lays out the UI and returns this frame's action) and paint the
@@ -341,9 +390,18 @@ impl EguiShell {
     /// [`draw_title`](Self::draw_title) and [`draw_loadout`](Self::draw_loadout) — device-gated glue,
     /// exempt from unit tests; the per-screen *logic* it drives lives in the pure `*_ui` builders and
     /// the pure action seams above.
+    ///
+    /// When `with_backdrop` is set (the title screen), the live 3D
+    /// [`gonedark_render::title_backdrop::TitleBackdrop`] is painted into the acquired view FIRST
+    /// (it clears the view to its sky and submits its own encoder), and the egui pass then composites
+    /// over it with `LoadOp::Load`. Otherwise (the gunsmith) the egui pass clears the view itself —
+    /// the original opaque behaviour, unchanged. The animation clock + cursor handed to the backdrop
+    /// come from this just-run frame's egui input (a one-frame lag is fine), with the pixel→NDC
+    /// conversion living in the pure [`pointer_to_ndc`] seam.
     fn run_and_paint<T>(
         &mut self,
         surface: &mut DesktopRenderSurface,
+        with_backdrop: bool,
         // `egui::Context::run_ui` takes an `FnMut` (it may run the UI more than once for a sizing
         // pass), so the per-screen builder is `FnMut` too.
         mut build: impl FnMut(&mut egui::Ui) -> Option<T>,
@@ -363,6 +421,15 @@ impl EguiShell {
         let paint_jobs = ctx.tessellate(full_output.shapes, ppp);
         let (w, h) = surface.size();
 
+        // Pull the backdrop's animation clock + cursor from this frame's egui input. `i.time` is a
+        // monotonic seconds clock; the latest pointer is in egui logical points (origin top-left),
+        // mapped to NDC against the surface size in the same logical points (physical / ppp).
+        let time = ctx.input(|i| i.time) as f32;
+        let cursor = ctx.input(|i| i.pointer.latest_pos()).map(|p| {
+            let size_points = [w as f32 / ppp, h as f32 / ppp];
+            pointer_to_ndc([p.x, p.y], size_points)
+        });
+
         // Acquire the frame (owned — the `&mut` surface borrow ends as this returns).
         let Some((frame, view)) = surface.acquire() else {
             return action;
@@ -370,6 +437,16 @@ impl EguiShell {
 
         let device = surface.device();
         let queue = surface.queue();
+
+        // Paint the 3D backdrop into the view BEFORE egui (it clears + submits its own encoder), so
+        // the egui pass below loads over it. `self.backdrop`/`self.renderer` are disjoint fields, so
+        // this split borrow is fine.
+        if with_backdrop {
+            if let Some(bd) = self.backdrop.as_mut() {
+                bd.render(device, queue, &view, (w, h), time, cursor);
+            }
+        }
+
         for (id, delta) in &full_output.textures_delta.set {
             self.renderer.update_texture(device, queue, *id, delta);
         }
@@ -384,6 +461,18 @@ impl EguiShell {
             self.renderer
                 .update_buffers(device, queue, &mut encoder, &paint_jobs, &screen);
         {
+            // Title: LOAD over the backdrop the pass above painted. Gunsmith: CLEAR to ink (no
+            // backdrop), preserving the original opaque look.
+            let load = if with_backdrop {
+                wgpu::LoadOp::Load
+            } else {
+                wgpu::LoadOp::Clear(wgpu::Color {
+                    r: 0.007,
+                    g: 0.009,
+                    b: 0.013,
+                    a: 1.0,
+                })
+            };
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("gonedark.shell.egui_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -391,12 +480,7 @@ impl EguiShell {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.007,
-                            g: 0.009,
-                            b: 0.013,
-                            a: 1.0,
-                        }),
+                        load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -473,20 +557,50 @@ fn card_frame() -> egui::Frame {
         .inner_margin(egui::Margin::same(22))
 }
 
-/// The immediate-mode title-screen UI, drawn into the root [`egui::Ui`] for the frame. Returns the
-/// action whose button was clicked this frame.
-fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
-    use egui::RichText;
-    let mut action = None;
+/// The title screen's framed card — [`card_frame`] refilled with the translucent [`PANEL_GLASS`] so
+/// the live 3D backdrop bleeds faintly through it. Glue (returns an egui builder).
+fn glass_card_frame() -> egui::Frame {
+    card_frame().fill(PANEL_GLASS)
+}
 
-    // Everything lives in one full-screen CentralPanel — a single centered column (the title hero +
-    // amber rule + tagline, a framed card holding the three actions, then the build stamp). One panel
-    // keeps the layout robust (no panel-space splitting); the panel fill paints the ink background.
-    egui::CentralPanel::default().show(ui, |ui| {
-        let h = ui.available_height();
-        ui.vertical_centered(|ui| {
-            ui.add_space(h * 0.18);
-            // Title hero: tracked-out caps in bone, the amber rule, then the muted tagline.
+/// A compact secondary "chip" button for the title screen's top-right utility cluster
+/// (SETTINGS / PROFILE) — smaller than the full-width [`menu_button`] so it reads as utility chrome
+/// rather than a primary action. Rides the [`shell_style`] widget ramp (lifts to PANEL_RAISED + an
+/// amber rim on hover). Glue (needs a live `Ui`); the click→action mapping it feeds is what the pure
+/// [`resolve_title_action`] seam covers. Text-only, uppercase ASCII — never a risky glyph (the
+/// file's tofu caution: only default-font glyphs like U+00B7 are trusted).
+fn chip_button(ui: &mut egui::Ui, text: &str) -> bool {
+    use egui::{Button, RichText};
+    ui.add(
+        Button::new(RichText::new(text).color(BONE).size(TYPE_BODY))
+            .min_size([104.0, 32.0].into()),
+    )
+    .clicked()
+}
+
+/// The immediate-mode title-screen UI — a real HUD-anchored landing screen drawn over the live 3D
+/// [`gonedark_render::title_backdrop::TitleBackdrop`]. Returns the action whose control was clicked
+/// this frame.
+///
+/// Layout (four floating [`egui::Area`]s anchored to the corners over the backdrop, so the central
+/// field stays transparent and the 3D shows through — there is deliberately **no** opaque
+/// CentralPanel fill here):
+///  - **top-left**  — the brand: GOING DARK hero + amber rule + the COMMAND · EMBODY tagline;
+///  - **top-right** — a compact SETTINGS / PROFILE utility chip row;
+///  - **bottom-left** — the DEPLOY cluster: CAMPAIGN (the lone amber CTA), PvE, PvP, then QUIT,
+///    in a translucent [`glass_card_frame`] so it reads as a deliberate panel;
+///  - **bottom-right** — the muted build stamp, the quiet corner opposite the play cluster.
+fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
+    use egui::{Align2, Area, Id, RichText};
+    let mut action = None;
+    // Areas attach to the context, not the parent `Ui`, so they float over the (transparent) root
+    // and composite over the backdrop. Clone the ctx so each `.show` is independent.
+    let ctx = ui.ctx().clone();
+
+    // ---- Brand, top-left -------------------------------------------------------------------------
+    Area::new(Id::new("title.brand"))
+        .anchor(Align2::LEFT_TOP, egui::vec2(40.0, 44.0))
+        .show(&ctx, |ui| {
             ui.label(
                 RichText::new("GOING DARK")
                     .color(BONE)
@@ -494,7 +608,7 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
                     .strong(),
             );
             ui.add_space(10.0);
-            accent_rule(ui, 132.0);
+            accent_rule(ui, 150.0);
             ui.add_space(10.0);
             ui.label(
                 // U+00B7 middle dot (the same glyph the build stamp uses) — proven to render in
@@ -503,29 +617,62 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
                     .color(ASH)
                     .size(TYPE_SUBHEAD),
             );
-            ui.add_space(34.0);
+        });
 
-            // The action stack, framed as a card so it reads as a deliberate panel.
-            card_frame().show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    if menu_button(ui, "START", Emphasis::Primary) {
-                        action = Some(TitleAction::Start);
-                    }
-                    ui.add_space(10.0);
-                    if menu_button(ui, "SETTINGS", Emphasis::Secondary) {
-                        action = Some(TitleAction::Settings);
-                    }
-                    ui.add_space(10.0);
-                    if menu_button(ui, "QUIT", Emphasis::Tertiary) {
-                        action = Some(TitleAction::Quit);
-                    }
-                });
+    // ---- Utility chips, top-right ----------------------------------------------------------------
+    Area::new(Id::new("title.utility"))
+        .anchor(Align2::RIGHT_TOP, egui::vec2(-32.0, 32.0))
+        .show(&ctx, |ui| {
+            ui.horizontal(|ui| {
+                if chip_button(ui, "SETTINGS") {
+                    action = Some(TitleAction::Settings);
+                }
+                if chip_button(ui, "PROFILE") {
+                    action = Some(TitleAction::Profile);
+                }
             });
+        });
 
-            ui.add_space(26.0);
+    // ---- Deploy cluster, bottom-left -------------------------------------------------------------
+    Area::new(Id::new("title.deploy"))
+        .anchor(Align2::LEFT_BOTTOM, egui::vec2(40.0, -40.0))
+        .show(&ctx, |ui| {
+            glass_card_frame().show(ui, |ui| {
+                ui.label(
+                    RichText::new("DEPLOY")
+                        .color(ASH)
+                        .size(TYPE_SUBHEAD)
+                        .strong(),
+                );
+                ui.add_space(6.0);
+                accent_rule(ui, 72.0);
+                ui.add_space(14.0);
+                // One amber call-to-action (CAMPAIGN); the other modes are neutral secondaries; QUIT
+                // is the quiet tertiary at the foot.
+                if menu_button(ui, "CAMPAIGN", Emphasis::Primary) {
+                    action = Some(TitleAction::Campaign);
+                }
+                ui.add_space(10.0);
+                if menu_button(ui, "PvE", Emphasis::Secondary) {
+                    action = Some(TitleAction::Pve);
+                }
+                ui.add_space(10.0);
+                if menu_button(ui, "PvP", Emphasis::Secondary) {
+                    action = Some(TitleAction::Pvp);
+                }
+                ui.add_space(14.0);
+                if menu_button(ui, "QUIT", Emphasis::Tertiary) {
+                    action = Some(TitleAction::Quit);
+                }
+            });
+        });
+
+    // ---- Build stamp, bottom-right (the quiet corner opposite the play cluster) -------------------
+    Area::new(Id::new("title.stamp"))
+        .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-28.0, -24.0))
+        .show(&ctx, |ui| {
             ui.label(RichText::new(stamp).color(MUTED).size(TYPE_CAPTION));
         });
-    });
 
     action
 }
@@ -666,12 +813,17 @@ mod tests {
     }
 
     #[test]
-    fn start_opens_the_gunsmith() {
-        // Start no longer enters the match directly — it routes through the loadout screen first.
-        assert_eq!(
-            resolve_title_action(TitleAction::Start),
-            HostTransition::OpenLoadout
-        );
+    fn every_play_mode_opens_the_gunsmith() {
+        // All three play modes currently share the one gunsmith→match flow (mode divergence is
+        // future work), so each must route through the loadout screen first — Deploy from there is
+        // what creates the `Game`.
+        for mode in [TitleAction::Campaign, TitleAction::Pve, TitleAction::Pvp] {
+            assert_eq!(
+                resolve_title_action(mode),
+                HostTransition::OpenLoadout,
+                "{mode:?} must open the gunsmith"
+            );
+        }
     }
 
     #[test]
@@ -683,8 +835,37 @@ mod tests {
     }
 
     #[test]
+    fn profile_opens_profile() {
+        assert_eq!(
+            resolve_title_action(TitleAction::Profile),
+            HostTransition::OpenProfile
+        );
+    }
+
+    #[test]
     fn quit_exits() {
         assert_eq!(resolve_title_action(TitleAction::Quit), HostTransition::Exit);
+    }
+
+    #[test]
+    fn pointer_maps_to_centre_corners_and_flips_y() {
+        // A 800x600-point surface. The centre is the NDC origin; corners map to ±1 with y up.
+        let size = [800.0, 600.0];
+        let approx = |a: [f32; 2], b: [f32; 2]| {
+            (a[0] - b[0]).abs() < 1e-5 && (a[1] - b[1]).abs() < 1e-5
+        };
+        assert!(approx(pointer_to_ndc([400.0, 300.0], size), [0.0, 0.0]));
+        // Top-left pixel (0,0) → NDC (-1, +1): y is flipped (egui y-down → NDC y-up).
+        assert!(approx(pointer_to_ndc([0.0, 0.0], size), [-1.0, 1.0]));
+        // Bottom-right pixel → NDC (+1, -1).
+        assert!(approx(pointer_to_ndc([800.0, 600.0], size), [1.0, -1.0]));
+    }
+
+    #[test]
+    fn pointer_to_ndc_guards_a_zero_size_surface() {
+        // A not-yet-sized surface (0x0) must not divide by zero — it degrades to a finite result.
+        let ndc = pointer_to_ndc([10.0, 10.0], [0.0, 0.0]);
+        assert!(ndc[0].is_finite() && ndc[1].is_finite());
     }
 
     #[test]

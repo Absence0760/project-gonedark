@@ -166,6 +166,107 @@ fn save_png(path: &str, rgba: &[u8]) {
         .expect("png data");
 }
 
+// --- arbitrary-size target / readback / png (for the 16:9 title-backdrop scene) -----------------
+// The default helpers above bake in the square 512² (`W`/`H`); the title backdrop is rendered at a
+// wide 16:9 so a viewport-stretch bug would show (the project memo: "viz is square so render 16:9 to
+// catch it"). These mirror `make_target`/`read_pixels`/`save_png` with explicit dimensions.
+
+fn make_target_sized(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("viz.target.sized"),
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
+}
+
+fn read_pixels_sized(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    w: u32,
+    h: u32,
+) -> Vec<u8> {
+    let bpp = 4u32;
+    let unpadded = w * bpp;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded = unpadded.div_ceil(align) * align;
+
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("viz.readback.sized"),
+        size: (padded * h) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("viz.readback_encoder.sized"),
+    });
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded),
+                rows_per_image: Some(h),
+            },
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit(Some(enc.finish()));
+
+    let slice = buffer.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    slice.map_async(wgpu::MapMode::Read, move |r| {
+        let _ = tx.send(r);
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("poll the device for the readback map");
+    rx.recv().expect("map_async result").expect("buffer map ok");
+
+    let data = slice.get_mapped_range();
+    let mut out = Vec::with_capacity((unpadded * h) as usize);
+    for row in 0..h {
+        let start = (row * padded) as usize;
+        out.extend_from_slice(&data[start..start + unpadded as usize]);
+    }
+    drop(data);
+    buffer.unmap();
+    out
+}
+
+fn save_png_sized(path: &str, rgba: &[u8], w: u32, h: u32) {
+    let file = std::fs::File::create(path).expect("create png");
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder
+        .write_header()
+        .expect("png header")
+        .write_image_data(rgba)
+        .expect("png data");
+}
+
 // --- pixel predicates ---------------------------------------------------------------------------
 
 fn px(rgba: &[u8]) -> impl Iterator<Item = [u8; 4]> + '_ {
@@ -307,6 +408,98 @@ fn check(failures: &mut u32, name: &str, cond: bool, detail: String) {
         println!("  FAIL  {name}: {detail}");
         *failures += 1;
     }
+}
+
+/// --- Title backdrop scene (render-crate component, no `Game`) -----------------------------------
+/// Render the standalone animated parallax title backdrop into a 16:9 offscreen target for a couple
+/// of representative `(time, cursor)` states, save PNGs, and assert it draws an atmospheric dark 3D
+/// diorama: not a flat single colour, contains warm amber accents (the embers/rim), and the zenith
+/// (top) is darker than the horizon band — the basic "sky over a lit horizon" read.
+fn backdrop_scene(gpu: &Gpu, failures: &mut u32) {
+    use gonedark_render::title_backdrop::TitleBackdrop;
+    const TW: u32 = 1024;
+    const TH: u32 = 576;
+
+    println!("[title_backdrop] the animated parallax title backdrop draws a dark 3D diorama");
+    let (target, view) = make_target_sized(&gpu.device, TW, TH);
+    let mut backdrop = TitleBackdrop::new(&gpu.device, FORMAT);
+
+    // Frame A: app start, pointer centred.
+    backdrop.render(&gpu.device, &gpu.queue, &view, (TW, TH), 0.0, None);
+    let a = read_pixels_sized(&gpu.device, &gpu.queue, &target, TW, TH);
+    save_png_sized("target/viz/title_backdrop.png", &a, TW, TH);
+
+    // Frame B: a few seconds in, pointer pushed to the lower-right (drift + parallax engaged).
+    backdrop.render(
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        (TW, TH),
+        3.0,
+        Some([0.6, -0.4]),
+    );
+    let b = read_pixels_sized(&gpu.device, &gpu.queue, &target, TW, TH);
+    save_png_sized("target/viz/title_backdrop_parallax.png", &b, TW, TH);
+
+    // (1) Not a flat single colour: there is a real spread between the darkest and brightest pixels.
+    let lum = |p: [u8; 4]| 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
+    let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+    for c in a.chunks_exact(4) {
+        let l = lum([c[0], c[1], c[2], c[3]]);
+        lo = lo.min(l);
+        hi = hi.max(l);
+    }
+    check(
+        failures,
+        "title_backdrop_not_flat",
+        hi - lo > 30.0,
+        format!("luminance spread {:.1} (>30 — a 3D scene, not a flat fill)", hi - lo),
+    );
+
+    // (2) Warm amber accents present (the embers + box rim — the signature warm-over-cold motif):
+    // pixels where red clearly dominates green dominates blue and the pixel is reasonably warm/bright.
+    let is_amber = |p: [u8; 4]| {
+        p[0] as i32 > p[1] as i32 + 18 && p[1] as i32 >= p[2] as i32 && p[0] > 90
+    };
+    let amber = a.chunks_exact(4).filter(|c| is_amber([c[0], c[1], c[2], c[3]])).count();
+    check(
+        failures,
+        "title_backdrop_has_amber_accents",
+        amber > 40,
+        format!("{amber} warm amber px (>40 — embers/rim drawn over the cold dark)"),
+    );
+
+    // (3) The sky reads top-dark → horizon-lighter: average the top 12% of rows vs a band around
+    // 55–70% down the frame (the horizon glow). Top must be darker.
+    let row_band_avg = |rgba: &[u8], y0: u32, y1: u32| -> f32 {
+        let mut sum = 0.0f64;
+        let mut n = 0u64;
+        for y in y0..y1 {
+            for x in 0..TW {
+                let i = ((y * TW + x) * 4) as usize;
+                sum += lum([rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]) as f64;
+                n += 1;
+            }
+        }
+        (sum / n as f64) as f32
+    };
+    let top = row_band_avg(&a, 0, TH * 12 / 100);
+    let horizon = row_band_avg(&a, TH * 55 / 100, TH * 70 / 100);
+    check(
+        failures,
+        "title_backdrop_top_darker_than_horizon",
+        top < horizon,
+        format!("top luminance {top:.1} < horizon band {horizon:.1} (sky over a lit horizon)"),
+    );
+
+    // Sanity: a non-trivial PNG was written.
+    let sz = std::fs::metadata("target/viz/title_backdrop.png").map(|m| m.len()).unwrap_or(0);
+    check(
+        failures,
+        "title_backdrop_png_written",
+        sz > 2000,
+        format!("title_backdrop.png is {sz} bytes (>2000 — a real image was written)"),
+    );
 }
 
 fn main() {
@@ -773,9 +966,13 @@ fn main() {
         format!("center hitmarker px {pre_hit_center} pre-hit → {best_hit_center} peak while firing (the \"I hit him\" X drew on a connecting shot)"),
     );
 
+    // --- Scenario 6: animated parallax title backdrop (render-crate component) -----------------
+    backdrop_scene(&gpu, &mut failures);
+
     println!(
         "\nPNGs: target/viz/{{command,selected,radial,marquee,embodied_dark,embodied_hud,\
-         combat_muzzle,embodied_kill_before,embodied_kill_after}}.png"
+         combat_muzzle,embodied_kill_before,embodied_kill_after,title_backdrop,\
+         title_backdrop_parallax}}.png"
     );
     if failures == 0 {
         println!("RESULT: all visual assertions passed ✓");

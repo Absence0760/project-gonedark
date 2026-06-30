@@ -313,6 +313,9 @@ impl App {
             }
             // Settings surface not built yet (phase-4-plan §2 surface 3) — a no-op placeholder.
             Some(HostTransition::OpenSettings) => {}
+            // Player profile / progression surface not built yet — a no-op placeholder, same as
+            // Settings. The title screen's PROFILE chip routes here.
+            Some(HostTransition::OpenProfile) => {}
             Some(HostTransition::Exit) => event_loop.exit(),
             // Return to the title screen, dropping any `Game` (the post-match DISMISS path, and the
             // gunsmith's BACK — which has no `Game` yet, so this is just a screen swap there).

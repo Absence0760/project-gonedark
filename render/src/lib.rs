@@ -123,6 +123,13 @@ pub mod mesh;
 /// gun, never any sim entity). Public so the host can build the [`world::WorldUniform`].
 pub mod world;
 
+/// Animated 3D parallax **title backdrop** (Phase 4 app-shell). Owns [`title_backdrop::TitleBackdrop`]:
+/// a self-contained, asset-free dark "Going Dark" diorama (sky gradient + receding ground grid +
+/// procedural silhouette skyline + drifting amber embers + vignette) that drifts slowly and follows
+/// the cursor with a clamped parallax — the live mood-setting background behind the desktop title
+/// screen. Render-only (invariant #1/#4); reads no sim state. Public so the app shell drives it.
+pub mod title_backdrop;
+
 /// Command-view ground grid (W6). Owns `TerrainRenderer`: a world-space lattice drawn under the units
 /// (first in the command pass) so position/motion read against a fixed reference instead of flat
 /// slate. Public so the pure `grid_lines` layout seam is reachable; the `Renderer` drives the pass.

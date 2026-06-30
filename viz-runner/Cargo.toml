@@ -14,6 +14,9 @@ publish = false
 gonedark-core = { path = "../core" }
 gonedark-engine = { path = "../engine" }
 gonedark-pal = { path = "../pal" }
+# The title backdrop is a standalone render-crate component (no `engine::Game`), so the viz
+# harness drives it directly to screenshot it (the other scenes go through `Game`).
+gonedark-render = { path = "../render" }
 wgpu = "29"
 pollster = "0.4"
 png = "0.18"

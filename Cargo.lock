@@ -1266,6 +1266,7 @@ dependencies = [
  "gonedark-pal",
  "gonedark-pal-android",
  "gonedark-pal-desktop",
+ "gonedark-render",
  "wgpu",
  "winit",
 ]
@@ -1361,6 +1362,7 @@ dependencies = [
  "gonedark-core",
  "gonedark-engine",
  "gonedark-pal",
+ "gonedark-render",
  "png",
  "pollster",
  "wgpu",
