@@ -111,6 +111,12 @@ pub mod session_shell;
 /// without ever mutating sim state — so it adds NO checksum/desync surface (invariant #1/#7). Owns
 /// the *Seize* mission-1 wiring + the HUD-view mapper. Public so a host (and tests) can drive it.
 pub mod objectives;
+/// Host-side `MissionId → mission` registry (PvE WS-B): resolves an opaque `core::campaign`
+/// `MissionId` to a concrete, runnable `MissionDef` (scenario seed + `ObjectiveSet` + WS-E tuning),
+/// and authors the shipped Operations-hub campaign wired to it. The "registry lives OUTSIDE the
+/// campaign model" half `core::campaign` documents — host-side, so it adds NO checksum surface
+/// (invariant #1/#7). Public so a host (and tests) can launch a node's mission.
+pub mod mission_registry;
 /// Render quality tuning (Phase 4 WS-C). Owns `RenderTuning`: the tier + dyn-res + thermal-backoff
 /// controller. A RENDERING choice only — never touches the sim (invariant #1/#4).
 pub mod tuning;
