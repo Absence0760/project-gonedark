@@ -51,11 +51,34 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let n = normalize(in.world_normal);
-    let l = normalize(g.light_dir.xyz);
-    // Surfaces facing into the light (-l) are lit; ambient floor keeps shadowed faces readable.
-    let diffuse = max(dot(n, -l), 0.0);
-    let shade = 0.38 + 0.62 * diffuse;
+
+    // --- three-point-ish lighting over the flat greybox normals (art-direction constants; the only
+    // runtime input is the key direction in `g.light_dir`). Replaces the old single-key + flat-grey
+    // `0.38 + 0.62*diffuse` wash so forms read with warm/cool directionality and a rim. The ground
+    // plane is z = 0, so world up is +z. ---
+
+    // Key light: the warm primary. Surfaces facing into -key are lit.
+    let key_l = normalize(g.light_dir.xyz);
+    let key = max(dot(n, -key_l), 0.0);
+    let key_col = vec3<f32>(1.0, 0.95, 0.86);
+
+    // Fill light: a softer cool light from a fixed high-side direction, lifting shadowed faces
+    // without flattening them.
+    let fill_l = normalize(vec3<f32>(0.55, 0.35, -0.40));
+    let fill = max(dot(n, -fill_l), 0.0);
+    let fill_col = vec3<f32>(0.42, 0.52, 0.70);
+
+    // Hemispheric ambient: a cool sky tint from above, a warm dark bounce from below (+z up).
+    let up = clamp(n.z * 0.5 + 0.5, 0.0, 1.0);
+    let ambient = mix(vec3<f32>(0.13, 0.12, 0.11), vec3<f32>(0.28, 0.33, 0.40), up);
+
+    // Rim/back term: a thin highlight on faces turning away from the key, reading the silhouette of
+    // the faceted forms against the world.
+    let rim = pow(1.0 - key, 4.0) * 0.15;
+
+    let lit = ambient + key_col * (key * 0.70) + fill_col * (fill * 0.22) + vec3<f32>(rim);
+
     // Warm muzzle-flash/emissive add, driven by the per-instance alpha (0 for ordinary tokens).
     let flash = vec3<f32>(1.0, 0.7, 0.35) * in.color.a;
-    return vec4<f32>(in.color.rgb * shade + flash, 1.0);
+    return vec4<f32>(in.color.rgb * lit + flash, 1.0);
 }

@@ -28,5 +28,19 @@ fn vs_present(@builtin(vertex_index) vi: u32) -> VsOut {
 
 @fragment
 fn fs_present(in: VsOut) -> @location(0) vec4<f32> {
-    return textureSample(scene_tex, scene_samp, in.uv);
+    var c = textureSample(scene_tex, scene_samp, in.uv).rgb;
+
+    // Gentle cinematic grade applied ONCE here over the whole world scene (HUD/text chrome is drawn
+    // AFTER this pass, so it stays untouched and crisp). The scene is largely LDR, so this is a light
+    // S-curve for contrast — NOT an HDR tonemap, which would wash out already-[0,1] colours.
+    let s = c * c * (3.0 - 2.0 * c); // smoothstep S-curve (deepen shadows, firm up highlights)
+    c = mix(c, s, 0.18);
+
+    // Subtle vignette: darken toward the corners for a focused frame. uv is [0,1]; distance² from
+    // centre peaks at 0.5 in the corners, so the corner falloff is ~0.45*0.5 ≈ 0.22.
+    let d = in.uv - vec2<f32>(0.5, 0.5);
+    let vignette = 1.0 - dot(d, d) * 0.45;
+    c = c * vignette;
+
+    return vec4<f32>(c, 1.0);
 }
