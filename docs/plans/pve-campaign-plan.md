@@ -14,8 +14,12 @@
 > (egui Title→Gunsmith→Deploy flow in `app`, calling `new_scene_with_loadout`). The mobile-native
 > gunsmith screen remains [D32](../decisions.md)-blocked like the other native shells. WS-B's
 > Operations-hub host model + persistence (`core/src/campaign.rs`, via `core::shell`) is built and
-> tested, but its **mission-select/briefing native shell is BLOCKED on [D32](../decisions.md)** and
-> the `MissionId→mission` registry is unbuilt. Design: [`pve-campaign.md`](../pve-campaign.md) +
+> tested, and the **`MissionId→mission` registry now landed** (`engine/src/mission_registry.rs` —
+> `MissionDef`/`MissionRegistry` mapping each unlock-graph node to a runnable seeder + WS-E briefing,
+> host-side / zero new checksum surface, `default_registry()` ships the WS-A *Seize* mission, 7 tests
+> green dev+release); only its **mission-select/briefing native shell stays BLOCKED on
+> [D32](../decisions.md)**. *(Replay-tier → commander-tier scaling is deferred —
+> [Q21](../open-questions.md#q21--replay-tier-to-commander-tier).)* Design: [`pve-campaign.md`](../pve-campaign.md) +
 > [`customization.md`](../customization.md); decisions [D58](../decisions.md)–[D61](../decisions.md).
 
 ---

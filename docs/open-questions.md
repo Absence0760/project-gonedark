@@ -505,3 +505,29 @@ projectile whether AI-driven or embodied (`combat::combat_system` spawns a `Proj
 `muzzle_vel > 0` via `projectile::fire_ballistic`, hitscan only for `muzzle_vel == 0`). Physically
 consistent and emergent without making the AI a strategist (it fires along current aim, does not lead);
 the new sim writes are index-ordered, fixed-point, checksum-folded, and must keep the arch matrix green.
+
+## Q21 — Campaign replay tier → commander aggression: how do the 4 progression tiers map onto the 3 commander tiers? <a id="q21--replay-tier-to-commander-tier"></a>
+
+There are **two distinct `Difficulty` enums**, and nothing yet bridges them:
+
+- `core::campaign::Difficulty` — the **4-tier progression/replay** coordinate
+  (Recruit / Regular / Veteran / Elite) the Operations hub records when you clear or replay a node.
+- `core::mission_tuning::Difficulty` — the **3-tier commander-aggression** knob
+  (Recruit / Veteran / Elite) that scales the seeded planner's reserve / unit-mix / cadence /
+  aggression ([D39](decisions.md) honest AI, never omniscient — invariant #6).
+
+The new `engine::mission_registry` (PvE WS-B) launches each mission at the **briefing's authored
+commander tier** and exposes `LaunchedMission::commander_difficulty` as the plug point, but it does
+**not** yet scale the commander by the player's chosen *replay* tier. So replay-at-higher-difficulty
+currently records a best-tier badge while the **actual fight is unchanged** — the progression
+coordinate is inert until a mapping consumes it.
+
+| Option | For | Against |
+|---|---|---|
+| **(i) Collapse 4→3** — map Recruit→Recruit, {Regular,Veteran}→Veteran, Elite→Elite | Simplest; reuses the shipped 3-tier commander knob unchanged | Two progression tiers feel identical in-fight — replay reward is cosmetic for one step |
+| **(ii) Widen commander to 4 tiers** — add a `Regular` aggression band | Each replay tier is a distinct fight; cleanest player-facing meaning | New sim-tuning surface to balance + keep checksum-folded; re-measures the [D30](decisions.md) bands |
+| **(iii) Layer modifiers, not just the tier** — replay tier also tightens WS-E scenario modifiers (force size / cadence / fog), commander tier stays 3 | Richer difficulty without inflating the AGGRESSION enum; modifiers already exist (WS-E) | More knobs interacting; must stay "reshape the situation, never the balance numbers" ([D30](decisions.md)) |
+
+Resolve before campaign replay ships as a player-facing feature. Relevant invariants: #1 (any
+tier→tuning mapping stays fixed-point + checksum-folded), #3/#6 (the commander stays honest, never
+omniscient, at every tier). Cross-link: [`pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-B/WS-E.

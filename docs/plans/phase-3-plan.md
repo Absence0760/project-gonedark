@@ -183,8 +183,13 @@ checksum byte-identical with prediction on vs off."*
    1-peer, **delay-0** session with a `None`/`NullTransport` (no input latency, no socket);
    `Game::new`/`frame` signatures unchanged so `app`/`pal-android` need no edits. The
    load-bearing guard test asserts the lockstep-driven single-player checksum stream is
-   identical to direct stepping. (Multiplayer per-frame submit *pacing* for `delay > 0` is part of
-   the step 8 host-RTT wiring still owed.) `engine` tests 33 → 43, dev + release.
+   identical to direct stepping. (Multiplayer per-frame submit *pacing* for `delay > 0` ✅ **landed** —
+   the pure, clock-free, float-free `submit_count(lead, target_delay, budget)` (+ `MAX_SUBMIT_AHEAD`)
+   now drives `drive_lockstep`'s submit step: steady-state/single-player returns exactly `budget`
+   (byte-identical to the old 1:1 loop), a raised delay pads **empty** sets to grow the lead the
+   new delay's worth ahead without dropping input, a lowered delay holds at `budget`. Two-peer
+   checksum-agreement tests across a mid-run delay change, determinism-auditor + code-reviewer clean.)
+   `engine` tests 33 → 43, dev + release.
 5. **Fill in `engine::predict_avatar`** ✅ **DONE** — replaced the stub with an `AvatarPrediction`
    (presentation-only): the embodied eye **leads** the authoritative ticks (`extrapolate_avatar`,
    by the avatar's authoritative velocity) and **reconciles** toward each tick (`reconcile_avatar`,
