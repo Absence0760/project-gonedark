@@ -184,9 +184,32 @@ const QUAD_VERTS: [QuadVertex; 6] = [
     },
 ];
 
+/// Half-extent (world units) of the procedural ground-fill quad drawn under the grid. Generously
+/// larger than [`GRID_HALF_EXTENT`] / the ±40 camera framing so the textured floor fully covers the
+/// frame (including its corners) with no slate sliver at the edges.
+const GROUND_FILL_HALF: f32 = 120.0;
+
+/// A single world-space XY vertex of the ground-fill quad (`terrain.wgsl` `vs_ground`).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct GroundVertex {
+    world: [f32; 2],
+}
+
+/// The two triangles of the big ground quad spanning ±[`GROUND_FILL_HALF`] on the z = 0 plane.
+const GROUND_VERTS: [GroundVertex; 6] = [
+    GroundVertex { world: [-GROUND_FILL_HALF, -GROUND_FILL_HALF] },
+    GroundVertex { world: [GROUND_FILL_HALF, -GROUND_FILL_HALF] },
+    GroundVertex { world: [GROUND_FILL_HALF, GROUND_FILL_HALF] },
+    GroundVertex { world: [-GROUND_FILL_HALF, -GROUND_FILL_HALF] },
+    GroundVertex { world: [GROUND_FILL_HALF, GROUND_FILL_HALF] },
+    GroundVertex { world: [-GROUND_FILL_HALF, GROUND_FILL_HALF] },
+];
+
 /// World-space ground-grid renderer. Unlike the screen-space chrome passes it does NOT own a
 /// camera UBO — it borrows the unit pass's camera bind group (it must share the exact top-down
-/// view-projection so the grid lines up with the units). Owns only its pipeline + buffers.
+/// view-projection so the grid lines up with the units). Owns only its pipelines + buffers (a
+/// procedural ground-fill quad drawn first, then the grid lines on top).
 pub struct TerrainRenderer {
     pipeline: wgpu::RenderPipeline,
     quad_buf: wgpu::Buffer,
@@ -194,6 +217,11 @@ pub struct TerrainRenderer {
     instance_cap: usize,
     /// The CPU-side grid lines, built once (the lattice is fixed — it never depends on sim state).
     lines: Vec<LineInstance>,
+    /// Procedural ground-fill quad: its own pipeline (the `vs_ground`/`fs_ground` entries in
+    /// `terrain.wgsl`) + a 6-vertex world-space quad, drawn FIRST so the floor reads as grounded
+    /// terrain under the grid. Shares the unit pass's camera bind group (group 0), like the lines.
+    ground_pipeline: wgpu::RenderPipeline,
+    ground_buf: wgpu::Buffer,
 }
 
 impl TerrainRenderer {
@@ -262,9 +290,50 @@ impl TerrainRenderer {
             cache: None,
         });
 
+        // Ground-fill pipeline: same camera layout (group 0), a single world-space XY vertex stream,
+        // the procedural `vs_ground`/`fs_ground` entries. Opaque REPLACE — drawn first, nothing behind.
+        let ground_vertex_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<GroundVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+        };
+        let ground_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("gonedark.terrain_ground_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_ground"),
+                buffers: &[ground_vertex_layout],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_ground"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let quad_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("gonedark.terrain_quad_vbo"),
             contents: bytemuck::cast_slice(&QUAD_VERTS),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let ground_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gonedark.terrain_ground_vbo"),
+            contents: bytemuck::cast_slice(&GROUND_VERTS),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
@@ -285,24 +354,34 @@ impl TerrainRenderer {
             instance_buf,
             instance_cap,
             lines,
+            ground_pipeline,
+            ground_buf,
         }
     }
 
-    /// Draw the ground grid into the existing command-view render pass (the caller owns the pass so
-    /// the grid composites into the same clear/store as the units, drawn first under them). Borrows
-    /// the unit pass's `camera_bind_group` so the grid shares the world frame. World-space, no fog —
-    /// the host calls this only in the command view (`!world_dark`).
+    /// Draw the ground (procedural fill, then the grid lines on top) into the existing command-view
+    /// render pass (the caller owns the pass so the ground composites into the same clear/store as
+    /// the units, drawn first under them). Borrows the unit pass's `camera_bind_group` so the ground
+    /// shares the world frame. World-space, no fog — the host calls this only in the command view
+    /// (`!world_dark`).
     pub fn draw<'a>(
         &'a self,
         pass: &mut wgpu::RenderPass<'a>,
         camera_bind_group: &'a wgpu::BindGroup,
     ) {
+        pass.set_bind_group(0, camera_bind_group, &[]);
+        // Ground fill first (under everything): procedural tonal variation + vignette, so the floor
+        // is grounded terrain rather than a flat slate clear.
+        pass.set_pipeline(&self.ground_pipeline);
+        pass.set_vertex_buffer(0, self.ground_buf.slice(..));
+        pass.draw(0..GROUND_VERTS.len() as u32, 0..1);
+
+        // Grid lines on top of the fill.
         if self.lines.is_empty() {
             return;
         }
         debug_assert!(self.lines.len() <= self.instance_cap);
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, camera_bind_group, &[]);
         pass.set_vertex_buffer(0, self.quad_buf.slice(..));
         pass.set_vertex_buffer(1, self.instance_buf.slice(..));
         pass.draw(0..QUAD_VERTS.len() as u32, 0..self.lines.len() as u32);
@@ -422,6 +501,20 @@ mod tests {
                 xs.iter().any(|o| (o + x).abs() < EPS),
                 "every line has an origin mirror"
             );
+        }
+    }
+
+    #[test]
+    fn ground_fill_quad_covers_the_camera_framing() {
+        // The ground-fill quad must fully cover the ±40 top-down camera framing (and the ±44 grid)
+        // with margin, so no flat slate sliver shows at the frame edges.
+        assert!(GROUND_FILL_HALF > GRID_HALF_EXTENT, "ground covers the grid");
+        assert!(GROUND_FILL_HALF >= 60.0, "ground covers the ±40 framing's corners with margin");
+        // It is two triangles (6 verts) and every vertex sits on a ±GROUND_FILL_HALF corner.
+        assert_eq!(GROUND_VERTS.len(), 6);
+        for v in &GROUND_VERTS {
+            assert!((v.world[0].abs() - GROUND_FILL_HALF).abs() < EPS);
+            assert!((v.world[1].abs() - GROUND_FILL_HALF).abs() < EPS);
         }
     }
 

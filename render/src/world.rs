@@ -29,6 +29,18 @@
 /// is a ~0.13 s flare — a snappy cue, gone before the next likely shot.
 pub const MUZZLE_FLASH_TICKS: u64 = 8;
 
+/// Edge length (px) of the square ground detail map (`assets/textures/ground.gray`). The contract
+/// with `tools/textures/gen_textures.py` (`SIZE` there MUST match): the baked file is
+/// `GROUND_TEX_SIZE * GROUND_TEX_SIZE` raw R8 bytes. The [`ground_tex_matches_metrics`](tests) test
+/// pins the `include_bytes!`d blob length so a generator/metrics drift fails `cargo test`.
+pub const GROUND_TEX_SIZE: u32 = 256;
+
+/// The baked seamless ground detail map: raw `GROUND_TEX_SIZE²` R8 bytes (one luminance byte per
+/// texel), `include_bytes!`d straight in so the render crate needs no image-decode dependency (it
+/// stays `wgpu` + `bytemuck` only — the same rule as the D74 font atlas). Generated with ImageMagick
+/// by `tools/textures/gen_textures.py`; render-only, carries no sim/intel (invariants #1/#4/#6).
+const GROUND_TEX_BYTES: &[u8] = include_bytes!("../../assets/textures/ground.gray");
+
 /// Compute the muzzle-flash intensity in `[0, 1]` for the current `tick`, given the tick the
 /// player last fired on (`None` if they have not fired). Fresh shot → `1.0`, then a linear ramp to
 /// `0.0` over [`MUZZLE_FLASH_TICKS`]; a future-stamped or long-past fire is dark. Pure float math
@@ -115,6 +127,12 @@ pub struct WorldRenderer {
     /// The world uniform (inverse view-proj, eye, flash).
     uniform_buf: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
+    /// The ground detail-map texture, kept so the raw R8 bytes can be uploaded lazily on the first
+    /// [`render_sky`](Self::render_sky) (the construction path has only a `device`, not a `queue` —
+    /// the same lazy-upload pattern as `text::TextRenderer::ensure_atlas_uploaded`).
+    ground_tex: wgpu::Texture,
+    /// Whether [`ground_tex`](Self::ground_tex)'s bytes have been written yet.
+    ground_uploaded: bool,
 }
 
 impl WorldRenderer {
@@ -133,27 +151,82 @@ impl WorldRenderer {
             mapped_at_creation: false,
         });
 
+        // The ground detail-map texture (R8 coverage); bytes written lazily on the first render_sky()
+        // (the construction path has no queue — the `text` atlas pattern). A REPEAT sampler so the
+        // shader can tile it across the world plane seamlessly.
+        let ground_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gonedark.world_ground_tex"),
+            size: wgpu::Extent3d {
+                width: GROUND_TEX_SIZE,
+                height: GROUND_TEX_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let ground_view = ground_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let ground_samp = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("gonedark.world_ground_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            ..Default::default()
+        });
+
         let uniform_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("gonedark.world_uniform_layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
 
         let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gonedark.world_uniform_bind_group"),
             layout: &uniform_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&ground_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&ground_samp),
+                },
+            ],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -196,7 +269,38 @@ impl WorldRenderer {
             sky_pipeline,
             uniform_buf,
             uniform_bind_group,
+            ground_tex,
+            ground_uploaded: false,
         }
+    }
+
+    /// Upload the baked R8 ground detail map into the texture, once. Called on the first
+    /// [`render_sky`](Self::render_sky) (the construction path has no `queue`); a no-op thereafter.
+    /// Mirrors `text::TextRenderer::ensure_atlas_uploaded`.
+    fn ensure_ground_uploaded(&mut self, queue: &wgpu::Queue) {
+        if self.ground_uploaded {
+            return;
+        }
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.ground_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            GROUND_TEX_BYTES,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(GROUND_TEX_SIZE),
+                rows_per_image: Some(GROUND_TEX_SIZE),
+            },
+            wgpu::Extent3d {
+                width: GROUND_TEX_SIZE,
+                height: GROUND_TEX_SIZE,
+                depth_or_array_layers: 1,
+            },
+        );
+        self.ground_uploaded = true;
     }
 
     /// Draw the sky + ground for the embodied frame. This is the CLEARING pass for the embodied
@@ -211,6 +315,7 @@ impl WorldRenderer {
         view: &wgpu::TextureView,
         uniform: &WorldUniform,
     ) {
+        self.ensure_ground_uploaded(queue);
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(uniform));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -370,6 +475,19 @@ mod tests {
         let fired = weapon_view_model(1.0);
         assert!(fired[3][2] > rest[3][2], "recoils back toward the camera");
         assert!(fired[3][1] > rest[3][1], "and kicks up");
+    }
+
+    // ---- ground detail-map metrics contract ----
+
+    #[test]
+    fn ground_tex_matches_metrics() {
+        // The baked ground blob length MUST equal GROUND_TEX_SIZE² — a guard against the generator
+        // and this const drifting (which would shear / misalign the sampled detail at runtime).
+        assert_eq!(
+            GROUND_TEX_BYTES.len(),
+            (GROUND_TEX_SIZE * GROUND_TEX_SIZE) as usize,
+            "raw R8 ground size must match GROUND_TEX_SIZE² — regenerate with `pnpm assets:textures`"
+        );
     }
 
     /// Validate `world.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails

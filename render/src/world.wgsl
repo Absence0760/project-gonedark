@@ -21,6 +21,15 @@ struct World {
 @group(0) @binding(0)
 var<uniform> world: World;
 
+// Ground detail map — a seamlessly-tiling R8 grayscale noise baked by tools/textures/gen_textures.py
+// (ImageMagick) and uploaded by `WorldRenderer`. Sampled (tiled by world XY) to break up the flat
+// floor; render-only, carries no intel (invariant #6). The call site uses `textureSampleLevel`
+// (explicit LOD 0) so the sample is legal inside the ground branch's non-uniform control flow.
+@group(0) @binding(1)
+var ground_tex: texture_2d<f32>;
+@group(0) @binding(2)
+var ground_samp: sampler;
+
 // ---- sky / ground -----------------------------------------------------------------------------
 
 struct SkyOut {
@@ -79,8 +88,20 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
         let grid2 = min(g / max(line_w, vec2<f32>(1e-4)), vec2<f32>(1.0));
         let line = 1.0 - min(grid2.x, grid2.y);
 
-        let floor_base = vec3<f32>(0.10, 0.12, 0.14); // dark earthy slate
-        let floor_line = vec3<f32>(0.28, 0.34, 0.40); // lighter grid line
+        // Ground detail: sample the seamless noise map at TWO world-space scales — a coarse octave
+        // for slow macro tonal variation and a fine octave for near-field grain — and combine them
+        // into a brightness modulation centred on 1.0. `textureSampleLevel` (LOD 0) keeps the sample
+        // legal in this branch's non-uniform control flow. The fine grain fades out with distance
+        // (it would alias into shimmer far away), leaving only the gentle macro variation near the
+        // horizon. Subtle by design: the floor reads as grounded terrain, never busy.
+        let coarse = textureSampleLevel(ground_tex, ground_samp, hit.xy / 26.0, 0.0).r;
+        let fine = textureSampleLevel(ground_tex, ground_samp, hit.xy / 5.5, 0.0).r;
+        let fine_fade = 1.0 - clamp(dist / 30.0, 0.0, 1.0);
+        let detail = (coarse - 0.5) * 0.26 + (fine - 0.5) * 0.18 * fine_fade;
+        let tint = clamp(1.0 + detail, 0.7, 1.3);
+
+        let floor_base = vec3<f32>(0.10, 0.12, 0.14) * tint; // dark earthy slate, detail-modulated
+        let floor_line = vec3<f32>(0.28, 0.34, 0.40);        // lighter grid line (kept crisp)
         let ground = mix(floor_base, floor_line, line);
 
         // Horizon haze the floor dissolves into (matches the bottom of the sky gradient).
@@ -88,12 +109,23 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
         return vec4<f32>(mix(ground, haze, fog), 1.0);
     }
 
-    // Sky: a vertical gradient from a deep zenith to a lighter horizon band. Drive it by the ray's
-    // elevation (dir.z), clamped so the band reads even when looking level/slightly down.
+    // Sky: a richer multi-stop vertical gradient (zenith → mid → horizon) with a subtle warm haze
+    // glow hugging the skyline, so the dome reads as atmospheric depth rather than a flat two-colour
+    // ramp. Driven by the ray's elevation (dir.z), clamped so the band reads even when looking
+    // level/slightly down. Kept a MUTED low-saturation blue-grey (channels track within ~0.06) so the
+    // alert-HUD markers and avatar still pop and no channel is misread as faction intel (invariant #6).
+    // Palette aligned to gonedark_render::theme INK/PANEL (WGSL can't import the consts; see theme.rs).
     let elev = clamp(dir.z, 0.0, 1.0);
-    let zenith = vec3<f32>(0.04, 0.06, 0.12);  // deep night-blue overhead
-    let horizon = vec3<f32>(0.16, 0.18, 0.22); // pale haze at the skyline
-    return vec4<f32>(mix(horizon, zenith, elev), 1.0);
+    let zenith = vec3<f32>(0.025, 0.040, 0.090); // deep night-blue overhead (toward theme::INK)
+    let mid_sky = vec3<f32>(0.075, 0.095, 0.140); // body of the dome
+    let horizon = vec3<f32>(0.150, 0.175, 0.215); // pale haze at the skyline
+    // Two smoothstep stops: horizon→mid over the low band, mid→zenith over the upper band.
+    let lower = mix(horizon, mid_sky, smoothstep(0.0, 0.22, elev));
+    var sky = mix(lower, zenith, smoothstep(0.18, 0.85, elev));
+    // A soft warm haze glow concentrated just above the horizon for a sense of distant light.
+    let glow = (1.0 - smoothstep(0.0, 0.20, elev)) * 0.06;
+    sky += vec3<f32>(0.9, 0.7, 0.5) * glow;
+    return vec4<f32>(sky, 1.0);
 }
 
 // ---- weapon viewmodel -------------------------------------------------------------------------
