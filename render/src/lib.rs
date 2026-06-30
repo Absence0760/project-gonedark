@@ -65,6 +65,11 @@ pub mod tank_hud;
 /// `scope` seam (the FOV-narrowing + input→zoom-intent math). Public so the host fills the
 /// [`scope::ScopeState`] from the embodied zoom state.
 pub mod scope;
+/// Embodied **bullet-impact VFX** (WS-A, CP-2 game-feel bar). Owns `ImpactRenderer`: the additive
+/// spark/dust burst at the point the avatar's own shot landed, drawn as a LOAD pass over the dark
+/// embodied frame. Pairs with the engine's hit-feedback seam (the host projects the world hit point
+/// to NDC + derives the fade clock). Public so the host fills the burst params.
+pub mod impact;
 /// Band-select marquee. Owns `MarqueeRenderer`: the selection rectangle drawn in the command view
 /// while a band-drag is in flight. Public so the host can describe the box via [`marquee::Marquee`].
 pub mod marquee;
@@ -657,6 +662,9 @@ pub struct Renderer {
     /// The embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9). Drawn as a LOAD
     /// pass by [`Renderer::render_scope`] when the local player aims down sight while embodied.
     scope: scope::ScopeRenderer,
+    /// The embodied **bullet-impact VFX** (WS-A). Drawn as an additive LOAD pass by
+    /// [`Renderer::render_impact`] at the projected hit point of the avatar's own connecting shot.
+    impact: impact::ImpactRenderer,
     /// The in-session shell overlay (Phase 4 WS-B). Drawn as a LOAD pass by
     /// [`Renderer::render_overlay`] when an in-session surface (pause/reconnect/summary) is up.
     overlay: overlay::OverlayRenderer,
@@ -827,6 +835,7 @@ impl Renderer {
         let touch_controls = touch_controls::TouchControlsRenderer::new(device, surface_format);
         let tank_hud = tank_hud::TankHudRenderer::new(device, surface_format);
         let scope = scope::ScopeRenderer::new(device, surface_format);
+        let impact = impact::ImpactRenderer::new(device, surface_format);
         let overlay = overlay::OverlayRenderer::new(device, surface_format);
         let radial = radial::RadialRenderer::new(device, surface_format);
         let marquee = marquee::MarqueeRenderer::new(device, surface_format);
@@ -862,6 +871,7 @@ impl Renderer {
             hud,
             touch_controls,
             scope,
+            impact,
             tank_hud,
             overlay,
             radial,
@@ -1195,6 +1205,57 @@ impl Renderer {
     ) {
         self.hud
             .render_hitmarker(device, queue, view, last_hit_tick, tick);
+    }
+
+    /// Draw the hip-fire **dynamic crosshair** (WS-A) — the four arm ticks + center pip, spread by the
+    /// recoil `bloom` — as a LOAD pass over the embodied frame. Delegates to [`hud::HudRenderer`].
+    /// `aspect` keeps the cross square on a wide viewport. The host calls this only while embodied in
+    /// a hip-firing unit (infantry); the tank draws its own gun-sight reticle. Screen-center chrome
+    /// with no world position — reveals nothing (invariant #6).
+    pub fn render_crosshair(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        bloom: f32,
+        aspect: f32,
+    ) {
+        self.hud.render_crosshair(device, queue, view, bloom, aspect);
+    }
+
+    /// Draw the **bullet-impact VFX** (WS-A) — the additive spark/dust burst at the projected hit
+    /// point NDC `(ndc_x, ndc_y)` for the given `intensity` — as a LOAD pass over the embodied frame.
+    /// Delegates to [`impact::ImpactRenderer`]. The host projects the world hit point (the avatar's
+    /// own connecting shot) through the camera and derives `intensity` from the fade clock; a no-op
+    /// once the burst has faded. Feedback on the player's own action, never intel (invariant #6).
+    pub fn render_impact(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        ndc_x: f32,
+        ndc_y: f32,
+        intensity: f32,
+        aspect: f32,
+    ) {
+        self.impact
+            .render(device, queue, view, ndc_x, ndc_y, intensity, aspect);
+    }
+
+    /// Draw the **shaped muzzle flash** flare (WS-A) at the gun muzzle for the current flash
+    /// `intensity` and viewport `aspect`, as an additive LOAD pass over the embodied frame. Delegates
+    /// to [`world::WorldRenderer`]. The host calls this after the weapon viewmodel, only while
+    /// embodied with a drawn rifle; a no-op between shots. No world position → reveals nothing (#6).
+    pub fn render_muzzle_flash(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        intensity: f32,
+        aspect: f32,
+    ) {
+        self.world
+            .render_muzzle_flash(device, queue, view, intensity, aspect);
     }
 
     /// Draw the embodied **tank** gunner-sight HUD (tank embodiment P8) on top of the current frame (a

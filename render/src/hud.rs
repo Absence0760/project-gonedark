@@ -54,6 +54,24 @@ const HITMARKER_COLOR: [f32; 3] = [1.0, 1.0, 1.0];
 /// The hitmarker glyph id matched by `glyph_coverage` in `hud.wgsl` (4 = centered "X").
 const SHAPE_HITMARKER: f32 = 4.0;
 
+/// The dot glyph id (`hud.wgsl` shape 0) — reused for the hip-fire crosshair ticks (WS-A).
+const SHAPE_DOT: f32 = 0.0;
+
+/// Resting half-gap (NDC-y) from screen-center to each crosshair arm tick at zero recoil — a tight,
+/// readable reticle. The recoil **bloom** ([`gonedark_engine::recoil::crosshair_bloom`]) is added to
+/// this so the arms spread under fire and pull back as the gun settles (WS-A, CP-2 game-feel bar).
+const CROSSHAIR_GAP: f32 = 0.030;
+
+/// Half-size (NDC) of each small crosshair tick (the four arm dots + the center pip).
+const CROSSHAIR_DOT_HALF: f32 = 0.011;
+
+/// Crosshair color — a pale green-white that stays legible over the muted blue-grey FPS world
+/// without reading as the warm muzzle flash or the red/orange alert ring (invariant #6 legibility).
+const CROSSHAIR_COLOR: [f32; 3] = [0.86, 0.96, 0.90];
+
+/// Crosshair opacity (it is constant chrome, not a fading flash).
+const CROSSHAIR_ALPHA: f32 = 0.82;
+
 /// The RGB color for an alert kind. Color is only ONE of the two cues — [`shape_for`] carries a
 /// redundant shape so the kinds stay distinct for CVD players (invariant #6: the thread back must
 /// stay legible). The palette is spaced along lightness *and* the blue-yellow axis, not just warm
@@ -191,6 +209,39 @@ pub fn hitmarker_marker(last_hit_tick: Option<u64>, tick: u64) -> Option<HudMark
         half_size: HITMARKER_HALF_SIZE,
         shape: SHAPE_HITMARKER,
     })
+}
+
+/// Build the hip-fire **dynamic crosshair** — four arm ticks (up/down/left/right) plus a center pip —
+/// for the current recoil `bloom` and viewport `aspect` (WS-A, CP-2 game-feel bar). The arms sit a
+/// half-gap of `CROSSHAIR_GAP + bloom` from screen-center, so at rest (`bloom == 0`) the reticle is
+/// tight and under fire it **spreads** outward and settles back as the recoil decays. The horizontal
+/// gap is divided by `aspect` so the cross stays square on a wide window (the raw-NDC chrome footgun —
+/// the alert markers ride a ring and dodge it, but a crosshair's symmetry needs the correction).
+///
+/// Pure float math (presentation boundary), so it is unit-testable without a GPU. Reveals nothing —
+/// it is screen-center chrome with no world position (invariant #6).
+pub fn crosshair_markers(bloom: f32, aspect: f32) -> Vec<HudMarker> {
+    let aspect = if aspect.abs() < 1.0e-6 { 1.0 } else { aspect };
+    let gap = (CROSSHAIR_GAP + bloom.max(0.0)).max(0.0);
+    let gx = gap / aspect; // square the cross on a non-1:1 viewport
+    let [r, g, b] = CROSSHAIR_COLOR;
+    let tick = |ndc_x: f32, ndc_y: f32| HudMarker {
+        ndc_x,
+        ndc_y,
+        r,
+        g,
+        b,
+        alpha: CROSSHAIR_ALPHA,
+        half_size: CROSSHAIR_DOT_HALF,
+        shape: SHAPE_DOT,
+    };
+    vec![
+        tick(0.0, 0.0),  // center pip
+        tick(gx, 0.0),   // right arm
+        tick(-gx, 0.0),  // left arm
+        tick(0.0, gap),  // top arm
+        tick(0.0, -gap), // bottom arm
+    ]
 }
 
 /// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-marker half-size).
@@ -367,6 +418,23 @@ impl HudRenderer {
             return;
         };
         self.draw_markers(device, queue, view, &[marker]);
+    }
+
+    /// Draw the hip-fire **dynamic crosshair** (WS-A) — the four arm ticks + center pip, spread by the
+    /// recoil `bloom` — as a LOAD pass over the embodied frame (same pipeline/shader as the alert
+    /// markers, glyph 0). `aspect` keeps the cross square on a wide viewport. The host calls this only
+    /// while embodied in a unit that hip-fires (infantry); the tank shows its own gun-sight reticle
+    /// instead. Screen-center chrome with no world position — reveals nothing (invariant #6).
+    pub fn render_crosshair(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        bloom: f32,
+        aspect: f32,
+    ) {
+        let markers = crosshair_markers(bloom, aspect);
+        self.draw_markers(device, queue, view, &markers);
     }
 
     /// Upload `markers` and composite them as one LOAD pass over `view` (never clears). Shared by
@@ -674,6 +742,58 @@ mod tests {
     fn future_stamped_hit_is_none() {
         // tick < last_hit_tick (clock not yet there) yields None rather than a negative age.
         assert!(hitmarker_marker(Some(100), 50).is_none());
+    }
+
+    // ---- dynamic crosshair (WS-A) ----
+
+    #[test]
+    fn crosshair_has_center_pip_plus_four_arms() {
+        let m = crosshair_markers(0.0, 1.0);
+        assert_eq!(m.len(), 5, "center + 4 arms");
+        // The first is the center pip.
+        assert!(m[0].ndc_x.abs() < 1e-9 && m[0].ndc_y.abs() < 1e-9, "center pip at origin");
+        // Every tick is the dot glyph in the crosshair color.
+        for t in &m {
+            assert_eq!(t.shape, SHAPE_DOT);
+            assert_eq!([t.r, t.g, t.b], CROSSHAIR_COLOR);
+        }
+        // At rest the arms sit at the resting gap.
+        let right = m.iter().find(|t| t.ndc_x > 0.0).unwrap();
+        assert!((right.ndc_x - CROSSHAIR_GAP).abs() < 1e-6, "rest gap at aspect 1");
+    }
+
+    #[test]
+    fn crosshair_blooms_outward_with_recoil() {
+        let rest = crosshair_markers(0.0, 1.0);
+        let fired = crosshair_markers(0.05, 1.0);
+        let rest_right = rest.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
+        let fired_right = fired.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
+        let rest_top = rest.iter().find(|t| t.ndc_y > 0.0).unwrap().ndc_y;
+        let fired_top = fired.iter().find(|t| t.ndc_y > 0.0).unwrap().ndc_y;
+        assert!(fired_right > rest_right, "horizontal arms spread under fire");
+        assert!(fired_top > rest_top, "vertical arms spread under fire");
+        // The bloom adds exactly the recoil bloom to the gap (aspect 1).
+        assert!((fired_top - (CROSSHAIR_GAP + 0.05)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn crosshair_stays_square_on_a_wide_window() {
+        // aspect 16:9 → the horizontal gap is divided by aspect so the on-screen cross is square
+        // (the same raw-NDC chrome footgun the alert ring dodges). Multiply the x gap back by aspect
+        // and it matches the y gap.
+        let aspect = 16.0 / 9.0;
+        let m = crosshair_markers(0.02, aspect);
+        let right = m.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
+        let top = m.iter().find(|t| t.ndc_y > 0.0).unwrap().ndc_y;
+        assert!((right * aspect - top).abs() < 1e-6, "x·aspect ({right}) matches y ({top})");
+    }
+
+    #[test]
+    fn crosshair_negative_bloom_does_not_pull_arms_inside_rest() {
+        // A stray negative recoil can never collapse the reticle past its resting gap.
+        let m = crosshair_markers(-1.0, 1.0);
+        let right = m.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
+        assert!((right - CROSSHAIR_GAP).abs() < 1e-6, "floors at the resting gap");
     }
 
     /// Validate `hud.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails

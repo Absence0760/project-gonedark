@@ -85,6 +85,11 @@ mod locomote;
 /// and the magnification readout (`zoom_magnification`). Presentation/input only (invariants #4/#5):
 /// it narrows the embodied camera FOV + drives the `render::scope` overlay, never touching the sim.
 mod scope;
+/// Embodied **recoil / view-kick** seam (WS-A, CP-2 game-feel bar). Owns the pure recoil-accumulator
+/// + camera-pitch-kick + crosshair-bloom math (`add_recoil`/`decay_recoil`/`view_pitch_kick`/
+/// `crosshair_bloom`), driven off the wall-clock `dt`. Presentation/input only (invariant #4): a
+/// transient view punch + reticle spread, never sim state.
+mod recoil;
 /// On-screen FPS touch controls (the COD-style embodied HUD). Owns the pure `TouchControls` seam:
 /// raw multi-touch points → embodied intents (`move_axis`/look/fire/crouch/reload/surface) + the
 /// screen-space layout the renderer draws. The testable logic `pal-android` can't host. Public so
@@ -907,19 +912,24 @@ fn should_auto_surface(embodied: bool, avatar_present: bool) -> bool {
     embodied && !avatar_present
 }
 
-/// Did the embodied avatar land a hit this tick? True iff the player is `embodied` AND some
-/// `SimEvent::Damaged` in this frame's deterministic event stream names `avatar` as its `source` —
-/// i.e. the avatar's OWN shot dealt damage. PURE (no `Game`/device) so it is the unit-testable seam
-/// behind the WS-4 hit-feedback cue (the hitmarker + hit SFX).
+/// The world point of the embodied avatar's OWN landed shot this tick (WS-4 + WS-A) — the `pos` of
+/// the first `SimEvent::Damaged` whose `source` is the `avatar`, or `None` if the player isn't
+/// embodied or no own shot connected (`Some` ⟺ "the avatar's own shot dealt damage"). PURE (no
+/// `Game`/device) so it is the unit-testable seam behind the hit feedback: the hitmarker + hit SFX
+/// (the `Some`-ness) AND the impact-VFX point + the coupled impact SFX (the position).
 ///
-/// Invariant #6: this keys STRICTLY on the avatar-as-source — feedback on the player's own action,
-/// not intel about an unseen enemy. It reads only the event stream (already-checksummed state copied
-/// out, never re-folded) + the local embodied flag; it mutates nothing and never enters `core`.
-fn avatar_landed_hit(events: &[SimEvent], avatar: Entity, embodied: bool) -> bool {
-    embodied
-        && events.iter().any(|e| {
-            matches!(*e, SimEvent::Damaged { source, .. } if source == avatar)
-        })
+/// Invariant #6: keyed STRICTLY on the avatar-as-source — feedback on the player's OWN action (the
+/// burst marks where their shot struck), never intel about an unseen enemy. Reads only the event
+/// stream (already-checksummed state copied out, never re-folded) + the embodied flag; mutates
+/// nothing and never enters `core`.
+fn avatar_hit_pos(events: &[SimEvent], avatar: Entity, embodied: bool) -> Option<Vec2> {
+    if !embodied {
+        return None;
+    }
+    events.iter().find_map(|e| match *e {
+        SimEvent::Damaged { source, pos, .. } if source == avatar => Some(pos),
+        _ => None,
+    })
 }
 
 /// The embodied crouch button → a `Command::Crouch` for `player`, or `None` when no press edge
@@ -1407,11 +1417,27 @@ pub struct Game {
 
     /// The sim tick the embodied avatar's own shot last *connected* (dealt damage), or `None` if it
     /// hasn't this match (WS-4). PRESENTATION ONLY — derived from the deterministic `SimEvent::Damaged`
-    /// stream where `source` is the avatar (the pure [`avatar_landed_hit`] seam) and the player is
+    /// stream where `source` is the avatar (the pure [`avatar_hit_pos`] seam) and the player is
     /// embodied; it drives the centered hitmarker flash ([`gonedark_render::hud::hitmarker_marker`])
     /// plus a one-shot hit SFX. It is feedback on the player's OWN action — never intel about an
     /// unseen enemy — so it stays inside invariant #6, and never feeds the sim / never enters `core`.
     last_hit_tick: Option<u64>,
+
+    // --- gunplay feel (WS-A, CP-2 game-feel bar) ---
+    // All PRESENTATION/INPUT ONLY (invariant #4): stepped from the wall-clock `dt`, never the sim
+    // tick, and never written into `core`. They drive the embodied camera punch, the crosshair
+    // bloom, and the impact VFX — feedback on the player's own action (invariant #6).
+    /// The recoil accumulator (host presentation state): bumped on each [`Command::Fire`] and decayed
+    /// toward rest every frame by the pure [`recoil`] seam. Drives the upward camera-pitch view-kick
+    /// (cosmetic — the sim aim is 2-D yaw) and the crosshair bloom. Never enters the sim.
+    view_recoil: f32,
+    /// The sim tick the avatar's own shot last *landed* on, for the impact VFX fade clock (the
+    /// downrange twin of `last_hit_tick`/`last_fire_tick`), or `None`. Presentation only.
+    last_impact_tick: Option<u64>,
+    /// The world-space `(x, y)` point of that last landed shot (the `SimEvent::Damaged` position),
+    /// projected to NDC each embodied frame for the impact burst. Presentation only — a copy of
+    /// already-checksummed event state, never re-folded (invariant #1/#7).
+    last_impact_pos: Option<(f32, f32)>,
 
     /// A transient command-view feedback banner for the last camp-upgrade attempt — `(tick, message,
     /// rgb)`, or `None` if none is live. PRESENTATION ONLY: the host detects whether a `Command::
@@ -1972,6 +1998,10 @@ impl Game {
             last_fire_tick: None,
             // No connecting shot yet → no hitmarker (WS-4, presentation only).
             last_hit_tick: None,
+            // Gunplay feel (WS-A): a settled gun, no impact in flight.
+            view_recoil: 0.0,
+            last_impact_tick: None,
+            last_impact_pos: None,
             // No upgrade attempted yet → no feedback banner.
             upgrade_banner: None,
             // No touches tracked yet; the HUD is only built on embodied touch frames.
@@ -2309,14 +2339,43 @@ impl Game {
             let p = self.player_pos();
             (fixed_to_f32(p.x), fixed_to_f32(p.y))
         };
-        embodied_view_proj_fov(px, py, self.yaw, self.pitch, width, height, self.embodied_fov_deg())
+        // Recoil view-kick (WS-A): add the upward camera-pitch punch from the recoil accumulator —
+        // PRESENTATION ONLY and cosmetic (the sim aim is 2-D yaw, so this moves the view, never the
+        // bullet, and the screen-center crosshair stays aligned with the fire direction). The
+        // horizontal half of recoil is carried by the crosshair bloom, not a camera-yaw offset.
+        let pitch = self.pitch + recoil::view_pitch_kick(self.view_recoil);
+        embodied_view_proj_fov(px, py, self.yaw, pitch, width, height, self.embodied_fov_deg())
     }
 
     /// The embodied camera FOV (degrees) for this frame — the base [`EMBODIED_FOV_DEG`] narrowed by
-    /// the current sniper/zoom gun-sight `aim_zoom_t` (tank embodiment P9). At hip it is the base
-    /// FOV; aiming down sight eases it toward [`scope::SCOPED_FOV_DEG`]. Pure presentation.
+    /// the current aim-down-sight `aim_zoom_t`. At hip it is the base FOV; aiming down sight eases it
+    /// toward the per-unit ADS target ([`Self::ads_scoped_fov`]): the tank's sniper gun-sight
+    /// ([`scope::SCOPED_FOV_DEG`]) or infantry's gentler iron-sight ([`scope::ADS_FOV_DEG`], WS-A).
+    /// Pure presentation.
     fn embodied_fov_deg(&self) -> f32 {
-        scope::zoom_fov_deg(EMBODIED_FOV_DEG, scope::SCOPED_FOV_DEG, self.aim_zoom_t)
+        scope::zoom_fov_deg(EMBODIED_FOV_DEG, self.ads_scoped_fov(), self.aim_zoom_t)
+    }
+
+    /// The fully-aimed FOV target (degrees) for the possessed unit: the **tank** gun-sight
+    /// ([`scope::SCOPED_FOV_DEG`], ~3.3× — when the avatar has an independent turret) or **infantry**
+    /// iron-sight ADS ([`scope::ADS_FOV_DEG`], ~1.7×). WS-A un-gated ADS from tank-only; the unit kind
+    /// picks how far the FOV narrows + (the host) whether to draw the scope-overlay chrome (tank
+    /// only). Pure presentation — read-only over the sim, never folded.
+    fn ads_scoped_fov(&self) -> f32 {
+        if self.player_has_turret() {
+            scope::SCOPED_FOV_DEG
+        } else {
+            scope::ADS_FOV_DEG
+        }
+    }
+
+    /// Whether the possessed unit has an independent turret (a tank gun-sight) — the gate for the
+    /// sniper-scope FOV + the scope-overlay/tank-HUD chrome. A read-only sim query; `false` when not
+    /// embodied or the avatar is dead. Pure presentation.
+    fn player_has_turret(&self) -> bool {
+        self.embodied
+            && self.sim.world.is_alive(self.player)
+            && self.sim.world.weapon[self.player.index as usize].turret_speed > 0
     }
 
     /// Command-view orthographic view-projection at the current pan focus + zoom — thin wrapper
@@ -2712,23 +2771,34 @@ impl Game {
                 )
             };
 
-        // Integrate look into presentation-only yaw + pitch (D15: never into the sim). Both
-        // subtract the delta so the view is non-inverted (mouse/drag right → look right, up → look
-        // up); pitch is clamped shy of vertical (see `integrate_look_*`).
-        self.yaw = integrate_look_yaw(self.yaw, look_axis.0);
-        self.pitch = integrate_look_pitch(self.pitch, look_axis.1);
-
-        // Sniper/zoom gun-sight (tank embodiment P9, presentation only): ease the embodied camera
-        // FOV toward the held aim-down-sight input. The zoom engages only while embodied in a unit
-        // with a gun-sight (the tank — an independent turret), so infantry embodiment and the command
-        // view are unaffected and the FOV simply restores to base when ADS is released or you eject.
-        // `aim_zoom_t` is host presentation state — it never enters the sim (invariants #4/#5), and a
-        // narrower FOV reveals *less* of the world, so the zoom stays fair (invariant #6).
-        let has_scope = self.embodied
-            && self.sim.world.is_alive(self.player)
-            && self.sim.world.weapon[self.player.index as usize].turret_speed > 0;
-        let zoom_active = scope::zoom_active(self.embodied, has_scope, aim);
+        // Aim-down-sight (P9 + WS-A, presentation only): ease the embodied camera FOV toward the held
+        // ADS input. As of WS-A **any** living embodied unit can ADS — infantry to `ADS_FOV_DEG` (a
+        // gentle iron-sight steadying) and the tank to `SCOPED_FOV_DEG` (the sniper gun-sight) — the
+        // possessed unit's kind picks the target FOV (`embodied_fov_deg`) and (the host, below)
+        // whether to draw the scope-overlay chrome (tank only, via `has_scope`). `aim_zoom_t` is host
+        // presentation state — it never enters the sim (invariants #4/#5), and a narrower FOV reveals
+        // *less* of the world, so ADS stays fair (invariant #6). Stepped first so the look-sensitivity
+        // ramp below reads the up-to-date zoom.
+        let has_scope = self.player_has_turret();
+        let can_ads = self.embodied && self.sim.world.is_alive(self.player);
+        let zoom_active = scope::zoom_active(self.embodied, can_ads, aim);
         self.aim_zoom_t = scope::step_zoom_t(self.aim_zoom_t, zoom_active, dt_secs, scope::ZOOM_RATE);
+
+        // Recoil settle (WS-A): decay the view-kick / crosshair-bloom accumulator toward rest every
+        // frame on the WALL-CLOCK `dt` (never the sim tick), so the punch recovers frame-rate-
+        // independently. The shot-time bump happens on `out.fired` below. Presentation only (#4).
+        self.view_recoil = recoil::decay_recoil(self.view_recoil, dt_secs, recoil::RECOIL_RECOVERY);
+
+        // Integrate look into presentation-only yaw + pitch (D15: never into the sim), scaling the
+        // deltas by the WS-A ADS look-sensitivity ramp so aiming down sight steadies the aim (eased
+        // with the zoom, floored so it never feels glued). Both subtract the delta so the view is
+        // non-inverted (mouse/drag right → look right, up → look up); pitch is clamped shy of vertical.
+        let look_scale = scope::ads_look_scale(
+            self.aim_zoom_t,
+            scope::zoom_magnification(EMBODIED_FOV_DEG, self.embodied_fov_deg()),
+        );
+        self.yaw = integrate_look_yaw(self.yaw, look_axis.0 * look_scale);
+        self.pitch = integrate_look_pitch(self.pitch, look_axis.1 * look_scale);
 
         if self.embodied {
             // The whole embodied input→command pipeline lives in the pure `embodied_input_commands`
@@ -2757,6 +2827,13 @@ impl Game {
                 // for a few ticks after this shot. Never read by the sim — it rides the host clock
                 // alongside the authoritative `Command::Fire`, not in place of it (invariant #4/#6).
                 self.last_fire_tick = Some(self.sim.tick_count());
+                // Recoil view-kick + crosshair bloom (WS-A): bump the accumulator on the shot (it
+                // decays each frame above). Host presentation state, never the sim.
+                self.view_recoil = recoil::add_recoil(self.view_recoil, 1);
+                // Host-clock fire cue (WS-A): crack the gun the instant the muzzle flashes, DECOUPLED
+                // from the Damaged-event `Gunfire` (which fires only for a connecting shot) — so a
+                // MISSED shot still sounds. Host-side, never the sim (invariant #4/#6).
+                audio.play_oneshot(audio::weapon_fire_cue());
             }
             if out.surfaced {
                 // The transition loop already ran THIS frame, so flip the camera state here directly
@@ -2994,14 +3071,23 @@ impl Game {
             .ingest(&frame_events, &self.sim.world, Faction::Player, tick);
 
         // WS-4 — local hit feedback. The "I hit him" signal the game never sent: if the embodied
-        // avatar's OWN shot dealt damage this frame (the pure `avatar_landed_hit` seam over the
+        // avatar's OWN shot dealt damage this frame (the pure `avatar_hit_pos` seam over the
         // deterministic event stream), stamp the hitmarker clock and fire a one-shot hit SFX. This
         // is presentation feedback on the player's own action — keyed STRICTLY on the avatar as the
         // damage `source`, never on intel about an unseen enemy — so it is invariant-#6-safe; it
         // folds nothing into the sim (the events are already-checksummed copies, invariant #1/#7).
-        if avatar_landed_hit(&frame_events, self.player, self.embodied) {
+        // WS-A extends this with the impact VFX + a coupled impact SFX: the `avatar_hit_pos` seam
+        // returns the world point the avatar's own shot landed (the `Damaged` event position), so the
+        // host can project it to NDC for the spark/dust burst (`last_impact_*`) and thud it in lockstep
+        // with the visual. Same fairness boundary — feedback on the player's OWN action, never intel
+        // about an unseen enemy (invariant #6) — and a copy of already-checksummed event state (#1/#7).
+        if let Some(hit) = avatar_hit_pos(&frame_events, self.player, self.embodied) {
             self.last_hit_tick = Some(tick);
             audio.play_oneshot(SoundId::HitConfirm as u32);
+            // Impact VFX clock + world point, and the coupled host-clock impact thud (WS-A).
+            self.last_impact_tick = Some(tick);
+            self.last_impact_pos = Some((fixed_to_f32(hit.x), fixed_to_f32(hit.y)));
+            audio.play_oneshot(audio::impact_cue());
         }
         // Accumulate this frame's events over the match so the post-match summary assembler can
         // tally produced/lost/killed (a presentation derivation; the events are already-checksummed
@@ -3223,6 +3309,13 @@ impl Game {
             let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
             self.renderer
                 .render_world_weapon(device, queue, &scene_view, &proj, flash, sw, sh);
+            // 7a'. Shaped muzzle flash (WS-A): an additive flare at the gun muzzle, flaring with the
+            // same host-clock `flash` curve, drawn into the scene target so it scales with the gun it
+            // comes off. A no-op between shots (`flash <= 0`). Presentation only; no world position
+            // (invariant #4/#6). Aspect is the NATIVE viewport (scale-invariant).
+            let aspect = width.max(1) as f32 / height.max(1) as f32;
+            self.renderer
+                .render_muzzle_flash(device, queue, &scene_view, flash, aspect);
         }
 
         // 7b'. Present (Phase 4 WS-C): upscale the dyn-res scene target onto the swapchain `view`.
@@ -3371,6 +3464,36 @@ impl Game {
                 viewport,
                 tick,
             );
+
+            // 8a''. WS-A — the bullet-impact VFX: an additive spark/dust burst at the world point the
+            // avatar's OWN shot last landed, projected to NDC through the active camera. A no-op once
+            // it has faded (`last_impact_tick`) or if the strike is behind/off the camera. Feedback on
+            // the player's own action — screen-space additive light, no map intel (invariant #4/#6).
+            let impact_i = gonedark_render::impact::impact_intensity(self.last_impact_tick, tick);
+            if impact_i > 0.0 {
+                if let Some((wx, wy)) = self.last_impact_pos {
+                    // Raise the hit to ~torso height and project through the camera (the host owns
+                    // glam, D19). `project_point3` returns NDC; the DirectX-style depth is in (0,1)
+                    // for points in front — guard it so a strike behind/well off-screen never draws.
+                    let ndc = view_proj.project_point3(Vec3::new(wx, wy, 1.0));
+                    if ndc.z > 0.0 && ndc.z < 1.0 && ndc.x.abs() <= 1.2 && ndc.y.abs() <= 1.2 {
+                        let aspect = width.max(1) as f32 / height.max(1) as f32;
+                        self.renderer
+                            .render_impact(device, queue, view, ndc.x, ndc.y, impact_i, aspect);
+                    }
+                }
+            }
+
+            // 8a'''. WS-A — the hip-fire dynamic crosshair: four arm ticks + a center pip that spread
+            // with the recoil bloom and settle as the gun recovers. Infantry only (`!has_scope`) — the
+            // tank shows its gun-sight reticle / scope chrome instead. Screen-center chrome with no
+            // world position (invariant #6); `aspect` keeps the cross square on a wide window.
+            if !has_scope {
+                let aspect = width.max(1) as f32 / height.max(1) as f32;
+                let bloom = recoil::crosshair_bloom(self.view_recoil);
+                self.renderer.render_crosshair(device, queue, view, bloom, aspect);
+            }
+
             // 8'. WS-4 — the embodied hitmarker: a centered "X" flash confirming the player's OWN
             // connecting shot, drawn over the dark frame. A no-op unless a hit is live in the fade
             // window (`last_hit_tick`). Feedback on the player's own action, never map intel about an
@@ -3418,12 +3541,13 @@ impl Game {
             // 8'''. Sniper/zoom gun-sight overlay (tank embodiment P9): while aiming down sight the
             // first-person FOV has narrowed (above), so draw the scope chrome — the vignette tunnel,
             // aperture ring, crosshair, center dot, and the magnification readout — over the dark
-            // frame. Gated on `aim_zoom_t` (only the tank ever zooms, since the FOV step gates on an
-            // independent turret), so infantry embodiment is unaffected. A read-only presentation
-            // overlay with no world position: it narrows (never widens) the visible frustum and
-            // surfaces no strategic-map intel (invariant #6); the renderer never mutates the sim
-            // (invariant #4).
-            if self.aim_zoom_t > scope::SCOPE_VISIBLE_T {
+            // frame. Gated to the **tank** (`has_scope`): WS-A un-gated ADS for infantry (the FOV step
+            // now narrows for any embodied unit), so the sniper-scope chrome must be re-gated to the
+            // turret unit here — infantry ADS narrows the FOV + tightens the look but shows the
+            // hip-fire crosshair, not this tunnel. A read-only presentation overlay with no world
+            // position: it narrows (never widens) the visible frustum and surfaces no strategic-map
+            // intel (invariant #6); the renderer never mutates the sim (invariant #4).
+            if has_scope && self.aim_zoom_t > scope::SCOPE_VISIBLE_T {
                 let scope_state = gonedark_render::scope::ScopeState {
                     aspect: (width.max(1) as f32) / (height.max(1) as f32),
                     zoom_t: self.aim_zoom_t,
@@ -3448,14 +3572,16 @@ impl Game {
                 let layout = resolved.layout;
                 let crouched = self.sim.world.is_alive(self.player)
                     && self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
-                // `has_scope` was resolved above (the W2 turret/tank gate) and is still in scope —
-                // reuse it so the ADS button is drawn only where the zoom actually applies.
+                // Draw the ADS button wherever aiming down sight applies. WS-A un-gated ADS for
+                // infantry (not just the tank's turret gun-sight), so this uses `can_ads` (any living
+                // embodied unit), not the tank-only `has_scope` — otherwise a touch rifleman could
+                // ADS via the hit area but never see the button.
                 let rhud = render_touch_hud(
                     &layout,
                     &hud_state,
                     viewport,
                     crouched,
-                    has_scope,
+                    can_ads,
                     &resolved.opacity,
                 );
                 self.renderer
@@ -4700,18 +4826,21 @@ mod tests {
         );
     }
 
-    /// WS-4 hit-feedback seam: `avatar_landed_hit` fires only when the player is embodied AND a
-    /// `Damaged` event names the avatar as its `source` (its own shot connected). It must ignore
-    /// damage dealt by OTHER units (no false hitmarker for an ally's kill) and damage TAKEN by the
-    /// avatar (being shot is not "I hit him"), and never fire while commanding.
+    /// WS-4 + WS-A hit-feedback seam: `avatar_hit_pos` returns the world point of the avatar's OWN
+    /// landed shot (`Some` ⟺ "the avatar's own shot dealt damage") under strict same-source gating —
+    /// embodied AND the `Damaged` event names the avatar as its `source`. It must ignore damage dealt
+    /// by OTHER units (no false hitmarker/burst for an ally's kill) and damage TAKEN by the avatar
+    /// (being shot is not "I hit him"), and never fire while commanding. Drives the hitmarker + hit
+    /// SFX (the `Some`-ness) and the impact VFX/SFX (the position).
     #[test]
-    fn avatar_landed_hit_fires_only_on_avatar_source_while_embodied() {
+    fn avatar_hit_pos_returns_the_own_shot_point_under_strict_source_gating() {
         use gonedark_core::fixed::Fixed;
         let avatar = Entity { index: 3, generation: 1 };
         let other = Entity { index: 9, generation: 0 };
         let target = Entity { index: 12, generation: 2 };
-        let pos = Vec2::new(Fixed::from_int(4), Fixed::from_int(2));
-        let dmg = |source: Entity, entity: Entity| SimEvent::Damaged {
+        let hit = Vec2::new(Fixed::from_int(7), Fixed::from_int(-3));
+        let elsewhere = Vec2::new(Fixed::from_int(1), Fixed::from_int(1));
+        let dmg = |source: Entity, entity: Entity, pos: Vec2| SimEvent::Damaged {
             entity,
             faction: Faction::Enemy,
             source,
@@ -4719,46 +4848,50 @@ mod tests {
             pos,
         };
 
-        // The canonical case: embodied, the avatar's own shot dealt damage.
-        assert!(
-            avatar_landed_hit(&[dmg(avatar, target)], avatar, true),
-            "embodied + avatar is the damage source → hit lands"
+        // The canonical case: embodied, the avatar's own shot dealt damage → its strike point.
+        assert_eq!(
+            avatar_hit_pos(&[dmg(avatar, target, hit)], avatar, true),
+            Some(hit),
+            "embodied + avatar is the damage source → own shot returns its world point"
         );
-        // Damage from someone else (an ally / another unit) is NOT the player's hit.
-        assert!(
-            !avatar_landed_hit(&[dmg(other, target)], avatar, true),
-            "another unit's damage must not register as the avatar's hit"
-        );
-        // Damage TAKEN by the avatar (avatar is the target, not the source) is not "I hit him".
-        assert!(
-            !avatar_landed_hit(&[dmg(other, avatar)], avatar, true),
-            "being shot is not a landed hit"
-        );
-        // Same avatar-source event, but commanding (not embodied) → no embodied hit cue.
-        assert!(
-            !avatar_landed_hit(&[dmg(avatar, target)], avatar, false),
-            "no hitmarker while commanding (the cue is an embodied-view affordance)"
-        );
-        // Mixed stream still detects the avatar's own hit among other events.
-        assert!(
-            avatar_landed_hit(
+        // The FIRST own-shot event wins (the burst marks one strike), ignoring others' damage.
+        assert_eq!(
+            avatar_hit_pos(
                 &[
-                    dmg(other, target),
-                    SimEvent::Killed { entity: target, faction: Faction::Enemy, source: other, pos },
-                    dmg(avatar, target),
+                    dmg(other, target, elsewhere),
+                    SimEvent::Killed { entity: target, faction: Faction::Enemy, source: other, pos: elsewhere },
+                    dmg(avatar, target, hit),
                 ],
                 avatar,
                 true
             ),
+            Some(hit),
             "the avatar's hit is found among unrelated events"
         );
+        // Another unit's damage → not the player's hit.
+        assert_eq!(
+            avatar_hit_pos(&[dmg(other, target, hit)], avatar, true),
+            None,
+            "another unit's damage must not register as the avatar's hit"
+        );
+        // Damage TAKEN by the avatar (avatar is the target, not the source) → not "I hit him".
+        assert_eq!(
+            avatar_hit_pos(&[dmg(other, avatar, hit)], avatar, true),
+            None,
+            "being shot is not a landed hit"
+        );
+        // Same avatar-source event, but commanding (not embodied) → no embodied hit cue.
+        assert_eq!(
+            avatar_hit_pos(&[dmg(avatar, target, hit)], avatar, false),
+            None,
+            "no feedback while commanding (the cue is an embodied-view affordance)"
+        );
         // Empty stream / non-Damaged events → no hit.
-        assert!(!avatar_landed_hit(&[], avatar, true));
-        assert!(!avatar_landed_hit(
-            &[SimEvent::UnitProduced { faction: Faction::Player, pos }],
-            avatar,
-            true
-        ));
+        assert_eq!(avatar_hit_pos(&[], avatar, true), None);
+        assert_eq!(
+            avatar_hit_pos(&[SimEvent::UnitProduced { faction: Faction::Player, pos: hit }], avatar, true),
+            None
+        );
     }
 
     /// The crouch button toggles posture off the avatar's CURRENT sim state: standing → crouch,

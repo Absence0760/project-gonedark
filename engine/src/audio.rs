@@ -17,6 +17,26 @@ use gonedark_core::ecs::World;
 use gonedark_core::event::SimEvent;
 use gonedark_pal::{AudioCue, SoundId};
 
+/// The fire-and-forget `play_oneshot` id for the **host-clock weapon-fire** cue (WS-A, CP-2): a crack
+/// emitted on the embodied trigger press, *decoupled* from the deterministic `Damaged`-event
+/// `Gunfire` (which sounds only for connecting shots), so a **missed** shot still cracks in lockstep
+/// with the muzzle flash. Presentation/host-side only (invariant #4/#6) — the host calls
+/// `audio.play_oneshot(weapon_fire_cue())` once per [`Command::Fire`](gonedark_core::sim::Command) it
+/// emits. The id round-trips through [`gonedark_pal::mix::oneshot_sound`] to [`SoundId::WeaponFire`].
+#[inline]
+pub fn weapon_fire_cue() -> u32 {
+    SoundId::WeaponFire as u32
+}
+
+/// The fire-and-forget `play_oneshot` id for the **impact** cue (WS-A) — coupled to the impact VFX at
+/// the point the avatar's own shot landed (feedback on the player's own action, invariant #6). The
+/// host calls `audio.play_oneshot(impact_cue())` on the same frame it stamps the impact visual. The
+/// id round-trips through [`gonedark_pal::mix::oneshot_sound`] to [`SoundId::Impact`].
+#[inline]
+pub fn impact_cue() -> u32 {
+    SoundId::Impact as u32
+}
+
 /// Distance (world units) at which a cue's gain is halved. Chosen so the falloff
 /// `1 / (1 + dist/FALLOFF)` reads as "audible across a camp, faint across the map": a source on
 /// top of the listener is ~1.0, one `FALLOFF` away is 0.5, and far events tail toward 0 without
@@ -309,5 +329,25 @@ mod tests {
         let (w, _, _) = world_unit_and_building();
         let cues = mix_cues(&[], true, (1.0, 2.0), 0.5, &w);
         assert!(cues.is_empty());
+    }
+
+    // --- host-clock fire/impact cue ids (WS-A) -----------------------------------------------
+
+    #[test]
+    fn host_clock_cue_ids_round_trip_to_their_sounds() {
+        // The host-clock fire/impact `play_oneshot` ids must decode to the matching SoundId via the
+        // shared backend table — so a press cracks WeaponFire and a landed shot thuds Impact, both
+        // decoupled from the `Damaged`-event Gunfire above.
+        assert_eq!(
+            gonedark_pal::mix::oneshot_sound(weapon_fire_cue()),
+            SoundId::WeaponFire
+        );
+        assert_eq!(
+            gonedark_pal::mix::oneshot_sound(impact_cue()),
+            SoundId::Impact
+        );
+        // And they are distinct from the connecting-shot Gunfire / the UI HitConfirm tick.
+        assert_ne!(weapon_fire_cue(), SoundId::Gunfire as u32);
+        assert_ne!(impact_cue(), SoundId::HitConfirm as u32);
     }
 }
