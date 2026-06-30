@@ -145,6 +145,12 @@ pub mod readout;
 /// ObjectiveHudView`]; the host-side `engine::objectives` OBSERVES the sim to fill it, so nothing
 /// here reads or folds sim state (invariant #1/#7). Public so the layout seams are reachable.
 pub mod objective_hud;
+/// Embodied-safe teach-prompt banner (CP-7 onboarding) — a centered lower-third card telegraphing
+/// the cost + controls of "going dark", drawn through the W4 text pass + the overlay quad pipeline.
+/// Pure layout of a host-supplied [`prompt::Prompt`]; the host-side `engine::onboarding` OBSERVES the
+/// sim (it folds nothing) to decide which prompt is up, so nothing here reads/folds sim state
+/// (invariant #1/#6/#7). Public so the layout seams are reachable.
+pub mod prompt;
 /// Command-view upgrade panel — the readable per-camp tier display ("growth" half of command-and-
 /// grow). Pure derivation of current tier / next-tier cost / production-speed effect / affordability
 /// from a camp level + resources. No sim read (invariant #4); public so the `upgrade_view` seam (the
@@ -1446,6 +1452,35 @@ impl Renderer {
         for l in objective_hud::objective_hud_labels(hud) {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
+        }
+        self.text.render(device, queue, view);
+    }
+
+    /// Draw the **teach prompt** banner (CP-7 onboarding) — a centered lower-third card telegraphing
+    /// the cost + controls of "going dark". Unlike the objective HUD this is **embodied-safe** (like
+    /// [`render_overlay`](Self::render_overlay)): it carries only static teaching copy (no world
+    /// position, no fog) so it is fair to draw over the dark embodied frame (invariant #6). The host
+    /// (`engine::onboarding`) OBSERVES the sim to decide which [`prompt::Prompt`] is up and hands it
+    /// in; this draws the card through the shared overlay quad pipeline and the W4 text pass, exactly
+    /// like [`render_objective_hud`](Self::render_objective_hud). A no-op for an empty/invisible prompt.
+    pub fn render_prompt(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        prompt: &prompt::Prompt,
+    ) {
+        let quads = prompt::prompt_quads(prompt, self.chrome_aspect);
+        if quads.is_empty() {
+            return;
+        }
+        self.overlay.draw_quads(device, queue, view, &quads);
+        // Re-assert the chrome aspect on the shared text pass before laying out glyphs — without it
+        // the copy stretches on a wide window (the raw-NDC chrome footgun).
+        self.text.set_aspect(self.chrome_aspect);
+        for l in prompt::prompt_labels(prompt, self.chrome_aspect) {
+            self.text
+                .queue(l.text, l.pos, l.size, l.anchor, l.color, l.alpha);
         }
         self.text.render(device, queue, view);
     }
