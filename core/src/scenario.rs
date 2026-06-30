@@ -401,16 +401,19 @@ pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
     // The real, deliberately small scenario purse (the scenario-local economy lever).
     sim.resources = economy::Resources::new(SKIRMISH_START_PURSE);
 
-    // One starting troop per base. Full produced-Rifleman HP, `ReturnFire` stance (it fights back if
-    // engaged but never auto-roams — invariant #3, it does exactly what it's ordered), facing the
-    // enemy across the map. The player selects/commands theirs; the commander tasks the Enemy's.
+    // One starting troop per base. Full produced-Rifleman HP, `FireAtWill` stance (the engagement
+    // default — it shoots any enemy that comes into weapon range + LoS but still only *moves* on an
+    // order, invariant #3: firing in place is not auto-roaming), facing the enemy across the map.
+    // The player selects/commands theirs; the commander tasks the Enemy's. (ReturnFire would deadlock
+    // the two starting troops — each would wait to be shot first, so they would just stare across the
+    // map until the player embodied one and fired.)
     let troop_hp = economy::unit_stats(UnitKind::Rifleman).0.max;
     let troop_x = Fixed::from_int(SKIRMISH_BASE_X - SKIRMISH_TROOP_GAP);
     let player_troop = spawn_rifleman(
         sim,
         Vec2::new(-troop_x, Fixed::ZERO),
         Faction::Player,
-        Stance::ReturnFire,
+        Stance::FireAtWill,
         troop_hp,
         Angle(0), // +X, toward the enemy
     );
@@ -418,7 +421,7 @@ pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
         sim,
         Vec2::new(troop_x, Fixed::ZERO),
         Faction::Enemy,
-        Stance::ReturnFire,
+        Stance::FireAtWill,
         troop_hp,
         Angle(ANGLE_FULL / 2), // −X, toward the player
     );
@@ -481,8 +484,9 @@ impl SeizeMission {
 /// handles. Ten Player Riflemen on the west (no base — production is disabled), one operational
 /// Enemy base camp on the east defended by a small FireAtWill garrison. Both purses are empty and
 /// the income drip is throttled, so neither side reinforces: the mission is decided by the opening
-/// ten troops. The player troops start `ReturnFire` (they fight back if engaged but don't auto-roam
-/// — invariant #3); the host commands them in.
+/// ten troops. The player troops start `FireAtWill` (the engagement default — they shoot enemies in
+/// range but only *move* on the host's order; invariant #3, firing in place is not auto-roaming);
+/// the host commands them in.
 ///
 /// Pure, deterministic, fixed-point (invariant #1): spawn order is fixed (troops, then the base,
 /// then the garrison) and every value is integer / `Fixed`, so two seeds of a fresh `Sim` are
@@ -499,7 +503,9 @@ pub fn seed_seize_mission(sim: &mut Sim) -> SeizeMission {
     sim.set_army(Faction::Player, Army::Us);
     sim.set_army(Faction::Enemy, Army::Fr);
 
-    // Ten Player Riflemen in a 2x5 block on the west, full produced HP, ReturnFire, facing the base.
+    // Ten Player Riflemen in a 2x5 block on the west, full produced HP, FireAtWill (the engagement
+    // default — they shoot any enemy that comes into range as they assault, but only *move* on the
+    // host's order; invariant #3), facing the base.
     let troop_hp = economy::unit_stats(UnitKind::Rifleman).0.max;
     let mut troops = Vec::with_capacity(SEIZE_TROOPS);
     for col in 0..5 {
@@ -509,7 +515,7 @@ pub fn seed_seize_mission(sim: &mut Sim) -> SeizeMission {
                 sim,
                 at((x, row_y)),
                 Faction::Player,
-                Stance::ReturnFire,
+                Stance::FireAtWill,
                 troop_hp,
                 Angle(0), // +X, toward the base
             ));
@@ -789,8 +795,8 @@ mod tests {
             assert!(sim.world.building[i].queue.is_empty(), "no pre-queued production");
         }
 
-        // Exactly one starting troop per faction — a Rifleman on ReturnFire (invariant #3: it does
-        // exactly what it's told, never auto-roams).
+        // Exactly one starting troop per faction — a Rifleman on FireAtWill (the engagement default:
+        // it shoots enemies in range, but only moves on an order — invariant #3, firing ≠ roaming).
         for (troop, faction) in [
             (s.player_troop, Faction::Player),
             (s.enemy_troop, Faction::Enemy),
@@ -799,7 +805,7 @@ mod tests {
             assert_eq!(sim.world.kind[i], EntityKind::Unit);
             assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
             assert_eq!(sim.world.faction[i], faction);
-            assert_eq!(sim.world.stance[i], Stance::ReturnFire);
+            assert_eq!(sim.world.stance[i], Stance::FireAtWill);
         }
         // ...and *only* one each (no squads — the user's "each base starts with one troop").
         assert_eq!(unit_count(&sim, Faction::Player), 1);
@@ -858,9 +864,17 @@ mod tests {
         use crate::rng::Rng;
 
         let mut sim = fresh();
-        seed_skirmish(&mut sim);
+        let s = seed_skirmish(&mut sim);
         // The enemy commander's own stream (host seeds it `sim_seed ^ faction`); never `Sim::rng`.
         let mut enemy_rng = Rng::new(0xD0E1 ^ Faction::Enemy.index() as u64);
+
+        // The player troop is issued NO order, so the literal executor (invariant #3) must never move
+        // it under its own power — track its spawn position and prove it stays put for as long as it
+        // lives. (It IS on FireAtWill, the engagement default, so it shoots back if reached — and may
+        // be overrun by the enemy army it built — but a stance is a *firing* posture, not a licence to
+        // roam: firing in place is not movement.)
+        let pi = s.player_troop.index as usize;
+        let player_spawn = sim.world.pos[pi];
 
         // 30 s of play (60 Hz). The Player issues nothing — we isolate that the *enemy* side alone
         // makes the economy/capture/production loop turn.
@@ -880,6 +894,13 @@ mod tests {
                 Vec::new()
             };
             sim.step(&cmds);
+            // No-auto-roam check, every tick it is alive: an unordered unit holds its ground.
+            if sim.world.is_alive(s.player_troop) {
+                assert_eq!(
+                    sim.world.pos[pi], player_spawn,
+                    "the unordered player troop must never move on its own (invariant #3)",
+                );
+            }
         }
 
         // The commander sent its lone troop to take the nearest post → the Enemy now holds ground.
@@ -892,13 +913,6 @@ mod tests {
         assert!(
             unit_count(&sim, Faction::Enemy) > 1,
             "the enemy should have produced reinforcements beyond its starting troop"
-        );
-        // The Player, untouched, still has exactly its starting troop (nothing auto-roamed it —
-        // invariant #3: a unit with no order just holds).
-        assert_eq!(
-            unit_count(&sim, Faction::Player),
-            1,
-            "the idle player keeps exactly its one starting troop"
         );
     }
 
@@ -932,7 +946,7 @@ mod tests {
             assert_eq!(sim.world.kind[i], EntityKind::Unit);
             assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
             assert_eq!(sim.world.faction[i], Faction::Player);
-            assert_eq!(sim.world.stance[i], Stance::ReturnFire);
+            assert_eq!(sim.world.stance[i], Stance::FireAtWill);
         }
         let player_buildings = (0..sim.world.capacity()).filter(|&i| {
             sim.world.is_index_alive(i)

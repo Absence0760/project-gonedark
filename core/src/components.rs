@@ -102,12 +102,22 @@ pub enum Order {
     FallBack(Vec2),
 }
 
-/// A unit's engagement stance (stubbed vocabulary for Phase 1).
+/// A unit's engagement stance (the literal-executor firing vocabulary, invariant #3).
+///
+/// The default is [`FireAtWill`](Stance::FireAtWill): absent a specific order, a combat unit
+/// engages the nearest enemy in weapon range + LoS each eligible tick. This is the literal
+/// execution of "fire at will" (it never *moves* on its own — movement is still order-driven), and
+/// it is what makes two AI units actually fight. [`ReturnFire`](Stance::ReturnFire) is NOT a safe
+/// default: it only engages a recorded `last_attacker`, so two `ReturnFire` units facing off each
+/// wait for the *other* to shoot first and deadlock — combat then never starts unless an embodied
+/// player pulls the first trigger. (Discriminant order is the wire/persist contract — see
+/// `sim::stance_tag` — so it is fixed: `HoldFire = 0`, `ReturnFire = 1`, `FireAtWill = 2`. Moving
+/// `#[default]` does not change it.)
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Stance {
     HoldFire,
-    #[default]
     ReturnFire,
+    #[default]
     FireAtWill,
 }
 

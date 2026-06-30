@@ -109,8 +109,10 @@ pub struct CommanderConfig {
 ///    you out-produce the player.
 /// 4. **Attack.** Units with no point to take are pointed at the nearest hostile force
 ///    (`AttackMove` toward the nearest enemy unit/building) so the line keeps pressing.
-/// 5. **Posture.** Any unit on `HoldFire` is bumped to `ReturnFire` so the commander's army
-///    actually shoots back (a one-shot stance fix; idempotent thereafter).
+/// 5. **Posture.** Any unit on `HoldFire` is bumped to `FireAtWill` so the commander's army
+///    actually engages (a one-shot stance fix; idempotent thereafter). `ReturnFire` would not do:
+///    a `HoldFire`/`ReturnFire` unit only shoots once *it* is hit, so a defending line would never
+///    open up on an attacker — it must `FireAtWill` to fight on its own.
 #[allow(clippy::too_many_arguments)] // honest read-only inputs; bundling them buys no clarity
 pub fn commander_orders(
     world: &World,
@@ -191,12 +193,14 @@ pub fn commander_orders(
             {
                 continue;
             }
-            // Posture fix: an idle army that won't shoot is useless. Bump HoldFire → ReturnFire once.
+            // Posture fix: an idle army that won't shoot is useless. Bump HoldFire → FireAtWill once
+            // so the unit engages enemies in range on its own (ReturnFire would only ever shoot back
+            // after being hit, never opening the fight — the AI-vs-AI first-shot deadlock).
             if world.stance[i] == Stance::HoldFire {
                 if let Some(e) = world.entity(i) {
                     commands.push(Command::SetStance {
                         entity: e,
-                        stance: Stance::ReturnFire,
+                        stance: Stance::FireAtWill,
                     });
                 }
             }
@@ -613,9 +617,10 @@ mod tests {
         );
     }
 
-    /// A HoldFire unit is bumped to ReturnFire so the army actually fights.
+    /// A HoldFire unit is bumped to FireAtWill so the army actually fights (engages on sight, not
+    /// merely shoots back once hit — the latter would deadlock two opposing defensive lines).
     #[test]
-    fn hold_fire_unit_is_bumped_to_return_fire() {
+    fn hold_fire_unit_is_bumped_to_fire_at_will() {
         let mut world = World::new();
         let u = spawn_unit(&mut world, Faction::Enemy, at(20, 0));
         world.stance[u.index as usize] = Stance::HoldFire;
@@ -624,9 +629,9 @@ mod tests {
         let cmds =
             commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
         assert!(
-            cmds.iter().any(|c| matches!(c, Command::SetStance { entity, stance: Stance::ReturnFire }
+            cmds.iter().any(|c| matches!(c, Command::SetStance { entity, stance: Stance::FireAtWill }
                 if *entity == u)),
-            "a HoldFire unit should be set to ReturnFire: {cmds:?}"
+            "a HoldFire unit should be set to FireAtWill: {cmds:?}"
         );
     }
 

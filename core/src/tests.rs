@@ -687,7 +687,7 @@ fn ecs_respawn_resets_component_arrays() {
     assert_eq!(w.pos[j], Vec2::ZERO);
     assert_eq!(w.vel[j], Vec2::ZERO);
     assert_eq!(w.order[j], Order::Idle);
-    assert_eq!(w.stance[j], Stance::ReturnFire);
+    assert_eq!(w.stance[j], Stance::FireAtWill);
     assert_eq!(w.input_source[j], InputSource::Orders);
     assert_eq!(w.posture[j], crate::components::Posture::Standing);
     // Phase 2 fields must reset to their defaults too.
@@ -813,9 +813,10 @@ fn vec2_normalized_is_bounded_unit_length() {
 
 #[test]
 fn component_defaults() {
-    // The literal-executor defaults: Idle order, ReturnFire stance, Orders input.
+    // The literal-executor defaults: Idle order, FireAtWill stance (a unit defends itself by
+    // engaging enemies in range — ReturnFire would deadlock two facing units), Orders input.
     assert_eq!(Order::default(), Order::Idle);
-    assert_eq!(Stance::default(), Stance::ReturnFire);
+    assert_eq!(Stance::default(), Stance::FireAtWill);
     assert_eq!(InputSource::default(), InputSource::Orders);
     assert_eq!(Vec2::default(), Vec2::ZERO);
 }
@@ -894,7 +895,7 @@ fn sim_commands_to_dead_entity_are_no_ops() {
     ]);
     // Only the tick counter advanced; the dead slot's components are untouched.
     assert_eq!(sim.world.order[e.index as usize], Order::Idle);
-    assert_eq!(sim.world.stance[e.index as usize], Stance::ReturnFire);
+    assert_eq!(sim.world.stance[e.index as usize], Stance::FireAtWill);
     assert_eq!(
         sim.world.input_source[e.index as usize],
         InputSource::Orders

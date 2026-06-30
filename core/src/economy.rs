@@ -662,7 +662,11 @@ pub fn economy_system(
         world.health[ei] = health;
         world.weapon[ei] = weapon;
         world.order[ei] = Order::Idle;
-        world.stance[ei] = Stance::ReturnFire;
+        // A produced unit enters the match on FireAtWill (the engagement default) so it actually
+        // fights — it engages any enemy in weapon range + LoS (invariant #3: firing in place, never
+        // autonomous movement). ReturnFire here would deadlock: a fresh reinforcement only shoots
+        // back once hit, so two opposing fresh units would stand and stare until something else fired.
+        world.stance[ei] = Stance::FireAtWill;
         events.push(SimEvent::UnitProduced { faction, pos });
     }
 }
@@ -834,7 +838,7 @@ mod tests {
                 assert_eq!(world.faction[i], Faction::Player);
                 assert_eq!(world.health[i], h);
                 assert_eq!(world.weapon[i], w);
-                assert_eq!(world.stance[i], Stance::ReturnFire);
+                assert_eq!(world.stance[i], Stance::FireAtWill);
                 assert_eq!(world.order[i], Order::Idle);
                 found = true;
             }

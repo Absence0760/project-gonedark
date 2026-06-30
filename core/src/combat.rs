@@ -790,6 +790,118 @@ mod tests {
     }
 
     #[test]
+    fn default_stance_units_engage_unprompted_no_embodiment_needed() {
+        // Regression for "AI units never fire": two opposing, armed units left at their DEFAULT stance
+        // (we never call SetStance) must fight on their own — neither is embodied, no `resolve_fire`
+        // is ever called. This is the bug the report describes: with the old `ReturnFire` default,
+        // `acquire_target` returned `None` for both (no `last_attacker` until shot), so they deadlocked
+        // and combat only started when an embodied player pulled the first trigger. The engagement
+        // default (`FireAtWill`) makes the literal executor shoot any enemy in range + LoS each tick.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        // No `world.stance[..] = ...` on either — they take the component default.
+        let a = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 10, 0));
+        let b = spawn_unit(&mut world, 3, 0, Faction::Enemy, 100, rifle(10, 10, 0));
+        // The default really is the engaging stance, and nobody is possessed.
+        assert_eq!(world.stance[a.index as usize], Stance::FireAtWill, "default stance engages");
+        assert_eq!(world.stance[b.index as usize], Stance::FireAtWill);
+        assert_eq!(world.input_source[a.index as usize], crate::components::InputSource::Orders);
+        assert_eq!(world.input_source[b.index as usize], crate::components::InputSource::Orders);
+
+        let mut events = Vec::new();
+        run(&mut world, &terrain, &mut events);
+        // Both took damage on the very first tick — a real mutual exchange with no player input.
+        assert_eq!(world.health[a.index as usize].cur, fx(90), "A is hit by B unprompted");
+        assert_eq!(world.health[b.index as usize].cur, fx(90), "B is hit by A unprompted");
+        assert_eq!(world.last_attacker[a.index as usize], Some(b));
+        assert_eq!(world.last_attacker[b.index as usize], Some(a));
+    }
+
+    #[test]
+    fn default_stance_combat_resolves_to_a_kill_without_any_manual_shot() {
+        // The end-to-end consequence: left to themselves (default stance, no embodiment, no scripted
+        // fire), two armed enemies in range fight to a result — combat *resolves*, it does not freeze
+        // (the "two troops just sit there" report). The higher-damage shooter outlasts the weaker one.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let strong = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        let weak = spawn_unit(&mut world, 4, 0, Faction::Enemy, 40, rifle(10, 10, 0));
+
+        let mut events = Vec::new();
+        let mut resolved = false;
+        for _ in 0..50 {
+            run(&mut world, &terrain, &mut events);
+            if !world.is_alive(weak) {
+                resolved = true;
+                break;
+            }
+        }
+        assert!(resolved, "default-stance AI combat must resolve, not deadlock");
+        assert!(world.is_alive(strong), "the higher-damage unit survives the exchange");
+        assert!(
+            events.iter().any(|e| matches!(e, SimEvent::Killed { entity, .. } if *entity == weak)),
+            "a Killed event fires for the loser — combat reached an outcome",
+        );
+    }
+
+    #[test]
+    fn default_stance_holds_fire_out_of_range_and_without_los() {
+        // The engagement default still respects the literal-executor limits (invariant #3): it does
+        // NOT fire at an enemy beyond weapon range, nor through a sight-blocking wall. Pairs with the
+        // unprompted-engage test so "engages" can't silently become "engages anything anywhere".
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        // Out of range: shooter range 5, enemy at distance 8 → never hit (default stance).
+        let _shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(5, 25, 0));
+        let far = spawn_unit(&mut world, 8, 0, Faction::Enemy, 100, Weapon::default());
+        let mut events = Vec::new();
+        for _ in 0..10 {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert_eq!(world.health[far.index as usize].cur, fx(100), "out of range: no fire");
+        assert!(events.is_empty());
+
+        // In range but no line of sight: a Heavy wall between an in-range shooter and target blocks it.
+        let mut world = World::new();
+        let mut terrain = Terrain::open();
+        let (wx, wy) = terrain.cell_of(Vec2::new(fx(2), fx(0)));
+        terrain.set_cover(wx, wy, Cover::Heavy); // Heavy blocks sight
+        let _s2 = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        let blocked = spawn_unit(&mut world, 4, 0, Faction::Enemy, 100, Weapon::default());
+        let mut events = Vec::new();
+        for _ in 0..10 {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert_eq!(world.health[blocked.index as usize].cur, fx(100), "no LoS: no fire");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn default_stance_ai_combat_is_deterministic() {
+        // Determinism (invariants #1/#7): two identical default-stance brawls stepped the same number
+        // of ticks land on byte-identical health for every slot — no float, no order dependence.
+        let build = || {
+            let mut world = World::new();
+            let _ = spawn_unit(&mut world, -2, 0, Faction::Player, 100, rifle(12, 7, 2));
+            let _ = spawn_unit(&mut world, 2, 0, Faction::Enemy, 100, rifle(12, 7, 2));
+            let _ = spawn_unit(&mut world, 2, 3, Faction::Enemy, 100, rifle(12, 7, 2));
+            world
+        };
+        let terrain = Terrain::open();
+        let mut w1 = build();
+        let mut w2 = build();
+        let mut ev = Vec::new();
+        for _ in 0..40 {
+            run(&mut w1, &terrain, &mut ev);
+            run(&mut w2, &terrain, &mut ev);
+        }
+        for i in 0..w1.capacity() {
+            assert_eq!(w1.health[i].cur, w2.health[i].cur, "health slot {i} must match");
+            assert_eq!(w1.suppression[i], w2.suppression[i], "suppression slot {i} must match");
+        }
+    }
+
+    #[test]
     fn last_attacker_recorded_on_hit() {
         let mut world = World::new();
         let terrain = Terrain::open();
