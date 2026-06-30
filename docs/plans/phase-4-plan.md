@@ -156,9 +156,14 @@ if wanted, is a `core` *system*, not this boundary).
 > the desync-drain + pause-guard wire-up. **Also landed:** post-match DISMISS → title transition
 > ([D52](../decisions.md)); pause overlay (desktop Esc [D53](../decisions.md), Android back-gesture
 > [D54](../decisions.md)) + in-match surrender are now wired — the in-session shell goal is fully
-> satisfied. **Owed:** the Android leave-to-title path (overlay **Surrender**/**DISMISS** taps →
-> JNI `Activity.finish()`, the twin of D52's desktop `ExitToTitle`); the Wi-Fi↔cellular reconnect
-> *handoff* half stays QUIC-blocked (Phase 3 C).
+> satisfied. **Also landed:** the Android leave-to-title path — the in-session overlay's
+> **Surrender** → post-match summary → **DISMISS** tap now finishes the `NativeActivity` over JNI
+> (`Activity.finish()`, best-effort + exception-clearing, never fatal), returning to the Compose
+> `MainActivity` title; the twin of D52's desktop `ExitToTitle`, mirroring its decision flow
+> (`overlay_click` → `OverlayClick::{Session,Dismiss}`). The shared pixel→NDC hit-test step both
+> hosts run before `overlay_click` is now the unit-tested `engine::pixel_to_ndc` seam, so the
+> leave-to-title tap can't diverge across desktop/Android (invariant #2). **Owed:** the
+> Wi-Fi↔cellular reconnect *handoff* half stays QUIC-blocked (Phase 3 C).
 
 **Goal:** pause, surrender/leave, post-match summary, and the reconnect prompt — rendered
 **in-engine** (`engine`/`render`) under the same avatar-only fog as the match (invariant #6,

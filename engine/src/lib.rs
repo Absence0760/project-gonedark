@@ -3406,6 +3406,22 @@ pub enum OverlayClick {
     Dismiss,
 }
 
+/// Convert a top-left-origin **pixel** pointer position into the normalized-device-coordinate space
+/// the overlay is drawn and hit-tested in (x rightward in `[-1, 1]`, y **upward** in `[-1, 1]` — so
+/// the pixel y is flipped). The shared pixel→NDC step every host's overlay-tap path runs before
+/// [`Game::overlay_click`]: the desktop host (`app`) and the Android backend (`pal-android`) both
+/// feed their platform pointer through this one seam rather than each open-coding the formula, so the
+/// leave-to-title hit-test (the in-session shell's Surrender/DISMISS → ExitToTitle / `Activity.finish()`
+/// path, D52) can never silently diverge between platforms (invariant #2 — shared logic, not forked
+/// per platform). Pure (no GPU, no platform types) and unit-tested below; the per-platform glue that
+/// supplies `px`/`py` and the viewport is the thin, un-constructible part. `width`/`height` are
+/// floored at 1 so a degenerate zero-area viewport yields a finite coordinate instead of NaN.
+pub fn pixel_to_ndc(px: f32, py: f32, width: u32, height: u32) -> (f32, f32) {
+    let w = width.max(1) as f32;
+    let h = height.max(1) as f32;
+    (2.0 * px / w - 1.0, 1.0 - 2.0 * py / h)
+}
+
 /// Resolve a hit button `slot` on `overlay` to its [`OverlayClick`]. The slot order mirrors the
 /// renderer's per-surface button vocabulary (`overlay::surface_choices`): on the pause / reconnect
 /// surfaces slot 0 is the affirmative **Resume** and slot 1 is **Surrender**/leave; the post-match
@@ -5522,6 +5538,55 @@ mod tests {
             gonedark_render::overlay::button_slot_at(&overlay, 5.0, 5.0),
             None
         );
+    }
+
+    /// The pixel→NDC seam both hosts run before `overlay_click` (the desktop `ExitToTitle` and the
+    /// Android `Activity.finish()` leave-to-title taps share it, invariant #2). The four corners +
+    /// center pin the mapping (top-left pixel → NDC top-left `(-1, 1)`, with y flipped), and a
+    /// zero-area viewport must stay finite rather than divide by zero.
+    #[test]
+    fn pixel_to_ndc_maps_corners_and_center() {
+        let (w, h) = (800u32, 600u32);
+        // Center of the viewport is NDC origin.
+        assert_eq!(pixel_to_ndc(400.0, 300.0, w, h), (0.0, 0.0));
+        // Top-left pixel (0,0) → NDC (-1, +1): x leftmost, y flipped to the top.
+        assert_eq!(pixel_to_ndc(0.0, 0.0, w, h), (-1.0, 1.0));
+        // Bottom-right pixel (w,h) → NDC (+1, -1).
+        assert_eq!(pixel_to_ndc(800.0, 600.0, w, h), (1.0, -1.0));
+        // A degenerate zero-area viewport floors the divisor at 1 — finite, never NaN.
+        let (nx, ny) = pixel_to_ndc(0.0, 0.0, 0, 0);
+        assert!(nx.is_finite() && ny.is_finite(), "zero viewport must not divide by zero");
+    }
+
+    /// End-to-end the Android/desktop leave-to-title tap in PIXEL space (the seam the JNI
+    /// `Activity.finish()` / desktop `ExitToTitle` glue depends on): a tap on the post-match summary's
+    /// DISMISS button — located from the renderer's own layout, converted back to pixels — runs
+    /// `pixel_to_ndc` then the same `button_slot_at` + `overlay_click_action` the hosts compose, and
+    /// resolves to `Dismiss`. A tap in an empty corner resolves to nothing.
+    #[test]
+    fn pixel_tap_on_dismiss_resolves_to_dismiss() {
+        let (w, h) = (1280u32, 720u32);
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        let overlay = overlay_for_surface(&ShellSurface::Ended(summary));
+        // The drawn DISMISS button center in NDC, mapped back to a pixel tap.
+        let button = gonedark_render::overlay::overlay_quads(&overlay)
+            .into_iter()
+            .find(|q| q.role == gonedark_render::overlay::QuadRole::ButtonPrimary)
+            .expect("summary draws a dismiss button");
+        let px = (button.cx + 1.0) * 0.5 * w as f32;
+        let py = (1.0 - button.cy) * 0.5 * h as f32;
+        // The hosts' exact path: pixel → NDC → slot → action.
+        let (nx, ny) = pixel_to_ndc(px, py, w, h);
+        let slot = gonedark_render::overlay::button_slot_at(&overlay, nx, ny)
+            .expect("the dismiss button hit-tests");
+        assert_eq!(
+            overlay_click_action(&overlay, slot),
+            Some(OverlayClick::Dismiss),
+            "a pixel tap on DISMISS drives the leave-to-title action"
+        );
+        // A tap in the top-left pixel corner misses every button.
+        let (cnx, cny) = pixel_to_ndc(0.0, 0.0, w, h);
+        assert_eq!(gonedark_render::overlay::button_slot_at(&overlay, cnx, cny), None);
     }
 
     /// End-to-end the reconnect wire-up as `frame` runs it (minus the GPU glue): a confirmed desync

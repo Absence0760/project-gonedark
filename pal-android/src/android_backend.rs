@@ -8,7 +8,7 @@
 //! device; only its JNI reader is android-gated alongside this module.)
 //!
 //! # NOT device-verified
-//! This was written against the *pinned* `android-activity` 0.6 / `jni` 0.21 / `ndk` 0.9 /
+//! This was written against the *pinned* `android-activity` 0.6 / `jni` 0.22 / `ndk` 0.9 /
 //! `wgpu` 29 / `oboe` 0.6 APIs. The **for-target build is verified on this workstation**
 //! (NDK 28.2 + `cargo-ndk`): `cargo ndk -t arm64-v8a build -p gonedark-pal-android` passes in
 //! dev and release. What remains **OWED is on-device shakeout** — actual audible/low-latency
@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gonedark_engine::{Game, OverlayClick, DEFAULT_SEED};
+use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, DEFAULT_SEED};
 use gonedark_pal::mix::{oneshot_sound, synth_bank, voice_from_cue, Mixer};
 use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Window, MAX_TOUCHES};
 
@@ -234,7 +234,9 @@ fn android_main(app: AndroidApp) {
                 if input_frame.pointer_up {
                     if let Some((px, py)) = input_frame.pointer {
                         let (w, h) = rhi.size();
-                        let ndc = (2.0 * px / w as f32 - 1.0, 1.0 - 2.0 * py / h as f32);
+                        // Shared pixel→NDC seam (engine; unit-tested) — desktop runs the same one, so
+                        // the leave-to-title hit-test can't diverge across platforms (invariant #2).
+                        let ndc = pixel_to_ndc(px, py, w, h);
                         match game.overlay_click(ndc) {
                             Some(OverlayClick::Session(action)) => {
                                 game.apply_session_action(action);

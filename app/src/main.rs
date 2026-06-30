@@ -14,7 +14,7 @@
 //! egui shell, and the wall clock that feeds per-frame `dt` into the engine's fixed-tick accumulator.
 
 use gonedark_engine::loadout_ui::LoadoutEditor;
-use gonedark_engine::{Game, OverlayClick, Scene, DEFAULT_SEED};
+use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
 use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface, DesktopThermalSensor};
 use std::sync::Arc;
 use std::time::Instant;
@@ -244,7 +244,9 @@ impl App {
                 if input.pointer_up {
                     if let Some((px, py)) = input.pointer {
                         let (w, h) = viewport;
-                        let ndc = (2.0 * px / w as f32 - 1.0, 1.0 - 2.0 * py / h as f32);
+                        // Shared pixel→NDC seam (engine; unit-tested) — Android runs the same one, so
+                        // the leave-to-title hit-test can't diverge across platforms (invariant #2).
+                        let ndc = pixel_to_ndc(px, py, w, h);
                         match game.overlay_click(ndc) {
                             Some(OverlayClick::Session(action)) => {
                                 game.apply_session_action(action);
