@@ -1262,6 +1262,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "gonedark-core",
  "gonedark-engine",
  "gonedark-pal",
  "gonedark-pal-android",
