@@ -263,15 +263,19 @@ impl Sim {
         // in `apply` (which ran above, in the command phase), so the per-tick net is bloom − settle.
         // Gated on `muzzle_vel > 0`, so a tank-free scene is byte-unchanged.
         crate::dispersion::dispersion_system(&mut self.world);
+        // Auto-combat. A ballistic gun (`muzzle_vel > 0`, the produced armoured tank) spawns a
+        // traveling shell into `self.projectiles` here (D72) — exactly the pool `projectile_system`
+        // advances on the next call; a `muzzle_vel == 0` weapon resolves instant hitscan as before.
         combat::combat_system(
             &mut self.world,
             &self.terrain,
             &mut self.rng,
+            &mut self.projectiles,
             &mut self.events,
         );
-        // Advance in-flight shells + resolve impacts, AFTER auto-combat (D55 P3). Embodied tank
-        // fire spawns shells in `apply`; this integrates their travel/drop and applies the same
-        // cover-mitigated damage on impact.
+        // Advance in-flight shells + resolve impacts, AFTER auto-combat (D55 P3). Embodied tank fire
+        // spawns shells in `apply` and AI tank fire in `combat_system` above (D72); this integrates
+        // their travel/drop and applies the same cover-mitigated damage on impact.
         projectile::projectile_system(
             &mut self.world,
             &self.terrain,

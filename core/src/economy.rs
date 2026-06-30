@@ -346,13 +346,24 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 reserve: 24,
                 reserve_max: 24,
                 turret_speed: 180,
-                muzzle_vel: Fixed::ZERO,
-                penetration: Fixed::ZERO,
-                // Aim-time dispersion (P5 default): a hitscan infantry/vehicle gun never blooms
-                // (the dispersion system gates on `muzzle_vel > 0`), so it stays settled at zero.
+                // BALLISTIC main gun (tank P9, D72): the produced tank's shot is a real traveling
+                // shell, not hitscan — `muzzle_vel > 0` routes both AI auto-fire (`combat_system`)
+                // and embodied `Fire` through `projectile::fire_ballistic`. `2` world-units/tick
+                // matches the duel-tank gun (`scenario::DUEL_GUN_MUZZLE_VEL`): a readable arc at the
+                // locked 60 Hz, so a moving target can out-run or dodge a shot in flight.
+                muzzle_vel: Fixed::from_int(2),
+                // Armour penetration (D55 P4 model), matching the duel gun (`DUEL_GUN_PENETRATION`):
+                // against an UNARMOURED target it is multiplier 1.0 (full damage — balance vs rifles
+                // is unchanged), and it pens flanks/rears while bouncing a thick frontal facet once a
+                // real armoured tank exists to fire at. Float-free (invariant #1).
+                penetration: Fixed::from_int(18),
+                // Aim-time dispersion (P5): starts fully settled (`0`). An AI tank never blooms — the
+                // dispersion system only *settles* toward zero, and bloom is added solely at the
+                // embodied drive/aim sites — so an AI shot fires dead-on along the bearing (the
+                // literal executor, invariant #3). An embodied driver's traverse/move blooms it.
                 dispersion: Fixed::ZERO,
-                // Loads AP by default (P6, D55): inert for a hitscan unit (`muzzle_vel == 0` never
-                // reads `shell`); the field just rides along, byte-folded as a zero tag.
+                // Loads AP by default (P6, D55): solid shot — full pen, full point damage, no splash.
+                // The embodied player can `SelectShell` HE/APHE; AI tanks fire the loaded AP.
                 shell: ShellKind::Ap,
             },
         ),
@@ -1215,7 +1226,11 @@ mod tests {
         assert!(th.max > unit_stats(UnitKind::Rifleman).0.max, "tank out-HPs a rifleman");
         assert!(tw.damage > Fixed::ZERO && tw.range > Fixed::ZERO, "tank has a gun");
         assert!(tw.turret_speed > 0, "tank has an independent turret slew");
-        assert_eq!(tw.penetration, Fixed::ZERO, "produced tank is unarmoured (balance, D65)");
+        // P9/D72: the produced tank now carries a real BALLISTIC main gun — a traveling shell with
+        // armour penetration, no longer the D65 hitscan stand-in. (Its `Armor` facets are a separate
+        // concern; this asserts only the gun.)
+        assert!(tw.muzzle_vel > Fixed::ZERO, "produced tank fires a ballistic shell (P9, D72)");
+        assert!(tw.penetration > Fixed::ZERO, "the ballistic gun carries armour penetration (P9, D72)");
         // The tank's main gun stows finite shells too (D67) — no more infinite ammo.
         assert!(tw.mag_size > 0, "tank rations its main-gun shells");
         assert_eq!(tw.ammo, tw.mag_size, "tank spawns with a loaded gun");
