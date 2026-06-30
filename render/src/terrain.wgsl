@@ -75,23 +75,33 @@ fn vs_ground(@location(0) world: vec2<f32>) -> GroundOut {
 @fragment
 fn fs_ground(in: GroundOut) -> @location(0) vec4<f32> {
     let p = in.world;
-    // Large-scale tonal variation: a few low-frequency, mutually-rotated sinusoids sum into smooth
-    // rolling blobs (a cheap, alias-free stand-in for macro terrain mottling). Normalised to ~[-1,1].
-    let n = sin(p.x * 0.090 + 0.7) * cos(p.y * 0.075 - 0.3)
-        + 0.55 * sin(p.x * 0.031 - p.y * 0.027)
-        + 0.45 * cos(p.y * 0.052 + p.x * 0.019);
-    let mottle = clamp(n / 2.0, -1.0, 1.0);
 
-    // Soft radial vignette: the field dims gently toward the framed edges for depth/focus on centre.
-    // Keyed off world distance from the origin (the command camera frames ±40 around it); clamped
-    // mild so no pixel ever sinks toward the near-black "dark" bucket the viz harness keys on.
-    let r = length(p) / 70.0;
-    let vignette = clamp(r * r, 0.0, 1.0) * 0.22;
+    // Macro tonal variation: a few low-frequency, mutually-rotated sinusoids sum into smooth rolling
+    // blobs — a cheap, alias-free stand-in for large-scale terrain mottling (lighter rises, darker
+    // hollows) so the board has region-scale depth rather than reading as one flat slate. The
+    // frequencies are low enough that a couple of broad swells cross the ±40 framing. Norm ~[-1,1].
+    let macro_n = sin(p.x * 0.052 + 0.7) * cos(p.y * 0.044 - 0.3)
+        + 0.55 * sin(p.x * 0.024 - p.y * 0.020)
+        + 0.45 * cos(p.y * 0.034 + p.x * 0.015);
+    let mottle = clamp(macro_n / 2.0, -1.0, 1.0);
 
-    // Base just above the clear slate so the grid + units still read, modulated by the mottle and
-    // darkened a touch by the vignette. Cool blue-grey; blue leads but stays low-saturation.
-    let base = vec3<f32>(0.030, 0.040, 0.060);
-    let tint = 1.0 + mottle * 0.30 - vignette;
-    let col = base * clamp(tint, 0.55, 1.45);
+    // Fine grain: a higher-frequency, low-amplitude ripple so the surface isn't dead-flat up close —
+    // well below the grid/unit contrast, just enough to texture the fill.
+    let grain = sin(p.x * 0.33 + p.y * 0.21) * cos(p.y * 0.29 - p.x * 0.17);
+
+    // Soft radial vignette: the field falls off toward the framed edges for depth + centre focus.
+    // Keyed off world distance from the origin (the command camera frames ±40 around it). Stronger
+    // than before so the board reads as a lit centre fading to a dark surround, but the floor below
+    // keeps every pixel cold-grey, never near-black.
+    let r = length(p) / 60.0;
+    let vignette = clamp(r * r, 0.0, 1.0) * 0.36;
+
+    // Cold blue-grey base just above the INK clear — blue leads, low saturation so units/icons pop.
+    // Mottle brightens the rises / darkens the hollows; the vignette subtracts a small cold amount at
+    // the edges; the grain adds a faint texture. A floor keeps it from sinking toward the dark bucket.
+    let base = vec3<f32>(0.031, 0.042, 0.062);
+    let lit = base * (1.0 + mottle * 0.46 + grain * 0.05)
+        - vignette * vec3<f32>(0.013, 0.016, 0.024);
+    let col = max(lit, vec3<f32>(0.017, 0.023, 0.034));
     return vec4<f32>(col, 1.0);
 }

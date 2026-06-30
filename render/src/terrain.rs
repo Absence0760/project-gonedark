@@ -36,22 +36,28 @@ pub const GRID_HALF_EXTENT: f32 = 44.0;
 /// across the screen — dense enough to read motion, sparse enough not to clutter.
 pub const GRID_SPACING: f32 = 8.0;
 
-/// Half-thickness (world units) of a normal (minor) grid line. Thin so the lattice is subtle.
-const MINOR_HALF: f32 = 0.06;
+/// Half-thickness (world units) of a normal (minor) grid line. Thin so the minor subdivisions read
+/// as a faint whisper under the major blocks, not as the dominant lattice.
+const MINOR_HALF: f32 = 0.055;
 
 /// Half-thickness (world units) of a major grid line (every [`MAJOR_EVERY`] cells, and the axes).
-/// Slightly heavier so the eye can chunk the field into larger blocks.
-const MAJOR_HALF: f32 = 0.14;
+/// Distinctly heavier than [`MINOR_HALF`] (~3x) so the eye chunks the field into clear blocks — the
+/// major tier carries the structural read, the minor tier only subdivides it.
+const MAJOR_HALF: f32 = 0.17;
 
 /// Every Nth line (counting out from the origin) is drawn as a heavier "major" line.
 const MAJOR_EVERY: i32 = 4;
 
-/// A minor grid line color — a desaturated cool slate, just above the [`crate::CLEAR_LIT`] clear so
-/// it reads as a faint lattice without competing with the unit bodies.
-const MINOR_COLOR: [f32; 3] = crate::theme::HAIRLINE;
+/// A minor grid line color — a cold, low-saturation slate pulled *below* the theme [`HAIRLINE`] so
+/// the subdivisions sit just above the ground fill and recede; the major tier, not this, structures
+/// the board. (`HAIRLINE` ≈ 0.10/0.13/0.18; this is a touch dimmer.)
+///
+/// [`HAIRLINE`]: crate::theme::HAIRLINE
+const MINOR_COLOR: [f32; 3] = [0.072, 0.092, 0.130];
 
-/// A major grid line color — a touch brighter than minor so the larger blocks read.
-const MAJOR_COLOR: [f32; 3] = [0.16, 0.20, 0.27];
+/// A major grid line color — clearly brighter than minor (a cold blue-grey, blue leading, still low
+/// saturation) so the larger blocks read as the map's structure without competing with unit bodies.
+const MAJOR_COLOR: [f32; 3] = [0.175, 0.215, 0.295];
 
 /// One ground-grid line as an axis-aligned world rectangle (center + half-extents + color). Pure
 /// CPU data produced by [`grid_lines`]; converted to a [`LineInstance`] for upload.
