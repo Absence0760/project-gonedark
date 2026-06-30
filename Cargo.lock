@@ -1305,6 +1305,7 @@ version = "0.0.0"
 dependencies = [
  "android-activity",
  "android_logger",
+ "gonedark-core",
  "gonedark-engine",
  "gonedark-pal",
  "jni",
