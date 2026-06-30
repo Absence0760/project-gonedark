@@ -471,7 +471,7 @@ pools). The asymmetry fork above is the design gate on WS-B.
 
 ---
 
-## Q20 — AI-controlled ballistic fire — does a produced/AI tank's gun travel, or stay hitscan? <a id="q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan"></a>
+## Q20 — AI-controlled ballistic fire — does a produced/AI tank's gun travel, or stay hitscan? — RESOLVED ([D72](decisions.md): option (ii) — AI tanks also fire traveling projectiles) <a id="q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan"></a>
 
 When a produced (and thus sometimes-AI-controlled) unit carries `muzzle_vel > 0` — the armoured
 ballistic Tank of P9's remaining scope in
@@ -500,4 +500,8 @@ Resolve this **before** P9's produced-tank ballistic gun ships (cross-link:
 (literal-executor AI — skill lives in the *order/stance vocabulary*, not autonomous unit cleverness)
 and #7 (lockstep checksum matrix must stay green across the arch matrix).
 
-**Current lean:** undecided.
+**Resolved — [D72](decisions.md): option (ii).** A produced tank's gun fires a real traveling
+projectile whether AI-driven or embodied (`combat::combat_system` spawns a `Projectile` for
+`muzzle_vel > 0` via `projectile::fire_ballistic`, hitscan only for `muzzle_vel == 0`). Physically
+consistent and emergent without making the AI a strategist (it fires along current aim, does not lead);
+the new sim writes are index-ordered, fixed-point, checksum-folded, and must keep the arch matrix green.

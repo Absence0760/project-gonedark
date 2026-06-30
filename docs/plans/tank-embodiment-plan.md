@@ -289,8 +289,9 @@ reload ring) followed — each committed and tested.
 [D65](../decisions.md) as an *unarmoured, hitscan* production unit (`penetration == 0`,
 `muzzle_vel == 0`, no `Armor`). What remains: the produced tank's **armour block + ballistic gun**
 (the full War-Thunder-capable vehicle this plan specifies) and the **sniper/zoom gun-sight view**
-(a new render path, not yet started). Before the produced-tank ballistic gun ships, resolve the
-latent AI-fire design fork in
-[Q20](../open-questions.md#q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan):
-the same gun is hitscan when AI-driven and ballistic when embodied — dormant today because D65's
-produced tank is deliberately `muzzle_vel == 0`, but live the moment P9's ballistic gun lands.
+(a new render path, not yet started). The AI-fire fork is now **resolved — [D72](../decisions.md)
+([Q20](../open-questions.md#q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan),
+option ii):** the produced tank's gun fires a real traveling projectile whether AI-driven or embodied
+— `combat::combat_system` spawns a `Projectile` for `muzzle_vel > 0` (hitscan stays the path only for
+`muzzle_vel == 0`). The P9 ballistic-gun work builds against that contract and must keep the arch
+checksum matrix + 2-peer lockstep runner green (invariant #7).

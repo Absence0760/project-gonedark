@@ -3336,3 +3336,35 @@ DPS/depth-neutral; tank tilt is cosmetic turret-only; production spawns the prod
 mismatched-armies lockstep agreement; per-army roster diverges the checksum at production) and +3
 `sim-runner` metrics tests (swap-invariance, swap-invariance under reload pressure, distinct-but-Neutral-
 matches-baseline), with `cross_faction_equal_cost` wired into the `--metrics summary` digest.
+
+## D72 — AI-controlled ballistic fire: a produced tank's gun travels regardless of driver (Q20 → option ii)
+
+**Decision.** When a produced `UnitKind::Tank` carries `muzzle_vel > 0` (the armoured ballistic tank
+of [`tank-embodiment-plan.md`](plans/tank-embodiment-plan.md) P9), its shot is a real traveling
+`Projectile` **whether the unit is AI-driven or embodied**. The AI auto-resolver
+`combat::combat_system` is taught to spawn a `Projectile` (via the existing
+`projectile::fire_ballistic` path) for `muzzle_vel > 0` instead of resolving instant hitscan; hitscan
+remains the path only for `muzzle_vel == 0` weapons (rifles, the unarmoured D65 tank). This closes
+[Q20](open-questions.md) on **option (ii)**.
+
+**Why.** The same barrel firing a laser when AI-driven and a cannon when embodied is a visible physical
+inconsistency the moment two AI tanks duel at range — exactly where ballistics matter. Option (ii) makes
+the gun identical regardless of who pulls the trigger, and it is *emergent*, not *clever*: the AI does not
+lead or solve a firing solution (that would touch [invariant #3](../CLAUDE.md)) — it fires along its
+current aim and the shell travels, so a moving target can now out-run or be missed by an AI shot, and the
+shell can be seen and reacted to in flight. The literal-executor stays literal; only the projectile becomes
+physical. This keeps the gun's *feel* swap-invariant with [D71](decisions.md)'s identity model.
+
+**Determinism.** This adds new sim writes (projectile spawns) inside the AI resolver, so it is
+[invariant #7](../CLAUDE.md)-sensitive: the spawn is index-ordered and fixed-point (the same
+`fire_ballistic` the embodied path already uses, [invariant #1](../CLAUDE.md)), folded into the per-tick
+checksum, and **must keep `determinism.yml`'s arch matrix and the 2-peer lockstep runner green** — a desync
+here is a real bug, never to be silenced. Armour facing is unchanged: `facing_penetration_multiplier`
+already resolves identically across all three fire paths at impact (P4, `dc8ce4e`), so this fork was only
+ever about projectile *travel*, not damage.
+
+**Consequences.** `combat::combat_system` branches on `muzzle_vel` (hitscan vs. ballistic spawn); the
+bounded projectile ring (§6a) now caps AI-originated shells too and `log()`s on saturation; the P9
+ballistic-gun worker builds against this contract. Ships with: a test that an AI tank with `muzzle_vel > 0`
+spawns a traveling projectile (near target hit *later* than hitscan), that `muzzle_vel == 0` units still
+hitscan unchanged (golden), and a 2-peer lockstep agreement over the AI-ballistic-fire path on one seed.
