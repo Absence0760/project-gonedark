@@ -111,6 +111,9 @@ pub mod session_shell;
 /// without ever mutating sim state — so it adds NO checksum/desync surface (invariant #1/#7). Owns
 /// the *Seize* mission-1 wiring + the HUD-view mapper. Public so a host (and tests) can drive it.
 pub mod objectives;
+// CP-7 onboarding: the host-side, observe-only teach state machine that drives the going-dark
+// tutorial prompts in PvE mission 1. Owns no `Sim` → adds no checksum surface (invariants #1/#7).
+pub mod onboarding;
 /// Host-side `MissionId → mission` registry (PvE WS-B): resolves an opaque `core::campaign`
 /// `MissionId` to a concrete, runnable `MissionDef` (scenario seed + `ObjectiveSet` + WS-E tuning),
 /// and authors the shipped Operations-hub campaign wired to it. The "registry lives OUTSIDE the
@@ -1352,6 +1355,15 @@ pub struct Game {
     /// skirmish/sandbox scenes (no HUD, no objective-driven end).
     objectives: objectives::ObjectiveSet,
 
+    // --- onboarding ---
+    /// The CP-7 first-possession teach machine. OBSERVE-only host-side session state: it folds the
+    /// embody/surface/death edges + the elapsed tick into a small set of going-dark tutorial beats and
+    /// NEVER mutates the sim, so it adds no checksum/desync surface (invariants #1/#7). Enabled only
+    /// for the campaign mission ([`Scene::Mission1`]); a disabled no-op for every other scene, so no
+    /// tutorial prompt ever shows in skirmish/sandbox. The prompt it yields is drawn embodied-safe
+    /// (invariant #6) through [`gonedark_render::prompt`].
+    onboarding: onboarding::Onboarding,
+
     /// Render quality-tuning controller (Phase 4 WS-C): the active tier + the running
     /// dynamic-resolution scale + the thermal backoff. A RENDERING choice only — it reads frame
     /// timing + the host-reported thermal state and NEVER touches the sim, so the per-tick checksum
@@ -1939,6 +1951,9 @@ impl Game {
             match_events: Vec::new(),
             // Host-side mission objectives (PvE WS-A). Set by the mission scene; empty otherwise.
             objectives,
+            // CP-7 onboarding: the going-dark teach runs ONLY in the campaign mission; every other
+            // scene gets a disabled no-op machine (no tutorial prompts in skirmish/sandbox).
+            onboarding: onboarding::Onboarding::new(matches!(scene, Scene::Mission1)),
             // Render quality tuning (Phase 4 WS-C). Default to the High tier — the flagship profile
             // Phase 1 validated on (D22); a host wires its device-class tier (and the Settings
             // "graphics tiers" surface) via `set_tier`. RENDER-only state (invariant #1/#4).
@@ -2930,7 +2945,11 @@ impl Game {
             .units
             .iter()
             .any(|u| u.entity_index == self.player.index);
-        if should_auto_surface(self.embodied, avatar_present) {
+        // CP-7: capture the death edge BEFORE the flip so the teach layer can frame this auto-surface
+        // as the player's own overstay (`should_auto_surface` requires `self.embodied`, so a manual
+        // Surface earlier this frame already cleared it — a clean voluntary return is never a death).
+        let teach_avatar_died = should_auto_surface(self.embodied, avatar_present);
+        if teach_avatar_died {
             self.embodied = false;
             self.camera = CameraMode::TopDown;
             log::info!(
@@ -2999,6 +3018,18 @@ impl Game {
             let ctx = objectives::ObserveCtx::new(&frame_events, &forces, self.sim.tick_count());
             self.objectives.observe(&ctx);
         }
+
+        // CP-7 onboarding (the going-dark teach): fold this frame's embody/death edges + the elapsed
+        // tick into the teach state machine so it raises the right tutorial prompt. It only OBSERVES
+        // already-checksummed state (the embodied flag + the captured death edge) and mutates no sim
+        // state, so it adds NO checksum/desync surface (invariant #1/#7). A no-op for every scene but
+        // the campaign mission (`onboarding` is disabled otherwise). The prompt is drawn embodied-safe
+        // in the chrome pass below.
+        self.onboarding.observe(onboarding::TeachInput {
+            embodied: self.embodied,
+            avatar_died: teach_avatar_died,
+            tick: self.sim.tick_count(),
+        });
 
         // Evaluate the win/lose condition from the (already-checksummed) end-state this frame and,
         // once it is decided, end the match into the post-match summary surface. `match_outcome` is
@@ -3454,6 +3485,17 @@ impl Game {
             // Label each wedge with its real command name from the vocabulary, not a slot number.
             self.renderer
                 .render_radial(device, queue, view, &menu, &self.radial_menu);
+        }
+
+        // 8c. CP-7 onboarding teach prompt: draw the current going-dark tutorial banner (if one is
+        // live) over BOTH views — it telegraphs the cost over the dark embodied frame, and the death
+        // payoff frames the auto-surface back in the command view. It is embodied-safe screen-space
+        // chrome carrying only static teaching copy (no world position, no fog), so it never leaks
+        // intel or widens the avatar-only fog (invariant #6). Drawn before the in-session overlay so a
+        // pause/summary modal still sits on top. A no-op outside the campaign mission / when no beat
+        // is up. The state machine was advanced from this frame's edges in the step above.
+        if let Some(teach) = self.onboarding.current_prompt(self.sim.tick_count()) {
+            self.renderer.render_prompt(device, queue, view, &teach);
         }
 
         // 9. Draw the in-session shell overlay (Phase 4 WS-B) LAST, over everything else — so the
