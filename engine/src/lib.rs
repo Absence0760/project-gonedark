@@ -217,15 +217,60 @@ impl Transport for NullTransport {
     }
 }
 
+/// Upper bound on the EXTRA local command sets [`submit_count`] will stamp in a single frame to
+/// grow the submit lead toward a just-raised input delay. The adaptive delay is itself capped
+/// (`net_tuning::DelayPolicy::max_delay`), so a real lead/target gap is always small; this is a
+/// belt-and-suspenders ceiling so a pathological gap can never make one frame emit an unbounded
+/// burst of (empty) submits. Generous enough to close any real gap in one frame.
+const MAX_SUBMIT_AHEAD: u32 = 16;
+
+/// Pure: how many local command sets to [`submit`](Lockstep::submit) this frame, given the current
+/// submit **lead** (`submit_tick - next_tick`), the `target_delay` the lead should converge to, and
+/// the `budget` of ticks this frame intends to advance. Clock-free, float-free integer tick math —
+/// it can never fold into the sim checksum (invariant #1) and is unit-tested directly.
+///
+/// **Why pacing exists (multiplayer, `delay > 0`).** The submit cursor is monotonic and decoupled
+/// from `delay` (so an agreed delay change can never re-stamp a command — `core::lockstep` B7),
+/// which means raising the delay does **not** by itself make the host stamp local input any further
+/// ahead. To actually realize a larger delay — the whole point of raising it when RTT climbs, so a
+/// peer receives this client's input before the tick that executes it — the host must stamp local
+/// input further into the future, i.e. submit *more* sets than it advances for one frame until the
+/// lead catches up. Without this, a raised delay is inert and the peer's gate stalls. This function
+/// computes that count:
+///
+/// - **Steady state / single-player.** When the lead already meets the target (including the
+///   single-player `lead == target == 0` case) it returns exactly `budget` — the 1:1 cadence, byte-
+///   identical to submitting `budget` directly. THE load-bearing single-player invariant: delay-0
+///   stepping is unchanged (guarded by `lockstep_single_player_matches_direct_stepping`).
+/// - **Lead short of target (a just-raised delay).** Returns `budget` plus the deficit
+///   (`target - lead`), bounded by [`MAX_SUBMIT_AHEAD`], so the lead grows to the target this frame.
+///   The extra sets are empty padding (only the FIRST submit carries the frame's real input), so no
+///   real input is dropped and peers receive our future-tick inputs the new delay's worth earlier.
+/// - **Lead above target (a just-lowered delay).** Returns `budget` (never less): the host holds the
+///   1:1 cadence and lets the lead stay high rather than UNDER-submitting, which would drop this
+///   frame's real input or strand a tick. A larger-than-needed lead is harmless for correctness
+///   (just extra input latency); actively *shrinking* it means advancing faster than real time
+///   (clock dilation) — a live-net-loop concern, **not** a submit-count one, and the documented
+///   boundary of this seam. So a decrease only lowers the input latency once a fresh, lower delay
+///   is re-proposed at a tick the lead already covers; it never withholds input to do so.
+fn submit_count(lead: u64, target_delay: u64, budget: u32) -> u32 {
+    let deficit = target_delay.saturating_sub(lead);
+    let extra = deficit.min(MAX_SUBMIT_AHEAD as u64) as u32;
+    budget.saturating_add(extra)
+}
+
 /// Drive `lockstep` forward by up to `budget` ticks this frame, stepping `sim` with each ready
 /// tick's merged command set — the wgpu-free seam under [`Game::frame`]'s fixed-tick accumulator
 /// (D27 step 4). It mirrors the `net-sim-runner` reference drive loop, in order:
 ///
-/// 1. **Submit** `budget` local sets — one per tick this frame intends to advance. The FIRST
-///    carries this frame's `commands`; the rest are empty — exactly as the old accumulator applied
-///    commands only on its first step and passed `&[]` to catch-up steps. (`Lockstep::submit`
-///    stamps each to its own execution tick `delay + submitted`, so input delay is honoured
-///    without the caller tracking tick numbers.)
+/// 1. **Submit** local sets — [`submit_count`] of them, PACED so the submit lead
+///    (`submit_tick - next_tick`) converges to the session's target delay. In steady state (and in
+///    the single-player delay-0 session) this is exactly `budget` — one per tick this frame intends
+///    to advance — so the FIRST carries this frame's `commands` and the rest are empty, exactly as
+///    the old accumulator applied commands only on its first step and passed `&[]` to catch-up
+///    steps. After the agreed delay is RAISED it submits extra empty sets to grow the lead so local
+///    input is stamped far enough ahead for a peer to receive it before the tick that executes it
+///    (see [`submit_count`]; `Lockstep::submit` stamps each to its own monotonic execution tick).
 /// 2. **Pump the transport** (if present): `drain_outbound -> send`, then `poll -> deliver`. With
 ///    the single-player `NullTransport` both are no-ops; with a real peer this is the wire pump.
 /// 3. **Advance**: `while try_advance()` (clamped to `budget`) hand each ready tick's merged set
@@ -250,11 +295,30 @@ fn drive_lockstep(
     budget: u32,
     mut step: impl FnMut(&mut Sim, &[Command]),
 ) -> u32 {
-    // 1. Submit exactly `budget` local sets — the first carrying this frame's commands, the rest
-    // empty. One submit per tick we intend to advance keeps `submitted` in step with the ticks
-    // executed (no over-submission stranding input at delay 0).
+    // 1. Submit local sets, PACED so the submit lead (submit_tick - next_tick) converges to the
+    // session's target delay (`submit_count`). In steady state — and in the single-player delay-0
+    // session (lead 0, target 0) — this is exactly `budget`, byte-identical to the pre-pacing 1:1
+    // loop. After the agreed delay is RAISED it stamps extra EMPTY sets to grow the lead so local
+    // input reaches a peer the new delay's worth ahead of the tick that executes it. The target is
+    // the max of the active and any *pending* delay, so the lead grows BEFORE an increase commits:
+    // local input for post-change ticks is already stamped with the new lead by the time `next_tick`
+    // reaches the effective tick. A pending DECREASE keeps the (higher) active delay as the target,
+    // so we never under-submit (drop input) chasing a not-yet-effective lower delay.
+    //
+    // Note the proposer grows its lead a frame before a receiving peer does: the proposer sets
+    // `pending_delay` in `propose_delay` (before this submit), whereas a peer only learns of the
+    // change when it `deliver`s the DelayChange frame in step 2 below — so its target rises on the
+    // NEXT frame. That asymmetry only changes how far ahead each peer has *pre-stamped* empty future
+    // ticks; it never changes which command executes at which tick (the gate merges identically), so
+    // the peers' checksum streams stay bit-identical (invariant #7). `effective_tick`'s guard lead
+    // far exceeds this one-frame skew, so the receiver's lead still covers the new delay in time.
+    let lead = lockstep.submit_tick().saturating_sub(lockstep.next_tick());
+    let target_delay = lockstep
+        .delay()
+        .max(lockstep.pending_delay().map_or(0, |(_, new_delay)| new_delay));
+    let submits = submit_count(lead, target_delay, budget);
     let mut commands = Some(commands);
-    for _ in 0..budget {
+    for _ in 0..submits {
         lockstep.submit(commands.take().unwrap_or_default());
     }
 
@@ -5286,6 +5350,328 @@ mod tests {
         assert_eq!(advanced, 0);
         assert_eq!(ls.next_tick(), 0, "no tick executed");
         assert_eq!(sim.checksum(), before, "sim untouched");
+    }
+
+    // --- Per-frame submit pacing for delay > 0 (workstream B step 8, host-RTT wiring) ---
+
+    /// Pure `submit_count`: steady state — including the single-player `lead == target == 0` case —
+    /// returns exactly `budget`. THE byte-identical anchor: pacing collapses to the old 1:1 loop
+    /// when the lead already covers the target, so delay-0 single-player stepping is unchanged.
+    #[test]
+    fn submit_count_steady_state_equals_budget() {
+        // Single-player: lead 0, target 0.
+        assert_eq!(submit_count(0, 0, 1), 1);
+        assert_eq!(submit_count(0, 0, 5), 5);
+        assert_eq!(submit_count(0, 0, 0), 0);
+        // Networked steady state: the lead already meets the (non-zero) target.
+        assert_eq!(submit_count(2, 2, 1), 1);
+        assert_eq!(submit_count(6, 6, 3), 3);
+    }
+
+    /// A just-RAISED delay (lead short of target) submits extra empty sets to grow the lead to the
+    /// target this frame — `budget + (target - lead)`. This is the load-bearing fix: without it a
+    /// raised delay never stamps local input further ahead, so a peer receives it late and stalls.
+    #[test]
+    fn submit_count_grows_lead_toward_a_raised_delay() {
+        // lead 2, target 6, budget 1 → submit 1 + (6-2) = 5; once the frame advances its budget the
+        // lead reaches 2 + 5 - 1 = 6 (a transient gate stall this frame just defers that by one).
+        assert_eq!(submit_count(2, 6, 1), 5);
+        // The growth rides on top of a multi-tick catch-up budget too.
+        assert_eq!(submit_count(2, 6, 3), 7);
+        // A one-tick raise grows by one.
+        assert_eq!(submit_count(5, 6, 1), 2);
+        // Even on a zero-budget frame the lead still catches up (stamps future empty ticks only).
+        assert_eq!(submit_count(2, 6, 0), 4);
+    }
+
+    /// The per-frame growth burst is bounded by `MAX_SUBMIT_AHEAD` so a pathological lead/target gap
+    /// can never emit an unbounded run of submits in one frame.
+    #[test]
+    fn submit_count_growth_is_bounded() {
+        let huge_target = MAX_SUBMIT_AHEAD as u64 + 100;
+        assert_eq!(
+            submit_count(0, huge_target, 1),
+            1 + MAX_SUBMIT_AHEAD,
+            "the extra submits are capped at MAX_SUBMIT_AHEAD"
+        );
+        // Saturating: an enormous target can't overflow the count.
+        assert_eq!(submit_count(0, u64::MAX, 2), 2 + MAX_SUBMIT_AHEAD);
+    }
+
+    /// A just-LOWERED delay (lead above target) holds the 1:1 cadence (returns `budget`) — never
+    /// under-submits, which would drop this frame's real input. Shrinking the lead needs clock
+    /// dilation (the live-net loop), not a smaller submit count — the documented seam boundary.
+    #[test]
+    fn submit_count_decrease_holds_budget_never_under_submits() {
+        assert_eq!(submit_count(8, 3, 1), 1, "lowered delay still submits 1:1, never < budget");
+        assert_eq!(submit_count(8, 3, 4), 4);
+        assert_eq!(submit_count(6, 0, 2), 2);
+    }
+
+    /// In-memory bidirectional [`Transport`] double for the two-peer pacing test. `engine` may not
+    /// depend on `pal-desktop` (invariant #2), so this is the minimal local equivalent of its
+    /// `LoopbackTransport`: `send` enqueues on our outbound direction, `poll` drains our inbound one;
+    /// `pair()` cross-wires two ends over shared single-threaded FIFOs (the `Rc<RefCell<…>>` idiom).
+    #[derive(Clone)]
+    struct PairTransport {
+        out: std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<Vec<u8>>>>,
+        inb: std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<Vec<u8>>>>,
+    }
+
+    impl PairTransport {
+        fn pair() -> (PairTransport, PairTransport) {
+            use std::cell::RefCell;
+            use std::collections::VecDeque;
+            use std::rc::Rc;
+            let a2b: Rc<RefCell<VecDeque<Vec<u8>>>> = Rc::new(RefCell::new(VecDeque::new()));
+            let b2a: Rc<RefCell<VecDeque<Vec<u8>>>> = Rc::new(RefCell::new(VecDeque::new()));
+            (
+                PairTransport {
+                    out: a2b.clone(),
+                    inb: b2a.clone(),
+                },
+                PairTransport { out: b2a, inb: a2b },
+            )
+        }
+    }
+
+    impl Transport for PairTransport {
+        fn send(&mut self, frame: &[u8]) {
+            self.out.borrow_mut().push_back(frame.to_vec());
+        }
+        fn poll(&mut self) -> Vec<Vec<u8>> {
+            self.inb.borrow_mut().drain(..).collect()
+        }
+    }
+
+    /// THE multiplayer determinism guard for pacing: drive a real two-peer `Lockstep` through
+    /// `drive_lockstep` (so the submit loop's pacing is exercised end to end) over the `PairTransport`
+    /// double, RAISE the agreed input delay mid-run, and assert (a) pacing actually grew BOTH peers'
+    /// submit lead to cover the new delay, (b) the change committed identically on both, and (c) the
+    /// two peers' per-tick checksum streams stay bit-identical to each other AND to a no-network
+    /// single-`Sim` reference (invariant #7). A pacing bug that stranded input or perturbed the
+    /// command timeline would break (a) or (c).
+    #[test]
+    fn delay_increase_paces_submit_and_both_peers_stay_checksum_identical() {
+        let mut sim0 = Sim::new(DRIVE_SEED);
+        let _ = drive_scene(&mut sim0);
+        let mut sim1 = Sim::new(DRIVE_SEED);
+        let _ = drive_scene(&mut sim1);
+        let (mut t0, mut t1) = PairTransport::pair();
+        let init_delay = 2;
+        let mut ls0 = Lockstep::new(2, 0, init_delay);
+        let mut ls1 = Lockstep::new(2, 1, init_delay);
+        let mut s0: Vec<u64> = Vec::new();
+        let mut s1: Vec<u64> = Vec::new();
+
+        // One frame each, budget 1, empty input. Peer 0 is driven before peer 1, so peer 0 polls
+        // peer 1's PREVIOUS-frame frames (a one-frame ferry lag, well inside the lead).
+        let step_frame =
+            |sim0: &mut Sim,
+             ls0: &mut Lockstep,
+             t0: &mut PairTransport,
+             s0: &mut Vec<u64>,
+             sim1: &mut Sim,
+             ls1: &mut Lockstep,
+             t1: &mut PairTransport,
+             s1: &mut Vec<u64>| {
+                drive_lockstep(sim0, ls0, Some(t0), Vec::new(), 1, |s, m| {
+                    s.step(m);
+                    s0.push(s.checksum());
+                });
+                drive_lockstep(sim1, ls1, Some(t1), Vec::new(), 1, |s, m| {
+                    s.step(m);
+                    s1.push(s.checksum());
+                });
+            };
+
+        // Warm up at the initial delay: the lead must hold steady at `init_delay` (pacing == budget
+        // in steady state — no spurious growth before any change).
+        for _ in 0..8 {
+            step_frame(
+                &mut sim0, &mut ls0, &mut t0, &mut s0, &mut sim1, &mut ls1, &mut t1, &mut s1,
+            );
+        }
+        let lead_before = ls0.submit_tick() - ls0.next_tick();
+        assert_eq!(
+            lead_before, init_delay,
+            "steady-state lead holds at the initial delay (pacing collapses to budget)"
+        );
+
+        // Peer 0 proposes RAISING the delay — what the host-side RTT estimator does when RTT climbs.
+        let new_delay = 6;
+        ls0.propose_delay(new_delay, 4)
+            .expect("first proposal is never AlreadyPending");
+
+        for _ in 0..40 {
+            step_frame(
+                &mut sim0, &mut ls0, &mut t0, &mut s0, &mut sim1, &mut ls1, &mut t1, &mut s1,
+            );
+        }
+
+        // The change committed identically on both peers.
+        assert_eq!(ls0.delay(), new_delay, "proposer committed the raised delay");
+        assert_eq!(ls1.delay(), new_delay, "peer committed the identical raised delay");
+        // Pacing grew BOTH peers' submit lead to cover the new delay. Without it the lead would stay
+        // at `init_delay` and the peer's input would arrive too late for the post-change ticks.
+        let lead0 = ls0.submit_tick() - ls0.next_tick();
+        let lead1 = ls1.submit_tick() - ls1.next_tick();
+        assert!(
+            lead0 >= new_delay,
+            "pacing grew the proposer's lead to cover the raised delay (got {lead0})"
+        );
+        assert!(
+            lead1 >= new_delay,
+            "pacing grew the peer's lead to cover the raised delay (got {lead1})"
+        );
+        assert!(
+            lead0 > lead_before,
+            "the lead genuinely grew past the initial delay (got {lead0})"
+        );
+
+        // Cross-client agreement (invariant #7) + no-network determinism: both peers' streams are
+        // identical to each other and to a single-Sim reference stepped the same number of empty
+        // ticks. Peer 0 lags peer 1 by at most the ferry slack, so compare the common prefix.
+        let n = s0.len().min(s1.len());
+        assert!(n >= 20, "the run advanced a meaningful number of ticks (got {n})");
+        assert_eq!(
+            s0[..n],
+            s1[..n],
+            "the two peers' checksum streams must agree through the delay change"
+        );
+        let mut refsim = Sim::new(DRIVE_SEED);
+        let _ = drive_scene(&mut refsim);
+        let reference: Vec<u64> = (0..n)
+            .map(|_| {
+                refsim.step(&[]);
+                refsim.checksum()
+            })
+            .collect();
+        assert_eq!(
+            s0[..n],
+            reference[..],
+            "the paced two-peer stream must match a no-network reference"
+        );
+    }
+
+    /// Pacing must not displace a REAL command issued in the same frame as a delay increase. The
+    /// growth burst submits extra EMPTY sets, but only the FIRST submit carries the frame's input —
+    /// so the command must still land on the submit tick it was stamped on, executed at that exact
+    /// tick by BOTH peers (invariant #7) and matching a no-network reference that applies it there.
+    /// (The earlier test uses all-empty input, so a regression that moved the real `take()` off the
+    /// first submit would slip past it; this test closes that gap.)
+    #[test]
+    fn delay_increase_during_a_real_command_keeps_it_on_the_right_tick() {
+        let mut sim0 = Sim::new(DRIVE_SEED);
+        let player = drive_scene(&mut sim0);
+        let mut sim1 = Sim::new(DRIVE_SEED);
+        let _ = drive_scene(&mut sim1);
+        let (mut t0, mut t1) = PairTransport::pair();
+        let mut ls0 = Lockstep::new(2, 0, 2);
+        let mut ls1 = Lockstep::new(2, 1, 2);
+
+        // Per-peer: a running executed-tick counter (ticks commit in order 0,1,2,…), the tick(s) at
+        // which the Move appeared in the merged set, and (peer 0) the checksum stream.
+        let mut tick0 = 0u64;
+        let mut tick1 = 0u64;
+        let mut move_ticks0: Vec<u64> = Vec::new();
+        let mut move_ticks1: Vec<u64> = Vec::new();
+        let mut sums0: Vec<u64> = Vec::new();
+        let has_move = |m: &[Command]| m.iter().any(|c| matches!(c, Command::Move { .. }));
+
+        let mv = Command::Move {
+            entity: player,
+            target: Vec2::new(Fixed::from_int(3), Fixed::from_int(1)),
+        };
+
+        // Warm up at delay 2 with empty input on both peers.
+        for _ in 0..6 {
+            drive_lockstep(&mut sim0, &mut ls0, Some(&mut t0), Vec::new(), 1, |s, m| {
+                if has_move(m) {
+                    move_ticks0.push(tick0);
+                }
+                s.step(m);
+                sums0.push(s.checksum());
+                tick0 += 1;
+            });
+            drive_lockstep(&mut sim1, &mut ls1, Some(&mut t1), Vec::new(), 1, |s, m| {
+                if has_move(m) {
+                    move_ticks1.push(tick1);
+                }
+                s.step(m);
+                tick1 += 1;
+            });
+        }
+
+        // The frame that BOTH raises the delay AND carries a real command on peer 0. Record the
+        // submit tick the command will be stamped on BEFORE driving (it is the first submit's tick).
+        ls0.propose_delay(6, 4).expect("first proposal");
+        let cmd_tick = ls0.submit_tick();
+        drive_lockstep(&mut sim0, &mut ls0, Some(&mut t0), vec![mv], 1, |s, m| {
+            if has_move(m) {
+                move_ticks0.push(tick0);
+            }
+            s.step(m);
+            sums0.push(s.checksum());
+            tick0 += 1;
+        });
+        drive_lockstep(&mut sim1, &mut ls1, Some(&mut t1), Vec::new(), 1, |s, m| {
+            if has_move(m) {
+                move_ticks1.push(tick1);
+            }
+            s.step(m);
+            tick1 += 1;
+        });
+
+        // Drive past the command's execution tick and the delay-change commit.
+        for _ in 0..30 {
+            drive_lockstep(&mut sim0, &mut ls0, Some(&mut t0), Vec::new(), 1, |s, m| {
+                if has_move(m) {
+                    move_ticks0.push(tick0);
+                }
+                s.step(m);
+                sums0.push(s.checksum());
+                tick0 += 1;
+            });
+            drive_lockstep(&mut sim1, &mut ls1, Some(&mut t1), Vec::new(), 1, |s, m| {
+                if has_move(m) {
+                    move_ticks1.push(tick1);
+                }
+                s.step(m);
+                tick1 += 1;
+            });
+        }
+
+        // The command executed exactly once, on the tick it was stamped on, identically on both
+        // peers — the growth burst's empty padding did not displace or duplicate it.
+        assert_eq!(
+            move_ticks0,
+            vec![cmd_tick],
+            "the Move executes once, on its stamped submit tick, for the proposer"
+        );
+        assert_eq!(
+            move_ticks1, move_ticks0,
+            "the peer executes the Move on the identical tick (cross-client agreement)"
+        );
+
+        // No-network determinism: a single Sim that applies the Move at `cmd_tick` and steps empty
+        // otherwise reproduces the proposer's checksum stream bit-for-bit.
+        let mut refsim = Sim::new(DRIVE_SEED);
+        let _ = drive_scene(&mut refsim);
+        let reference: Vec<u64> = (0..sums0.len() as u64)
+            .map(|t| {
+                if t == cmd_tick {
+                    refsim.step(std::slice::from_ref(&mv));
+                } else {
+                    refsim.step(&[]);
+                }
+                refsim.checksum()
+            })
+            .collect();
+        assert_eq!(
+            sums0, reference,
+            "the paced stream with a real command must match a no-network reference"
+        );
     }
 
     // --- Avatar-local prediction (D15, workstream B step 5) ---
