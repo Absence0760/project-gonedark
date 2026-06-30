@@ -120,11 +120,16 @@ the JNI reader.
 
 ## 5. Tier 2 — buildable once Tier 0 lands (config-seam-blocked, NOT netcode-blocked)
 
-> **Gunsmith: ✅ LANDED.** The Compose gunsmith screen + `LoadoutSelection` seam ship; the three
-> slot indices (labels verbatim from `core::gunsmith`) pack straight into the `opt`/`bar`/`mag` wire
-> keys at Deploy. **Campaign mission-select + briefing: still pending** — the next parity surface
-> (all three play modes currently open the gunsmith and Deploy into Skirmish, mirroring the desktop
-> title's current fold-to-loadout behaviour).
+> **Gunsmith + campaign mission-select/briefing: ✅ LANDED.** The Compose gunsmith (`LoadoutSelection`
+> seam, labels verbatim from `core::gunsmith`) and the Operations-hub **mission-select + briefing**
+> (the single "Seize the Outpost" node → `mission1`, with a difficulty cycler) ship. Campaign opens
+> mission-select → briefing → gunsmith → Deploy into `mission1` with the chosen loadout; PvE/PvP open
+> the gunsmith and Deploy into Skirmish. The engine now **fully consumes** the wire loadout
+> (`new_scene_with_loadout`) and audio gains. **Owed:** the briefing's **difficulty** (needs a `diff`
+> wire key + mission-tuning plumbing) and **look-sensitivity** (the Android look delta is derived in
+> `engine::touch_controls`, not scalable at the PAL boundary) — both shown/carried but not yet applied
+> on Android. **Persistence:** Settings/Profile/loadout now survive restarts via `ShellPrefs`
+> (SharedPreferences). Still pending: per-mission campaign expansion, PvP match-setup (Q5/Phase-3).
 
 
 | Surface | Desktop reference | What Tier 0 unblocks |

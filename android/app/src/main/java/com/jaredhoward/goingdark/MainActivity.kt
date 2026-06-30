@@ -14,32 +14,42 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
 
 /**
  * The app's LAUNCHER: the native Jetpack-Compose **app shell** the player lands on (D32 surface 1,
- * "Boot & title") — and now the out-of-match shell around it (Compose shell parity, Tier 1/2):
- * Settings, Profile, Field Manual, and the pre-match gunsmith. It owns only out-of-match chrome and
- * holds no game/sim state — its only state is which shell surface is up and the player's
- * presentation prefs / loadout selection, all in Compose `remember` (parity with the desktop host's
- * in-memory `Screen`/`SettingsState`/`ProfileState`/`LoadoutEditor`, `app/src/main.rs`).
+ * "Boot & title") and the out-of-match shell around it (Compose shell parity, Tier 1/2): Settings,
+ * Profile, Field Manual, the campaign Operations hub (mission-select → briefing), and the pre-match
+ * gunsmith. It owns only out-of-match chrome — its state is which surface is up, the player's prefs
+ * / profile / loadout (persisted across launches via [ShellPrefs]), and the in-flight campaign
+ * selection. This mirrors the desktop host's in-memory `Screen`/`SettingsState`/`ProfileState`/
+ * `LoadoutEditor`/campaign (`app/src/main.rs`).
  *
  * Deploy launches the shared **Rust engine** ([NativeActivity], which loads
  * `libgonedark_pal_android.so` and runs `engine::Game`), threading a [LaunchConfig] across the seam
- * (Tier 0): it boots the real **Skirmish** match (desktop's default boot) with the chosen loadout +
- * audio/look prefs folded into the wire. The Compose shell and the engine live in separate
- * activities — the D32 native/in-engine split made concrete: out-of-match chrome is native, the
- * in-match (and in-session) surfaces are in-engine under avatar-only fog (invariant #6).
+ * (Tier 0): the chosen scene + gunsmith loadout + audio prefs are folded into the wire and consumed
+ * by `android_main`. The Compose shell and the engine live in separate activities — the D32
+ * native/in-engine split: out-of-match chrome is native, the in-match (and in-session) surfaces are
+ * in-engine under avatar-only fog (invariant #6).
  *
- * Mode divergence (Campaign vs PvE vs PvP) is future work — all three currently open the gunsmith
- * and Deploy into Skirmish, mirroring the desktop shell where each still folds to the loadout
- * screen (`app/src/shell.rs::resolve_title_action`). Campaign's Operations-hub mission-select and
- * the PvP match-setup half stay pending (mission-select is the next parity surface; PvP is
- * Q5/Phase-3-blocked, phase-4-plan §2).
+ * Campaign opens the Operations hub → a mission briefing → the gunsmith → Deploy into the mission
+ * scene (`mission1`, where the loadout applies to the player's troops). PvE/PvP open the gunsmith
+ * directly and Deploy into Skirmish (their mode divergence + the PvP match-setup half stay future
+ * work / Q5-Phase-3-blocked, phase-4-plan §2). The briefing's **difficulty** selector is shown but
+ * not yet threaded to the engine on Android (owed — needs a `diff` wire key + mission-tuning
+ * plumbing; the desktop already threads it). Look-sensitivity from Settings is likewise owed (the
+ * Android look delta is derived in `engine::touch_controls`, not scalable at the PAL boundary).
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val stamp = buildStamp(buildChannel(BuildConfig.DEBUG), BuildConfig.VERSION_NAME)
+        val prefs = ShellPrefs(this)
         setContent {
             GoingDarkTheme {
-                Shell(versionStamp = stamp, onQuit = ::finish, onDeploy = ::startMatch)
+                Shell(
+                    versionStamp = stamp,
+                    initial = prefs.load(),
+                    onPersist = prefs::save,
+                    onQuit = ::finish,
+                    onDeploy = ::startMatch,
+                )
             }
         }
     }
@@ -58,32 +68,43 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Which out-of-match shell surface is up — the Compose twin of the desktop host's `Screen` enum. */
-private enum class ShellRoute { Title, Settings, Profile, About, Gunsmith }
+private enum class ShellRoute { Title, Settings, Profile, About, MissionSelect, Briefing, Gunsmith }
 
 /**
- * The out-of-match shell navigator: a flat `when` over [ShellRoute] holding the player's prefs and
- * loadout in `remember` (no persistence yet — parity with the desktop host's in-memory state).
- * `onDeploy` boots the engine with the assembled [LaunchConfig]; `onQuit` finishes the activity.
+ * The out-of-match shell navigator: a flat `when` over [ShellRoute] holding the player's prefs,
+ * profile, loadout, and in-flight campaign selection in `remember`. State is seeded from `initial`
+ * (loaded from [ShellPrefs]) and pushed back through `onPersist` whenever the player edits Settings,
+ * Profile, or the loadout — so it survives a restart. `onDeploy` boots the engine with the assembled
+ * [LaunchConfig]; `onQuit` finishes the activity.
  */
 @Composable
 private fun Shell(
     versionStamp: String,
+    initial: ShellState,
+    onPersist: (ShellState) -> Unit,
     onQuit: () -> Unit,
     onDeploy: (LaunchConfig) -> Unit,
 ) {
     var route by remember { mutableStateOf(ShellRoute.Title) }
-    var settings by remember { mutableStateOf(SettingsState.defaults()) }
-    var profile by remember { mutableStateOf(ProfileState()) }
-    var loadout by remember { mutableStateOf(LoadoutSelection()) }
+    var settings by remember { mutableStateOf(initial.settings) }
+    var profile by remember { mutableStateOf(initial.profile) }
+    var loadout by remember { mutableStateOf(initial.loadout) }
+    // Campaign flow state: which scene the gunsmith's Deploy boots (Skirmish for PvE/PvP, the
+    // mission's scene token when arrived via a briefing), the node being briefed, and the selected
+    // replay difficulty (shown in the briefing; engine-application owed).
+    var pendingScene by remember { mutableStateOf("skirmish") }
+    var briefedNode by remember { mutableStateOf(campaignNodes.first()) }
+    var difficulty by remember { mutableStateOf(Difficulty.Recruit) }
+
+    fun persist() = onPersist(ShellState(settings, profile, loadout))
 
     when (route) {
         ShellRoute.Title -> TitleScreen(
             versionStamp = versionStamp,
-            // Campaign/PvE/PvP all open the gunsmith for now (mode divergence is future work),
-            // exactly as the desktop title folds each play mode to the loadout screen.
-            onCampaign = { route = ShellRoute.Gunsmith },
-            onPve = { route = ShellRoute.Gunsmith },
-            onPvp = { route = ShellRoute.Gunsmith },
+            onCampaign = { route = ShellRoute.MissionSelect },
+            // PvE/PvP open the gunsmith and Deploy into Skirmish (mode divergence is future work).
+            onPve = { pendingScene = "skirmish"; route = ShellRoute.Gunsmith },
+            onPvp = { pendingScene = "skirmish"; route = ShellRoute.Gunsmith },
             onSettings = { route = ShellRoute.Settings },
             onProfile = { route = ShellRoute.Profile },
             onAbout = { route = ShellRoute.About },
@@ -91,33 +112,51 @@ private fun Shell(
         )
         ShellRoute.Settings -> SettingsScreen(
             state = settings,
-            onChange = { settings = it },
+            onChange = { settings = it; persist() },
             onBack = { route = ShellRoute.Title },
         )
         ShellRoute.Profile -> ProfileScreen(
             state = profile,
-            onChange = { profile = it },
+            onChange = { profile = it; persist() },
             onBack = { route = ShellRoute.Title },
         )
         ShellRoute.About -> AboutScreen(onBack = { route = ShellRoute.Title })
+        ShellRoute.MissionSelect -> MissionSelectScreen(
+            nodes = campaignNodes,
+            onOpenNode = { briefedNode = it; route = ShellRoute.Briefing },
+            onBack = { route = ShellRoute.Title },
+        )
+        ShellRoute.Briefing -> BriefingScreen(
+            node = briefedNode,
+            difficulty = difficulty,
+            onCycleDifficulty = { difficulty = difficulty.next() },
+            // Briefing Deploy routes through the gunsmith (desktop: Briefing → Loadout), then
+            // Deploy there boots this mission's scene with the chosen loadout.
+            onDeploy = { pendingScene = briefedNode.sceneToken; route = ShellRoute.Gunsmith },
+            onBack = { route = ShellRoute.MissionSelect },
+        )
         ShellRoute.Gunsmith -> GunsmithScreen(
             selection = loadout,
-            onChange = { loadout = it },
-            onDeploy = { onDeploy(launchConfigOf(settings, loadout)) },
+            onChange = { loadout = it; persist() },
+            onDeploy = { onDeploy(launchConfigOf(pendingScene, settings, loadout)) },
             onBack = { route = ShellRoute.Title },
         )
     }
 }
 
 /**
- * Assemble the [LaunchConfig] the engine receives at Deploy: the chosen [LoadoutSelection] slot
- * indices and the [SettingsState] audio/look prefs folded into the wire keys (`opt`/`bar`/`mag`,
- * `vol`/`sfx`/`sens`/`invy`). Scene is the real Skirmish match. Pure — kept out of the composable so
- * the wiring is obvious and testable.
+ * Assemble the [LaunchConfig] the engine receives at Deploy: the chosen scene token, the
+ * [LoadoutSelection] slot indices, and the [SettingsState] audio prefs folded into the wire keys
+ * (`opt`/`bar`/`mag`, `vol`/`sfx`/`sens`/`invy`). Pure — kept out of the composable so the wiring is
+ * obvious. (Sensitivity/invert are carried but not yet applied on Android — see the class doc.)
  */
-private fun launchConfigOf(settings: SettingsState, loadout: LoadoutSelection): LaunchConfig =
+private fun launchConfigOf(
+    scene: String,
+    settings: SettingsState,
+    loadout: LoadoutSelection,
+): LaunchConfig =
     LaunchConfig(
-        scene = "skirmish",
+        scene = scene,
         optic = loadout.optic,
         barrel = loadout.barrel,
         magazine = loadout.magazine,
