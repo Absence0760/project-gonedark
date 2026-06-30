@@ -31,6 +31,7 @@ use gonedark_core::fixed::Fixed;
 use gonedark_core::sim::Sim;
 use gonedark_core::terrain::{Cover, Terrain};
 use gonedark_core::territory::ControlPoint;
+use gonedark_core::trig::{Angle, ANGLE_FULL};
 
 const HZ: u64 = 60;
 
@@ -197,6 +198,116 @@ pub fn equal_cost_outcome(budget: i64, sep: i32) -> (u64, u32, u32) {
         8000,
         alive_units(&sim.world, Faction::Player),
         alive_units(&sim.world, Faction::Enemy),
+    )
+}
+
+// --- Produced-Tank cost-parity (D30 discipline, wave-2 W7) ---------------------------------------
+//
+// The produced `UnitKind::Tank` (D65 archetype + the wave-1 armour W1 and ballistic gun W4/D72) was
+// shipped with a *playtest BASELINE* cost/stat block flagged "NOT D30-measured". This block MEASURES
+// it against the matchups that exist TODAY — tank vs Rifleman, tank vs Heavy, tank vs tank — at the
+// standard separations the rest of the harness uses (sep 5 close, sep 9 ranged), and the locking
+// tests below pin the result so a stray future edit that re-breaks the balance trips CI.
+//
+// The load-bearing mechanic: a produced tank is a REAL armoured vehicle (`unit_armor`: front 40 /
+// side 16 / rear 8), and ALL existing infantry fire at `penetration == 0`, which bounces every
+// armour facet (`2·0 ≤ a` — `combat::facing_penetration_multiplier`). So infantry deal LITERALLY
+// ZERO damage to a produced tank, on every facet, regardless of cost or numbers — no equal-cost
+// budget lets a Rifleman/Heavy mass crack it. That is not a *cost* imbalance a price tweak can fix;
+// it is a rock-paper-scissors GAP, and the intended counter is the dedicated anti-tank unit ([D73],
+// added separately by wave-2 W8) — NOT a stat/cost change here. This file's job is to MEASURE + LOCK
+// that the tank's price buys what its armour/gun deliver against today's roster, and to document the
+// gap so the AT unit lands against a measured baseline rather than a vibe.
+
+/// Spawn a unit with its FULL produced loadout — `unit_stats` health+weapon, the `unit_armor`
+/// directional plate, and an explicit `hull_heading` — exactly as the real production path
+/// (`economy::economy_system`) spawns it. The base [`spawn`] helper omits `unit_kind`/`armor`
+/// (harmless for the unarmoured infantry it was written for, where armour is the no-op default);
+/// measuring the armoured Tank REQUIRES them, or the tank would (wrongly) take full damage from
+/// penetration-0 fire and resolve no facets. Float-free.
+fn spawn_produced(sim: &mut Sim, x: i32, y: i32, faction: Faction, kind: UnitKind, hull: Angle) {
+    let (health, weapon) = economy::unit_stats(kind);
+    let e = sim.world.spawn();
+    let i = e.index as usize;
+    sim.world.kind[i] = EntityKind::Unit;
+    sim.world.unit_kind[i] = kind;
+    sim.world.faction[i] = faction;
+    sim.world.pos[i] = v(x, y);
+    sim.world.health[i] = health;
+    sim.world.weapon[i] = weapon;
+    sim.world.armor[i] = economy::unit_armor(kind);
+    sim.world.hull_heading[i] = hull;
+    sim.world.stance[i] = Stance::FireAtWill;
+}
+
+/// Equal-**resource** trade of an `infantry`-mass (Player) vs a produced-Tank-mass (Enemy), `sep`
+/// apart, run to a wipe (or 8000-tick cap). An equal budget buys `budget/unit_cost` of each, so this
+/// is the produced-tank analogue of [`equal_cost_outcome`]. The Enemy tanks are hull-angled INTO the
+/// incoming fire (front toward the Player) — the realistic "face your armour at the threat" default,
+/// and irrelevant anyway since the infantry's penetration-0 fire bounces *every* facet. Returns
+/// `(end_tick, infantry_survivors, tank_survivors, tank_hp_bits)` — the tank HP bits expose that the
+/// armour took the fire for **zero loss** (a deterministic Q16.16 integer, never a float).
+pub fn tank_vs_infantry_outcome(infantry: UnitKind, budget: i64, sep: i32) -> (u64, u32, u32, i64) {
+    let mut sim = Sim::new(0x7A2C_0B11);
+    let ni = (budget / unit_cost(infantry)) as i32;
+    let nt = (budget / unit_cost(UnitKind::Tank)) as i32;
+    for k in 0..ni {
+        // Infantry are unarmoured — heading is a no-op; face +X toward the tanks for tidiness.
+        spawn_produced(&mut sim, 0, k, Faction::Player, infantry, Angle(0));
+    }
+    for k in 0..nt {
+        // Tanks at +sep facing −X (toward the Player): front plate INTO the incoming fire.
+        spawn_produced(&mut sim, sep, k, Faction::Enemy, UnitKind::Tank, Angle(ANGLE_FULL / 2));
+    }
+    for t in 1..=8000u64 {
+        sim.step(&[]);
+        let p = alive_units(&sim.world, Faction::Player);
+        let e = alive_units(&sim.world, Faction::Enemy);
+        if p == 0 || e == 0 {
+            return (t, p, e, summed_hp_bits(&sim.world, Faction::Enemy));
+        }
+    }
+    (
+        8000,
+        alive_units(&sim.world, Faction::Player),
+        alive_units(&sim.world, Faction::Enemy),
+        summed_hp_bits(&sim.world, Faction::Enemy),
+    )
+}
+
+/// A 1v1 produced-tank duel, `sep` apart, with each tank's hull turned by `player_hull` / `enemy_hull`
+/// so the test can choose which facet each tank presents. Run to a wipe (or a 4000-tick cap — long
+/// enough to drain the slow 6-shell magazine and reload several times). Returns
+/// `(end_tick, player_alive, enemy_alive, player_hp_bits, enemy_hp_bits)`.
+///
+/// Drives the "angle the hull / flank to kill" lesson through the AI auto-resolver: AI tanks are
+/// literal executors (invariant #3) — they fire along the bearing to the target and never maneuver
+/// to flank — so the *spawn* heading decides the facet, and the duel's outcome is entirely a function
+/// of which armour each tank presents.
+pub fn tank_duel(sep: i32, player_hull: Angle, enemy_hull: Angle) -> (u64, u32, u32, i64, i64) {
+    let mut sim = Sim::new(0x7A2C_D0E1);
+    spawn_produced(&mut sim, 0, 0, Faction::Player, UnitKind::Tank, player_hull);
+    spawn_produced(&mut sim, sep, 0, Faction::Enemy, UnitKind::Tank, enemy_hull);
+    for t in 1..=4000u64 {
+        sim.step(&[]);
+        let p = alive_units(&sim.world, Faction::Player);
+        let e = alive_units(&sim.world, Faction::Enemy);
+        if p == 0 || e == 0 {
+            return (
+                t,
+                p,
+                e,
+                summed_hp_bits(&sim.world, Faction::Player),
+                summed_hp_bits(&sim.world, Faction::Enemy),
+            );
+        }
+    }
+    (
+        4000,
+        alive_units(&sim.world, Faction::Player),
+        alive_units(&sim.world, Faction::Enemy),
+        summed_hp_bits(&sim.world, Faction::Player),
+        summed_hp_bits(&sim.world, Faction::Enemy),
     )
 }
 
@@ -436,11 +547,110 @@ fn summary() {
             );
         }
     }
+    // Produced-tank cost-parity (D30, wave-2 W7): the armoured tank vs today's roster. Infantry fire
+    // at penetration 0, so it bounces every facet — the tank wins the equal-cost trade for ZERO loss.
+    // The HARD-counter gap is closed by the dedicated AT unit (D73), not a price change.
+    eprintln!("# produced-tank cost-parity (D30): equal-resource trades vs today's roster");
+    for kind in [UnitKind::Rifleman, UnitKind::Heavy] {
+        for &(budget, sep) in &[(360i64, 5i32), (720, 9)] {
+            let (t, inf, tanks, hp) = tank_vs_infantry_outcome(kind, budget, sep);
+            let untouched = hp == 300 * (Fixed::SCALE as i64) * tanks as i64;
+            eprintln!(
+                "tank vs {kind:?} budget {budget} sep{sep}: ended {t} ({:.1}s), {kind:?} survivors {inf}, tanks {tanks} [{}]",
+                secs(t),
+                if untouched { "tanks UNTOUCHED — infantry can't pen" } else { "tanks took damage" },
+            );
+        }
+    }
+    let ff = tank_duel(9, Angle(0), Angle(ANGLE_FULL / 2));
+    let fl = tank_duel(9, Angle(0), Angle(0));
+    eprintln!("tank duel sep9 front/front: {ff:?} (stalemate: pen 18 bounces the 40-front)");
+    eprintln!("tank duel sep9 flank(rear): {fl:?} (flank pens the 8-rear — angle the hull / flank to kill)");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Raw Q16.16 bits of one full-health produced Tank (300 HP) — the "took zero damage" yardstick.
+    const TANK_FULL_HP_BITS: i64 = 300 * (Fixed::SCALE as i64);
+
+    /// **MEASURED produced-tank cost-parity vs today's roster (D30 discipline, wave-2 W7).** The
+    /// headline lock: at *equal resources*, a produced-Tank mass HARD-COUNTERS every existing infantry
+    /// archetype — it wipes the cost-equal Rifleman/Heavy mass while taking **literally zero damage**
+    /// (its armour bounces their `penetration == 0` fire on every facet — `core` proves the mechanism;
+    /// this proves the battlefield outcome). The tank ends at *full* HP with the infantry 0-for, at
+    /// both the close (sep 5) and ranged (sep 9) separations, for a single tank (budget 360) and a
+    /// two-tank mass (720). This is NOT a cost imbalance a price tweak could fix — no budget buys an
+    /// infantry shot that pens — so the cost is held; the intended counter is the dedicated anti-tank
+    /// unit ([D73], added separately). Exact ticks pinned so a stray edit that drifts the numbers trips.
+    #[test]
+    fn produced_tank_hard_counters_infantry_at_equal_cost() {
+        // (infantry kind, budget, sep) => (end_tick, infantry_survivors, tank_survivors, tank_hp_bits)
+        type Case = (UnitKind, i64, i32, (u64, u32, u32, i64));
+        let cases: &[Case] = &[
+            // vs RIFLEMAN (cost 100): budget 360 -> 1 tank vs 3 rifles; 720 -> 2 tanks vs 7 rifles.
+            (UnitKind::Rifleman, 360, 5, (155, 0, 1, TANK_FULL_HP_BITS)),
+            (UnitKind::Rifleman, 360, 9, (157, 0, 1, TANK_FULL_HP_BITS)),
+            (UnitKind::Rifleman, 720, 5, (314, 0, 2, 2 * TANK_FULL_HP_BITS)),
+            (UnitKind::Rifleman, 720, 9, (315, 0, 2, 2 * TANK_FULL_HP_BITS)),
+            // vs HEAVY (cost 220): budget 360 -> 1 tank vs 1 heavy; 720 -> 2 tanks vs 3 heavies.
+            (UnitKind::Heavy, 360, 5, (153, 0, 1, TANK_FULL_HP_BITS)),
+            (UnitKind::Heavy, 360, 9, (155, 0, 1, TANK_FULL_HP_BITS)),
+            (UnitKind::Heavy, 720, 5, (304, 0, 2, 2 * TANK_FULL_HP_BITS)),
+            (UnitKind::Heavy, 720, 9, (306, 0, 2, 2 * TANK_FULL_HP_BITS)),
+        ];
+        for &(kind, budget, sep, expected) in cases {
+            let got = tank_vs_infantry_outcome(kind, budget, sep);
+            // Direction (the load-bearing balance facts): infantry wiped, tanks all survive, and the
+            // tank HP is UNTOUCHED — the armour ate the entire equal-cost volley for nothing.
+            assert_eq!(got.1, 0, "{kind:?} budget {budget} sep{sep}: infantry must be wiped");
+            assert_eq!(got.2, expected.2, "{kind:?} budget {budget} sep{sep}: every tank survives");
+            assert_eq!(
+                got.3, expected.3,
+                "{kind:?} budget {budget} sep{sep}: tanks take ZERO damage (full HP) — pen-0 infantry bounce"
+            );
+            // Exact regression pin (deterministic, dev==release): catches a silent drift.
+            assert_eq!(got, expected, "{kind:?} budget {budget} sep{sep}: measured cost-parity pin moved");
+        }
+    }
+
+    /// **MEASURED produced-tank-vs-tank (the "angle the hull / flank to kill" lesson through the AI
+    /// auto-resolver, wave-2 W7).** Two AI tanks facing each other head-on cannot crack one another:
+    /// the duel-class gun (pen 18) bounces the 40-front (`2·18 = 36 < 40`), so a front/front duel is a
+    /// **stalemate** — both alive at full HP when the 4000-tick cap is hit, at every separation. Expose
+    /// a tank's rear and it dies fast (pen 18 ≥ 8-rear) while the flanker stays untouched. AI tanks are
+    /// literal executors (invariant #3): they never maneuver to flank, so the *presented facet* — set at
+    /// spawn — wholly decides the fight. This is the cost-parity floor for the mirror (tank vs tank) and
+    /// the reason a tank mass is not self-checking: cracking it needs a flank or a penetrating counter.
+    #[test]
+    fn produced_tank_duel_is_a_frontal_stalemate_but_a_flank_kills() {
+        let toward_enemy = Angle(0); // Player at x=0 faces +X, toward the Enemy
+        let toward_player = Angle(ANGLE_FULL / 2); // Enemy at +sep faces −X, toward the Player
+        let away_from_player = Angle(0); // Enemy faces +X → its REAR is toward the Player
+
+        for &sep in &[5i32, 9, 13] {
+            // FRONT vs FRONT: neither gun pens the other's frontal plate → no damage, runs to the cap.
+            let (t, p, e, php, ehp) = tank_duel(sep, toward_enemy, toward_player);
+            assert_eq!(
+                (t, p, e, php, ehp),
+                (4000, 1, 1, TANK_FULL_HP_BITS, TANK_FULL_HP_BITS),
+                "sep{sep}: a head-on tank duel must stalemate — both tanks alive at full HP",
+            );
+            // FLANK: the Player faces the Enemy's exposed rear → Enemy dies, Player untouched.
+            let (tf, pf, ef, phpf, ehpf) = tank_duel(sep, toward_enemy, away_from_player);
+            assert!(pf == 1 && ef == 0, "sep{sep}: the flanker kills the rear-exposed tank");
+            assert_eq!(phpf, TANK_FULL_HP_BITS, "sep{sep}: the flanker takes no return damage");
+            assert_eq!(ehpf, 0, "sep{sep}: the flanked tank is destroyed");
+            assert!(tf < 4000, "sep{sep}: a flank shot resolves the duel well inside the cap (t={tf})");
+        }
+        // Exact regression pin for the flank kill at the close separation (deterministic dev==release).
+        assert_eq!(
+            tank_duel(5, Angle(0), Angle(0)),
+            (153, 1, 0, TANK_FULL_HP_BITS, 0),
+            "flank-kill measured pin moved",
+        );
+    }
 
     /// **Cross-faction parity (factions-plan WS-B, the per-faction analogue of D30's unit-parity
     /// check).** The equal-cost mirror-of-roles trade must be **swap-invariant**: fielding US on the
