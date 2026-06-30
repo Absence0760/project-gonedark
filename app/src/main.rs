@@ -2,16 +2,18 @@
 //! the egui title screen ([D36](../docs/decisions.md)) — and, on **Start**, drives the shared
 //! [`gonedark_engine::Game`].
 //!
-//! Two host screens, the desktop counterpart of Android's `MainActivity → NativeActivity` split
-//! ([D35](../docs/decisions.md)): the out-of-match **Title** screen (egui, in [`shell`]) and the
-//! in-match **Game** (the shared engine loop — deterministic fixed-tick sim, render interpolation
-//! (invariant #4), the embodiment input-source swap (invariant #5)). The shell holds no game logic
-//! and reaches `core` only through the `core::shell` seam; today **Start** just creates the default
-//! `Game` (match-configuration handoff is deferred with match-setup, Q5).
+//! Three host screens, the desktop counterpart of Android's `MainActivity → NativeActivity` split
+//! ([D35](../docs/decisions.md)): the out-of-match **Title** screen, the pre-match **Loadout**
+//! (gunsmith) screen — both egui, in [`shell`] — and the in-match **Game** (the shared engine loop —
+//! deterministic fixed-tick sim, render interpolation (invariant #4), the embodiment input-source
+//! swap (invariant #5)). The shell holds no game logic and reaches `core` only through host-side
+//! seams; **Start** opens the gunsmith, and the gunsmith's **Deploy** creates the `Game` fielding the
+//! player's chosen `core::gunsmith::Loadout` via [`Game::new_scene_with_loadout`] (WS-C, D60).
 //!
 //! This binary owns only the desktop concerns: the window, the wgpu surface, input plumbing, the
 //! egui shell, and the wall clock that feeds per-frame `dt` into the engine's fixed-tick accumulator.
 
+use gonedark_engine::loadout_ui::LoadoutEditor;
 use gonedark_engine::{Game, OverlayClick, Scene, DEFAULT_SEED};
 use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface, DesktopThermalSensor};
 use std::sync::Arc;
@@ -23,12 +25,19 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
 
 mod shell;
-use shell::{build_channel, build_stamp, resolve_title_action, EguiShell, HostTransition};
+use shell::{
+    apply_loadout_action, build_channel, build_stamp, resolve_title_action, EguiShell,
+    HostTransition, LoadoutStep,
+};
 
-/// Which host screen is up: the out-of-match title shell, or a running match. Entering a match
-/// lazily constructs `Game` (it needs the GPU device that only exists after `resumed`).
+/// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
+/// match. Entering a match lazily constructs `Game` (it needs the GPU device that only exists after
+/// `resumed`), fielding the loadout chosen on the gunsmith screen.
 enum Screen {
     Title,
+    /// The pre-match gunsmith / loadout screen (egui). The editable selection itself lives on
+    /// [`App::loadout`] (host-side pre-match state), so this variant carries no data.
+    Loadout,
     // `Game` is large (the renderer + sim state); box it so the idle `Title` variant doesn't carry
     // that footprint around (clippy::large_enum_variant).
     InMatch(Box<Game>),
@@ -68,6 +77,13 @@ struct App {
     /// demo or a debug sandbox like `--scene duel`). A pure host launch choice; it only picks which
     /// `Game::new_scene` seeding runs.
     scene: Scene,
+
+    /// The player's pre-match gunsmith selection (the `engine::loadout_ui` seam over
+    /// `core::gunsmith`). Edited on the [`Screen::Loadout`] gunsmith screen and handed to
+    /// [`Game::new_scene_with_loadout`] at Deploy. Host-side pre-match state — it never touches the
+    /// sim until the scenario seeder applies it at match start (WS-C, D60). Persists across matches so
+    /// the player keeps their build; the gunsmith's RESET button returns it to the neutral baseline.
+    loadout: LoadoutEditor,
 }
 
 impl App {
@@ -84,6 +100,7 @@ impl App {
             alt_held: false,
             fullscreen: false,
             scene,
+            loadout: LoadoutEditor::new(),
         }
     }
 
@@ -202,6 +219,20 @@ impl App {
                     }
                 }
             }
+            Screen::Loadout => {
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) = sh.draw_loadout(surface, &self.loadout) {
+                        // Edits mutate the editor in place (Stay); Deploy/Back are screen
+                        // transitions. Deploy enters the match (the loadout is read at creation);
+                        // Back returns to the title (reusing the no-Game ExitToTitle screen swap).
+                        transition = match apply_loadout_action(action, &mut self.loadout) {
+                            LoadoutStep::Stay => None,
+                            LoadoutStep::Deploy => Some(HostTransition::EnterMatch),
+                            LoadoutStep::Back => Some(HostTransition::ExitToTitle),
+                        };
+                    }
+                }
+            }
             Screen::InMatch(game) => {
                 let mut input = self.input.drain_frame();
                 let viewport = surface.size();
@@ -256,22 +287,33 @@ impl App {
         }
 
         match transition {
+            // Start → the pre-match gunsmith. The editor (App::loadout) is already populated; the
+            // screen edits it in place until the player Deploys or Backs out.
+            Some(HostTransition::OpenLoadout) => {
+                self.screen = Screen::Loadout;
+                self.last_frame = Instant::now();
+            }
             Some(HostTransition::EnterMatch) => {
                 let surface = self.surface.as_ref().expect("surface exists in resumed");
-                let game = Game::new_scene(
+                // Field the player's chosen gunsmith loadout at match start (WS-C, D60). For scenes
+                // that carry no player loadout it is inert; `Loadout::STANDARD` (the untouched editor)
+                // reproduces `new_scene` exactly, so this is a strict superset of the old call.
+                let game = Game::new_scene_with_loadout(
                     surface.device(),
                     surface.format(),
                     DEFAULT_SEED,
                     self.scene,
+                    self.loadout.current(),
                 );
                 self.screen = Screen::InMatch(Box::new(game));
-                // Don't charge the time spent on the title screen to the first sim tick.
+                // Don't charge the time spent on the title/gunsmith screens to the first sim tick.
                 self.last_frame = Instant::now();
             }
             // Settings surface not built yet (phase-4-plan §2 surface 3) — a no-op placeholder.
             Some(HostTransition::OpenSettings) => {}
             Some(HostTransition::Exit) => event_loop.exit(),
-            // Drop the `Game` and return to the title screen (the post-match DISMISS path).
+            // Return to the title screen, dropping any `Game` (the post-match DISMISS path, and the
+            // gunsmith's BACK — which has no `Game` yet, so this is just a screen swap there).
             Some(HostTransition::ExitToTitle) => {
                 self.screen = Screen::Title;
                 self.last_frame = Instant::now();
@@ -329,7 +371,8 @@ impl ApplicationHandler for App {
         // accumulator gets them in a match. (A stray event in the other state is simply ignored, so
         // nothing leaks between the shell and the sim.)
         match self.screen {
-            Screen::Title => {
+            // The egui shell owns input on both out-of-match screens (title + gunsmith).
+            Screen::Title | Screen::Loadout => {
                 if let (Some(sh), Some(surface)) = (self.shell.as_mut(), self.surface.as_ref()) {
                     sh.on_window_event(surface.window(), &event);
                 }
