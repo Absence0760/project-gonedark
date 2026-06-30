@@ -95,6 +95,26 @@ def sphere(radius, loc, segments=16, rings=8):
     return bpy.context.active_object
 
 
+def icosphere(radius, loc, subdivisions=1):
+    """A faceted icosphere — deterministic, run-to-run reproducible (unlike the UV sphere whose
+    pole/seam tessellation wobbles between runs). Its triangular facets flat-shade into crisp,
+    chunky chips, so it's the right primitive for hard greybox scenery (rock) and rounded helmets."""
+    bpy.ops.mesh.primitive_ico_sphere_add(
+        radius=radius, location=loc, subdivisions=subdivisions
+    )
+    return bpy.context.active_object
+
+
+def cone(base, top, depth, loc, rot=(0, 0, 0), verts=8):
+    """A (truncated) cone — `top` > 0 gives a frustum, `top` = 0 a point. Deterministic. Used for
+    stylized conifer tiers and tapered trunks; a low `verts` keeps the facet read chunky and the
+    triangle count lean for the mobile / 200-unit budget."""
+    bpy.ops.mesh.primitive_cone_add(
+        radius1=base, radius2=top, depth=depth, location=loc, rotation=rot, vertices=verts
+    )
+    return bpy.context.active_object
+
+
 def pyramid(base, height, loc, rot=(0, 0, 0)):
     # A 4-vertex cone is a square pyramid; rotate 45° in Z to square it to the walls.
     bpy.ops.mesh.primitive_cone_add(
@@ -104,8 +124,37 @@ def pyramid(base, height, loc, rot=(0, 0, 0)):
     return bpy.context.active_object
 
 
-def weld(name, parts, material):
-    """Apply each part's transform, join into one mesh, assign a single material."""
+def chamfer(obj, width, segments=1, angle_deg=40.0):
+    """Apply an angle-limited bevel modifier so the model's hard silhouette edges read as a
+    deliberate machined/cast chamfer instead of a raw razor-sharp primitive edge — the single
+    cheapest lift from "stack of cubes" to "intentional greybox".
+
+    The `ANGLE` limit means only edges sharper than `angle_deg` get beveled, so the flat coplanar
+    faces of a box are left untouched (no wasted geometry, no shading seams) while every corner
+    and silhouette crease is softened. `clamp_overlap` caps the width per-edge to half the shortest
+    adjacent edge, so a thin part (a rifle barrel, a track guard) auto-shrinks its chamfer instead
+    of self-intersecting — one global `width` is therefore safe across very different part scales.
+    `segments=1` keeps it a single flat chamfer face (faceted, on-aesthetic, and tri-cheap). The
+    modifier is applied immediately so `export_mesh` sees real geometry and recomputes flat
+    normals from it."""
+    if width <= 0.0:
+        return obj
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    m = obj.modifiers.new("chamfer", "BEVEL")
+    m.width = width
+    m.segments = segments
+    m.limit_method = "ANGLE"
+    m.angle_limit = math.radians(angle_deg)
+    m.use_clamp_overlap = True  # Blender 5.x name (was `clamp_overlap` pre-4.x)
+    bpy.ops.object.modifier_apply(modifier=m.name)
+    return obj
+
+
+def weld(name, parts, material, bevel=0.0):
+    """Apply each part's transform, join into one mesh, assign a single material. `bevel` (metres)
+    applies an angle-limited `chamfer` to the welded result — soft silhouette edges per model."""
     for o in parts:
         bpy.ops.object.select_all(action="DESELECT")
         o.select_set(True)
@@ -121,6 +170,7 @@ def weld(name, parts, material):
     obj.name = name
     obj.data.materials.clear()
     obj.data.materials.append(material)
+    chamfer(obj, bevel)
     return obj
 
 
@@ -329,16 +379,30 @@ def rgba(name):
 
 def build_trooper():
     mat = make_material("trooper", rgba("trooper"))  # olive
+    # Boxy humanoid, but with the silhouette tells that read as a soldier even at eye level: a
+    # rounded combat helmet capping the head, a chest-plate slab over the torso, and a backpack
+    # behind. Limbs taper (shoulders > forearms, thighs > calves) so it stops reading as a coat-rack.
     parts = [
         box((0.40, 0.24, 0.20), (0, 0, 0.75)),                 # hips
-        box((0.45, 0.25, 0.70), (0, 0, 1.10)),                 # torso
-        sphere(0.16, (0, 0, 1.58)),                            # head
-        cyl(0.09, 0.70, (0.12, 0, 0.35)),                      # leg R
-        cyl(0.09, 0.70, (-0.12, 0, 0.35)),                     # leg L
-        cyl(0.07, 0.60, (0.28, 0, 1.10), rot=(math.radians(8), 0, 0)),   # arm R
-        cyl(0.07, 0.60, (-0.28, 0, 1.10), rot=(math.radians(8), 0, 0)),  # arm L
+        box((0.45, 0.26, 0.46), (0, 0, 0.98)),                 # lower torso
+        box((0.48, 0.30, 0.30), (0, -0.01, 1.30)),             # chest (plate carrier — bulkier, deeper)
+        box((0.36, 0.14, 0.30), (0, 0.20, 1.28)),              # front plate slab
+        box((0.30, 0.20, 0.40), (0, -0.20, 1.18)),             # backpack
+        sphere(0.15, (0, 0, 1.56), segments=10, rings=6),      # head
+        icosphere(0.18, (0, 0, 1.64), subdivisions=1),         # rounded combat helmet (faceted dome)
+        box((0.34, 0.30, 0.06), (0, 0.02, 1.71)),              # helmet brow / NVG-mount slab
+        cyl(0.10, 0.40, (0.12, 0, 0.55), verts=10),            # thigh R
+        cyl(0.10, 0.40, (-0.12, 0, 0.55), verts=10),           # thigh L
+        cyl(0.08, 0.40, (0.12, 0, 0.18), verts=10),            # calf R
+        cyl(0.08, 0.40, (-0.12, 0, 0.18), verts=10),           # calf L
+        box((0.16, 0.18, 0.10), (0.12, 0.04, 0.02)),           # boot R
+        box((0.16, 0.18, 0.10), (-0.12, 0.04, 0.02)),          # boot L
+        cyl(0.08, 0.34, (0.30, 0, 1.30), verts=10),            # upper arm R
+        cyl(0.08, 0.34, (-0.30, 0, 1.30), verts=10),           # upper arm L
+        cyl(0.06, 0.36, (0.30, 0.04, 0.96), rot=(math.radians(14), 0, 0), verts=10),   # forearm R
+        cyl(0.06, 0.36, (-0.30, 0.04, 0.96), rot=(math.radians(14), 0, 0), verts=10),  # forearm L
     ]
-    return weld("trooper", parts, mat)
+    return weld("trooper", parts, mat, bevel=0.02)
 
 
 def build_tank():
@@ -349,11 +413,19 @@ def build_tank():
     # to z≈hull-top rotates about that ring exactly.
     mat = make_material("tank", rgba("tank"))  # dark green
     parts = [
-        box((3.0, 1.6, 0.70), (0, 0, 0.60)),                   # hull
+        box((3.0, 1.6, 0.55), (0, 0, 0.62)),                   # upper hull
+        box((0.9, 1.6, 0.34), (1.35, 0, 0.52), rot=(0, math.radians(22), 0)),  # sloped front glacis
         box((3.2, 0.45, 0.50), (0, 0.85, 0.35)),               # track R
         box((3.2, 0.45, 0.50), (0, -0.85, 0.35)),              # track L
+        box((3.3, 0.50, 0.12), (0, 0.85, 0.62)),               # track guard / fender R
+        box((3.3, 0.50, 0.12), (0, -0.85, 0.62)),              # track guard / fender L
     ]
-    return weld("tank", parts, mat)
+    # Road wheels: faceted drums proud of each track — break the slab side into a running-gear read.
+    for side in (0.85, -0.85):
+        for i, x in enumerate((-1.1, -0.55, 0.0, 0.55, 1.1)):
+            parts.append(cyl(0.22, 0.12, (x, side, 0.24),
+                             rot=(math.radians(90), 0, 0), verts=10))
+    return weld("tank", parts, mat, bevel=0.05)
 
 
 def build_tank_turret():
@@ -365,9 +437,13 @@ def build_tank_turret():
     mat = make_material("tank_turret", rgba("tank_turret"))  # dark green (matches the hull)
     parts = [
         box((1.4, 1.2, 0.50), (-0.2, 0, 1.05)),                # turret box (centred behind the ring)
+        box((0.55, 1.0, 0.34), (0.45, 0, 1.02), rot=(0, math.radians(-14), 0)),  # sloped gun mantlet
+        box((0.9, 1.3, 0.22), (-0.45, 0, 0.98)),               # rear stowage bustle (overhangs)
+        cyl(0.22, 0.16, (-0.45, 0.0, 1.38), verts=12),         # commander's cupola
         cyl(0.10, 1.60, (1.2, 0, 1.05), rot=(0, math.radians(90), 0)),  # barrel, forward along +X
+        cyl(0.13, 0.20, (0.55, 0, 1.05), rot=(0, math.radians(90), 0), verts=12),  # bore-evacuator collar
     ]
-    return weld("tank_turret", parts, mat)
+    return weld("tank_turret", parts, mat, bevel=0.04)
 
 
 def build_tracer():
@@ -377,73 +453,119 @@ def build_tracer():
     # not a model; the renderer drives a hot emissive tint per-instance, so the base colour is only a
     # fallback.
     mat = make_material("tracer", rgba("tracer"))  # hot orange
-    return weld("tracer", [box((0.6, 0.12, 0.12), (0, 0, 0))], mat)
+    # A short body with a pointed nose cone along +X (the travel axis) — reads as a round in flight
+    # rather than a brick. The renderer drives the emissive glow; geometry just needs the heading.
+    parts = [
+        box((0.42, 0.12, 0.12), (-0.09, 0, 0)),                          # body
+        cone(0.085, 0.0, 0.24, (0.24, 0, 0), rot=(0, math.radians(90), 0), verts=8),  # nose cone (+X)
+    ]
+    return weld("tracer", parts, mat, bevel=0.015)
 
 
 def build_camp_hq():
     mat = make_material("camp_hq", rgba("camp_hq"))  # tan
     parts = [
         box((3.5, 3.0, 1.8), (0, 0, 0.90)),                    # walls
+        box((3.7, 3.2, 0.18), (0, 0, 1.80)),                   # eave / cornice band (roofline lip)
         pyramid(2.6, 1.2, (0, 0, 2.40)),                       # roof
+        box((1.0, 0.20, 1.10), (0, 1.50, 0.55)),               # door frame (front face)
+        box((0.70, 0.10, 0.55), (-1.0, 1.50, 1.10)),           # window slab (front face)
+        box((0.70, 0.10, 0.55), (1.0, 1.50, 1.10)),            # window slab (front face)
+        box((0.40, 0.40, 0.50), (0, 0, 3.00)),                 # rooftop vent housing under the mast
         cyl(0.04, 1.40, (1.2, 1.0, 3.50)),                     # antenna
+        cyl(0.10, 0.30, (1.2, 1.0, 2.95), verts=8),            # antenna base
     ]
-    return weld("camp_hq", parts, mat)
+    return weld("camp_hq", parts, mat, bevel=0.06)
 
 
 def build_weapon_rifle():
     mat = make_material("weapon_rifle", rgba("weapon_rifle"))  # gunmetal
+    # The eye-level hero prop — gets the most silhouette care: flat-top rail, ribbed handguard,
+    # front sight post, a canted magazine and a real grip+stock. Receiver at origin, barrel +X.
     parts = [
-        box((0.50, 0.06, 0.12), (0, 0, 0)),                    # receiver/body
-        cyl(0.02, 0.40, (0.35, 0, 0), rot=(0, math.radians(90), 0)),  # barrel
-        box((0.06, 0.05, 0.18), (-0.02, 0, -0.13)),            # magazine
-        box((0.18, 0.05, 0.10), (-0.32, 0, 0.0)),              # stock
-        box((0.06, 0.05, 0.14), (-0.10, 0, -0.10), rot=(0, math.radians(-12), 0)),  # grip
+        box((0.46, 0.06, 0.11), (0.0, 0, 0)),                  # upper/lower receiver
+        box((0.40, 0.05, 0.035), (0.0, 0, 0.082)),             # flat-top picatinny rail
+        cyl(0.03, 0.20, (0.26, 0, -0.01), rot=(0, math.radians(90), 0), verts=10),  # handguard
+        cyl(0.018, 0.46, (0.42, 0, 0), rot=(0, math.radians(90), 0), verts=10),  # barrel
+        box((0.02, 0.03, 0.07), (0.40, 0, 0.05)),              # front sight post
+        cyl(0.035, 0.06, (0.64, 0, 0), rot=(0, math.radians(90), 0), verts=10),  # muzzle device
+        box((0.07, 0.05, 0.20), (-0.02, 0, -0.14)),            # magazine (curved STANAG read)
+        box((0.20, 0.05, 0.085), (-0.32, 0, 0.0)),             # collapsible stock
+        box((0.06, 0.045, 0.05), (-0.20, 0, 0.05)),            # cheek riser
+        box((0.06, 0.05, 0.14), (-0.10, 0, -0.10), rot=(0, math.radians(-14), 0)),  # grip
     ]
-    return weld("weapon_rifle", parts, mat)
+    return weld("weapon_rifle", parts, mat, bevel=0.006)
 
 
 def build_crate():
     mat = make_material("crate", rgba("crate"))  # wood — low cover prop
-    return weld("crate", [box((1.0, 1.0, 1.0), (0, 0, 0.50))], mat)
+    # Slatted shipping crate: a core box, four proud corner posts, and a mid-height banding course
+    # so it reads as built planks instead of a featureless 1 m cube. Bevel chamfers every edge.
+    parts = [box((0.94, 0.94, 1.0), (0, 0, 0.50))]            # core
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            parts.append(box((0.10, 0.10, 1.0), (sx * 0.47, sy * 0.47, 0.50)))  # corner post
+    parts += [
+        box((1.02, 1.02, 0.10), (0, 0, 0.30)),                 # lower banding course
+        box((1.02, 1.02, 0.10), (0, 0, 0.70)),                 # upper banding course
+        box((1.0, 1.0, 0.08), (0, 0, 1.0)),                    # lid rim
+    ]
+    return weld("crate", parts, mat, bevel=0.03)
 
 
 def build_turret():
     mat = make_material("turret", rgba("turret"))  # steel defensive emplacement
     parts = [
         box((1.6, 1.6, 0.40), (0, 0, 0.20)),                   # base pad
-        cyl(0.55, 0.70, (0, 0, 0.70)),                         # rotating drum
-        box((0.70, 0.70, 0.45), (0, 0, 1.15)),                 # gun housing
-        cyl(0.07, 1.20, (0.75, 0, 1.15), rot=(0, math.radians(90), 0)),  # barrel
+        box((1.2, 1.2, 0.14), (0, 0, 0.47)),                   # bolted ring plate on the pad
+        cyl(0.55, 0.70, (0, 0, 0.70), verts=12),               # rotating drum
+        box((0.70, 0.80, 0.45), (0, 0, 1.15)),                 # gun housing
+        box((0.55, 0.95, 0.50), (0.42, 0, 1.18)),              # gun shield (faces +X with the barrel)
+        box((0.34, 0.30, 0.26), (-0.28, 0.34, 1.20)),          # ammo box (side)
+        cyl(0.07, 1.20, (0.75, 0, 1.15), rot=(0, math.radians(90), 0), verts=10),  # barrel
+        cyl(0.10, 0.18, (0.30, 0, 1.15), rot=(0, math.radians(90), 0), verts=10),  # barrel shroud
     ]
-    return weld("turret", parts, mat)
+    return weld("turret", parts, mat, bevel=0.03)
 
 
 def build_tree():
     mat = make_material("tree", rgba("tree"))  # foliage greybox (single material)
+    # A stylized low-poly conifer: a tapered trunk plus three stacked cone tiers of decreasing
+    # radius. Cones/cylinders are deterministic (the old two-UV-sphere canopy varied run-to-run);
+    # the stacked tiers give a far more intentional, readable silhouette than two blobs.
     parts = [
-        cyl(0.16, 1.40, (0, 0, 0.70), verts=8),                # trunk
-        sphere(0.95, (0, 0, 1.90), segments=10, rings=6),      # lower canopy
-        sphere(0.65, (0, 0, 2.70), segments=10, rings=6),      # upper canopy
+        cone(0.20, 0.12, 1.40, (0, 0, 0.70), verts=8),         # tapered trunk
+        cone(1.00, 0.0, 1.30, (0, 0, 1.70), verts=10),         # lower skirt tier
+        cone(0.78, 0.0, 1.20, (0, 0, 2.35), verts=10),         # mid tier
+        cone(0.52, 0.0, 1.00, (0, 0, 3.00), verts=10),         # crown tier
     ]
-    return weld("tree", parts, mat)
+    return weld("tree", parts, mat, bevel=0.0)
 
 
 def build_rock():
     mat = make_material("rock", rgba("rock"))  # grey boulder
-    # A low-poly sphere squashed and faceted into a boulder — flat-shaded facets read as stone.
-    o = sphere(0.90, (0, 0, 0.55), segments=10, rings=6)
-    o.dimensions = (1.80, 1.50, 1.10)  # squash to a boulder, base near z=0
-    return weld("rock", [o], mat)
+    # A cluster of two faceted icospheres (deterministic — the old UV sphere tessellated differently
+    # each run), each squashed and offset so the silhouette is an irregular boulder, not a ball.
+    # Flat-shaded triangular facets read as cleaved stone.
+    main = icosphere(0.90, (0, 0, 0.55), subdivisions=1)
+    main.dimensions = (1.80, 1.50, 1.05)               # squash to a boulder, base near z=0
+    spur = icosphere(0.55, (0.55, -0.30, 0.40), subdivisions=1)
+    spur.dimensions = (0.95, 0.80, 0.70)               # smaller offset lobe — breaks the symmetry
+    return weld("rock", [main, spur], mat)
 
 
 def build_barricade():
     mat = make_material("barricade", rgba("barricade"))  # sandbag berm cover
-    # A stepped sandbag berm: a wide low course with a narrower course stacked on top.
-    parts = [
-        box((2.40, 0.70, 0.45), (0, 0, 0.225)),                # lower course
-        box((2.00, 0.55, 0.40), (0, 0, 0.625)),                # upper course
-    ]
-    return weld("barricade", parts, mat)
+    # A stacked sandbag berm: discrete bags laid in two offset (running-bond) courses instead of two
+    # smooth slabs, so the silhouette reads as a wall of bags. A heavy chamfer rounds each bag.
+    parts = []
+    lower_xs = [-1.0, -0.5, 0.0, 0.5, 1.0]
+    upper_xs = [-0.75, -0.25, 0.25, 0.75]
+    for x in lower_xs:
+        parts.append(box((0.46, 0.70, 0.30), (x, 0, 0.15)))    # lower course bag
+    for x in upper_xs:
+        parts.append(box((0.46, 0.60, 0.28), (x, 0, 0.44)))    # upper course bag (offset = running bond)
+    return weld("barricade", parts, mat, bevel=0.09)
 
 
 # --- Faction cosmetic silhouettes (factions-plan WS-C, D68) -----------------------------------
@@ -462,14 +584,19 @@ def build_trooper_us():
     parts = [
         box((0.42, 0.26, 0.20), (0, 0, 0.75)),                 # hips
         box((0.50, 0.30, 0.72), (0, 0, 1.10)),                 # torso (plate carrier — bulkier)
-        sphere(0.17, (0, 0, 1.60)),                            # head + rounded combat helmet
-        box((0.40, 0.30, 0.08), (0, 0, 1.70)),                # helmet brow / NVG-mount slab
-        cyl(0.09, 0.70, (0.13, 0, 0.35)),                      # leg R
-        cyl(0.09, 0.70, (-0.13, 0, 0.35)),                     # leg L
+        box((0.38, 0.16, 0.34), (0, 0.20, 1.22)),              # front plate slab
+        box((0.32, 0.22, 0.42), (0, -0.22, 1.16)),             # backpack
+        sphere(0.15, (0, 0, 1.58), segments=10, rings=6),      # head
+        icosphere(0.19, (0, 0, 1.64), subdivisions=1),         # rounded ACH/ECH combat helmet
+        box((0.40, 0.30, 0.07), (0, 0.02, 1.72)),              # helmet brow / NVG-mount slab
+        cyl(0.10, 0.70, (0.13, 0, 0.35)),                      # leg R
+        cyl(0.10, 0.70, (-0.13, 0, 0.35)),                     # leg L
+        box((0.17, 0.20, 0.10), (0.13, 0.04, 0.02)),           # boot R
+        box((0.17, 0.20, 0.10), (-0.13, 0.04, 0.02)),          # boot L
         cyl(0.08, 0.60, (0.30, 0, 1.10), rot=(math.radians(8), 0, 0)),   # arm R
         cyl(0.08, 0.60, (-0.30, 0, 1.10), rot=(math.radians(8), 0, 0)),  # arm L
     ]
-    return weld("trooper_us", parts, mat)
+    return weld("trooper_us", parts, mat, bevel=0.02)
 
 
 def build_trooper_fr():
@@ -478,15 +605,19 @@ def build_trooper_fr():
     parts = [
         box((0.40, 0.24, 0.20), (0, 0, 0.75)),                 # hips
         box((0.44, 0.26, 0.70), (0, 0, 1.10)),                 # torso (slimmer)
-        sphere(0.15, (0, 0, 1.58)),                            # head
-        box((0.34, 0.34, 0.07), (0, 0, 1.66)),                # flatter helmet dome + slight brim
-        box((0.40, 0.16, 0.05), (0.0, 0.10, 1.62)),           # brim accent (forward)
+        box((0.30, 0.14, 0.32), (0, 0.18, 1.20)),              # front plate slab (slimmer)
+        box((0.28, 0.18, 0.38), (0, -0.18, 1.16)),             # backpack
+        sphere(0.15, (0, 0, 1.58), segments=10, rings=6),      # head
+        cyl(0.18, 0.16, (0, 0, 1.66), verts=12),               # flatter SPECTRA helmet dome
+        box((0.40, 0.18, 0.05), (0.0, 0.10, 1.62)),            # brim accent (forward)
         cyl(0.09, 0.70, (0.12, 0, 0.35)),                      # leg R
         cyl(0.09, 0.70, (-0.12, 0, 0.35)),                     # leg L
+        box((0.16, 0.20, 0.10), (0.12, 0.04, 0.02)),           # boot R
+        box((0.16, 0.20, 0.10), (-0.12, 0.04, 0.02)),          # boot L
         cyl(0.07, 0.62, (0.27, 0, 1.10), rot=(math.radians(8), 0, 0)),   # arm R
         cyl(0.07, 0.62, (-0.27, 0, 1.10), rot=(math.radians(8), 0, 0)),  # arm L
     ]
-    return weld("trooper_fr", parts, mat)
+    return weld("trooper_fr", parts, mat, bevel=0.02)
 
 
 def build_tank_us():
@@ -498,8 +629,14 @@ def build_tank_us():
         box((1.0, 1.9, 0.30), (1.55, 0, 0.45), rot=(0, math.radians(18), 0)),  # sloped front glacis
         box((3.7, 0.50, 0.55), (0, 1.00, 0.35)),               # track R (long)
         box((3.7, 0.50, 0.55), (0, -1.00, 0.35)),              # track L
+        box((3.8, 0.56, 0.12), (0, 1.00, 0.62)),               # track guard / fender R
+        box((3.8, 0.56, 0.12), (0, -1.00, 0.62)),              # track guard / fender L
     ]
-    return weld("tank_us", parts, mat)
+    for side in (1.00, -1.00):
+        for x in (-1.3, -0.78, -0.26, 0.26, 0.78, 1.3):
+            parts.append(cyl(0.23, 0.12, (x, side, 0.24),
+                             rot=(math.radians(90), 0, 0), verts=10))  # road wheel
+    return weld("tank_us", parts, mat, bevel=0.05)
 
 
 def build_tank_turret_us():
@@ -511,8 +648,9 @@ def build_tank_turret_us():
         box((0.7, 1.7, 0.30), (1.05, 0, 1.05), rot=(0, math.radians(-12), 0)),  # sloped gun mantlet
         cyl(0.10, 2.10, (1.5, 0, 1.05), rot=(0, math.radians(90), 0)),  # long 120mm barrel, +X
         box((0.5, 0.5, 0.18), (-0.9, 0.5, 1.40)),              # commander's cupola/CITV
+        cyl(0.13, 0.20, (0.45, 0, 1.05), rot=(0, math.radians(90), 0), verts=12),  # bore-evacuator collar
     ]
-    return weld("tank_turret_us", parts, mat)
+    return weld("tank_turret_us", parts, mat, bevel=0.04)
 
 
 def build_tank_fr():
@@ -523,8 +661,14 @@ def build_tank_fr():
         box((0.9, 1.7, 0.34), (1.35, 0, 0.50), rot=(0, math.radians(24), 0)),  # steeper glacis
         box((3.1, 0.46, 0.58), (0, 0.88, 0.36)),               # track R
         box((3.1, 0.46, 0.58), (0, -0.88, 0.36)),              # track L
+        box((3.2, 0.52, 0.12), (0, 0.88, 0.64)),               # track guard / fender R
+        box((3.2, 0.52, 0.12), (0, -0.88, 0.64)),              # track guard / fender L
     ]
-    return weld("tank_fr", parts, mat)
+    for side in (0.88, -0.88):
+        for x in (-1.1, -0.55, 0.0, 0.55, 1.1):
+            parts.append(cyl(0.22, 0.12, (x, side, 0.25),
+                             rot=(math.radians(90), 0, 0), verts=10))  # road wheel
+    return weld("tank_fr", parts, mat, bevel=0.05)
 
 
 def build_tank_turret_fr():
@@ -536,8 +680,9 @@ def build_tank_turret_fr():
         box((1.0, 1.4, 0.55), (-1.05, 0, 1.05)),               # rear bustle (autoloader) — overhangs
         cyl(0.09, 1.90, (1.35, 0, 1.12), rot=(0, math.radians(90), 0)),  # 120mm barrel, +X
         box((0.4, 0.4, 0.40), (-0.3, 0.45, 1.55)),             # roof sight mast
+        cyl(0.12, 0.20, (0.42, 0, 1.12), rot=(0, math.radians(90), 0), verts=12),  # bore-evacuator collar
     ]
-    return weld("tank_turret_fr", parts, mat)
+    return weld("tank_turret_fr", parts, mat, bevel=0.04)
 
 
 def build_weapon_rifle_us():
@@ -553,8 +698,9 @@ def build_weapon_rifle_us():
         box((0.06, 0.05, 0.20), (0.02, 0, -0.14)),             # STANAG magazine (curved, forward of grip)
         box((0.07, 0.05, 0.14), (-0.10, 0, -0.10), rot=(0, math.radians(-14), 0)),  # pistol grip
         box((0.22, 0.05, 0.10), (-0.34, 0, 0.0)),              # collapsible stock
+        box((0.02, 0.03, 0.06), (0.40, 0, 0.05)),              # front sight post
     ]
-    return weld("weapon_rifle_us", parts, mat)
+    return weld("weapon_rifle_us", parts, mat, bevel=0.006)
 
 
 def build_weapon_rifle_fr():
@@ -571,7 +717,7 @@ def build_weapon_rifle_fr():
         box((0.05, 0.05, 0.16), (-0.20, 0, -0.12)),            # magazine BEHIND the grip (bullpup)
         box((0.06, 0.05, 0.13), (0.02, 0, -0.10), rot=(0, math.radians(-10), 0)),  # pistol grip (forward of mag)
     ]
-    return weld("weapon_rifle_fr", parts, mat)
+    return weld("weapon_rifle_fr", parts, mat, bevel=0.006)
 
 
 MODELS = [
