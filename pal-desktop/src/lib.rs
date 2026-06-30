@@ -267,6 +267,12 @@ pub struct DesktopInput {
     // edge (`command_latch`) and ignores `aim`; the embodied view consumes `aim` (held) and ignores
     // `command_click` — so the two never collide on one button. Tracks the button level, not an edge.
     aim_held: bool,
+    // Player look prefs from the Settings screen, applied to the drained `look_axis` (NOT to the raw
+    // accumulation — these never feed back into the sim's deterministic state; they shape the host
+    // input *before* it crosses the engine boundary, exactly like every other host-side input
+    // mapping here). `look_sensitivity` is a multiplier (1.0 = stock); `invert_look_y` flips pitch.
+    look_sensitivity: f32,
+    invert_look_y: bool,
 }
 
 impl Default for DesktopInput {
@@ -295,13 +301,35 @@ impl Default for DesktopInput {
             crouch_latch: false,
             reload_latch: false,
             aim_held: false,
+            look_sensitivity: 1.0,
+            invert_look_y: false,
         }
     }
+}
+
+/// Apply the player's look prefs to a raw mouse-look delta: scale both axes by `sensitivity` and flip
+/// pitch when `invert_y`. Pure host-side input shaping — it runs at drain time, *before* the delta
+/// crosses into the engine, so it never affects the deterministic sim (invariant #1: the sim
+/// quantises whatever look value it receives; this only changes the host value handed across, exactly
+/// like the WASD→axis mapping above). `sensitivity` is range-validated at the Settings boundary
+/// (`SettingsState::clamp` keeps it in `[0.1, 3.0]`), so this trusts it and just multiplies.
+pub fn scale_look(raw: (f32, f32), sensitivity: f32, invert_y: bool) -> (f32, f32) {
+    let y = if invert_y { -raw.1 } else { raw.1 };
+    (raw.0 * sensitivity, y * sensitivity)
 }
 
 impl DesktopInput {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the player's look prefs (Settings screen). `sensitivity` multiplies the mouse-look delta
+    /// (clamped sane in [`scale_look`]); `invert_y` flips the pitch axis. The host calls this each
+    /// match frame from its Settings model. Host-side only — it shapes input before the engine
+    /// boundary and never touches the deterministic sim.
+    pub fn set_look_prefs(&mut self, sensitivity: f32, invert_y: bool) {
+        self.look_sensitivity = sensitivity;
+        self.invert_look_y = invert_y;
     }
 
     /// Feed one `winit` [`WindowEvent`]. This is a **thin decoder**: it unpacks the platform event
@@ -492,7 +520,13 @@ impl DesktopInput {
             train_slot: self.train_slot,
             upgrade_pressed: self.upgrade_latch,
             move_axis: (mx, my),
-            look_axis: (self.look_dx, self.look_dy),
+            // Apply the player's look prefs (sensitivity + invert-Y) as the raw delta leaves for the
+            // engine — host-side shaping, never a sim input.
+            look_axis: scale_look(
+                (self.look_dx, self.look_dy),
+                self.look_sensitivity,
+                self.invert_look_y,
+            ),
             fire: self.fire,
             // Aim-down-sight / zoom rides the right button (held); the command view ignores `aim`,
             // so it never collides with the right-click command edge above.
@@ -855,6 +889,36 @@ mod input_tests {
         let f = input.drain_frame();
         assert!(!f.crouch_pressed, "repeat doesn't latch a crouch");
         assert!(!f.reload_pressed, "repeat doesn't latch a reload");
+    }
+
+    // --- look prefs (sensitivity + invert) ----------------------------------------------------
+
+    #[test]
+    fn scale_look_multiplies_and_inverts() {
+        let approx = |a: (f32, f32), b: (f32, f32)| {
+            (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6
+        };
+        // Stock prefs are a pure pass-through.
+        assert!(approx(scale_look((3.0, -2.0), 1.0, false), (3.0, -2.0)));
+        // Sensitivity scales both axes.
+        assert!(approx(scale_look((3.0, -2.0), 2.0, false), (6.0, -4.0)));
+        // Invert flips pitch only (X is untouched), and composes with sensitivity.
+        assert!(approx(scale_look((3.0, -2.0), 1.0, true), (3.0, 2.0)));
+        assert!(approx(scale_look((3.0, -2.0), 0.5, true), (1.5, 1.0)));
+    }
+
+    #[test]
+    fn drain_frame_applies_the_set_look_prefs() {
+        let mut input = DesktopInput::new();
+        // Default: look passes through unscaled.
+        input.on_mouse_motion(2.0, -3.0);
+        assert_eq!(input.drain_frame().look_axis, (2.0, -3.0));
+        // With 2x sensitivity + invert-Y, the next drained delta is scaled and the pitch flipped.
+        input.set_look_prefs(2.0, true);
+        input.on_mouse_motion(2.0, -3.0);
+        let f = input.drain_frame();
+        assert!((f.look_axis.0 - 4.0).abs() < 1e-6, "x scaled 2x: {:?}", f.look_axis);
+        assert!((f.look_axis.1 - 6.0).abs() < 1e-6, "y inverted+scaled: {:?}", f.look_axis);
     }
 }
 

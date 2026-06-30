@@ -22,6 +22,10 @@ mod backend {
         pub fn new() -> Self {
             DesktopAudio
         }
+
+        /// Match the feature-on backend's API so the host can call it unconditionally — a no-op here
+        /// (the silent build has nothing to scale).
+        pub fn set_gains(&mut self, _master: f32, _sfx: f32) {}
     }
 
     impl Audio for DesktopAudio {
@@ -37,7 +41,7 @@ mod backend {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{FromSample, SizedSample};
-    use gonedark_pal::mix::{oneshot_sound, synth_bank, voice_from_cue, Mixer};
+    use gonedark_pal::mix::{oneshot_sound, scaled_gain, synth_bank, voice_from_cue, Mixer};
     use gonedark_pal::{Audio, AudioCue, SoundId};
 
     /// Active output: the live stream (kept alive by ownership), the shared mixer, and the
@@ -53,6 +57,13 @@ mod backend {
     /// silently drops everything (audio is never load-bearing).
     pub struct DesktopAudio {
         inner: Option<Active>,
+        /// Player volume prefs (`[0, 1]`) from the Settings screen, pushed by the host via
+        /// [`set_gains`](Self::set_gains). Default `1.0` (a pass-through) so non-app users — viz /
+        /// tests / a host that never sets them — hear the unscaled mix. Applied per cue at queue time
+        /// through the shared [`scaled_gain`] seam (so a volume change affects subsequent cues; the
+        /// short procedural cues already in flight finish at their baked gain).
+        master: f32,
+        sfx: f32,
     }
 
     impl Default for DesktopAudio {
@@ -63,27 +74,40 @@ mod backend {
 
     impl DesktopAudio {
         pub fn new() -> Self {
-            match Active::open() {
-                Ok(active) => DesktopAudio {
-                    inner: Some(active),
-                },
+            let inner = match Active::open() {
+                Ok(active) => Some(active),
                 Err(e) => {
                     eprintln!("[audio] disabled (silent): {e}");
-                    DesktopAudio { inner: None }
+                    None
                 }
+            };
+            DesktopAudio {
+                inner,
+                master: 1.0,
+                sfx: 1.0,
             }
         }
 
+        /// Set the master / SFX volume prefs (`[0, 1]`, validated at the Settings boundary). The host
+        /// calls this from the Settings model each match frame; cues queued afterwards are scaled by
+        /// `master * sfx`.
+        pub fn set_gains(&mut self, master: f32, sfx: f32) {
+            self.master = master;
+            self.sfx = sfx;
+        }
+
         /// Queue one voice for `sound`, panned by `azimuth` (0 = ahead, + = right), scaled by
-        /// `gain`, low-passed when `muffled`. The pan/gain/muffle derivation is the shared
-        /// `gonedark_pal::mix::voice_from_cue`; this only looks up the synthesized buffer and
-        /// pushes the voice (never blocking the realtime thread holds elsewhere).
+        /// `gain` **and** the player's master/bus volumes, low-passed when `muffled`. The pan/gain/
+        /// muffle derivation is the shared `gonedark_pal::mix::voice_from_cue`, and the volume scaling
+        /// the shared `scaled_gain`; this only looks up the synthesized buffer and pushes the voice
+        /// (never blocking the realtime thread holds elsewhere).
         fn queue(&self, sound: SoundId, azimuth: f32, gain: f32, muffled: bool) {
             let Some(active) = &self.inner else { return };
             let Some(samples) = active.bank.get(&sound) else {
                 return;
             };
-            let voice = voice_from_cue(Arc::clone(samples), azimuth, gain, muffled);
+            let g = scaled_gain(gain, self.master, self.sfx);
+            let voice = voice_from_cue(Arc::clone(samples), azimuth, g, muffled);
             if let Ok(mut mixer) = active.mixer.lock() {
                 mixer.push(voice);
             }

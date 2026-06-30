@@ -216,13 +216,15 @@ impl QualityChoice {
 
 /// Host-side player preferences edited on the Settings screen. **Presentation only** — none of these
 /// reach the deterministic sim (invariant #1 is about the sim's fixed-point state, not the host's
-/// float prefs); volumes/sensitivity feed the *renderer/audio* host layers, quality feeds
-/// `render::tiers`. Fullscreen is deliberately **not** here — the window mode's single source of
-/// truth is `App::fullscreen` (the Settings checkbox reflects it and emits
+/// float prefs). Fullscreen is deliberately **not** here — the window mode's single source of truth
+/// is `App::fullscreen` (the Settings checkbox reflects it and emits
 /// [`SettingsAction::ToggleFullscreen`]).
 ///
-/// Today these are stored and survive across screens but are **not yet wired into the live audio mix
-/// or the tier controller** — that wiring is follow-up work; the screen is a real, stateful stub.
+/// Wiring status: **`master_volume` + `sfx_volume`** drive the desktop audio sink (the host pushes
+/// them via `DesktopAudio::set_gains` each match frame) and **`mouse_sensitivity` + `invert_look_y`**
+/// shape the desktop look input (`DesktopInput::set_look_prefs`). **`music_volume`** is a dormant
+/// stored pref — there is no music cue to scale yet — and **`quality`** is not yet wired into
+/// `render::tiers`. Both survive across screens for the session.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct SettingsState {
     /// Master output gain, `0.0..=1.0`.

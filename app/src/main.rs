@@ -283,6 +283,14 @@ impl App {
                 }
             }
             Screen::InMatch(game) => {
+                // Field the player's Settings prefs before this frame consumes input/audio: look
+                // sensitivity + invert-Y shape the drained look axis (so it must precede the drain),
+                // and the master/SFX volumes scale every cue queued during `game.frame`. Both are
+                // host-side presentation only — neither reaches the deterministic sim.
+                self.input
+                    .set_look_prefs(self.settings.mouse_sensitivity, self.settings.invert_look_y);
+                self.audio
+                    .set_gains(self.settings.master_volume, self.settings.sfx_volume);
                 let mut input = self.input.drain_frame();
                 let viewport = surface.size();
                 // Shell overlay buttons (pause / reconnect / post-match summary). A click while an

@@ -74,6 +74,15 @@ pub fn voice_from_cue(samples: Arc<Vec<f32>>, azimuth: f32, gain: f32, muffled: 
     }
 }
 
+/// Compose the final linear gain for a cue: its own distance-attenuated `gain`, scaled by the
+/// player's master and SFX volumes (both `[0, 1]` prefs from the Settings screen). Every gameplay cue
+/// is an SFX cue today, so both stages apply to all of them. Pure — the one bit of "how loud" logic
+/// the Settings volumes drive, so it is host-tested. Inputs are already range-validated at the
+/// Settings boundary (`SettingsState::clamp`); this trusts that and just multiplies.
+pub fn scaled_gain(gain: f32, master: f32, sfx: f32) -> f32 {
+    gain * master * sfx
+}
+
 /// The shared mix state read by a backend's realtime audio callback and written by the game
 /// thread. A backend wraps this in an `Arc<Mutex<_>>`; the callback `try_lock`s it (never blocks
 /// the audio thread) and pulls frames, the game thread pushes voices on `submit_mix`.
@@ -439,5 +448,16 @@ mod tests {
         assert_eq!(oneshot_sound(5), SoundId::HitConfirm);
         assert_eq!(oneshot_sound(0), SoundId::Gunfire);
         assert_eq!(oneshot_sound(99), SoundId::Gunfire);
+    }
+
+    #[test]
+    fn scaled_gain_multiplies_master_and_sfx() {
+        let g = scaled_gain(0.8, 0.5, 0.5);
+        assert!((g - 0.8 * 0.5 * 0.5).abs() < 1e-6, "got {g}");
+        // Either stage at zero silences the cue.
+        assert_eq!(scaled_gain(1.0, 0.0, 1.0), 0.0);
+        assert_eq!(scaled_gain(1.0, 1.0, 0.0), 0.0);
+        // Unity master+sfx is a pass-through.
+        assert_eq!(scaled_gain(0.42, 1.0, 1.0), 0.42);
     }
 }
