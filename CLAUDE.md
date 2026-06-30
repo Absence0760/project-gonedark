@@ -185,12 +185,21 @@ art. All are installed machine-wide and on PATH:
 - **SoX** — SFX synthesis + processing
 - **Csound** — deterministic, seed-scripted SFX (regenerable + git-diffable; the audio analogue of D41 — audio is a primary system, invariant #6)
 - **Inkscape** (`--export-type=png`) — vector → PNG HUD / command-layer UI icons across DPIs
-- **ImageMagick** (`magick`) — scripted textures, atlases, noise / normal maps
+- **ImageMagick** (`magick`) — scripted textures, atlases, noise / normal maps; also rasterises
+  glyph/icon atlases (it baked the **D74** HUD font atlas, `tools/fonts/gen_hud_font.py`)
+- **FontForge** (`fontforge -script gen.py`, or `import fontforge`) — scriptable custom/icon font
+  generation. ImageMagick covered the D74 raster atlas; reach for FontForge when a task needs a
+  real `.ttf`/`.otf` or actual glyph outlines, not just a rasterised cell atlas.
+
+These are the **visual/audio polish toolchain — always reach for them first** for any model,
+sound, icon, font, texture, or normal map (the visual-design pass uses them heavily). Worked
+examples: `tools/models/gen_models.py` (Blender greybox), `tools/fonts/gen_hud_font.py`
+(ImageMagick → raw R8 atlas `include_bytes!`d so the render crate stays `wgpu`+`bytemuck` only).
 
 Full rationale + the can/can't boundary: [`docs/content-pipeline.md`](docs/content-pipeline.md)
-§6 (**D46** logs the toolchain; **D41** the Blender method). Per-tool install provenance lives
-in the workstation `~/CLAUDE.md` — note **Csound is a source build** and is *not* swept by
-`update-all` (bump manually).
+§6 (**D46** logs the toolchain; **D41** the Blender method; **D74** the font atlas). Per-tool
+install provenance lives in the workstation `~/CLAUDE.md` — note **Csound is a source build** and
+is *not* swept by `update-all` (bump manually).
 
 ## Glossary
 
