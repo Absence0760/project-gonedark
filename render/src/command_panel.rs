@@ -119,17 +119,17 @@ pub struct PanelLabel {
 ///
 /// The width auto-sizes to the widest line the panel must hold — the title (at [`TITLE_SIZE`]) or any
 /// body row (at [`ROW_SIZE`]) — plus inner padding, clamped to `[MIN_HALF_W, MAX_HALF_W]`. Widths are
-/// measured at aspect `1.0` (the *square-NDC* footprint, which is the widest a string can be — a wider
-/// viewport only narrows the on-screen text), so the box is sized for the worst case and the rows
-/// always fit inside it on any window. That removes the off-screen clipping that made the panel look
-/// broken. The right + top edges stay pinned (`RIGHT`/`TOP`), so the panel still hugs the corner and
-/// grows leftward/downward with its content.
-fn box_geom(view: &CommandPanelView) -> (f32, f32, f32, f32, f32, f32) {
-    let widest = std::iter::once(crate::text::measure(&view.title, TITLE_SIZE, 1.0).0)
+/// measured at the live `aspect` (width / height) so the box hugs the *on-screen* text footprint: the
+/// glyphs are aspect-corrected by the text pass, so on a wide window the rows are narrower and the box
+/// shrinks to match instead of leaving dead right-padding — while on any window the row still fits
+/// inside its box (no off-screen clipping, the bug that made the panel look broken). The right + top
+/// edges stay pinned (`RIGHT`/`TOP`), so the panel hugs the corner and grows leftward/downward.
+fn box_geom(view: &CommandPanelView, aspect: f32) -> (f32, f32, f32, f32, f32, f32) {
+    let widest = std::iter::once(crate::text::measure(&view.title, TITLE_SIZE, aspect).0)
         .chain(
             view.lines
                 .iter()
-                .map(|l| crate::text::measure(&l.text, ROW_SIZE, 1.0).0),
+                .map(|l| crate::text::measure(&l.text, ROW_SIZE, aspect).0),
         )
         .fold(0.0_f32, f32::max);
     let hw = ((widest + 2.0 * PAD) * 0.5).clamp(MIN_HALF_W, MAX_HALF_W);
@@ -143,12 +143,13 @@ fn box_geom(view: &CommandPanelView) -> (f32, f32, f32, f32, f32, f32) {
 }
 
 /// The panel's background + rim quads (drawn through the overlay quad pipeline), auto-sized to the
-/// view's row count. Empty view ⇒ no quads. Pure + GPU-free → unit-tested.
-pub fn command_panel_quads(view: &CommandPanelView) -> Vec<OverlayQuad> {
+/// view's content at the live viewport `aspect` (width / height). Empty view ⇒ no quads. Pure +
+/// GPU-free → unit-tested.
+pub fn command_panel_quads(view: &CommandPanelView, aspect: f32) -> Vec<OverlayQuad> {
     if view.is_empty() {
         return Vec::new();
     }
-    let (cx, cy, hw, hh, _, _) = box_geom(view);
+    let (cx, cy, hw, hh, _, _) = box_geom(view, aspect);
     vec![
         // Rim first (behind), then the panel fill on top — a crisp border.
         OverlayQuad {
@@ -177,12 +178,13 @@ pub fn command_panel_quads(view: &CommandPanelView) -> Vec<OverlayQuad> {
 }
 
 /// The panel's text labels — the title, then one label per body row, left-aligned and stacked from
-/// the inner top. Empty view ⇒ no labels. Pure + GPU-free → unit-tested.
-pub fn command_panel_labels(view: &CommandPanelView) -> Vec<PanelLabel> {
+/// the inner top, placed against the box sized at the live viewport `aspect`. Empty view ⇒ no labels.
+/// Pure + GPU-free → unit-tested.
+pub fn command_panel_labels(view: &CommandPanelView, aspect: f32) -> Vec<PanelLabel> {
     if view.is_empty() {
         return Vec::new();
     }
-    let (_, _, _, _, left, top_inner) = box_geom(view);
+    let (_, _, _, _, left, top_inner) = box_geom(view, aspect);
     let mut out = Vec::with_capacity(view.lines.len() + 1);
     out.push(PanelLabel {
         text: view.title.clone(),
@@ -224,14 +226,14 @@ mod tests {
     fn empty_view_draws_nothing() {
         let v = CommandPanelView::default();
         assert!(v.is_empty());
-        assert!(command_panel_quads(&v).is_empty());
-        assert!(command_panel_labels(&v).is_empty());
+        assert!(command_panel_quads(&v, 1.0).is_empty());
+        assert!(command_panel_labels(&v, 1.0).is_empty());
     }
 
     #[test]
     fn quads_are_a_rim_behind_a_fill_in_the_top_right() {
         let v = view("CAMP — TIER 1", &[("Resources 300", LineStyle::Normal)]);
-        let q = command_panel_quads(&v);
+        let q = command_panel_quads(&v, 1.0);
         assert_eq!(q.len(), 2, "rim + fill");
         let (rim, fill) = (&q[0], &q[1]);
         assert!(rim.hw > fill.hw && rim.hh > fill.hh, "rim is larger than the fill");
@@ -243,16 +245,19 @@ mod tests {
 
     #[test]
     fn taller_content_grows_the_box_downward() {
-        let short = command_panel_quads(&view("T", &[("a", LineStyle::Normal)]));
-        let tall = command_panel_quads(&view(
-            "T",
-            &[
-                ("a", LineStyle::Normal),
-                ("b", LineStyle::Normal),
-                ("c", LineStyle::Normal),
-                ("d", LineStyle::Normal),
-            ],
-        ));
+        let short = command_panel_quads(&view("T", &[("a", LineStyle::Normal)]), 1.0);
+        let tall = command_panel_quads(
+            &view(
+                "T",
+                &[
+                    ("a", LineStyle::Normal),
+                    ("b", LineStyle::Normal),
+                    ("c", LineStyle::Normal),
+                    ("d", LineStyle::Normal),
+                ],
+            ),
+            1.0,
+        );
         assert!(tall[1].hh > short[1].hh, "more rows → taller box");
         // Both keep their top edge pinned at TOP (they grow downward).
         assert!((short[1].cy + short[1].hh - TOP).abs() < 1e-6);
@@ -269,7 +274,7 @@ mod tests {
                 ("Stance: Hold", LineStyle::Dim),
             ],
         );
-        let ls = command_panel_labels(&v);
+        let ls = command_panel_labels(&v, 1.0);
         assert_eq!(ls.len(), 4, "title + 3 rows");
         assert_eq!(ls[0].text, "SELECTED — 3");
         assert_eq!(ls[0].color, LineStyle::Header.color(), "title reads as a header");
@@ -286,11 +291,11 @@ mod tests {
     fn box_auto_widens_for_long_rows_but_stays_on_screen() {
         // A long row grows the box wider than a short one (auto-width), yet the panel never runs off
         // the left edge — the bug that made it look broken. Both keep the right edge pinned at RIGHT.
-        let short = command_panel_quads(&view("SEL", &[("3x RIFLE", LineStyle::Normal)]));
-        let long = command_panel_quads(&view(
-            "SELECTED — 3",
-            &[("STANCE: FIRE AT WILL", LineStyle::Normal)],
-        ));
+        let short = command_panel_quads(&view("SEL", &[("3x RIFLE", LineStyle::Normal)]), 1.0);
+        let long = command_panel_quads(
+            &view("SELECTED — 3", &[("STANCE: FIRE AT WILL", LineStyle::Normal)]),
+            1.0,
+        );
         assert!(long[1].hw > short[1].hw, "a longer row makes a wider box");
         for q in long.iter().chain(short.iter()) {
             // Right edge pinned; left edge stays inside the screen (> -1.0) so nothing clips off.
@@ -311,7 +316,7 @@ mod tests {
                 ("E  EMBODY", LineStyle::Dim),
             ],
         );
-        let q = command_panel_quads(&v);
+        let q = command_panel_quads(&v, 1.0);
         let fill = &q[1];
         let inner_w = 2.0 * fill.hw - 2.0 * PAD;
         for line in &v.lines {
@@ -321,12 +326,35 @@ mod tests {
     }
 
     #[test]
+    fn box_tightens_on_a_wide_viewport_without_clipping() {
+        // A wide window narrows the on-screen text, so the auto-width box shrinks to hug it (no dead
+        // right-padding) — yet every row still fits inside the (now tighter) inner width.
+        let v = view(
+            "SELECTED — 3",
+            &[("STANCE: FIRE AT WILL", LineStyle::Normal), ("E  EMBODY", LineStyle::Dim)],
+        );
+        let aspect = 16.0 / 9.0;
+        let sq = command_panel_quads(&v, 1.0);
+        let wide = command_panel_quads(&v, aspect);
+        // Long content isn't clamped, so the wide box is strictly narrower than the square one.
+        assert!(wide[1].hw < sq[1].hw, "box hugs the narrower wide-screen text");
+        let inner_w = 2.0 * wide[1].hw - 2.0 * PAD;
+        for line in &v.lines {
+            let w = crate::text::measure(&line.text, ROW_SIZE, aspect).0;
+            assert!(w <= inner_w + 1e-6, "row still fits the tightened box");
+        }
+        // Right edge stays pinned; left edge stays on screen.
+        assert!((wide[1].cx + wide[1].hw - RIGHT).abs() < 1e-6);
+        assert!(wide[1].cx - wide[1].hw > -1.0);
+    }
+
+    #[test]
     fn good_and_bad_rows_take_distinct_colors() {
         let v = view(
             "CAMP",
             &[("Upgrade 200", LineStyle::Good), ("Upgrade 200", LineStyle::Bad)],
         );
-        let ls = command_panel_labels(&v);
+        let ls = command_panel_labels(&v, 1.0);
         assert_eq!(ls[1].color, LineStyle::Good.color());
         assert_eq!(ls[2].color, LineStyle::Bad.color());
         assert_ne!(ls[1].color, ls[2].color);

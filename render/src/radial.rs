@@ -14,16 +14,17 @@
 //! ever draws this in the **command view** — the menu is empty while embodied and the host gates the
 //! pass on `!embodied`, so it never paints over the dark frame. The ring is *chrome*, not intel.
 //!
-//! ## What it draws (and does not)
+//! ## What it draws
 //!
 //! A dim backdrop, a center hub at the anchor, and one wedge per available action laid out clockwise
-//! from the top. There is **no glyph/text system in this engine yet**, so the wedges are unlabeled —
-//! the slot *count* and the (optional) highlighted slot are the affordance. Labels live in the
-//! host's `radial_menu` for when a text/icon pass lands; they are deliberately not plumbed here.
+//! from the top, **each labelled with its real command name** through the W4 [`text`](crate::text)
+//! pass ([`radial_labels`], fed the host's `engine::Game::radial_menu` vocabulary via
+//! [`RadialRenderer::render_with_labels`]). The ring is laid out aspect-corrected (horizontal offsets
+//! `/aspect`) so it reads as a true circle, not an ellipse, on a wide window.
 //!
-//! The testable layout math (how many quads, where each wedge sits) lives in the free
-//! [`radial_quads`] so it is unit-testable without a GPU — the `overlay_quads` / `marker_for`
-//! pattern.
+//! The testable layout math (how many quads, where each wedge sits, the labels) lives in the free
+//! [`radial_quads`] / [`radial_labels`] so it is unit-testable without a GPU — the `overlay_quads` /
+//! `marker_for` pattern.
 
 use crate::text::{Anchor, TextRenderer};
 use std::f32::consts::{FRAC_PI_2, TAU};
@@ -107,10 +108,12 @@ impl RadialQuad {
     }
 }
 
-// Layout constants (NDC). The ring is laid out in raw NDC, so on a non-square viewport it reads as a
-// slight ellipse — consistent with the HUD ring and the overlay, which also work in raw NDC.
-/// Radius of the wedge ring from the anchor.
-const RING_RADIUS: f32 = 0.30;
+// Layout constants (NDC vertical reference). Horizontal extents/offsets are divided by the viewport
+// `aspect` (width / height) at layout time so the ring is a true circle and the wedges/hub/backdrop
+// stay square in pixels on a wide window, instead of the old raw-NDC ellipse.
+/// Radius of the wedge ring from the anchor (vertical NDC; the horizontal offset is `/aspect`). A
+/// touch wider than before so the action labels around it have more room and crowd less.
+const RING_RADIUS: f32 = 0.34;
 /// Half-extent of a wedge (action) slot.
 const WEDGE_HALF: f32 = 0.055;
 /// Half-extent of the center hub.
@@ -153,41 +156,50 @@ fn quad(cx: f32, cy: f32, hw: f32, hh: f32, alpha: f32, role: RadialRole) -> Rad
 /// Wedges are laid out clockwise starting at the top (12 o'clock): slot 0 sits directly above the
 /// anchor, the rest fan around the ring evenly. The optional `highlight` slot is drawn with the
 /// [`WedgeHighlight`](RadialRole::WedgeHighlight) role.
-pub fn radial_quads(menu: &RadialMenu) -> Vec<RadialQuad> {
+pub fn radial_quads(menu: &RadialMenu, aspect: f32) -> Vec<RadialQuad> {
     if menu.slots == 0 {
         return Vec::new();
     }
+    // Divide horizontal offsets/half-extents by aspect so the ring is circular and the squares stay
+    // square in pixels on a wide window. Guard a degenerate (zero/non-finite) aspect → fall back to 1.
+    let a = if aspect.is_finite() && aspect.abs() > 1e-6 {
+        aspect
+    } else {
+        1.0
+    };
     let (cx, cy) = (menu.center[0], menu.center[1]);
     let mut out = Vec::with_capacity(menu.slots + 2);
     // Backdrop first (back-to-front): a dim square so the wedges read over the command frame.
     out.push(quad(
         cx,
         cy,
-        BACKDROP_HALF,
+        BACKDROP_HALF / a,
         BACKDROP_HALF,
         BACKDROP_ALPHA,
         RadialRole::Backdrop,
     ));
     // The hub marks the anchor the menu opened at.
-    out.push(quad(cx, cy, HUB_HALF, HUB_HALF, 1.0, RadialRole::Hub));
-    // Wedges around the ring: slot 0 at the top, clockwise (NDC +y is up, so subtract the angle).
+    out.push(quad(cx, cy, HUB_HALF / a, HUB_HALF, 1.0, RadialRole::Hub));
+    // Wedges around the ring: slot 0 at the top, clockwise (NDC +y is up, so subtract the angle). The
+    // x offset is `/a` so the ring is a circle in pixels, not a horizontal ellipse.
     let n = menu.slots as f32;
     for i in 0..menu.slots {
         let angle = FRAC_PI_2 - (i as f32) * TAU / n;
-        let wx = cx + RING_RADIUS * angle.cos();
+        let wx = cx + (RING_RADIUS / a) * angle.cos();
         let wy = cy + RING_RADIUS * angle.sin();
         let role = if menu.highlight == Some(i) {
             RadialRole::WedgeHighlight
         } else {
             RadialRole::Wedge
         };
-        out.push(quad(wx, wy, WEDGE_HALF, WEDGE_HALF, WEDGE_ALPHA, role));
+        out.push(quad(wx, wy, WEDGE_HALF / a, WEDGE_HALF, WEDGE_ALPHA, role));
     }
     out
 }
 
-/// Glyph cell height (NDC) of a wedge label — small, to sit inside a wedge slot.
-const WEDGE_LABEL_SIZE: f32 = 0.030;
+/// Glyph cell height (NDC) of a wedge label — small, to sit inside a wedge slot (and to keep the
+/// longer command names from colliding around a crowded ring).
+const WEDGE_LABEL_SIZE: f32 = 0.026;
 /// Light off-white the wedge labels draw in, so they read over the wedge chrome.
 const LABEL_COLOR: [f32; 3] = [0.92, 0.94, 0.98];
 
@@ -221,16 +233,22 @@ fn placeholder_slot_label(i: usize) -> String {
 /// host SEAM); when `None`, [`placeholder_slot_label`] fills each slot from its index. A slot with an
 /// empty/missing name is skipped (draws no label, but the wedge quad still shows the slot). Returns
 /// an empty vec when the menu has no slots.
-pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>) -> Vec<WedgeLabel> {
+pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>, aspect: f32) -> Vec<WedgeLabel> {
     if menu.slots == 0 {
         return Vec::new();
     }
+    let a = if aspect.is_finite() && aspect.abs() > 1e-6 {
+        aspect
+    } else {
+        1.0
+    };
     let (cx, cy) = (menu.center[0], menu.center[1]);
     let n = menu.slots as f32;
     let mut out = Vec::with_capacity(menu.slots);
     for i in 0..menu.slots {
         let angle = FRAC_PI_2 - (i as f32) * TAU / n;
-        let wx = cx + RING_RADIUS * angle.cos();
+        // Match the circular ring (x offset `/a`) so labels sit on their wedges on any window.
+        let wx = cx + (RING_RADIUS / a) * angle.cos();
         let wy = cy + RING_RADIUS * angle.sin();
         let text = match names.and_then(|ns| ns.get(i)) {
             Some(name) if !name.is_empty() => name.to_string(),
@@ -285,6 +303,9 @@ pub struct RadialRenderer {
     /// The shared text pass (W4) — the radial menu owns one so its wedges carry action labels.
     /// Flushed at the end of [`RadialRenderer::render`].
     text: TextRenderer,
+    /// Viewport aspect (width / height) for the current frame — keeps the ring circular and the
+    /// wedges square in pixels. Set via [`set_aspect`](RadialRenderer::set_aspect); defaults to `1.0`.
+    aspect: f32,
 }
 
 impl RadialRenderer {
@@ -370,6 +391,7 @@ impl RadialRenderer {
             instance_buf,
             instance_cap,
             text,
+            aspect: 1.0,
         }
     }
 
@@ -378,6 +400,7 @@ impl RadialRenderer {
     /// before [`render`](RadialRenderer::render). The ring geometry stays raw NDC by design (a slight
     /// ellipse on a wide viewport, consistent with the HUD ring) — only the glyphs are corrected.
     pub fn set_aspect(&mut self, aspect: f32) {
+        self.aspect = aspect;
         self.text.set_aspect(aspect);
     }
 
@@ -406,14 +429,14 @@ impl RadialRenderer {
         menu: &RadialMenu,
         names: Option<&[&str]>,
     ) {
-        let quads = radial_quads(menu);
+        let quads = radial_quads(menu, self.aspect);
         if quads.is_empty() {
             return;
         }
         let instances: Vec<RadialInstance> = quads.iter().map(|q| q.instance()).collect();
 
         // Queue the wedge labels (W4) — flushed after the wedge quads below so the glyphs sit on top.
-        for label in radial_labels(menu, names) {
+        for label in radial_labels(menu, names, self.aspect) {
             self.text.queue(
                 label.text,
                 label.pos,
@@ -497,12 +520,12 @@ mod tests {
 
     #[test]
     fn empty_menu_draws_nothing() {
-        assert!(radial_quads(&menu([0.0, 0.0], 0, None)).is_empty());
+        assert!(radial_quads(&menu([0.0, 0.0], 0, None), 1.0).is_empty());
     }
 
     #[test]
     fn backdrop_then_hub_then_wedges() {
-        let q = radial_quads(&menu([0.0, 0.0], 4, None));
+        let q = radial_quads(&menu([0.0, 0.0], 4, None), 1.0);
         // Back-to-front: a dim backdrop, the hub, then one wedge per slot.
         assert_eq!(q[0].role, RadialRole::Backdrop);
         assert_eq!(q[1].role, RadialRole::Hub);
@@ -518,7 +541,7 @@ mod tests {
     #[test]
     fn slot_count_drives_wedge_count() {
         for n in 1..=10usize {
-            let q = radial_quads(&menu([0.0, 0.0], n, None));
+            let q = radial_quads(&menu([0.0, 0.0], n, None), 1.0);
             assert_eq!(wedges(&q).len(), n, "one wedge per slot for n={n}");
         }
     }
@@ -527,7 +550,7 @@ mod tests {
     fn slot_zero_sits_at_top_above_the_anchor() {
         // Slot 0 is at 12 o'clock: same x as the center, directly above it (cy + RING_RADIUS).
         let c = [0.1, -0.2];
-        let q = radial_quads(&menu(c, 4, None));
+        let q = radial_quads(&menu(c, 4, None), 1.0);
         let w0 = wedges(&q)[0];
         assert!((w0.cx - c[0]).abs() < 1e-5, "slot 0 shares the anchor's x");
         assert!(
@@ -539,7 +562,7 @@ mod tests {
     #[test]
     fn wedges_lie_on_the_ring_around_the_center() {
         let c = [-0.3, 0.25];
-        let q = radial_quads(&menu(c, 6, None));
+        let q = radial_quads(&menu(c, 6, None), 1.0);
         for w in wedges(&q) {
             let d = ((w.cx - c[0]).powi(2) + (w.cy - c[1]).powi(2)).sqrt();
             assert!(
@@ -550,9 +573,26 @@ mod tests {
     }
 
     #[test]
+    fn ring_is_circular_in_pixels_under_aspect() {
+        // On a wide viewport the wedge ring's horizontal offset is divided by aspect, so the ring is a
+        // true circle in pixels (the 3-o'clock wedge's NDC x-offset is `aspect`× smaller than the
+        // 12-o'clock wedge's NDC y-offset), not the old stretched ellipse. Slots/quads stay square too.
+        let aspect = 16.0 / 9.0;
+        let c = [0.0, 0.0];
+        let q = radial_quads(&menu(c, 4, None), aspect);
+        let w = wedges(&q);
+        // Slot 1 (3 o'clock) is purely a horizontal offset; slot 0 (12 o'clock) purely vertical.
+        let x_off = (w[1].cx - c[0]).abs();
+        let y_off = (w[0].cy - c[1]).abs();
+        assert!((x_off * aspect - y_off).abs() < 1e-5, "x-offset·aspect == y-offset (circular)");
+        // Wedge slots are narrower in NDC by aspect (square in pixels).
+        assert!((w[0].hw * aspect - w[0].hh).abs() < 1e-5, "wedge is square in pixels");
+    }
+
+    #[test]
     fn second_slot_is_clockwise_of_the_first() {
         // Clockwise from the top → slot 1 swings to the anchor's right (+x) and below the top.
-        let q = radial_quads(&menu([0.0, 0.0], 4, None));
+        let q = radial_quads(&menu([0.0, 0.0], 4, None), 1.0);
         let w = wedges(&q);
         assert!(
             w[1].cx > w[0].cx,
@@ -563,7 +603,7 @@ mod tests {
 
     #[test]
     fn highlight_marks_exactly_one_wedge() {
-        let q = radial_quads(&menu([0.0, 0.0], 5, Some(2)));
+        let q = radial_quads(&menu([0.0, 0.0], 5, Some(2)), 1.0);
         let w = wedges(&q);
         for (i, wedge) in w.iter().enumerate() {
             if i == 2 {
@@ -584,15 +624,15 @@ mod tests {
     #[test]
     fn out_of_range_highlight_highlights_nothing() {
         // A highlight index past the slot count simply highlights no wedge (no panic).
-        let q = radial_quads(&menu([0.0, 0.0], 3, Some(9)));
+        let q = radial_quads(&menu([0.0, 0.0], 3, Some(9)), 1.0);
         assert!(!roles(&q).contains(&RadialRole::WedgeHighlight));
     }
 
     #[test]
     fn center_offset_translates_every_quad() {
         // Shifting the anchor shifts the whole menu rigidly: each quad moves by the same delta.
-        let base = radial_quads(&menu([0.0, 0.0], 4, None));
-        let moved = radial_quads(&menu([0.2, -0.1], 4, None));
+        let base = radial_quads(&menu([0.0, 0.0], 4, None), 1.0);
+        let moved = radial_quads(&menu([0.2, -0.1], 4, None), 1.0);
         assert_eq!(base.len(), moved.len());
         for (b, m) in base.iter().zip(moved.iter()) {
             assert!((m.cx - b.cx - 0.2).abs() < 1e-5 && (m.cy - b.cy + 0.1).abs() < 1e-5);
@@ -605,7 +645,7 @@ mod tests {
     /// centered anchor the whole menu stays inside the screen; nothing carries spatial sim data.
     #[test]
     fn radial_quads_are_screen_space_only() {
-        let q = radial_quads(&menu([0.0, 0.0], 10, Some(0)));
+        let q = radial_quads(&menu([0.0, 0.0], 10, Some(0)), 1.0);
         for quad in &q {
             assert!(quad.cx.is_finite() && quad.cy.is_finite());
             assert!(
@@ -623,12 +663,12 @@ mod tests {
 
     #[test]
     fn empty_menu_has_no_labels() {
-        assert!(radial_labels(&menu([0.0, 0.0], 0, None), None).is_empty());
+        assert!(radial_labels(&menu([0.0, 0.0], 0, None), None, 1.0).is_empty());
     }
 
     #[test]
     fn placeholder_labels_are_one_based_slot_numbers() {
-        let labels = radial_labels(&menu([0.0, 0.0], 4, None), None);
+        let labels = radial_labels(&menu([0.0, 0.0], 4, None), None, 1.0);
         let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, vec!["1", "2", "3", "4"]);
     }
@@ -636,8 +676,8 @@ mod tests {
     #[test]
     fn one_label_per_slot_at_the_wedge_center() {
         let c = [0.1, -0.2];
-        let q = radial_quads(&menu(c, 6, None));
-        let labels = radial_labels(&menu(c, 6, None), None);
+        let q = radial_quads(&menu(c, 6, None), 1.0);
+        let labels = radial_labels(&menu(c, 6, None), None, 1.0);
         let w = wedges(&q);
         assert_eq!(labels.len(), w.len(), "one label per wedge");
         // Each label sits exactly at its wedge's center.
@@ -650,7 +690,7 @@ mod tests {
     #[test]
     fn explicit_names_override_placeholders() {
         let names = ["MOVE", "STOP", "HOLD"];
-        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names));
+        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names), 1.0);
         let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, vec!["MOVE", "STOP", "HOLD"]);
     }
@@ -659,7 +699,7 @@ mod tests {
     fn empty_name_skips_that_slots_label() {
         // An explicit empty name draws no label for that slot (but the others still appear).
         let names = ["MOVE", "", "HOLD"];
-        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names));
+        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names), 1.0);
         let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, vec!["MOVE", "HOLD"], "the empty slot is skipped");
     }
@@ -668,7 +708,7 @@ mod tests {
     fn missing_name_falls_back_to_placeholder() {
         // Fewer names than slots → the unfilled slots fall back to their placeholder numbers.
         let names = ["MOVE"];
-        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names));
+        let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names), 1.0);
         let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, vec!["MOVE", "2", "3"]);
     }

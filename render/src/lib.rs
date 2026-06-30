@@ -1305,9 +1305,9 @@ impl Renderer {
         if panel.is_empty() {
             return;
         }
-        let quads = command_panel::command_panel_quads(panel);
+        let quads = command_panel::command_panel_quads(panel, self.chrome_aspect);
         self.overlay.draw_quads(device, queue, view, &quads);
-        for l in command_panel::command_panel_labels(panel) {
+        for l in command_panel::command_panel_labels(panel, self.chrome_aspect) {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
         }
