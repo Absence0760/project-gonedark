@@ -26,8 +26,9 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, Window
 
 mod shell;
 use shell::{
-    apply_loadout_action, build_channel, build_stamp, resolve_title_action, EguiShell,
-    HostTransition, LoadoutStep,
+    apply_loadout_action, apply_profile_action, apply_settings_action, build_channel, build_stamp,
+    resolve_title_action, EguiShell, HostTransition, LoadoutStep, ProfileState, ProfileStep,
+    SettingsState, SettingsStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -38,6 +39,13 @@ enum Screen {
     /// The pre-match gunsmith / loadout screen (egui). The editable selection itself lives on
     /// [`App::loadout`] (host-side pre-match state), so this variant carries no data.
     Loadout,
+    /// The out-of-match Settings screen (audio / controls / video prefs). State lives on
+    /// [`App::settings`], so this variant carries no data.
+    Settings,
+    /// The out-of-match player Profile screen. State lives on [`App::profile`].
+    Profile,
+    /// The About / controls-reference screen (reached from Settings). Static content, no host state.
+    About,
     // `Game` is large (the renderer + sim state); box it so the idle `Title` variant doesn't carry
     // that footprint around (clippy::large_enum_variant).
     InMatch(Box<Game>),
@@ -84,6 +92,12 @@ struct App {
     /// sim until the scenario seeder applies it at match start (WS-C, D60). Persists across matches so
     /// the player keeps their build; the gunsmith's RESET button returns it to the neutral baseline.
     loadout: LoadoutEditor,
+
+    /// Host-side player preferences (audio / look / video / quality) edited on the Settings screen.
+    /// Presentation only — never reaches the sim; persists across screens for the session.
+    settings: SettingsState,
+    /// Host-side player identity + lifetime record shown on the Profile screen. Presentation only.
+    profile: ProfileState,
 }
 
 impl App {
@@ -101,6 +115,8 @@ impl App {
             fullscreen: false,
             scene,
             loadout: LoadoutEditor::new(),
+            settings: SettingsState::default(),
+            profile: ProfileState::default(),
         }
     }
 
@@ -233,6 +249,39 @@ impl App {
                     }
                 }
             }
+            Screen::Settings => {
+                if let Some(sh) = self.shell.as_mut() {
+                    // The video checkbox reflects the host's live window mode; pref edits mutate
+                    // `self.settings` in place (the Stay case).
+                    if let Some(action) = sh.draw_settings(surface, &mut self.settings, self.fullscreen)
+                    {
+                        transition = match apply_settings_action(action, &mut self.settings) {
+                            SettingsStep::Stay => None,
+                            SettingsStep::ToggleFullscreen => Some(HostTransition::ToggleFullscreen),
+                            SettingsStep::About => Some(HostTransition::OpenAbout),
+                            SettingsStep::Back => Some(HostTransition::ExitToTitle),
+                        };
+                    }
+                }
+            }
+            Screen::Profile => {
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) = sh.draw_profile(surface, &mut self.profile) {
+                        transition = match apply_profile_action(action, &mut self.profile) {
+                            ProfileStep::Stay => None,
+                            ProfileStep::Back => Some(HostTransition::ExitToTitle),
+                        };
+                    }
+                }
+            }
+            Screen::About => {
+                if let Some(sh) = self.shell.as_mut() {
+                    // BACK from About returns to Settings (where it was opened from).
+                    if sh.draw_about(surface) {
+                        transition = Some(HostTransition::OpenSettings);
+                    }
+                }
+            }
             Screen::InMatch(game) => {
                 let mut input = self.input.drain_frame();
                 let viewport = surface.size();
@@ -311,11 +360,21 @@ impl App {
                 // Don't charge the time spent on the title/gunsmith screens to the first sim tick.
                 self.last_frame = Instant::now();
             }
-            // Settings surface not built yet (phase-4-plan §2 surface 3) — a no-op placeholder.
-            Some(HostTransition::OpenSettings) => {}
-            // Player profile / progression surface not built yet — a no-op placeholder, same as
-            // Settings. The title screen's PROFILE chip routes here.
-            Some(HostTransition::OpenProfile) => {}
+            // Out-of-match utility screens — drawn over the same 3D backdrop as the title.
+            Some(HostTransition::OpenSettings) => {
+                self.screen = Screen::Settings;
+                self.last_frame = Instant::now();
+            }
+            Some(HostTransition::OpenProfile) => {
+                self.screen = Screen::Profile;
+                self.last_frame = Instant::now();
+            }
+            Some(HostTransition::OpenAbout) => {
+                self.screen = Screen::About;
+                self.last_frame = Instant::now();
+            }
+            // The Settings video toggle: flip the window mode, stay on the current screen.
+            Some(HostTransition::ToggleFullscreen) => self.toggle_fullscreen(),
             Some(HostTransition::Exit) => event_loop.exit(),
             // Return to the title screen, dropping any `Game` (the post-match DISMISS path, and the
             // gunsmith's BACK — which has no `Game` yet, so this is just a screen swap there).
@@ -376,8 +435,13 @@ impl ApplicationHandler for App {
         // accumulator gets them in a match. (A stray event in the other state is simply ignored, so
         // nothing leaks between the shell and the sim.)
         match self.screen {
-            // The egui shell owns input on both out-of-match screens (title + gunsmith).
-            Screen::Title | Screen::Loadout => {
+            // The egui shell owns input on every out-of-match screen (title, gunsmith, settings,
+            // profile, about).
+            Screen::Title
+            | Screen::Loadout
+            | Screen::Settings
+            | Screen::Profile
+            | Screen::About => {
                 if let (Some(sh), Some(surface)) = (self.shell.as_mut(), self.surface.as_ref()) {
                     sh.on_window_event(surface.window(), &event);
                 }

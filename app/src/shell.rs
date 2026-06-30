@@ -45,10 +45,16 @@ pub enum HostTransition {
     OpenLoadout,
     /// Lazily create `engine::Game` and switch the host to the in-match screen.
     EnterMatch,
-    /// Open the (not-yet-built) settings surface — a no-op placeholder today.
+    /// Switch the host to the Settings screen (audio / video / controls preferences).
     OpenSettings,
-    /// Open the (not-yet-built) player profile / progression surface — a no-op placeholder today.
+    /// Switch the host to the player Profile screen (callsign, faction preference, lifetime record).
     OpenProfile,
+    /// Switch the host to the About / controls-reference screen (reached from Settings).
+    OpenAbout,
+    /// Toggle borderless fullscreen and stay on the current screen — the Settings video toggle. The
+    /// window mode lives on the host (`App::fullscreen`), so this defers the actual flip to the run
+    /// loop rather than carrying a second source of truth into the settings model.
+    ToggleFullscreen,
     /// Tear down and exit the app.
     Exit,
     /// Leave the current match and return to the title screen — the post-match summary's DISMISS,
@@ -165,6 +171,324 @@ pub fn pointer_to_ndc(pos: [f32; 2], size_points: [f32; 2]) -> [f32; 2] {
     let w = if size_points[0] > 0.0 { size_points[0] } else { 1.0 };
     let h = if size_points[1] > 0.0 { size_points[1] } else { 1.0 };
     [(pos[0] / w) * 2.0 - 1.0, 1.0 - (pos[1] / h) * 2.0]
+}
+
+// ---- The Settings screen — pure seam (unit-tested) ----------------------------------------------
+
+/// The render-quality preference exposed on the Settings screen. `Auto` lets the in-match tier
+/// controller (`render::tiers`) pick from thermals; the explicit tiers pin it. A small cycler enum so
+/// the screen needs no slider for a discrete choice. Pure data — no GPU.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum QualityChoice {
+    /// Let the thermal/perf tier controller choose (the shipped default).
+    #[default]
+    Auto,
+    Low,
+    Medium,
+    High,
+}
+
+impl QualityChoice {
+    /// Cycle order for the `<`/`>` style toggle.
+    pub const ALL: [QualityChoice; 4] = [
+        QualityChoice::Auto,
+        QualityChoice::Low,
+        QualityChoice::Medium,
+        QualityChoice::High,
+    ];
+
+    /// The on-screen label.
+    pub fn label(self) -> &'static str {
+        match self {
+            QualityChoice::Auto => "Auto",
+            QualityChoice::Low => "Low",
+            QualityChoice::Medium => "Medium",
+            QualityChoice::High => "High",
+        }
+    }
+
+    /// The next choice in [`Self::ALL`], wrapping — what the cycler advances to.
+    pub fn next(self) -> QualityChoice {
+        let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+}
+
+/// Host-side player preferences edited on the Settings screen. **Presentation only** — none of these
+/// reach the deterministic sim (invariant #1 is about the sim's fixed-point state, not the host's
+/// float prefs); volumes/sensitivity feed the *renderer/audio* host layers, quality feeds
+/// `render::tiers`. Fullscreen is deliberately **not** here — the window mode's single source of
+/// truth is `App::fullscreen` (the Settings checkbox reflects it and emits
+/// [`SettingsAction::ToggleFullscreen`]).
+///
+/// Today these are stored and survive across screens but are **not yet wired into the live audio mix
+/// or the tier controller** — that wiring is follow-up work; the screen is a real, stateful stub.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct SettingsState {
+    /// Master output gain, `0.0..=1.0`.
+    pub master_volume: f32,
+    /// SFX bus gain, `0.0..=1.0`.
+    pub sfx_volume: f32,
+    /// Music bus gain, `0.0..=1.0`.
+    pub music_volume: f32,
+    /// Mouse-look sensitivity multiplier, [`Self::SENS_MIN`]`..=`[`Self::SENS_MAX`].
+    pub mouse_sensitivity: f32,
+    /// Invert the embodied vertical look axis.
+    pub invert_look_y: bool,
+    /// Render-quality preference (see [`QualityChoice`]).
+    pub quality: QualityChoice,
+}
+
+impl Default for SettingsState {
+    fn default() -> Self {
+        SettingsState {
+            master_volume: 0.8,
+            sfx_volume: 0.8,
+            music_volume: 0.6,
+            mouse_sensitivity: 1.0,
+            invert_look_y: false,
+            quality: QualityChoice::Auto,
+        }
+    }
+}
+
+impl SettingsState {
+    /// Sensitivity slider bounds (a multiplier around 1.0).
+    pub const SENS_MIN: f32 = 0.1;
+    pub const SENS_MAX: f32 = 3.0;
+
+    /// Clamp every field back into its valid range — called after the egui sliders write, so a future
+    /// non-slider edit path (config import, keybind) can never leave an out-of-range value. Pure.
+    pub fn clamp(&mut self) {
+        for v in [
+            &mut self.master_volume,
+            &mut self.sfx_volume,
+            &mut self.music_volume,
+        ] {
+            *v = v.clamp(0.0, 1.0);
+        }
+        self.mouse_sensitivity = self.mouse_sensitivity.clamp(Self::SENS_MIN, Self::SENS_MAX);
+    }
+
+    /// Restore the shipped defaults — the Settings RESET button.
+    pub fn reset(&mut self) {
+        *self = SettingsState::default();
+    }
+}
+
+/// An action the Settings screen can emit in a frame. Slider/checkbox edits mutate [`SettingsState`]
+/// in place (no action — they're the "Stay" case); only these discrete controls are actions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SettingsAction {
+    /// Flip borderless fullscreen (the window mode lives on the host).
+    ToggleFullscreen,
+    /// Restore the shipped defaults.
+    ResetDefaults,
+    /// Open the About / controls-reference screen.
+    About,
+    /// Return to the title screen.
+    Back,
+}
+
+/// The screen-level outcome of a [`SettingsAction`] once applied — what the run loop switches on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SettingsStep {
+    /// Stay on Settings (a pref edit, a reset, or nothing this frame).
+    Stay,
+    /// Toggle fullscreen and stay (the host flips the window mode).
+    ToggleFullscreen,
+    /// Leave for the About screen.
+    About,
+    /// Return to the title screen.
+    Back,
+}
+
+/// Apply a [`SettingsAction`] to the preferences and report the resulting screen step. `ResetDefaults`
+/// mutates state and stays; the rest are screen/host transitions. Pure (no egui/window) — the
+/// Settings testable decision seam, mirroring [`apply_loadout_action`].
+pub fn apply_settings_action(action: SettingsAction, state: &mut SettingsState) -> SettingsStep {
+    match action {
+        SettingsAction::ResetDefaults => {
+            state.reset();
+            SettingsStep::Stay
+        }
+        SettingsAction::ToggleFullscreen => SettingsStep::ToggleFullscreen,
+        SettingsAction::About => SettingsStep::About,
+        SettingsAction::Back => SettingsStep::Back,
+    }
+}
+
+// ---- The Profile screen — pure seam (unit-tested) -----------------------------------------------
+
+/// The player's preferred faction (the real-army roster, `docs/factions.md`). A cosmetic/pre-match
+/// preference only — it never constrains fairness (the roster is fairness-bounded). Pure data.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum FactionPref {
+    #[default]
+    UsArmy,
+    FrenchArmy,
+}
+
+impl FactionPref {
+    /// The on-screen label.
+    pub fn label(self) -> &'static str {
+        match self {
+            FactionPref::UsArmy => "US Army",
+            FactionPref::FrenchArmy => "French Army",
+        }
+    }
+
+    /// The next faction, wrapping — what the cycler advances to.
+    pub fn next(self) -> FactionPref {
+        match self {
+            FactionPref::UsArmy => FactionPref::FrenchArmy,
+            FactionPref::FrenchArmy => FactionPref::UsArmy,
+        }
+    }
+}
+
+/// Host-side player identity / record shown on the Profile screen. Presentation only — never touches
+/// the sim. The lifetime record is a real counter the host *will* bump at match end (placeholder
+/// zeroes today; the post-match summary is the natural writer). Persists across matches like the
+/// loadout.
+#[derive(Clone, PartialEq, Debug)]
+pub struct ProfileState {
+    /// The player's chosen callsign (display name). Sanitised by [`sanitize_callsign`] on commit.
+    pub callsign: String,
+    /// Preferred faction (see [`FactionPref`]).
+    pub faction: FactionPref,
+    /// Lifetime matches played.
+    pub matches_played: u32,
+    /// Lifetime wins (`<= matches_played`).
+    pub wins: u32,
+}
+
+impl Default for ProfileState {
+    fn default() -> Self {
+        ProfileState {
+            callsign: DEFAULT_CALLSIGN.to_string(),
+            faction: FactionPref::UsArmy,
+            matches_played: 0,
+            wins: 0,
+        }
+    }
+}
+
+/// The fallback callsign when the field is left empty.
+pub const DEFAULT_CALLSIGN: &str = "Commander";
+/// Maximum callsign length (chars) — keeps it fitting the field and the in-match nameplate.
+pub const CALLSIGN_MAX: usize = 18;
+
+/// Normalise a raw callsign: trim surrounding whitespace, truncate to [`CALLSIGN_MAX`] characters,
+/// and fall back to [`DEFAULT_CALLSIGN`] when the result is empty. Pure — the Profile screen's one bit
+/// of real input validation, so it is unit-tested. Char-based truncation (not byte) so a multi-byte
+/// name can't be split mid-codepoint.
+pub fn sanitize_callsign(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return DEFAULT_CALLSIGN.to_string();
+    }
+    trimmed.chars().take(CALLSIGN_MAX).collect()
+}
+
+/// Win-rate percentage (`0..=100`), or `None` when no matches have been played (a clean "--" readout
+/// instead of a divide-by-zero). Integer math, rounded down. Pure — unit-tested.
+pub fn win_rate_pct(wins: u32, played: u32) -> Option<u32> {
+    if played == 0 {
+        None
+    } else {
+        // u64 to avoid overflow on `wins * 100` for large lifetime counts.
+        Some(((wins as u64 * 100) / played as u64) as u32)
+    }
+}
+
+/// An action the Profile screen can emit. The callsign `TextEdit` mutates [`ProfileState::callsign`]
+/// in place (the "Stay" case); these are the discrete controls.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProfileAction {
+    /// Cycle the preferred faction.
+    CycleFaction,
+    /// Zero the lifetime record.
+    ResetStats,
+    /// Return to the title screen (sanitises the callsign on the way out).
+    Back,
+}
+
+/// The screen-level outcome of a [`ProfileAction`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ProfileStep {
+    /// Stay on Profile.
+    Stay,
+    /// Return to the title screen.
+    Back,
+}
+
+/// Apply a [`ProfileAction`] to the profile and report the resulting screen step. `Back` sanitises the
+/// callsign (so an empty/over-long field commits a clean value). Pure — the Profile decision seam.
+pub fn apply_profile_action(action: ProfileAction, profile: &mut ProfileState) -> ProfileStep {
+    match action {
+        ProfileAction::CycleFaction => {
+            profile.faction = profile.faction.next();
+            ProfileStep::Stay
+        }
+        ProfileAction::ResetStats => {
+            profile.matches_played = 0;
+            profile.wins = 0;
+            ProfileStep::Stay
+        }
+        ProfileAction::Back => {
+            profile.callsign = sanitize_callsign(&profile.callsign);
+            ProfileStep::Back
+        }
+    }
+}
+
+// ---- The About / controls-reference screen — pure seam (unit-tested) ----------------------------
+
+/// One control-reference row: the input and what it does, grouped by layer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ControlRow {
+    /// The layer this binding belongs to ("COMMAND", "EMBODIED", "GLOBAL").
+    pub group: &'static str,
+    /// The key/mouse input (ASCII only — it renders in egui's default font).
+    pub keys: &'static str,
+    /// What the input does.
+    pub action: &'static str,
+}
+
+/// The desktop controls reference shown on the About screen — the **real** default keymap (kept in
+/// sync with `pal-desktop`'s `DesktopInput` doc + `app`'s host keys). Static data, so it's unit-tested
+/// for shape (every group present, no empty cells). ASCII only — never a tofu glyph.
+pub fn controls_reference() -> &'static [ControlRow] {
+    const fn row(group: &'static str, keys: &'static str, action: &'static str) -> ControlRow {
+        ControlRow {
+            group,
+            keys,
+            action,
+        }
+    }
+    // A `static` (not a returned temporary) so the slice is genuinely `'static`.
+    static ROWS: &[ControlRow] = &[
+        // Command layer (RTS) — pal-desktop keymap (D42 classic-RTS split).
+        row("COMMAND", "Left-click", "Select / band-select"),
+        row("COMMAND", "Right-click", "Move or attack-move the selection"),
+        row("COMMAND", "B", "Place a Camp at the cursor"),
+        row("COMMAND", "R / H", "Queue a Rifleman / Heavy at the camp"),
+        row("COMMAND", "U", "Upgrade the active camp"),
+        row("COMMAND", "1 - 0", "Order / stance vocabulary slots"),
+        // Embodiment layer (FPS).
+        row("EMBODIED", "E", "Embody the targeted unit"),
+        row("EMBODIED", "Q", "Surface (eject back to command)"),
+        row("EMBODIED", "W A S D", "Move"),
+        row("EMBODIED", "Mouse", "Look"),
+        row("EMBODIED", "Left-click / Space", "Fire"),
+        // Global host keys (app/src/main.rs).
+        row("GLOBAL", "Esc", "Pause / resume"),
+        row("GLOBAL", "Left Alt", "Free the cursor (hold)"),
+        row("GLOBAL", "F11", "Toggle fullscreen"),
+        row("GLOBAL", "F3", "Toggle the debug overlay"),
+    ];
+    ROWS
 }
 
 // ---- The "going-dark" palette + theme -----------------------------------------------------------
@@ -383,6 +707,38 @@ impl EguiShell {
         // `with_backdrop = false`: the gunsmith keeps its opaque ink panel (it has no 3D backdrop),
         // so the egui pass clears as before — no regression to `draw_loadout`.
         self.run_and_paint(surface, false, |ui| loadout_ui(ui, editor))
+    }
+
+    /// Draw the Settings screen for one frame and return the [`SettingsAction`] whose control was
+    /// used, if any. `state` is the host-side preference model (edited in place by the sliders);
+    /// `fullscreen` is the host's current window mode (reflected by the video checkbox). Drawn over the
+    /// live 3D backdrop so the out-of-match shell stays cohesive. Pure presentation — never the sim.
+    pub fn draw_settings(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+        state: &mut SettingsState,
+        fullscreen: bool,
+    ) -> Option<SettingsAction> {
+        self.run_and_paint(surface, true, |ui| settings_ui(ui, state, fullscreen))
+    }
+
+    /// Draw the player Profile screen for one frame and return the [`ProfileAction`] used, if any.
+    /// `profile` is the host-side identity/record (the callsign field edits it in place). Over the
+    /// backdrop, same as Settings. Pure presentation.
+    pub fn draw_profile(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+        profile: &mut ProfileState,
+    ) -> Option<ProfileAction> {
+        self.run_and_paint(surface, true, |ui| profile_ui(ui, profile))
+    }
+
+    /// Draw the About / controls-reference screen for one frame. Returns `true` on BACK (the only
+    /// control), so the run loop returns to Settings. Static content over the backdrop. Pure.
+    pub fn draw_about(&mut self, surface: &mut DesktopRenderSurface) -> bool {
+        let stamp = self.stamp.clone();
+        self.run_and_paint(surface, true, |ui| about_ui(ui, &stamp).then_some(()))
+            .is_some()
     }
 
     /// Run one egui frame (`build` lays out the UI and returns this frame's action) and paint the
@@ -783,6 +1139,243 @@ fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction
     action
 }
 
+/// A centred screen banner — the heading + amber rule treatment the gunsmith/settings/profile/about
+/// screens share, so they read as one family. Glue (needs a `Ui`).
+fn screen_banner(ui: &mut egui::Ui, title: &str, rule_w: f32) {
+    use egui::RichText;
+    ui.label(
+        RichText::new(title)
+            .color(BONE)
+            .size(TYPE_HEADING)
+            .strong(),
+    );
+    ui.add_space(8.0);
+    accent_rule(ui, rule_w);
+    ui.add_space(16.0);
+}
+
+/// A left-aligned section sub-heading inside a screen card (e.g. "AUDIO", "CONTROLS"). Glue.
+fn section_label(ui: &mut egui::Ui, text: &str) {
+    use egui::RichText;
+    ui.add_space(6.0);
+    ui.label(RichText::new(text).color(ASH).size(TYPE_CAPTION).strong());
+    ui.add_space(6.0);
+}
+
+/// The transparent full-screen panel the over-backdrop screens (settings/profile/about) sit in, with
+/// their content centred in a translucent [`glass_card_frame`]. The central panel paints **no** fill
+/// (`Frame::NONE`) so the live 3D backdrop shows through around the card. `build` lays out the card's
+/// interior; the whole screen returns whatever `build` produced. Glue.
+fn over_backdrop_screen<T>(
+    ui: &mut egui::Ui,
+    top_frac: f32,
+    build: impl FnOnce(&mut egui::Ui) -> T,
+) -> T {
+    let mut out = None;
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| {
+            let h = ui.available_height();
+            ui.vertical_centered(|ui| {
+                ui.add_space(h * top_frac);
+                glass_card_frame().show(ui, |ui| {
+                    out = Some(build(ui));
+                });
+            });
+        });
+    out.expect("over_backdrop_screen build ran")
+}
+
+/// The immediate-mode Settings screen: audio/controls/video preferences in a centred card over the
+/// backdrop. Sliders/checkboxes edit `state` in place (then [`SettingsState::clamp`] re-bounds it);
+/// the discrete controls return a [`SettingsAction`] the pure [`apply_settings_action`] seam resolves.
+/// `fullscreen` is the host's current window mode (reflected by the video checkbox). Glue.
+fn settings_ui(
+    ui: &mut egui::Ui,
+    state: &mut SettingsState,
+    fullscreen: bool,
+) -> Option<SettingsAction> {
+    use egui::{RichText, Slider};
+    let mut action = None;
+
+    over_backdrop_screen(ui, 0.10, |ui| {
+        ui.set_min_width(420.0);
+        screen_banner(ui, "SETTINGS", 96.0);
+
+        section_label(ui, "AUDIO");
+        ui.add(Slider::new(&mut state.master_volume, 0.0..=1.0).text("Master"));
+        ui.add(Slider::new(&mut state.sfx_volume, 0.0..=1.0).text("SFX"));
+        ui.add(Slider::new(&mut state.music_volume, 0.0..=1.0).text("Music"));
+
+        section_label(ui, "CONTROLS");
+        ui.add(
+            Slider::new(
+                &mut state.mouse_sensitivity,
+                SettingsState::SENS_MIN..=SettingsState::SENS_MAX,
+            )
+            .text("Look sensitivity"),
+        );
+        ui.checkbox(&mut state.invert_look_y, "Invert look Y");
+
+        section_label(ui, "VIDEO");
+        // The window-mode source of truth is the host: reflect it, and emit the toggle action rather
+        // than editing a second copy here.
+        let mut fs = fullscreen;
+        if ui.checkbox(&mut fs, "Fullscreen").clicked() {
+            action = Some(SettingsAction::ToggleFullscreen);
+        }
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Quality").color(BONE).size(TYPE_BODY));
+            ui.add_space(8.0);
+            // A single cycling button over the discrete tiers (a direct edit — no action needed).
+            if ui
+                .button(RichText::new(state.quality.label()).color(AMBER).size(TYPE_BODY))
+                .clicked()
+            {
+                state.quality = state.quality.next();
+            }
+        });
+
+        // Defensive re-clamp after the slider writes (sliders already bound, but a future edit path
+        // might not).
+        state.clamp();
+
+        ui.add_space(18.0);
+        if menu_button(ui, "BACK", Emphasis::Primary) {
+            action = Some(SettingsAction::Back);
+        }
+        ui.add_space(10.0);
+        if menu_button(ui, "CONTROLS / ABOUT", Emphasis::Secondary) {
+            action = Some(SettingsAction::About);
+        }
+        ui.add_space(10.0);
+        if menu_button(ui, "RESET DEFAULTS", Emphasis::Tertiary) {
+            action = Some(SettingsAction::ResetDefaults);
+        }
+    });
+
+    action
+}
+
+/// The immediate-mode Profile screen: callsign, faction preference, and the lifetime record, centred
+/// over the backdrop. The callsign `TextEdit` edits `profile` in place (length-capped to
+/// [`CALLSIGN_MAX`]); the discrete controls return a [`ProfileAction`] the pure [`apply_profile_action`]
+/// seam resolves (BACK sanitises the callsign). Glue.
+fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Option<ProfileAction> {
+    use egui::{RichText, TextEdit};
+    let mut action = None;
+
+    over_backdrop_screen(ui, 0.12, |ui| {
+        ui.set_min_width(420.0);
+        screen_banner(ui, "PROFILE", 84.0);
+
+        section_label(ui, "IDENTITY");
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [96.0, 28.0],
+                egui::Label::new(RichText::new("Callsign").color(BONE).size(TYPE_BODY)),
+            );
+            ui.add_sized(
+                [220.0, 28.0],
+                TextEdit::singleline(&mut profile.callsign).char_limit(CALLSIGN_MAX),
+            );
+        });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [96.0, 28.0],
+                egui::Label::new(RichText::new("Faction").color(BONE).size(TYPE_BODY)),
+            );
+            if ui
+                .add_sized(
+                    [220.0, 28.0],
+                    egui::Button::new(
+                        RichText::new(profile.faction.label()).color(AMBER).size(TYPE_BODY),
+                    ),
+                )
+                .clicked()
+            {
+                action = Some(ProfileAction::CycleFaction);
+            }
+        });
+
+        section_label(ui, "RECORD");
+        let rate = match win_rate_pct(profile.wins, profile.matches_played) {
+            Some(p) => format!("{p}%"),
+            None => "--".to_string(),
+        };
+        ui.label(
+            RichText::new(format!(
+                "Matches {}   ·   Wins {}   ·   Win rate {}",
+                profile.matches_played, profile.wins, rate
+            ))
+            .color(ASH)
+            .size(TYPE_BODY),
+        );
+
+        ui.add_space(18.0);
+        if menu_button(ui, "BACK", Emphasis::Primary) {
+            action = Some(ProfileAction::Back);
+        }
+        ui.add_space(10.0);
+        if menu_button(ui, "RESET RECORD", Emphasis::Tertiary) {
+            action = Some(ProfileAction::ResetStats);
+        }
+    });
+
+    action
+}
+
+/// The immediate-mode About / field-manual screen: the one-line pitch, the real default keymap
+/// (grouped), and the build stamp, centred over the backdrop. Returns `true` on BACK. Static content
+/// from the pure [`controls_reference`] seam. Glue.
+fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
+    use egui::{Grid, RichText, ScrollArea};
+    let mut back = false;
+
+    over_backdrop_screen(ui, 0.06, |ui| {
+        ui.set_min_width(460.0);
+        screen_banner(ui, "FIELD MANUAL", 120.0);
+        ui.label(
+            RichText::new(
+                "Command and grow your camps from above -- then possess a single soldier and \
+                 fight it in first person, while the strategic map goes dark.",
+            )
+            .color(ASH)
+            .size(TYPE_BODY),
+        );
+        ui.add_space(14.0);
+
+        // The keymap, grouped by layer. A bounded ScrollArea keeps the card sane on a short window.
+        ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+            let mut current_group = "";
+            for row in controls_reference() {
+                if row.group != current_group {
+                    section_label(ui, row.group);
+                    current_group = row.group;
+                }
+                Grid::new(("about.controls", row.group, row.keys))
+                    .num_columns(2)
+                    .min_col_width(150.0)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(row.keys).color(AMBER).size(TYPE_BODY).strong());
+                        ui.label(RichText::new(row.action).color(BONE).size(TYPE_BODY));
+                        ui.end_row();
+                    });
+            }
+        });
+
+        ui.add_space(14.0);
+        ui.label(RichText::new(stamp).color(MUTED).size(TYPE_CAPTION));
+        ui.add_space(12.0);
+        if menu_button(ui, "BACK", Emphasis::Primary) {
+            back = true;
+        }
+    });
+
+    back
+}
+
 #[cfg(test)]
 mod tests {
     //! The pure seam only — the egui glue (`EguiShell`/`title_ui`/`loadout_ui`/`run_and_paint`) needs
@@ -1036,5 +1629,172 @@ mod tests {
             hints.iter().all(|h| h.is_ascii()),
             "trade hints must be ASCII to render in egui's default font"
         );
+    }
+
+    // ---- The Settings pure seam ------------------------------------------------------------------
+
+    #[test]
+    fn settings_defaults_are_in_range() {
+        let s = SettingsState::default();
+        for v in [s.master_volume, s.sfx_volume, s.music_volume] {
+            assert!((0.0..=1.0).contains(&v));
+        }
+        assert!((SettingsState::SENS_MIN..=SettingsState::SENS_MAX).contains(&s.mouse_sensitivity));
+        assert_eq!(s.quality, QualityChoice::Auto);
+        assert!(!s.invert_look_y);
+    }
+
+    #[test]
+    fn settings_clamp_rebounds_every_out_of_range_field() {
+        let mut s = SettingsState {
+            master_volume: 5.0,
+            sfx_volume: -2.0,
+            music_volume: 0.5,
+            mouse_sensitivity: 99.0,
+            invert_look_y: true,
+            quality: QualityChoice::High,
+        };
+        s.clamp();
+        assert_eq!(s.master_volume, 1.0);
+        assert_eq!(s.sfx_volume, 0.0);
+        assert_eq!(s.music_volume, 0.5);
+        assert_eq!(s.mouse_sensitivity, SettingsState::SENS_MAX);
+        // Non-numeric fields are untouched by clamp.
+        assert!(s.invert_look_y);
+        assert_eq!(s.quality, QualityChoice::High);
+    }
+
+    #[test]
+    fn settings_reset_restores_defaults_and_stays() {
+        let mut s = SettingsState::default();
+        s.master_volume = 0.0;
+        s.invert_look_y = true;
+        s.quality = QualityChoice::Low;
+        let step = apply_settings_action(SettingsAction::ResetDefaults, &mut s);
+        assert_eq!(step, SettingsStep::Stay);
+        assert_eq!(s, SettingsState::default());
+    }
+
+    #[test]
+    fn settings_discrete_actions_map_to_their_steps() {
+        let mut s = SettingsState::default();
+        assert_eq!(
+            apply_settings_action(SettingsAction::ToggleFullscreen, &mut s),
+            SettingsStep::ToggleFullscreen
+        );
+        assert_eq!(
+            apply_settings_action(SettingsAction::About, &mut s),
+            SettingsStep::About
+        );
+        assert_eq!(
+            apply_settings_action(SettingsAction::Back, &mut s),
+            SettingsStep::Back
+        );
+        // None of those non-reset actions mutate the prefs.
+        assert_eq!(s, SettingsState::default());
+    }
+
+    #[test]
+    fn quality_cycles_through_all_choices_and_wraps() {
+        let mut q = QualityChoice::Auto;
+        let mut seen = Vec::new();
+        for _ in 0..QualityChoice::ALL.len() {
+            seen.push(q);
+            q = q.next();
+        }
+        // Visited every distinct tier exactly once...
+        for choice in QualityChoice::ALL {
+            assert!(seen.contains(&choice), "{choice:?} must appear in the cycle");
+        }
+        // ...and wrapped back to the start.
+        assert_eq!(q, QualityChoice::Auto);
+    }
+
+    // ---- The Profile pure seam -------------------------------------------------------------------
+
+    #[test]
+    fn sanitize_callsign_trims_truncates_and_falls_back() {
+        assert_eq!(sanitize_callsign("  Reaper  "), "Reaper");
+        // Empty / whitespace-only → the default.
+        assert_eq!(sanitize_callsign("   "), DEFAULT_CALLSIGN);
+        assert_eq!(sanitize_callsign(""), DEFAULT_CALLSIGN);
+        // Over-long names truncate to CALLSIGN_MAX chars.
+        let long = "X".repeat(CALLSIGN_MAX + 10);
+        assert_eq!(sanitize_callsign(&long).chars().count(), CALLSIGN_MAX);
+    }
+
+    #[test]
+    fn sanitize_callsign_truncates_on_char_boundaries() {
+        // A multi-byte name must never split mid-codepoint (char-based take, not byte slice).
+        let name = "é".repeat(CALLSIGN_MAX + 5);
+        let out = sanitize_callsign(&name);
+        assert_eq!(out.chars().count(), CALLSIGN_MAX);
+        assert!(out.chars().all(|c| c == 'é'));
+    }
+
+    #[test]
+    fn win_rate_guards_zero_and_computes_a_floor_percentage() {
+        assert_eq!(win_rate_pct(0, 0), None, "no matches → no rate (clean '--')");
+        assert_eq!(win_rate_pct(0, 4), Some(0));
+        assert_eq!(win_rate_pct(2, 4), Some(50));
+        assert_eq!(win_rate_pct(4, 4), Some(100));
+        // Floors (1/3 = 33.3% → 33).
+        assert_eq!(win_rate_pct(1, 3), Some(33));
+        // No overflow on a large lifetime record.
+        assert_eq!(win_rate_pct(1_000_000, 2_000_000), Some(50));
+    }
+
+    #[test]
+    fn faction_pref_cycles_and_wraps() {
+        assert_eq!(FactionPref::UsArmy.next(), FactionPref::FrenchArmy);
+        assert_eq!(FactionPref::FrenchArmy.next(), FactionPref::UsArmy);
+    }
+
+    #[test]
+    fn profile_actions_apply_and_transition() {
+        let mut p = ProfileState {
+            callsign: "  Ghost  ".to_string(),
+            faction: FactionPref::UsArmy,
+            matches_played: 9,
+            wins: 3,
+        };
+        // Cycle faction stays on-screen.
+        assert_eq!(
+            apply_profile_action(ProfileAction::CycleFaction, &mut p),
+            ProfileStep::Stay
+        );
+        assert_eq!(p.faction, FactionPref::FrenchArmy);
+        // Reset stats zeroes the record and stays.
+        assert_eq!(
+            apply_profile_action(ProfileAction::ResetStats, &mut p),
+            ProfileStep::Stay
+        );
+        assert_eq!((p.matches_played, p.wins), (0, 0));
+        // Back sanitises the callsign and leaves.
+        assert_eq!(
+            apply_profile_action(ProfileAction::Back, &mut p),
+            ProfileStep::Back
+        );
+        assert_eq!(p.callsign, "Ghost");
+    }
+
+    // ---- The About controls reference ------------------------------------------------------------
+
+    #[test]
+    fn controls_reference_is_well_formed_and_covers_every_layer() {
+        let rows = controls_reference();
+        assert!(!rows.is_empty());
+        // No empty cells, and every label stays ASCII so it can't tofu.
+        for r in rows {
+            assert!(!r.group.is_empty() && !r.keys.is_empty() && !r.action.is_empty());
+            assert!(r.keys.is_ascii() && r.action.is_ascii() && r.group.is_ascii());
+        }
+        // All three layers are documented.
+        for layer in ["COMMAND", "EMBODIED", "GLOBAL"] {
+            assert!(
+                rows.iter().any(|r| r.group == layer),
+                "the {layer} layer must have at least one binding"
+            );
+        }
     }
 }
