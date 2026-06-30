@@ -309,7 +309,7 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
     // Everything lives in one full-screen CentralPanel — a single centered column (title, tagline,
     // the three actions, then the build stamp). One panel keeps the layout robust (no panel-space
     // splitting); the wgpu clear already paints the ink background behind it.
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         let h = ui.available_height();
         ui.vertical_centered(|ui| {
             ui.add_space(h * 0.20);
@@ -356,7 +356,7 @@ fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction
     use egui::{Button, Label, RichText};
     let mut action = None;
 
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         let h = ui.available_height();
         ui.vertical_centered(|ui| {
             ui.add_space(h * 0.10);

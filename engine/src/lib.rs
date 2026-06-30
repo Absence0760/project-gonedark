@@ -336,7 +336,7 @@ fn topdown_view_proj(width: u32, height: u32, focus_x: f32, focus_y: f32, half_e
             -COMMAND_EYE_DIST * pitch.cos(),
             COMMAND_EYE_DIST * pitch.sin(),
         );
-    let proj = Mat4::orthographic_rh(
+    let proj = glam::camera::rh::proj::directx::orthographic(
         -hx,
         hx,
         -hy,
@@ -344,7 +344,7 @@ fn topdown_view_proj(width: u32, height: u32, focus_x: f32, focus_y: f32, half_e
         COMMAND_EYE_DIST - 100.0,
         COMMAND_EYE_DIST + 140.0,
     );
-    let view = Mat4::look_at_rh(eye, focus, Vec3::Z);
+    let view = glam::camera::rh::view::look_at_mat4(eye, focus, Vec3::Z);
     proj * view
 }
 
@@ -360,7 +360,12 @@ const EMBODIED_FAR: f32 = 500.0;
 /// so it needs the projection by itself (D44).
 fn embodied_proj_fov(width: u32, height: u32, fov_deg: f32) -> Mat4 {
     let aspect = width.max(1) as f32 / height.max(1) as f32;
-    Mat4::perspective_rh(fov_deg.to_radians(), aspect, EMBODIED_NEAR, EMBODIED_FAR)
+    glam::camera::rh::proj::directx::perspective(
+        fov_deg.to_radians(),
+        aspect,
+        EMBODIED_NEAR,
+        EMBODIED_FAR,
+    )
 }
 
 /// The embodied perspective projection at the un-zoomed base FOV ([`EMBODIED_FOV_DEG`]). Test-only:
@@ -415,7 +420,7 @@ fn embodied_view_proj_fov(
     let target = eye + dir;
 
     let proj = embodied_proj_fov(width, height, fov_deg);
-    let view = Mat4::look_at_rh(eye, target, Vec3::Z);
+    let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Z);
     proj * view
 }
 
@@ -4042,14 +4047,14 @@ mod tests {
     }
 
     /// `embodied_proj` is the single source of the embodied perspective constants (D44 shares it
-    /// with the weapon viewmodel pass), so pin it: it must equal a direct `perspective_rh` with the
+    /// with the weapon viewmodel pass), so pin it: it must equal a direct RH `directx::perspective` with the
     /// documented FOV/near/far, and produce a sane 4:3 frustum. Guards the constants against drift —
     /// if they ever diverge, the gun's projection silently stops matching the world it sits in.
     #[test]
     fn embodied_proj_matches_documented_constants() {
         let (width, height) = (800u32, 600u32); // 4:3
         let got = embodied_proj(width, height);
-        let expected = Mat4::perspective_rh(
+        let expected = glam::camera::rh::proj::directx::perspective(
             EMBODIED_FOV_DEG.to_radians(),
             width as f32 / height as f32,
             EMBODIED_NEAR,

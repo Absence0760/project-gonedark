@@ -41,12 +41,12 @@ gonedark-engine = { path = "../engine" }
 android-activity = { version = "0.6", features = ["native-activity"] }
 # JNI bridge for the few platform services that must call into Kotlin/Java
 # (billing, push, etc. — Phase 2). Not load-bearing for the Phase 1 slice.
-jni = "0.21"
+jni = "0.22"
 # Safe NDK wrappers (ANativeWindow, AAssetManager, AInputEvent helpers).
 ndk = "0.9"
 # `log` facade + an Android logcat backend so `log::info!` lands in `adb logcat`.
 log = "0.4"
-android_logger = "0.14"
+android_logger = "0.15"
 # RHI: wgpu picks the Vulkan backend on Android automatically (platforms.md §3).
 wgpu = "29"
 # Bridges the NDK `ANativeWindow` to wgpu's surface creation.

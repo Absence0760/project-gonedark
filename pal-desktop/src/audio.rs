@@ -114,7 +114,7 @@ mod backend {
                 .map_err(|e| format!("default_output_config: {e}"))?;
             let sample_format = supported.sample_format();
             let config: cpal::StreamConfig = supported.into();
-            let sample_rate = config.sample_rate.0;
+            let sample_rate = config.sample_rate;
             let channels = config.channels as usize;
 
             let mixer = Arc::new(Mutex::new(Mixer::default()));
@@ -155,7 +155,7 @@ mod backend {
     ) -> Result<cpal::Stream, String> {
         device
             .build_output_stream(
-                config,
+                *config,
                 move |out: &mut [T], _| {
                     // Never block the realtime thread: if the game thread holds the lock, emit a
                     // frame of silence (rare; submit_mix's critical section is tiny).

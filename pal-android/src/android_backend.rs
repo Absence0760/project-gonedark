@@ -313,23 +313,27 @@ fn android_main(app: AndroidApp) {
 /// decision it serves (`overlay_click_action`) is host-tested in the `engine` crate.
 fn finish_activity(app: &AndroidApp) {
     use jni::objects::JObject;
-    use jni::JavaVM;
+    use jni::{jni_sig, jni_str, JavaVM};
 
     // SAFETY: the pointers come from `android-activity`'s live `AndroidApp`, valid while the
     // activity is running (same handles the thermal reader attaches through).
-    let vm = match unsafe { JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) } {
-        Ok(vm) => vm,
-        Err(_) => return,
-    };
-    let mut env = match vm.attach_current_thread() {
-        Ok(env) => env,
-        Err(_) => return,
-    };
-    let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
-    // Activity.finish() : void. On any failure, clear the pending exception so we fail safe.
-    if env.call_method(&activity, "finish", "()V", &[]).is_err() {
-        let _ = env.exception_clear();
-    }
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) };
+    let activity_ptr = app.activity_as_ptr() as jni::sys::jobject;
+    // jni 0.22 attaches via a scoped closure handing back a borrowed `Env`, and JNI object refs are
+    // tied to it — so the `Activity` handle and the `finish()` call both live inside the closure.
+    // Any attach/lookup failure is swallowed (best-effort, never fatal).
+    let _ = vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
+        // SAFETY: `activity_ptr` is a live local ref android-activity owns for the call's duration.
+        let activity = unsafe { JObject::from_raw(&*env, activity_ptr) };
+        // Activity.finish() : void. On any failure, clear the pending exception so we fail safe.
+        if env
+            .call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[])
+            .is_err()
+        {
+            env.exception_clear();
+        }
+        Ok(())
+    });
 }
 
 // ---------------------------------------------------------------------------------------
