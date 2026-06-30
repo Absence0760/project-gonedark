@@ -13,8 +13,8 @@
 //! intact — the sim's checksum folds `Resources` by that shape.
 
 use crate::components::{
-    Army, Building, BuildingKind, EntityKind, Faction, Health, Order, ProductionItem, ShellKind,
-    Stance, UnitKind, Vec2, Weapon, FACTION_COUNT,
+    Armor, Army, Building, BuildingKind, EntityKind, Faction, Health, Order, ProductionItem,
+    ShellKind, Stance, UnitKind, Vec2, Weapon, FACTION_COUNT,
 };
 use crate::ecs::{Entity, World};
 use crate::event::SimEvent;
@@ -124,6 +124,30 @@ const CAMP_HP: i32 = 1000;
 pub const TANK_COST: i64 = 360;
 /// Base ticks to produce a [`Tank`](UnitKind::Tank). 840 = 14 s — slow, deliberate armour.
 pub const TANK_BASE_TICKS: u16 = 840;
+
+// --- Produced-Tank directional armour (tank embodiment P9, the armour half — completes the D65
+// unarmoured-tank stopgap). The produced `UnitKind::Tank` is now a real armoured vehicle: thick
+// front, thinner side, thinnest rear, in the same `Fixed` units a `Weapon::penetration` is measured
+// in and resolved by `combat::facing_penetration_multiplier`. Same scale as the duel-scene reference
+// chassis (`scenario::DUEL_ARMOR_*`) so the project carries ONE armour vocabulary, not two: a
+// penetration of 18 (the duel gun) bounces head-on (2·18 = 36 < 40) but pens the side (18 ≥ 16) and
+// rear (18 ≥ 8) — *angle the hull at the enemy; flank to kill*. Held IDENTICAL across armies (no
+// `unit_stats_for` tilt): armour is a snowball-sensitive combat axis, fenced by the same fairness
+// band as damage/HP/penetration (factions-plan WS-B). No float (invariant #1).
+//
+// CONSEQUENCE (intended): infantry carry `penetration == 0`, and any positive armour facet bounces a
+// zero-pen shot on EVERY facet (2·0 ≤ a). So a produced Tank now shrugs off all small-arms fire — it
+// is an armoured vehicle, killed only by a penetrating gun (another tank's main gun). This replaces
+// the D65 stopgap that kept the tank unarmoured precisely to avoid this, now that the tank IS meant
+// to read as armour. No pre-placed shipping scenario produces a `UnitKind::Tank` (the duel chassis is
+// a re-dressed Heavy), so no golden checksum moves.
+/// Frontal armour of a produced Tank — the thickest facet. Sized so a duel-class penetration (18)
+/// cannot crack it head-on (`2·18 = 36 < 40` ⇒ hard bounce) but a flank/rear shot lands.
+pub const TANK_ARMOR_FRONT: Fixed = Fixed::from_int(40);
+/// Side (flank) armour of a produced Tank — thinner; a duel-class penetration pens it (`18 ≥ 16`).
+pub const TANK_ARMOR_SIDE: Fixed = Fixed::from_int(16);
+/// Rear armour of a produced Tank — the thinnest facet; cracked by even a modest penetrating gun.
+pub const TANK_ARMOR_REAR: Fixed = Fixed::from_int(8);
 
 /// Cost to produce a [`Medic`](UnitKind::Medic) — a cheap support body. 120 ≈ 1.2 Riflemen.
 pub const MEDIC_COST: i64 = 120;
@@ -359,6 +383,29 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 shell: ShellKind::Ap,
             },
         ),
+    }
+}
+
+/// Directional [`Armor`] for a produced unit of `kind` (tank embodiment P9). Only the
+/// [`Tank`](UnitKind::Tank) is armoured — every other archetype returns the all-zero
+/// [`Armor::default()`] (unarmoured), so it takes byte-identical damage to today
+/// ([`combat::facing_penetration_multiplier`](crate::combat::facing_penetration_multiplier) returns
+/// exactly `1.0` for an unarmoured defender) and no checksum moves where the tank is absent
+/// (invariant #7). Kept **separate** from [`unit_stats`]'s `(Health, Weapon)` tuple so the armour
+/// concern doesn't disturb that signature's ~30 call sites, and is **not** per-army (`unit_stats_for`
+/// has no armour tilt): armour is a snowball-sensitive combat axis, held identical across armies by
+/// the same fairness band as damage/HP/penetration. No float (invariant #1).
+#[inline]
+pub fn unit_armor(kind: UnitKind) -> Armor {
+    match kind {
+        UnitKind::Tank => Armor {
+            front: TANK_ARMOR_FRONT,
+            side: TANK_ARMOR_SIDE,
+            rear: TANK_ARMOR_REAR,
+        },
+        // Infantry and support carry no armour — the unarmoured default that preserves today's
+        // balance exactly (multiplier 1.0 on every shot, regardless of facing or penetration).
+        UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Medic => Armor::default(),
     }
 }
 
@@ -661,6 +708,10 @@ pub fn economy_system(
         world.pos[ei] = pos;
         world.health[ei] = health;
         world.weapon[ei] = weapon;
+        // Directional armour (tank embodiment P9): a produced Tank enters armoured; every other
+        // archetype draws the unarmoured default, so non-tank production is byte-identical to before
+        // and the checksum only moves once an armoured tank is actually on the field (invariant #7).
+        world.armor[ei] = unit_armor(unit_kind);
         world.order[ei] = Order::Idle;
         // A produced unit enters the match on FireAtWill (the engagement default) so it actually
         // fights — it engages any enemy in weapon range + LoS (invariant #3: firing in place, never
@@ -1397,5 +1448,163 @@ mod tests {
         assert_eq!(produce_for(Army::Neutral), unit_stats(UnitKind::Rifleman).1, "non-aligned camp fields the baseline");
         // The point of the roster: the US and FR produced units genuinely differ.
         assert_ne!(produce_for(Army::Us), produce_for(Army::Fr), "the two armies produce distinct units");
+    }
+
+    // =======================================================================
+    // PRODUCED-TANK ARMOUR (tank embodiment P9 — the armour half). The produced `UnitKind::Tank`
+    // is now an armoured vehicle; every other archetype stays unarmoured so today's balance is
+    // byte-identical. Facet behaviour is pinned against the shared
+    // `combat::facing_penetration_multiplier` resolver (invariant #7 safety).
+    // =======================================================================
+
+    /// The golden no-regression property: every NON-tank archetype draws the all-zero
+    /// [`Armor::default()`], so `facing_penetration_multiplier` returns exactly `1.0` for it and
+    /// the entire pre-P9 combat/economy balance is untouched.
+    #[test]
+    fn non_tank_archetypes_stay_unarmoured() {
+        for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Medic] {
+            assert!(
+                unit_armor(kind).is_unarmored(),
+                "{kind:?} must carry no armour — preserves today's damage exactly",
+            );
+            assert_eq!(unit_armor(kind), Armor::default(), "{kind:?} is the unarmoured default");
+        }
+    }
+
+    /// The produced Tank carries a real, well-ordered tank armour block: thick front, thinner side,
+    /// thinnest rear, all strictly positive. *Angle the hull at the enemy; flank to kill.*
+    #[test]
+    fn produced_tank_carries_ordered_directional_armour() {
+        let a = unit_armor(UnitKind::Tank);
+        assert!(!a.is_unarmored(), "the produced tank is armoured");
+        assert!(a.front > a.side, "front is the thickest facet");
+        assert!(a.side > a.rear, "side is thicker than rear");
+        assert!(a.rear > Fixed::ZERO, "every facet is real armour (positive)");
+        assert_eq!(a.front, TANK_ARMOR_FRONT);
+        assert_eq!(a.side, TANK_ARMOR_SIDE);
+        assert_eq!(a.rear, TANK_ARMOR_REAR);
+    }
+
+    /// The production seam itself: a Tank pushed through `economy_system` spawns wearing its armour,
+    /// while a Rifleman produced the same way stays unarmoured (the no-regression guarantee, proven
+    /// at the real spawn site, not just the table).
+    #[test]
+    fn production_assigns_tank_armour_and_leaves_infantry_unarmoured() {
+        let mut world = World::new();
+        let mut res = Resources::new(CAMP_BUILD_COST + TANK_COST + RIFLEMAN_COST);
+        let camp = build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::ZERO,
+        )
+        .unwrap();
+        let terr = empty_terr();
+        for _ in 0..CAMP_BUILD_TICKS {
+            tick(&mut world, &mut res, &terr);
+        }
+
+        // Produce a Tank → it spawns armoured.
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank));
+        for _ in 0..prod_time(UnitKind::Tank, 0) {
+            tick(&mut world, &mut res, &terr);
+        }
+        let tank_idx = (0..world.capacity())
+            .find(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)
+            .expect("a tank should have spawned");
+        assert_eq!(world.unit_kind[tank_idx], UnitKind::Tank);
+        assert_eq!(
+            world.armor[tank_idx],
+            unit_armor(UnitKind::Tank),
+            "the produced tank wears the tank armour block",
+        );
+        assert!(!world.armor[tank_idx].is_unarmored());
+
+        // Produce a Rifleman → it spawns unarmoured (no regression at the spawn site).
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+        for _ in 0..prod_time(UnitKind::Rifleman, 0) {
+            tick(&mut world, &mut res, &terr);
+        }
+        let rifle_idx = (0..world.capacity())
+            .find(|&i| {
+                world.is_index_alive(i)
+                    && world.kind[i] == EntityKind::Unit
+                    && i != tank_idx
+            })
+            .expect("a rifleman should have spawned");
+        assert!(
+            world.armor[rifle_idx].is_unarmored(),
+            "a produced rifleman carries no armour",
+        );
+    }
+
+    /// The load-bearing hitbox property on the PRODUCED tank's armour: a head-on shot bounces, a
+    /// flank/rear shot pens — pinned against the shared resolver. A duel-class penetration (18)
+    /// bounces the front (`2·18 = 36 < 40`) but pens the side (`18 ≥ 16`) and rear (`18 ≥ 8`).
+    #[test]
+    fn produced_tank_front_bounces_while_flank_and_rear_penetrate() {
+        use crate::combat::{facing_penetration_multiplier, shot_facet, Facet};
+        use crate::trig::{Angle, ANGLE_FULL};
+
+        let armor = unit_armor(UnitKind::Tank);
+        let hull = Angle(ANGLE_FULL / 2); // tank faces −X → front meets a +X shot
+        let pen = Fixed::from_int(18); // a duel-class penetrating gun (the tank's own gun, W4)
+
+        let plus_x = Vec2::new(Fixed::ONE, Fixed::ZERO);
+        let from_flank = Vec2::new(Fixed::ZERO, Fixed::ONE);
+        let from_rear = Vec2::new(-Fixed::ONE, Fixed::ZERO);
+
+        // Front: the thick facet overmatches the shot → hard bounce (0×).
+        assert_eq!(shot_facet(plus_x, hull), Facet::Front);
+        assert_eq!(
+            facing_penetration_multiplier(plus_x, hull, pen, armor),
+            Fixed::ZERO,
+            "a head-on shot bounces off the produced tank's frontal armour",
+        );
+        // Side: the gun out-pens the thinner flank → full damage (1×).
+        assert_eq!(shot_facet(from_flank, hull), Facet::Side);
+        assert_eq!(
+            facing_penetration_multiplier(from_flank, hull, pen, armor),
+            Fixed::ONE,
+            "a flank shot pens the produced tank's side",
+        );
+        // Rear: thinnest facet → full damage (1×).
+        assert_eq!(shot_facet(from_rear, hull), Facet::Rear);
+        assert_eq!(
+            facing_penetration_multiplier(from_rear, hull, pen, armor),
+            Fixed::ONE,
+            "a rear shot pens the produced tank's tail",
+        );
+    }
+
+    /// Facet selection is correct AT the front/side and side/rear arc boundaries (the off-by-one
+    /// trap the P4 facet math guards). The shared `shot_facet` arc is `FACET_ARC` wide; here we only
+    /// assert that shots clearly inside each arc bucket onto the expected facet — and that an
+    /// infantry-class **zero-penetration** shot bounces on EVERY facet (the intended consequence:
+    /// a produced tank shrugs off all small arms; only a penetrating gun kills it).
+    #[test]
+    fn zero_penetration_bounces_every_facet_on_the_produced_tank() {
+        use crate::combat::facing_penetration_multiplier;
+        use crate::trig::Angle;
+
+        let armor = unit_armor(UnitKind::Tank);
+        let hull = Angle(0); // faces +X
+        let zero_pen = Fixed::ZERO; // every infantry weapon (Rifleman/Heavy)
+
+        // Probe shots from the four cardinals: whatever facet each lands on, a zero-pen shot must
+        // bounce (2·0 = 0 ≤ a for every positive facet) — infantry cannot scratch the tank.
+        for dir in [
+            Vec2::new(Fixed::ONE, Fixed::ZERO),
+            Vec2::new(-Fixed::ONE, Fixed::ZERO),
+            Vec2::new(Fixed::ZERO, Fixed::ONE),
+            Vec2::new(Fixed::ZERO, -Fixed::ONE),
+        ] {
+            assert_eq!(
+                facing_penetration_multiplier(dir, hull, zero_pen, armor),
+                Fixed::ZERO,
+                "a zero-penetration (infantry) shot bounces off every facet of the produced tank",
+            );
+        }
     }
 }
