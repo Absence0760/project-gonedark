@@ -293,7 +293,10 @@ auto-resolver `combat::combat_system` now spawns a traveling `Projectile` for `m
 [D72](../decisions.md)/[Q20](../open-questions.md), hitscan only for `muzzle_vel == 0`; 2-peer
 lockstep agrees over 300 ticks — wave-1 W4), and the **sniper/zoom gun-sight view** (RMB
 aim-down-sight narrows the embodied FOV 60°→20° with a scope reticle; render + input seam only, no
-sim writes — wave-1 W2). The full War-Thunder-capable produced tank this plan specifies now exists. The AI-fire fork is now **resolved — [D72](../decisions.md)
+sim writes — wave-1 W2; an on-screen touch aim-down-sight button reached mobile parity in wave-2 W6).
+The full War-Thunder-capable produced tank this plan specifies now exists, and its infantry **anti-tank
+counter** shipped as a new dedicated AT unit ([D73](../decisions.md), wave-2 W8) — so the armoured tank
+is no longer immune to a properly-equipped infantry force. The AI-fire fork is now **resolved — [D72](../decisions.md)
 ([Q20](../open-questions.md#q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan),
 option ii):** the produced tank's gun fires a real traveling projectile whether AI-driven or embodied
 — `combat::combat_system` spawns a `Projectile` for `muzzle_vel > 0` (hitscan stays the path only for

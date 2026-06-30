@@ -79,7 +79,9 @@ codecs → [`/safe-edit`](../../.claude/commands).
 
 - **`economy::unit_stats` keyed by `(Army, archetype)`** — US and FR archetype sets (rifleman / heavy /
   vehicle / support, the shared skeleton from [`factions.md`](../factions.md) §2) with **tilts inside a
-  fairness band**, fixed-point. Every army fields every archetype (no missing role).
+  fairness band**, fixed-point. Every army fields every archetype (no missing role). *(The roster gained
+  a fifth archetype — the dedicated **anti-tank** infantry unit, [D73](../decisions.md) — routed through
+  the same `unit_stats_for`; it carries no logistics tilt, held shared across armies inside the band.)*
 - **Measure parity:** extend the `--metrics` harness with a cross-faction equal-cost trade; assert no
   army wins the mirror-of-roles trade outside the band (the per-faction analogue of [D30](../decisions.md)'s
   unit-parity check).

@@ -10,8 +10,9 @@
 > `core::scenario::seed_seize_mission_with_loadout` / `engine` `new_scene_with_loadout`, so the
 > chosen loadout is applied to every player troop's weapon **at match start** and folded into the
 > per-tick checksum (`STANDARD` stays a byte-identical no-op; same-loadout peers agree every tick,
-> different loadouts diverge only as expected). The one remaining WS-C item is the desktop
-> title→gunsmith UI flow that calls the now-live `new_scene_with_loadout` seam. WS-B's
+> different loadouts diverge only as expected), and the **desktop gunsmith UI is now wired**
+> (egui Title→Gunsmith→Deploy flow in `app`, calling `new_scene_with_loadout`). The mobile-native
+> gunsmith screen remains [D32](../decisions.md)-blocked like the other native shells. WS-B's
 > Operations-hub host model + persistence (`core/src/campaign.rs`, via `core::shell`) is built and
 > tested, but its **mission-select/briefing native shell is BLOCKED on [D32](../decisions.md)** and
 > the `MissionId→mission` registry is unbuilt. Design: [`pve-campaign.md`](../pve-campaign.md) +
@@ -103,7 +104,7 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
 
 **Tests:** unlock-graph transitions; persistence round-trip of campaign progress.
 
-### WS-C — Gunsmith loadout — **LIVE-WIRED (sim model + UI seam + match-start application; desktop UI flow remains)**
+### WS-C — Gunsmith loadout — **DONE on desktop (sim model + UI seam + match-start application + egui gunsmith screen); mobile-native screen D32-blocked**
 
 - **Fixed-point attachment-delta model in `core`** (Q16.16, [D17](../decisions.md)): an integer
   attachment table applied to the weapon component **at match start** as match-setup input; folded
