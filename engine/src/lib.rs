@@ -30,6 +30,7 @@ use gonedark_core::ecs::Entity;
 use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::{self, Visibility};
+use gonedark_core::gunsmith::Loadout;
 use gonedark_core::lockstep::Lockstep;
 use gonedark_core::rng::Rng;
 use gonedark_core::shell::{ConnectionStatus, LinkState, MatchOutcome};
@@ -1449,8 +1450,16 @@ fn seed_skirmish_scene(sim: &mut Sim) -> (Entity, bool) {
 /// losing all ten. The `player` is the first of the ten troops (the embodiable/selectable handle);
 /// booted in the command view. GPU-free, so it is host-tested directly. The objective layer only
 /// OBSERVES the sim — it is never folded into the checksum (invariant #1/#7).
-fn seed_seize_mission_scene(sim: &mut Sim) -> (Entity, bool, objectives::ObjectiveSet) {
-    let m = gonedark_core::scenario::seed_seize_mission(sim);
+///
+/// The player's pre-match gunsmith `player_loadout` (chosen on the command layer via
+/// `loadout_ui::LoadoutEditor`) is applied to the ten troops' weapons **at match start** — the WS-C
+/// live-spawn wiring. It is deterministic match-setup input folded into the per-tick checksum with
+/// no new fold surface (invariant #7); `Loadout::STANDARD` is a no-op (byte-identical to no loadout).
+fn seed_seize_mission_scene(
+    sim: &mut Sim,
+    player_loadout: Loadout,
+) -> (Entity, bool, objectives::ObjectiveSet) {
+    let m = gonedark_core::scenario::seed_seize_mission_with_loadout(sim, player_loadout);
     let objectives = objectives::ObjectiveSet::mission_one(m.enemy_strength());
     let player = m.troops[0];
     (player, false, objectives)
@@ -1705,11 +1714,30 @@ impl Game {
         seed: u64,
         scene: Scene,
     ) -> Self {
+        // No gunsmith selection plumbed → field the neutral all-`Standard` loadout (a proven no-op,
+        // byte-identical to the pre-gunsmith match). A host with a `loadout_ui::LoadoutEditor` calls
+        // `new_scene_with_loadout` to field the player's chosen build at match start (WS-C).
+        Self::new_scene_with_loadout(device, surface_format, seed, scene, Loadout::STANDARD)
+    }
+
+    /// Build the game into a chosen [`Scene`], fielding the player's pre-match gunsmith
+    /// `player_loadout` at match start (WS-C, D60). Identical to [`Game::new_scene`] in every respect
+    /// except that the PvE mission ([`Scene::Mission1`]) applies the chosen loadout to the player's
+    /// troops as deterministic match-setup input (folded into the per-tick checksum with no new fold
+    /// surface — invariant #7). The other scenes carry no player loadout, so the argument is inert for
+    /// them. `Loadout::STANDARD` reproduces [`Game::new_scene`] exactly.
+    pub fn new_scene_with_loadout(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        seed: u64,
+        scene: Scene,
+        player_loadout: Loadout,
+    ) -> Self {
         let mut sim = Sim::new(seed);
         // Most scenes carry no objectives (empty set → no HUD, no objective win/lose); the PvE
         // mission seeds a live `ObjectiveSet` that OBSERVES the sim (never mutates it).
         let (player, start_embodied, objectives) = match scene {
-            Scene::Mission1 => seed_seize_mission_scene(&mut sim),
+            Scene::Mission1 => seed_seize_mission_scene(&mut sim, player_loadout),
             Scene::Default => {
                 let (p, e) = seed_default_scene(&mut sim);
                 (p, e, objectives::ObjectiveSet::default())
@@ -3525,6 +3553,44 @@ mod tests {
         assert_eq!(units(Faction::Player), 1);
         assert_eq!(units(Faction::Enemy), 1);
         assert_eq!(sim.territory.points.len(), 3);
+    }
+
+    /// WS-C live-spawn wiring: the PvE mission scene seam applies the player's chosen gunsmith
+    /// loadout to the assault troops at match start. `Loadout::STANDARD` leaves the weapon byte-equal
+    /// to the un-loadout-ed scene; a non-Standard loadout moves it. GPU-free seam under
+    /// `Game::new_scene_with_loadout` (the checksum/fairness proofs live in `core::scenario`/
+    /// `core::gunsmith`); this just pins that the seam threads the loadout through to the live spawn.
+    #[test]
+    fn mission_scene_applies_the_chosen_loadout_at_match_start() {
+        use gonedark_core::gunsmith::{Barrel, Magazine, Optic};
+
+        // Standard loadout → identical to the plain seeder (no-op), so the player troop's weapon is
+        // exactly the army-rostered baseline the un-wired mission spawned.
+        let mut std_sim = Sim::new(DEFAULT_SEED);
+        let (std_player, embodied, _obj) =
+            seed_seize_mission_scene(&mut std_sim, Loadout::STANDARD);
+        assert!(!embodied, "the PvE mission boots commanding, not possessing");
+        let mut baseline_sim = Sim::new(DEFAULT_SEED);
+        let baseline = gonedark_core::scenario::seed_seize_mission(&mut baseline_sim);
+        assert_eq!(
+            std_sim.world.weapon[std_player.index as usize],
+            baseline_sim.world.weapon[baseline.troops[0].index as usize],
+            "the Standard loadout is a no-op — byte-identical to the un-wired mission",
+        );
+
+        // A non-Standard loadout is actually applied to the live-spawned troop's weapon.
+        let chosen = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        };
+        let mut sim = Sim::new(DEFAULT_SEED);
+        let (player, _e, _o) = seed_seize_mission_scene(&mut sim, chosen);
+        assert_ne!(
+            sim.world.weapon[player.index as usize],
+            std_sim.world.weapon[std_player.index as usize],
+            "a non-Standard loadout must move the live-spawned weapon off the baseline",
+        );
     }
 
     /// The infantry sandbox boots **embodied** in a Player Rifleman with the input source swapped
