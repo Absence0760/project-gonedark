@@ -1,0 +1,257 @@
+//! The **launch-config seam** (Compose shell parity, Tier 0 — `docs/plans/compose-shell-parity.md`
+//! §3) + its pure, host-testable parser.
+//!
+//! ## What this module is — and is NOT
+//!
+//! The native Compose shell ([`MainActivity`]) and the engine (`android_main`, a separate
+//! `NativeActivity`) are **two activities**; the shell hands the engine its match configuration
+//! across that boundary as **one `Intent` string extra** ([`EXTRA_KEY`]). This module owns the pure
+//! half of that hand-off: the [`LaunchConfig`] DTO and the tolerant [`parse_launch_config`] codec.
+//! It is split along the CLAUDE.md *"extract the pure logic to a testable seam"* rule, exactly the
+//! way [`crate::thermal`] keeps its integer→enum mapping host-compiled while only the JNI sensor is
+//! android-gated:
+//!
+//!   * **pure codec** (this module) — **no Android deps, no engine deps**, std-only. It compiles
+//!     and is unit-tested on every host target (the `tests` module below), so the wire contract is
+//!     covered without a device. It carries `scene` as a **string token** (not `engine::Scene`)
+//!     because `gonedark-engine` is android-target-only (it pulls wgpu); the android-gated glue maps
+//!     the token via the already-host-tested [`gonedark_engine::Scene::parse`].
+//!   * **JNI reader** (`read_launch_config` in `android_backend`, `#[cfg(target_os = "android")]`) —
+//!     the thin part that reads the live `Intent` extra off the `NativeActivity` and feeds it here.
+//!
+//! ## The wire format (v1) — a versioned, tolerant `key=value` string
+//!
+//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0`
+//!
+//! - `;`-separated `key=value` pairs.
+//! - **Tolerant decode** (the forward-compat contract): unknown keys are ignored, missing keys take
+//!   their [`LaunchConfig::default`] value, and an absent/empty/malformed string yields a full
+//!   default config — it **never** panics. That tolerance is what lets later parity tiers start
+//!   emitting new keys (`diff=`, …) without an older decoder choking. The Kotlin side
+//!   (`LaunchConfig.kt`) mirrors these exact rules; a JVM test there and the tests here pin the same
+//!   contract from both ends (the [D79](../../docs/decisions.md) mirrored-constants discipline).
+//!
+//! This seam carries **no game logic and never touches the sim** — it shapes a coarse launch intent
+//! into primitives the host maps into an existing `core`/`engine` call. Determinism is unaffected:
+//! a launch config is one-shot match-setup input, not a per-tick sim field.
+
+/// Slot-option wire indices run `0..=2`, matching each gunsmith slot enum's `ALL` order
+/// (`0` = `Standard`, `1` = the `+` trade, `2` = the `-` trade — `core::gunsmith`). Out-of-range
+/// values clamp to `Standard` (`0`) so a malformed wire string degrades to the neutral loadout
+/// rather than failing.
+pub const SLOT_MAX: u8 = 2;
+
+/// Audio gains are carried as integer percents `0..=100` (the wire stays float-free; the consumer
+/// divides by 100.0 into the `f32` gain the audio backend wants).
+pub const GAIN_PCT_MAX: u8 = 100;
+
+/// Look sensitivity is carried as an integer `sensitivity * 100`, mirroring the desktop slider
+/// bounds `0.1..=3.0` (`app::shell::SettingsState::SENS_MIN/MAX`) as `10..=300`.
+pub const SENS_MIN: u16 = 10;
+/// See [`SENS_MIN`].
+pub const SENS_MAX: u16 = 300;
+
+/// The parsed launch payload the Compose shell hands the engine across the Activity boundary.
+///
+/// All fields are primitives (no `engine`/`core` types) so this stays a std-only, host-compiled
+/// seam. The android-gated glue maps `scene` → [`gonedark_engine::Scene`] and the slot indices →
+/// `core::gunsmith::Loadout`; the gains/sensitivity map into the backend audio/input setters.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LaunchConfig {
+    /// The scene token (e.g. `"skirmish"`, `"mission1"`). Mapped via `engine::Scene::parse`; an
+    /// unknown token falls back to the host's default scene.
+    pub scene: String,
+    /// Optic slot index, `0..=`[`SLOT_MAX`].
+    pub optic: u8,
+    /// Barrel slot index, `0..=`[`SLOT_MAX`].
+    pub barrel: u8,
+    /// Magazine slot index, `0..=`[`SLOT_MAX`].
+    pub magazine: u8,
+    /// Master volume percent, `0..=`[`GAIN_PCT_MAX`].
+    pub master_pct: u8,
+    /// SFX volume percent, `0..=`[`GAIN_PCT_MAX`].
+    pub sfx_pct: u8,
+    /// Look sensitivity ×100, [`SENS_MIN`]`..=`[`SENS_MAX`].
+    pub sens_x100: u16,
+    /// Invert the embodied vertical look axis.
+    pub invert_y: bool,
+}
+
+impl Default for LaunchConfig {
+    fn default() -> Self {
+        // Defaults mirror the desktop shell's shipped defaults (app::shell::SettingsState::default)
+        // and the real playable match (Scene::Skirmish — desktop's default boot), so a bare Start
+        // with no extras behaves like the desktop default rather than the canned demo.
+        LaunchConfig {
+            scene: "skirmish".to_string(),
+            optic: 0,
+            barrel: 0,
+            magazine: 0,
+            master_pct: 80,
+            sfx_pct: 80,
+            sens_x100: 100,
+            invert_y: false,
+        }
+    }
+}
+
+/// The `Intent` extra key the Compose shell writes and `android_main` reads. Mirrored verbatim in
+/// `LaunchConfig.kt` (`LaunchConfig.EXTRA_KEY`).
+pub const EXTRA_KEY: &str = "com.jaredhoward.goingdark.LAUNCH_CONFIG";
+
+/// The wire-format version this build emits/understands. Bumped only on a breaking change; the
+/// tolerant decode means additive changes (new keys) do NOT need a bump.
+pub const WIRE_VERSION: u32 = 1;
+
+/// Tolerantly parse the v1 wire string into a [`LaunchConfig`]. Pure + total: every malformed input
+/// degrades to a sensible default, never a panic. Unknown keys are ignored; missing keys keep their
+/// default; out-of-range numbers clamp. See the module docs for the contract.
+pub fn parse_launch_config(raw: &str) -> LaunchConfig {
+    let mut cfg = LaunchConfig::default();
+    for pair in raw.split(';') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = pair.split_once('=') else {
+            continue; // not a key=value token — ignore, stay tolerant
+        };
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            // `v` is advisory: we parse tolerantly regardless, so an unknown version still decodes
+            // as far as it can. (A future breaking format would branch here.)
+            "v" => {}
+            "scene" if !value.is_empty() => cfg.scene = value.to_string(),
+            "opt" => cfg.optic = clamp_u8(value, SLOT_MAX, cfg.optic),
+            "bar" => cfg.barrel = clamp_u8(value, SLOT_MAX, cfg.barrel),
+            "mag" => cfg.magazine = clamp_u8(value, SLOT_MAX, cfg.magazine),
+            "vol" => cfg.master_pct = clamp_u8(value, GAIN_PCT_MAX, cfg.master_pct),
+            "sfx" => cfg.sfx_pct = clamp_u8(value, GAIN_PCT_MAX, cfg.sfx_pct),
+            "sens" => cfg.sens_x100 = clamp_u16(value, SENS_MIN, SENS_MAX, cfg.sens_x100),
+            "invy" => cfg.invert_y = parse_bool(value, cfg.invert_y),
+            _ => {} // unknown key — ignore (forward-compat)
+        }
+    }
+    cfg
+}
+
+/// Parse `value` as a `u8` and clamp to `0..=max`; on parse failure keep `fallback`.
+fn clamp_u8(value: &str, max: u8, fallback: u8) -> u8 {
+    match value.parse::<i64>() {
+        Ok(n) => n.clamp(0, max as i64) as u8,
+        Err(_) => fallback,
+    }
+}
+
+/// Parse `value` as a `u16` and clamp to `min..=max`; on parse failure keep `fallback`.
+fn clamp_u16(value: &str, min: u16, max: u16, fallback: u16) -> u16 {
+    match value.parse::<i64>() {
+        Ok(n) => n.clamp(min as i64, max as i64) as u16,
+        Err(_) => fallback,
+    }
+}
+
+/// Parse a wire bool: `1`/`true` → true, `0`/`false` → false, anything else keeps `fallback`.
+fn parse_bool(value: &str, fallback: bool) -> bool {
+    match value {
+        "1" | "true" => true,
+        "0" | "false" => false,
+        _ => fallback,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_the_skirmish_desktop_default() {
+        let d = LaunchConfig::default();
+        assert_eq!(d.scene, "skirmish");
+        assert_eq!((d.optic, d.barrel, d.magazine), (0, 0, 0));
+        assert_eq!((d.master_pct, d.sfx_pct), (80, 80));
+        assert_eq!(d.sens_x100, 100);
+        assert!(!d.invert_y);
+    }
+
+    #[test]
+    fn empty_or_garbage_yields_default() {
+        assert_eq!(parse_launch_config(""), LaunchConfig::default());
+        assert_eq!(parse_launch_config("   "), LaunchConfig::default());
+        assert_eq!(parse_launch_config("not a config at all"), LaunchConfig::default());
+        assert_eq!(parse_launch_config(";;;==;"), LaunchConfig::default());
+    }
+
+    #[test]
+    fn parses_a_full_v1_string() {
+        let cfg = parse_launch_config("v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1");
+        assert_eq!(cfg.scene, "mission1");
+        assert_eq!((cfg.optic, cfg.barrel, cfg.magazine), (1, 2, 1));
+        assert_eq!((cfg.master_pct, cfg.sfx_pct), (50, 70));
+        assert_eq!(cfg.sens_x100, 250);
+        assert!(cfg.invert_y);
+    }
+
+    #[test]
+    fn missing_keys_keep_defaults() {
+        // Only scene present → every other field stays default (forward-compat: an old emitter).
+        let cfg = parse_launch_config("v=1;scene=skirmish");
+        assert_eq!(cfg.scene, "skirmish");
+        assert_eq!(cfg, LaunchConfig::default());
+    }
+
+    #[test]
+    fn unknown_keys_are_ignored() {
+        // A future tier's key (`diff`) an older decoder doesn't know must not break the rest.
+        let cfg = parse_launch_config("scene=mission1;diff=3;newthing=foo;opt=2");
+        assert_eq!(cfg.scene, "mission1");
+        assert_eq!(cfg.optic, 2);
+        assert_eq!(cfg.barrel, 0); // untouched
+    }
+
+    #[test]
+    fn out_of_range_numbers_clamp() {
+        let cfg = parse_launch_config("opt=9;bar=255;mag=-4;vol=900;sfx=-1;sens=9000");
+        assert_eq!((cfg.optic, cfg.barrel), (SLOT_MAX, SLOT_MAX));
+        assert_eq!(cfg.magazine, 0); // negative clamps to 0
+        assert_eq!(cfg.master_pct, GAIN_PCT_MAX);
+        assert_eq!(cfg.sfx_pct, 0);
+        assert_eq!(cfg.sens_x100, SENS_MAX);
+    }
+
+    #[test]
+    fn sens_below_min_clamps_up() {
+        assert_eq!(parse_launch_config("sens=0").sens_x100, SENS_MIN);
+        assert_eq!(parse_launch_config("sens=5").sens_x100, SENS_MIN);
+    }
+
+    #[test]
+    fn unparseable_numbers_keep_default() {
+        let cfg = parse_launch_config("opt=abc;vol=lots;sens=fast;invy=maybe");
+        assert_eq!(cfg.optic, 0);
+        assert_eq!(cfg.master_pct, 80);
+        assert_eq!(cfg.sens_x100, 100);
+        assert!(!cfg.invert_y);
+    }
+
+    #[test]
+    fn bool_forms() {
+        assert!(parse_launch_config("invy=1").invert_y);
+        assert!(parse_launch_config("invy=true").invert_y);
+        assert!(!parse_launch_config("invy=0").invert_y);
+        assert!(!parse_launch_config("invy=false").invert_y);
+    }
+
+    #[test]
+    fn whitespace_around_pairs_is_tolerated() {
+        let cfg = parse_launch_config(" scene = skirmish ; opt = 1 ");
+        assert_eq!(cfg.scene, "skirmish");
+        assert_eq!(cfg.optic, 1);
+    }
+
+    #[test]
+    fn duplicate_keys_last_wins() {
+        assert_eq!(parse_launch_config("opt=1;opt=2").optic, 2);
+    }
+}

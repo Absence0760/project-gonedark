@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, DEFAULT_SEED};
+use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
 use gonedark_pal::mix::{oneshot_sound, synth_bank, voice_from_cue, Mixer};
 use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Window, MAX_TOUCHES};
 
@@ -79,6 +79,14 @@ fn android_main(app: AndroidApp) {
     let mut rhi: Option<AndroidRhi> = None;
     let mut game: Option<Game> = None;
     let mut last_frame = Instant::now();
+
+    // The Compose shell's launch payload (scene/loadout/prefs), read once off the launching
+    // `Intent` (Compose shell parity, Tier 0). Read here at startup — the engine `Game` is built
+    // lazily on `InitWindow`, possibly after a surface loss/recreate, and reuses this captured
+    // config so every (re)build inside this process is consistent. Absent/malformed → a default
+    // config (Scene::Skirmish, the real match — desktop's default boot), never a crash.
+    let launch = read_launch_config(&app);
+    info!("launch config: scene={:?}", launch.scene);
 
     // On-device frame-rate + sim-checksum heartbeat (Phase 1 exit criterion: "running at
     // target frame rate on a target phone"). Throttled to ~one logcat line per second so it
@@ -147,12 +155,20 @@ fn android_main(app: AndroidApp) {
                                 let (w, h) = window.size();
                                 window.width = w;
                                 window.height = h;
-                                // Build the shared game against the live device. Same seed as
-                                // desktop → the bit-identical deterministic scene.
-                                game = Some(Game::new(
+                                // Build the shared game against the live device, into the scene the
+                                // Compose shell asked for (Tier 0). Same seed as desktop → the
+                                // bit-identical deterministic scene. An unknown scene token falls
+                                // back to the real playable match (Skirmish), matching the desktop
+                                // host's default boot. (Loadout/audio/look prefs the wire also
+                                // carries are owed to the gunsmith/settings integration — for now
+                                // they tolerant-decode to defaults, so `new_scene` fields the neutral
+                                // Standard loadout, byte-identical to the pre-parity boot.)
+                                let scene = Scene::parse(&launch.scene).unwrap_or(Scene::Skirmish);
+                                game = Some(Game::new_scene(
                                     new_rhi.device(),
                                     new_rhi.format(),
                                     DEFAULT_SEED,
+                                    scene,
                                 ));
                                 rhi = Some(new_rhi);
                                 last_frame = Instant::now();
@@ -342,6 +358,87 @@ fn finish_activity(app: &AndroidApp) {
         }
         Ok(())
     });
+}
+
+/// Read the Compose shell's launch-config `Intent` extra ([`crate::launch::EXTRA_KEY`]) off the live
+/// `NativeActivity` and parse it (Compose shell parity, Tier 0). Calls `activity.getIntent()` then
+/// `intent.getStringExtra(KEY)` over JNI — the same attach-and-call discipline as
+/// [`finish_activity`]. **Best-effort and never fatal:** any attach/lookup failure, a missing
+/// intent, or an absent extra is swallowed and yields a default [`crate::launch::LaunchConfig`]
+/// (Scene::Skirmish); a pending JVM exception is cleared so a failed call can't abort the process on
+/// the next JNI op. This is un-constructible glue (no real `JNIEnv`/`Activity`/`Intent` off a
+/// device), so it is exempt from unit coverage; the pure codec it feeds
+/// ([`crate::launch::parse_launch_config`]) is exhaustively host-tested in `crate::launch`.
+fn read_launch_config(app: &AndroidApp) -> crate::launch::LaunchConfig {
+    use jni::objects::{JObject, JString};
+    use jni::{jni_sig, jni_str, JavaVM};
+
+    // SAFETY: the pointers come from `android-activity`'s live `AndroidApp`, valid while the
+    // activity is running (the same handles `finish_activity`/the thermal reader attach through).
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) };
+    let activity_ptr = app.activity_as_ptr() as jni::sys::jobject;
+    let mut wire = String::new();
+    // jni 0.22 attaches via a scoped closure handing back a borrowed `Env`; the `Activity`/`Intent`
+    // refs and every call live inside it. Any failure is swallowed (best-effort, never fatal) and
+    // leaves `wire` empty → a default config.
+    let _ = vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
+        // SAFETY: `activity_ptr` is a live local ref android-activity owns for the call's duration.
+        let activity = unsafe { JObject::from_raw(&*env, activity_ptr) };
+        // Intent intent = activity.getIntent();
+        let intent = match env
+            .call_method(
+                &activity,
+                jni_str!("getIntent"),
+                jni_sig!("()Landroid/content/Intent;"),
+                &[],
+            )
+            .and_then(|v| v.l())
+        {
+            Ok(obj) => obj,
+            Err(_) => {
+                env.exception_clear();
+                return Ok(());
+            }
+        };
+        if intent.is_null() {
+            return Ok(());
+        }
+        // String s = intent.getStringExtra(EXTRA_KEY);
+        let key = env.new_string(crate::launch::EXTRA_KEY)?;
+        let extra = match env
+            .call_method(
+                &intent,
+                jni_str!("getStringExtra"),
+                jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                &[(&key).into()],
+            )
+            .and_then(|v| v.l())
+        {
+            Ok(obj) => obj,
+            Err(_) => {
+                env.exception_clear();
+                return Ok(());
+            }
+        };
+        if extra.is_null() {
+            return Ok(()); // no extra on the intent — default config
+        }
+        // getStringExtra returns an `Object`; checked-cast it to a `JString` (jni 0.22's
+        // `cast_local`), then read it as a Rust `String` (`try_to_string`). A failed cast/read is
+        // swallowed → default config.
+        let jstr = match env.cast_local::<JString>(extra) {
+            Ok(s) => s,
+            Err(_) => {
+                env.exception_clear();
+                return Ok(());
+            }
+        };
+        if let Ok(s) = jstr.try_to_string(&env) {
+            wire = s;
+        }
+        Ok(())
+    });
+    crate::launch::parse_launch_config(&wire)
 }
 
 // ---------------------------------------------------------------------------------------

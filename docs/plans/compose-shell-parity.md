@@ -57,7 +57,18 @@ surfaces, not broken ones.
 
 ---
 
-## 3. Tier 0 — the launch-config seam (foundation, build first)
+## 3. Tier 0 — the launch-config seam (foundation, build first) — ✅ LANDED
+
+> **Status: LANDED.** The seam ships: `pal-android/src/launch.rs` (pure, host-tested codec),
+> `LaunchConfig.kt` (mirror codec), the JNI `Intent`-extra reader in `android_backend.rs`, and
+> `MainActivity` now boots the real **Skirmish** match (desktop's default) via the extra. Wire
+> format v1: `v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0` (tolerant decode).
+> Verified: Rust host tests (dev+release), `cargo ndk` arm64 cdylib compiles, Kotlin
+> `compileDebugKotlin` + `testDebugUnitTest` green. On-device boot-into-Skirmish is the one check
+> owed when a device is available (the JNI reader is un-unit-testable glue, mirroring `thermal`'s
+> sensor and `finish_activity`). The wire carries loadout/audio/look keys too, tolerant-decoded to
+> defaults until the gunsmith/Settings surfaces populate them.
+
 
 A typed launch config that crosses **Compose → `NativeActivity` → `android_main`**, replacing the
 bare `Game::new(…DEFAULT_SEED)`.

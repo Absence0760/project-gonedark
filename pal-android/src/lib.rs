@@ -23,6 +23,10 @@
 // host-compiled and unit-tested in the module; the JNI reader inside it is android-gated.
 pub mod thermal;
 
+// Pure launch-config codec (Compose shell parity, Tier 0). Host-compiled + unit-tested here; the
+// JNI reader that feeds it the live `Intent` extra is android-gated in `android_backend`.
+pub mod launch;
+
 // The Android backend proper — entry point, lifecycle, surface, input, audio, storage. Android-
 // target-only; on a host it is absent and the crate is just the `thermal` mapping seam. The
 // re-export keeps the integrator's `pub use gonedark_pal_android::*;` (see the note at the foot of

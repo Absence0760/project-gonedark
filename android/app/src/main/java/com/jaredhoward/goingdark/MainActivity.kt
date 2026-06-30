@@ -16,9 +16,12 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  * separate activities — the D32 native/in-engine split made concrete: out-of-match chrome is native,
  * the in-match (and in-session) surfaces are in-engine under avatar-only fog (invariant #6).
  *
- * Match configuration is not yet threaded across the seam — Start boots the engine's default match;
- * match-setup-driven config (army / map / mode) is Q5/Phase-3-blocked (phase-4-plan §2/§4). Settings
- * is a no-op placeholder until the Settings surface lands.
+ * Start now threads a [LaunchConfig] across the seam (Compose shell parity, Tier 0): it boots the
+ * real **Skirmish** match (desktop's default boot), not the canned demo. The wire also carries
+ * loadout / audio / look prefs for later tiers (the gunsmith + Settings surfaces) — tolerant-decoded
+ * to defaults until those surfaces populate them. Full match-setup config (army / map / mode) stays
+ * Q5/Phase-3-blocked (phase-4-plan §2/§4). Settings is a no-op placeholder until the Settings
+ * surface lands.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,8 +39,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Hand off to the shared engine: launch the NativeActivity that loads the Rust cdylib. */
+    /**
+     * Hand off to the shared engine: launch the NativeActivity that loads the Rust cdylib, carrying
+     * the [LaunchConfig] as an `Intent` string extra ([LaunchConfig.EXTRA_KEY]) that `android_main`
+     * reads back over JNI. Boots the real Skirmish match; later tiers pass loadout/prefs here.
+     */
     private fun startMatch() {
-        startActivity(Intent(this, NativeActivity::class.java))
+        val config = LaunchConfig(scene = "skirmish")
+        startActivity(
+            Intent(this, NativeActivity::class.java)
+                .putExtra(LaunchConfig.EXTRA_KEY, config.encode()),
+        )
     }
 }
