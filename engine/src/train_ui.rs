@@ -49,6 +49,7 @@ fn unit_for_slot(slot: u8) -> Option<UnitKind> {
         1 => UnitKind::Heavy,
         2 => UnitKind::Tank,
         3 => UnitKind::Medic,
+        4 => UnitKind::AntiTank,
         _ => return None,
     })
 }
@@ -154,7 +155,7 @@ mod tests {
     #[test]
     fn unknown_slot_emits_nothing() {
         let camp = camp_entity(1);
-        for slot in [4u8, 5, 99, 255] {
+        for slot in [5u8, 6, 99, 255] {
             assert!(
                 train_commands(Some(slot), Some(camp)).is_empty(),
                 "slot {slot} is outside the producible vocabulary"
@@ -165,12 +166,14 @@ mod tests {
     #[test]
     fn slots_cover_every_unit_kind_in_declaration_order() {
         // The slot vocabulary must map 1:1 onto UnitKind in declaration order, so the on-screen
-        // index stays a stable, wire-free handle as kinds are added (D65 added Tank/Medic at 2/3).
+        // index stays a stable, wire-free handle as kinds are added (D65 added Tank/Medic at 2/3;
+        // D73 added AntiTank at 4).
         assert_eq!(unit_for_slot(0), Some(UnitKind::Rifleman));
         assert_eq!(unit_for_slot(1), Some(UnitKind::Heavy));
         assert_eq!(unit_for_slot(2), Some(UnitKind::Tank));
         assert_eq!(unit_for_slot(3), Some(UnitKind::Medic));
-        assert_eq!(unit_for_slot(4), None);
+        assert_eq!(unit_for_slot(4), Some(UnitKind::AntiTank)); // D73
+        assert_eq!(unit_for_slot(5), None);
     }
 
     // --- rally seam (quantization; no sim Command exists yet — flagged follow-up) ----------------

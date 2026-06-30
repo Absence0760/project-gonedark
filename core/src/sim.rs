@@ -912,7 +912,10 @@ impl Sim {
 /// pre-P5 snapshot is rejected rather than misparsed against the longer slot layout.
 /// 8→9 by tank embodiment P6 (D55): the per-slot `Weapon` fold grew a loaded-shell tag and the
 /// projectile fold grew a shell tag + splash pair, so a pre-P6 snapshot is rejected, not misparsed.
-const SNAPSHOT_VERSION: u8 = 9;
+/// 9→10 by D73 (anti-tank infantry): the `unit_kind` tag space gained value 4 (`UnitKind::AntiTank`).
+/// The layout width is unchanged (still one tag byte), but bumping deliberately rejects a pre-D73
+/// build's snapshot at the version gate rather than letting it silently misread a tag-4 unit.
+const SNAPSHOT_VERSION: u8 = 10;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.
@@ -1063,6 +1066,7 @@ fn read_unit_kind(r: &mut Reader) -> Result<UnitKind, DeserializeError> {
         1 => UnitKind::Heavy,
         2 => UnitKind::Tank,
         3 => UnitKind::Medic,
+        4 => UnitKind::AntiTank,
         t => return Err(DeserializeError::BadTag(t)),
     })
 }
@@ -1141,6 +1145,7 @@ fn unit_kind_tag(k: UnitKind) -> u8 {
         UnitKind::Heavy => 1,
         UnitKind::Tank => 2,
         UnitKind::Medic => 3,
+        UnitKind::AntiTank => 4,
     }
 }
 

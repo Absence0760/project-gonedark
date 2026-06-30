@@ -43,6 +43,7 @@ fn kind_label(kind: UnitKind) -> &'static str {
         UnitKind::Heavy => "Heavy",
         UnitKind::Tank => "Tank",
         UnitKind::Medic => "Medic",
+        UnitKind::AntiTank => "Anti-Tank", // D73
     }
 }
 

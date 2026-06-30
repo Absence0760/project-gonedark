@@ -234,14 +234,23 @@ pub enum UnitKind {
     Rifleman,
     Heavy,
     /// A produced armoured vehicle — high HP, a hard-hitting gun, and an independently-slewing
-    /// turret (cosmetic, reusing the D55 hull/turret split + tank mesh). For balance in the
-    /// rifle-centric skirmish it is **unarmoured** (no facet immunity): the full armoured + ballistic
-    /// tank, which infantry cannot pen frontally, remains the duel scene's domain until an anti-tank
-    /// counter exists ([D65](../docs/decisions.md)).
+    /// turret (cosmetic, reusing the D55 hull/turret split + tank mesh). It is now a **real armoured
+    /// vehicle** (wave-1 W1: directional facet armour) that small-arms cannot pen frontally — its
+    /// dedicated counter is the [`AntiTank`](UnitKind::AntiTank) infantry, whose penetrating gun
+    /// cracks the frontal facet ([D73](../docs/decisions.md), restoring the armour RPS triangle).
     Tank,
     /// A support unit: it carries no offensive weapon and instead **heals** nearby friendly units
     /// each tick (`crate::heal`). Built from a [`Barracks`](BuildingKind::Barracks).
     Medic,
+    /// Dedicated **anti-tank infantry** (a bazooka / AT team) — the answer to armour ([D73]). Carries
+    /// a slow, penetrating gun (`penetration ≥ TANK_ARMOR_FRONT`) so it cracks a produced
+    /// [`Tank`](UnitKind::Tank)'s frontal facet head-on, but is **fragile** (low HP), **slow**
+    /// (few ready rounds, long cooldown — D67 logistics), and **poor anti-personnel** (so equal-cost
+    /// it loses to massed [`Rifleman`](UnitKind::Rifleman)). Unarmoured infantry; trained from a
+    /// [`Barracks`](BuildingKind::Barracks) like the [`Medic`](UnitKind::Medic). The RPS triangle:
+    /// AT-infantry beats armour, massed infantry beats AT-infantry, armour beats infantry.
+    /// ([D73](../docs/decisions.md).)
+    AntiTank,
 }
 
 /// A constructable building archetype.

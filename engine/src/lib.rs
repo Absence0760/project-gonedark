@@ -378,9 +378,11 @@ fn embodied_proj(width: u32, height: u32) -> Mat4 {
 fn embodied_shows_rifle_viewmodel(kind: UnitKind) -> bool {
     match kind {
         UnitKind::Rifleman => true,
-        // Vehicles have no handheld weapon; the Medic carries no offensive weapon at all (D65) — so
-        // none of these show the rifle viewmodel.
-        UnitKind::Heavy | UnitKind::Tank | UnitKind::Medic => false,
+        // Vehicles have no handheld weapon; the Medic carries no offensive weapon at all (D65); and
+        // the AntiTank team carries a launcher, not a rifle — drawing the rifleman's rifle viewmodel
+        // for it would be wrong, so it shows none until a dedicated AT-launcher viewmodel mesh exists
+        // (flagged follow-up, D73). None of these show the rifle viewmodel.
+        UnitKind::Heavy | UnitKind::Tank | UnitKind::Medic | UnitKind::AntiTank => false,
     }
 }
 
@@ -591,6 +593,7 @@ fn unit_kind_name(k: UnitKind) -> &'static str {
         UnitKind::Heavy => "Heavy",
         UnitKind::Tank => "Tank",
         UnitKind::Medic => "Medic",
+        UnitKind::AntiTank => "Anti-Tank", // D73
     }
 }
 
@@ -695,6 +698,7 @@ fn command_panel_view(
         let mut heavies = 0usize;
         let mut tanks = 0usize;
         let mut medics = 0usize;
+        let mut antitanks = 0usize;
         let mut hp_sum = 0.0f32;
         for &e in &units {
             match world.unit_kind[e.index as usize] {
@@ -702,6 +706,7 @@ fn command_panel_view(
                 UnitKind::Heavy => heavies += 1,
                 UnitKind::Tank => tanks += 1,
                 UnitKind::Medic => medics += 1,
+                UnitKind::AntiTank => antitanks += 1,
             }
             hp_sum += fixed_to_f32(world.health[e.index as usize].fraction());
         }
@@ -719,6 +724,7 @@ fn command_panel_view(
             (heavies, "Heavy"),
             (tanks, "Tank"),
             (medics, "Medic"),
+            (antitanks, "Anti-Tank"),
         ] {
             if count > 0 {
                 lines.push(PanelLine::new(format!("{count}x {label}"), LineStyle::Normal));
