@@ -2,11 +2,13 @@
 # Going Dark — non-interactive on-device FPS + thermal capture (Phase 3 on-device perf validation).
 #
 # Captures the live in-app heartbeat the running engine logs once per second
-# (`heartbeat: <fps> fps | frame <n> | tick <t> | checksum <c>`) plus the startup thermal line
-# (`thermal: initial state <S> | power <P>`), for a bounded window, and SUMMARISES sustained FPS
-# (min/median/max), the tick-count progression, and the observed thermal state(s). It flags
-# whether sustained FPS held at/near the 60 fps target, and any thermal escalation off Nominal —
-# the datum that would reopen the D21 dual-rate question on mid-range silicon.
+# (`heartbeat: <fps> fps | frame <n> | tick <t> | thermal <State> | checksum <c>`), for a bounded
+# window, and SUMMARISES sustained FPS (min/median/max), the tick-count progression, and the
+# thermal-state *progression across the window*. It flags whether sustained FPS held at/near the
+# 60 fps target, and any thermal escalation off Nominal mid-capture — the datum that would reopen
+# the D21 dual-rate question on mid-range silicon. The per-second `thermal <State>` field is the
+# primary source; if it's absent (an older APK), it falls back to the one-time startup
+# `thermal: initial state <S> | power <P>` line.
 #
 # Unlike `pnpm android:logcat` (which tails interactively until Ctrl-C), this is a one-shot
 # capture+summary: it clears logcat, records for DURATION seconds, then prints the digest and exits.
@@ -115,10 +117,9 @@ read -r FPS_N FPS_MIN FPS_MED FPS_MAX FPS_MEAN < <(
 TICK_FIRST="$(grep -F 'heartbeat:' "$LOGFILE" | grep -oE 'tick [0-9]+' | head -1 | awk '{print $2}')"
 TICK_LAST="$(grep -F 'heartbeat:' "$LOGFILE" | grep -oE 'tick [0-9]+' | tail -1 | awk '{print $2}')"
 
-# Thermal: the states observed (logged at startup as `thermal: initial state <S> ...`). The
-# heartbeat doesn't re-log thermal, so escalation detection is limited to the startup reading(s)
-# present in this window — but ANY non-Nominal state is flagged.
-THERMAL_STATES="$(grep -F 'thermal:' "$LOGFILE" | grep -oE 'state [A-Za-z]+' | awk '{print $2}' | sort -u | paste -sd, -)"
+# Thermal: prefer the per-second `thermal <State>` field on the heartbeat lines (in capture order
+# so escalation across the window is visible); fall back to the one-time startup `thermal:` line.
+HB_THERMAL="$(grep -F 'heartbeat:' "$LOGFILE" | grep -oE 'thermal [A-Za-z]+' | awk '{print $2}')"
 
 echo
 echo "== FPS over ${DURATION}s ($FPS_N heartbeats, target ${TARGET_FPS} fps) =="
@@ -141,12 +142,32 @@ awk -v med="$FPS_MED" -v mn="$FPS_MIN" -v t="$TARGET_FPS" 'BEGIN {
 
 echo
 echo "== thermal =="
-if [[ -z "$THERMAL_STATES" ]]; then
-	echo "   (no thermal line in this window — it logs at engine startup; restart the engine"
-	echo "    inside the capture window to record it)"
-elif [[ "$THERMAL_STATES" == "Nominal" ]]; then
-	echo "   state(s): Nominal — no thermal escalation observed."
+if [[ -n "$HB_THERMAL" ]]; then
+	# Per-second field present (preferred): report the progression across the capture window.
+	T_FIRST="$(printf '%s\n' "$HB_THERMAL" | head -1)"
+	T_LAST="$(printf '%s\n' "$HB_THERMAL" | tail -1)"
+	# Collapse consecutive repeats into a readable progression (e.g. Nominal -> Fair -> Serious).
+	T_SEQ="$(printf '%s\n' "$HB_THERMAL" | awk '$0 != prev { printf "%s%s", sep, $0; sep = " -> "; prev = $0 } END { print "" }')"
+	# Any sample off Nominal is an escalation — the D21 dual-rate datum.
+	T_HOT="$(printf '%s\n' "$HB_THERMAL" | grep -vx 'Nominal' | sort -u | paste -sd, - || true)"
+	echo "   per-second progression: $T_SEQ"
+	echo "   first -> last:          $T_FIRST -> $T_LAST  (over $HEARTBEATS heartbeats)"
+	if [[ -z "$T_HOT" ]]; then
+		echo "   held Nominal across the whole window — no thermal escalation observed."
+	else
+		echo "   !! thermal escalation observed mid-capture: reached $T_HOT (off Nominal)." >&2
+		echo "      This is the datum that reopens D21 (dual-rate) on this device." >&2
+	fi
 else
-	echo "   state(s): $THERMAL_STATES" >&2
-	echo "   !! thermal escalation off Nominal observed — the datum that reopens D21 (dual-rate)." >&2
+	# Fallback: the one-time startup `thermal:` line (an older APK without the heartbeat field).
+	START_THERMAL="$(grep -F 'thermal:' "$LOGFILE" | grep -oE 'state [A-Za-z]+' | awk '{print $2}' | sort -u | paste -sd, -)"
+	if [[ -z "$START_THERMAL" ]]; then
+		echo "   (no thermal data in this window — neither a per-second heartbeat field nor the"
+		echo "    one-time startup line; rebuild + reinstall the app to get the heartbeat field)"
+	elif [[ "$START_THERMAL" == "Nominal" ]]; then
+		echo "   startup state: Nominal (per-second field absent — older APK; reinstall for progression)."
+	else
+		echo "   startup state(s): $START_THERMAL (per-second field absent — older APK)." >&2
+		echo "   !! non-Nominal at startup — reinstall for mid-capture escalation tracking." >&2
+	fi
 fi
