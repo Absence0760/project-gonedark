@@ -116,8 +116,13 @@ pub const PER_POINT_INCOME: i64 = 2;
 /// raze, not something a stray squad deletes in passing.
 const CAMP_HP: i32 = 1000;
 
-// --- New content (D65): Tank, Medic, Barracks. A playtest BASELINE only — NOT D30-measured (D30
-// covers Rifleman/Heavy); dial against a future `--metrics` pass. Same integer/fixed-point rules. ---
+// --- New content (D65): Tank, Medic, Barracks. The Tank's cost/armour/gun is now D30-MEASURED and
+// locked (wave-2 W7): the sim-runner `--metrics` harness (`tank_vs_infantry_outcome` / `tank_duel`,
+// summary block) and the `produced_tank_cost_parity_is_measured` test below pin the equal-cost
+// outcomes — at its 360 price the armoured tank hard-counters today's infantry (their penetration-0
+// fire bounces every facet, so it wins the equal-resource trade for ZERO loss), a rock-paper-scissors
+// GAP closed by the dedicated AT unit ([D73]), not by a price tweak. Medic + Barracks remain a playtest
+// BASELINE (NOT yet D30-measured); dial against a future `--metrics` pass. Same integer/fixed-point rules. ---
 
 /// Cost to produce a [`Tank`](UnitKind::Tank) — a heavy vehicle, the priciest unit. 360 ≈ 3.6
 /// Riflemen (~6 s of base income): massing armour is a real commitment.
@@ -1622,6 +1627,62 @@ mod tests {
                 Fixed::ZERO,
                 "a zero-penetration (infantry) shot bounces off every facet of the produced tank",
             );
+        }
+    }
+
+    /// **MEASURED produced-tank cost-parity (D30 discipline, wave-2 W7).** The companion to the
+    /// sim-runner `--metrics` outcome locks (`produced_tank_hard_counters_infantry_at_equal_cost`,
+    /// `produced_tank_duel_is_a_frontal_stalemate_but_a_flank_kills`): this pins, in `core`, the
+    /// cost + stat block those measured outcomes flow from, and the load-bearing *mechanism* that
+    /// makes the tank's price honest against today's roster.
+    ///
+    /// The verdict the harness measured: at its 360 price the armoured tank is a **hard counter** to
+    /// every existing infantry archetype — it wins the equal-resource trade taking ZERO damage,
+    /// because all infantry fire at `penetration == 0`, which bounces every tank facet
+    /// (`2·0 ≤ a`). No budget buys an infantry shot that pens, so this is a rock-paper-scissors GAP,
+    /// not a cost imbalance a price tweak could fix; the intended counter is the dedicated AT unit
+    /// ([D73]), and the tank's cost is therefore held. These assertions lock the inputs so a stray
+    /// edit (a price drop, an armour/penetration change) that would silently re-break that measured
+    /// balance trips here as well as in the sim-runner harness.
+    #[test]
+    fn produced_tank_cost_parity_is_measured() {
+        use crate::combat::facing_penetration_multiplier;
+        use crate::trig::Angle;
+
+        // The priciest unit (the armour/gun commitment), priced against the bodies a budget also buys.
+        // Bind the consts to locals so clippy doesn't flag the comparison as a constant assertion
+        // (the pattern `balance_baseline_reads_in_seconds` already uses).
+        let (tank_cost, heavy_cost, rifle_cost) = (TANK_COST, HEAVY_COST, RIFLEMAN_COST);
+        assert_eq!(tank_cost, 360, "produced tank costs 360 (measured cost-parity, D30/W7)");
+        assert!(tank_cost > heavy_cost && tank_cost > rifle_cost, "the tank is the priciest unit");
+        // An equal budget buys whole numbers of each archetype — the equal-cost trade the harness runs.
+        assert_eq!(360 / RIFLEMAN_COST, 3, "360 buys 1 tank or 3 riflemen");
+        assert_eq!(360 / HEAVY_COST, 1, "360 buys 1 tank or 1 heavy");
+
+        // The stat block the measured outcome flows from: 300 HP + a duel-class penetrating gun (18).
+        let (th, tw) = unit_stats(UnitKind::Tank);
+        assert_eq!(th, Health::full(Fixed::from_int(300)), "tank 300 HP (the wall the harness measured)");
+        assert_eq!(tw.penetration, Fixed::from_int(18), "tank gun pen 18 (bounces a 40-front, pens 16/8)");
+
+        // The load-bearing D30 mechanism: EVERY existing infantry weapon fires at penetration 0, and a
+        // pen-0 shot bounces every facet of the tank's armour → infantry deal literally zero damage, at
+        // any cost or count. This is why cost-parity vs infantry is a RPS gap (D73), not a price knob.
+        let armor = unit_armor(UnitKind::Tank);
+        for inf in [UnitKind::Rifleman, UnitKind::Heavy] {
+            let (_h, w) = unit_stats(inf);
+            assert_eq!(w.penetration, Fixed::ZERO, "{inf:?} fires at penetration 0 (cannot pen armour)");
+            for dir in [
+                Vec2::new(Fixed::ONE, Fixed::ZERO),
+                Vec2::new(-Fixed::ONE, Fixed::ZERO),
+                Vec2::new(Fixed::ZERO, Fixed::ONE),
+                Vec2::new(Fixed::ZERO, -Fixed::ONE),
+            ] {
+                assert_eq!(
+                    facing_penetration_multiplier(dir, Angle(0), w.penetration, armor),
+                    Fixed::ZERO,
+                    "{inf:?} deals ZERO damage to the produced tank on every facet — the measured hard counter",
+                );
+            }
         }
     }
 }
