@@ -1,7 +1,8 @@
 // On-screen FPS touch-control HUD shader (the COD-style embodied controls) — a screen-space LOAD
 // pass drawn over the dark embodied frame, Android only. One alpha-blended quad per control:
 // the floating move-stick base (ring) + thumb (disc), and the Fire / Crouch / Reload / Surface
-// buttons (a faint disc fill + outline ring + a procedural icon). Glyphs are shader-drawn shape
+// buttons — plus an Aim-down-sight (ADS) button for a scope-capable avatar (a faint disc fill +
+// outline ring + a procedural icon). Glyphs are shader-drawn shape
 // ids — no binary art assets (real Inkscape icons are a later polish). Per-axis half-size keeps
 // the circles round regardless of viewport aspect.
 //
@@ -11,7 +12,7 @@ struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) local: vec2<f32>,              // quad corner in [-1, 1] (interpolated)
-    @location(2) @interpolate(flat) shape: f32, // 0 ring, 1 disc, 2 fire, 3 crouch, 4 reload, 5 surface
+    @location(2) @interpolate(flat) shape: f32, // 0 ring, 1 disc, 2 fire, 3 crouch, 4 reload, 5 surface, 6 aim
 };
 
 @vertex
@@ -56,7 +57,7 @@ fn chevron(p: vec2<f32>, dir: f32) -> f32 {
     return arm * inside;
 }
 
-// Per-button icon mask (shapes 2..5). Returns [0,1] coverage of the glyph strokes.
+// Per-button icon mask (shapes 2..6). Returns [0,1] coverage of the glyph strokes.
 fn button_icon(p: vec2<f32>, shape: f32) -> f32 {
     if shape < 2.5 {
         // FIRE: a crosshair — thin plus inside the circle + a center dot.
@@ -75,9 +76,16 @@ fn button_icon(p: vec2<f32>, shape: f32) -> f32 {
         // Open a gap around the top (+y ≈ +pi/2): suppress the band there.
         let gap = smoothstep(0.5, 0.9, abs(ang - PI * 0.5) / PI);
         return band * gap;
-    } else {
+    } else if shape < 5.5 {
         // SURFACE: an upward chevron (eject up, back to command).
         return chevron(p, 1.0);
+    } else {
+        // AIM (ADS): a sniper-scope reticle — a thin annulus + a fine full-width crosshair through
+        // the center, distinct from FIRE's short, dotted crosshair. Reads as "look down the scope".
+        let reticle = ring(p, 0.52, 0.66);
+        let vbar = step(abs(p.x), 0.05) * (1.0 - smoothstep(0.7 - AA, 0.7 + AA, abs(p.y)));
+        let hbar = step(abs(p.y), 0.05) * (1.0 - smoothstep(0.7 - AA, 0.7 + AA, abs(p.x)));
+        return clamp(max(reticle, max(vbar, hbar)), 0.0, 1.0);
     }
 }
 

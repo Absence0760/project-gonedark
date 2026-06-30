@@ -35,6 +35,11 @@ const FIRE_R_FRAC: f32 = 0.095;
 /// The Surface (eject) button is smaller and tucked in the top corner — a deliberate, not a
 /// twitch, action.
 const SURFACE_R_FRAC: f32 = 0.055;
+/// The aim-down-sight (ADS) button is a standard-size disc, sat just above-left of Fire so the
+/// right thumb can hold it while a left finger drives the stick (the sniper/zoom, wave-2 W6). Only
+/// drawn/honored for a unit that actually has a gun-sight (the host gates the visual + the zoom on
+/// `has_scope`, exactly as W2's `scope::zoom_active` does).
+const AIM_R_FRAC: f32 = 0.072;
 /// Full-deflection radius of the floating move stick, as a fraction of min(viewport).
 const STICK_RADIUS_FRAC: f32 = 0.16;
 /// Converts a look-region finger's pixel drag this frame into the look-axis units
@@ -93,6 +98,10 @@ pub struct TouchLayout {
     pub crouch: Circle,
     pub reload: Circle,
     pub surface: Circle,
+    /// Aim-down-sight (ADS) button: HELD = zoom (the sniper scope), like Fire. Its hit shape always
+    /// exists in the layout; whether it does anything is gated host-side by `has_scope` (a unit with
+    /// an independent turret), so an infantry avatar's press is inert — the W2 turret/tank gate.
+    pub aim: Circle,
 }
 
 impl TouchLayout {
@@ -105,6 +114,7 @@ impl TouchLayout {
         let br = BUTTON_R_FRAC * m;
         let fire_r = FIRE_R_FRAC * m;
         let surface_r = SURFACE_R_FRAC * m;
+        let aim_r = AIM_R_FRAC * m;
         TouchLayout {
             width: w,
             height: h,
@@ -145,6 +155,13 @@ impl TouchLayout {
                 cy: 0.08 * h,
                 r: surface_r,
             },
+            // Just above-left of Fire: the right thumb can hold ADS (zoom) while the left finger
+            // drives the stick and a second right-thumb tap hits Fire. Clear of Fire and Crouch.
+            aim: Circle {
+                cx: 0.70 * w,
+                cy: 0.62 * h,
+                r: aim_r,
+            },
         }
     }
 }
@@ -165,6 +182,8 @@ pub struct TouchHud {
     pub crouch_pressed: bool,
     pub reload_pressed: bool,
     pub surface_pressed: bool,
+    /// Aim-down-sight button held this frame (the press flash — held like Fire, not an edge).
+    pub aim_pressed: bool,
 }
 
 /// The embodied control intents derived from this frame's touches — consumed by `Game::frame`
@@ -179,6 +198,11 @@ pub struct TouchOutput {
     pub look_delta: (f32, f32),
     /// Fire button held (auto-fire while down).
     pub fire: bool,
+    /// Aim-down-sight button **held** this frame (the zoom is held, not an edge — the level signal
+    /// the desktop right-mouse `InputFrame.aim` carries). The host feeds this to `scope::zoom_active`,
+    /// which itself gates on `has_scope` (the W2 turret/tank gate), so it is inert for a scope-less
+    /// avatar even though the button is always hit-tested here.
+    pub aim: bool,
     /// Crouch button press *edge* this frame (the engine flips posture off authoritative sim state).
     pub crouch_edge: bool,
     /// Reload button press edge this frame.
@@ -297,6 +321,8 @@ impl TouchControls {
 
         // --- Buttons: pressed = an UNOWNED finger inside the circle; edges vs last frame. ---
         let fire = self.button_pressed(&layout.fire, touches);
+        // ADS is HELD (the zoom level signal), exactly like Fire — no edge detection.
+        let aim = self.button_pressed(&layout.aim, touches);
         let crouch = self.button_pressed(&layout.crouch, touches);
         let reload = self.button_pressed(&layout.reload, touches);
         let surface = self.button_pressed(&layout.surface, touches);
@@ -305,6 +331,7 @@ impl TouchControls {
             move_axis,
             look_delta,
             fire,
+            aim,
             crouch_edge: crouch && !self.prev_crouch,
             reload_edge: reload && !self.prev_reload,
             surface_edge: surface && !self.prev_surface,
@@ -316,6 +343,7 @@ impl TouchControls {
                 crouch_pressed: crouch,
                 reload_pressed: reload,
                 surface_pressed: surface,
+                aim_pressed: aim,
             },
         };
 
@@ -338,6 +366,7 @@ impl TouchControls {
     #[inline]
     fn on_any_button(&self, layout: &TouchLayout, x: f32, y: f32) -> bool {
         layout.fire.contains(x, y)
+            || layout.aim.contains(x, y)
             || layout.crouch.contains(x, y)
             || layout.reload.contains(x, y)
             || layout.surface.contains(x, y)
@@ -420,6 +449,62 @@ mod tests {
         assert!(out.hud.fire_pressed);
         let out = tc.update(&l, &[t(3, fx, fy)]);
         assert!(out.fire, "still firing on the next held frame");
+    }
+
+    #[test]
+    fn aim_button_is_held_not_edge_like_fire() {
+        // ADS is the zoom level signal — true for as long as the finger is down, never a one-shot.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        let (ax, ay) = center(&l.aim);
+        let out = tc.update(&l, &[t(8, ax, ay)]);
+        assert!(out.aim, "aim is true while the ADS button is held");
+        assert!(out.hud.aim_pressed, "the press flash tracks the held button");
+        let out = tc.update(&l, &[t(8, ax, ay)]);
+        assert!(out.aim, "still aiming on the next held frame (no edge dropout)");
+        // Releasing drops ADS the same frame.
+        let out = tc.update(&l, &[]);
+        assert!(!out.aim, "releasing the button releases the zoom");
+        assert!(!out.hud.aim_pressed);
+    }
+
+    #[test]
+    fn a_touch_outside_the_aim_button_does_not_hold_aim() {
+        let l = layout();
+        let mut tc = TouchControls::new();
+        // A finger in the bare look region (clear of every button) never holds ADS.
+        let p = (l.look_zone.x0 + 250.0, 90.0);
+        assert!(!l.aim.contains(p.0, p.1), "precondition: point is outside the ADS button");
+        let out = tc.update(&l, &[t(1, p.0, p.1)]);
+        assert!(!out.aim, "only a touch inside the ADS circle holds aim");
+    }
+
+    #[test]
+    fn aim_finger_is_not_claimed_as_look_and_does_not_steal_fire_or_move() {
+        // The load-bearing isolation case: hold ADS with one right-thumb finger while the OTHER
+        // controls keep working — the ADS finger must not also drive the look drag, and it must not
+        // swallow the move stick or the Fire button.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        let (ax, ay) = center(&l.aim);
+        let (fx, fy) = center(&l.fire);
+        let stick_o = (60.0, l.stick_zone.y0 + 60.0);
+
+        // Establish stick + an ADS hold (frame 1).
+        tc.update(&l, &[t(1, stick_o.0, stick_o.1), t(2, ax, ay)]);
+        // Frame 2: deflect the stick, drag the ADS finger, and add a Fire finger — all independent.
+        let out = tc.update(
+            &l,
+            &[
+                t(1, stick_o.0, stick_o.1 + l.stick_radius), // full down
+                t(2, ax + 40.0, ay),                         // ADS finger dragged
+                t(3, fx, fy),                                // fire
+            ],
+        );
+        assert!(out.aim, "ADS stays held across the drag");
+        assert_eq!(out.look_delta, (0.0, 0.0), "the ADS finger never drives the look region");
+        assert!(out.move_axis.1 > 0.99, "the move stick still reads full forward");
+        assert!(out.fire, "and the trigger still fires — ADS didn't swallow it");
     }
 
     #[test]
@@ -522,7 +607,7 @@ mod tests {
     #[test]
     fn layout_buttons_sit_inside_the_viewport() {
         let l = TouchLayout::new(1920, 1080);
-        for c in [l.fire, l.crouch, l.reload, l.surface] {
+        for c in [l.fire, l.aim, l.crouch, l.reload, l.surface] {
             assert!(c.cx - c.r >= 0.0 && c.cx + c.r <= l.width, "button within width");
             assert!(c.cy - c.r >= 0.0 && c.cy + c.r <= l.height, "button within height");
         }
