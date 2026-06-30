@@ -48,15 +48,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     return vec4<f32>(in.color, 1.0);
 }
 
-// ---- ground fill (procedural tonal variation under the grid) ----------------------------------
+// ---- ground fill (procedural TACTICAL MAP under the grid) -------------------------------------
 //
 // A single large world-space quad drawn FIRST (under the grid lines + units) so the top-down floor
-// is grounded terrain rather than a flat slate fill. It samples NO texture (the command pass's
-// `terrain::draw` has no &Queue to upload one without touching lib.rs) — instead it derives a gentle
-// LARGE-SCALE tonal variation procedurally from world position plus a soft radial vignette, kept
-// subtle so the grid stays readable and units keep popping. Pure render derivation: no sim, no fog,
-// no intel (invariant #6). Base palette aligned to the command-view clear (gonedark_render CLEAR_LIT
-// ≈ 0.02/0.03/0.05) and the cool theme slate.
+// reads as a *designed tactical map* — a topographic, sectored military board — rather than a flat
+// slate fill. It samples NO texture (the command pass's `terrain::draw` has no &Queue to upload one
+// without touching lib.rs); everything is derived procedurally from world position, so it is
+// identical every frame regardless of what is on the map. Pure render derivation: no sim state, no
+// fog, no intel (invariant #6). All layers stay DARK / LOW-contrast / LOW-saturation so units,
+// selection rims, control rings, fog and the marquee box keep popping cleanly on top — the map
+// recedes, it never competes. Base palette aligned to the command clear (CLEAR_LIT ≈ 0.02/0.03/0.05)
+// and the cool theme slate (deep blue-grey INK/PANEL family).
+//
+// Four cooperating layers, all world-space so they pan/frame with the camera:
+//   1. a smooth procedural ELEVATION field (the single source of truth for shading + contours);
+//   2. broad two-tone terrain ZONES (a high-ground sector vs a low basin) for a sense of *place*;
+//   3. topographic CONTOUR lines read straight off the elevation field (the "military map" read),
+//      with heavier index contours every few steps and constant ~1px width via screen derivatives;
+//   4. a framing radial VIGNETTE that darkens the surround and focuses the play space.
 
 struct GroundOut {
     @builtin(position) clip_pos: vec4<f32>,
@@ -72,36 +81,67 @@ fn vs_ground(@location(0) world: vec2<f32>) -> GroundOut {
     return out;
 }
 
+// Smooth, alias-free procedural elevation at a world point, normalized to ~[-1, 1]. A few
+// low-frequency, mutually-rotated sinusoids sum into broad rolling relief (ridges + hollows). This
+// is the ONE source for both the tonal shading and the contour lines below, so the contours hug the
+// shading exactly like a real topographic map. Low frequencies => only a couple of swells cross the
+// ±40 framing => the relief reads as region-scale terrain, not noise.
+fn elevation(p: vec2<f32>) -> f32 {
+    let h = sin(p.x * 0.045 + 0.7) * cos(p.y * 0.039 - 0.3)
+        + 0.60 * sin(p.x * 0.021 - p.y * 0.018 + 1.7)
+        + 0.50 * cos(p.y * 0.030 + p.x * 0.013);
+    return clamp(h / 2.10, -1.0, 1.0);
+}
+
+// One topographic contour layer: a constant-width bright line everywhere `elev` crosses a multiple
+// of `1/bands`. `tri` is the triangle-wave distance to the nearest band edge (0 on a contour, rising
+// between); dividing the smoothstep edge by the screen-space derivative `fwidth` holds every line at
+// ~`px` pixels wide no matter the local slope — wide-spaced on flats, tight on steeps, exactly like
+// a real map. Returns 0..1 line coverage.
+fn contour(elev: f32, bands: f32, px: f32) -> f32 {
+    let bv = elev * bands;
+    let tri = 0.5 - abs(fract(bv) - 0.5);
+    let w = max(fwidth(bv), 1e-4);
+    return 1.0 - smoothstep(0.0, w * px, tri);
+}
+
 @fragment
 fn fs_ground(in: GroundOut) -> @location(0) vec4<f32> {
     let p = in.world;
 
-    // Macro tonal variation: a few low-frequency, mutually-rotated sinusoids sum into smooth rolling
-    // blobs — a cheap, alias-free stand-in for large-scale terrain mottling (lighter rises, darker
-    // hollows) so the board has region-scale depth rather than reading as one flat slate. The
-    // frequencies are low enough that a couple of broad swells cross the ±40 framing. Norm ~[-1,1].
-    let macro_n = sin(p.x * 0.052 + 0.7) * cos(p.y * 0.044 - 0.3)
-        + 0.55 * sin(p.x * 0.024 - p.y * 0.020)
-        + 0.45 * cos(p.y * 0.034 + p.x * 0.015);
-    let mottle = clamp(macro_n / 2.0, -1.0, 1.0);
+    // (1) Elevation field — drives both the shading and the contours so they agree.
+    let elev = elevation(p);
 
-    // Fine grain: a higher-frequency, low-amplitude ripple so the surface isn't dead-flat up close —
-    // well below the grid/unit contrast, just enough to texture the fill.
+    // (2) Broad terrain ZONES: a separate ultra-low-frequency field carves the board into a couple
+    // of broad sectors (high ground vs low basin), smoothstep-blended so the boundary is a soft
+    // tonal gradient, never a hard seam. Very low contrast — it gives the board *place*, not intel.
+    let zone_f = sin(p.x * 0.018 - 0.4) + cos(p.y * 0.015 + 0.9) + 0.70 * sin((p.x + p.y) * 0.011);
+    let zone = smoothstep(-0.85, 0.85, zone_f); // 0 = low basin, 1 = high-ground sector
+
+    // Fine grain so the surface isn't dead-flat up close — well below grid/unit contrast.
     let grain = sin(p.x * 0.33 + p.y * 0.21) * cos(p.y * 0.29 - p.x * 0.17);
 
-    // Soft radial vignette: the field falls off toward the framed edges for depth + centre focus.
-    // Keyed off world distance from the origin (the command camera frames ±40 around it). Stronger
-    // than before so the board reads as a lit centre fading to a dark surround, but the floor below
-    // keeps every pixel cold-grey, never near-black.
-    let r = length(p) / 60.0;
-    let vignette = clamp(r * r, 0.0, 1.0) * 0.36;
+    // (3) CONTOURS: faint minor lines plus heavier index lines (~every 3rd step), topo-map style.
+    let minor_c = contour(elev, 7.0, 1.3);
+    let index_c = contour(elev, 7.0 / 3.0, 1.4);
+
+    // (4) Framing VIGNETTE: the field falls off toward the framed edges so the board reads as a lit
+    // centre fading into a dark surround (the camera frames ±40 about the origin). A floor below
+    // keeps even the corners cold-grey, never near-black.
+    let r = length(p) / 52.0;
+    let vignette = clamp(r * r, 0.0, 1.0) * 0.52;
 
     // Cold blue-grey base just above the INK clear — blue leads, low saturation so units/icons pop.
-    // Mottle brightens the rises / darkens the hollows; the vignette subtracts a small cold amount at
-    // the edges; the grain adds a faint texture. A floor keeps it from sinking toward the dark bucket.
-    let base = vec3<f32>(0.031, 0.042, 0.062);
-    let lit = base * (1.0 + mottle * 0.46 + grain * 0.05)
-        - vignette * vec3<f32>(0.013, 0.016, 0.024);
-    let col = max(lit, vec3<f32>(0.017, 0.023, 0.034));
+    let base = vec3<f32>(0.030, 0.041, 0.061);
+    // Zone tint: high-ground sector a touch brighter & cooler, basin a touch darker. Tiny deltas.
+    let zone_tint = mix(vec3<f32>(-0.005, -0.005, -0.006), vec3<f32>(0.007, 0.009, 0.013), zone);
+    // Gentle elevation shading (rises lighter, hollows darker) + the fine grain.
+    var col = (base + zone_tint) * (1.0 + elev * 0.11 + grain * 0.045);
+    // Contour brightening: cool, faint for minor, a touch stronger for the index lines.
+    col = col + minor_c * vec3<f32>(0.016, 0.021, 0.030)
+        + index_c * vec3<f32>(0.022, 0.028, 0.040);
+    // Subtract the cold framing vignette, then floor so the surround stays a deep cold grey.
+    col = col - vignette * vec3<f32>(0.017, 0.021, 0.031);
+    col = max(col, vec3<f32>(0.013, 0.018, 0.027));
     return vec4<f32>(col, 1.0);
 }

@@ -41,12 +41,24 @@ pub const GRID_SPACING: f32 = 8.0;
 const MINOR_HALF: f32 = 0.055;
 
 /// Half-thickness (world units) of a major grid line (every [`MAJOR_EVERY`] cells, and the axes).
-/// Distinctly heavier than [`MINOR_HALF`] (~3x) so the eye chunks the field into clear blocks — the
+/// Distinctly heavier than [`MINOR_HALF`] (~4x) so the eye chunks the field into clear blocks — the
 /// major tier carries the structural read, the minor tier only subdivides it.
-const MAJOR_HALF: f32 = 0.17;
+const MAJOR_HALF: f32 = 0.21;
 
 /// Every Nth line (counting out from the origin) is drawn as a heavier "major" line.
 const MAJOR_EVERY: i32 = 4;
+
+/// Half-length (world units) of each arm of a registration cross drawn at a major×major
+/// intersection — a small "+" survey mark, like the grid ticks on a military map. Short so the cross
+/// reads as a deliberate node at the junction, not another full line.
+const TICK_HALF_LEN: f32 = 1.15;
+
+/// Half-thickness (world units) of a registration-cross arm. Between minor and major thickness.
+const TICK_HALF_THICK: f32 = 0.12;
+
+/// Registration-cross color — clearly brighter than [`MAJOR_COLOR`] (still cold, low-saturation,
+/// well under the unit/selection brightness) so the surveyed junctions read as intentional marks.
+const TICK_COLOR: [f32; 3] = [0.255, 0.305, 0.385];
 
 /// A minor grid line color — a cold, low-saturation slate pulled *below* the theme [`HAIRLINE`] so
 /// the subdivisions sit just above the ground fill and recede; the major tier, not this, structures
@@ -57,7 +69,7 @@ const MINOR_COLOR: [f32; 3] = [0.072, 0.092, 0.130];
 
 /// A major grid line color — clearly brighter than minor (a cold blue-grey, blue leading, still low
 /// saturation) so the larger blocks read as the map's structure without competing with unit bodies.
-const MAJOR_COLOR: [f32; 3] = [0.175, 0.215, 0.295];
+const MAJOR_COLOR: [f32; 3] = [0.205, 0.250, 0.335];
 
 /// One ground-grid line as an axis-aligned world rectangle (center + half-extents + color). Pure
 /// CPU data produced by [`grid_lines`]; converted to a [`LineInstance`] for upload.
@@ -162,6 +174,55 @@ pub fn grid_lines(half_extent: f32, spacing: f32) -> Vec<GridLine> {
             b,
             major,
         });
+    }
+    out
+}
+
+/// Build the registration cross-marks: a small "+" survey mark at every major×major grid
+/// intersection (the origin and every [`MAJOR_EVERY`]th line either way), giving the lattice precise,
+/// surveyed nodes like a military map's coordinate ticks. Pure (no GPU, no sim, no fog) — a fixed
+/// lattice keyed only off the world extent, identical every frame. Each cross is two short
+/// perpendicular [`GridLine`] arms (horizontal then vertical) coloured [`TICK_COLOR`] so the junctions
+/// read above the major lines they sit on. Drawn AFTER [`grid_lines`] (opaque REPLACE) so the marks
+/// win at the intersection. Marks are flagged `major` (they belong to the structural tier).
+pub fn tick_marks(half_extent: f32, spacing: f32) -> Vec<GridLine> {
+    let spacing = spacing.max(0.5);
+    let half_extent = half_extent.max(spacing);
+    let count = (half_extent / spacing).floor() as i32;
+
+    // The major line indices within the extent (origin + every MAJOR_EVERY-th, both directions).
+    let majors: Vec<f32> = (-count..=count)
+        .filter(|&i| is_major(i))
+        .map(|i| i as f32 * spacing)
+        .collect();
+
+    let [r, g, b] = TICK_COLOR;
+    let mut out = Vec::with_capacity(majors.len() * majors.len() * 2);
+    for &cy in &majors {
+        for &cx in &majors {
+            // Horizontal arm.
+            out.push(GridLine {
+                cx,
+                cy,
+                hw: TICK_HALF_LEN,
+                hh: TICK_HALF_THICK,
+                r,
+                g,
+                b,
+                major: true,
+            });
+            // Vertical arm.
+            out.push(GridLine {
+                cx,
+                cy,
+                hw: TICK_HALF_THICK,
+                hh: TICK_HALF_LEN,
+                r,
+                g,
+                b,
+                major: true,
+            });
+        }
     }
     out
 }
@@ -343,10 +404,11 @@ impl TerrainRenderer {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let lines: Vec<LineInstance> = grid_lines(GRID_HALF_EXTENT, GRID_SPACING)
-            .iter()
-            .map(|l| l.instance())
-            .collect();
+        // The grid lattice, then the registration cross-marks on top (one instanced draw, opaque
+        // REPLACE — the appended marks win at the major junctions they sit on).
+        let mut grid = grid_lines(GRID_HALF_EXTENT, GRID_SPACING);
+        grid.extend(tick_marks(GRID_HALF_EXTENT, GRID_SPACING));
+        let lines: Vec<LineInstance> = grid.iter().map(|l| l.instance()).collect();
         let instance_cap = lines.len().max(1);
         let instance_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("gonedark.terrain_instance_vbo"),
@@ -506,6 +568,75 @@ mod tests {
             assert!(
                 xs.iter().any(|o| (o + x).abs() < EPS),
                 "every line has an origin mirror"
+            );
+        }
+    }
+
+    #[test]
+    fn tick_marks_sit_only_on_major_intersections() {
+        // Every cross arm centers on a major×major junction: both cx and cy must be a multiple of the
+        // MAJOR_EVERY*spacing step (and within the extent).
+        let half = 40.0;
+        let spacing = 8.0;
+        let step = MAJOR_EVERY as f32 * spacing;
+        let marks = tick_marks(half, spacing);
+        assert!(!marks.is_empty(), "registration marks are produced");
+        for m in &marks {
+            for c in [m.cx, m.cy] {
+                let k = (c / step).round();
+                assert!((c - k * step).abs() < EPS, "mark sits on a major step");
+                assert!(c.abs() <= half + EPS, "mark within the extent");
+            }
+        }
+    }
+
+    #[test]
+    fn tick_marks_are_two_short_perpendicular_arms_per_node() {
+        // Majors within ±40 at step 32: indices -1,0,1 -> 3 per axis -> 9 nodes -> 18 arms (2 each).
+        let spacing = 8.0;
+        let step = MAJOR_EVERY as f32 * spacing;
+        let majors_per_axis = (-((40.0f32 / spacing).floor() as i32)..=((40.0f32 / spacing).floor() as i32))
+            .filter(|&i| is_major(i))
+            .count();
+        let marks = tick_marks(40.0, spacing);
+        assert_eq!(marks.len(), majors_per_axis * majors_per_axis * 2, "two arms per node");
+        // Each arm is short (well under a major cell) and one axis is the long arm, the other thin.
+        for m in &marks {
+            assert!(m.hw.max(m.hh) <= TICK_HALF_LEN + EPS, "arm is short, not a full line");
+            assert!(m.hw.max(m.hh) < step, "arm shorter than a major cell");
+            assert!(m.hw.min(m.hh) <= TICK_HALF_THICK + EPS, "arm is thin");
+            assert!((m.hw - m.hh).abs() > EPS, "arm is a line (long on one axis)");
+        }
+        // Per node there is exactly one horizontal arm (hw>hh) and one vertical (hh>hw).
+        assert_eq!(marks.iter().filter(|m| m.hw > m.hh).count(), majors_per_axis * majors_per_axis);
+        assert_eq!(marks.iter().filter(|m| m.hh > m.hw).count(), majors_per_axis * majors_per_axis);
+    }
+
+    #[test]
+    fn tick_marks_are_brighter_than_major_lines_but_stay_subtle() {
+        // The survey nodes read above the major lattice, yet stay cold/low-sat and under the unit
+        // brightness so units/selection rims keep popping.
+        let marks = tick_marks(40.0, 8.0);
+        let tick_lum: f32 = TICK_COLOR.iter().sum();
+        let major_lum: f32 = MAJOR_COLOR.iter().sum();
+        assert!(tick_lum > major_lum, "registration marks brighter than major lines");
+        for m in &marks {
+            assert_eq!([m.r, m.g, m.b], TICK_COLOR, "marks carry the tick colour");
+            assert!(m.r < 0.4 && m.g < 0.4 && m.b < 0.45, "marks stay subtle, under the units");
+            // Cold + low-saturation: blue leads, red trails.
+            assert!(m.b > m.g && m.g > m.r, "marks stay cold (blue-leading)");
+        }
+    }
+
+    #[test]
+    fn tick_marks_are_symmetric_about_the_origin() {
+        // Fixed, world-symmetric reference (no sim/fog input): a node at (+x,+y) has mirrors.
+        let marks = tick_marks(40.0, 8.0);
+        let centers: Vec<(f32, f32)> = marks.iter().map(|m| (m.cx, m.cy)).collect();
+        for &(x, y) in &centers {
+            assert!(
+                centers.iter().any(|&(ox, oy)| (ox + x).abs() < EPS && (oy - y).abs() < EPS),
+                "every node has an x-mirror"
             );
         }
     }
