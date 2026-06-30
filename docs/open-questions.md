@@ -544,7 +544,16 @@ omniscient, at every tier). Cross-link: [`pve-campaign-plan.md`](plans/pve-campa
 
 ---
 
-## Q22 — Terrain representation: a built-in map-id registry or embedded terrain data? <a id="q22--terrain-representation"></a>
+## Q22 — Terrain representation: a built-in map-id registry or embedded terrain data? — RESOLVED ([D77](decisions.md)) <a id="q22--terrain-representation"></a>
+
+> **Resolved by [D77](decisions.md):** option **(iii) content-addressed terrain** (the lean). Terrain
+> becomes authorable/generatable data — a map carries its cover/LoS grid, identified by a **deterministic
+> content hash of the canonical fixed-point bytes**; `MapId` widens from a `u16` registry index to that
+> digest. `persist`/reconnect ([D28](decisions.md)) keeps serializing **only the id, not the grid** (the
+> resuming/joining peer rebuilds it from the shared content set [D76](decisions.md) already introduces),
+> so reconnect snapshots stay lean **and** terrain is authorable. A missing/mismatched id is a hard
+> match-setup failure, never a silent desync; the hash is arch-independent (integer bytes only —
+> invariants #1/#7). This **unblocks CT-G's terrain half**.
 
 Surfaced by the procedural map generator ([`content-tooling-plan.md`](plans/content-tooling-plan.md)
 CT-G): generating *novel battlefields* wants novel **terrain**, but terrain is the one piece of a map

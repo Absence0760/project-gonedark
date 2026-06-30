@@ -3558,3 +3558,53 @@ become **expressible in the format** rather than requiring new code per mission.
 Operations-hub mission-select/briefing shell stays [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)-blocked
 (unchanged by this) — this decision unblocks *authoring* content, not *presenting* the campaign menu.
 Build sequencing, workstreams, and the validation harness: **[`content-tooling-plan.md`](plans/content-tooling-plan.md)**.
+
+## D77 — Content-addressed terrain: maps carry the grid, persist serializes a content-hash id (resolves Q22)
+
+**Decision.** Lock [Q22](open-questions.md) option (iii): **content-addressed terrain.** Terrain
+stops being a hard-coded registry and becomes **authorable/generatable data** — a battlefield's
+cover/line-of-sight grid lives in the map content (`*.map.ron` / a terrain content artifact,
+[`content-tooling-plan.md`](plans/content-tooling-plan.md) CT-C) and is identified by a
+**deterministic content hash of its canonical fixed-point bytes**. `MapId` evolves from a `u16`
+registry index into that content-hash digest. `persist`/reconnect ([D28](#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk))
+keeps serializing **only the id, not the grid** — a resuming or joining peer rebuilds the identical
+grid by looking the id up in the shared content set it loaded at match start. A missing or mismatched
+id is a **hard, explicit failure at load/setup, never a silent desync.**
+
+**Why.** Of the three [Q22](open-questions.md) forks: **(i)** a built-in-id registry makes every new
+terrain a recompile shipped in the binary — it defeats the whole [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)
+data-file goal for the *one* piece that most defines a battlefield, and the procedural generator
+(CT-G) could never make new ground. **(ii)** embedding the grid by value bloats every reconnect
+snapshot with a full grid, regressing [D28](#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)'s
+deliberately lean snapshot (which carries terrain *by id* precisely to stay small). **(iii)
+content-addressed** is the only option that keeps the snapshot lean (id only, exactly as today) **and**
+makes terrain authorable — and the shared content set it relies on is **already** introduced by
+[D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)'s
+data-file model, so it rides existing machinery rather than inventing new. The content-hash id is also
+**self-validating**: if two peers ever computed different grids, their ids differ and the mismatch is
+caught at setup, not as a silent lockstep divergence.
+
+**Determinism.** The terrain grid is fixed-point `Cover` per cell — **no floats** ([invariant #1](../CLAUDE.md)),
+unchanged. The content hash is computed over the grid's **canonical integer bytes** using the same
+arch-independent hashing discipline as the checksum field-walk
+([D28](#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)),
+so the id is **bit-identical on every platform** ([invariant #7](../CLAUDE.md)). Terrain is loaded once
+at match start through the **host-side [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)
+airlock** (so authored grids can't smuggle a float in), then is static sim-read state; it does **not**
+mutate per tick, so the per-tick checksum is unaffected. Cross-peer terrain equality is established at
+match setup via the content-hash id, and reconnect carries that id **exactly where the `u16` map-id sat**
+([D28](#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)) —
+so the resume path's determinism property is preserved verbatim; only the id's *meaning* (registry index
+→ content hash) and width change.
+
+**Consequences.** `MapId` widens from `u16` to the content-hash digest (reuse the 64-bit checksum
+hash — ample for a curated content set; a wider/crypto hash is a later concern only if untrusted
+user-mod terrain ships, PC-4). `Terrain::from_map_id` is replaced by a content-set lookup
+(`Terrain::from_content`/by-hash); today's built-in open field (id `0`) becomes one content entry like
+any other (or a reserved sentinel for the empty field). **CT-C** authors terrain grids as data; **CT-G**
+generates them and emits the grid **plus its content hash**, with the **CT-F** lint verifying the hash
+matches the grid (reproducible, untampered). **Content distribution:** shipped/official maps bundle with
+the build; user-generated/mod terrain ([`roadmap.md`](roadmap.md) PC-4) needs a distribution path — a
+known later concern, and a peer lacking a referenced terrain id fails the match-setup handshake
+**explicitly**. This **unblocks CT-G's terrain half** (Q22 no longer gates it; the placement half was
+already unblocked). Net: novel battlefields — terrain included — become **scripted, lintable content**.

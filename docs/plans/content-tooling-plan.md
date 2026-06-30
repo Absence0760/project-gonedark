@@ -167,15 +167,18 @@ volume needs no human in the loop, only `cargo`/script + CT-F.
   control points, and cover are symmetric under the map's declared symmetry (point or mirror), so
   neither side has a structural edge — pillar 4 fairness and the LEAD-protection *symmetric*-PvP shape
   ([`positioning.md`](../positioning/positioning.md) §3). Extends the CT-F lint with a `--pvp` check.
-- **Terrain generation — the one real fork ([Q22](../open-questions.md)).** Cover, control points, and
-  spawns are pure *placement* data the generator writes freely over an existing terrain. *Novel terrain
-  shape itself* is **not** yet data: `core::terrain` is a `MapId` (`u16`) **registry**
-  (`Terrain::from_map_id` rebuilds the cover/LoS grid; the reconnect snapshot serializes only the
-  map-id, **not** the grid — [D28](../decisions.md)). Generating new terrain therefore forces a choice —
-  keep terrain a registry of built-in ids (a recompile per terrain, which defeats the data goal *for
-  terrain*) or **embed the terrain grid as fixed-point map data** and teach `persist`/reconnect to carry
-  it (by value, or by a content-hash id). Flagged as **[Q22](../open-questions.md)**; CT-G's terrain
-  half is gated on it. **The placement half ships without it** (generate over an existing terrain id).
+- **Terrain generation — decided: content-addressed ([D77](../decisions.md), resolves [Q22](../open-questions.md)).**
+  Cover, control points, and spawns are pure *placement* data the generator writes freely over an
+  existing terrain. *Novel terrain shape itself* was the one real fork — `core::terrain` is a `MapId`
+  (`u16`) **registry** (`Terrain::from_map_id` rebuilds the cover/LoS grid; the reconnect snapshot
+  serializes only the map-id, **not** the grid — [D28](../decisions.md)). [D77](../decisions.md) locks
+  **content-addressed terrain**: the map carries its fixed-point cover grid as data, `MapId` widens from
+  a registry index to a **content-hash digest** of the grid's canonical bytes, and `persist`/reconnect
+  keeps serializing **only the id** (the peer rebuilds the grid from the shared content set). So CT-G
+  emits a generated terrain grid **plus its content hash**, the CT-F lint verifies the hash matches the
+  grid, and a missing/mismatched id is a hard match-setup failure (never a desync). **The placement half
+  needs none of this** (generate over an existing terrain id); the terrain half now **builds against
+  D77** rather than being gated on an open question.
 
 **Tests:** same seed → **byte-identical** `*.map.ron`; every generated map passes CT-F; the symmetry
 validator **rejects** a deliberately-asymmetric fixture and **accepts** a mirrored one; a batch of
@@ -190,7 +193,7 @@ script.
    CT-A (builder) ──► CT-B (mission format) ──► CT-D (registry + hot-reload) ──► (author at volume)
                           │                          ▲
                           ├─► CT-C (map format) ──┬──┘   (battlefields; reused across missions + PvP)
-                          │                       └─► CT-G (procedural generator + PvP-symmetry; Q22 gates terrain)
+                          │                       └─► CT-G (procedural generator + PvP-symmetry; content-addressed terrain per D77)
                           ├─► CT-E (archetypes)          (full verb vocabulary in data)
                           └─► CT-F (content lint)        (CI guard; CT-G extends it with the --pvp check)
 ```
