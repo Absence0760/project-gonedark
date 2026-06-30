@@ -184,6 +184,50 @@ impl MuzzleUniform {
     }
 }
 
+/// Radius (in flare-local `[-1,1]` units) of the expanding shock RING for the current flash
+/// `intensity` — tight at the muzzle flash (`flash → 1`), blooming outward as the shot fades
+/// (`flash → 0`). **Reference implementation** of the ring radius in `world.wgsl`'s `fs_muzzle`;
+/// keep the constants in lockstep. Pure `f32` (presentation boundary) so it is unit-testable.
+pub fn muzzle_ring_radius(flash: f32) -> f32 {
+    (1.0 - flash) * 0.85 + 0.12
+}
+
+/// Visibility weight of the shock RING across the shot's life — a mid-life puff that is dark both at
+/// the white-hot flash itself (`flash → 1`) and once fully faded (`flash → 0`), peaking around
+/// `flash = 0.5`. Mirrors the ring weight in `world.wgsl`'s `fs_muzzle`; keep in lockstep.
+pub fn muzzle_ring_weight(flash: f32) -> f32 {
+    (flash * (1.0 - flash) * 4.0).clamp(0.0, 1.0)
+}
+
+/// **Reference implementation** of the shaped muzzle-flare intensity at the flare-local point
+/// `(px, py)` in `[-1,1]` for the current `flash`, mirroring `world.wgsl`'s `fs_muzzle` shape (the
+/// pre-alpha `shape`, before the `× flash` and additive premultiply). It sums a tight white-hot core
+/// under a soft warm bloom, an **asymmetric** multi-spike star (three offset cosine harmonics — not
+/// a clean symmetric plus), and the expanding shock ring. Pure `f32` so the shape's load-bearing
+/// properties — the centre is brightest, the star is NOT 4-fold symmetric, the ring is a mid-life
+/// feature — are unit-testable off-GPU. Keep every constant in lockstep with the shader.
+pub fn muzzle_flare_shape(px: f32, py: f32, flash: f32) -> f32 {
+    let r = (px * px + py * py).sqrt();
+    let ang = py.atan2(px);
+
+    let bloom = (1.0 - r).clamp(0.0, 1.0).powf(1.7);
+    let hot = (1.0 - r * 2.3).clamp(0.0, 1.0).powf(2.0);
+    let core = bloom * 0.55 + hot;
+
+    let reach = (1.0 - r * 0.85).clamp(0.0, 1.0).powf(1.4);
+    let s1 = (ang * 2.0 - 0.35).cos().max(0.0).powf(7.0);
+    let s2 = (ang * 3.0 + 1.20).cos().max(0.0).powf(11.0);
+    let s3 = (ang * 5.0 + 0.60).cos().max(0.0).powf(16.0);
+    let flicker = 0.82 + 0.18 * (ang * 9.0 + flash * 22.0).cos();
+    let spikes = (s1 + s2 * 0.55 + s3 * 0.40) * reach * flicker;
+
+    let ring_r = muzzle_ring_radius(flash);
+    let ring_band = (-((r - ring_r) / 0.11).powf(2.0)).exp();
+    let ring = ring_band * muzzle_ring_weight(flash);
+
+    (core + spikes * 0.85 + ring * 0.45).clamp(0.0, 1.4)
+}
+
 /// Sky + ground pass for the embodied (first-person) view. Owns the fullscreen sky/ground pipeline
 /// (which CLEARS the frame) plus the shaped muzzle-flash flare. The weapon viewmodel is no longer
 /// drawn here — it is a 3D mesh drawn by the [`crate::Renderer`] through the shared
@@ -687,6 +731,73 @@ mod tests {
     fn muzzle_uniform_clamps_flash() {
         assert_eq!(MuzzleUniform::new(5.0, 1.0).params[0], 1.0, "over-range flash clamps to 1");
         assert_eq!(MuzzleUniform::new(-2.0, 1.0).params[0], 0.0, "under-range flash clamps to 0");
+    }
+
+    // ---- shaped muzzle-flare geometry (WS-A) ----
+
+    #[test]
+    fn muzzle_ring_expands_as_the_shot_fades() {
+        // Tight at the muzzle flash (flash → 1), blooming outward as it fades (flash → 0): the
+        // radius is monotonically larger for a more-decayed shot, and stays within the flare quad.
+        let fresh = muzzle_ring_radius(1.0);
+        let mid = muzzle_ring_radius(0.5);
+        let old = muzzle_ring_radius(0.0);
+        assert!(old > mid && mid > fresh, "ring grows as flash decays ({fresh} < {mid} < {old})");
+        assert!(fresh > 0.0 && old < 1.0, "ring radius stays inside the flare quad");
+    }
+
+    #[test]
+    fn muzzle_ring_is_a_mid_life_puff() {
+        // The ring is dark at the white-hot flash itself and once fully faded, peaking mid-life — so
+        // it reads as a fast expanding puff, not a constant halo.
+        let peak = muzzle_ring_weight(0.5);
+        assert!(peak > muzzle_ring_weight(0.1), "ring brightens past the initial flash");
+        assert!(peak > muzzle_ring_weight(0.9), "ring brightens before the flash whites out");
+        assert_eq!(muzzle_ring_weight(0.0), 0.0, "no ring once fully faded");
+        assert_eq!(muzzle_ring_weight(1.0), 0.0, "no ring at the white-hot flash");
+    }
+
+    #[test]
+    fn muzzle_flare_core_is_brightest() {
+        // The white-hot centre is the peak of the flare — brighter than any off-centre point — so
+        // the shot has a punchy hot pip rather than a flat disc.
+        let center = muzzle_flare_shape(0.0, 0.0, 0.7);
+        for &(x, y) in &[(0.6, 0.0), (0.0, 0.6), (-0.45, 0.45), (0.3, -0.5)] {
+            assert!(
+                center > muzzle_flare_shape(x, y, 0.7),
+                "centre {center} must outshine off-centre ({x},{y})"
+            );
+        }
+    }
+
+    #[test]
+    fn muzzle_star_is_asymmetric() {
+        // The whole point of the reshape: the star is NOT a clean symmetric plus / radial disc. At a
+        // fixed radius (with the ring suppressed at high flash so the variation is pure spike energy)
+        // the horizontal and vertical rays carry clearly different energy, and sweeping a full ring
+        // of angles is far from rotationally uniform — a ragged, real-flash silhouette.
+        let f = 0.92; // ring negligible here, so the variation is pure spike asymmetry
+        let horiz = muzzle_flare_shape(0.5, 0.0, f);
+        let vert = muzzle_flare_shape(0.0, 0.5, f);
+        assert!((horiz - vert).abs() > 0.05, "axes differ: h={horiz} v={vert}");
+
+        let r = 0.5;
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for i in 0..24 {
+            let a = std::f32::consts::TAU * i as f32 / 24.0;
+            let s = muzzle_flare_shape(r * a.cos(), r * a.sin(), f);
+            min = min.min(s);
+            max = max.max(s);
+        }
+        assert!(max - min > 0.1, "the star must not be rotationally uniform, spread {}", max - min);
+    }
+
+    #[test]
+    fn muzzle_flare_fades_outside_the_quad() {
+        // Beyond the flare's local extent there is no light — the additive pass adds nothing in the
+        // corners, so the flash stays a compact shape, not a screen-wide wash.
+        assert_eq!(muzzle_flare_shape(1.3, 1.3, 0.5), 0.0, "no light past the quad corner");
     }
 
     // ---- ground detail-map metrics contract ----

@@ -260,10 +260,14 @@ fn fs_weapon(in: WeaponOut) -> @location(0) vec4<f32> {
 // ---- shaped muzzle flash (WS-A) ---------------------------------------------------------------
 //
 // A dedicated ADDITIVE screen-space flare at the gun muzzle, drawn over the world+weapon while the
-// player fires. Promotes the flat alpha muzzle quad above to a SHAPED flare — a hot round core plus
-// a soft four-point star — that flares with `Muzzle.params.x` (the host-clock flash intensity) and
-// is gone between shots. Its own uniform at a distinct binding so it never disturbs the sky pass's
-// `world` uniform. Presentation only (invariant #4); no world position → reveals nothing (#6).
+// player fires. Promotes the flat alpha muzzle quad above to a SHAPED gunshot flare — a tight
+// white-hot core under a soft warm bloom, an ASYMMETRIC multi-spike star (three offset harmonics,
+// not a clean symmetric plus), and a quick expanding shock RING that puffs outward mid-life — all
+// flaring with `Muzzle.params.x` (the host-clock flash intensity) and gone between shots. Its own
+// uniform at a distinct binding so it never disturbs the sky pass's `world` uniform. The shape math
+// is mirrored in world.rs (`muzzle_flare_shape`/`muzzle_ring_radius`/`muzzle_ring_weight`) and
+// unit-tested off-GPU; keep the two in lockstep. Presentation only (invariant #4); no world
+// position → reveals nothing (#6).
 
 struct Muzzle {
     // x = flash intensity [0,1]; y = viewport aspect (w/h); z = anchor NDC x; w = anchor NDC y.
@@ -290,8 +294,9 @@ fn vs_muzzle(@builtin(vertex_index) vid: u32) -> MuzzleOut {
     let flash = muzzle.params.x;
     let aspect = max(muzzle.params.y, 1e-4);
     let anchor = vec2<f32>(muzzle.params.z, muzzle.params.w);
-    // Base half-size in NDC-y, grown slightly by the flash so the flare pops on the shot.
-    let size_y = 0.13 * (0.65 + 0.35 * flash);
+    // Base half-size in NDC-y, kept nearly constant (a small pop on the shot) so the expanding
+    // shock ring genuinely grows in screen space as the flash fades rather than shrinking with it.
+    let size_y = 0.155 * (0.85 + 0.20 * flash);
     let half = vec2<f32>(size_y / aspect, size_y);
     var out: MuzzleOut;
     out.clip_pos = vec4<f32>(anchor.x + c.x * half.x, anchor.y + c.y * half.y, 0.0, 1.0);
@@ -304,18 +309,41 @@ fn fs_muzzle(in: MuzzleOut) -> @location(0) vec4<f32> {
     let flash = muzzle.params.x;
     let p = in.local;
     let r = length(p);
-    // Hot round core, soft falloff.
-    var core = clamp(1.0 - r, 0.0, 1.0);
-    core = core * core;
-    // Four-point star: brightest along the axes, so it reads as a flash, not a disc.
     let ang = atan2(p.y, p.x);
-    let spikes = pow(max(abs(cos(2.0 * ang)), 0.0), 6.0) * clamp(1.0 - r, 0.0, 1.0);
-    let shape = clamp(core + spikes * 0.8, 0.0, 1.0);
+
+    // Core: a soft warm BLOOM under a tight white-HOT centre, so the flash has a punchy white pip
+    // that bleeds into a warmer halo rather than a single flat disc.
+    let bloom = pow(clamp(1.0 - r, 0.0, 1.0), 1.7);
+    let hot = pow(clamp(1.0 - r * 2.3, 0.0, 1.0), 2.0);
+    let core = bloom * 0.55 + hot;
+
+    // ASYMMETRIC multi-spike star: three cosine harmonics at unequal frequencies, phase offsets,
+    // and weights, so the rays read as a ragged real flash — not a clean symmetric plus. They reach
+    // further than the core and shimmer with a flash-driven flicker (heat-haze; flash is the time
+    // proxy as the shot decays).
+    let reach = pow(clamp(1.0 - r * 0.85, 0.0, 1.0), 1.4);
+    let s1 = pow(max(cos(ang * 2.0 - 0.35), 0.0), 7.0);
+    let s2 = pow(max(cos(ang * 3.0 + 1.20), 0.0), 11.0);
+    let s3 = pow(max(cos(ang * 5.0 + 0.60), 0.0), 16.0);
+    let flicker = 0.82 + 0.18 * cos(ang * 9.0 + flash * 22.0);
+    let spikes = (s1 + s2 * 0.55 + s3 * 0.40) * reach * flicker;
+
+    // Quick expanding SHOCK RING — a mid-life puff: tight at the muzzle flash, blooming outward as
+    // the shot fades. Radius grows as flash → 0; visibility peaks around flash = 0.5 (dark both at
+    // the white-hot flash itself and once fully faded), so it reads as a fast smoke/heat ring.
+    let ring_r = (1.0 - flash) * 0.85 + 0.12;
+    let ring_band = exp(-pow((r - ring_r) / 0.11, 2.0));
+    let ring = ring_band * clamp(flash * (1.0 - flash) * 4.0, 0.0, 1.0);
+
+    let shape = clamp(core + spikes * 0.85 + ring * 0.45, 0.0, 1.4);
     let a = shape * flash;
     if (a <= 0.001) {
         discard;
     }
-    // Warm white-yellow, premultiplied for the additive blend (a flash adds light).
-    let col = vec3<f32>(1.0, 0.90, 0.6);
+    // Warm white-yellow that whitens at the white-hot core and along the fresh ring. Premultiplied
+    // for the additive blend (a flash only adds light). Stays in the warm muzzle family.
+    let warm = vec3<f32>(1.0, 0.88, 0.58);
+    let white = vec3<f32>(1.0, 0.97, 0.86);
+    let col = mix(warm, white, clamp(hot + ring * 0.30, 0.0, 1.0));
     return vec4<f32>(col * a, a);
 }
