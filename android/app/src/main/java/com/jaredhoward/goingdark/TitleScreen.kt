@@ -36,8 +36,9 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  * an Activity, and emits only callbacks. Behind the chrome sits the animated Compose-native
  * [TitleBackdrop] (D78 option 1) — a 2D motif, deliberately *not* the desktop's live 3D scene.
  *
- * Actions are passed in as callbacks so the screen stays decoupled from the host nav graph. PvP routes
- * to a "blocked" notice today (match setup is Q5/Phase-3); the host owns that, not this screen.
+ * Actions are passed in as callbacks so the screen stays decoupled from the host nav graph. PvE and
+ * PvP both open the gunsmith and Deploy into Skirmish today (their mode divergence — PvP match setup —
+ * is Q5/Phase-3 work the host owns, not this screen).
  */
 @Composable
 fun TitleScreen(

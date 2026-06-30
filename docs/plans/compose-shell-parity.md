@@ -1,13 +1,15 @@
 # Compose shell parity plan — bringing Android's out-of-match shell up to desktop
 
-> **Status: PLANNED.** The Android landing/title surface ([D35](../decisions.md)) is still at
-> its day-one form — a flat three-button Compose screen — while the desktop egui shell
-> ([D36](../decisions.md)) has since grown several feature waves (art-directed title over a live
-> 3D backdrop, real Settings/Profile/About, the gunsmith, the Operations-hub mission-select +
-> briefing). This doc is the product-of-record plan for closing that gap. It sequences by what is
-> unblocked *today* and is updated as slices land. Scope is **Android Compose only**; iOS has no
-> native target at all (Phase 3), and PvP/lobby/store/consent surfaces stay blocked per
-> [`phase-4-plan.md`](phase-4-plan.md) §2.
+> **Status: SUBSTANTIALLY COMPLETE (as of 2026-06-30).** All three tiers landed — the launch-config
+> seam (Tier 0), Settings/Profile/About + title mode-split (Tier 1), and the gunsmith + campaign
+> mission-select/briefing (Tier 2) — and a **parity-gap sweep** ([§12](#12-parity-gap-sweep-2026-06-30))
+> then closed the six concrete UI/content divergences a four-cluster audit turned up. The Android
+> Compose shell is now at **feature + value parity** with the desktop egui shell
+> ([D36](../decisions.md)) across every shipped out-of-match surface. What remains is **structural**
+> (a campaign progress/unlock model on Android; desktop-side shell-pref persistence) and **blocked**
+> (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) — tracked in §12. Scope is
+> **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
+> original gap analysis, kept for the *why*; the per-tier status notes record what landed.
 
 ---
 
@@ -228,3 +230,49 @@ test asserting them so drift is caught.
 See [`phase-4-plan.md`](phase-4-plan.md) §2 (surface table), [D32](../decisions.md) (native-shell
 split), [D34](../decisions.md) (the `core::shell` seam), [D35](../decisions.md)/[D36](../decisions.md)
 (the two Boot & title shells).
+
+---
+
+## 12. Parity-gap sweep (2026-06-30)
+
+Once all three tiers had landed, a four-worker audit (one per surface cluster — title+nav+persistence,
+settings+profile+about, loadout+gunsmith, campaign+mission+briefing) compared the Compose shell
+against the canonical desktop reference (`app/src/shell.rs` + the shared `engine`/`core` seams).
+**Value-level parity was already solid** — setting ranges/defaults/clamps, the keymap rows, callsign
+sanitisation + win-rate math, and the four difficulty tiers all matched (most already test-pinned per
+[D79](../decisions.md)). The audit found **six closeable UI/content gaps**, all fixed in one
+path-scoped Android commit:
+
+| Gap | Desktop reference | Fix |
+|---|---|---|
+| **Briefing copy drift** (worst — a live cross-shell content divergence, and unguarded by tests) | `core::mission_tuning::MISSION_ONE_BRIEFING.situation` | Android now mirrors the situation string **verbatim** (was a paraphrase that also folded in `objective_line`, which the desktop briefing surface doesn't show); pinned by `CampaignModelTest` so it can't silently drift again |
+| **Gunsmith RESET missing** | `LoadoutAction::Reset` / `LoadoutEditor::reset()` | added the RESET button + `LoadoutSelection.reset()`/`STANDARD` seam (DEPLOY · RESET · BACK) |
+| **Profile RESET RECORD missing** | `ProfileAction::ResetStats` | added the button + `ProfileState.resetRecord()` (zeroes matches/wins, keeps callsign + faction) |
+| **About build-stamp missing** | `about_ui` renders the stamp on the card | About screen now takes a `versionStamp` and renders it above BACK |
+| **Mission-select subtitle missing** | `mission_select_ui`'s instructional line | added verbatim under the OPERATIONS banner |
+| **Trade-hint glyph drift** | `slot_trade_hint` uses ASCII `<->` (deliberate, font-safe) | Android changed `↔` → `<->` to match the desktop literal byte-for-byte |
+
+New/extended JVM tests cover `reset()`/`resetRecord()` and pin the verbatim briefing + trade-hint
+strings; `gradlew testDebugUnitTest` green. No determinism/lockstep surface touched (chrome only), so
+the checksum matrix is unaffected.
+
+### Structural parity items still open (need a design call — *not* a mirror tweak)
+
+These are deliberately **not** done — each is a chunk of real work, and two are symmetric gaps where
+each platform is missing the *other's* state:
+
+1. **Android has no campaign progress model.** `CampaignModel.kt` is a flat node list with every tile
+   always playable; desktop has `NodeProgress` (Locked/Available/Cleared), a `playable_node` gate, and
+   `campaign.dat` persistence (`app/src/main.rs`). Harmless while only the one *Seize* node ships, but
+   it breaks parity the moment a second/gated node lands — and the briefing's clear-status line +
+   mission-tile status pill follow from it.
+2. **Desktop doesn't persist shell prefs.** Settings/Profile/loadout are in-memory only on desktop and
+   lost on exit; only `campaign.dat` (campaign progress) persists. **Android is ahead here** — it
+   round-trips all three via `ShellPrefs`. The two shells persist *disjoint* state.
+3. **Look-sensitivity / briefing-difficulty are carried but inert on Android** — already tracked as
+   "owed" in [§5](#5--tier-2--buildable-once-tier-0-lands-config-seam-blocked-not-netcode-blocked)
+   (the look delta lives in `engine::touch_controls`, not scalable at the PAL boundary; difficulty
+   needs a `diff` wire key + mission-tuning plumbing).
+4. **Inverted About entry point** — desktop reaches About from inside Settings (`SettingsAction::About`);
+   Android surfaces it as a "FIELD MANUAL" button on the title. A deliberate [D78](../decisions.md) UX
+   choice; left as-is, noted so it isn't mistaken for a regression.
