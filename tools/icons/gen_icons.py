@@ -63,65 +63,78 @@ _STROKE = 'fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="
 
 
 def svg_for(name: str) -> str:
-    """Return the SVG document for one icon name (white-on-transparent, 64×64 viewBox)."""
+    """Return the SVG document for one icon name (white-on-transparent, 64×64 viewBox).
+
+    Design language: a coherent tactical glyph set. Solid white silhouettes for *things*
+    (units/structures/resources/objective), open white strokes for *orders/actions*
+    (upgrade/attack). Stroke-based icons share one weight (_SW) for a consistent line; all
+    detailing reads through **negative space** (transparent seams) so every shape stays pure
+    white + alpha and tints cleanly per draw — no painted-in dark strokes (which the alpha-
+    coverage tint would just flatten into solid fill).
+    """
+    _SW = "6.5"  # one shared stroke weight for the open/line icons (upgrade, attack)
     if name == "infantry":
-        # Head + a bell-shaped torso — a clean soldier silhouette.
+        # A soldier bust — domed helmet head over square-set shoulders (rifleman token).
         body = (
-            f'<circle cx="32" cy="17" r="9" {_FILL}/>'
-            f'<path d="M14,56 C14,40 22,30 32,30 C42,30 50,40 50,56 Z" {_FILL}/>'
+            f'<circle cx="32" cy="18" r="8.6" {_FILL}/>'
+            f'<path d="M14,55 L14,43 C14,35 22,30 32,30 C42,30 50,35 50,43 '
+            f'L50,55 Z" {_FILL}/>'
         )
     elif name == "armor":
-        # Tracks + hull + turret + barrel — a side-on tank token.
+        # Side-on tank: sloped hull + turret + barrel, sitting on a track bar with a thin
+        # transparent seam between hull and track so the running gear reads as separate.
         body = (
-            f'<rect x="6"  y="42" width="52" height="13" rx="5" {_FILL}/>'
-            f'<rect x="12" y="29" width="40" height="15" rx="3" {_FILL}/>'
-            f'<rect x="24" y="20" width="15" height="11" rx="2" {_FILL}/>'
-            f'<rect x="38" y="23" width="22" height="5"  rx="2" {_FILL}/>'
+            f'<rect x="6" y="44" width="52" height="12" rx="6" {_FILL}/>'
+            f'<path d="M10,42 L15,31 L49,31 L54,42 Z" {_FILL}/>'
+            f'<rect x="22" y="21" width="17" height="11" rx="3" {_FILL}/>'
+            f'<rect x="38" y="24.5" width="22" height="4.5" rx="2.2" {_FILL}/>'
         )
     elif name == "build":
-        # A hammer: a head bar + a handle.
+        # A hammer — head bar over a centred handle (build / construct).
         body = (
-            f'<rect x="16" y="10" width="32" height="11" rx="3" {_FILL}/>'
-            f'<rect x="28" y="19" width="9"  height="35" rx="3" {_FILL}/>'
+            f'<rect x="18" y="11" width="28" height="10" rx="3" {_FILL}/>'
+            f'<rect x="28.5" y="20" width="7" height="34" rx="3" {_FILL}/>'
         )
     elif name == "upgrade":
         # Two stacked up-chevrons — "advance a tier".
         body = (
-            f'<path d="M14,32 L32,16 L50,32" {_STROKE} stroke-width="7"/>'
-            f'<path d="M14,50 L32,34 L50,50" {_STROKE} stroke-width="7"/>'
+            f'<path d="M14,30 L32,15 L50,30" {_STROKE} stroke-width="{_SW}"/>'
+            f'<path d="M14,48 L32,33 L50,48" {_STROKE} stroke-width="{_SW}"/>'
         )
     elif name == "resources":
-        # A faceted credits crystal/gem.
+        # A cut credits gem — four white facets (two crown, two pavilion) split by thin
+        # transparent seams (the dark HUD shows through), so it reads faceted while staying
+        # pure white + alpha.
         body = (
-            f'<path d="M32,8 L54,28 L32,56 L10,28 Z" {_FILL}/>'
-            f'<path d="M20,28 L44,28 M32,8 L24,28 L32,56 M32,8 L40,28 L32,56" '
-            f'fill="none" stroke="#000000" stroke-width="2.2" stroke-opacity="0.45" '
-            f'stroke-linejoin="round"/>'
+            f'<path d="M31,10 L12,28 L31,28 Z" {_FILL}/>'   # crown left
+            f'<path d="M33,10 L52,28 L33,28 Z" {_FILL}/>'   # crown right
+            f'<path d="M12,30 L31,30 L32,57 Z" {_FILL}/>'   # pavilion left
+            f'<path d="M52,30 L33,30 L32,57 Z" {_FILL}/>'   # pavilion right
         )
     elif name == "objective":
-        # A flag on a pole — objective / control point.
+        # A pennant on a pole — objective / control point.
         body = (
-            f'<rect x="16" y="8" width="5" height="48" rx="2" {_FILL}/>'
-            f'<path d="M21,11 L52,18 L21,33 Z" {_FILL}/>'
+            f'<rect x="16.5" y="8" width="4.5" height="48" rx="2" {_FILL}/>'
+            f'<path d="M21,10 L50,17 L21,24 Z" {_FILL}/>'
         )
     elif name == "move":
         # An upward arrow — the move order.
         body = (
-            f'<path d="M32,8 L52,30 L41,30 L41,56 L23,56 L23,30 L12,30 Z" {_FILL}/>'
+            f'<path d="M32,8 L51,29 L41,29 L41,55 L23,55 L23,29 L13,29 Z" {_FILL}/>'
         )
     elif name == "attack":
         # A crosshair — ring + four ticks + a center dot.
         body = (
-            f'<circle cx="32" cy="32" r="17" {_STROKE} stroke-width="6"/>'
-            f'<path d="M32,4 L32,16 M32,48 L32,60 M4,32 L16,32 M48,32 L60,32" '
-            f'{_STROKE} stroke-width="6"/>'
-            f'<circle cx="32" cy="32" r="3.5" {_FILL}/>'
+            f'<circle cx="32" cy="32" r="16" {_STROKE} stroke-width="{_SW}"/>'
+            f'<path d="M32,5 L32,15 M32,49 L32,59 M5,32 L15,32 M49,32 L59,32" '
+            f'{_STROKE} stroke-width="{_SW}"/>'
+            f'<circle cx="32" cy="32" r="3.6" {_FILL}/>'
         )
     elif name == "hold":
         # A shield — the hold-position stance.
         body = (
-            f'<path d="M32,7 L53,16 L53,33 C53,47 43,55 32,59 '
-            f'C21,55 11,47 11,33 L11,16 Z" {_FILL}/>'
+            f'<path d="M32,7 L53,15 L53,32 C53,46 43,54 32,59 '
+            f'C21,54 11,46 11,32 L11,15 Z" {_FILL}/>'
         )
     else:
         raise ValueError(f"no geometry for icon {name!r}")

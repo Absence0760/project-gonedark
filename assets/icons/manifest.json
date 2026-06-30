@@ -23,8 +23,8 @@
     "atlas_h": 192,
     "channels": 4
   },
-  "png_bytes": 4416,
-  "png_sha256": "64bdca5a9779b67784995cd61040aa0a0b773da05ddb7dc1c1b92782c8daa3a3",
+  "png_bytes": 4177,
+  "png_sha256": "8275180ba0805583f4c53ece642d754e285da4c66f048f46a47aaeca8f00d447",
   "rgba_bytes": 196608,
-  "rgba_sha256": "7a356bba7bedebf17738744beb98530f555fabd0258ccc3d3871ffd3cd960aa2"
+  "rgba_sha256": "36c01daada84dcced441e39b96ddcf620b27e51117c220229eee84f751d22f9b"
 }
