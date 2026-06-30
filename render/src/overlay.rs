@@ -157,19 +157,20 @@ const BUTTON_GAP: f32 = 0.04; // horizontal spacing between adjacent slots
 const BUTTON_ROW_CY: f32 = -PANEL_HH + 0.09; // near the panel's lower edge
 
 fn color(role: QuadRole) -> [f32; 3] {
+    use crate::theme;
     match role {
         QuadRole::Scrim => [0.0, 0.0, 0.0],
-        QuadRole::Panel => [0.06, 0.07, 0.10],
+        QuadRole::Panel => theme::PANEL,
         QuadRole::Accent => [0.30, 0.55, 0.90], // calm blue: "waiting on a peer"
-        QuadRole::Warning => [0.90, 0.25, 0.20], // red: a confirmed desync
-        QuadRole::Win => [0.30, 0.80, 0.40],    // green: victory
+        QuadRole::Warning => theme::STATUS_CRIT, // red: a confirmed desync
+        QuadRole::Win => theme::STATUS_GOOD,    // green: victory
         QuadRole::Loss => [0.70, 0.70, 0.75],   // grey: defeat/draw
-        QuadRole::DataBar => [0.45, 0.65, 0.85], // blue: kills
-        QuadRole::TerritoryBar => [0.55, 0.80, 0.45], // green: territory held
-        QuadRole::ResourceBar => [0.90, 0.75, 0.35], // amber: resources banked
+        QuadRole::DataBar => theme::DATA_KILLS, // blue: kills
+        QuadRole::TerritoryBar => theme::DATA_TERRITORY, // green: territory held
+        QuadRole::ResourceBar => theme::DATA_RESOURCE, // amber: resources banked
         QuadRole::BarTrack => [0.20, 0.22, 0.28], // faint track behind a data bar
-        QuadRole::PanelRim => [0.16, 0.18, 0.24], // a lighter border behind the panel
-        QuadRole::Button => [0.22, 0.25, 0.32], // a neutral choice slot
+        QuadRole::PanelRim => theme::RIM,       // a lighter border behind the panel
+        QuadRole::Button => theme::PANEL_RAISED, // a neutral choice slot
         QuadRole::ButtonPrimary => [0.30, 0.45, 0.70], // the affirmative choice slot
     }
 }

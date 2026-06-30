@@ -48,7 +48,7 @@ const MAJOR_EVERY: i32 = 4;
 
 /// A minor grid line color — a desaturated cool slate, just above the [`crate::CLEAR_LIT`] clear so
 /// it reads as a faint lattice without competing with the unit bodies.
-const MINOR_COLOR: [f32; 3] = [0.10, 0.13, 0.18];
+const MINOR_COLOR: [f32; 3] = crate::theme::HAIRLINE;
 
 /// A major grid line color — a touch brighter than minor so the larger blocks read.
 const MAJOR_COLOR: [f32; 3] = [0.16, 0.20, 0.27];

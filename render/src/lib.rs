@@ -41,6 +41,9 @@ use gonedark_core::snapshot::Snapshot;
 use gonedark_core::trig::{Angle, ANGLE_FULL};
 use wgpu::util::DeviceExt;
 
+/// The canonical visual theme — palette, type scale, spacing. The single source of truth for the
+/// renderer's colour language (replaces the scattered per-module colour consts).
+pub mod theme;
 /// Fog-of-war application (worker 1). Owns `visible_instances`: the visibility → drawn-instances
 /// filter the unit pass runs each frame.
 mod fog;
@@ -394,15 +397,15 @@ fn unit_draw_plan(
 /// The base RGB color for a faction (the embodied avatar overrides this to amber).
 pub fn faction_color(faction: Faction) -> [f32; 3] {
     match faction {
-        Faction::Player => [0.25, 0.60, 0.95],  // cool blue
-        Faction::Enemy => [0.90, 0.32, 0.26],   // hostile red
-        Faction::Neutral => [0.55, 0.55, 0.60], // neutral grey
+        Faction::Player => theme::PLAYER,
+        Faction::Enemy => theme::ENEMY,
+        Faction::Neutral => theme::NEUTRAL,
     }
 }
 
 /// The embodied avatar's color — warm amber, the unit you possess. `pub(crate)` so the command-view
 /// readout (`readout.rs`) can exclude the avatar from the per-faction unit tally.
-pub(crate) const AVATAR_COLOR: [f32; 3] = [1.0, 0.85, 0.2];
+pub(crate) const AVATAR_COLOR: [f32; 3] = theme::AVATAR;
 
 /// Uniform scale for a tracer bolt (the `tracer` mesh is ~0.6 m along its travel axis). Render-only
 /// cosmetic scale.

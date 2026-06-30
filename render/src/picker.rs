@@ -29,12 +29,12 @@ const HEADER_SIZE: f32 = 0.050;
 const ROW_SIZE: f32 = 0.055;
 
 /// Header tint — a neutral bright label.
-const HEADER_COLOR: [f32; 3] = [0.95, 0.95, 1.0];
+const HEADER_COLOR: [f32; 3] = crate::theme::BONE;
 /// An embodiable row — warm amber, echoing the possessed-avatar color so "this is what you'd
 /// become" reads at a glance.
-const ROW_COLOR: [f32; 3] = [1.0, 0.85, 0.2];
+const ROW_COLOR: [f32; 3] = crate::theme::AVATAR;
 /// A non-embodiable row — dimmed (reserved for future unit kinds that can't be possessed).
-const ROW_DIM: [f32; 3] = [0.5, 0.5, 0.55];
+const ROW_DIM: [f32; 3] = crate::theme::MUTED;
 
 /// The NDC center `y` of row `i` (0 = top). Shared by [`picker_labels`] and [`picker_row_at`].
 #[inline]

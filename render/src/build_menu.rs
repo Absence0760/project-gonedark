@@ -68,9 +68,9 @@ const MARGIN: f32 = 0.04;
 const LINE_STEP: f32 = 0.075;
 
 /// Color for an affordable entry (a readable off-white, like `readout`'s neutral label).
-const AFFORDABLE_COLOR: [f32; 3] = [0.85, 0.85, 0.9];
+const AFFORDABLE_COLOR: [f32; 3] = crate::theme::BONE;
 /// Dimmed grey for an entry the player can't currently afford (greyed out).
-const UNAFFORDABLE_COLOR: [f32; 3] = [0.45, 0.45, 0.48];
+const UNAFFORDABLE_COLOR: [f32; 3] = crate::theme::MUTED;
 
 /// The placeable structures, in palette/slot order. Index = the `engine::build_ui` slot. Currently
 /// just the Camp (the only [`BuildingKind`]); adding a structure here adds a palette entry, and the

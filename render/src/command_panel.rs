@@ -38,9 +38,9 @@ const TITLE_GAP: f32 = 0.028;
 /// The rim quad extends this far past the panel on each side to draw a thin border.
 const RIM_PAD: f32 = 0.010;
 
-const BG_COLOR: [f32; 3] = [0.05, 0.06, 0.09];
+const BG_COLOR: [f32; 3] = crate::theme::PANEL;
 const BG_ALPHA: f32 = 0.84;
-const RIM_COLOR: [f32; 3] = [0.16, 0.18, 0.24];
+const RIM_COLOR: [f32; 3] = crate::theme::RIM;
 const RIM_ALPHA: f32 = 0.92;
 
 /// How a body row reads — drives its tint.

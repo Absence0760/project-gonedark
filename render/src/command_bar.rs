@@ -24,7 +24,7 @@ const RIM_ALPHA: f32 = 0.9;
 /// same chrome.
 const FILL: [f32; 3] = [0.10, 0.12, 0.17];
 const RIM: [f32; 3] = [0.30, 0.34, 0.44];
-const LABEL_COLOR: [f32; 3] = [0.92, 0.94, 0.98];
+const LABEL_COLOR: [f32; 3] = crate::theme::BONE;
 /// NDC rim thickness added around each button's fill (a crisp border, like the panels' rim).
 const RIM_PAD: f32 = 0.006;
 
