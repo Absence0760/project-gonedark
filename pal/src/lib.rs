@@ -177,6 +177,16 @@ pub enum SoundId {
     /// feedback on the player's OWN action (never map intel about an unseen enemy), invariant #6
     /// (WS-4 in-game hit feedback).
     HitConfirm,
+    /// The embodied avatar's **own weapon firing**, emitted on the host-clock trigger press (WS-A,
+    /// CP-2 game-feel bar) so a shot cracks the instant the muzzle flashes — *decoupled* from
+    /// [`Gunfire`](SoundId::Gunfire) (which the deterministic `Damaged` event drives, and so only
+    /// for shots that *connect*). A missed shot still sounds. Presentation feedback on the player's
+    /// own action; host-side, never sim. (Deliberate sound *identity* is CP-6; this is the timing.)
+    WeaponFire,
+    /// A bullet **impact** — coupled to the impact VFX at the point the avatar's own shot landed
+    /// (WS-A). A short, sharp world thud distinct from the [`HitConfirm`](SoundId::HitConfirm) UI
+    /// tick. Host-clock, presentation-only (invariant #4/#6).
+    Impact,
 }
 
 /// One positioned sound for this frame's mix. Floats are fine here (platform side, not the sim):

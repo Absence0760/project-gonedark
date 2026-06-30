@@ -164,3 +164,66 @@ fn fs_weapon(in: WeaponOut) -> @location(0) vec4<f32> {
     let lit = metal + vec3<f32>(0.25, 0.22, 0.12) * flash;
     return vec4<f32>(lit, 1.0);
 }
+
+// ---- shaped muzzle flash (WS-A) ---------------------------------------------------------------
+//
+// A dedicated ADDITIVE screen-space flare at the gun muzzle, drawn over the world+weapon while the
+// player fires. Promotes the flat alpha muzzle quad above to a SHAPED flare — a hot round core plus
+// a soft four-point star — that flares with `Muzzle.params.x` (the host-clock flash intensity) and
+// is gone between shots. Its own uniform at a distinct binding so it never disturbs the sky pass's
+// `world` uniform. Presentation only (invariant #4); no world position → reveals nothing (#6).
+
+struct Muzzle {
+    // x = flash intensity [0,1]; y = viewport aspect (w/h); z = anchor NDC x; w = anchor NDC y.
+    params: vec4<f32>,
+};
+
+@group(0) @binding(3)
+var<uniform> muzzle: Muzzle;
+
+struct MuzzleOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) local: vec2<f32>, // quad corner in [-1,1]
+};
+
+// A 6-vertex quad generated without a vertex buffer, anchored at the muzzle NDC and scaled by the
+// flash (so it grows out of nothing as the shot fires). Aspect-corrected in x so the flare is round.
+@vertex
+fn vs_muzzle(@builtin(vertex_index) vid: u32) -> MuzzleOut {
+    var corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0),
+    );
+    let c = corners[vid];
+    let flash = muzzle.params.x;
+    let aspect = max(muzzle.params.y, 1e-4);
+    let anchor = vec2<f32>(muzzle.params.z, muzzle.params.w);
+    // Base half-size in NDC-y, grown slightly by the flash so the flare pops on the shot.
+    let size_y = 0.13 * (0.65 + 0.35 * flash);
+    let half = vec2<f32>(size_y / aspect, size_y);
+    var out: MuzzleOut;
+    out.clip_pos = vec4<f32>(anchor.x + c.x * half.x, anchor.y + c.y * half.y, 0.0, 1.0);
+    out.local = c;
+    return out;
+}
+
+@fragment
+fn fs_muzzle(in: MuzzleOut) -> @location(0) vec4<f32> {
+    let flash = muzzle.params.x;
+    let p = in.local;
+    let r = length(p);
+    // Hot round core, soft falloff.
+    var core = clamp(1.0 - r, 0.0, 1.0);
+    core = core * core;
+    // Four-point star: brightest along the axes, so it reads as a flash, not a disc.
+    let ang = atan2(p.y, p.x);
+    let spikes = pow(max(abs(cos(2.0 * ang)), 0.0), 6.0) * clamp(1.0 - r, 0.0, 1.0);
+    let shape = clamp(core + spikes * 0.8, 0.0, 1.0);
+    let a = shape * flash;
+    if (a <= 0.001) {
+        discard;
+    }
+    // Warm white-yellow, premultiplied for the additive blend (a flash adds light).
+    let col = vec3<f32>(1.0, 0.90, 0.6);
+    return vec4<f32>(col * a, a);
+}

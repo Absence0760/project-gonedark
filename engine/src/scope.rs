@@ -16,8 +16,24 @@
 
 /// The fully-scoped embodied FOV (degrees). The gun-sight narrows from the embodied base FOV
 /// (`EMBODIED_FOV_DEG`, 60°) down to this when aiming down sight — a ~3× optical zoom (see
-/// [`zoom_magnification`]). Narrower = more magnified, but never below a sane floor.
+/// [`zoom_magnification`]). Narrower = more magnified, but never below a sane floor. This is the
+/// **tank gun-sight** target (an independent turret with optics); infantry use the gentler
+/// [`ADS_FOV_DEG`] instead.
 pub const SCOPED_FOV_DEG: f32 = 20.0;
+
+/// The fully-aimed embodied FOV (degrees) for **infantry** iron-sight ADS (WS-A, CP-2 game-feel
+/// bar). A modest narrowing from the 60° base — a ~1.7× magnification (vs the tank's ~3.3× scope) —
+/// so aiming down sight steadies + tightens the shot without the disorienting tunnel of a sniper
+/// scope. The host picks this target (not [`SCOPED_FOV_DEG`]) for a possessed rifleman, and skips
+/// the [`crate::scope`]-overlay scope chrome (that stays tank-only). Same fair narrowing (invariant
+/// #6: a narrower FOV reveals *less* of the world).
+pub const ADS_FOV_DEG: f32 = 42.0;
+
+/// Floor on the ADS look-sensitivity multiplier ([`ads_look_scale`]): even fully zoomed the look
+/// never drops below 45% of hip sensitivity, so aiming down sight steadies the aim without ever
+/// feeling glued/unresponsive on a phone-sized viewport. Tuned for the snappy-but-controllable feel
+/// the WS-A floor calls for.
+pub const ADS_SENS_FLOOR: f32 = 0.45;
 
 /// Zoom interpolation rate (units of `t` per second): how fast the FOV eases between hip and full
 /// ADS. `8.0` → a full transition in ~0.125 s, snappy but not instant (so the scope eases in, not
@@ -28,13 +44,16 @@ pub const ZOOM_RATE: f32 = 8.0;
 /// The host gates the `render::scope` pass on `aim_zoom_t > SCOPE_VISIBLE_T`.
 pub const SCOPE_VISIBLE_T: f32 = 0.02;
 
-/// Whether aiming down sight engages this frame: only while **embodied**, in a unit that *has* a
-/// gun-sight (`has_scope` — the host passes the tank's "has an independent turret" read), and while
-/// the ADS input is **held**. A pure gate (the zoom twin of [`fire::fire_command`]'s trigger gate),
-/// so an infantry avatar or the command view never zooms. Holding ADS while not embodied is inert.
+/// Whether aiming down sight engages this frame: only while **embodied**, in a unit that *can* aim
+/// down sight (`can_ads`), and while the ADS input is **held**. A pure gate (the zoom twin of
+/// [`fire::fire_command`]'s trigger gate), so the command view never zooms and a dead avatar is
+/// inert. As of WS-A `can_ads` is true for **any** living embodied unit (infantry iron-sight ADS to
+/// [`ADS_FOV_DEG`] *and* the tank gun-sight to [`SCOPED_FOV_DEG`]) — the host chooses the target FOV
+/// + whether to draw the scope-overlay chrome (tank only) from the possessed unit's kind. Holding
+/// ADS while not embodied is inert.
 #[inline]
-pub fn zoom_active(embodied: bool, has_scope: bool, aim_held: bool) -> bool {
-    embodied && has_scope && aim_held
+pub fn zoom_active(embodied: bool, can_ads: bool, aim_held: bool) -> bool {
+    embodied && can_ads && aim_held
 }
 
 /// Advance the zoom interpolation toward full ADS (`active`) or back to the hip (`!active`) by one
@@ -75,6 +94,23 @@ pub fn zoom_fov_deg(base_deg: f32, scoped_deg: f32, t: f32) -> f32 {
 pub fn zoom_magnification(base_deg: f32, fov_deg: f32) -> f32 {
     let half_tan = |d: f32| (d.clamp(1.0e-3, 179.0) * 0.5).to_radians().tan();
     (half_tan(base_deg) / half_tan(fov_deg)).max(1.0)
+}
+
+/// The look-sensitivity multiplier while aiming down sight at interpolation `t` and optical
+/// `magnification` (WS-A, CP-2). Eases from `1.0` at hip (`t = 0`) toward `1 / magnification` at full
+/// ADS (`t = 1`) — the standard "match the angular travel" ramp that keeps the mouse/stick feeling
+/// consistent as the FOV narrows — but **floored at [`ADS_SENS_FLOOR`]** so the aim never feels
+/// glued even at a high tank magnification. The host multiplies its look deltas by this each frame.
+/// PRESENTATION/INPUT ONLY (invariant #4): it scales the host-side yaw/pitch integration, never the
+/// sim. Monotone non-increasing in `t`; clamped so an out-of-range `t`/`magnification` stays sane.
+/// Pure → host-tested.
+#[inline]
+pub fn ads_look_scale(t: f32, magnification: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    // The fully-zoomed target multiplier (never below the responsiveness floor).
+    let target = (1.0 / magnification.max(1.0)).max(ADS_SENS_FLOOR);
+    // Lerp hip (1.0) → target by t.
+    1.0 + (target - 1.0) * t
 }
 
 #[cfg(test)]
@@ -192,5 +228,41 @@ mod tests {
         // A wider-than-base FOV would compute < 1×; the floor keeps the readout at 1.0× (the scope
         // never de-magnifies the world).
         assert!((zoom_magnification(BASE, 90.0) - 1.0).abs() < 1e-6);
+    }
+
+    // ---- ADS look-sensitivity ramp (WS-A) ----
+
+    #[test]
+    fn ads_look_scale_is_unity_at_hip_and_drops_when_scoped() {
+        // The infantry ADS magnification (60°→42° ≈ 1.7×).
+        let mag = zoom_magnification(BASE, ADS_FOV_DEG);
+        assert!((ads_look_scale(0.0, mag) - 1.0).abs() < 1e-6, "hip is full sensitivity");
+        let scoped = ads_look_scale(1.0, mag);
+        assert!(scoped < 1.0, "ADS slows the look, got {scoped}");
+        // ~1/1.7 ≈ 0.59 (above the floor), matched to the angular-travel ramp.
+        assert!((scoped - 1.0 / mag).abs() < 1e-6, "full ADS scales to 1/mag at this magnification");
+    }
+
+    #[test]
+    fn ads_look_scale_is_monotone_nonincreasing_in_t() {
+        let mag = zoom_magnification(BASE, SCOPED_FOV_DEG); // the high tank magnification
+        let mut prev = 2.0;
+        for i in 0..=20 {
+            let s = ads_look_scale(i as f32 / 20.0, mag);
+            assert!(s <= prev + 1e-9, "non-increasing in t: {s} !<= {prev}");
+            assert!((0.0..=1.0).contains(&s), "scale {s} out of (0,1]");
+            prev = s;
+        }
+    }
+
+    #[test]
+    fn ads_look_scale_never_drops_below_the_floor() {
+        // Even at an absurd magnification the look stays at least ADS_SENS_FLOOR responsive.
+        assert!(
+            (ads_look_scale(1.0, 100.0) - ADS_SENS_FLOOR).abs() < 1e-6,
+            "fully zoomed at huge mag floors at ADS_SENS_FLOOR"
+        );
+        // Degenerate magnification (< 1) is clamped so the scale never exceeds 1.0 (never speeds up).
+        assert!(ads_look_scale(1.0, 0.1) <= 1.0 + 1e-6, "ADS never speeds the look up");
     }
 }

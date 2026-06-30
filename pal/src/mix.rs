@@ -156,6 +156,8 @@ pub fn synth_bank(sr: u32) -> HashMap<SoundId, Arc<Vec<f32>>> {
     bank.insert(SoundId::Capture, Arc::new(capture(sr)));
     bank.insert(SoundId::ProductionReady, Arc::new(production_ready(sr)));
     bank.insert(SoundId::HitConfirm, Arc::new(hit_confirm(sr)));
+    bank.insert(SoundId::WeaponFire, Arc::new(weapon_fire(sr)));
+    bank.insert(SoundId::Impact, Arc::new(impact(sr)));
     bank
 }
 
@@ -245,6 +247,41 @@ fn hit_confirm(sr: u32) -> Vec<f32> {
         .collect()
 }
 
+/// The embodied avatar's OWN weapon crack (WS-A) — a host-clock fire cue on the trigger press, so a
+/// shot reads the instant the muzzle flashes even when it misses. Punchier + a touch longer than the
+/// distant [`gunfire`] field cue (this is the gun *in your hands*): a hot noise transient with a low
+/// body thump under it, fast exponential decay. Placeholder synth (identity is CP-6); WS-A owns the
+/// coupling timing.
+fn weapon_fire(sr: u32) -> Vec<f32> {
+    let n = secs(sr, 0.12);
+    let tau = sr as f32 * 0.025;
+    let mut st = 0xC0FF_EE11u32;
+    (0..n)
+        .map(|i| {
+            let env = (-(i as f32) / tau).exp();
+            // Noise crack + a short low body thump (110 Hz) under it. Amplitudes stay clear of the
+            // ~0.8 clip headroom even when the noise transient and the body peak coincide.
+            let body = sine(sr, i, 110.0) * 0.22;
+            (noise(&mut st) * 0.50 + body) * env
+        })
+        .collect()
+}
+
+/// A bullet **impact** — coupled to the impact VFX at the point the avatar's shot landed (WS-A). A
+/// very short, sharp click/thud: a high noise tick over a brief mid thump, faster decay than the gun
+/// crack so it reads as the strike, not the shot. Placeholder synth (identity is CP-6).
+fn impact(sr: u32) -> Vec<f32> {
+    let n = secs(sr, 0.06);
+    let tau = sr as f32 * 0.012;
+    let mut st = 0x5EED_BEEFu32;
+    (0..n)
+        .map(|i| {
+            let env = (-(i as f32) / tau).exp();
+            (noise(&mut st) * 0.42 + sine(sr, i, 240.0) * 0.26) * env
+        })
+        .collect()
+}
+
 /// Map the legacy opaque `play_oneshot` id onto a [`SoundId`]. Shared so every backend's
 /// fire-and-forget path agrees (desktop/Android both call this).
 pub fn oneshot_sound(sound_id: u32) -> SoundId {
@@ -254,6 +291,8 @@ pub fn oneshot_sound(sound_id: u32) -> SoundId {
         3 => SoundId::Capture,
         4 => SoundId::ProductionReady,
         5 => SoundId::HitConfirm,
+        6 => SoundId::WeaponFire,
+        7 => SoundId::Impact,
         _ => SoundId::Gunfire,
     }
 }
@@ -421,6 +460,8 @@ mod tests {
             SoundId::Capture,
             SoundId::ProductionReady,
             SoundId::HitConfirm,
+            SoundId::WeaponFire,
+            SoundId::Impact,
         ] {
             let buf = bank.get(&id).expect("sound present");
             assert!(!buf.is_empty(), "{id:?} buffer empty");
@@ -446,6 +487,8 @@ mod tests {
         assert_eq!(oneshot_sound(3), SoundId::Capture);
         assert_eq!(oneshot_sound(4), SoundId::ProductionReady);
         assert_eq!(oneshot_sound(5), SoundId::HitConfirm);
+        assert_eq!(oneshot_sound(6), SoundId::WeaponFire);
+        assert_eq!(oneshot_sound(7), SoundId::Impact);
         assert_eq!(oneshot_sound(0), SoundId::Gunfire);
         assert_eq!(oneshot_sound(99), SoundId::Gunfire);
     }

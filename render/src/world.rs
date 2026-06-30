@@ -118,15 +118,44 @@ impl WorldUniform {
     }
 }
 
+/// Screen-space NDC anchor of the **shaped muzzle flash** (WS-A) — where the flare blooms relative to
+/// the lower-right weapon viewmodel's muzzle. Pure presentation constant; the flare is drawn here so
+/// it reads as light coming off the gun the player is holding (no world position → no intel, #6).
+pub const MUZZLE_ANCHOR: (f32, f32) = (0.14, -0.07);
+
+/// The muzzle-flash uniform — `params = (flash, aspect, anchor_x, anchor_y)` matching `world.wgsl`'s
+/// `Muzzle` struct. `repr(C)` + `Pod` so it uploads straight into the uniform buffer.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MuzzleUniform {
+    pub params: [f32; 4],
+}
+
+impl MuzzleUniform {
+    /// Build the uniform from the muzzle-flash `intensity` (clamped to `[0,1]`) and viewport `aspect`,
+    /// anchored at [`MUZZLE_ANCHOR`]. Pure + device-free → unit-testable.
+    pub fn new(intensity: f32, aspect: f32) -> Self {
+        MuzzleUniform {
+            params: [intensity.clamp(0.0, 1.0), aspect, MUZZLE_ANCHOR.0, MUZZLE_ANCHOR.1],
+        }
+    }
+}
+
 /// Sky + ground pass for the embodied (first-person) view. Owns the fullscreen sky/ground pipeline
-/// (which CLEARS the frame). The weapon viewmodel is no longer drawn here — it is a 3D mesh drawn by
-/// the [`crate::Renderer`] through the shared [`crate::mesh::MeshPipeline`] (D44).
+/// (which CLEARS the frame) plus the shaped muzzle-flash flare. The weapon viewmodel is no longer
+/// drawn here — it is a 3D mesh drawn by the [`crate::Renderer`] through the shared
+/// [`crate::mesh::MeshPipeline`] (D44).
 pub struct WorldRenderer {
     /// Fullscreen sky/ground pipeline (clears the frame to the world).
     sky_pipeline: wgpu::RenderPipeline,
     /// The world uniform (inverse view-proj, eye, flash).
     uniform_buf: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
+    /// The shaped muzzle-flash flare (WS-A): an additive screen-space flare at [`MUZZLE_ANCHOR`],
+    /// drawn by [`render_muzzle_flash`](Self::render_muzzle_flash) after the weapon viewmodel.
+    muzzle_pipeline: wgpu::RenderPipeline,
+    muzzle_uniform_buf: wgpu::Buffer,
+    muzzle_bind_group: wgpu::BindGroup,
     /// The ground detail-map texture, kept so the raw R8 bytes can be uploaded lazily on the first
     /// [`render_sky`](Self::render_sky) (the construction path has only a `device`, not a `queue` —
     /// the same lazy-upload pattern as `text::TextRenderer::ensure_atlas_uploaded`).
@@ -265,10 +294,88 @@ impl WorldRenderer {
             cache: None,
         });
 
+        // Shaped muzzle-flash flare (WS-A): its own uniform at binding 3 (so it never collides with
+        // the sky pass's `world` uniform), an additive blend, and a vertex-shader-generated quad.
+        let muzzle_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gonedark.world_muzzle_layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let muzzle_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gonedark.world_muzzle_uniform"),
+            size: std::mem::size_of::<MuzzleUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let muzzle_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("gonedark.world_muzzle_bind_group"),
+            layout: &muzzle_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 3,
+                resource: muzzle_uniform_buf.as_entire_binding(),
+            }],
+        });
+        let muzzle_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("gonedark.world_muzzle_pipeline_layout"),
+            bind_group_layouts: &[Some(&muzzle_layout)],
+            immediate_size: 0,
+        });
+        let muzzle_additive = wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::One,
+                operation: wgpu::BlendOperation::Add,
+            },
+        };
+        let muzzle_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("gonedark.world_muzzle_pipeline"),
+            layout: Some(&muzzle_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_muzzle"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_muzzle"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(muzzle_additive),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         WorldRenderer {
             sky_pipeline,
             uniform_buf,
             uniform_bind_group,
+            muzzle_pipeline,
+            muzzle_uniform_buf,
+            muzzle_bind_group,
             ground_tex,
             ground_uploaded: false,
         }
@@ -343,6 +450,52 @@ impl WorldRenderer {
             pass.set_bind_group(0, &self.uniform_bind_group, &[]);
             // Fullscreen triangle: 3 vertices, no vertex buffer.
             pass.draw(0..3, 0..1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+    }
+
+    /// Draw the **shaped muzzle flash** flare (WS-A) at [`MUZZLE_ANCHOR`] for the current flash
+    /// `intensity` and viewport `aspect`, as an ADDITIVE LOAD pass over the embodied frame (never
+    /// clears). A no-op at `intensity <= 0` so it leaves the frame untouched between shots. The host
+    /// calls this after the weapon viewmodel, only while embodied with a drawn rifle. Presentation
+    /// only (invariant #4); no world position → reveals nothing (invariant #6).
+    pub fn render_muzzle_flash(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        intensity: f32,
+        aspect: f32,
+    ) {
+        if intensity <= 0.0 {
+            return;
+        }
+        let uniform = MuzzleUniform::new(intensity, aspect);
+        queue.write_buffer(&self.muzzle_uniform_buf, 0, bytemuck::bytes_of(&uniform));
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("gonedark.world_muzzle_encoder"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("gonedark.world_muzzle_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                multiview_mask: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.muzzle_pipeline);
+            pass.set_bind_group(0, &self.muzzle_bind_group, &[]);
+            pass.draw(0..6, 0..1);
         }
         queue.submit(std::iter::once(encoder.finish()));
     }
@@ -475,6 +628,22 @@ mod tests {
         let fired = weapon_view_model(1.0);
         assert!(fired[3][2] > rest[3][2], "recoils back toward the camera");
         assert!(fired[3][1] > rest[3][1], "and kicks up");
+    }
+
+    // ---- shaped muzzle-flash uniform (WS-A) ----
+
+    #[test]
+    fn muzzle_uniform_carries_flash_aspect_and_anchor() {
+        let u = MuzzleUniform::new(0.5, 16.0 / 9.0);
+        assert!((u.params[0] - 0.5).abs() < EPS, "flash threads through");
+        assert!((u.params[1] - 16.0 / 9.0).abs() < EPS, "aspect threads through");
+        assert_eq!((u.params[2], u.params[3]), MUZZLE_ANCHOR, "anchor is MUZZLE_ANCHOR");
+    }
+
+    #[test]
+    fn muzzle_uniform_clamps_flash() {
+        assert_eq!(MuzzleUniform::new(5.0, 1.0).params[0], 1.0, "over-range flash clamps to 1");
+        assert_eq!(MuzzleUniform::new(-2.0, 1.0).params[0], 0.0, "under-range flash clamps to 0");
     }
 
     // ---- ground detail-map metrics contract ----
