@@ -472,16 +472,30 @@ def build_tracer():
 
 def build_camp_hq():
     mat = make_material("camp_hq", rgba("camp_hq"))  # tan
+    # A real command building: a hipped roof over a cornice, the front (eye-level hero) face given
+    # the detail — corner pilasters framing a recessed doorway under a sloped entrance awning on two
+    # posts, flanked by windows — plus a rooftop vent and an antenna mast with a cross-spreader for
+    # the top-down read. Kept lean: only the silhouette-defining masses, so the tri count stays low.
     parts = [
         box((3.5, 3.0, 1.8), (0, 0, 0.90)),                    # walls
-        box((3.7, 3.2, 0.18), (0, 0, 1.80)),                   # eave / cornice band (roofline lip)
-        pyramid(2.6, 1.2, (0, 0, 2.40)),                       # roof
-        box((1.0, 0.20, 1.10), (0, 1.50, 0.55)),               # door frame (front face)
-        box((0.70, 0.10, 0.55), (-1.0, 1.50, 1.10)),           # window slab (front face)
-        box((0.70, 0.10, 0.55), (1.0, 1.50, 1.10)),            # window slab (front face)
-        box((0.40, 0.40, 0.50), (0, 0, 3.00)),                 # rooftop vent housing under the mast
-        cyl(0.04, 1.40, (1.2, 1.0, 3.50)),                     # antenna
-        cyl(0.10, 0.30, (1.2, 1.0, 2.95), verts=8),            # antenna base
+        box((0.28, 0.28, 1.9), (-1.73, 1.48, 0.95)),           # front pilaster L (frames the facade)
+        box((0.28, 0.28, 1.9), (1.73, 1.48, 0.95)),            # front pilaster R
+        box((3.7, 3.2, 0.20), (0, 0, 1.80)),                   # eave / cornice band (roofline lip)
+        pyramid(2.55, 1.10, (0, 0, 2.34)),                     # hipped roof
+        box((1.7, 0.55, 0.20), (0, 0, 2.88)),                  # ridge vent cap along the roof apex
+        # Front entrance: recessed door panel in a frame under a sloped awning on two posts.
+        box((1.10, 0.22, 1.20), (0, 1.49, 0.60)),              # door frame surround (proud of wall)
+        box((0.72, 0.10, 1.02), (0, 1.57, 0.51)),              # recessed door panel
+        box((1.34, 0.60, 0.10), (0, 1.84, 1.34), rot=(math.radians(-12), 0, 0)),  # sloped entrance awning
+        box((0.09, 0.09, 1.20), (-0.58, 2.02, 0.60)),          # awning post L
+        box((0.09, 0.09, 1.20), (0.58, 2.02, 0.60)),           # awning post R
+        box((0.74, 0.12, 0.50), (-1.05, 1.52, 1.20)),          # window slab L (front face)
+        box((0.74, 0.12, 0.50), (1.05, 1.52, 1.20)),           # window slab R
+        # Rooftop kit + mast (top-down read).
+        box((0.46, 0.46, 0.52), (-0.2, -0.2, 2.94)),           # rooftop vent housing
+        cyl(0.045, 1.60, (1.15, 1.0, 3.55)),                   # antenna mast
+        cyl(0.11, 0.34, (1.15, 1.0, 2.96), verts=8),           # antenna base
+        box((0.56, 0.05, 0.05), (1.15, 1.0, 3.85)),            # mast cross-spreader
     ]
     return weld("camp_hq", parts, mat, bevel=0.06)
 
@@ -526,56 +540,86 @@ def build_crate():
 
 def build_turret():
     mat = make_material("turret", rgba("turret"))  # steel defensive emplacement
+    # A credible automated weapon emplacement: a bolted ring plate on a base pad, a rotating drum, an
+    # armoured gun housing with a sloped face shield, twin elevation trunnion arms cradling the gun, a
+    # top sensor/optic block, a side ammo can, a recoil cylinder slung under the barrel, and a muzzle
+    # brake. Kept lean — only the parts that make it read as a weapon, not a box on a stick.
     parts = [
         box((1.6, 1.6, 0.40), (0, 0, 0.20)),                   # base pad
         box((1.2, 1.2, 0.14), (0, 0, 0.47)),                   # bolted ring plate on the pad
         cyl(0.55, 0.70, (0, 0, 0.70), verts=12),               # rotating drum
-        box((0.70, 0.80, 0.45), (0, 0, 1.15)),                 # gun housing
-        box((0.55, 0.95, 0.50), (0.42, 0, 1.18)),              # gun shield (faces +X with the barrel)
-        box((0.34, 0.30, 0.26), (-0.28, 0.34, 1.20)),          # ammo box (side)
-        cyl(0.07, 1.20, (0.75, 0, 1.15), rot=(0, math.radians(90), 0), verts=10),  # barrel
-        cyl(0.10, 0.18, (0.30, 0, 1.15), rot=(0, math.radians(90), 0), verts=10),  # barrel shroud
+        box((0.74, 0.84, 0.46), (-0.05, 0, 1.15)),             # gun housing
+        box((0.50, 0.98, 0.62), (0.40, 0, 1.20), rot=(0, math.radians(-10), 0)),  # sloped face shield (+X)
+        box((0.16, 0.10, 0.40), (0.52, 0.42, 1.20)),           # elevation trunnion arm L
+        box((0.16, 0.10, 0.40), (0.52, -0.42, 1.20)),          # elevation trunnion arm R
+        box((0.32, 0.34, 0.22), (-0.20, 0, 1.47)),             # sensor / optic block (on top)
+        box((0.34, 0.30, 0.26), (-0.30, 0.40, 1.18)),          # ammo can (side)
+        cyl(0.07, 0.30, (0.55, 0, 1.04), rot=(0, math.radians(90), 0), verts=8),  # recoil cylinder stub (under barrel)
+        cyl(0.07, 1.30, (0.78, 0, 1.20), rot=(0, math.radians(90), 0), verts=10),  # barrel
+        cyl(0.10, 0.18, (0.34, 0, 1.20), rot=(0, math.radians(90), 0), verts=10),  # barrel shroud
+        cyl(0.11, 0.16, (1.42, 0, 1.20), rot=(0, math.radians(90), 0), verts=10),  # muzzle brake
     ]
     return weld("turret", parts, mat, bevel=0.03)
 
 
 def build_tree():
     mat = make_material("tree", rgba("tree"))  # foliage greybox (single material)
-    # A stylized low-poly conifer: a tapered trunk plus three stacked cone tiers of decreasing
-    # radius. Cones/cylinders are deterministic (the old two-UV-sphere canopy varied run-to-run);
-    # the stacked tiers give a far more intentional, readable silhouette than two blobs.
+    # A stylized low-poly conifer: a tapered trunk plus four stacked cone tiers of decreasing radius.
+    # Cones/cylinders are deterministic (the old two-UV-sphere canopy varied run-to-run). Each tier
+    # is rotated a few degrees so its facets don't line up with the tier below and is nudged slightly
+    # off the trunk axis, giving the canopy a natural, hand-grown irregularity instead of a perfect
+    # stack of identical cones. The tiers overlap in z so the skirts read as one ragged silhouette.
     parts = [
-        cone(0.20, 0.12, 1.40, (0, 0, 0.70), verts=8),         # tapered trunk
-        cone(1.00, 0.0, 1.30, (0, 0, 1.70), verts=10),         # lower skirt tier
-        cone(0.78, 0.0, 1.20, (0, 0, 2.35), verts=10),         # mid tier
-        cone(0.52, 0.0, 1.00, (0, 0, 3.00), verts=10),         # crown tier
+        cone(0.22, 0.13, 1.50, (0, 0, 0.72), verts=8),                              # tapered trunk
+        cone(1.05, 0.30, 1.20, (0.04, -0.02, 1.55), rot=(0, 0, math.radians(0)), verts=10),   # lower skirt tier
+        cone(0.86, 0.22, 1.10, (-0.05, 0.03, 2.10), rot=(0, 0, math.radians(18)), verts=10),  # mid-low tier
+        cone(0.64, 0.16, 1.00, (0.03, -0.03, 2.65), rot=(0, 0, math.radians(36)), verts=10),  # mid-high tier
+        cone(0.40, 0.0, 0.95, (-0.02, 0.02, 3.20), rot=(0, 0, math.radians(12)), verts=8),    # crown tier
     ]
     return weld("tree", parts, mat, bevel=0.0)
 
 
 def build_rock():
     mat = make_material("rock", rgba("rock"))  # grey boulder
-    # A cluster of two faceted icospheres (deterministic — the old UV sphere tessellated differently
-    # each run), each squashed and offset so the silhouette is an irregular boulder, not a ball.
-    # Flat-shaded triangular facets read as cleaved stone.
-    main = icosphere(0.90, (0, 0, 0.55), subdivisions=1)
-    main.dimensions = (1.80, 1.50, 1.05)               # squash to a boulder, base near z=0
-    spur = icosphere(0.55, (0.55, -0.30, 0.40), subdivisions=1)
-    spur.dimensions = (0.95, 0.80, 0.70)               # smaller offset lobe — breaks the symmetry
-    return weld("rock", [main, spur], mat)
+    # A cluster of three faceted icospheres (deterministic — the old UV sphere tessellated
+    # differently each run), each squashed, tilted, and offset so the silhouette is an irregular
+    # cleaved boulder, not a ball. No chamfer — the raw flat-shaded triangular facets are exactly the
+    # sharp fractured-stone read we want (and a bevel on a sphere bevels every facet edge, ballooning
+    # the tri count for no aesthetic gain).
+    main = icosphere(0.90, (0, 0, 0.52), subdivisions=1)
+    main.dimensions = (1.85, 1.45, 1.02)               # squash to a boulder, base near z=0
+    main.rotation_euler = (0, math.radians(7), math.radians(20))  # tilt the cleavage plane
+    spur = icosphere(0.55, (0.62, -0.32, 0.38), subdivisions=1)
+    spur.dimensions = (1.00, 0.82, 0.74)               # offset lobe — breaks the symmetry
+    spur.rotation_euler = (math.radians(10), 0, math.radians(-15))
+    chip = icosphere(0.34, (-0.58, 0.30, 0.26), subdivisions=1)
+    chip.dimensions = (0.66, 0.58, 0.46)               # small shed chip at the foot
+    return weld("rock", [main, spur, chip], mat)
 
 
 def build_barricade():
     mat = make_material("barricade", rgba("barricade"))  # sandbag berm cover
-    # A stacked sandbag berm: discrete bags laid in two offset (running-bond) courses instead of two
-    # smooth slabs, so the silhouette reads as a wall of bags. A heavy chamfer rounds each bag.
+    # A stacked sandbag berm: discrete bags laid in three offset (running-bond) courses. Each bag is
+    # a flattened, heavily-chamfered box rotated a few degrees off-axis and dipped in height, so the
+    # course sags and bulges like real filled bags rather than a tidy brick wall. A deterministic
+    # per-bag wobble (indexed, not random) keeps the regen bit-reproducible.
     parts = []
-    lower_xs = [-1.0, -0.5, 0.0, 0.5, 1.0]
-    upper_xs = [-0.75, -0.25, 0.25, 0.75]
-    for x in lower_xs:
-        parts.append(box((0.46, 0.70, 0.30), (x, 0, 0.15)))    # lower course bag
-    for x in upper_xs:
-        parts.append(box((0.46, 0.60, 0.28), (x, 0, 0.44)))    # upper course bag (offset = running bond)
+    # (x, base_dims, z, +/- sag tweak, yaw nudge in deg) per course. Bags overlap slightly so the
+    # berm reads as a continuous packed wall with no gaps.
+    lower = [-1.05, -0.52, 0.0, 0.52, 1.05]
+    upper = [-0.78, -0.26, 0.26, 0.78]
+    top = [-0.40, 0.10, 0.55]
+    for i, x in enumerate(lower):
+        sag = 0.02 if i % 2 else -0.02
+        parts.append(box((0.52, 0.74, 0.30 + sag), (x, 0.01 * (i % 3 - 1), 0.15 + sag * 0.5),
+                         rot=(0, 0, math.radians(4 if i % 2 else -3))))  # lower course bag
+    for i, x in enumerate(upper):
+        sag = -0.02 if i % 2 else 0.015
+        parts.append(box((0.50, 0.64, 0.28 + sag), (x, 0.02 * (i % 2), 0.45 + sag * 0.5),
+                         rot=(0, 0, math.radians(-4 if i % 2 else 5))))  # mid course bag (running bond)
+    for i, x in enumerate(top):
+        parts.append(box((0.44, 0.54, 0.24), (x, -0.01, 0.70),
+                         rot=(0, 0, math.radians(3 if i % 2 else -4))))  # short top crest course
     return weld("barricade", parts, mat, bevel=0.09)
 
 
@@ -763,19 +807,21 @@ MODELS = [
     ("tank_turret", build_tank_turret,
      "Greybox tank turret — gun mantlet + barrel, pivoting about the hull's turret ring (P7)."),
     ("camp_hq", build_camp_hq,
-     "Greybox structure — walled building with a pyramid roof + antenna."),
+     "Greybox structure — command building: hipped roof + ridge vent, pilaster-framed recessed "
+     "doorway under an entrance awning, flanking windows, rooftop vent + antenna mast."),
     ("weapon_rifle", build_weapon_rifle,
      "First-person weapon viewmodel — receiver, barrel, magazine, stock, grip."),
     ("crate", build_crate,
      "Cover prop — a 1m crate."),
     ("turret", build_turret,
-     "Defensive structure — base pad, rotating drum, gun housing + barrel."),
+     "Defensive structure — weapon emplacement: base pad + ring plate, rotating drum, armoured gun "
+     "housing with a sloped shield, elevation trunnions, sensor block, barrel + muzzle brake."),
     ("tree", build_tree,
-     "Scenery / soft cover — trunk with a two-tier canopy."),
+     "Scenery / soft cover — conifer: tapered trunk + four staggered, rotated cone tiers."),
     ("rock", build_rock,
-     "Scenery / hard cover — a faceted low-poly boulder."),
+     "Scenery / hard cover — a faceted three-lobe boulder (tilted, irregular silhouette)."),
     ("barricade", build_barricade,
-     "Cover prop — a stepped two-course sandbag berm."),
+     "Cover prop — a three-course sagging sandbag berm (offset running bond, per-bag wobble)."),
     ("tracer", build_tracer,
      "Tank-shell tracer — a small +X-elongated bolt, placed at the shell and yawed by velocity (P7)."),
     # Faction cosmetic silhouettes (WS-C, D68) — presentation-only per-army variants.

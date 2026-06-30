@@ -17,6 +17,19 @@ read as a rifleman, not a coat-rack); the tank turrets seat on a ring foot with 
 + coax MG; the rifle viewmodels gain a low-profile optic. The faction silhouette tells are
 preserved (US rounded helmet / long-flat Abrams + broad turret / M4 mag-forward; FR flat-brimmed
 SPECTRA / compact Leclerc + rear autoloader bustle + sight mast / FAMAS bullpup carry-handle).
+
+A second pass gave the **structures and props** the same treatment so they read as believable
+emplacements/scenery at both top-down and eye level (still modest tri counts — all well under the
+infantry ceiling): the **camp HQ** is a command building (hipped roof + ridge vent, corner
+pilasters framing a recessed doorway under an entrance awning, flanking windows, a rooftop vent +
+antenna mast with cross-spreader); the **defensive turret** is a credible weapon emplacement
+(ring-plated pad, rotating drum, armoured housing with a sloped face shield, elevation trunnions,
+a sensor block, and a barrel with shroud + muzzle brake); the **barricade** is a three-course
+sagging sandbag berm (offset running bond, each bag flattened/rotated with a deterministic
+per-bag wobble); the **tree** is a four-tier conifer whose tiers are rotated + nudged off-axis for
+a ragged, hand-grown silhouette; the **rock** is a three-lobe tilted boulder. (The barricade and
+sandbag courses are deliberately tri-light box stacks; the heavy per-bag chamfer does the rounding.)
+
 One budget note: at the chamfer's 40° angle limit, cylinder side edges stay un-beveled only at
 **≥10 facets** (a 9- or 8-gon's wider inter-facet angle trips the limit and bevels every edge,
 *adding* geometry) — so limbs/wheels/barrels stay at `verts=10`, rings at `12`.
@@ -64,13 +77,13 @@ Eleven models — units, structures, weapons, props, scenery, fx:
 | `trooper` | `units` | Greybox infantry unit (boxy humanoid) |
 | `tank` | `units` | Greybox vehicle hull (chassis + tracks) |
 | `tank_turret` | `units` | Tank turret (mantlet + barrel, slews on the hull's ring) |
-| `camp_hq` | `structures` | Greybox structure (walls + pyramid roof + antenna) |
-| `turret` | `structures` | Defensive structure (base/drum/housing/barrel) |
-| `barricade` | `structures` | Two-course sandbag berm cover |
+| `camp_hq` | `structures` | Command building (hipped roof, doorway + awning, windows, antenna mast) |
+| `turret` | `structures` | Weapon emplacement (pad/drum/housing/shield/trunnions/barrel + muzzle brake) |
+| `barricade` | `structures` | Three-course sagging sandbag berm cover |
 | `weapon_rifle` | `weapons` | First-person weapon viewmodel |
 | `crate` | `props` | 1 m cover prop |
-| `tree` | `props` | Scenery / soft cover (trunk + two-tier canopy) |
-| `rock` | `props` | Scenery / hard cover (faceted boulder) |
+| `tree` | `props` | Scenery / soft cover (trunk + four-tier ragged conifer canopy) |
+| `rock` | `props` | Scenery / hard cover (three-lobe faceted boulder) |
 | `tracer` | `fx` | Tank-shell tracer (small +X-elongated bolt) |
 
 ## The LOD chain
@@ -96,11 +109,13 @@ from **gltfpack** (`-si <ratio> -sa`) re-imported into Blender and re-cooked thr
 - Naming contract the renderer relies on: full = `<name>.mesh`; decimated = `<name>.lod1.mesh`,
   `<name>.lod2.mesh`. The `.lodN.glb` siblings are kept for provenance.
 
-> **Determinism caveat.** The sphere-based models (`trooper`, `tree`, `rock`) are
-> **non-deterministic run-to-run** — Blender's UV-sphere tessellation varies between runs, so
-> their LOD0 `.mesh` bytes (and thus the derived LOD tiers) change on regeneration even though the
-> geometry is equivalent. The box/cylinder/cone models are bit-reproducible. Treat the committed
-> `.mesh` files as the golden artifacts; the render crate golden test checks validity, not bytes.
+> **Determinism caveat.** The models with a **UV-sphere** part (`trooper` and its faction
+> variants `trooper_us`/`trooper_fr` — the head) are **non-deterministic run-to-run**: Blender's
+> UV-sphere tessellation varies between runs, so their LOD0 `.mesh` bytes (and thus the derived LOD
+> tiers) change on regeneration even though the geometry is equivalent. The box/cylinder/cone/
+> **icosphere** models — including `tree` (cones) and `rock` (icospheres) — are bit-reproducible.
+> Treat the committed `.mesh` files as the golden artifacts; the render crate golden test checks
+> validity, not bytes.
 
 ## Adding / editing a model
 
