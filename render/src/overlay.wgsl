@@ -2,8 +2,10 @@
 // reconnect-prompt / post-match-summary chrome, drawn as a screen-space LOAD pass on top of the
 // already-rendered (possibly dark) match frame. One axis-aligned rectangle per quad, positioned
 // and sized in NDC, then shaped into a *card*: a signed-distance rounded rectangle with a crisp
-// anti-aliased edge, an optional subtle vertical gradient (top a touch lighter), and an optional
-// soft feather for drop-shadow quads. Alpha-blended over the frame (no clear).
+// anti-aliased edge, an optional subtle vertical gradient (top a touch lighter), a hairline rim
+// light along the top edge + a recessed lower lip (both gated on the gradient param, so flat
+// structural roles stay clean), and an optional soft feather for drop-shadow quads. Alpha-blended
+// over the frame (no clear).
 //
 // Float side of invariant #4 — every number here is already an f32; this overlay carries NO world
 // position and no fog data (it is chrome, not intel — invariant #6 stays intact beneath it).
@@ -85,16 +87,32 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let r = clamp(radius, 0.0, min(ext.x, ext.y));
     let dist = rounded_box_sdf(p, ext, r);
 
-    // Anti-aliased coverage: `fwidth` gives a ~1px band for a crisp edge; `softness` widens it so a
-    // drop-shadow quad fades softly outward instead of ending in a hard line.
+    // Anti-aliased coverage. `fwidth` is the per-pixel slope of the SDF; a half-pixel band on each
+    // side gives a crisp ~1px edge (was a softer ~2px band). `softness` widens it so a drop-shadow
+    // quad fades softly outward instead of ending in a hard line.
     let aa = max(fwidth(dist), 1e-4);
-    let edge = aa + softness;
+    let edge = aa * 0.5 + softness;
     let coverage = 1.0 - smoothstep(-edge, edge, dist);
 
     // Subtle vertical gradient: top (local.y -> +1) slightly lighter, bottom slightly darker, so a
     // panel/button reads as a lit card rather than a flat fill.
     let shade = 1.0 + gradient * 0.16 * in.local.y;
-    let rgb = clamp(in.color.rgb * shade, vec3<f32>(0.0), vec3<f32>(1.0));
+    var rgb = clamp(in.color.rgb * shade, vec3<f32>(0.0), vec3<f32>(1.0));
+
+    // Designed-card sculpting, gated on `gradient` so the flat structural roles (scrim, panel rim,
+    // drop shadow, bar track — all gradient 0) stay perfectly clean. `dist` is negative inside, so
+    // `inset` is a thin ramp that is 1 right at the border and falls to 0 a few px in: a hairline
+    // that hugs the rounded edge. We light the TOP of that hairline (a cool rim light, lit-from-
+    // above) and darken its BOTTOM (a recessed lower lip), which lifts the card off the dark map.
+    let hairline = aa + 0.006;
+    let inset = clamp(1.0 + dist / hairline, 0.0, 1.0);
+    let top_w = clamp(in.local.y, 0.0, 1.0);
+    let bot_w = clamp(-in.local.y, 0.0, 1.0);
+    // A cool bone tint for the top rim light so it reads as light, not just a brighter fill.
+    let rim_tint = vec3<f32>(0.80, 0.87, 1.0);
+    let rim_light = gradient * inset * top_w * 0.22;
+    let lower_lip = gradient * inset * bot_w * 0.14;
+    rgb = clamp(rgb + rim_light * rim_tint - vec3<f32>(lower_lip), vec3<f32>(0.0), vec3<f32>(1.0));
 
     return vec4<f32>(rgb, in.color.a * coverage);
 }

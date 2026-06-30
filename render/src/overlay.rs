@@ -166,8 +166,9 @@ struct QuadStyle {
     softness: f32,
 }
 
-/// Card corner radius (NDC-y) for panels/rim — the rounded-rect "card" look.
-const CORNER_PANEL: f32 = 0.045;
+/// Card corner radius (NDC-y) for panels/rim — the rounded-rect "card" look. Kept on the tighter
+/// side so the cards read as crisp tactical chrome rather than soft bubbles.
+const CORNER_PANEL: f32 = 0.038;
 /// Corner radius (NDC-y) for buttons — a touch tighter than a panel.
 const CORNER_BUTTON: f32 = 0.022;
 /// How far past the panel the drop shadow's soft edge feathers (NDC-y).
