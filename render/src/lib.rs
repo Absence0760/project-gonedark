@@ -1409,6 +1409,61 @@ impl Renderer {
         self.text.render(device, queue, view);
     }
 
+    /// Draw a transient centered command-view **banner** (e.g. the upgrade-feedback message) near the
+    /// top of the frame — `text` over a subtle backing card, the whole thing faded by `alpha` so the
+    /// host can play it in and out. A no-op for empty text or `alpha <= 0`. Screen-space chrome with no
+    /// world position (invariant #6); the host gates it to the command view and supplies the fade. The
+    /// backing card is sized to this frame's aspect-corrected text footprint so it always hugs the message.
+    pub fn render_banner(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        text: &str,
+        color: [f32; 3],
+        alpha: f32,
+    ) {
+        if text.is_empty() || alpha <= 0.0 {
+            return;
+        }
+        const SIZE: f32 = 0.055;
+        // Upper third, clear of the top corners (readout card / command panel) and the bottom bar.
+        const TOP_Y: f32 = 0.55; // top edge of the (TopCenter-anchored) text box
+        let (tw, th) = text::measure(text, SIZE, self.chrome_aspect);
+        let (pad_x, pad_y) = (0.030, 0.020);
+        let hw = tw * 0.5 + pad_x;
+        let hh = th * 0.5 + pad_y;
+        let cy = TOP_Y - th * 0.5; // card centres on the text box
+        let card = vec![
+            overlay::OverlayQuad {
+                cx: 0.0,
+                cy,
+                hw: hw + 0.008,
+                hh: hh + 0.008,
+                r: 0.16,
+                g: 0.18,
+                b: 0.24,
+                alpha: 0.85 * alpha,
+                role: overlay::QuadRole::PanelRim,
+            },
+            overlay::OverlayQuad {
+                cx: 0.0,
+                cy,
+                hw,
+                hh,
+                r: 0.05,
+                g: 0.06,
+                b: 0.09,
+                alpha: 0.80 * alpha,
+                role: overlay::QuadRole::Panel,
+            },
+        ];
+        self.overlay.draw_quads(device, queue, view, &card);
+        self.text
+            .queue(text, [0.0, TOP_Y], SIZE, text::Anchor::TopCenter, color, alpha);
+        self.text.render(device, queue, view);
+    }
+
     /// Draw the embody-unit picker (command view) — the list of selected units the player chooses
     /// from to possess one — on top of the current command frame (a LOAD text pass; never clears).
     /// The host calls this ONLY in the command view (never embodied → never over the dark frame,

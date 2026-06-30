@@ -1042,6 +1042,36 @@ fn active_player_camp(world: &gonedark_core::ecs::World, faction: Faction) -> Op
     None
 }
 
+/// How long (sim ticks) a command-view upgrade-feedback banner stays on screen before fading out.
+/// 2.5 s at 60 Hz — long enough to read, short enough not to nag.
+const UPGRADE_BANNER_TICKS: u64 = 150;
+/// Success banner tint (the credits/upgrade amber, matching the readout's economy lines).
+const BANNER_OK: [f32; 3] = [1.0, 0.82, 0.32];
+/// Failure banner tint (a soft hostile red — "you couldn't afford it").
+const BANNER_FAIL: [f32; 3] = [0.95, 0.45, 0.40];
+
+/// The feedback banner for an upgrade attempt, from the camp's tier *before* and *after* the sim step
+/// plus the (host-previewed) `next_cost` of that upgrade. PURE (no `Game`/device/sim read) so it is
+/// host-unit-tested: a tier that actually rose reads as a success ("CAMP UPGRADED — TIER n", matching
+/// the command panel's `CAMP — TIER n` title), and an unchanged tier reads as "can't afford" with the
+/// cost the player was short of — turning a previously-silent button into a clear yes/no indication.
+fn upgrade_banner_message(pre_level: u8, post_level: u8, next_cost: i64) -> (String, [f32; 3]) {
+    if post_level > pre_level {
+        (format!("CAMP UPGRADED — TIER {post_level}"), BANNER_OK)
+    } else {
+        (format!("NEED {next_cost} RESOURCES TO UPGRADE"), BANNER_FAIL)
+    }
+}
+
+/// Linear fade alpha for a banner stamped `elapsed` ticks ago over a `total`-tick lifetime: full at
+/// stamp, 0 once it expires. PURE → host-tested; the draw call skips a 0-alpha banner entirely.
+fn banner_alpha(elapsed: u64, total: u64) -> f32 {
+    if total == 0 || elapsed >= total {
+        return 0.0;
+    }
+    1.0 - elapsed as f32 / total as f32
+}
+
 /// Map this frame's command-view **production** intents — build / train / upgrade (Phase 2's "command
 /// and grow your camps") — onto sim commands for `Faction::Player`. PURE (no `Game`/device), so it is
 /// host-testable: the device-bound [`Game::frame`] only resolves the two inputs (the unprojected
@@ -1231,6 +1261,14 @@ pub struct Game {
     /// plus a one-shot hit SFX. It is feedback on the player's OWN action — never intel about an
     /// unseen enemy — so it stays inside invariant #6, and never feeds the sim / never enters `core`.
     last_hit_tick: Option<u64>,
+
+    /// A transient command-view feedback banner for the last camp-upgrade attempt — `(tick, message,
+    /// rgb)`, or `None` if none is live. PRESENTATION ONLY: the host detects whether a `Command::
+    /// Upgrade` actually raised the camp's tier this frame (by comparing the camp `level` across the
+    /// sim step — never a sim read the checksum sees) and stamps a fading banner so the player gets a
+    /// clear "it worked / you can't afford it" indication instead of silence. Command view only
+    /// (invariant #6); never read by the sim, never crosses into `core`.
+    upgrade_banner: Option<(u64, String, [f32; 3])>,
 
     /// Per-frame-persistent touch-control state (the Android FPS HUD): which finger owns the move
     /// stick / look region + button-edge history. Drives the embodied intents from
@@ -1752,6 +1790,8 @@ impl Game {
             last_fire_tick: None,
             // No connecting shot yet → no hitmarker (WS-4, presentation only).
             last_hit_tick: None,
+            // No upgrade attempted yet → no feedback banner.
+            upgrade_banner: None,
             // No touches tracked yet; the HUD is only built on embodied touch frames.
             touch: touch_controls::TouchControls::new(),
             // The shipped-default HUD layout (no overrides → resolves to the stock `TouchLayout`).
@@ -2234,19 +2274,27 @@ impl Game {
 
         // Command-view on-screen buttons (build / train / upgrade) — the mobile path for the
         // command intents the desktop arms off the B/R/H/U keys (touch had no way to set them). A
-        // tap-up inside a bar button arms the matching `InputFrame` intent and is CONSUMED (the
-        // pointer + tap edges are cleared) so the same release can't also select/deselect units
-        // underneath — the same "a click on a button belongs to the button" rule the overlay uses.
-        // The hit shapes come from the SAME `CommandBarLayout` the renderer draws from below (no
+        // gesture that BEGINS on a bar button belongs to the button, so we intercept BOTH edges of it:
+        //  - on press-DOWN over a button we consume the down edge, so the selection layer below never
+        //    starts a band-select drag — that stray drag (anchored on the press, never finalised
+        //    because we also consume the matching release) was the empty "selection box" that opened
+        //    on every button click and had to be dismissed with a second click;
+        //  - on release-UP over a button we arm the matching `InputFrame` intent (tap semantics).
+        // Either way the pointer + tap edges are cleared so the same gesture can't also select/
+        // deselect units underneath — the "a click on a button belongs to the button" rule the overlay
+        // uses. The hit shapes come from the SAME `CommandBarLayout` the renderer draws from below (no
         // drift). Command view only — never while embodied (invariant #6).
-        if !self.embodied && input.pointer_up {
+        if !self.embodied && (input.pointer_down || input.pointer_up) {
             if let Some((px, py)) = input.pointer {
                 if let Some(btn) = command_touch::CommandBarLayout::new(width, height).button_at(px, py)
                 {
-                    match btn {
-                        command_touch::CommandButton::TrainRifleman => input.train_slot = Some(0),
-                        command_touch::CommandButton::TrainHeavy => input.train_slot = Some(1),
-                        command_touch::CommandButton::Upgrade => input.upgrade_pressed = true,
+                    // Arm the intent on the release only; the press merely blocks the drag from starting.
+                    if input.pointer_up {
+                        match btn {
+                            command_touch::CommandButton::TrainRifleman => input.train_slot = Some(0),
+                            command_touch::CommandButton::TrainHeavy => input.train_slot = Some(1),
+                            command_touch::CommandButton::Upgrade => input.upgrade_pressed = true,
+                        }
                     }
                     input.pointer = None;
                     input.pointer_up = false;
@@ -2601,6 +2649,25 @@ impl Game {
             budget = 1;
         }
 
+        // Upgrade-feedback capture (bug fix): note the targeted camp's tier + this upgrade's previewed
+        // cost BEFORE the step, so that after it we can tell whether a `Command::Upgrade` this frame
+        // actually raised the tier (success) or was rejected for cost — and show the player a banner
+        // either way (an upgrade used to apply silently). A pure host read of the pre-step world; it
+        // folds nothing into the sim and never enters the checksum (invariant #4/#7). `Upgrade` is a
+        // one-shot command, so a sub-tick frame still advances one tick (above) and applies it.
+        let upgrade_pre: Option<(Entity, u8, i64)> = commands.iter().find_map(|c| match c {
+            Command::Upgrade { camp } if self.sim.world.is_alive(*camp) => {
+                let level = self.sim.world.building[camp.index as usize].level;
+                let next_cost = gonedark_render::upgrade_panel::upgrade_view(
+                    level,
+                    self.sim.resources.get(Faction::Player),
+                )
+                .next_cost;
+                Some((*camp, level, next_cost))
+            }
+            _ => None,
+        });
+
         // Drive the lockstep loop for `budget` ticks. The per-tick `step` closure preserves the
         // prev→curr snapshot, the event accumulation, and the sim advance the old accumulator did.
         let prev = &mut self.prev;
@@ -2623,6 +2690,20 @@ impl Game {
         // tick's per-peer input wasn't in hand (the seam's `stalled` observation; single-player at
         // delay 0 never stalls, so this is always false there). Feeds the reconnect prompt below.
         let lockstep_stalled = advanced < budget;
+
+        // Stamp the upgrade-feedback banner now the step has run: the camp's tier rose → success,
+        // else it couldn't afford the upgrade. Presentation only — a host clock cue alongside the
+        // authoritative result, never a sim read the checksum sees (invariant #4/#7). Drawn in the
+        // command-view chrome below and fades over `UPGRADE_BANNER_TICKS`.
+        if let Some((camp, pre_level, next_cost)) = upgrade_pre {
+            let post_level = if self.sim.world.is_alive(camp) {
+                self.sim.world.building[camp.index as usize].level
+            } else {
+                pre_level
+            };
+            let (msg, color) = upgrade_banner_message(pre_level, post_level, next_cost);
+            self.upgrade_banner = Some((self.sim.tick_count(), msg, color));
+        }
 
         // Adaptive input delay (WS-B): on a NETWORKED session, fold the latest RTT into the
         // estimator's decision and, when its hysteresis gate fires, ask lockstep to propose the new
@@ -2959,6 +3040,20 @@ impl Game {
             let bar_view = command_touch::CommandBarLayout::new(width, height).to_view(width, height);
             self.renderer
                 .render_command_bar(device, queue, view, &bar_view);
+        }
+
+        // 7c''. Upgrade-feedback banner (bug fix): a fading centered message confirming the last camp
+        // upgrade attempt ("CAMP UPGRADED — TIER n" / "NEED n RESOURCES"), so the UPGRADE button is no
+        // longer silent. Command view only (invariant #6); a host clock cue, no sim read. The banner
+        // tuple is cloned out first so the immutable read doesn't clash with the `&mut self.renderer`.
+        if !self.embodied {
+            if let Some((stamp, msg, color)) = self.upgrade_banner.clone() {
+                let alpha = banner_alpha(tick.saturating_sub(stamp), UPGRADE_BANNER_TICKS);
+                if alpha > 0.0 {
+                    self.renderer
+                        .render_banner(device, queue, view, &msg, color, alpha);
+                }
+            }
         }
 
         // 7c'. Objective HUD (PvE WS-A), top-left. Command view only — never over the dark embodied
@@ -3635,6 +3730,32 @@ mod tests {
             Some(building),
             "the lowest-index built camp stays the deterministic active camp"
         );
+    }
+
+    #[test]
+    fn upgrade_banner_reads_success_when_the_tier_rose() {
+        let (msg, color) = upgrade_banner_message(1, 2, 400);
+        assert!(msg.contains("UPGRADED"), "a risen tier reads as success: {msg:?}");
+        assert!(msg.contains('2'), "names the new tier");
+        assert_eq!(color, BANNER_OK, "success tint");
+    }
+
+    #[test]
+    fn upgrade_banner_reads_cant_afford_when_the_tier_held() {
+        // Tier unchanged → the sim rejected it (couldn't pay): tell the player the cost they were short.
+        let (msg, color) = upgrade_banner_message(1, 1, 400);
+        assert!(msg.contains("NEED") && msg.contains("400"), "names the cost: {msg:?}");
+        assert_eq!(color, BANNER_FAIL, "failure tint");
+        assert_ne!(BANNER_OK, BANNER_FAIL, "the two outcomes are visually distinct");
+    }
+
+    #[test]
+    fn banner_alpha_fades_linearly_then_expires() {
+        assert!((banner_alpha(0, 150) - 1.0).abs() < 1e-6, "full alpha at the stamp");
+        assert!((banner_alpha(75, 150) - 0.5).abs() < 1e-6, "half way → half alpha");
+        assert_eq!(banner_alpha(150, 150), 0.0, "expired at the lifetime");
+        assert_eq!(banner_alpha(999, 150), 0.0, "stays expired after");
+        assert_eq!(banner_alpha(0, 0), 0.0, "a zero lifetime never shows");
     }
 
     /// `command_view_production_commands` maps the InputFrame's build/train/upgrade edges onto the
