@@ -2015,6 +2015,119 @@ mod tests {
         assert_eq!(dmg(0, 10), fx(20), "flank shot pens for full damage");
     }
 
+    // --- Anti-tank infantry (D73): the measured armour RPS counter ---------------------------------
+
+    /// Spawn a produced unit of `kind` for `faction` at `(x, y)` from the REAL economy stat table
+    /// (`economy::unit_stats` + `unit_armor`), on `FireAtWill` — so these measured matchups fight the
+    /// exact units production spawns. Float-free (positions are `Fixed`).
+    fn spawn_produced(
+        world: &mut World,
+        kind: crate::components::UnitKind,
+        x: Fixed,
+        y: Fixed,
+        faction: Faction,
+    ) -> Entity {
+        let (health, weapon) = crate::economy::unit_stats(kind);
+        let e = world.spawn();
+        let i = e.index as usize;
+        world.pos[i] = Vec2::new(x, y);
+        world.faction[i] = faction;
+        world.health[i] = health;
+        world.weapon[i] = weapon;
+        world.armor[i] = crate::economy::unit_armor(kind);
+        world.unit_kind[i] = kind;
+        world.stance[i] = Stance::FireAtWill;
+        e
+    }
+
+    fn count_alive(world: &World, faction: Faction) -> usize {
+        (0..world.capacity())
+            .filter(|&i| {
+                world.is_index_alive(i)
+                    && world.kind[i] == EntityKind::Unit
+                    && world.faction[i] == faction
+            })
+            .count()
+    }
+
+    /// AT↔TANK (measured): the anti-tank team's penetrating gun cracks a produced Tank's FRONTAL
+    /// facet and kills it, where a Rifleman's zero-pen rifle bounces off that same front forever.
+    /// The shooter sits 13.5 east of the tank — inside its own range (14) but OUTSIDE the tank's gun
+    /// (13) — so it out-duels the armour cleanly and survives. This is the "AT beats armour" leg of
+    /// the RPS triangle, on real production stats.
+    #[test]
+    fn antitank_frontal_pen_kills_the_tank_where_a_rifle_bounces() {
+        use crate::components::UnitKind;
+        // Run a single `shooter` against a front-facing tank; report (tank killed, shooter survived,
+        // tank HP remaining).
+        fn duel(shooter: UnitKind) -> (bool, bool, Fixed) {
+            let mut world = World::new();
+            let terrain = Terrain::open();
+            let tank = spawn_produced(&mut world, UnitKind::Tank, fx(0), fx(0), Faction::Enemy);
+            world.hull_heading[tank.index as usize] = deg(0); // front faces +X (toward the shooter)
+            world.stance[tank.index as usize] = Stance::HoldFire; // isolate the shooter's effect
+            // 13.5 east: in AT/rifle range (14), out of the tank's gun (13).
+            let sx = fx(13) + Fixed::HALF;
+            let atk = spawn_produced(&mut world, shooter, sx, fx(0), Faction::Player);
+            let mut events = Vec::new();
+            for _ in 0..600 {
+                run(&mut world, &terrain, &mut events);
+            }
+            // (Measured: the AntiTank lands the kill at tick ~434; the Rifleman never dents the front.)
+            let tank_dead = !world.is_alive(tank);
+            let shooter_alive = world.is_alive(atk);
+            let tank_hp = if world.is_alive(tank) {
+                world.health[tank.index as usize].cur
+            } else {
+                Fixed::ZERO
+            };
+            (tank_dead, shooter_alive, tank_hp)
+        }
+
+        let (at_killed, at_survived, _) = duel(UnitKind::AntiTank);
+        assert!(at_killed, "anti-tank infantry must crack the tank's frontal armour and kill it");
+        assert!(
+            at_survived,
+            "and survive the duel — it out-ranges the tank's gun (range 14 vs 13)"
+        );
+
+        let (rifle_killed, _, rifle_left) = duel(UnitKind::Rifleman);
+        assert!(!rifle_killed, "a Rifleman's zero-pen shot must bounce off the front (no kill)");
+        let (full_tank, _) = crate::economy::unit_stats(UnitKind::Tank);
+        assert_eq!(
+            rifle_left, full_tank.cur,
+            "the frontal bounce is total — the tank loses no HP at all to the rifle"
+        );
+    }
+
+    /// AT↔RIFLE (measured): massed infantry beats the specialist AT team at equal cost — the second
+    /// leg of the RPS triangle. 6 Riflemen (6×100 = 600) vs 5 AntiTank (5×120 = 600): the rifles'
+    /// cheaper bodies + far higher anti-personnel cadence wipe the fragile, slow-firing AT. Real
+    /// production stats, float-free.
+    #[test]
+    fn equal_cost_riflemen_beat_antitank_infantry() {
+        use crate::components::UnitKind;
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        for k in -3..3i32 {
+            spawn_produced(&mut world, UnitKind::Rifleman, fx(-4), fx(k), Faction::Player);
+        }
+        for k in -2..3i32 {
+            spawn_produced(&mut world, UnitKind::AntiTank, fx(4), fx(k), Faction::Enemy);
+        }
+        assert_eq!(count_alive(&world, Faction::Player), 6);
+        assert_eq!(count_alive(&world, Faction::Enemy), 5);
+        let mut events = Vec::new();
+        for _ in 0..1200 {
+            run(&mut world, &terrain, &mut events);
+        }
+        let rifles = count_alive(&world, Faction::Player);
+        let at = count_alive(&world, Faction::Enemy);
+        // (Measured: all 6 riflemen survive; all 5 AT are wiped — a decisive equal-cost win.)
+        assert_eq!(at, 0, "equal-cost riflemen must wipe the anti-tank infantry (got {at} AT left)");
+        assert!(rifles > 0, "and several riflemen survive the trade (got {rifles})");
+    }
+
     #[test]
     fn resolve_fire_applies_armor_facing() {
         // Embodied hitscan also honours armour facing (the same shared resolver). Shot aims +X at a

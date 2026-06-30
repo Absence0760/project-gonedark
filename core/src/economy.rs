@@ -163,6 +163,40 @@ pub const BARRACKS_BUILD_TICKS: u16 = 600;
 /// Camp (1000).
 const BARRACKS_HP: i32 = 600;
 
+// --- Anti-tank infantry (D73): the dedicated answer to the armoured produced Tank, restoring the
+// armour RPS triangle (AT beats armour, massed rifles beat AT, armour beats infantry). A playtest
+// BASELINE dialed against `sim-runner --metrics` / the measured AT↔tank + AT↔rifle assertions in
+// `tests` below; same integer/fixed-point rules (invariant #1). It is fragile, slow-firing, and a
+// poor anti-personnel weapon, paying for those weaknesses with a gun that PENETRATES armour. ---
+
+/// Cost to produce an [`AntiTank`](UnitKind::AntiTank) unit. 120 = exactly ⅓ of a [`Tank`](TANK_COST)
+/// (360), so a cost-equal AT force is 3-vs-1 against armour — the measured "AT beats armour" trade.
+pub const ANTITANK_COST: i64 = 120;
+/// Base ticks to produce an [`AntiTank`](UnitKind::AntiTank). 420 = 7 s — slower than a Rifleman
+/// (5 s), reflecting the specialist AT team (D67 logistics rhythm).
+pub const ANTITANK_BASE_TICKS: u16 = 420;
+/// Starting HP of an [`AntiTank`](UnitKind::AntiTank). 70 — **fragile**, below a Rifleman's 100, so a
+/// produced Tank's 120-damage shot (or a brief burst of rifle fire) deletes it; it must be screened.
+const ANTITANK_HP: i32 = 70;
+/// Per-shot damage of the AT gun. 70 vs an unarmoured target — but at a long [`ANTITANK_COOLDOWN`]
+/// cadence, so its anti-PERSONNEL DPS (≈0.83/tick) is well under a Rifleman's (1.0/tick): equal-cost
+/// it loses to massed rifles (measured below).
+const ANTITANK_DAMAGE: i32 = 70;
+/// Range of the AT gun. 14 = a Rifleman's reach (and one longer than the Tank's 13), so a single AT
+/// can pick a tank apart from just outside the tank's gun while staying a fair-range infantry trade
+/// (it does NOT out-reach rifles).
+const ANTITANK_RANGE: i32 = 14;
+/// Cooldown (ticks) between AT shots. 84 ≈ 1.4 s — **slow**, far longer than a Rifleman's 30, so the
+/// AT is poor at sustained anti-personnel fire even though each shot stings.
+const ANTITANK_COOLDOWN: u16 = 84;
+/// Armour penetration of the AT gun (D55 P4 model). Set to [`TANK_ARMOR_FRONT`] (40) so it lands the
+/// FULL multiplier on a produced Tank's thickest (frontal) facet (`p ≥ a ⇒ 1.0`) — it cracks armour
+/// head-on, the whole point of the archetype — and of course pens the thinner side/rear too. Against
+/// an unarmoured target the multiplier is the same 1.0 every infantry weapon gets (balance vs rifles
+/// is governed by HP/damage/cadence, not penetration). Comfortably clears the D73 `pen ≥ 20`
+/// threshold with margin. No float (invariant #1).
+pub const ANTITANK_PENETRATION: Fixed = TANK_ARMOR_FRONT;
+
 /// Cost to upgrade a camp currently at `level` to the next tier: `200 * (level + 1)`.
 /// Level 0→1 costs 200 (≈ two Riflemen), and each tier costs more (200, 400,
 /// 600, …) so deep upgrades are a real resource sink competing with army size.
@@ -179,6 +213,7 @@ pub const fn unit_cost(kind: UnitKind) -> i64 {
         UnitKind::Heavy => HEAVY_COST,
         UnitKind::Tank => TANK_COST,
         UnitKind::Medic => MEDIC_COST,
+        UnitKind::AntiTank => ANTITANK_COST,
     }
 }
 
@@ -191,6 +226,7 @@ pub const fn prod_time(kind: UnitKind, level: u8) -> u16 {
         UnitKind::Heavy => HEAVY_BASE_TICKS,
         UnitKind::Tank => TANK_BASE_TICKS,
         UnitKind::Medic => MEDIC_BASE_TICKS,
+        UnitKind::AntiTank => ANTITANK_BASE_TICKS,
     };
     let speedup = LEVEL_PROD_SPEEDUP.saturating_mul(level as u16);
     let reduced = base.saturating_sub(speedup);
@@ -228,15 +264,18 @@ const fn building_hp(kind: BuildingKind) -> i32 {
     }
 }
 
-/// Whether a `building` kind can produce a `unit` kind (the production-routing rule, D65). The Camp
-/// (base) fields infantry and vehicles; the Barracks is infantry-only and is the **sole source of
-/// the Medic**. `queue_production` enforces this, so a mismatched request is simply rejected.
+/// Whether a `building` kind can produce a `unit` kind (the production-routing rule, D65/D73). The
+/// Camp (base) fields infantry and vehicles; the Barracks is infantry-only and is the **sole source
+/// of the specialist infantry** — the [`Medic`](UnitKind::Medic) and the
+/// [`AntiTank`](UnitKind::AntiTank) team (D73, routed at the Barracks for the same reason as the
+/// Medic: it is forward specialist infantry, not a base-line body or a vehicle). `queue_production`
+/// enforces this, so a mismatched request is simply rejected.
 #[inline]
 pub const fn can_produce(building: BuildingKind, unit: UnitKind) -> bool {
     matches!(
         (building, unit),
         (BuildingKind::Camp, UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Tank)
-            | (BuildingKind::Barracks, UnitKind::Rifleman | UnitKind::Medic)
+            | (BuildingKind::Barracks, UnitKind::Rifleman | UnitKind::Medic | UnitKind::AntiTank)
     )
 }
 
@@ -396,6 +435,40 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 shell: ShellKind::Ap,
             },
         ),
+        // Dedicated anti-tank infantry (D73): a fragile, slow-firing bazooka/AT team whose gun
+        // PENETRATES armour ([`ANTITANK_PENETRATION`] = `TANK_ARMOR_FRONT`, so it cracks a produced
+        // Tank's frontal facet at the full multiplier). Hitscan like other infantry (`muzzle_vel ==
+        // 0`); penetration still applies on the hitscan path via `combat::facing_penetration_multiplier`.
+        // Fragile (70 HP), slow (84-tick cooldown), few ready rounds (a 4-round magazine, slow
+        // 180-tick reload, 4 spare mags — D67 logistics), so its anti-personnel DPS is poor and equal-
+        // cost it loses to massed riflemen. Unarmoured (the `unit_armor` default). Float-free (#1).
+        UnitKind::AntiTank => (
+            Health::full(Fixed::from_int(ANTITANK_HP)),
+            Weapon {
+                range: Fixed::from_int(ANTITANK_RANGE),
+                damage: Fixed::from_int(ANTITANK_DAMAGE),
+                cooldown_ticks: ANTITANK_COOLDOWN,
+                cooldown_left: 0,
+                // Few ready rounds (D67 logistics): a 4-round launcher tube, a slow 180-tick (3 s)
+                // reload, and four spare loads in reserve (16) — it must pull back to rearm.
+                mag_size: 4,
+                ammo: 4,
+                reload_ticks: 180,
+                reload_left: 0,
+                reserve: 16,
+                reserve_max: 16,
+                // Infantry: shoulder-fired, no independent turret.
+                turret_speed: 0,
+                // Hitscan (no shell flight); penetration is honoured on the hitscan path too.
+                muzzle_vel: Fixed::ZERO,
+                // The armour-cracking gun — the whole point of the archetype (see ANTITANK_PENETRATION).
+                penetration: ANTITANK_PENETRATION,
+                // Aim-time dispersion (P5 default): a hitscan gun never blooms (gated on muzzle_vel > 0).
+                dispersion: Fixed::ZERO,
+                // Loads AP by default (P6, D55): inert for a hitscan unit; rides along as a zero tag.
+                shell: ShellKind::Ap,
+            },
+        ),
     }
 }
 
@@ -417,8 +490,11 @@ pub fn unit_armor(kind: UnitKind) -> Armor {
             rear: TANK_ARMOR_REAR,
         },
         // Infantry and support carry no armour — the unarmoured default that preserves today's
-        // balance exactly (multiplier 1.0 on every shot, regardless of facing or penetration).
-        UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Medic => Armor::default(),
+        // balance exactly (multiplier 1.0 on every shot, regardless of facing or penetration). The
+        // anti-tank team is infantry too: it DEALS penetration, it does not WEAR armour (D73).
+        UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Medic | UnitKind::AntiTank => {
+            Armor::default()
+        }
     }
 }
 
@@ -483,8 +559,13 @@ struct LogisticsTilt {
 /// Integer-only (invariant #1); every field is a `u16`.
 const fn faction_logistics_tilt(army: Army, kind: UnitKind) -> Option<LogisticsTilt> {
     match (army, kind) {
-        // Shared baseline: the non-aligned default and every army's (non-combatant) Medic.
-        (Army::Neutral, _) | (_, UnitKind::Medic) => None,
+        // Shared baseline: the non-aligned default, every army's (non-combatant) Medic, and the
+        // anti-tank team (D73). The AT carries NO tilt for the SAME reason the tank's magazine can't
+        // be tilted (below) — its 4-round launcher is even SHALLOWER, so any mag/reload nudge shifts
+        // the reload PHASE enough to hand the faster-reloading army a contrived long-fight edge (the
+        // Lanchester snowball) — AND it has no turret to tilt cosmetically. So every army fields the
+        // identical AT; its faction identity is presentation-only (silhouette/voicelines, WS-C).
+        (Army::Neutral, _) | (_, UnitKind::Medic) | (_, UnitKind::AntiTank) => None,
         // Rifleman (baseline mag 30 / reload 90 / reserve 180). US +20 % magazine (deeper belt,
         // longer reload); FR −20 % (snappier swap). Both keep 6 mags of reserve and the same
         // sustained rate (mag/reload scale together) → power-neutral.
@@ -1247,15 +1328,17 @@ mod tests {
     #[test]
     fn can_produce_routes_units_to_the_right_building() {
         use BuildingKind::{Barracks, Camp};
-        use UnitKind::{Heavy, Medic, Rifleman, Tank};
-        // Camp (base): infantry + vehicles, but NOT the Medic.
+        use UnitKind::{AntiTank, Heavy, Medic, Rifleman, Tank};
+        // Camp (base): infantry + vehicles, but NOT the Medic, and NOT the specialist AT team (D73).
         assert!(can_produce(Camp, Rifleman));
         assert!(can_produce(Camp, Heavy));
         assert!(can_produce(Camp, Tank));
         assert!(!can_produce(Camp, Medic), "the Medic comes only from a Barracks");
-        // Barracks: infantry + Medic, but NOT vehicles.
+        assert!(!can_produce(Camp, AntiTank), "the AT team comes only from a Barracks (D73)");
+        // Barracks: infantry + Medic + AntiTank, but NOT vehicles.
         assert!(can_produce(Barracks, Rifleman));
         assert!(can_produce(Barracks, Medic));
+        assert!(can_produce(Barracks, AntiTank), "the Barracks fields the specialist AT team (D73)");
         assert!(!can_produce(Barracks, Tank), "the Barracks cannot build vehicles");
         assert!(!can_produce(Barracks, Heavy));
     }
@@ -1322,6 +1405,55 @@ mod tests {
         assert!(medic.is_some(), "the Barracks produced a Medic into the world");
     }
 
+    /// The anti-tank infantry's stat block meets the D73 balance contract: it PENETRATES the tank's
+    /// frontal facet (`penetration ≥ TANK_ARMOR_FRONT`), is FRAGILE (HP below a Rifleman's), SLOW
+    /// (longer cooldown + few ready rounds), POOR anti-personnel (lower per-shot DPS than a Rifleman),
+    /// and UNARMOURED. Numbers are float-free (invariant #1); the matchup outcomes are locked in
+    /// `combat::tests` (AT↔tank frontal kill, AT↔rifle equal-cost loss).
+    #[test]
+    fn antitank_stat_block_meets_the_d73_contract() {
+        let (at_h, at_w) = unit_stats(UnitKind::AntiTank);
+        let (rifle_h, rifle_w) = unit_stats(UnitKind::Rifleman);
+
+        // Penetrates the tank's frontal facet (the whole point) — clears the D73 `2·pen ≥ front`
+        // threshold with margin (full pen, `pen == TANK_ARMOR_FRONT`).
+        assert!(
+            at_w.penetration >= TANK_ARMOR_FRONT,
+            "AT must crack the tank's frontal armour ({} vs front {})",
+            at_w.penetration.to_bits(),
+            TANK_ARMOR_FRONT.to_bits()
+        );
+        assert_eq!(at_w.penetration, ANTITANK_PENETRATION);
+
+        // Fragile: below a Rifleman's HP.
+        assert!(at_h.max < rifle_h.max, "AT is fragile (HP below a Rifleman)");
+
+        // Slow: longer cooldown than a Rifleman, and a shallow magazine (few ready rounds, D67).
+        assert!(at_w.cooldown_ticks > rifle_w.cooldown_ticks, "AT fires slower than a Rifleman");
+        assert!(at_w.mag_size > 0 && at_w.mag_size < rifle_w.mag_size, "AT carries few ready rounds");
+        assert_eq!(at_w.ammo, at_w.mag_size, "AT spawns with a full launcher");
+        assert_eq!(at_w.reserve, at_w.reserve_max, "AT spawns with a full reserve");
+
+        // Poor anti-personnel DPS: damage-per-tick below the Rifleman's (cross-multiplied, integer —
+        // invariant #1). at.dmg/at.cd  <  rifle.dmg/rifle.cd.
+        let lhs = at_w.damage.to_bits() as i64 * rifle_w.cooldown_ticks as i64;
+        let rhs = rifle_w.damage.to_bits() as i64 * at_w.cooldown_ticks as i64;
+        assert!(lhs < rhs, "AT's anti-personnel DPS is below a Rifleman's");
+
+        // Unarmoured infantry, and hitscan like the other infantry (no shell flight).
+        assert_eq!(unit_armor(UnitKind::AntiTank), Armor::default(), "AT wears no armour");
+        assert_eq!(at_w.muzzle_vel, Fixed::ZERO, "AT is hitscan");
+
+        // Cost/production sanity: exactly ⅓ of a Tank (the 3-AT-vs-1-tank equal-cost trade), slower to
+        // build than a Rifleman.
+        assert_eq!(unit_cost(UnitKind::AntiTank), ANTITANK_COST);
+        assert_eq!(unit_cost(UnitKind::AntiTank) * 3, unit_cost(UnitKind::Tank), "3 AT == 1 Tank cost");
+        assert!(
+            prod_time(UnitKind::AntiTank, 0) > prod_time(UnitKind::Rifleman, 0),
+            "AT is slower to produce than a Rifleman"
+        );
+    }
+
     // --- factions WS-B: per-faction rosters --------------------------------------------------------
 
     /// Run one economy tick with an explicit per-side army map (production draws the producing
@@ -1349,7 +1481,13 @@ mod tests {
     /// checksum is unmoved).
     #[test]
     fn neutral_army_roster_is_the_shared_baseline() {
-        for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic] {
+        for kind in [
+            UnitKind::Rifleman,
+            UnitKind::Heavy,
+            UnitKind::Tank,
+            UnitKind::Medic,
+            UnitKind::AntiTank,
+        ] {
             assert_eq!(
                 unit_stats_for(Army::Neutral, kind),
                 unit_stats(kind),
@@ -1375,9 +1513,15 @@ mod tests {
             assert_eq!(uw.range, fw.range, "{kind:?}: range is shared");
             assert_eq!(uw.penetration, fw.penetration, "{kind:?}: penetration is shared");
         }
-        // The Medic is non-combatant: shared across every army (no fair combat surface to tilt).
+        // The Medic (non-combatant) and the AntiTank (shallow 4-round launcher → no fair logistics
+        // tilt, and no turret to tilt cosmetically) carry NO per-army tilt — shared across every army.
         for army in [Army::Neutral, Army::Us, Army::Fr] {
             assert_eq!(unit_stats_for(army, UnitKind::Medic), unit_stats(UnitKind::Medic));
+            assert_eq!(
+                unit_stats_for(army, UnitKind::AntiTank),
+                unit_stats(UnitKind::AntiTank),
+                "the AT team has no per-army tilt (D73)"
+            );
         }
     }
 

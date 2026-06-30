@@ -1385,6 +1385,11 @@ fn snapshot_round_trips_the_new_d65_kinds() {
     let medic = sim.world.spawn();
     sim.world.kind[medic.index as usize] = EntityKind::Unit;
     sim.world.unit_kind[medic.index as usize] = UnitKind::Medic;
+    // D73: the anti-tank infantry's unit-kind tag (4) must round-trip through the snapshot codec too
+    // (sim.rs `unit_kind_tag`/`read_unit_kind` symmetry); SNAPSHOT_VERSION bumped 9→10.
+    let antitank = sim.world.spawn();
+    sim.world.kind[antitank.index as usize] = EntityKind::Unit;
+    sim.world.unit_kind[antitank.index as usize] = UnitKind::AntiTank;
     let mut res = Resources::new(10_000);
     let bar = economy::build(
         &mut sim.world,
@@ -1402,9 +1407,99 @@ fn snapshot_round_trips_the_new_d65_kinds() {
     assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
     assert_eq!(restored.world.unit_kind[tank.index as usize], UnitKind::Tank);
     assert_eq!(restored.world.unit_kind[medic.index as usize], UnitKind::Medic);
+    assert_eq!(restored.world.unit_kind[antitank.index as usize], UnitKind::AntiTank);
     assert_eq!(
         restored.world.building[bar.index as usize].kind,
         BuildingKind::Barracks
+    );
+}
+
+/// 2-PEER LOCKSTEP AGREEMENT for the new anti-tank infantry (D73, invariant #7). Two independently
+/// built sims, fed the identical (empty) command stream, must agree on the per-tick checksum every
+/// tick over a 300-tick window that genuinely **produces** an AntiTank (from a Barracks queue) and
+/// **fights** one (a live AT penetrating an enemy Tank's frontal armour). The AT's HP/weapon/armor
+/// all fold into the checksum, so any non-deterministic handling of the new kind would diverge here —
+/// and `determinism.yml` runs this same `core` suite across the {win/linux/android/ios} arch matrix.
+#[test]
+fn two_peers_agree_producing_and_fighting_an_antitank_unit() {
+    use crate::components::{
+        Building, BuildingKind, EntityKind, Faction, Health, ProductionItem, Stance, UnitKind, Vec2,
+    };
+    use crate::economy;
+
+    fn scene(sim: &mut Sim) {
+        // A live AntiTank (Player) 13.5 east of an armoured Tank (Enemy) facing it front-on, both on
+        // FireAtWill: the AT out-ranges the tank's gun (14 vs 13) and cracks its frontal facet, so a
+        // penetrating fight folds through the full sim each tick.
+        let (at_h, at_w) = economy::unit_stats(UnitKind::AntiTank);
+        let at = sim.world.spawn();
+        let ai = at.index as usize;
+        sim.world.kind[ai] = EntityKind::Unit;
+        sim.world.unit_kind[ai] = UnitKind::AntiTank;
+        sim.world.faction[ai] = Faction::Player;
+        sim.world.pos[ai] = Vec2::new(Fixed::from_int(13) + Fixed::HALF, Fixed::ZERO);
+        sim.world.health[ai] = at_h;
+        sim.world.weapon[ai] = at_w;
+        sim.world.armor[ai] = economy::unit_armor(UnitKind::AntiTank);
+        sim.world.stance[ai] = Stance::FireAtWill;
+
+        let (tk_h, tk_w) = economy::unit_stats(UnitKind::Tank);
+        let tk = sim.world.spawn();
+        let ti = tk.index as usize;
+        sim.world.kind[ti] = EntityKind::Unit;
+        sim.world.unit_kind[ti] = UnitKind::Tank;
+        sim.world.faction[ti] = Faction::Enemy;
+        sim.world.pos[ti] = Vec2::ZERO;
+        sim.world.health[ti] = tk_h;
+        sim.world.weapon[ti] = tk_w;
+        sim.world.armor[ti] = economy::unit_armor(UnitKind::Tank);
+        sim.world.hull_heading[ti] = crate::trig::Angle(0); // front faces +X toward the AT
+        sim.world.stance[ti] = Stance::FireAtWill;
+
+        // A pre-built Player Barracks producing an AntiTank — exercises the economy production-SPAWN
+        // path for the new kind. Built (ticks_left 0), queue near-complete so it spawns within 300.
+        let bar = sim.world.spawn();
+        let bi = bar.index as usize;
+        sim.world.kind[bi] = EntityKind::Building;
+        sim.world.faction[bi] = Faction::Player;
+        sim.world.pos[bi] = Vec2::new(Fixed::from_int(-20), Fixed::ZERO);
+        sim.world.health[bi] = Health::full(Fixed::from_int(600));
+        sim.world.building[bi] = Building {
+            kind: BuildingKind::Barracks,
+            level: 0,
+            build_ticks_left: 0,
+            queue: vec![ProductionItem { kind: UnitKind::AntiTank, ticks_left: 30 }],
+        };
+    }
+
+    let mut a = Sim::new(0xA7);
+    let mut b = Sim::new(0xA7);
+    scene(&mut a);
+    scene(&mut b);
+    assert_eq!(a.checksum(), b.checksum(), "pre-step peers must already agree");
+    for t in 0..300u32 {
+        a.step(&[]);
+        b.step(&[]);
+        assert_eq!(a.checksum(), b.checksum(), "2-peer desync at tick {t}");
+    }
+    // Prove the stream genuinely produced AND fought an AT (not an idle agreement): the Barracks
+    // queue spawned at least one more AntiTank, and the enemy tank took penetrating damage.
+    let at_count = (0..a.world.capacity())
+        .filter(|&i| {
+            a.world.is_index_alive(i)
+                && a.world.kind[i] == EntityKind::Unit
+                && a.world.unit_kind[i] == UnitKind::AntiTank
+        })
+        .count();
+    assert!(at_count >= 2, "the Barracks must have produced an AntiTank (live AT + produced one)");
+    let tank_idx = (0..a.world.capacity()).find(|&i| {
+        a.world.is_index_alive(i) && a.world.unit_kind[i] == UnitKind::Tank
+    });
+    let ti = tank_idx.expect("the enemy tank survives the 300-tick window (it dies ~tick 434)");
+    let (full_tank, _) = economy::unit_stats(UnitKind::Tank);
+    assert!(
+        a.world.health[ti].cur < full_tank.cur,
+        "the AT must have penetrated the tank's front (tank below full HP)"
     );
 }
 

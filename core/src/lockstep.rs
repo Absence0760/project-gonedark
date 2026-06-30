@@ -42,7 +42,10 @@ use crate::sim::Command;
 /// WS-A) — so a pre-factions peer's frame is rejected at the handshake, not on `BadTag(16)` mid-game.
 /// 8 added the embodied tank `Command::SelectShell` (tag 17) — the AP/APHE/HE shell selection (tank
 /// embodiment P6, D55) — so a pre-P6 peer's frame is rejected at the handshake, not on `BadTag(17)`.
-const WIRE_VERSION: u8 = 8;
+/// 9 added the anti-tank infantry `UnitKind::AntiTank` (unit-kind codec tag 4, D73) — so a pre-D73
+/// peer (which cannot decode a `QueueProduction { unit: AntiTank }`) fails the handshake rather than
+/// hitting `BadTag(4)` mid-game or, worse, silently desyncing on the new archetype.
+const WIRE_VERSION: u8 = 9;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
 /// carry command sets, checksum reports, and delay-change proposals over the one wire format.
@@ -274,6 +277,10 @@ fn put_unit_kind(w: &mut Writer, k: UnitKind) {
         UnitKind::Heavy => 1,
         UnitKind::Tank => 2,
         UnitKind::Medic => 3,
+        // D73: append-only — the anti-tank infantry takes tag 4 (existing 0–3 unchanged), mirrored in
+        // sim.rs's `unit_kind_tag`/`read_unit_kind`. WIRE_VERSION bumped to 9 so a pre-D73 peer fails
+        // the handshake rather than hitting this branch.
+        UnitKind::AntiTank => 4,
     });
 }
 fn get_unit_kind(r: &mut Reader) -> Result<UnitKind, DecodeError> {
@@ -282,6 +289,7 @@ fn get_unit_kind(r: &mut Reader) -> Result<UnitKind, DecodeError> {
         1 => UnitKind::Heavy,
         2 => UnitKind::Tank,
         3 => UnitKind::Medic,
+        4 => UnitKind::AntiTank,
         t => return Err(DecodeError::BadTag(t)),
     })
 }
@@ -1052,6 +1060,13 @@ mod tests {
                 camp: ent(8, 1),
                 unit: UnitKind::Medic,
             },
+            // D73: the anti-tank infantry (unit-kind codec tag 4) must survive the wire codec — its
+            // tag matches sim.rs / the persist codec, so the order decodes to the identical archetype
+            // on every peer (invariant #7). WIRE_VERSION bumped 8→9 so a pre-D73 peer is rejected.
+            Command::QueueProduction {
+                camp: ent(8, 1),
+                unit: UnitKind::AntiTank,
+            },
             Command::Fire {
                 entity: ent(9, 1),
                 dir: v(1, 0),
@@ -1155,6 +1170,34 @@ mod tests {
         }
         // Re-encoding the decoded report reproduces the exact bytes (catches a dropped field).
         assert_eq!(bytes, encode_checksum_frame(1, 77, 0xDEAD_BEEF_F00D_CAFE));
+    }
+
+    #[test]
+    fn unit_kind_codec_round_trips_every_tag_including_antitank() {
+        // Every UnitKind put→get is identity (the tags match sim.rs's `unit_kind_tag`), and the new
+        // D73 AntiTank rides on append-only tag 4 (0–3 unchanged). An UNKNOWN tag is a loud BadTag,
+        // never a silent mis-decode (invariant #7).
+        for kind in [
+            UnitKind::Rifleman,
+            UnitKind::Heavy,
+            UnitKind::Tank,
+            UnitKind::Medic,
+            UnitKind::AntiTank,
+        ] {
+            let mut w = Writer::new();
+            put_unit_kind(&mut w, kind);
+            let mut r = Reader::new(&w.buf);
+            assert_eq!(get_unit_kind(&mut r).expect("decode"), kind);
+        }
+        // AntiTank is exactly tag 4.
+        let mut w = Writer::new();
+        put_unit_kind(&mut w, UnitKind::AntiTank);
+        assert_eq!(w.buf, vec![4]);
+        // An out-of-range tag (5) is rejected, not silently misparsed into a wrong kind.
+        let mut w = Writer::new();
+        w.u8(5);
+        let mut r = Reader::new(&w.buf);
+        assert_eq!(get_unit_kind(&mut r).unwrap_err(), DecodeError::BadTag(5));
     }
 
     #[test]

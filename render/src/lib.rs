@@ -200,7 +200,7 @@ const TOKEN_SCALE: f32 = 1.0;
 
 /// The 3D token mesh for a snapshot unit, resolved from its [`Army`] identity + producible
 /// [`UnitKind`] / building flag (factions-plan WS-C, D68). Buildings are the camp structure; units
-/// map by archetype (`Heavy`/`Tank`→tank silhouette, `Rifleman`/`Medic`→infantry). The **army**
+/// map by archetype (`Heavy`/`Tank`→tank silhouette, `Rifleman`/`Medic`/`AntiTank`→infantry). The **army**
 /// selects the *silhouette*: a US-side rifleman is an M1-helmeted [`TrooperUs`](mesh::ModelKind::TrooperUs),
 /// a French tank is a Leclerc [`TankFr`](mesh::ModelKind::TankFr); [`Army::Neutral`] (legacy / debug
 /// scenes that never select an army) falls back to the original shared greybox, so a non-faction
@@ -217,7 +217,8 @@ pub(crate) fn model_for_unit(army: Army, building: bool, kind: UnitKind) -> mesh
         return M::CampHq;
     }
     // Is this archetype an infantry body or a tank chassis? (D65: the produced Tank reuses the Heavy
-    // chassis token; the Medic is infantry.)
+    // chassis token; the Medic is infantry. D73: the AntiTank team is infantry — it falls through to
+    // the infantry silhouette here, a Rifleman-style trooper body.)
     let is_tank = matches!(kind, UnitKind::Heavy | UnitKind::Tank);
     match (army, is_tank) {
         (Army::Us, true) => M::TankUs,
@@ -1899,6 +1900,11 @@ mod tests {
             model_for_unit(Army::Neutral, false, UnitKind::Medic),
             mesh::ModelKind::Trooper
         );
+        // D73: the AntiTank team is infantry → the shared trooper silhouette.
+        assert_eq!(
+            model_for_unit(Army::Neutral, false, UnitKind::AntiTank),
+            mesh::ModelKind::Trooper
+        );
         // A building is the camp structure regardless of the (irrelevant) unit-kind tag or army.
         assert_eq!(
             model_for_unit(Army::Neutral, true, UnitKind::Heavy),
@@ -1919,11 +1925,13 @@ mod tests {
         // US side.
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Rifleman), M::TrooperUs);
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Medic), M::TrooperUs);
+        assert_eq!(model_for_unit(Army::Us, false, UnitKind::AntiTank), M::TrooperUs);
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Heavy), M::TankUs);
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Tank), M::TankUs);
         // French side.
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Rifleman), M::TrooperFr);
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Medic), M::TrooperFr);
+        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::AntiTank), M::TrooperFr);
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Heavy), M::TankFr);
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Tank), M::TankFr);
     }
@@ -1933,7 +1941,7 @@ mod tests {
     /// point of cosmetic identity). Exercises every combination (the "no panic on unmapped" floor).
     #[test]
     fn model_for_unit_total_distinct_and_panic_free() {
-        for &kind in &[UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic] {
+        for &kind in &[UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic, UnitKind::AntiTank] {
             for &building in &[false, true] {
                 let neutral = model_for_unit(Army::Neutral, building, kind);
                 let us = model_for_unit(Army::Us, building, kind);
