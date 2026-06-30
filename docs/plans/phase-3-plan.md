@@ -195,8 +195,11 @@ checksum byte-identical with prediction on vs off."*
    clean**. `engine` tests 43 → 49, dev + release. *Honest scope:* embodied locomotion isn't a sim
    command yet and single-player runs at delay 0, so today's visible effect is sub-tick eye
    smoothing — the **boundary** is what lands now (as D15/`architecture.md` mandate: it goes in at
-   the first netcode commit), ready for multiplayer delay + authoritative embodied motion. Two LOW
-   feel-polish follow-ups noted in code (dt-independent smoothing; arch-stable ease/snap boundary).
+   the first netcode commit), ready for multiplayer delay + authoritative embodied motion. The two
+   LOW feel-polish follow-ups have since landed: the reconcile ease is now **dt-independent**
+   (`dt_scaled_smoothing` rescales the per-tick fraction by `1-(1-base)^(dt/ref_dt)` so convergence
+   is frame-rate-independent), and the **ease/snap boundary is arch-stable** (a squared-distance
+   `>=` comparison on strictly-IEEE-754 ops, resolved independently of the libm `powf` smoothing).
 5. **Fill in `engine::predict_avatar`** — presentation-only predict + reconcile; the
    byte-identical-checksum guard test. Highest-risk single commit (`audit-determinism`).
 6. **Runtime cross-client checksum-agreement broadcast** ✅ **DONE** — the lockstep wire codec

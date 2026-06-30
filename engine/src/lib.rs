@@ -165,16 +165,21 @@ const CAM_ZOOM_PER_NOTCH: f32 = 1.12;
 const CAM_PAN_RATE: f32 = 1.3;
 
 /// Avatar-local prediction (D15): the predicted embodied eye eases toward the authoritative
-/// target by this fraction each frame — high enough to feel responsive, low enough that a
-/// per-tick correction reads as smooth rather than a snap. Presentation feel knob; tunable.
-/// TODO(phase3 feel polish): this is a raw per-FRAME coefficient, so the ease rate is
-/// frame-rate-dependent (120 fps converges faster than 30). Make it dt-independent (half-life /
-/// `1-(1-base)^dt`) once embodied locomotion gives real motion to tune against across device tiers.
+/// target by this fraction **per reference timestep** — high enough to feel responsive, low
+/// enough that a per-tick correction reads as smooth rather than a snap. The reference timestep
+/// is one sim tick (`tick_dt`, 1/60 s), so at a 60 fps render this is the literal per-frame ease
+/// and the historical feel is preserved; [`dt_scaled_smoothing`] rescales it for any other frame
+/// rate so the convergence rate over wall-clock time is **frame-rate-independent** (120 fps no
+/// longer converges twice as fast as 60, nor 30 fps half as fast). Presentation feel knob; tunable.
 const AVATAR_RECONCILE_SMOOTHING: f32 = 0.5;
 
 /// Avatar-local prediction (D15): if the predicted eye is more than this many world units from
 /// the authoritative target, **snap** instead of easing — a large correction (snapshot resume,
 /// a future teleport, gross misprediction) should resolve at once, not slide across the world.
+/// The snap-vs-ease decision is the **ease/snap boundary**, kept arch-stable in
+/// [`reconcile_avatar`]: it is a squared-distance comparison using only strictly-IEEE-754 ops
+/// (`-`, `*`, `+`, `>=`), so every client — x86 desktop or arm64 phone — agrees on whether a
+/// given correction snaps, independent of the libm `powf` that scales the ease magnitude.
 const AVATAR_RECONCILE_SNAP_DIST: f32 = 5.0;
 
 /// Cap on catch-up sim steps in one frame, so a huge first-frame / stall `dt` can't spiral
@@ -2954,7 +2959,9 @@ impl Game {
                 // Lead by this frame's sub-tick fraction. Multiplayer adds the input-delay lead
                 // (`delay * tick_dt`) once a 2-peer session runs delay > 0; the single-player
                 // delay-0 session leads only by the sub-tick, which simply smooths the 60 Hz eye.
-                self.avatar.update(pos, vel, alpha * tick_dt);
+                // `dt_secs` + `tick_dt` make the reconcile ease frame-rate-independent (the ease
+                // converges at the same wall-clock rate at 30, 60, or 120 fps).
+                self.avatar.update(pos, vel, alpha * tick_dt, dt_secs, tick_dt);
             }
         } else {
             self.avatar.clear();
@@ -3551,11 +3558,40 @@ fn extrapolate_avatar(pos: (f32, f32), vel: (f32, f32), lead_secs: f32) -> (f32,
     (pos.0 + vel.0 * lead_secs, pos.1 + vel.1 * lead_secs)
 }
 
+/// Rescale a per-reference-timestep ease fraction (`base`, the fraction eased in one `ref_dt`) to
+/// the equivalent fraction for an arbitrary frame `dt`, so the predicted eye converges toward the
+/// authoritative target at a rate that is **independent of frame rate**: easing by `base` once per
+/// `ref_dt` and easing by the returned fraction once per `dt` land in the same place over equal
+/// wall-clock time. The retained fraction `1 - base` decays as `(1 - base)^(dt / ref_dt)`
+/// (exponential smoothing); `base` is clamped to `[0,1]`, and a non-positive `dt`/`ref_dt`
+/// degenerates to `base` (no rescale). At `dt == ref_dt` it returns `base` unchanged.
+///
+/// PRESENTATION ONLY (invariant #1 binds the sim, not the render/predict path). This is the *one*
+/// libm/transcendental (`powf`) touch in the prediction path, so it is deliberately kept OUT of
+/// the ease/snap boundary decision in [`reconcile_avatar`]: `powf` results vary across libm
+/// implementations, so only the *magnitude* of an ease step rides this factor — the snap-vs-ease
+/// *decision* never does, and stays arch-stable.
+fn dt_scaled_smoothing(base: f32, dt: f32, ref_dt: f32) -> f32 {
+    let base = base.clamp(0.0, 1.0);
+    if dt <= 0.0 || ref_dt <= 0.0 {
+        return base;
+    }
+    1.0 - (1.0 - base).powf(dt / ref_dt)
+}
+
 /// Reconcile the running predicted eye toward a fresh authoritative `target`: ease by `smoothing`
 /// (clamped to `[0,1]`), but **snap** when the error meets/exceeds `snap_dist` so a large
 /// correction resolves at once instead of sliding. Pure; returns the new predicted eye. This is
 /// the **reconcile against the tick** half of D15 — misprediction (and, in multiplayer, the
 /// authoritative T+D resolution differing from the local lead) decays smoothly, never as a jolt.
+///
+/// The **ease/snap boundary is arch-stable**: the snap decision is a squared-distance comparison
+/// (`dx*dx + dy*dy >= snap_dist*snap_dist`) using only strictly-IEEE-754 primitive ops — no
+/// `sqrt`, no `powf`, no FMA contraction (Rust does not fuse `a*b + c*d` unless asked) — so it
+/// is bit-reproducible across architectures and `>=` makes exactly-at-threshold snap on every
+/// client. The frame-rate-dependent `powf` rescale lives in [`dt_scaled_smoothing`] and reaches
+/// this fn only as an already-resolved `smoothing` scalar, so it cannot perturb which side of the
+/// boundary a correction falls on.
 fn reconcile_avatar(
     predicted: (f32, f32),
     target: (f32, f32),
@@ -3594,17 +3630,16 @@ impl AvatarPrediction {
     }
 
     /// Update the predicted eye from the authoritative avatar pose (`pos`/`vel`, world f32),
-    /// leading by `lead_secs` and reconciling against the tick. Presentation-only — touches only
-    /// `self`. The first embodied frame anchors (no ease-in); subsequent frames reconcile.
-    fn update(&mut self, pos: (f32, f32), vel: (f32, f32), lead_secs: f32) {
+    /// leading by `lead_secs` and reconciling against the tick. `dt` is this frame's wall-clock
+    /// time and `ref_dt` the reference timestep the smoothing constant is tuned against (one sim
+    /// tick); together they make the ease rate frame-rate-independent (see [`dt_scaled_smoothing`]).
+    /// Presentation-only — touches only `self`. The first embodied frame anchors (no ease-in);
+    /// subsequent frames reconcile.
+    fn update(&mut self, pos: (f32, f32), vel: (f32, f32), lead_secs: f32, dt: f32, ref_dt: f32) {
         let target = extrapolate_avatar(pos, vel, lead_secs);
         self.eye = if self.valid {
-            reconcile_avatar(
-                self.eye,
-                target,
-                AVATAR_RECONCILE_SMOOTHING,
-                AVATAR_RECONCILE_SNAP_DIST,
-            )
+            let smoothing = dt_scaled_smoothing(AVATAR_RECONCILE_SMOOTHING, dt, ref_dt);
+            reconcile_avatar(self.eye, target, smoothing, AVATAR_RECONCILE_SNAP_DIST)
         } else {
             self.valid = true;
             target
@@ -5729,20 +5764,102 @@ mod tests {
     }
 
     #[test]
+    fn dt_scaled_smoothing_rescales_per_reference_step() {
+        let base = 0.5;
+        // dt == ref_dt → the per-step fraction is used verbatim (no rescale).
+        assert!(
+            (dt_scaled_smoothing(base, 0.02, 0.02) - base).abs() < 1e-6,
+            "dt == ref_dt returns base"
+        );
+        // Half the reference dt → a smaller per-step fraction (slower convergence per step)...
+        let half = dt_scaled_smoothing(base, 0.01, 0.02);
+        assert!(half > 0.0 && half < base, "sub-ref dt eases less per step: {half}");
+        // ...but two such steps retain the same fraction as one full reference step:
+        // (1 - half)^2 == 1 - base. THIS is the frame-rate independence, algebraically.
+        assert!(
+            ((1.0 - half) * (1.0 - half) - (1.0 - base)).abs() < 1e-6,
+            "two half-dt steps == one ref step"
+        );
+        // Double the reference dt → a larger per-step fraction, still capped below a full snap.
+        let dbl = dt_scaled_smoothing(base, 0.04, 0.02);
+        assert!(dbl > base && dbl < 1.0, "super-ref dt eases more per step: {dbl}");
+        // Clamp: base > 1 → 1 (full reach in one step); base < 0 → 0 (hold).
+        assert_eq!(dt_scaled_smoothing(2.0, 0.02, 0.02), 1.0);
+        assert_eq!(dt_scaled_smoothing(-1.0, 0.02, 0.02), 0.0);
+        // Degenerate dt / ref_dt → fall back to base (no rescale, never a NaN/`powf(_, inf)`).
+        assert_eq!(dt_scaled_smoothing(base, 0.0, 0.02), base);
+        assert_eq!(dt_scaled_smoothing(base, 0.02, 0.0), base);
+        assert_eq!(dt_scaled_smoothing(base, -0.5, 0.02), base);
+    }
+
+    #[test]
+    fn ease_converges_at_same_wall_clock_rate_regardless_of_fps() {
+        // Easing toward a fixed target for the same wall-clock time lands in the same place at
+        // 30 fps and 120 fps — the retained error is (1 - base)^(T / ref_dt) either way, which is
+        // exactly what dt-independent smoothing buys us (the old fixed per-frame lerp converged
+        // 4x faster at 120 fps than at 30). Snap disabled so we isolate the ease.
+        let base = AVATAR_RECONCILE_SMOOTHING;
+        let ref_dt = 1.0 / TICK_HZ as f32;
+        let target = (10.0, 0.0);
+        let total = 2.0 * ref_dt; // a short window so closed-form error stays well above noise
+        let converge = |fps: f32| -> f32 {
+            let dt = 1.0 / fps;
+            let steps = (total * fps).round() as u32;
+            let mut eye = (0.0_f32, 0.0);
+            for _ in 0..steps {
+                let s = dt_scaled_smoothing(base, dt, ref_dt);
+                eye = reconcile_avatar(eye, target, s, 1000.0);
+            }
+            eye.0
+        };
+        let slow = converge(30.0);
+        let fast = converge(120.0);
+        assert!((slow - fast).abs() < 1e-3, "30fps {slow} vs 120fps {fast} diverge");
+        // Both match the closed form: target * (1 - (1 - base)^(T / ref_dt)).
+        let expected = 10.0 * (1.0 - (1.0_f32 - base).powf(total / ref_dt));
+        assert!((fast - expected).abs() < 1e-3, "got {fast}, want {expected}");
+    }
+
+    #[test]
+    fn ease_snap_boundary_is_arch_stable_and_smoothing_independent() {
+        // The ease/snap boundary decision depends ONLY on the squared-distance comparison, never
+        // on the (libm/arch-variant) smoothing scalar — so every client agrees on which side a
+        // correction falls, even when their `powf`-derived smoothing differs bit-for-bit.
+        let snap_dist = 5.0;
+        // s == 0 (no ease): just-under the threshold takes the EASE branch and holds at the start;
+        // snapping would jump to the target, so this distinguishes the branches crisply.
+        assert_eq!(
+            reconcile_avatar((0.0, 0.0), (4.99, 0.0), 0.0, snap_dist),
+            (0.0, 0.0),
+            "just inside the boundary eases (here: holds), not snaps"
+        );
+        // Exactly at the threshold snaps regardless of smoothing — even s == 0 snaps to target,
+        // proving the boundary is resolved before/independent of the smoothing factor.
+        for &s in &[0.0_f32, 0.1, 0.5, 0.9, 1.0] {
+            assert_eq!(
+                reconcile_avatar((0.0, 0.0), (5.0, 0.0), s, snap_dist),
+                (5.0, 0.0),
+                "exactly-at-threshold (>=) snaps for smoothing={s}"
+            );
+        }
+    }
+
+    #[test]
     fn avatar_prediction_anchors_then_reconciles_and_clears() {
         let mut p = AvatarPrediction::default();
         assert!(!p.valid, "starts invalid");
         // First embodied frame ANCHORS to the extrapolated target (no ease-in from origin).
-        p.update((10.0, 0.0), (0.0, 0.0), 0.5);
+        // dt == ref_dt → the per-tick smoothing (0.5) is used verbatim (no frame-rate rescale).
+        p.update((10.0, 0.0), (0.0, 0.0), 0.5, 1.0, 1.0);
         assert!(p.valid);
         assert_eq!(p.eye, (10.0, 0.0), "first frame anchors exactly");
         // A subsequent frame with a moved authoritative target reconciles (eases), not snaps.
-        p.update((12.0, 0.0), (0.0, 0.0), 0.0);
+        p.update((12.0, 0.0), (0.0, 0.0), 0.0, 1.0, 1.0);
         assert_eq!(p.eye, (11.0, 0.0), "eases halfway toward the new target");
         // Clearing (surfacing) resets so the next embody re-anchors.
         p.clear();
         assert!(!p.valid);
-        p.update((-3.0, 7.0), (0.0, 0.0), 0.0);
+        p.update((-3.0, 7.0), (0.0, 0.0), 0.0, 1.0, 1.0);
         assert_eq!(p.eye, (-3.0, 7.0), "re-anchors after clear");
     }
 
@@ -5772,7 +5889,7 @@ mod tests {
                     if let Some(u) = snap.units.iter().find(|u| u.entity_index == player.index) {
                         let pos = (fixed_to_f32(u.pos.x), fixed_to_f32(u.pos.y));
                         let vel = (fixed_to_f32(u.vel.x), fixed_to_f32(u.vel.y));
-                        pred.update(pos, vel, 0.5 * tick_dt);
+                        pred.update(pos, vel, 0.5 * tick_dt, tick_dt, tick_dt);
                     }
                 }
                 stream.push(sim.checksum());
