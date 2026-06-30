@@ -1,13 +1,17 @@
 # PvE campaign plan — the first shippable product
 
-> **Status: IN PROGRESS — WS-A & WS-D shipped and live-wired; WS-E shipped; WS-C & WS-B
+> **Status: IN PROGRESS — WS-A, WS-C, WS-D shipped and live-wired; WS-E shipped; WS-B
 > host-side only.** WS-A (mission/objective core — `engine/src/objectives.rs`,
 > `core::scenario::seed_seize_mission`, `render::objective_hud`) and WS-D (HUD layout editor —
 > `engine/src/hud_layout.rs`) are built, tested, and wired into the live host. WS-E (difficulty /
 > modifiers / briefing — `core/src/mission_tuning.rs`) is built and threaded into
-> `core::commander`. WS-C's sim model + fairness/checksum proofs (`core/src/gunsmith.rs`) and
-> pre-match UI seam (`engine/src/loadout_ui.rs`) are built and tested, but **the chosen loadout is
-> not yet applied at live match start** — that wiring is the remaining WS-C work. WS-B's
+> `core::commander`. **WS-C is now live-wired:** the gunsmith sim model + fairness/checksum proofs
+> (`core/src/gunsmith.rs`) and pre-match UI seam (`engine/src/loadout_ui.rs`) feed
+> `core::scenario::seed_seize_mission_with_loadout` / `engine` `new_scene_with_loadout`, so the
+> chosen loadout is applied to every player troop's weapon **at match start** and folded into the
+> per-tick checksum (`STANDARD` stays a byte-identical no-op; same-loadout peers agree every tick,
+> different loadouts diverge only as expected). The one remaining WS-C item is the desktop
+> title→gunsmith UI flow that calls the now-live `new_scene_with_loadout` seam. WS-B's
 > Operations-hub host model + persistence (`core/src/campaign.rs`, via `core::shell`) is built and
 > tested, but its **mission-select/briefing native shell is BLOCKED on [D32](../decisions.md)** and
 > the `MissionId→mission` registry is unbuilt. Design: [`pve-campaign.md`](../pve-campaign.md) +
@@ -99,7 +103,7 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
 
 **Tests:** unlock-graph transitions; persistence round-trip of campaign progress.
 
-### WS-C — Gunsmith loadout — **PARTIAL (sim model + UI seam built; live-spawn wiring gap)**
+### WS-C — Gunsmith loadout — **LIVE-WIRED (sim model + UI seam + match-start application; desktop UI flow remains)**
 
 - **Fixed-point attachment-delta model in `core`** (Q16.16, [D17](../decisions.md)): an integer
   attachment table applied to the weapon component **at match start** as match-setup input; folded

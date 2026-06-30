@@ -185,9 +185,9 @@ P7  render: turret mesh node + shortest-arc angle interp + tracer/projectile dra
     `tracer` mesh extrapolated from the projectile snapshot, embodied pass) (inv #4)
 P8  HUD: hull-relative turret indicator, dispersion reticle, LEAD pip, shell selector,
     reload ring   ── DONE
-P9  tank UnitKind archetype + economy stats + sniper/zoom view
-    (PARTIAL — D65 ships the archetype + stats as unarmoured/hitscan;
-    armour block + ballistic gun + sniper/zoom remain; see Q20 before shipping ballistic gun)
+P9  tank UnitKind archetype + economy stats + armour block + ballistic gun + sniper/zoom view
+    ── DONE (D65 archetype; wave-1 W1 armour block, W4 ballistic gun + AI projectile fire per
+    D72/Q20, W2 sniper/zoom gun-sight view)
 ─────────────────────────────────────────────────────────────────────────
 DEFERRED (own decision later): module+crew damage (tracks/breech/ammo-rack),
 commander's-optics third view.
@@ -198,11 +198,11 @@ order is why ballistics-first avoids hitscan-then-projectile rework). P5–P6 ar
 P7–P9 make it legible and playable. Each lands with unit tests in the same commit; **P3 and P4
 must keep `determinism.yml`'s arch matrix green** (invariant #7 — projectiles and the damage
 rewrite are both checksummed sim state). High-blast-radius phases (P2, P3, P4, P6) run through
-`/safe-edit`. **P1–P8 done.** P7 landed early (turret mesh node + shortest-arc yaw interp, then shell
+`/safe-edit`. **P1–P9 done.** P7 landed early (turret mesh node + shortest-arc yaw interp, then shell
 tracers) — a pure render seam, no dependency on P5/P6. P5 (dispersion bloom — settle-to-zero
 scatter), P6 (ShellKind AP/APHE/HE + SelectShell), and P8 (hull-relative turret indicator,
-dispersion reticle, LEAD pip, shell selector, reload ring) followed. **P9 is the remaining scope
-— see §9.**
+dispersion reticle, LEAD pip, shell selector, reload ring) followed. **P9 landed in a 3-worker
+wave-1** (armour block, ballistic gun + AI projectile fire per D72, sniper/zoom view) — see §9.
 
 ---
 
@@ -285,11 +285,15 @@ over 300 ticks** with no desync, `WIRE_VERSION` 6 (unchanged — P4 adds no comm
 and **P8** (HUD: hull-relative turret indicator, dispersion reticle, LEAD pip, shell selector,
 reload ring) followed — each committed and tested.
 
-**P9 is the remaining scope.** The `UnitKind::Tank` archetype + economy-stats half landed via
-[D65](../decisions.md) as an *unarmoured, hitscan* production unit (`penetration == 0`,
-`muzzle_vel == 0`, no `Armor`). What remains: the produced tank's **armour block + ballistic gun**
-(the full War-Thunder-capable vehicle this plan specifies) and the **sniper/zoom gun-sight view**
-(a new render path, not yet started). The AI-fire fork is now **resolved — [D72](../decisions.md)
+**P9 is done** (a 3-worker wave-1). The `UnitKind::Tank` archetype + economy-stats half landed via
+[D65](../decisions.md) as an *unarmoured, hitscan* production unit; the remaining scope then landed:
+the produced tank's **armour block** (`Armor{front:40,side:16,rear:8}` via `economy::unit_armor`,
+golden + facing tests — wave-1 W1), its **ballistic gun** (`muzzle_vel:2`, `penetration:18`; the AI
+auto-resolver `combat::combat_system` now spawns a traveling `Projectile` for `muzzle_vel > 0` per
+[D72](../decisions.md)/[Q20](../open-questions.md), hitscan only for `muzzle_vel == 0`; 2-peer
+lockstep agrees over 300 ticks — wave-1 W4), and the **sniper/zoom gun-sight view** (RMB
+aim-down-sight narrows the embodied FOV 60°→20° with a scope reticle; render + input seam only, no
+sim writes — wave-1 W2). The full War-Thunder-capable produced tank this plan specifies now exists. The AI-fire fork is now **resolved — [D72](../decisions.md)
 ([Q20](../open-questions.md#q20--ai-controlled-ballistic-fire--does-a-producedai-tanks-gun-travel-or-stay-hitscan),
 option ii):** the produced tank's gun fires a real traveling projectile whether AI-driven or embodied
 — `combat::combat_system` spawns a `Projectile` for `muzzle_vel > 0` (hitscan stays the path only for
