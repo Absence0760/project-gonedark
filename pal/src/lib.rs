@@ -99,6 +99,15 @@ pub struct InputFrame {
     pub move_axis: (f32, f32),
     pub look_axis: (f32, f32),
     pub fire: bool,
+    /// **Embodied aim-down-sight / zoom** intent — a HELD/level signal (`true` for as long as the
+    /// player holds it), NOT an edge. While embodied in a unit with a gun-sight (the tank), the
+    /// engine's `scope` seam narrows the first-person camera FOV and draws the sniper-scope overlay
+    /// for as long as this is held; releasing it eases the zoom back out. Desktop latches the right
+    /// mouse button (held); touch will derive it from an on-screen ADS button (deferred with the rest
+    /// of the on-screen embodied controls). A purely presentational signal — it never enters the sim
+    /// (the zoom is a camera change, not a character system; invariants #4/#5). Ignored while not
+    /// embodied / for a unit without a scope.
+    pub aim: bool,
     /// **Embodied crouch** intent — a one-shot edge that *toggles* the avatar's posture (the engine
     /// flips it off the authoritative sim posture, so the host holds no toggle state). Desktop
     /// latches a key; touch derives it from the on-screen Crouch button via the `touch_controls`

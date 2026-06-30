@@ -56,6 +56,12 @@ pub mod touch_controls;
 /// as a LOAD pass over the dark embodied frame while the local player drives a tank. Public so the
 /// host fills the [`tank_hud::TankHudState`] from the embodied tank's (read-only) sim state.
 pub mod tank_hud;
+/// Embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9). Owns `ScopeRenderer`:
+/// the scope vignette tunnel + aperture ring + crosshair + center dot, drawn as a LOAD pass over the
+/// dark embodied frame while the local player aims down sight. Pairs with the engine's
+/// `scope` seam (the FOV-narrowing + input→zoom-intent math). Public so the host fills the
+/// [`scope::ScopeState`] from the embodied zoom state.
+pub mod scope;
 /// Band-select marquee. Owns `MarqueeRenderer`: the selection rectangle drawn in the command view
 /// while a band-drag is in flight. Public so the host can describe the box via [`marquee::Marquee`].
 pub mod marquee;
@@ -625,6 +631,9 @@ pub struct Renderer {
     /// The embodied **tank** gunner-sight HUD (tank embodiment P8). Drawn as a LOAD pass by
     /// [`Renderer::render_tank_hud`] when the local player is embodied in a tank.
     tank_hud: tank_hud::TankHudRenderer,
+    /// The embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9). Drawn as a LOAD
+    /// pass by [`Renderer::render_scope`] when the local player aims down sight while embodied.
+    scope: scope::ScopeRenderer,
     /// The in-session shell overlay (Phase 4 WS-B). Drawn as a LOAD pass by
     /// [`Renderer::render_overlay`] when an in-session surface (pause/reconnect/summary) is up.
     overlay: overlay::OverlayRenderer,
@@ -790,6 +799,7 @@ impl Renderer {
         let hud = hud::HudRenderer::new(device, surface_format);
         let touch_controls = touch_controls::TouchControlsRenderer::new(device, surface_format);
         let tank_hud = tank_hud::TankHudRenderer::new(device, surface_format);
+        let scope = scope::ScopeRenderer::new(device, surface_format);
         let overlay = overlay::OverlayRenderer::new(device, surface_format);
         let radial = radial::RadialRenderer::new(device, surface_format);
         let marquee = marquee::MarqueeRenderer::new(device, surface_format);
@@ -821,6 +831,7 @@ impl Renderer {
             projectiles: Vec::new(),
             hud,
             touch_controls,
+            scope,
             tank_hud,
             overlay,
             radial,
@@ -1182,6 +1193,43 @@ impl Renderer {
                 text::Anchor::TopCenter,
                 [0.82, 0.86, 0.92],
                 0.92,
+            );
+            self.text.render(device, queue, view);
+        }
+    }
+
+    /// Draw the embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9) on top of the
+    /// current frame (a LOAD pass — never clears): the vignette tunnel, aperture ring, crosshair, and
+    /// center dot (geometry via [`scope::ScopeRenderer`]), then the magnification readout (e.g.
+    /// "3.3x") through the shared [`text`](crate::text) pass. The host calls this only while the
+    /// local player is embodied and aiming down sight (`zoom_t > 0`). Presentation-only chrome with
+    /// no world position — it reveals nothing about unseen enemies and *narrows* (never widens) the
+    /// visible frustum (invariant #6); the renderer only READS the [`scope::ScopeState`] it is handed
+    /// (invariant #4). A no-op at hip (the builder returns nothing below the fade threshold).
+    pub fn render_scope(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        state: &scope::ScopeState,
+        magnification: f32,
+    ) {
+        self.scope.render(device, queue, view, state);
+        // Magnification readout under the aperture. Re-assert the chrome aspect on the shared text
+        // pass before laying out glyphs — without it the label stretches on a wide window (the
+        // raw-NDC chrome footgun). The geometry above is aspect-corrected host-side via the
+        // `ScopeState.aspect` it was handed.
+        self.text.set_aspect(self.chrome_aspect);
+        let fade = scope::scope_fade(state.zoom_t);
+        if fade > 0.0 {
+            let label = format!("{magnification:.1}x");
+            self.text.queue(
+                &label,
+                [0.0, -0.86],
+                0.045,
+                text::Anchor::TopCenter,
+                [0.82, 0.95, 0.86],
+                0.92 * fade,
             );
             self.text.render(device, queue, view);
         }
