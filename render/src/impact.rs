@@ -2,8 +2,10 @@
 //! the avatar's OWN shot landed, the muzzle-flash's downrange twin. It is the render half of the hit
 //! feedback (the engine derives the hit point + the fade clock from the avatar-source
 //! `SimEvent::Damaged` stream); this module turns "a burst of intensity `i` at NDC `(x, y)`" into an
-//! **additive** screen-space flash so it reads as light. Two elements per burst: a hot radial **core**
-//! flash that shrinks as it fades, and an **expanding ring** of dust that grows as it ages.
+//! **additive** screen-space flash so it reads as light. Three elements per burst: a hot near-white
+//! **flash core** that snaps out on a punchy `i²` curve, a ring of crisp **spark embers** flung
+//! radially outward, and a soft **dust puff** that expands as it ages — together a sharp, readable
+//! strike against the dark earthy ground rather than a single soft blob.
 //!
 //! Invariant #4: this is the **float side** — every number is `f32` host-side presentation, never
 //! `core` sim state, and the renderer only READS the burst params it is handed. Invariant #6: the
@@ -15,26 +17,40 @@
 use wgpu::util::DeviceExt;
 
 /// Shader `shape` ids — must match the `fs_main` branches in `impact.wgsl`.
-const SHAPE_CORE: f32 = 0.0;
-const SHAPE_RING: f32 = 1.0;
+const SHAPE_CORE: f32 = 0.0; // hot flash core
+const SHAPE_RING: f32 = 1.0; // expanding dust puff
+const SHAPE_SPARK: f32 = 2.0; // crisp flying ember
 
 /// How many sim ticks an impact burst stays alive after the shot landed, fading linearly to nothing.
 /// At 60 Hz this is a ~0.15 s spark — long enough to register the strike, short enough to feel crisp
 /// and not smear across sustained fire (matched to the muzzle-flash window's order of magnitude).
 pub const IMPACT_TICKS: u64 = 9;
 
-/// Core-flash radius (NDC half-height) at full intensity — the bright strike point. It shrinks with
-/// intensity as the burst fades.
-const CORE_R: f32 = 0.040;
+/// Hot-flash radius (NDC half-height) at full intensity — the bright strike point. It shrinks toward
+/// a hot pinpoint (never fully to zero) as the burst fades, so the strike never wholly disappears
+/// before the alpha snaps out.
+const FLASH_R: f32 = 0.052;
 
-/// Expanding dust-ring radius (NDC half-height): grows from `RING_R0` (fresh) to `RING_R1` (fully
-/// aged) so the dust visibly puffs outward.
-const RING_R0: f32 = 0.025;
-const RING_R1: f32 = 0.085;
+/// Expanding dust-puff radius (NDC half-height): grows from `RING_R0` (fresh) to `RING_R1` (fully
+/// aged) so the dust visibly kicks outward from the strike.
+const RING_R0: f32 = 0.030;
+const RING_R1: f32 = 0.105;
 
-/// Warm spark color (orange-white) — distinct from the cool blue-grey FPS world and the pale-green
-/// reticle, so the strike reads as a hot impact (invariant #6 legibility, not intel).
-const IMPACT_COLOR: [f32; 3] = [1.0, 0.80, 0.45];
+/// Spark-ember burst: `SPARK_COUNT` crisp dots flung radially out of the strike, each riding from
+/// `SPARK_R0` (fresh, at the impact) to `SPARK_R1` (aged, flung out) along a `sqrt` ease so they
+/// snap outward early then settle. An odd count + a golden-ratio jitter keeps the burst from reading
+/// as a tidy arcade ring. `SPARK_DOT_R` is the head-dot half-size (the tail is smaller/dimmer).
+const SPARK_COUNT: usize = 7;
+const SPARK_R0: f32 = 0.012;
+const SPARK_R1: f32 = 0.120;
+const SPARK_DOT_R: f32 = 0.011;
+
+/// Warm impact palette — kept in the muzzle-flash warm family (white-yellow heat against the cold
+/// blue-grey FPS world), so the strike reads as hot light, not intel (invariant #6 legibility).
+/// Flash: near-white heat. Spark: orange ember. Dust: muted warm earth catching the flash light.
+const FLASH_COLOR: [f32; 3] = [1.0, 0.93, 0.78];
+const SPARK_COLOR: [f32; 3] = [1.0, 0.76, 0.40];
+const DUST_COLOR: [f32; 3] = [0.66, 0.52, 0.40];
 
 /// The impact burst intensity in `[0, 1]` for the current `tick`, given the tick the avatar's shot
 /// last landed on (`None` → no burst). Fresh strike → `1.0`, linear ramp to `0.0` over
@@ -82,49 +98,115 @@ fn round_half(r: f32, aspect: f32) -> (f32, f32) {
     (r / a, r)
 }
 
+/// A center offset (in NDC) for a point `radius` out from the strike at `angle`, aspect-corrected on
+/// x so the spark ring stays circular on a wide window (same rule as [`round_half`]). Pure helper.
+#[inline]
+fn radial_offset(angle: f32, radius: f32, aspect: f32) -> (f32, f32) {
+    let a = if aspect.abs() < 1.0e-6 { 1.0 } else { aspect };
+    (radius * angle.cos() / a, radius * angle.sin())
+}
+
+/// The fixed (deterministic) angle + radial-length jitter for spark `k`. Evenly spaced with a phase
+/// offset (so the burst isn't axis-aligned) plus a golden-ratio per-spark wobble on both angle and
+/// reach — enough irregularity to read as scattered debris, not a tidy arcade ring. Pure: no RNG, so
+/// the burst is stable frame-to-frame. Returns `(angle_radians, length_factor)`.
+fn spark_layout(k: usize) -> (f32, f32) {
+    use std::f32::consts::TAU;
+    const PHASE: f32 = 0.55;
+    const GOLDEN: f32 = 0.618_034;
+    let frac = (k as f32 * GOLDEN).fract(); // 0..1, well-spread across sparks
+    let angle = PHASE + k as f32 * TAU / SPARK_COUNT as f32 + (frac - 0.5) * 0.30;
+    let length_factor = 0.78 + 0.44 * frac;
+    (angle, length_factor)
+}
+
 /// Build the impact burst's screen-space instances at NDC `(ndc_x, ndc_y)` for `intensity` in
 /// `[0, 1]` and viewport `aspect`. Returns **empty** when `intensity <= 0` (so the renderer no-ops
-/// once the burst has faded). The **core** flash shrinks with intensity; the **ring** grows as the
-/// burst ages (`age_t = 1 - intensity`), both fading their alpha with intensity. Round elements are
-/// aspect-corrected via [`round_half`]. Pure float math — host-testable without a GPU.
+/// once the burst has faded). Three elements, all aspect-corrected and fading with the burst:
+/// element `[0]` is the hot **flash core** (shrinks toward a pinpoint, alpha snaps out on `i²`),
+/// element `[1]` is the **dust puff** (grows with age `age_t = 1 - i`, low warm alpha), and the rest
+/// are crisp **spark embers** flung outward (head + dimmer tail per spark, riding a `sqrt(age_t)`
+/// ease so they snap out early). Pure float math — host-testable without a GPU.
 pub fn impact_instances(ndc_x: f32, ndc_y: f32, intensity: f32, aspect: f32) -> Vec<ImpactInstance> {
     let i = intensity.clamp(0.0, 1.0);
     if i <= 0.0 {
         return Vec::new();
     }
     let age_t = 1.0 - i; // 0 fresh → 1 fully aged
-    let [r, g, b] = IMPACT_COLOR;
+    let fling = age_t.sqrt(); // snap-out ease: fast early travel, settle late
 
-    // Core: bright + tight at the strike, shrinking + dimming as it fades.
-    let (chx, chy) = round_half(CORE_R * i, aspect);
-    let core = ImpactInstance {
+    let mut out = Vec::with_capacity(2 + 2 * SPARK_COUNT);
+
+    // [0] Flash core: hot near-white, tight at the strike, shrinking toward a pinpoint. Alpha snaps
+    // out on i² so the heat reads as an instant punch that's gone fast, not a lingering smear.
+    let [fr, fg, fb] = FLASH_COLOR;
+    let (chx, chy) = round_half(FLASH_R * (0.45 + 0.55 * i), aspect);
+    out.push(ImpactInstance {
         ndc_x,
         ndc_y,
         half_x: chx,
         half_y: chy,
-        r,
-        g,
-        b,
-        a: i,
+        r: fr,
+        g: fg,
+        b: fb,
+        a: i * i,
         shape: SHAPE_CORE,
-    };
+    });
 
-    // Ring: dust puffing outward — radius grows with age, alpha fades a touch faster than the core.
+    // [1] Dust puff: warm muted earth catching the flash, expanding as it ages, kept low so it
+    // grounds the strike without washing the dark field.
+    let [dr, dg, db] = DUST_COLOR;
     let ring_r = RING_R0 + (RING_R1 - RING_R0) * age_t;
     let (rhx, rhy) = round_half(ring_r, aspect);
-    let ring = ImpactInstance {
+    out.push(ImpactInstance {
         ndc_x,
         ndc_y,
         half_x: rhx,
         half_y: rhy,
-        r,
-        g,
-        b,
-        a: i * 0.6,
+        r: dr,
+        g: dg,
+        b: db,
+        a: i * 0.32,
         shape: SHAPE_RING,
-    };
+    });
 
-    vec![core, ring]
+    // [2..] Spark embers: crisp orange dots flung radially outward (head + dimmer inner tail), each
+    // fading with the burst so they wink out at the rim.
+    let [sr, sg, sb] = SPARK_COLOR;
+    let (hx_dot, hy_dot) = round_half(SPARK_DOT_R, aspect);
+    let (tx_dot, ty_dot) = round_half(SPARK_DOT_R * 0.7, aspect);
+    for k in 0..SPARK_COUNT {
+        let (angle, len_f) = spark_layout(k);
+        let reach = SPARK_R0 + (SPARK_R1 * len_f - SPARK_R0) * fling;
+        // Head (bright, at the leading edge).
+        let (ox, oy) = radial_offset(angle, reach, aspect);
+        out.push(ImpactInstance {
+            ndc_x: ndc_x + ox,
+            ndc_y: ndc_y + oy,
+            half_x: hx_dot,
+            half_y: hy_dot,
+            r: sr,
+            g: sg,
+            b: sb,
+            a: i,
+            shape: SHAPE_SPARK,
+        });
+        // Tail (dimmer, trailing closer to the strike — a short streak under additive blend).
+        let (tox, toy) = radial_offset(angle, reach * 0.55, aspect);
+        out.push(ImpactInstance {
+            ndc_x: ndc_x + tox,
+            ndc_y: ndc_y + toy,
+            half_x: tx_dot,
+            half_y: ty_dot,
+            r: sr,
+            g: sg,
+            b: sb,
+            a: i * 0.5,
+            shape: SHAPE_SPARK,
+        });
+    }
+
+    out
 }
 
 /// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-instance half-size).
@@ -357,26 +439,75 @@ mod tests {
     }
 
     #[test]
-    fn live_burst_emits_core_and_ring_at_the_hit_point() {
+    fn live_burst_emits_flash_dust_and_sparks() {
         let inst = impact_instances(0.3, -0.2, 1.0, 1.0);
-        assert_eq!(inst.len(), 2, "core + ring");
-        assert_eq!(inst[0].shape, SHAPE_CORE);
-        assert_eq!(inst[1].shape, SHAPE_RING);
-        for e in &inst {
+        assert_eq!(inst.len(), 2 + 2 * SPARK_COUNT, "flash + dust + head/tail per spark");
+        assert_eq!(inst[0].shape, SHAPE_CORE, "[0] is the flash core");
+        assert_eq!(inst[1].shape, SHAPE_RING, "[1] is the dust puff");
+        // The flash + dust sit exactly on the hit point; sparks are flung off it.
+        for e in &inst[..2] {
             assert!((e.ndc_x - 0.3).abs() < EPS && (e.ndc_y + 0.2).abs() < EPS, "centered on the hit");
+        }
+        assert!(
+            inst[2..].iter().all(|e| e.shape == SHAPE_SPARK),
+            "every remaining element is a spark ember",
+        );
+    }
+
+    #[test]
+    fn flash_shrinks_and_dust_grows_as_the_burst_ages() {
+        let fresh = impact_instances(0.0, 0.0, 1.0, 1.0);
+        let aged = impact_instances(0.0, 0.0, 0.2, 1.0);
+        // Flash (element 0) shrinks with intensity.
+        assert!(aged[0].half_y < fresh[0].half_y, "flash shrinks as it fades");
+        // Dust (element 1) grows as it ages.
+        assert!(aged[1].half_y > fresh[1].half_y, "dust puff expands outward");
+        // Flash alpha fades with intensity (and on an i² curve, so faster than linear).
+        assert!(aged[0].a < fresh[0].a, "flash alpha snaps out");
+        assert!((fresh[0].a - 1.0).abs() < EPS, "fresh flash is full bright");
+    }
+
+    #[test]
+    fn flash_alpha_uses_a_snappy_quadratic_fade() {
+        // i² is below the linear i for every interior intensity → a punchier, faster snap-out.
+        for &i in &[0.25_f32, 0.5, 0.75] {
+            let flash = impact_instances(0.0, 0.0, i, 1.0)[0];
+            assert!(flash.a < i - EPS, "flash fades faster than linear at i={i}");
+            assert!((flash.a - i * i).abs() < EPS, "flash alpha is i²");
         }
     }
 
     #[test]
-    fn core_shrinks_and_ring_grows_as_the_burst_ages() {
+    fn sparks_fling_outward_and_dim_as_the_burst_ages() {
         let fresh = impact_instances(0.0, 0.0, 1.0, 1.0);
         let aged = impact_instances(0.0, 0.0, 0.2, 1.0);
-        // Core (element 0) shrinks with intensity.
-        assert!(aged[0].half_y < fresh[0].half_y, "core shrinks as it fades");
-        // Ring (element 1) grows as it ages.
-        assert!(aged[1].half_y > fresh[1].half_y, "dust ring puffs outward");
-        // Alpha fades with intensity.
-        assert!(aged[0].a < fresh[0].a, "alpha fades with intensity");
+        // Compare the same spark (first head, element [2]) fresh vs aged.
+        let reach = |e: &ImpactInstance| (e.ndc_x * e.ndc_x + e.ndc_y * e.ndc_y).sqrt();
+        assert!(reach(&aged[2]) > reach(&fresh[2]), "sparks travel out from the strike with age");
+        assert!(reach(&fresh[2]) < 0.05, "fresh sparks start at the impact point");
+        assert!(aged[2].a < fresh[2].a, "spark embers dim as they fly out");
+    }
+
+    #[test]
+    fn spark_heads_outshine_their_tails() {
+        let inst = impact_instances(0.0, 0.0, 1.0, 1.0);
+        // Heads are even-indexed (2, 4, …), tails the odd one right after.
+        for k in 0..SPARK_COUNT {
+            let head = &inst[2 + 2 * k];
+            let tail = &inst[2 + 2 * k + 1];
+            assert!(head.a > tail.a, "head brighter than tail (spark {k})");
+            assert!(head.half_y > tail.half_y, "head larger than tail (spark {k})");
+        }
+    }
+
+    #[test]
+    fn spark_layout_is_deterministic_and_spread() {
+        // Pure, RNG-free: identical every call (stable burst), and the angles are not all the same.
+        let a = (0..SPARK_COUNT).map(spark_layout).collect::<Vec<_>>();
+        let b = (0..SPARK_COUNT).map(spark_layout).collect::<Vec<_>>();
+        assert_eq!(a, b, "spark layout is deterministic");
+        let spread = a.iter().any(|&(ang, _)| (ang - a[0].0).abs() > 0.5);
+        assert!(spread, "sparks fan out across distinct angles");
     }
 
     #[test]

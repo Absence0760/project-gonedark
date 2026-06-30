@@ -33,16 +33,23 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let r = length(in.local);
+    let soft = clamp(1.0 - r, 0.0, 1.0);
     var cov = 0.0;
     if (in.shape < 0.5) {
-        // Hot radial core: a soft gaussian-ish falloff from center, brightest at the strike point.
-        cov = clamp(1.0 - r, 0.0, 1.0);
-        cov = cov * cov;
-    } else {
-        // Expanding dust ring: a thin bright annulus near the quad edge that the host grows with age.
-        let ring = 1.0 - smoothstep(0.0, 0.35, abs(r - 0.82));
+        // Hot flash core: a soft warm halo with a blown-out pinpoint at the strike — under additive
+        // blend the centre saturates to white, so the heat reads as a punch, not a flat blob.
+        let halo = soft * soft;
+        let hot = pow(soft, 6.0);
+        cov = halo * 0.55 + hot;
+    } else if (in.shape < 1.5) {
+        // Dust puff: a soft, wide, expanding ring of lit dust kicked up by the strike (low + warm).
+        let ring = 1.0 - smoothstep(0.0, 0.5, abs(r - 0.70));
         let inside = step(r, 1.0); // clip the corners outside the unit circle
-        cov = ring * inside;
+        cov = ring * inside * 0.8;
+    } else {
+        // Spark ember: a crisp, tight dot (flying debris catching the impact light) — a sharper
+        // falloff than the flash so the embers stay pin-bright rather than smearing into the halo.
+        cov = pow(soft, 2.5) + pow(soft, 9.0);
     }
     let a = in.color.a * cov;
     if (a <= 0.001) {
