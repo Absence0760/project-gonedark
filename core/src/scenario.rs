@@ -33,6 +33,7 @@ use crate::components::{
 use crate::ecs::Entity;
 use crate::economy;
 use crate::fixed::Fixed;
+use crate::gunsmith::Loadout;
 use crate::sim::Sim;
 use crate::terrain::Cover;
 use crate::territory::ControlPoint;
@@ -491,7 +492,26 @@ impl SeizeMission {
 /// Pure, deterministic, fixed-point (invariant #1): spawn order is fixed (troops, then the base,
 /// then the garrison) and every value is integer / `Fixed`, so two seeds of a fresh `Sim` are
 /// bit-identical — the single-sourcing property the played mission and any headless driver rest on.
+///
+/// This is the all-`Standard` loadout entry point ([`Loadout::STANDARD`] is a proven no-op on the
+/// weapon, so the seeded world is byte-identical to the pre-gunsmith mission). To field the player's
+/// chosen gunsmith loadout at match start, call [`seed_seize_mission_with_loadout`].
 pub fn seed_seize_mission(sim: &mut Sim) -> SeizeMission {
+    seed_seize_mission_with_loadout(sim, Loadout::STANDARD)
+}
+
+/// Seed the *Seize* mission, applying the player's chosen gunsmith [`Loadout`] to every one of the
+/// ten Player troops' weapons **at match start** — the WS-C live-spawn wiring (D60, `customization.md`
+/// §1). The loadout is **deterministic match-setup input**: it is applied once, here, on top of the
+/// per-army base weapon (the Player fields [`Army::Us`], so the deltas are drawn from the US gunsmith
+/// pool via [`Loadout::apply_to_weapon_for`]). The modified weapon fields are already hashed by
+/// `Sim::fold`, so the loadout rides the per-tick checksum with **no new fold surface** — two peers
+/// that pick the same loadout fold bit-identically, and a loadout desync would be caught by the
+/// cross-arch matrix like any other sim divergence (invariant #7). The chosen build is a fair
+/// sidegrade by construction (no strictly-dominant build — proven in [`crate::gunsmith`]).
+///
+/// [`seed_seize_mission`] is the `Loadout::STANDARD` (no-op) shim over this.
+pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> SeizeMission {
     // Production OFF: no purse for either side and a slow income drip, so this stays a fixed-force
     // assault rather than an economy race. The player has no camp at all (so it cannot produce); the
     // enemy camp is the objective and, with an empty purse, its commander cannot reinforce.
@@ -520,6 +540,16 @@ pub fn seed_seize_mission(sim: &mut Sim) -> SeizeMission {
                 Angle(0), // +X, toward the base
             ));
         }
+    }
+
+    // Apply the player's chosen gunsmith loadout to every assault troop's weapon — the WS-C
+    // live-spawn step. Match-setup input applied once on top of the per-army base weapon (drawn from
+    // the Player's army gunsmith pool); `Loadout::STANDARD` is a no-op, so an opted-out player's
+    // troops keep the byte-identical baseline weapon. The modified fields are all already in
+    // `Sim::fold`, so this folds into the per-tick checksum with no new fold surface (invariant #7).
+    let player_army = sim.army_of(Faction::Player);
+    for &t in &troops {
+        player_loadout.apply_to_weapon_for(player_army, &mut sim.world.weapon[t.index as usize]);
     }
 
     // The enemy base camp (the objective). Built through the canonical `economy::build` path from a
@@ -1094,6 +1124,221 @@ mod tests {
         let baseline = economy::unit_stats(UnitKind::Rifleman).1;
         for e in [inf.player, inf.open, inf.cover, inf.walled, inf.far, inf.flank] {
             assert_eq!(sim.world.weapon[e.index as usize], baseline, "a no-army troop keeps the baseline loadout");
+        }
+    }
+
+    // --- WS-C: gunsmith loadout applied at live match start --------------------------------------
+    //
+    // The live-spawn wiring (D60): `seed_seize_mission_with_loadout` applies the player's chosen
+    // gunsmith `Loadout` to every assault troop's weapon at match start as deterministic match-setup
+    // input. These pin (a) it lands on the live-spawned weapon, (b) the per-tick checksum agrees for
+    // same-loadout peers and diverges *only as expected sim state* for different ones (invariant #7),
+    // and (c) the no-strictly-dominant-build fairness rule (D30/D60) holds on the live-spawn path —
+    // not just on the `core::gunsmith` delta model.
+
+    /// Every loadout in the full build space (3 slots × 3 options = 27).
+    fn all_loadouts() -> Vec<Loadout> {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let mut v = Vec::new();
+        for &optic in &Optic::ALL {
+            for &barrel in &Barrel::ALL {
+                for &magazine in &Magazine::ALL {
+                    v.push(Loadout { optic, barrel, magazine });
+                }
+            }
+        }
+        v
+    }
+
+    /// The player troop[0]'s weapon after the *Seize* mission is live-seeded with `loadout`.
+    fn seize_player_weapon(loadout: Loadout) -> Weapon {
+        let mut sim = fresh();
+        let m = seed_seize_mission_with_loadout(&mut sim, loadout);
+        sim.world.weapon[m.troops[0].index as usize]
+    }
+
+    /// Polarity-aware "no axis worse" over the six tracked weapon stat axes (the same polarity as
+    /// `StatDelta`: range/damage/mag_size/reserve better-when-higher; cooldown/reload better-when-
+    /// lower). Used to assert no live-spawned build strictly dominates another.
+    fn weapon_strictly_dominates(a: &Weapon, b: &Weapon) -> bool {
+        let no_axis_worse = a.range >= b.range
+            && a.damage >= b.damage
+            && a.cooldown_ticks <= b.cooldown_ticks
+            && a.mag_size >= b.mag_size
+            && a.reload_ticks <= b.reload_ticks
+            && a.reserve >= b.reserve;
+        let some_axis_better = a.range > b.range
+            || a.damage > b.damage
+            || a.cooldown_ticks < b.cooldown_ticks
+            || a.mag_size > b.mag_size
+            || a.reload_ticks < b.reload_ticks
+            || a.reserve > b.reserve;
+        no_axis_worse && some_axis_better
+    }
+
+    /// Drive the *Seize* mission seeded with `loadout` through the scripted assault and return the
+    /// per-tick checksum stream (pre-step first, then one entry per stepped tick). Deterministic by
+    /// construction — the lockstep building block the agreement/divergence tests below replay. The
+    /// loadout is in the weapon component, so it is folded from the pre-step checksum onward.
+    fn seize_checksum_stream(loadout: Loadout, ticks: u64) -> Vec<u64> {
+        use crate::commander::{commander_orders, CommanderConfig, COMMANDER_PERIOD};
+        use crate::rng::Rng;
+
+        let mut sim = fresh();
+        let m = seed_seize_mission_with_loadout(&mut sim, loadout);
+        let base_pos = sim.world.pos[m.enemy_base.index as usize];
+        let mut enemy_rng = Rng::new(0xD0E1 ^ Faction::Enemy.index() as u64);
+
+        let mut stream = Vec::with_capacity(ticks as usize + 1);
+        // Pre-step: the loadout already lives in the weapon fold, so peers must agree (or diverge)
+        // here before a single system runs.
+        stream.push(sim.checksum());
+
+        let opening: Vec<Command> = m
+            .troops
+            .iter()
+            .map(|&t| Command::AttackMove { entity: t, target: base_pos })
+            .collect();
+        sim.step(&opening);
+        stream.push(sim.checksum());
+
+        for _ in 1..ticks {
+            let cmds = if sim.tick_count().is_multiple_of(COMMANDER_PERIOD) {
+                commander_orders(
+                    &sim.world,
+                    &sim.territory,
+                    &sim.resources,
+                    &mut enemy_rng,
+                    &CommanderConfig::default(),
+                    &[],
+                    Faction::Enemy,
+                    sim.tick_count(),
+                )
+            } else {
+                Vec::new()
+            };
+            sim.step(&cmds);
+            stream.push(sim.checksum());
+        }
+        stream
+    }
+
+    /// The live-spawn application: every assault troop's weapon is the player-army (US) base Rifleman
+    /// with the chosen loadout applied — exactly what `Loadout::apply_to_weapon_for(Army::Us, …)`
+    /// produces — and the enemy garrison is untouched by the *player's* gunsmith.
+    #[test]
+    fn seize_applies_the_chosen_loadout_to_every_player_troop() {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let loadout = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        };
+        let mut sim = fresh();
+        let m = seed_seize_mission_with_loadout(&mut sim, loadout);
+
+        let mut expected = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        loadout.apply_to_weapon_for(Army::Us, &mut expected);
+        for &t in &m.troops {
+            assert_eq!(
+                sim.world.weapon[t.index as usize], expected,
+                "each US assault troop fields the US-pool weapon with the loadout applied"
+            );
+        }
+        // A non-Standard loadout actually moved the weapon off the bare US baseline.
+        let bare_us = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        assert_ne!(expected, bare_us, "the loadout is a real change off the baseline");
+        // The enemy (FR) garrison is unaffected — this is the player's gunsmith, not the enemy's.
+        let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
+        for &g in &m.garrison {
+            assert_eq!(
+                sim.world.weapon[g.index as usize], fr_rifle,
+                "the enemy garrison is untouched by the player loadout"
+            );
+        }
+    }
+
+    /// `Loadout::STANDARD` is a true no-op on the live-spawn path: the mission seeded with the
+    /// Standard loadout is byte-identical to the plain `seed_seize_mission` (same handles, same
+    /// checksum) — so an opted-out player's match is unchanged and existing goldens are unmoved.
+    #[test]
+    fn seize_standard_loadout_is_byte_identical_to_the_plain_seeder() {
+        let mut plain = fresh();
+        let mut std = fresh();
+        let m_plain = seed_seize_mission(&mut plain);
+        let m_std = seed_seize_mission_with_loadout(&mut std, Loadout::STANDARD);
+        assert_eq!(m_plain, m_std, "the Standard loadout seeds the identical handles");
+        assert_eq!(
+            plain.checksum(),
+            std.checksum(),
+            "the Standard loadout leaves the seeded world byte-identical"
+        );
+    }
+
+    /// **Checksum agreement (invariant #7).** Two peers seeding the SAME loadout and replaying the
+    /// SAME scripted assault produce the identical per-tick checksum stream — the loadout rides the
+    /// existing weapon fold, adding no desync surface.
+    #[test]
+    fn same_loadout_seize_two_peers_agree_every_tick() {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let loadout = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Quickdraw,
+        };
+        let a = seize_checksum_stream(loadout, 400);
+        let b = seize_checksum_stream(loadout, 400);
+        assert_eq!(
+            a, b,
+            "two peers with the same loadout produce the identical per-tick checksum stream"
+        );
+    }
+
+    /// **Honest divergence.** Two peers seeding DIFFERENT loadouts (same scene, same scripted input)
+    /// diverge — and the divergence is *expected sim state*: it shows up from the pre-step checksum
+    /// (the weapon component differs) and persists through the fight. The same-loadout control above
+    /// proves the divergence is caused by the loadout, not by nondeterminism — so a real loadout
+    /// desync would surface on the cross-arch matrix, never drift silently.
+    #[test]
+    fn different_loadout_seize_diverges_only_as_expected_sim_state() {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let marksman = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        };
+        let runner = Loadout {
+            optic: Optic::CloseQuarters,
+            barrel: Barrel::Light,
+            magazine: Magazine::Quickdraw,
+        };
+        let a = seize_checksum_stream(marksman, 400);
+        let b = seize_checksum_stream(runner, 400);
+        assert_ne!(
+            a[0], b[0],
+            "different loadouts fold to a different pre-step checksum (the weapon stats differ)"
+        );
+        assert_ne!(a, b, "different loadouts produce a different sim trajectory");
+    }
+
+    /// **Fairness on the live-spawn path (D30/D60).** Extends the no-strictly-dominant-build property
+    /// from the `core::gunsmith` delta model to the actual *seeded* weapons: across all 27 loadouts,
+    /// the live-spawned player Rifleman of one build never strictly dominates another on the six
+    /// tracked axes. A future re-tune (of the table OR the base weapon) that made one build a flat
+    /// upgrade in-match trips this.
+    #[test]
+    fn no_seize_loadout_strictly_dominates_another_on_the_live_weapon() {
+        let weapons: Vec<Weapon> = all_loadouts().iter().map(|&l| seize_player_weapon(l)).collect();
+        for (i, a) in weapons.iter().enumerate() {
+            for (j, b) in weapons.iter().enumerate() {
+                if i == j {
+                    continue;
+                }
+                assert!(
+                    !weapon_strictly_dominates(a, b),
+                    "live-spawned build {i} strictly dominates build {j} — not a sidegrade",
+                );
+            }
         }
     }
 
