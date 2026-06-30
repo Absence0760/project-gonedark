@@ -178,21 +178,27 @@ fn acquire_target(
     }
 }
 
-/// Resolve one tick of combat over `world`, using `terrain` for cover + line of sight and
-/// `rng` for any deterministic rolls, pushing facts into `events`.
+/// Resolve one tick of combat over `world`, using `terrain` for cover + line of sight, `rng` for
+/// the ballistic aim-bloom draw, and `pool` to launch traveling shells, pushing facts into `events`.
 ///
 /// Three index-ordered passes for clean, peer-identical ordering:
 /// 1. **Upkeep** — decay suppression toward zero; tick weapon cooldowns down.
-/// 2. **Engage** — armed, non-embodied, non-pinned units acquire a target by stance and fire
-///    on a ready cooldown, applying cover-mitigated damage + suppression.
+/// 2. **Engage** — armed, non-embodied, non-pinned units acquire a target by stance and fire on a
+///    ready cooldown. A **hitscan** gun (`muzzle_vel == 0` — rifles, the D65 unarmoured tank)
+///    applies cover-mitigated damage + suppression instantly. A **ballistic** gun (`muzzle_vel > 0`
+///    — the produced armoured tank, P9) instead launches a real traveling [`Projectile`] via the
+///    same [`projectile::fire_ballistic`](crate::projectile::fire_ballistic) the embodied path uses
+///    (D72): the AI fires along the bearing to the target's *current* position — it never leads or
+///    solves a firing solution (invariant #3) — and impact resolves the damage later, in
+///    [`projectile::projectile_system`](crate::projectile::projectile_system).
 /// 3. **Deaths** — anything at zero health emits `Killed` and is despawned.
 pub fn combat_system(
     world: &mut World,
     terrain: &Terrain,
     rng: &mut Rng,
+    pool: &mut Vec<crate::projectile::Projectile>,
     events: &mut Vec<SimEvent>,
 ) {
-    let _ = rng; // No stochastic combat yet; reserved for future spread/crit rolls.
     let n = world.capacity();
 
     // --- Pass 1: upkeep (every alive entity) ---
@@ -271,6 +277,28 @@ pub fn combat_system(
             if w.mag_size > 0 && (w.reload_left > 0 || w.ammo == 0) {
                 continue;
             }
+        }
+
+        // Ballistic vs. hitscan (D72): a gun with `muzzle_vel > 0` (the produced armoured tank, P9)
+        // launches a REAL traveling shell via the SAME `projectile::fire_ballistic` the embodied
+        // path uses, instead of resolving an instant hitscan. The AI fires along the bearing to the
+        // target's CURRENT position — it does NOT lead the target or solve a firing solution
+        // (invariant #3, the literal executor): the shell travels at `muzzle_vel`, so a moving
+        // target can outrun or be missed by an AI shot, and the shell can be seen and reacted to in
+        // flight. `fire_ballistic` owns the cooldown + ammo spend, the (settled-AI: zero) aim-bloom
+        // dispersion draw, and the bounded-ring cap; impact (`projectile_system`, run later this
+        // tick) applies the same cover/armour-mitigated damage + suppression a hitscan would — so
+        // nothing further happens for this shooter here. The spawn is index-ordered into the
+        // checksum-folded pool, identically on every peer (invariant #7).
+        if world.weapon[i].muzzle_vel > Fixed::ZERO {
+            // Aim straight at where the target IS now (never where it will be) — the literal bearing.
+            let aim = world.pos[target_idx] - world.pos[i];
+            // The bounded projectile ring (§6a) caps AI-originated shells too (D72). On saturation
+            // `fire_ballistic` drops the shot deterministically (no spawn, no ammo/cooldown spent) —
+            // identical to the embodied overflow path, so the cap can never leak. The drop is a
+            // silent, deterministic side effect (no checksummed event), matching the embodied `Fire`.
+            let _fired = crate::projectile::fire_ballistic(world, i, aim, pool, rng);
+            continue;
         }
 
         let shooter = match world.entity(i) {
@@ -731,7 +759,10 @@ mod tests {
 
     fn run(world: &mut World, terrain: &Terrain, events: &mut Vec<SimEvent>) {
         let mut rng = Rng::new(1);
-        combat_system(world, terrain, &mut rng, events);
+        // A local pool: hitscan scenes (`muzzle_vel == 0`) never touch it, so it stays empty; the
+        // ballistic AI tests below pass their own pool to inspect the launched shells.
+        let mut pool = Vec::new();
+        combat_system(world, terrain, &mut rng, &mut pool, events);
     }
 
     #[test]
@@ -1451,7 +1482,8 @@ mod tests {
         assert!(world.health[enemy.index as usize].is_dead());
         // Now run the auto-resolver's death pass (as Sim::step would, right after apply).
         let mut rng = Rng::new(1);
-        combat_system(&mut world, &terrain, &mut rng, &mut events);
+        let mut pool = Vec::new();
+        combat_system(&mut world, &terrain, &mut rng, &mut pool, &mut events);
         assert!(!world.is_alive(enemy), "lethal embodied shot despawns the target this tick");
         assert!(events.iter().any(|e| matches!(e, SimEvent::Killed { .. })));
     }
@@ -1478,7 +1510,8 @@ mod tests {
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert!(world.health[building.index as usize].is_dead());
         let mut rng = Rng::new(1);
-        combat_system(&mut world, &terrain, &mut rng, &mut events);
+        let mut pool = Vec::new();
+        combat_system(&mut world, &terrain, &mut rng, &mut pool, &mut events);
         assert!(!world.is_alive(building), "a razed building is despawned exactly like a unit");
         assert!(
             events
@@ -1601,7 +1634,8 @@ mod tests {
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert!(world.health[ci].is_dead());
         let mut rng = Rng::new(1);
-        combat_system(&mut world, &terrain, &mut rng, &mut events);
+        let mut pool = Vec::new();
+        combat_system(&mut world, &terrain, &mut rng, &mut pool, &mut events);
         assert!(!world.is_alive(camp), "razed camp is despawned");
 
         // The economy must skip the despawned camp: no unit spawns, no UnitProduced event.
@@ -2064,5 +2098,210 @@ mod tests {
             run(&mut world, &terrain, &mut events);
         }
         assert!(!firing(&world), "the flag clears once the cooldown decays past the flash window");
+    }
+
+    // --- tank P9 (D72): AI-controlled BALLISTIC fire — the produced tank's gun travels -----------
+
+    use crate::projectile::{
+        self, projectile_system, Projectile, DEFAULT_LIFETIME, LAUNCH_VZ, MAX_PROJECTILES,
+        MUZZLE_HEIGHT,
+    };
+
+    /// A produced-tank-style **ballistic** main gun: `muzzle_vel > 0` so `combat_system` launches a
+    /// traveling shell instead of resolving hitscan (D72). Mirrors the produced Tank's logistics (a
+    /// 6-shell magazine) so the ammo gate behaves as in the real economy loadout.
+    fn ballistic_tank_gun(range: i32, damage: i32, muzzle_vel: i32, penetration: i32, cooldown: u16) -> Weapon {
+        Weapon {
+            range: fx(range),
+            damage: fx(damage),
+            cooldown_ticks: cooldown,
+            cooldown_left: 0,
+            mag_size: 6,
+            ammo: 6,
+            reload_ticks: 240,
+            reload_left: 0,
+            reserve: 24,
+            reserve_max: 24,
+            turret_speed: 180,
+            muzzle_vel: fx(muzzle_vel),
+            penetration: fx(penetration),
+            // Settled: an AI tank never blooms (bloom is added only at the embodied drive/aim sites),
+            // so the launch is dead-on along the bearing and draws no RNG (invariant #3 + #7).
+            dispersion: Fixed::ZERO,
+            shell: ShellKind::Ap,
+        }
+    }
+
+    /// Run one `combat_system` tick with a caller-owned projectile `pool`, so a test can inspect the
+    /// shells the AI launched. A fresh seeded `rng` each call matches `Sim::step`'s deterministic
+    /// draw order (and is moot here — a settled tank gun draws no RNG).
+    fn run_with_pool(
+        world: &mut World,
+        terrain: &Terrain,
+        pool: &mut Vec<Projectile>,
+        events: &mut Vec<SimEvent>,
+    ) {
+        let mut rng = Rng::new(1);
+        combat_system(world, terrain, &mut rng, pool, events);
+    }
+
+    /// A bare in-flight shell, for pre-filling the bounded ring to its cap in the saturation test.
+    fn dummy_shell() -> Projectile {
+        Projectile {
+            pos2d: Vec2::new(fx(0), fx(0)),
+            vel2d: Vec2::new(fx(2), Fixed::ZERO),
+            height: MUZZLE_HEIGHT,
+            vz: LAUNCH_VZ,
+            owner: Entity { index: 0, generation: 0 },
+            faction: Faction::Player,
+            damage: fx(10),
+            penetration: Fixed::ZERO,
+            lifetime: DEFAULT_LIFETIME,
+            shell: ShellKind::Ap,
+            splash_radius: Fixed::ZERO,
+            splash_damage: Fixed::ZERO,
+        }
+    }
+
+    #[test]
+    fn ai_ballistic_tank_launches_a_traveling_shell_not_instant_hitscan() {
+        // The headline of D72: an AI (non-embodied, FireAtWill) tank with `muzzle_vel > 0` launches a
+        // REAL traveling shell — the near target is hit LATER than an instant hitscan would, because
+        // the shell has to cross the gap. This is the property the whole fork rests on.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let tank = spawn_unit(&mut world, 0, 0, Faction::Player, 100, ballistic_tank_gun(30, 50, 2, 18, 0));
+        world.stance[tank.index as usize] = Stance::FireAtWill;
+        let target = spawn_unit(&mut world, 6, 0, Faction::Enemy, 1000, Weapon::default());
+        world.stance[target.index as usize] = Stance::HoldFire;
+
+        let mut pool: Vec<Projectile> = Vec::new();
+        let mut events = Vec::new();
+        // One combat tick: the AI launches one shell, but the target is UNHARMED this tick — a hitscan
+        // would already have landed (compare the golden test below).
+        run_with_pool(&mut world, &terrain, &mut pool, &mut events);
+        assert_eq!(pool.len(), 1, "the AI tank launched exactly one traveling shell");
+        assert_eq!(
+            world.health[target.index as usize].cur,
+            fx(1000),
+            "no instant damage — the shell is in flight, not a hitscan"
+        );
+        assert!(events.is_empty(), "no Damaged event yet — the shell has not arrived");
+        assert_eq!(world.weapon[tank.index as usize].ammo, 5, "one shell spent on launch");
+
+        // Advance ONLY the shell (no further combat, so the pool does not refill): 6 units at 2/tick
+        // ⇒ ~3 ticks of travel before impact. Flat (no gravity) so travel time is the only variable.
+        let mut ticks = 0;
+        while !pool.is_empty() && ticks < 100 {
+            projectile_system(&mut world, &terrain, &mut pool, &mut events, Fixed::ZERO);
+            ticks += 1;
+        }
+        assert_eq!(ticks, 3, "6 / 2 = 3 ticks of travel — the shell arrives LATER than a hitscan");
+        assert!(
+            world.health[target.index as usize].cur < fx(1000),
+            "the traveling AI shell eventually lands and damages the target"
+        );
+    }
+
+    #[test]
+    fn ai_muzzle_vel_zero_still_hitscans_unchanged_and_spawns_no_projectile() {
+        // The golden no-regression: a `muzzle_vel == 0` gun (a rifle, the D65 unarmoured tank) keeps
+        // the instant-hitscan path EXACTLY as before — damage lands the same tick, and NOTHING is
+        // pushed into the projectile pool. This is the half of the dispatch the ballistic branch must
+        // not disturb.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(30, 50, 0));
+        world.stance[shooter.index as usize] = Stance::FireAtWill;
+        let target = spawn_unit(&mut world, 6, 0, Faction::Enemy, 1000, Weapon::default());
+        world.stance[target.index as usize] = Stance::HoldFire;
+
+        let mut pool: Vec<Projectile> = Vec::new();
+        let mut events = Vec::new();
+        run_with_pool(&mut world, &terrain, &mut pool, &mut events);
+        assert!(pool.is_empty(), "a muzzle_vel == 0 gun spawns NO projectile (hitscan, unchanged)");
+        assert_eq!(
+            world.health[target.index as usize].cur,
+            fx(950),
+            "hitscan lands its 50 damage instantly, the same tick"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, SimEvent::Damaged { .. })),
+            "the hitscan emits its Damaged event immediately"
+        );
+    }
+
+    #[test]
+    fn ai_ballistic_fire_is_literal_aims_at_current_position_no_lead() {
+        // Invariant #3, made concrete: the AI fires along the bearing to the target's CURRENT
+        // position, scaled to muzzle_vel — it adds NO lead term (it does not solve where the target
+        // will be). The launched shell's velocity is exactly `normalize(target − shooter) · muzzle_vel`.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let tank = spawn_unit(&mut world, 0, 0, Faction::Player, 100, ballistic_tank_gun(30, 50, 2, 18, 0));
+        world.stance[tank.index as usize] = Stance::FireAtWill;
+        // Off both axes, so a lead would visibly tilt the shot away from the straight bearing.
+        let target = spawn_unit(&mut world, 8, 6, Faction::Enemy, 1000, Weapon::default());
+        world.stance[target.index as usize] = Stance::HoldFire;
+
+        let mut pool: Vec<Projectile> = Vec::new();
+        let mut events = Vec::new();
+        run_with_pool(&mut world, &terrain, &mut pool, &mut events);
+        assert_eq!(pool.len(), 1);
+        let expected = Vec2::new(fx(8), fx(6)).normalized().scale(fx(2));
+        assert_eq!(
+            pool[0].vel2d, expected,
+            "the AI shell aims at the target's current position — no lead (literal executor)"
+        );
+    }
+
+    #[test]
+    fn ai_ballistic_ring_caps_saturated_shots_and_never_leaks() {
+        // The bounded projectile ring (§6a) caps AI-originated shells too (D72): with the pool already
+        // at MAX_PROJECTILES, the AI's shot is dropped DETERMINISTICALLY — no spawn (the pool never
+        // grows past the cap, so it can't leak) and no spend (the magazine is untouched).
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let tank = spawn_unit(&mut world, 0, 0, Faction::Player, 100, ballistic_tank_gun(30, 50, 2, 18, 0));
+        world.stance[tank.index as usize] = Stance::FireAtWill;
+        let target = spawn_unit(&mut world, 6, 0, Faction::Enemy, 1000, Weapon::default());
+        world.stance[target.index as usize] = Stance::HoldFire;
+
+        let mut pool: Vec<Projectile> = (0..MAX_PROJECTILES).map(|_| dummy_shell()).collect();
+        let mut events = Vec::new();
+        run_with_pool(&mut world, &terrain, &mut pool, &mut events);
+        assert_eq!(pool.len(), MAX_PROJECTILES, "the pool never exceeds the cap — no leak");
+        assert_eq!(world.weapon[tank.index as usize].ammo, 6, "a dropped shot spends no ammo");
+        assert_eq!(world.weapon[tank.index as usize].cooldown_left, 0, "a dropped shot sets no cooldown");
+    }
+
+    #[test]
+    fn ai_ballistic_fire_is_deterministic_across_runs() {
+        // Two identical AI-tank duels, stepped through combat + projectile flight the same number of
+        // ticks, land on bit-identical world health AND bit-identical projectile pools — the new sim
+        // writes (shell spawns + flight) are float-free and order-stable (invariants #1/#7), the
+        // property the cross-arch matrix and 2-peer lockstep rest on.
+        let build = || {
+            let mut world = World::new();
+            let t = spawn_unit(&mut world, -3, 0, Faction::Player, 300, ballistic_tank_gun(30, 50, 2, 18, 4));
+            world.stance[t.index as usize] = Stance::FireAtWill;
+            let e = spawn_unit(&mut world, 3, 0, Faction::Enemy, 300, ballistic_tank_gun(30, 50, 2, 18, 4));
+            world.stance[e.index as usize] = Stance::FireAtWill;
+            world
+        };
+        let terrain = Terrain::open();
+        let (mut w1, mut w2) = (build(), build());
+        let (mut p1, mut p2): (Vec<Projectile>, Vec<Projectile>) = (Vec::new(), Vec::new());
+        let mut ev = Vec::new();
+        for _ in 0..120 {
+            run_with_pool(&mut w1, &terrain, &mut p1, &mut ev);
+            projectile_system(&mut w1, &terrain, &mut p1, &mut ev, projectile::GRAVITY);
+            run_with_pool(&mut w2, &terrain, &mut p2, &mut ev);
+            projectile_system(&mut w2, &terrain, &mut p2, &mut ev, projectile::GRAVITY);
+        }
+        for i in 0..w1.capacity() {
+            assert_eq!(w1.health[i].cur, w2.health[i].cur, "health slot {i} must match");
+        }
+        assert_eq!(p1, p2, "the in-flight projectile pools must be bit-identical");
     }
 }

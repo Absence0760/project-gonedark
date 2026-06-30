@@ -1699,6 +1699,99 @@ mod tests {
         }
     }
 
+    // ----- tank P9 (D72): two peers agree over AI-controlled BALLISTIC tank fire -----
+
+    /// Spawn a produced-loadout tank (BALLISTIC main gun, `muzzle_vel > 0`, D72) of `faction` at
+    /// `(x, y)`, engaging at will. Spawn order is fixed, so the handle is bit-identical across every
+    /// sim seeded this way (the property lockstep agreement rests on).
+    fn spawn_tank(sim: &mut Sim, x: i32, y: i32, faction: Faction) -> Entity {
+        let (health, weapon) = economy::unit_stats(UnitKind::Tank);
+        let e = sim.world.spawn();
+        let i = e.index as usize;
+        sim.world.kind[i] = EntityKind::Unit;
+        sim.world.unit_kind[i] = UnitKind::Tank;
+        sim.world.faction[i] = faction;
+        sim.world.pos[i] = v(x, y);
+        sim.world.health[i] = health;
+        sim.world.weapon[i] = weapon;
+        sim.world.stance[i] = Stance::FireAtWill;
+        e
+    }
+
+    /// Two opposing AI tank lines, close enough (8 apart, inside range 13) to trade ballistic shells
+    /// with **no commands at all** — the literal-executor AI fires on its own (D72). Deterministic by
+    /// spawn order, so every sim built this way is bit-identical.
+    fn tank_scene(sim: &mut Sim) {
+        sim.resources = Resources::new(100_000);
+        spawn_tank(sim, -4, 0, Faction::Player);
+        spawn_tank(sim, -4, 3, Faction::Player);
+        spawn_tank(sim, 4, 0, Faction::Enemy);
+        spawn_tank(sim, 4, 3, Faction::Enemy);
+    }
+
+    #[test]
+    fn lockstep_two_peers_agree_over_ai_ballistic_tank_fire() {
+        // Invariant #7 over the D72 path: AI tanks auto-firing TRAVELING shells add new checksummed
+        // sim writes (projectile spawns + in-flight pool) inside the resolver. Two lockstep peers
+        // stepping the merged stream — here empty, since the literal AI needs no commands — over a
+        // clean channel must agree on every per-tick checksum AND match a no-network single-sim
+        // reference, for 300 ticks (the runner convention). A divergence would be a real cross-client
+        // desync, never to be silenced by narrowing the test.
+        const TICKS: u64 = 300;
+        const DELAY: u64 = 2;
+
+        let mut sims = [Sim::new(SCENE_SEED), Sim::new(SCENE_SEED)];
+        tank_scene(&mut sims[0]);
+        tank_scene(&mut sims[1]); // identical by determinism
+
+        // Reference: one sim, no network, empty commands each tick. Also confirm the AI ballistic
+        // path actually fired (a shell existed) so the agreement is not vacuous.
+        let mut refsim = Sim::new(SCENE_SEED);
+        tank_scene(&mut refsim);
+        let mut refsums = Vec::with_capacity(TICKS as usize);
+        let mut saw_projectile = false;
+        for _ in 0..TICKS {
+            refsim.step(&[]);
+            saw_projectile |= !refsim.projectiles.is_empty();
+            refsums.push(refsim.checksum());
+        }
+        assert!(saw_projectile, "the AI ballistic path must have launched a real traveling shell");
+
+        let mut sessions = [Lockstep::new(2, 0, DELAY), Lockstep::new(2, 1, DELAY)];
+        for _ in 0..(TICKS - DELAY) {
+            sessions[0].submit(Vec::new());
+            sessions[1].submit(Vec::new());
+        }
+
+        let mut net = Net::new(0xBA111574_C0FFEE11, 0, 0, 0, 1); // clean channel
+        let mut sums = [
+            Vec::with_capacity(TICKS as usize),
+            Vec::with_capacity(TICKS as usize),
+        ];
+        let mut it = 0u64;
+        loop {
+            let f0 = sessions[0].drain_outbound();
+            net.send(it, 1, f0);
+            let f1 = sessions[1].drain_outbound();
+            net.send(it, 0, f1);
+            net.deliver_due(it, &mut sessions);
+            for i in 0..2 {
+                while let Some(cmds) = sessions[i].try_advance() {
+                    sims[i].step(&cmds);
+                    sums[i].push(sims[i].checksum());
+                }
+            }
+            if sessions[0].next_tick() >= TICKS && sessions[1].next_tick() >= TICKS {
+                break;
+            }
+            it += 1;
+            assert!(it < 1_000_000, "lockstep failed to converge");
+        }
+        assert_eq!(sums[0].len(), TICKS as usize);
+        assert_eq!(sums[0], sums[1], "the two peers must agree every tick over AI ballistic fire");
+        assert_eq!(sums[0], refsums, "lockstep must match the no-network reference");
+    }
+
     // ----- factions WS-A: both peers pick armies over the lockstep stream -----
 
     #[test]
