@@ -43,7 +43,13 @@ data class ProfileState(
     val faction: FactionPref = FactionPref.UsArmy,
     val matchesPlayed: Int = 0,
     val wins: Int = 0,
-)
+) {
+    /**
+     * A copy with the lifetime record zeroed (matches + wins → 0), leaving callsign and faction
+     * intact — what the "RESET RECORD" control commits. Mirrors the desktop `ProfileAction::ResetStats`.
+     */
+    fun resetRecord(): ProfileState = copy(matchesPlayed = 0, wins = 0)
+}
 
 /** The fallback callsign when the field is left empty. Mirrors Rust `DEFAULT_CALLSIGN`. */
 const val DEFAULT_CALLSIGN: String = "Commander"

@@ -12,9 +12,9 @@ package com.jaredhoward.goingdark
  *
  * | Slot     | index 0    | index 1    | index 2          | trade axis              |
  * |----------|------------|------------|------------------|-------------------------|
- * | Optic    | `Standard` | `Marksman` | `Close-Quarters` | range ↔ fire-rate       |
- * | Barrel   | `Standard` | `Heavy`    | `Light`          | damage ↔ reserve        |
- * | Magazine | `Standard` | `Extended` | `Quickdraw`      | capacity ↔ handling     |
+ * | Optic    | `Standard` | `Marksman` | `Close-Quarters` | range <-> fire-rate     |
+ * | Barrel   | `Standard` | `Heavy`    | `Light`          | damage <-> reserve      |
+ * | Magazine | `Standard` | `Extended` | `Quickdraw`      | capacity <-> handling   |
  *
  * Each enum's `ALL` order in the Rust source IS the wire index, and those indices are exactly the
  * `opt`/`bar`/`mag` fields of [LaunchConfig] (`optic`/`barrel`/`magazine`, each `0..SLOT_MAX`). A
@@ -70,6 +70,9 @@ data class LoadoutSelection(
         return withIndex(slot, next)
     }
 
+    /** The neutral all-`Standard` baseline — the RESET control's target. Mirrors `LoadoutEditor::reset()`. */
+    fun reset(): LoadoutSelection = STANDARD
+
     companion object {
         /**
          * Max option index, inclusive. **Must equal [LaunchConfig.SLOT_MAX]** (D79 mirror) — every
@@ -91,14 +94,22 @@ data class LoadoutSelection(
         )
 
         /**
-         * A short trade-axis hint per slot, for the UI. Mirrors the unique axis pair each slot trades
-         * within (`core/src/gunsmith.rs`): Optic range↔fire-rate, Barrel damage↔reserve, Magazine
-         * capacity↔handling.
+         * The neutral all-`Standard` baseline `(0, 0, 0)` — the build a player with no unlocks
+         * fields, byte-identical to the Rust `Loadout::default()` / `Loadout::STANDARD`. The RESET
+         * control returns the editor here; mirrors the desktop `LoadoutEditor::reset()`.
+         */
+        val STANDARD = LoadoutSelection()
+
+        /**
+         * A short trade-axis hint per slot, for the UI. Mirrors `app/src/shell.rs::slot_trade_hint`
+         * **verbatim** — ASCII `<->` (not the `↔` glyph), exactly as the desktop string, so the two
+         * shells show byte-identical hints: Optic range<->fire-rate, Barrel damage<->reserve, Magazine
+         * capacity<->handling.
          */
         private val TRADE_HINTS: Map<Slot, String> = mapOf(
-            Slot.Optic to "range ↔ fire-rate",
-            Slot.Barrel to "damage ↔ reserve",
-            Slot.Magazine to "capacity ↔ handling",
+            Slot.Optic to "range <-> fire-rate",
+            Slot.Barrel to "damage <-> reserve",
+            Slot.Magazine to "capacity <-> handling",
         )
 
         /** The human label for option [index] of [slot] (index clamped into range). */

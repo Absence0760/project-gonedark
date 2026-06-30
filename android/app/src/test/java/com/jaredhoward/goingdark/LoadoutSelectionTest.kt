@@ -84,10 +84,25 @@ class LoadoutSelectionTest {
     }
 
     @Test
-    fun trade_hints_name_each_slots_axis_pair() {
-        assertEquals("range ↔ fire-rate", LoadoutSelection.tradeHint(Slot.Optic))
-        assertEquals("damage ↔ reserve", LoadoutSelection.tradeHint(Slot.Barrel))
-        assertEquals("capacity ↔ handling", LoadoutSelection.tradeHint(Slot.Magazine))
+    fun trade_hints_mirror_the_desktop_strings_verbatim() {
+        // ASCII `<->`, byte-identical to app/src/shell.rs::slot_trade_hint — not the `↔` glyph — so
+        // the two shells show the same hint text (D79 mirror; a glyph swap trips this).
+        assertEquals("range <-> fire-rate", LoadoutSelection.tradeHint(Slot.Optic))
+        assertEquals("damage <-> reserve", LoadoutSelection.tradeHint(Slot.Barrel))
+        assertEquals("capacity <-> handling", LoadoutSelection.tradeHint(Slot.Magazine))
+    }
+
+    @Test
+    fun reset_returns_the_neutral_all_standard_baseline() {
+        // RESET (mirrors LoadoutEditor::reset) drops every slot back to index 0 from any build.
+        val built = LoadoutSelection(optic = 1, barrel = 2, magazine = 1)
+        assertEquals(LoadoutSelection(), built.reset())
+        assertEquals(LoadoutSelection.STANDARD, built.reset())
+        for (slot in Slot.entries) {
+            assertEquals(0, built.reset().index(slot))
+        }
+        // Reset of the baseline is a no-op.
+        assertEquals(LoadoutSelection(), LoadoutSelection().reset())
     }
 
     @Test

@@ -120,7 +120,10 @@ private fun Shell(
             onChange = { profile = it; persist() },
             onBack = { route = ShellRoute.Title },
         )
-        ShellRoute.About -> AboutScreen(onBack = { route = ShellRoute.Title })
+        ShellRoute.About -> AboutScreen(
+            versionStamp = versionStamp,
+            onBack = { route = ShellRoute.Title },
+        )
         ShellRoute.MissionSelect -> MissionSelectScreen(
             nodes = campaignNodes,
             onOpenNode = { briefedNode = it; route = ShellRoute.Briefing },
@@ -139,6 +142,7 @@ private fun Shell(
             selection = loadout,
             onChange = { loadout = it; persist() },
             onDeploy = { onDeploy(launchConfigOf(pendingScene, settings, loadout)) },
+            onReset = { loadout = loadout.reset(); persist() },
             onBack = { route = ShellRoute.Title },
         )
     }

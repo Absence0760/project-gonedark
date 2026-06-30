@@ -81,4 +81,19 @@ class CampaignModelTest {
         assertTrue("mission name is non-blank", seize!!.name.isNotBlank())
         assertTrue("briefing copy is non-blank", seize.briefing.isNotBlank())
     }
+
+    @Test
+    fun seize_name_and_briefing_mirror_the_rust_source_verbatim() {
+        // Pins the D79 mirror against core::mission_tuning::MISSION_ONE_BRIEFING (title + situation).
+        // The desktop briefing surface shows only `situation` (not `objective_line`), so this must
+        // too — a paraphrase or a merged-in objective line trips this rather than shipping a
+        // cross-shell content divergence.
+        val seize = campaignNodes.first { it.sceneToken == "mission1" }
+        assertEquals("Seize the Outpost", seize.name)
+        assertEquals(
+            "Ten of yours against a dug-in garrison. Command them — or go dark and fight one " +
+                "yourself. Just don't stay blind too long.",
+            seize.briefing,
+        )
+    }
 }

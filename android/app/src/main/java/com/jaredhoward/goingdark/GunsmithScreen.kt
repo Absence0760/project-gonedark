@@ -42,6 +42,7 @@ fun GunsmithScreen(
     selection: LoadoutSelection,
     onChange: (LoadoutSelection) -> Unit,
     onDeploy: () -> Unit,
+    onReset: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -96,6 +97,14 @@ fun GunsmithScreen(
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
                     Text("DEPLOY", letterSpacing = 2.sp)
+                }
+                // RESET returns every slot to the neutral all-Standard baseline — mirrors the desktop
+                // gunsmith's RESET action (LoadoutAction::Reset), sitting between DEPLOY and BACK.
+                TextButton(
+                    onClick = onReset,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                ) {
+                    Text("RESET", letterSpacing = 2.sp)
                 }
                 TextButton(
                     onClick = onBack,
@@ -173,6 +182,7 @@ private fun GunsmithScreenPreview() {
             selection = LoadoutSelection(optic = 1, barrel = 2, magazine = 0),
             onChange = {},
             onDeploy = {},
+            onReset = {},
             onBack = {},
         )
     }

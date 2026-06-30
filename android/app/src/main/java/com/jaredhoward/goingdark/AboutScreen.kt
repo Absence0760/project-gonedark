@@ -35,6 +35,7 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  */
 @Composable
 fun AboutScreen(
+    versionStamp: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -101,6 +102,16 @@ fun AboutScreen(
                     Spacer(Modifier.height(18.dp))
                 }
 
+                // The build/version stamp, just above BACK — mirrors the desktop About card, which
+                // carries the same stamp the Title screen shows (parity: desktop renders it here too).
+                Text(
+                    text = versionStamp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                )
+
                 Button(
                     onClick = onBack,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
@@ -118,6 +129,6 @@ fun AboutScreen(
 @Composable
 private fun AboutScreenPreview() {
     GoingDarkTheme {
-        AboutScreen(onBack = {})
+        AboutScreen(versionStamp = "build dev · v0.0.0", onBack = {})
     }
 }

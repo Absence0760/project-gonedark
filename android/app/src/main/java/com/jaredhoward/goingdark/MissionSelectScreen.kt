@@ -60,6 +60,18 @@ fun MissionSelectScreen(
                 textAlign = TextAlign.Center,
             )
 
+            Spacer(Modifier.height(12.dp))
+
+            // The instructional subtitle — mirrors desktop's mission_select_ui copy verbatim.
+            Text(
+                text = "Clear an operation to open the next. A cleared operation can be replayed at " +
+                    "a higher tier.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth(),
+            )
+
             Spacer(Modifier.height(24.dp))
 
             // The mission list, width-capped so tiles don't stretch across a wide landscape screen.

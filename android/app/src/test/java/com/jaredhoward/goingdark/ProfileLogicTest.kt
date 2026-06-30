@@ -76,4 +76,22 @@ class ProfileLogicTest {
         assertEquals(FactionPref.FrenchArmy, FactionPref.UsArmy.next())
         assertEquals(FactionPref.UsArmy, FactionPref.FrenchArmy.next())
     }
+
+    // ---- resetRecord -------------------------------------------------------------------------
+
+    @Test
+    fun reset_record_zeroes_matches_and_wins_only() {
+        // Mirrors desktop ProfileAction::ResetStats: record → 0, identity (callsign/faction) intact.
+        val state = ProfileState(
+            callsign = "Reaper",
+            faction = FactionPref.FrenchArmy,
+            matchesPlayed = 12,
+            wins = 7,
+        )
+        val reset = state.resetRecord()
+        assertEquals(0, reset.matchesPlayed)
+        assertEquals(0, reset.wins)
+        assertEquals("Reaper", reset.callsign)
+        assertEquals(FactionPref.FrenchArmy, reset.faction)
+    }
 }

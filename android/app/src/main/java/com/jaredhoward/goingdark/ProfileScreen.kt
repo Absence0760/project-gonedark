@@ -131,6 +131,21 @@ fun ProfileScreen(
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Start,
                 )
+
+                // Zero the lifetime record (mirrors desktop ProfileAction::ResetStats). Commits the
+                // in-field callsign too, like the faction cycle, so an unsaved draft isn't lost.
+                OutlinedButton(
+                    onClick = {
+                        onChange(
+                            state
+                                .copy(callsign = sanitizeCallsign(callsignDraft))
+                                .resetRecord(),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                ) {
+                    Text("RESET RECORD", letterSpacing = 1.sp)
+                }
             }
 
             Spacer(Modifier.weight(1f))

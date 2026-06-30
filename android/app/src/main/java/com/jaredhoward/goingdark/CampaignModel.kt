@@ -102,16 +102,18 @@ data class MissionNode(
 
 /**
  * The shipped campaign nodes, mirroring `engine::mission_registry::default_campaign()`. Today exactly
- * one playable node: the WS-A *Seize* mission. The [briefing] paraphrases `MISSION_ONE_BRIEFING`'s
- * gist (situation + objective). More nodes land here as more Rust missions ship — keep in lock-step.
+ * one playable node: the WS-A *Seize* mission. The [name] mirrors `MISSION_ONE_BRIEFING.title` and the
+ * [briefing] mirrors `MISSION_ONE_BRIEFING.situation` **verbatim** (the desktop briefing surface shows
+ * only the situation, not the separate `objective_line`, so neither does this) — a D79 mirrored string
+ * the [CampaignModelTest] pins so a future edit to the Rust copy can't silently diverge. More nodes
+ * land here as more Rust missions ship — keep in lock-step.
  */
 val campaignNodes: List<MissionNode> = listOf(
     MissionNode(
         id = 0,
         name = "Seize the Outpost",
         sceneToken = "mission1",
-        briefing = "Ten of yours against a dug-in garrison. Command them from above — or go dark " +
-            "and fight one of them yourself in first person. Take the enemy camp without losing " +
-            "all ten, and don't stay blind too long.",
+        briefing = "Ten of yours against a dug-in garrison. Command them — or go dark and fight one " +
+            "yourself. Just don't stay blind too long.",
     ),
 )
