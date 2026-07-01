@@ -1,8 +1,9 @@
 // On-screen FPS touch-control HUD shader (the COD-style embodied controls) — a screen-space LOAD
 // pass drawn over the dark embodied frame, Android only. One alpha-blended quad per control:
-// the floating move-stick base (ring) + thumb (disc), and the Fire / Crouch / Reload / Surface
-// buttons — plus an Aim-down-sight (ADS) button for a scope-capable avatar (a faint disc fill +
-// outline ring + a procedural icon). Glyphs are shader-drawn shape
+// the floating move-stick base (ring) + thumb (disc), and the Fire / Crouch / Reload / Surface /
+// Jump / select-fire buttons — plus an Aim-down-sight (ADS) button for a scope-capable avatar (a
+// faint disc fill + outline ring + a procedural icon). The select-fire button's glyph switches
+// (single dot = semi, three dots = auto) to read as the current fire-mode. Glyphs are shader-drawn shape
 // ids — no binary art assets (real Inkscape icons are a later polish). Per-axis half-size keeps
 // the circles round regardless of viewport aspect.
 //
@@ -12,7 +13,7 @@ struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) local: vec2<f32>,              // quad corner in [-1, 1] (interpolated)
-    @location(2) @interpolate(flat) shape: f32, // 0 ring, 1 disc, 2 fire, 3 crouch, 4 reload, 5 surface, 6 aim
+    @location(2) @interpolate(flat) shape: f32, // 0 ring, 1 disc, 2 fire, 3 crouch, 4 reload, 5 surface, 6 aim, 7 jump, 8 semi, 9 auto
 };
 
 @vertex
@@ -79,13 +80,27 @@ fn button_icon(p: vec2<f32>, shape: f32) -> f32 {
     } else if shape < 5.5 {
         // SURFACE: an upward chevron (eject up, back to command).
         return chevron(p, 1.0);
-    } else {
+    } else if shape < 6.5 {
         // AIM (ADS): a sniper-scope reticle — a thin annulus + a fine full-width crosshair through
         // the center, distinct from FIRE's short, dotted crosshair. Reads as "look down the scope".
         let reticle = ring(p, 0.52, 0.66);
         let vbar = step(abs(p.x), 0.05) * (1.0 - smoothstep(0.7 - AA, 0.7 + AA, abs(p.y)));
         let hbar = step(abs(p.y), 0.05) * (1.0 - smoothstep(0.7 - AA, 0.7 + AA, abs(p.x)));
         return clamp(max(reticle, max(vbar, hbar)), 0.0, 1.0);
+    } else if shape < 7.5 {
+        // JUMP: an upward DOUBLE chevron (the hop) — two stacked "^", distinct from SURFACE's single.
+        let up1 = chevron(p + vec2<f32>(0.0, 0.20), 1.0);
+        let up2 = chevron(p - vec2<f32>(0.0, 0.20), 1.0);
+        return clamp(max(up1, up2), 0.0, 1.0);
+    } else if shape < 8.5 {
+        // FIRE-MODE SEMI: a single centre dot — "one shot per pull".
+        return disc(p, 0.22);
+    } else {
+        // FIRE-MODE AUTO: three dots in a row — "sustained spray".
+        let d0 = disc(p + vec2<f32>(0.36, 0.0), 0.17);
+        let d1 = disc(p, 0.17);
+        let d2 = disc(p - vec2<f32>(0.36, 0.0), 0.17);
+        return clamp(max(d0, max(d1, d2)), 0.0, 1.0);
     }
 }
 

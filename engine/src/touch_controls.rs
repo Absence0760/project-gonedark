@@ -63,6 +63,15 @@ const LOOK_SPLIT_FRAC: f32 = 0.42;
 /// `integrate_look_yaw`/`_pitch` expect (those were tuned for raw mouse-pixel deltas, so ~1.0 keeps
 /// a touch drag feeling like a mouse drag; tune for device feel later).
 const LOOK_DRAG_SCALE: f32 = 1.0;
+/// The Jump button is a standard-size disc (the touch twin of the desktop Space hop). A one-shot
+/// press edge — a mid-air re-press is ignored sim-height-side by `jump::start_jump`, so a held
+/// finger can't pogo.
+const JUMP_R_FRAC: f32 = 0.072;
+/// The fire-mode (select-fire) button is standard-size too — a deliberate tap that toggles
+/// semi ⇄ auto. It doubles as the on-screen fire-mode READOUT: the renderer draws its glyph from the
+/// CURRENT mode (the host passes it), so the Android player can read semi-vs-auto at a glance (the
+/// desktop player infers it; there is no other on-screen indicator).
+const FIREMODE_R_FRAC: f32 = 0.072;
 
 /// An axis-aligned screen rectangle in pixels (`x0,y0` top-left, inclusive lower bound).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -115,6 +124,14 @@ pub struct TouchLayout {
     pub crouch: Circle,
     pub reload: Circle,
     pub surface: Circle,
+    /// Jump button: a one-shot press edge that launches the cosmetic first-person hop (the touch twin
+    /// of the desktop Space binding). Presentation only — the host feeds its edge to `jump::start_jump`
+    /// (invariant #4/#5), never the sim.
+    pub jump: Circle,
+    /// Select-fire button: a one-shot press edge that toggles the embodied weapon between semi and
+    /// full-auto (`fire::FireMode::toggled`). Its drawn glyph reflects the CURRENT mode, so it is also
+    /// the on-screen fire-mode readout. Input preference only — never sim state (invariant #4/#5).
+    pub fire_mode: Circle,
     /// Aim-down-sight (ADS) button: HELD = zoom (the sniper scope), like Fire. Its hit shape always
     /// exists in the layout; whether it does anything is gated host-side by `has_scope` (a unit with
     /// an independent turret), so an infantry avatar's press is inert — the W2 turret/tank gate.
@@ -132,6 +149,8 @@ impl TouchLayout {
         let fire_r = FIRE_R_FRAC * m;
         let surface_r = SURFACE_R_FRAC * m;
         let aim_r = AIM_R_FRAC * m;
+        let jump_r = JUMP_R_FRAC * m;
+        let fire_mode_r = FIREMODE_R_FRAC * m;
         TouchLayout {
             width: w,
             height: h,
@@ -171,6 +190,19 @@ impl TouchLayout {
                 cy: 0.08 * h,
                 r: surface_r,
             },
+            // Lower-middle, left of Crouch and clear of the move ring: a right-hand thumb-reach hop.
+            jump: Circle {
+                cx: 0.58 * w,
+                cy: 0.86 * h,
+                r: jump_r,
+            },
+            // Upper-right of the thumb cluster, above Fire and clear of Reload: a deliberate mode tap
+            // that also reads as the current-mode indicator.
+            fire_mode: Circle {
+                cx: 0.84 * w,
+                cy: 0.46 * h,
+                r: fire_mode_r,
+            },
             // Just above-left of Fire: the right thumb can hold ADS (zoom) while the left finger
             // drives the stick and a second right-thumb tap hits Fire. Clear of Fire and Crouch.
             aim: Circle {
@@ -198,6 +230,11 @@ pub struct TouchHud {
     pub crouch_pressed: bool,
     pub reload_pressed: bool,
     pub surface_pressed: bool,
+    /// Jump button pressed this frame (the momentary press flash).
+    pub jump_pressed: bool,
+    /// Fire-mode button pressed this frame (the momentary press flash). The current-mode glyph is
+    /// chosen host-side (the seam doesn't hold the `FireMode`).
+    pub fire_mode_pressed: bool,
     /// Aim-down-sight button held this frame (the press flash — held like Fire, not an edge).
     pub aim_pressed: bool,
 }
@@ -225,13 +262,19 @@ pub struct TouchOutput {
     pub reload_edge: bool,
     /// Surface button press edge this frame (eject to command).
     pub surface_edge: bool,
+    /// Jump button press *edge* this frame — the host feeds it to `jump::start_jump` (the touch twin
+    /// of `InputFrame.jump_pressed`).
+    pub jump_edge: bool,
+    /// Select-fire (fire-mode) button press *edge* this frame — the host feeds it to
+    /// `fire::FireMode::toggled` (the touch twin of `InputFrame.select_fire_pressed`).
+    pub fire_mode_edge: bool,
     /// What to draw this frame.
     pub hud: TouchHud,
 }
 
 /// Per-frame-persistent touch state: which finger owns which control, and last frame's button
 /// presses (for edge detection). Lives on `Game`; reset on (un)embodiment via [`reset`](Self::reset).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TouchControls {
     move_id: Option<u64>,
     look_id: Option<u64>,
@@ -240,6 +283,35 @@ pub struct TouchControls {
     prev_crouch: bool,
     prev_reload: bool,
     prev_surface: bool,
+    prev_jump: bool,
+    prev_fire_mode: bool,
+    /// Player look-sensitivity multiplier (`1.0` = stock) and pitch-invert, from the Compose shell's
+    /// Settings — the touch twin of `pal-desktop::scale_look`. Applied to the drag-look `look_delta`
+    /// inside [`update`](Self::update) (the raw finger *positions* are never scaled — that would
+    /// corrupt the stick centre + button hit-tests). Presentation/input only, above `core`
+    /// (invariant #1): floats are fine here. Persist across [`reset`](Self::reset) — a match-setup
+    /// pref must survive every embody/surface toggle.
+    look_sensitivity: f32,
+    invert_y: bool,
+}
+
+impl Default for TouchControls {
+    fn default() -> Self {
+        Self {
+            move_id: None,
+            look_id: None,
+            look_last: (0.0, 0.0),
+            prev_fire: false,
+            prev_crouch: false,
+            prev_reload: false,
+            prev_surface: false,
+            prev_jump: false,
+            prev_fire_mode: false,
+            // Stock pass-through until the host pushes the player's Settings prefs.
+            look_sensitivity: 1.0,
+            invert_y: false,
+        }
+    }
 }
 
 impl TouchControls {
@@ -248,9 +320,25 @@ impl TouchControls {
     }
 
     /// Forget all finger ownership + button history. Called when embodiment toggles so a stale
-    /// finger from the command view (or a previous possession) never bleeds into a fresh one.
+    /// finger from the command view (or a previous possession) never bleeds into a fresh one. The
+    /// look prefs are a match-setup preference, not per-possession state, so they PERSIST across a
+    /// reset (a fresh embodiment must keep the player's sensitivity / invert-Y).
     pub fn reset(&mut self) {
+        let look_sensitivity = self.look_sensitivity;
+        let invert_y = self.invert_y;
         *self = Self::default();
+        self.look_sensitivity = look_sensitivity;
+        self.invert_y = invert_y;
+    }
+
+    /// Set the player's embodied look prefs (Compose shell Settings). `sensitivity` multiplies the
+    /// drag-look delta (`1.0` = stock); `invert_y` flips the pitch axis. The touch twin of
+    /// `pal-desktop::DesktopInput::set_look_prefs` — desktop scales the raw mouse delta at the PAL
+    /// boundary, but the Android look delta is produced *inside* this seam, so the scaling lives here.
+    /// Applied in [`update`](Self::update); survives [`reset`](Self::reset).
+    pub fn set_look_prefs(&mut self, sensitivity: f32, invert_y: bool) {
+        self.look_sensitivity = sensitivity;
+        self.invert_y = invert_y;
     }
 
     /// Is `id` the finger currently driving the stick or the look region? Such a finger can't be
@@ -341,6 +429,16 @@ impl TouchControls {
             }
         }
 
+        // Apply the player's look prefs to the drag delta — the touch twin of
+        // `pal-desktop::scale_look`: scale BOTH axes by `look_sensitivity` and flip the PITCH (y) when
+        // `invert_y`. The raw finger *positions* are never scaled (that would corrupt the stick centre
+        // + button hit-tests, which are position-based); only this per-frame delta is. A zero delta
+        // (holding still / no look finger) stays zero. Presentation/input only, above `core`.
+        let look_delta = (
+            look_delta.0 * self.look_sensitivity,
+            (if self.invert_y { -look_delta.1 } else { look_delta.1 }) * self.look_sensitivity,
+        );
+
         // --- Buttons: pressed = ANY finger inside the circle (buttons win); edges vs last frame. ---
         let fire = pressed(&layout.fire);
         // ADS is HELD (the zoom level signal), exactly like Fire — no edge detection.
@@ -348,6 +446,11 @@ impl TouchControls {
         let crouch = pressed(&layout.crouch);
         let reload = pressed(&layout.reload);
         let surface = pressed(&layout.surface);
+        // Jump + select-fire are one-shot press EDGES (like Crouch/Reload/Surface): the host feeds
+        // them to `jump::start_jump` / `fire::FireMode::toggled`, the touch twins of the desktop
+        // `InputFrame.jump_pressed` / `.select_fire_pressed` keys.
+        let jump = pressed(&layout.jump);
+        let fire_mode = pressed(&layout.fire_mode);
 
         let out = TouchOutput {
             move_axis,
@@ -357,6 +460,8 @@ impl TouchControls {
             crouch_edge: crouch && !self.prev_crouch,
             reload_edge: reload && !self.prev_reload,
             surface_edge: surface && !self.prev_surface,
+            jump_edge: jump && !self.prev_jump,
+            fire_mode_edge: fire_mode && !self.prev_fire_mode,
             hud: TouchHud {
                 stick_active,
                 stick_origin: base,
@@ -365,6 +470,8 @@ impl TouchControls {
                 crouch_pressed: crouch,
                 reload_pressed: reload,
                 surface_pressed: surface,
+                jump_pressed: jump,
+                fire_mode_pressed: fire_mode,
                 aim_pressed: aim,
             },
         };
@@ -373,6 +480,8 @@ impl TouchControls {
         self.prev_crouch = crouch;
         self.prev_reload = reload;
         self.prev_surface = surface;
+        self.prev_jump = jump;
+        self.prev_fire_mode = fire_mode;
         out
     }
 
@@ -385,6 +494,8 @@ impl TouchControls {
             || layout.crouch.contains(x, y)
             || layout.reload.contains(x, y)
             || layout.surface.contains(x, y)
+            || layout.jump.contains(x, y)
+            || layout.fire_mode.contains(x, y)
     }
 }
 
@@ -672,14 +783,154 @@ mod tests {
     #[test]
     fn layout_buttons_sit_inside_the_viewport() {
         let l = TouchLayout::new(1920, 1080);
-        for c in [l.fire, l.aim, l.crouch, l.reload, l.surface] {
+        for c in [l.fire, l.aim, l.crouch, l.reload, l.surface, l.jump, l.fire_mode] {
             assert!(c.cx - c.r >= 0.0 && c.cx + c.r <= l.width, "button within width");
             assert!(c.cy - c.r >= 0.0 && c.cy + c.r <= l.height, "button within height");
         }
+        // The new Jump + fire-mode buttons must not overlap any existing control (a shared touch
+        // point would fire two intents at once).
+        let no_overlap = |a: &Circle, b: &Circle| {
+            let dx = a.cx - b.cx;
+            let dy = a.cy - b.cy;
+            (dx * dx + dy * dy).sqrt() >= a.r + b.r
+        };
+        for other in [l.fire, l.crouch, l.reload, l.surface, l.aim] {
+            assert!(no_overlap(&l.jump, &other), "jump overlaps another button");
+            assert!(no_overlap(&l.fire_mode, &other), "fire-mode overlaps another button");
+        }
+        assert!(no_overlap(&l.jump, &l.fire_mode), "jump overlaps fire-mode");
+        // Jump sits clear of the move ring too (it lives in/near the look zone, not on the stick).
+        assert!(
+            l.jump.cx - l.jump.r > l.stick_base.cx + l.stick_base.r,
+            "jump is clear of the move ring"
+        );
         // The move ring sits on the left, entirely clear of the look zone (its right edge is left
         // of the look split) — so the two controls can never claim the same touch.
         assert!(l.stick_base.cx + l.stick_base.r < l.look_zone.x0, "ring is clear of the look zone");
         assert!(l.stick_base.cx - l.stick_base.r >= 0.0, "ring stays on-screen");
         assert!(l.stick_base.cy + l.stick_base.r <= l.height, "ring stays on-screen");
+    }
+
+    #[test]
+    fn jump_button_is_a_one_shot_press_edge() {
+        // Parity with the desktop Space hop: a Jump tap emits exactly one edge on the press frame and
+        // does NOT re-edge while held (a held finger can't pogo — `jump::start_jump` also gates on
+        // grounded, but the seam already refuses the repeat here).
+        let l = layout();
+        let mut tc = TouchControls::new();
+        let (jx, jy) = center(&l.jump);
+        let out = tc.update(&l, &[t(1, jx, jy)]);
+        assert!(out.jump_edge, "press edge on first contact");
+        assert!(out.hud.jump_pressed, "the press flash tracks the held button");
+        let out = tc.update(&l, &[t(1, jx, jy)]);
+        assert!(!out.jump_edge, "no repeat edge while held");
+        // Release then re-press: a fresh edge.
+        tc.update(&l, &[]);
+        let out = tc.update(&l, &[t(1, jx, jy)]);
+        assert!(out.jump_edge, "re-press is a fresh edge");
+    }
+
+    #[test]
+    fn fire_mode_button_is_a_one_shot_press_edge() {
+        // The select-fire toggle: one edge per tap, so a single tap flips semi ⇄ auto exactly once
+        // (the host consumes the edge via `fire::FireMode::toggled`).
+        let l = layout();
+        let mut tc = TouchControls::new();
+        let (fx, fy) = center(&l.fire_mode);
+        let out = tc.update(&l, &[t(2, fx, fy)]);
+        assert!(out.fire_mode_edge, "press edge on first contact");
+        assert!(out.hud.fire_mode_pressed);
+        let out = tc.update(&l, &[t(2, fx, fy)]);
+        assert!(!out.fire_mode_edge, "held does not re-toggle");
+        tc.update(&l, &[]);
+        let out = tc.update(&l, &[t(2, fx, fy)]);
+        assert!(out.fire_mode_edge, "re-press is a fresh edge");
+    }
+
+    #[test]
+    fn jump_and_fire_mode_buttons_win_over_look() {
+        // Both sit inside the look zone; like every other button they must WIN the hit test so a
+        // right-thumb finger on them never also drives the camera (COD-Mobile "buttons win").
+        let l = layout();
+        assert!(l.look_zone.contains(l.jump.cx, l.jump.cy), "precondition: jump is in the look zone");
+        assert!(
+            l.look_zone.contains(l.fire_mode.cx, l.fire_mode.cy),
+            "precondition: fire-mode is in the look zone"
+        );
+        let mut tc = TouchControls::new();
+        let (jx, jy) = center(&l.jump);
+        let out = tc.update(&l, &[t(1, jx, jy)]);
+        assert!(out.jump_edge);
+        assert_eq!(out.look_delta, (0.0, 0.0), "the jump finger never drives look");
+        // Even dragging the held jump finger produces no look delta.
+        let out = tc.update(&l, &[t(1, jx + 40.0, jy)]);
+        assert_eq!(out.look_delta, (0.0, 0.0));
+    }
+
+    #[test]
+    fn look_delta_scales_with_sensitivity() {
+        // The touch twin of `pal-desktop::scale_look`: the drag delta multiplies by the sensitivity.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        tc.set_look_prefs(2.0, false);
+        let start = (l.look_zone.x0 + 200.0, 200.0);
+        tc.update(&l, &[t(7, start.0, start.1)]); // capture frame (no delta)
+        // Drag right 30 px, up 10 px → each axis scaled by 2.0 (pitch NOT inverted).
+        let out = tc.update(&l, &[t(7, start.0 + 30.0, start.1 - 10.0)]);
+        assert!((out.look_delta.0 - 60.0 * LOOK_DRAG_SCALE).abs() < 1e-4, "x scaled ×2");
+        assert!((out.look_delta.1 - (-20.0) * LOOK_DRAG_SCALE).abs() < 1e-4, "y scaled ×2, sign kept");
+    }
+
+    #[test]
+    fn look_delta_inverts_pitch_only_when_invert_y() {
+        // invert_y flips the PITCH (y) sign and leaves yaw (x) alone — again mirroring `scale_look`.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        tc.set_look_prefs(1.0, true);
+        let start = (l.look_zone.x0 + 200.0, 200.0);
+        tc.update(&l, &[t(7, start.0, start.1)]);
+        let out = tc.update(&l, &[t(7, start.0 + 30.0, start.1 - 10.0)]);
+        assert!((out.look_delta.0 - 30.0 * LOOK_DRAG_SCALE).abs() < 1e-4, "yaw unaffected by invert");
+        assert!((out.look_delta.1 - 10.0 * LOOK_DRAG_SCALE).abs() < 1e-4, "pitch flipped: -10 → +10");
+    }
+
+    #[test]
+    fn look_prefs_combine_scale_and_invert() {
+        // Sensitivity AND invert together: y = -raw.y * sensitivity, x = raw.x * sensitivity.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        tc.set_look_prefs(0.5, true);
+        let start = (l.look_zone.x0 + 200.0, 200.0);
+        tc.update(&l, &[t(7, start.0, start.1)]);
+        let out = tc.update(&l, &[t(7, start.0 + 40.0, start.1 + 20.0)]);
+        assert!((out.look_delta.0 - 20.0).abs() < 1e-4, "x: 40 × 0.5 = 20");
+        assert!((out.look_delta.1 - (-10.0)).abs() < 1e-4, "y: -(20) × 0.5 = -10");
+    }
+
+    #[test]
+    fn look_prefs_survive_a_reset() {
+        // The prefs are match-setup, not per-possession — an embody/surface reset must keep them.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        tc.set_look_prefs(2.5, true);
+        tc.reset();
+        let start = (l.look_zone.x0 + 200.0, 200.0);
+        tc.update(&l, &[t(7, start.0, start.1)]);
+        let out = tc.update(&l, &[t(7, start.0 + 10.0, start.1 + 10.0)]);
+        assert!((out.look_delta.0 - 25.0).abs() < 1e-4, "sensitivity persisted through reset");
+        assert!((out.look_delta.1 - (-25.0)).abs() < 1e-4, "invert persisted through reset");
+    }
+
+    #[test]
+    fn default_look_prefs_are_a_stock_pass_through() {
+        // Without any host push the seam must behave exactly as before (×1.0, no invert) so the
+        // shipped feel is unchanged.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        let start = (l.look_zone.x0 + 200.0, 200.0);
+        tc.update(&l, &[t(7, start.0, start.1)]);
+        let out = tc.update(&l, &[t(7, start.0 + 30.0, start.1 - 10.0)]);
+        assert!((out.look_delta.0 - 30.0 * LOOK_DRAG_SCALE).abs() < 1e-4);
+        assert!((out.look_delta.1 - (-10.0) * LOOK_DRAG_SCALE).abs() < 1e-4);
     }
 }
