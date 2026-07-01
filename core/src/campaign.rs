@@ -33,6 +33,8 @@
 //! without either side reaching into the other. The single point to revisit is documented on
 //! [`MissionId`].
 
+use crate::detection::TellMode;
+use crate::mission_tuning;
 use crate::persist::{DeserializeError, Reader, StateSink, Writer};
 
 // ===========================================================================
@@ -56,9 +58,16 @@ pub struct MissionId(pub u32);
 /// [`Campaign::clear`] uses to keep only the *best* clear. Each tier is an integer rank (a
 /// [`Difficulty::tier`] `u8`); there is no float anywhere (invariant #1).
 ///
-/// What a tier *means* mechanically (commander reserve/cadence/aggression) is WS-E's job, threaded
-/// into the seeded planner — never an omniscient cheat (invariant #6). Here a tier is only the
-/// progression coordinate the hub records and replays against.
+/// What a tier *means* mechanically is resolved by the D83 mapping seam ([`commander_tier`],
+/// [`scenario_modifiers`], [`combat_tuning`]): a replay tier drives the fight on **two axes** — the
+/// 3-tier enemy-commander aggression band (a 4→3 collapse) and the full-4-tier
+/// [`mission_tuning::ScenarioModifiers`] situation levers — never an omniscient cheat (invariant
+/// #6). A tier is both the progression coordinate the hub records/replays against *and* (through that
+/// mapping) the coordinate that reshapes the running fight.
+///
+/// [`commander_tier`]: Difficulty::commander_tier
+/// [`scenario_modifiers`]: Difficulty::scenario_modifiers
+/// [`combat_tuning`]: Difficulty::combat_tuning
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub enum Difficulty {
     #[default]
@@ -109,6 +118,96 @@ impl Difficulty {
             Difficulty::Veteran => "veteran",
             Difficulty::Elite => "elite",
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // D83 — the replay-tier → combat-tuning mapping seam (resolves Q21)
+    // -----------------------------------------------------------------------
+
+    /// The enemy-commander **aggression band** this replay tier fights at — the D83 **4→3 collapse**
+    /// on the aggression axis only (Q21 option iii). `Regular` and `Veteran` share the
+    /// [`Veteran`](mission_tuning::Difficulty::Veteran) band — the golden-checksum-stable baseline
+    /// commander whose D30 constants are reused *unchanged* — and are told apart by their
+    /// [`scenario_modifiers`](Difficulty::scenario_modifiers) instead, so no two replay tiers produce
+    /// an identical fight. The honest-AI bound holds at every tier (invariant #6): a harder tier is a
+    /// *better* commander (issues orders sooner, spends more freely), never an omniscient one. Pure,
+    /// `const`, float-free (invariant #1).
+    pub const fn commander_tier(self) -> mission_tuning::Difficulty {
+        match self {
+            // Recruit alone keeps the forgiving commander band.
+            Difficulty::Recruit => mission_tuning::Difficulty::Recruit,
+            // The 4→3 collapse: {Regular, Veteran} both field the baseline (Veteran) band. They are
+            // distinguished by the *situation* (`scenario_modifiers`), not the commander's aggression
+            // — so this reuses the measured D30 commander constants without adding a 4th band.
+            Difficulty::Regular => mission_tuning::Difficulty::Veteran,
+            Difficulty::Veteran => mission_tuning::Difficulty::Veteran,
+            Difficulty::Elite => mission_tuning::Difficulty::Elite,
+        }
+    }
+
+    /// The scenario **situation** this replay tier fields — the full 4-tier resolution on the
+    /// [`ScenarioModifiers`](mission_tuning::ScenarioModifiers) axis (D30: reshape the *board*, never
+    /// the balance *pieces*). The four profiles are **pairwise distinct** and monotonically harder
+    /// easiest→hardest, so every tier feels different even where two share a commander band. Every
+    /// lever is integer, so the mapping stays fixed-point and checksum-folded (invariants #1/#7).
+    ///
+    /// `Regular` returns *exactly* [`ScenarioModifiers::default`] (the neutral baseline), so the
+    /// shipped default fight is byte-identical; the other three deviate deliberately. The levers,
+    /// easiest→hardest (these are situation dials, tunable in playtest, **not** per-unit balance):
+    ///
+    /// | tier    | `force_scale_pct` | `reinforcement_period` | `fog`    |
+    /// |---------|-------------------|------------------------|----------|
+    /// | Recruit | 90                | `Some(900)` (slow)     | `Marked` |
+    /// | Regular | 100               | `None` (baseline 600)  | `Subtle` |
+    /// | Veteran | 115               | `Some(360)` (fast)     | `Subtle` |
+    /// | Elite   | 130               | `Some(240)` (fastest)  | `Hidden` |
+    ///
+    /// - **force size** (`force_scale_pct`): more enemy bodies on the board, identical per-unit stats.
+    /// - **reinforcement cadence** (`reinforcement_period`, ticks): the *Seize* mission's baseline is
+    ///   600 ([`seed_seize_mission`](crate::scenario::seed_seize_mission)); a slower drip for Recruit
+    ///   and a progressively faster one for Veteran/Elite (the enemy economy ticks sooner). This is
+    ///   the lever that reaches the checksummed sim via
+    ///   [`ScenarioModifiers::apply_to_sim`](mission_tuning::ScenarioModifiers::apply_to_sim) — the
+    ///   accrued purse it grows is folded, so distinct cadences diverge the sim.
+    /// - **fog** (the going-dark intel regime): `Marked` (most forgiving) → `Subtle` (baseline) →
+    ///   `Hidden` (total blindness). Still fully honest (invariant #6).
+    ///
+    /// Pure, `const`, float-free (invariant #1).
+    pub const fn scenario_modifiers(self) -> mission_tuning::ScenarioModifiers {
+        use mission_tuning::ScenarioModifiers;
+        match self {
+            Difficulty::Recruit => ScenarioModifiers {
+                force_scale_pct: 90,
+                reinforcement_period: Some(900),
+                fog: TellMode::Marked,
+                time_limit_ticks: None,
+            },
+            // MUST equal `ScenarioModifiers::default()` — the neutral baseline (byte-identical seed).
+            Difficulty::Regular => ScenarioModifiers {
+                force_scale_pct: 100,
+                reinforcement_period: None,
+                fog: TellMode::Subtle,
+                time_limit_ticks: None,
+            },
+            Difficulty::Veteran => ScenarioModifiers {
+                force_scale_pct: 115,
+                reinforcement_period: Some(360),
+                fog: TellMode::Subtle,
+                time_limit_ticks: None,
+            },
+            Difficulty::Elite => ScenarioModifiers {
+                force_scale_pct: 130,
+                reinforcement_period: Some(240),
+                fog: TellMode::Hidden,
+                time_limit_ticks: None,
+            },
+        }
+    }
+
+    /// Both combat axes at once — the single convenience the host/registry launch consume so the two
+    /// halves of the D83 mapping can never drift apart: `(commander band, scenario situation)`.
+    pub const fn combat_tuning(self) -> (mission_tuning::Difficulty, mission_tuning::ScenarioModifiers) {
+        (self.commander_tier(), self.scenario_modifiers())
     }
 }
 
@@ -645,6 +744,95 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), Difficulty::ALL.len());
+    }
+
+    // -------- D83: replay-tier → combat-tuning mapping (resolves Q21) --------
+
+    /// The commander aggression axis is a 4→3 collapse: Recruit→Recruit, {Regular,Veteran}→Veteran,
+    /// Elite→Elite. Regular and Veteran deliberately share the baseline (Veteran) band.
+    #[test]
+    fn commander_tier_collapses_four_replay_tiers_onto_three_bands() {
+        use crate::mission_tuning::Difficulty as Cmd;
+        assert_eq!(Difficulty::Recruit.commander_tier(), Cmd::Recruit);
+        assert_eq!(Difficulty::Regular.commander_tier(), Cmd::Veteran);
+        assert_eq!(Difficulty::Veteran.commander_tier(), Cmd::Veteran);
+        assert_eq!(Difficulty::Elite.commander_tier(), Cmd::Elite);
+        // The collapse is real: two distinct replay tiers land on the same commander band.
+        assert_eq!(
+            Difficulty::Regular.commander_tier(),
+            Difficulty::Veteran.commander_tier(),
+            "Regular and Veteran share the baseline commander band (told apart by modifiers)",
+        );
+    }
+
+    /// `Regular` reproduces the neutral baseline situation **exactly** — the property that keeps the
+    /// shipped default fight byte-identical (its modifiers apply as a no-op). Paired with the baseline
+    /// (Veteran) commander band via the convenience.
+    #[test]
+    fn regular_is_the_neutral_baseline_situation() {
+        use crate::mission_tuning::{Difficulty as Cmd, ScenarioModifiers};
+        assert_eq!(
+            Difficulty::Regular.scenario_modifiers(),
+            ScenarioModifiers::default(),
+            "Regular MUST be the neutral baseline so the shipped default fight is byte-identical",
+        );
+        let (cmd, mods) = Difficulty::Regular.combat_tuning();
+        assert_eq!(cmd, Cmd::Veteran);
+        assert_eq!(mods, ScenarioModifiers::default());
+    }
+
+    /// The four situation profiles are **pairwise distinct** and monotonically harder easiest→hardest
+    /// on every lever — so no two replay tiers field an identical situation, even Regular vs Veteran
+    /// (same commander band). `Difficulty::ALL` is ascending (Recruit..Elite).
+    #[test]
+    fn scenario_modifiers_are_four_distinct_and_monotonic_profiles() {
+        // The *Seize* baseline income period (see `scenario::seed_seize_mission`); `None` ⇒ this,
+        // so an easier tier lengthens it (slower drip) and a harder tier shortens it (faster drip).
+        const SEIZE_BASE_PERIOD: u32 = 600;
+        let tiers = Difficulty::ALL; // [Recruit, Regular, Veteran, Elite], ascending
+        let mods: Vec<_> = tiers.iter().map(|d| d.scenario_modifiers()).collect();
+
+        // Pairwise distinct: every tier fields a different situation.
+        for i in 0..mods.len() {
+            for j in (i + 1)..mods.len() {
+                assert_ne!(
+                    mods[i], mods[j],
+                    "tiers {:?} and {:?} must field distinct situations",
+                    tiers[i], tiers[j]
+                );
+            }
+        }
+
+        // Force size: non-decreasing easiest→hardest, with real spread (more bodies as it hardens).
+        for w in mods.windows(2) {
+            assert!(w[0].force_scale_pct <= w[1].force_scale_pct, "force size only grows");
+        }
+        assert!(
+            mods[0].force_scale_pct < mods[mods.len() - 1].force_scale_pct,
+            "the force curve has real spread",
+        );
+
+        // Reinforcement cadence: the effective period only *shrinks* easiest→hardest (faster drip =
+        // more enemy pressure). `None` resolves to the seize baseline.
+        let period = |m: &crate::mission_tuning::ScenarioModifiers| {
+            m.reinforcement_period.unwrap_or(SEIZE_BASE_PERIOD)
+        };
+        for w in mods.windows(2) {
+            assert!(period(&w[0]) >= period(&w[1]), "the drip only gets faster as it hardens");
+        }
+        assert!(
+            period(&mods[0]) > period(&mods[mods.len() - 1]),
+            "the cadence curve has real spread",
+        );
+        // Recruit is *slower* than baseline (easier); Veteran/Elite are *faster* (harder).
+        assert!(period(&mods[0]) > SEIZE_BASE_PERIOD, "Recruit reinforces slower than baseline");
+        assert!(period(&mods[2]) < SEIZE_BASE_PERIOD, "Veteran reinforces faster than baseline");
+        assert!(period(&mods[3]) < period(&mods[2]), "Elite is the fastest drip");
+
+        // Fog: the going-dark regime hardens Marked → Subtle → … → Hidden.
+        assert_eq!(mods[0].fog, TellMode::Marked, "Recruit is the most forgiving fog");
+        assert_eq!(mods[1].fog, TellMode::Subtle, "Regular is the baseline fog");
+        assert_eq!(mods[3].fog, TellMode::Hidden, "Elite is total blindness");
     }
 
     // -------- mission-select + briefing surface --------

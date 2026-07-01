@@ -16,10 +16,13 @@
 > Operations-hub host model + persistence (`core/src/campaign.rs`, via `core::shell`) is built and
 > tested, and the **`MissionId→mission` registry now landed** (`engine/src/mission_registry.rs` —
 > `MissionDef`/`MissionRegistry` mapping each unlock-graph node to a runnable seeder + WS-E briefing,
-> host-side / zero new checksum surface, `default_registry()` ships the WS-A *Seize* mission, 7 tests
+> host-side / zero new checksum surface, `default_registry()` ships the WS-A *Seize* mission, tests
 > green dev+release); only its **mission-select/briefing native shell stays BLOCKED on
-> [D32](../decisions.md)**. *(Replay-tier → commander-tier scaling is deferred —
-> [Q21](../open-questions.md#q21--replay-tier-to-commander-tier).)* Design: [`pve-campaign.md`](../pve-campaign.md) +
+> [D32](../decisions.md)**. *(Replay-tier → combat-tuning scaling is **resolved + implemented** by
+> [D83](../decisions.md#d83--campaign-replay-difficulty-reshapes-the-situation-not-a-4th-commander-band-resolves-q21):
+> the chosen replay tier drives both the 4→3 enemy-commander band and the `ScenarioModifiers`
+> situation, threaded through `MissionDef::launch` + `Game::apply_campaign_tuning` on both hosts —
+> [Q21](../open-questions.md#q21--replay-tier-to-commander-tier) closed.)* Design: [`pve-campaign.md`](../pve-campaign.md) +
 > [`customization.md`](../customization.md); decisions [D58](../decisions.md)–[D61](../decisions.md).
 
 ---

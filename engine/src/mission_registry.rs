@@ -23,13 +23,16 @@
 //! run and which [`ObjectiveSet`](crate::objectives::ObjectiveSet) (a host-side OBSERVE-only layer)
 //! to attach. It folds nothing into the sim. [`MissionDef::launch`] seeds a `Sim` exactly as the
 //! engine's existing scene path already does and then applies only the **one** scenario lever
-//! `core` owns ([`ScenarioModifiers::apply_to_sim`] — the reinforcement cadence); with the
-//! shipped mission's neutral modifiers that is a no-op, so a registry-launched mission is
-//! **byte-identical** to the bare seed (asserted in the tests). The enemy commander difficulty it
+//! `core` owns ([`ScenarioModifiers::apply_to_sim`] — the reinforcement cadence), resolved from the
+//! player's chosen **campaign replay tier** (D83, resolving Q21); at the neutral `Regular` tier that
+//! is a no-op, so a `Regular` launch is **byte-identical** to the bare seed (asserted in the tests),
+//! while the other tiers reshape the situation deliberately. The enemy commander difficulty it
 //! reports back is a **host-side planning knob** ([`Game::set_commander_difficulty`]), never sim
 //! state.
 
-use gonedark_core::campaign::{Campaign, MissionId, NodeId, OperationNode};
+use gonedark_core::campaign::{
+    Campaign, Difficulty as ReplayTier, MissionId, NodeId, OperationNode,
+};
 use gonedark_core::ecs::Entity;
 use gonedark_core::gunsmith::Loadout;
 use gonedark_core::mission_tuning::{Briefing, Difficulty, ScenarioModifiers, MISSION_ONE_BRIEFING};
@@ -83,9 +86,11 @@ pub struct LaunchedMission {
     pub start_embodied: bool,
     /// The host-side objective set that watches this match (OBSERVE-only; never folded).
     pub objectives: ObjectiveSet,
-    /// The enemy commander difficulty tier the host applies via
-    /// [`Game::set_commander_difficulty`](crate::Game::set_commander_difficulty). A host-side
-    /// planning knob, not sim state.
+    /// The enemy commander difficulty **band** the host applies via
+    /// [`Game::set_commander_difficulty`](crate::Game::set_commander_difficulty) — the D83 4→3
+    /// collapse of the player's chosen replay tier
+    /// ([`commander_tier`](gonedark_core::campaign::Difficulty::commander_tier)), not the mission's
+    /// authored tier. A host-side planning knob, not sim state.
     pub commander_difficulty: Difficulty,
 }
 
@@ -96,21 +101,35 @@ impl MissionDef {
     }
 
     /// Seed `sim` with this mission's scenario, applying the player's pre-match gunsmith `loadout`
-    /// (WS-C), and return the runnable [`LaunchedMission`]. After seeding, applies the one scenario
-    /// lever `core` owns — the reinforcement cadence ([`ScenarioModifiers::apply_to_sim`]); with
-    /// neutral modifiers this is a no-op, so the seeded world is byte-identical to the bare seed
-    /// (invariants #1/#7). The commander difficulty + the scenario force/time-limit modifiers are
-    /// returned/exposed for the host to apply (they are host-side, never sim state).
-    pub fn launch(&self, sim: &mut Sim, loadout: Loadout) -> LaunchedMission {
+    /// (WS-C), and return the runnable [`LaunchedMission`] tuned to the player's chosen campaign
+    /// `replay_tier` (D83, resolving Q21).
+    ///
+    /// The replay tier — not the mission's *authored* [`Briefing::difficulty`]/[`Briefing::modifiers`]
+    /// — drives the fight: the tier's [`ScenarioModifiers`](gonedark_core::mission_tuning::ScenarioModifiers)
+    /// (from [`Difficulty::scenario_modifiers`](gonedark_core::campaign::Difficulty::scenario_modifiers))
+    /// are applied after seeding (the reinforcement cadence is the one lever `core` owns —
+    /// [`ScenarioModifiers::apply_to_sim`]; force/time-limit/fog are host-owned and read off
+    /// [`LaunchedMission`]), and the returned `commander_difficulty` is the tier's
+    /// [`commander_tier`](gonedark_core::campaign::Difficulty::commander_tier) band. The authored
+    /// briefing fields are preserved as the declared default/baseline for display (see
+    /// [`Briefing`]); they no longer drive the launched fight.
+    ///
+    /// The `Regular` tier maps to the neutral baseline (no modifiers, Veteran commander band), so a
+    /// `Regular` launch is **byte-identical** to the bare `core::scenario` seed (invariants #1/#7 —
+    /// asserted in the tests); the other tiers deviate deliberately. The commander difficulty it
+    /// reports back is a host-side planning knob ([`Game::set_commander_difficulty`]), never sim state.
+    pub fn launch(&self, sim: &mut Sim, loadout: Loadout, replay_tier: ReplayTier) -> LaunchedMission {
         let (player, start_embodied, objectives) = (self.seed)(sim, loadout);
-        // The single scenario lever `core` owns. Neutral (`None`) ⇒ no-op ⇒ byte-identical seed.
-        self.briefing.modifiers.apply_to_sim(sim);
+        let (commander_difficulty, modifiers) = replay_tier.combat_tuning();
+        // The single scenario lever `core` owns (reinforcement cadence). Regular ⇒ neutral (`None`)
+        // ⇒ no-op ⇒ byte-identical seed; the other tiers reshape the enemy economy's pace.
+        modifiers.apply_to_sim(sim);
         LaunchedMission {
             mission: self.id,
             player,
             start_embodied,
             objectives,
-            commander_difficulty: self.briefing.difficulty,
+            commander_difficulty,
         }
     }
 
@@ -324,12 +343,14 @@ mod tests {
     /// #1/#7). This is the structural proof that the registry "confirms the sim it observes is
     /// unchanged".
     #[test]
-    fn launch_is_byte_identical_to_the_bare_seed() {
+    fn launch_at_regular_is_byte_identical_to_the_bare_seed() {
         let reg = default_registry();
         let def = reg.get(MISSION_SEIZE).unwrap();
 
+        // The neutral `Regular` replay tier reproduces the baseline (D83): no modifiers, Veteran
+        // commander band — so the seeded world matches the bare `core::scenario` seed byte-for-byte.
         let mut launched_sim = Sim::new(0xA11CE);
-        let launched = def.launch(&mut launched_sim, Loadout::STANDARD);
+        let launched = def.launch(&mut launched_sim, Loadout::STANDARD, CampaignDifficulty::Regular);
 
         let mut bare_sim = Sim::new(0xA11CE);
         seed_seize_mission(&mut bare_sim);
@@ -337,19 +358,112 @@ mod tests {
         assert_eq!(
             launched_sim.checksum(),
             bare_sim.checksum(),
-            "a registry launch adds no checksum surface over the bare seed",
+            "a Regular-tier registry launch adds no checksum surface over the bare seed",
         );
 
         // The launch hands back a runnable mission: a live objective set, the command-view boot, the
-        // commander tier the host applies, and a real player entity in the Player faction.
+        // commander band the host applies (Regular → Veteran, the baseline), and a real player entity.
         assert!(!launched.objectives.is_empty(), "the mission has a live objective set");
         assert!(!launched.start_embodied, "a campaign mission boots in the command view");
-        assert_eq!(launched.commander_difficulty, CommanderDifficulty::Recruit);
+        assert_eq!(launched.commander_difficulty, CommanderDifficulty::Veteran);
         assert_eq!(launched.mission, MISSION_SEIZE);
         assert_eq!(
             launched_sim.world.faction[launched.player.index as usize],
             Faction::Player,
         );
+    }
+
+    /// D83: the player's chosen replay tier — not the mission's authored briefing — drives the
+    /// launched fight, on both axes. Each tier applies its own commander band and its own scenario
+    /// modifiers (here read back through the sim's income period, the cadence lever `core` owns).
+    #[test]
+    fn launch_applies_the_replay_tier_not_the_authored_briefing() {
+        use gonedark_core::mission_tuning::Difficulty as Cmd;
+        let reg = default_registry();
+        let def = reg.get(MISSION_SEIZE).unwrap();
+
+        // The authored briefing is preserved (declared default/baseline) and is NOT what the launch
+        // applies once a replay tier is chosen.
+        assert_eq!(def.briefing.difficulty, Cmd::Recruit, "authored tier preserved for display");
+
+        // Each replay tier → its D83 commander band + its scenario cadence on the sim.
+        let cases = [
+            (CampaignDifficulty::Recruit, Cmd::Recruit, Some(900u32)),
+            (CampaignDifficulty::Regular, Cmd::Veteran, None),
+            (CampaignDifficulty::Veteran, Cmd::Veteran, Some(360)),
+            (CampaignDifficulty::Elite, Cmd::Elite, Some(240)),
+        ];
+        // The seize baseline income period (what `None` leaves untouched) — asserted so the "Regular
+        // keeps the baseline" claim is concrete.
+        let baseline_period = {
+            let mut s = Sim::new(1);
+            seed_seize_mission(&mut s);
+            s.income_period()
+        };
+        for (tier, band, period_override) in cases {
+            let mut sim = Sim::new(1);
+            let launched = def.launch(&mut sim, Loadout::STANDARD, tier);
+            assert_eq!(launched.commander_difficulty, band, "commander band for {tier:?}");
+            let expected = period_override.unwrap_or(baseline_period);
+            assert_eq!(sim.income_period(), expected, "reinforcement cadence for {tier:?}");
+        }
+    }
+
+    /// D83 peer-parity + divergence (mirrors the `scenario.rs` checksum pattern, GPU-free): two peers
+    /// at the **same** replay tier stay bit-identical every tick, and **different** tiers diverge —
+    /// the tier's cadence lever reaches the checksummed sim (via the enemy purse it accrues). `Regular`
+    /// reproduces the bare-seed baseline evolution exactly.
+    #[test]
+    fn replay_tiers_diverge_and_same_tier_stays_bit_identical() {
+        let reg = default_registry();
+        let def = reg.get(MISSION_SEIZE).unwrap();
+
+        // Launch at `tier`, drive `TICKS`, and collect the per-tick checksum stream. The budget is
+        // long enough that every tier's cadence has accrued a distinct number of times (600/900 only
+        // separate from 240/360 well past the accrual boundary — see the module tests).
+        const TICKS: usize = 1800;
+        let stream = |tier: CampaignDifficulty| -> Vec<u64> {
+            let mut sim = Sim::new(0xA11CE);
+            def.launch(&mut sim, Loadout::STANDARD, tier);
+            let mut cs = Vec::with_capacity(TICKS);
+            for _ in 0..TICKS {
+                sim.step(&[]);
+                cs.push(sim.checksum());
+            }
+            cs
+        };
+
+        // Two peers at the same tier: bit-identical every tick (the lockstep invariant, #7).
+        assert_eq!(
+            stream(CampaignDifficulty::Veteran),
+            stream(CampaignDifficulty::Veteran),
+            "same replay tier is bit-identical tick-for-tick across peers",
+        );
+
+        // Regular reproduces the neutral bare-seed evolution exactly (byte-identical baseline fight).
+        let baseline = {
+            let mut sim = Sim::new(0xA11CE);
+            seed_seize_mission(&mut sim);
+            let mut cs = Vec::with_capacity(TICKS);
+            for _ in 0..TICKS {
+                sim.step(&[]);
+                cs.push(sim.checksum());
+            }
+            cs
+        };
+        assert_eq!(stream(CampaignDifficulty::Regular), baseline, "Regular == neutral baseline fight");
+
+        // Different tiers diverge by the final tick (the cadence lever bit the checksummed sim).
+        let last = |tier| *stream(tier).last().unwrap();
+        let recruit = last(CampaignDifficulty::Recruit);
+        let regular = last(CampaignDifficulty::Regular);
+        let veteran = last(CampaignDifficulty::Veteran);
+        let elite = last(CampaignDifficulty::Elite);
+        assert_ne!(recruit, regular, "Recruit (slower drip) diverges from Regular");
+        assert_ne!(veteran, regular, "Veteran (faster drip) diverges from Regular");
+        assert_ne!(elite, regular, "Elite (fastest drip) diverges from Regular");
+        assert_ne!(veteran, elite, "Veteran and Elite field distinct cadences");
+        assert_ne!(recruit, veteran, "the easiest and a harder tier diverge");
     }
 
     /// Resolving a node and launching it composes end-to-end: node → MissionId → MissionDef →
@@ -361,11 +475,12 @@ mod tests {
         let def = reg.resolve_node(&campaign, NodeId(0)).expect("root resolves");
 
         let mut sim = Sim::new(0xC0FFEE);
-        let launched = def.launch(&mut sim, Loadout::STANDARD);
+        let launched = def.launch(&mut sim, Loadout::STANDARD, CampaignDifficulty::Regular);
         assert_eq!(launched.mission, MISSION_SEIZE);
-        // Determinism: the same node launched onto the same seed twice is bit-identical.
+        // Determinism: the same node launched onto the same seed at the same tier twice is
+        // bit-identical.
         let mut sim2 = Sim::new(0xC0FFEE);
-        let _ = def.launch(&mut sim2, Loadout::STANDARD);
+        let _ = def.launch(&mut sim2, Loadout::STANDARD, CampaignDifficulty::Regular);
         assert_eq!(sim.checksum(), sim2.checksum());
     }
 }
