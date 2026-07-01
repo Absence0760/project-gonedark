@@ -15,7 +15,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,13 +34,16 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  *
  * Stateless: the current [selection] and all actions are passed in, so the screen is host-agnostic
  * and previewable without an Activity (the `TitleScreen.kt` pattern). [onChange] is invoked with the
- * new selection whenever a slot is cycled; the host owns the state.
+ * new selection whenever a slot is cycled; the host owns the state (persisted for the next Deploy).
+ *
+ * **Customization only, not a play gate (D81):** the gunsmith is reached from Settings and has no
+ * Deploy — edits persist and apply to the next match you launch from the mode/mission flow. It is no
+ * longer a mandatory step in front of PvE/PvP.
  */
 @Composable
 fun GunsmithScreen(
     selection: LoadoutSelection,
     onChange: (LoadoutSelection) -> Unit,
-    onDeploy: () -> Unit,
     onReset: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -92,25 +94,20 @@ fun GunsmithScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Button(
-                    onClick = onDeploy,
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                ) {
-                    Text("DEPLOY", letterSpacing = 2.sp)
-                }
                 // RESET returns every slot to the neutral all-Standard baseline — mirrors the desktop
-                // gunsmith's RESET action (LoadoutAction::Reset), sitting between DEPLOY and BACK.
-                TextButton(
+                // gunsmith's RESET action (LoadoutAction::Reset). DONE saves-and-returns to Settings
+                // (the edits are already persisted via onChange); there is no Deploy here (D81).
+                OutlinedButton(
                     onClick = onReset,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
                     Text("RESET", letterSpacing = 2.sp)
                 }
-                TextButton(
+                Button(
                     onClick = onBack,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
-                    Text("BACK", letterSpacing = 2.sp)
+                    Text("DONE", letterSpacing = 2.sp)
                 }
             }
         }
@@ -181,7 +178,6 @@ private fun GunsmithScreenPreview() {
         GunsmithScreen(
             selection = LoadoutSelection(optic = 1, barrel = 2, magazine = 0),
             onChange = {},
-            onDeploy = {},
             onReset = {},
             onBack = {},
         )

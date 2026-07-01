@@ -45,6 +45,7 @@ import kotlin.math.roundToInt
 fun SettingsScreen(
     state: SettingsState,
     onChange: (SettingsState) -> Unit,
+    onOpenLoadout: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -143,6 +144,18 @@ fun SettingsScreen(
                         Text(state.quality.label().uppercase(), letterSpacing = 2.sp)
                     }
                 }
+
+                Spacer(Modifier.height(8.dp))
+                SectionLabel("LOADOUT")
+                // The gunsmith is loadout customization, not a play gate (D81): it lives here, reached
+                // on demand, and its edits persist for the next Deploy — tapping a play mode no longer
+                // forces you through it.
+                OutlinedButton(
+                    onClick = onOpenLoadout,
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                ) {
+                    Text("GUNSMITH", letterSpacing = 2.sp)
+                }
             }
 
             Spacer(Modifier.height(28.dp))
@@ -232,6 +245,7 @@ private fun SettingsScreenPreview() {
         SettingsScreen(
             state = SettingsState.defaults(),
             onChange = {},
+            onOpenLoadout = {},
             onBack = {},
         )
     }

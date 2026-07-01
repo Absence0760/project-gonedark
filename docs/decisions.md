@@ -3714,3 +3714,40 @@ height layer; water/cliffs are `Cover::Heavy` until [Q24](open-questions.md#q24-
 adds a traversal-cost layer; destructibility is deferred to
 [Q25](open-questions.md#q25--destructible-terrain). Licensing rides the manifest per source (OSM =
 ODbL-1.0, attribution + share-alike).
+
+## D81 — Play modes don't funnel through the gunsmith; the gunsmith is loadout customization behind Settings
+
+**Decision.** Tapping a play mode goes **toward the match**, not through the loadout gunsmith. On the
+out-of-match shell: **Campaign** opens the Operations hub (mission-select → briefing → **Deploy**),
+and **PvE / PvP** open a lightweight **mode/map select** (`ModeSelectScreen`, `shellGameModes`) whose
+tiles **Deploy straight into the chosen scene**. The **gunsmith is no longer a play gate** — it is
+loadout *customization*, reached on demand from **Settings** (a `GUNSMITH` entry), with no Deploy of
+its own; its edits persist ([`ShellPrefs`]) and are folded into whatever match you launch next. The
+title→screen routing runs through the unit-tested `resolveTitleAction` seam (`TitleAction.kt`), which
+the live Compose router (`MainActivity.Shell`) now **consumes** — previously it hand-wired the same
+mapping inline, so the JVM tests covered a function the app didn't run.
+
+**Why.** The old flow put the gunsmith in front of *every* play mode and made **Deploy** the only way
+forward — so on a device where the engine hand-off wasn't obvious the gunsmith read as a **dead end**
+("I can't get past this screen"), and it made a customization surface a mandatory step for players who
+just wanted to play. Loadout tweaking is an occasional, opt-in activity; gating fights it belongs
+with the other opt-in preferences (Settings), and the play modes should lead to a *match*, not a
+weapon editor. Routing the live navigation through the tested seam closes the drift hazard the two
+Kotlin tables carried (the inline `when` was untested).
+
+**Scene tokens.** The mode tiles carry the tokens `engine::lib::Scene::parse` accepts
+(`skirmish`, `seize`); `GameModeTest` pins every mode to a known token so a typo can't ship an
+un-launchable tile. PvE and PvP share the picker until PvP match-setup exists
+([Q5](open-questions.md#q5--single-player-multiplayer-or-both--and-in-what-order--resolved-d58-pve-first)-blocked); their divergence stays future work.
+
+**Owed — desktop parity ([D79](#d79--compose-shell-parity-is-hand-mirrored-not-jni-single-sourced)).**
+This landed on the **Android Compose shell** (the reported platform). The desktop egui shell
+(`app/src/shell.rs::resolve_title_action`, `app/src/main.rs`) still routes Pve/Pvp through
+`OpenLoadout` — reconciling it (add an `OpenModeSelect`/`Screen::ModeSelect`, move the loadout behind
+Settings, repoint the Briefing→match hop) is the owed D79 hand-parity half, tracked here so the two
+shells' divergence is explicit, not silent.
+
+**Consequences.** `TitleRoute` loses its `Loadout` member (no title action reaches the gunsmith); the
+gunsmith's DEPLOY button becomes DONE (save-and-return-to-Settings). New play modes are a
+`shellGameModes` entry + a valid scene token. The desktop divergence above must be closed before the
+two shells can be called at parity again.

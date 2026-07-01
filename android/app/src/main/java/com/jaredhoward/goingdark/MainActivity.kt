@@ -28,13 +28,19 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  * native/in-engine split: out-of-match chrome is native, the in-match (and in-session) surfaces are
  * in-engine under avatar-only fog (invariant #6).
  *
- * Campaign opens the Operations hub → a mission briefing → the gunsmith → Deploy into the mission
- * scene (`mission1`, where the loadout applies to the player's troops). PvE/PvP open the gunsmith
- * directly and Deploy into Skirmish (their mode divergence + the PvP match-setup half stay future
- * work / Q5-Phase-3-blocked, phase-4-plan §2). The briefing's **difficulty** selector is shown but
- * not yet threaded to the engine on Android (owed — needs a `diff` wire key + mission-tuning
+ * Campaign opens the Operations hub → a mission briefing → Deploy into the mission scene (`mission1`,
+ * where the loadout applies to the player's troops). PvE/PvP open a **mode/map select** → Deploy into
+ * the chosen scene (**D81**: the loadout gunsmith no longer gates play — it moved behind Settings, so
+ * a play-mode tap goes straight toward the match). PvE and PvP share the picker until PvP match-setup
+ * lands (Q5-Phase-3-blocked, phase-4-plan §2). The loadout persists (via [ShellPrefs]) and is folded
+ * into every Deploy regardless of which flow launched it. The briefing's **difficulty** selector is
+ * shown but not yet threaded to the engine on Android (owed — needs a `diff` wire key + mission-tuning
  * plumbing; the desktop already threads it). Look-sensitivity from Settings is likewise owed (the
  * Android look delta is derived in `engine::touch_controls`, not scalable at the PAL boundary).
+ *
+ * The title→screen routing goes through the unit-tested [resolveTitleAction] seam (D81), so the JVM
+ * tests cover the navigation the app actually runs. NB the desktop egui shell (`app/src/shell.rs`)
+ * still routes Pve/Pvp through the gunsmith — reconciling it to this flow is the owed D79 parity half.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,7 +74,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Which out-of-match shell surface is up — the Compose twin of the desktop host's `Screen` enum. */
-private enum class ShellRoute { Title, Settings, Profile, About, MissionSelect, Briefing, Gunsmith }
+private enum class ShellRoute { Title, ModeSelect, Settings, Profile, About, MissionSelect, Briefing, Gunsmith }
 
 /**
  * The out-of-match shell navigator: a flat `when` over [ShellRoute] holding the player's prefs,
@@ -89,30 +95,49 @@ private fun Shell(
     var settings by remember { mutableStateOf(initial.settings) }
     var profile by remember { mutableStateOf(initial.profile) }
     var loadout by remember { mutableStateOf(initial.loadout) }
-    // Campaign flow state: which scene the gunsmith's Deploy boots (Skirmish for PvE/PvP, the
-    // mission's scene token when arrived via a briefing), the node being briefed, and the selected
-    // replay difficulty (shown in the briefing; engine-application owed).
-    var pendingScene by remember { mutableStateOf("skirmish") }
+    // Campaign flow state: the node being briefed, and the selected replay difficulty (shown in the
+    // briefing; engine-application owed). The launch scene is no longer held here — each Deploy path
+    // (ModeSelect / Briefing) carries its own scene token straight into `launchConfigOf`.
     var briefedNode by remember { mutableStateOf(campaignNodes.first()) }
     var difficulty by remember { mutableStateOf(Difficulty.Recruit) }
 
     fun persist() = onPersist(ShellState(settings, profile, loadout))
 
+    // Route a title action through the SAME pure seam the JVM tests cover (D81), so the live
+    // navigation can't silently drift from `resolveTitleAction`.
+    fun applyTitle(action: TitleAction) {
+        when (resolveTitleAction(action)) {
+            TitleRoute.MissionSelect -> route = ShellRoute.MissionSelect
+            TitleRoute.ModeSelect -> route = ShellRoute.ModeSelect
+            TitleRoute.Settings -> route = ShellRoute.Settings
+            TitleRoute.Profile -> route = ShellRoute.Profile
+            TitleRoute.About -> route = ShellRoute.About
+            TitleRoute.Quit -> onQuit()
+        }
+    }
+
     when (route) {
         ShellRoute.Title -> TitleScreen(
             versionStamp = versionStamp,
-            onCampaign = { route = ShellRoute.MissionSelect },
-            // PvE/PvP open the gunsmith and Deploy into Skirmish (mode divergence is future work).
-            onPve = { pendingScene = "skirmish"; route = ShellRoute.Gunsmith },
-            onPvp = { pendingScene = "skirmish"; route = ShellRoute.Gunsmith },
-            onSettings = { route = ShellRoute.Settings },
-            onProfile = { route = ShellRoute.Profile },
-            onAbout = { route = ShellRoute.About },
-            onQuit = onQuit,
+            onCampaign = { applyTitle(TitleAction.Campaign) },
+            onPve = { applyTitle(TitleAction.Pve) },
+            onPvp = { applyTitle(TitleAction.Pvp) },
+            onSettings = { applyTitle(TitleAction.Settings) },
+            onProfile = { applyTitle(TitleAction.Profile) },
+            onAbout = { applyTitle(TitleAction.About) },
+            onQuit = { applyTitle(TitleAction.Quit) },
+        )
+        ShellRoute.ModeSelect -> ModeSelectScreen(
+            modes = shellGameModes,
+            // Pick a mode → Deploy straight into its scene with the persisted loadout (no gunsmith).
+            onPick = { onDeploy(launchConfigOf(it.sceneToken, settings, loadout)) },
+            onBack = { route = ShellRoute.Title },
         )
         ShellRoute.Settings -> SettingsScreen(
             state = settings,
             onChange = { settings = it; persist() },
+            // The gunsmith now lives under Settings (D81) — loadout customization, not a play gate.
+            onOpenLoadout = { route = ShellRoute.Gunsmith },
             onBack = { route = ShellRoute.Title },
         )
         ShellRoute.Profile -> ProfileScreen(
@@ -133,17 +158,17 @@ private fun Shell(
             node = briefedNode,
             difficulty = difficulty,
             onCycleDifficulty = { difficulty = difficulty.next() },
-            // Briefing Deploy routes through the gunsmith (desktop: Briefing → Loadout), then
-            // Deploy there boots this mission's scene with the chosen loadout.
-            onDeploy = { pendingScene = briefedNode.sceneToken; route = ShellRoute.Gunsmith },
+            // Briefing Deploy boots this mission's scene directly with the persisted loadout — the
+            // gunsmith is no longer an intermediate step (D81).
+            onDeploy = { onDeploy(launchConfigOf(briefedNode.sceneToken, settings, loadout)) },
             onBack = { route = ShellRoute.MissionSelect },
         )
         ShellRoute.Gunsmith -> GunsmithScreen(
             selection = loadout,
             onChange = { loadout = it; persist() },
-            onDeploy = { onDeploy(launchConfigOf(pendingScene, settings, loadout)) },
             onReset = { loadout = loadout.reset(); persist() },
-            onBack = { route = ShellRoute.Title },
+            // Customization only (D81): DONE returns to Settings, where the gunsmith is reached from.
+            onBack = { route = ShellRoute.Settings },
         )
     }
 }

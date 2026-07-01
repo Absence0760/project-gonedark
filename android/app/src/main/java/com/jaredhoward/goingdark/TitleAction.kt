@@ -19,8 +19,9 @@ package com.jaredhoward.goingdark
 
 /**
  * A top-level action the player can pick on the title screen — the Kotlin mirror of the Rust
- * `app::shell::TitleAction`. The three play modes (Campaign / Pve / Pvp) all funnel toward the
- * gunsmith→match flow today; their divergence is future work (see [resolveTitleAction]).
+ * `app::shell::TitleAction`. `Campaign` opens the Operations hub; `Pve`/`Pvp` open a mode/map select
+ * that then deploys the match. The loadout **gunsmith is no longer a play gate** — it lives behind
+ * Settings now (D81) — so no title action routes to it (see [resolveTitleAction]).
  *
  * `About` (the FIELD MANUAL button) has no Rust `TitleAction` counterpart — on desktop the About
  * screen is reached *from* Settings — but the Compose title surfaces it directly, so it gets its own
@@ -58,8 +59,8 @@ enum class TitleRoute {
     /** The Operations-hub mission-select screen — the PvE campaign entry (mirrors `OpenMissionSelect`). */
     MissionSelect,
 
-    /** The pre-match gunsmith / loadout screen (mirrors `OpenLoadout`). */
-    Loadout,
+    /** The mode/map select shown for a Pve/Pvp play mode, which then deploys the match (D81). */
+    ModeSelect,
 
     /** The Settings screen (mirrors `OpenSettings`). */
     Settings,
@@ -75,21 +76,22 @@ enum class TitleRoute {
 }
 
 /**
- * Map a title action to the route it triggers — the pure nav decision, mirroring the Rust
- * `resolve_title_action`:
+ * Map a title action to the route it triggers — the pure nav decision (D81):
  *
  *  - `Campaign` opens the Operations-hub mission-select (the PvE pillar, D58);
- *  - `Pve` / `Pvp` fold straight to the loadout/gunsmith screen (no PvP lobby or standalone-skirmish
- *    picker exists yet — their mode divergence is future work, same as desktop);
+ *  - `Pve` / `Pvp` open the mode/map select, which deploys the chosen scene — the gunsmith no longer
+ *    gates play (it moved behind Settings); PvE and PvP share the picker until PvP match-setup lands;
  *  - `Settings` / `Profile` / `About` open their like-named screens;
  *  - `Quit` exits.
  *
  * Kept pure (no Android types) so it is unit-testable on the plain JVM — see `TitleActionTest.kt`.
+ * The live Compose router ([Shell] in `MainActivity.kt`) consumes THIS function, so the tests below
+ * cover the navigation the app actually runs.
  */
 fun resolveTitleAction(action: TitleAction): TitleRoute =
     when (action) {
         TitleAction.Campaign -> TitleRoute.MissionSelect
-        TitleAction.Pve, TitleAction.Pvp -> TitleRoute.Loadout
+        TitleAction.Pve, TitleAction.Pvp -> TitleRoute.ModeSelect
         TitleAction.Settings -> TitleRoute.Settings
         TitleAction.Profile -> TitleRoute.Profile
         TitleAction.About -> TitleRoute.About
