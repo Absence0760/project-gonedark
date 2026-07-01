@@ -74,6 +74,8 @@ class ShellPrefs(context: Context) {
             ShellPrefsCodec.KEY_SENS,
             ShellPrefsCodec.KEY_INVERT_Y,
             ShellPrefsCodec.KEY_QUALITY,
+            ShellPrefsCodec.KEY_CVD_CUES,
+            ShellPrefsCodec.KEY_SOUND_CUES,
             ShellPrefsCodec.KEY_CALLSIGN,
             ShellPrefsCodec.KEY_FACTION,
             ShellPrefsCodec.KEY_MATCHES,
@@ -82,6 +84,7 @@ class ShellPrefs(context: Context) {
             ShellPrefsCodec.KEY_BARREL,
             ShellPrefsCodec.KEY_MAGAZINE,
             ShellPrefsCodec.KEY_CAMPAIGN,
+            ShellPrefsCodec.KEY_ARMY,
         )
     }
 }

@@ -1,7 +1,9 @@
 package com.jaredhoward.goingdark
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -29,6 +31,8 @@ class ShellPrefsCodecTest {
                 sensX100 = 250,
                 invertLookY = true,
                 quality = Quality.High,
+                colorblindCues = true,
+                visualSoundCues = true,
             ),
             profile = ProfileState(
                 callsign = "Reaper-7",
@@ -37,6 +41,7 @@ class ShellPrefsCodecTest {
                 wins = 17,
             ),
             loadout = LoadoutSelection(optic = 2, barrel = 1, magazine = 2),
+            army = Army.Fr,
         )
         val decoded = ShellPrefsCodec.decode(ShellPrefsCodec.encode(state))
         assertEquals(state, decoded)
@@ -81,6 +86,42 @@ class ShellPrefsCodecTest {
     @Test
     fun empty_map_decodes_to_defaults() {
         assertEquals(ShellState.defaults(), ShellPrefsCodec.decode(emptyMap()))
+    }
+
+    @Test
+    fun army_pick_survives_the_round_trip() {
+        for (army in Army.SELECTABLE) {
+            val state = ShellState.defaults().copy(army = army)
+            val decoded = ShellPrefsCodec.decode(ShellPrefsCodec.encode(state))
+            assertEquals(army, decoded.army)
+        }
+        // The army is written under its stable Army.index ordinal.
+        val encoded = ShellPrefsCodec.encode(ShellState.defaults().copy(army = Army.Fr))
+        assertEquals(Army.Fr.index.toString(), encoded[ShellPrefsCodec.KEY_ARMY])
+    }
+
+    @Test
+    fun army_neutral_or_garbage_decodes_to_us_default() {
+        // Neutral (0), out-of-range, and unparseable all collapse to the US default (never Neutral).
+        assertEquals(Army.Us, ShellPrefsCodec.decode(mapOf(ShellPrefsCodec.KEY_ARMY to "0")).army)
+        assertEquals(Army.Us, ShellPrefsCodec.decode(mapOf(ShellPrefsCodec.KEY_ARMY to "9")).army)
+        assertEquals(Army.Us, ShellPrefsCodec.decode(mapOf(ShellPrefsCodec.KEY_ARMY to "fr")).army)
+        // Missing key → the US default.
+        assertEquals(Army.Us, ShellPrefsCodec.decode(emptyMap()).army)
+    }
+
+    @Test
+    fun accessibility_cues_survive_the_round_trip() {
+        val settings = SettingsState.defaults().copy(colorblindCues = true, visualSoundCues = true)
+        val decoded = ShellPrefsCodec.decode(
+            ShellPrefsCodec.encode(ShellState.defaults().copy(settings = settings)),
+        )
+        assertTrue(decoded.settings.colorblindCues)
+        assertTrue(decoded.settings.visualSoundCues)
+        // Missing keys → both default OFF (tolerant).
+        val bare = ShellPrefsCodec.decode(emptyMap())
+        assertFalse(bare.settings.colorblindCues)
+        assertFalse(bare.settings.visualSoundCues)
     }
 
     @Test

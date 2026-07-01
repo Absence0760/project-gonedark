@@ -21,7 +21,7 @@
 //!
 //! ## The wire format (v1) — a versioned, tolerant `key=value` string
 //!
-//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0`
+//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0`
 //!
 //! - `;`-separated `key=value` pairs.
 //! - **Tolerant decode** (the forward-compat contract): unknown keys are ignored, missing keys take
@@ -60,6 +60,16 @@ pub const SENS_MAX: u16 = 300;
 /// tier rather than failing.
 pub const DIFF_MAX: u8 = 3;
 
+/// The player-army wire ordinals — `1` = US, `2` = French, matching `core::components::Army::index`
+/// (`Neutral` = `0` is never a player pick). [`ARMY_MAX`] is the highest combatant ordinal;
+/// [`ARMY_DEFAULT`] (US) is what a Neutral / out-of-range / missing / garbage value collapses to,
+/// mirroring the desktop `app::shell::decode_army` (`Army::ALL.get(i)` → `None`/`Neutral` → US). Unlike
+/// the slot keys this deliberately does NOT clamp-to-max: an out-of-range ordinal is a stale/garbage
+/// pick, not "the highest army", so it degrades to the neutral default rather than silently to French.
+pub const ARMY_MAX: u8 = 2;
+/// See [`ARMY_MAX`] — the default player army ordinal (US Army), the non-Neutral fallback.
+pub const ARMY_DEFAULT: u8 = 1;
+
 /// The parsed launch payload the Compose shell hands the engine across the Activity boundary.
 ///
 /// All fields are primitives (no `engine`/`core` types) so this stays a std-only, host-compiled
@@ -87,6 +97,25 @@ pub struct LaunchConfig {
     /// Campaign replay difficulty tier, `0..=`[`DIFF_MAX`] (Recruit..Elite). The tier a campaign
     /// clear is recorded at on a win; inert for non-campaign scenes. See [`DIFF_MAX`].
     pub diff: u8,
+    /// Campaign **node index** (the `NodeId` ordinal) the launch targets, for a campaign (`Mission1`)
+    /// scene. Mirrors the desktop host's `pending_launch` node (`app/src/main.rs`: `resolve_node`); the
+    /// android glue resolves it through the SHARED mission registry (invariant #2) and records the win
+    /// against it. Inert for non-campaign scenes. Missing / negative / garbage → `0` (the root node),
+    /// the tolerant default.
+    pub node: u32,
+    /// Player **army** ordinal — `1` = US, `2` = French (`core::components::Army::index`). Never
+    /// `Neutral` (`0`): the parser collapses Neutral / out-of-range / garbage to the US default
+    /// ([`ARMY_DEFAULT`]), mirroring the desktop `decode_army` (a commander always fields a real army,
+    /// factions-plan WS-A). Fielded at match start via the shared `Game::select_army`.
+    pub army: u8,
+    /// Accessibility: add the CVD text labels (FIRE/LOST/BASE/TERR) to the embodied alert HUD. Default
+    /// OFF (an opt-in intensifier). Fed to the engine via the platform-agnostic
+    /// `Game::set_accessibility_prefs`; the desktop twin is the `cvdcues` shell pref. Host /
+    /// presentation only — never the sim or the per-tick checksum (invariants #1/#4/#6).
+    pub colorblind_cues: bool,
+    /// Accessibility: draw the hard-of-hearing visual echoes of the audio-only signals. Default OFF.
+    /// The desktop twin is the `soundcues` shell pref. Host / presentation only — never the sim.
+    pub visual_sound_cues: bool,
 }
 
 impl Default for LaunchConfig {
@@ -104,6 +133,10 @@ impl Default for LaunchConfig {
             sens_x100: 100,
             invert_y: false,
             diff: 0,
+            node: 0,
+            army: ARMY_DEFAULT,
+            colorblind_cues: false,
+            visual_sound_cues: false,
         }
     }
 }
@@ -144,6 +177,10 @@ pub fn parse_launch_config(raw: &str) -> LaunchConfig {
             "sens" => cfg.sens_x100 = clamp_u16(value, SENS_MIN, SENS_MAX, cfg.sens_x100),
             "invy" => cfg.invert_y = parse_bool(value, cfg.invert_y),
             "diff" => cfg.diff = clamp_u8(value, DIFF_MAX, cfg.diff),
+            "node" => cfg.node = clamp_u32(value, cfg.node),
+            "army" => cfg.army = clamp_army(value, cfg.army),
+            "cvd" => cfg.colorblind_cues = parse_bool(value, cfg.colorblind_cues),
+            "snd" => cfg.visual_sound_cues = parse_bool(value, cfg.visual_sound_cues),
             _ => {} // unknown key — ignore (forward-compat)
         }
     }
@@ -162,6 +199,31 @@ fn clamp_u8(value: &str, max: u8, fallback: u8) -> u8 {
 fn clamp_u16(value: &str, min: u16, max: u16, fallback: u16) -> u16 {
     match value.parse::<i64>() {
         Ok(n) => n.clamp(min as i64, max as i64) as u16,
+        Err(_) => fallback,
+    }
+}
+
+/// Parse `value` as a non-negative `u32` campaign node index; on parse failure or a negative value
+/// keep `fallback`. No upper clamp — the mission registry resolves an out-of-range node to nothing
+/// (a no-op), so an over-large index degrades safely without needing a bound here.
+fn clamp_u32(value: &str, fallback: u32) -> u32 {
+    match value.parse::<i64>() {
+        Ok(n) if n >= 0 => n.min(u32::MAX as i64) as u32,
+        _ => fallback,
+    }
+}
+
+/// Parse the `army` wire ordinal into a valid **combatant** army index. Mirrors the desktop
+/// `app::shell::decode_army`: only `1` (US) and `2` (French) are real player picks; Neutral (`0`),
+/// out-of-range, or unparseable values all collapse to the US default ([`ARMY_DEFAULT`]) — Neutral is
+/// never a player pick (factions-plan WS-A). This deliberately does NOT clamp-to-[`ARMY_MAX`] the way
+/// the slot keys do (see [`ARMY_MAX`]): an out-of-range ordinal is a stale/garbage pick, so it maps to
+/// the neutral default rather than silently to French. A field always holds `1` or `2` after decode.
+fn clamp_army(value: &str, fallback: u8) -> u8 {
+    match value.parse::<i64>() {
+        Ok(1) => 1, // US Army
+        Ok(2) => 2, // French Army
+        Ok(_) => ARMY_DEFAULT, // Neutral (0) / out-of-range → US (never a player pick)
         Err(_) => fallback,
     }
 }
@@ -244,6 +306,10 @@ mod tests {
         assert_eq!(d.sens_x100, 100);
         assert!(!d.invert_y);
         assert_eq!(d.diff, 0); // Recruit — the neutral campaign tier
+        assert_eq!(d.node, 0); // the root campaign node
+        assert_eq!(d.army, ARMY_DEFAULT); // US Army — Neutral is never a player pick
+        assert!(!d.colorblind_cues); // accessibility cues opt-in, default OFF
+        assert!(!d.visual_sound_cues);
     }
 
     #[test]
@@ -256,14 +322,60 @@ mod tests {
 
     #[test]
     fn parses_a_full_v1_string() {
-        let cfg =
-            parse_launch_config("v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1;diff=2");
+        let cfg = parse_launch_config(
+            "v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1;diff=2;node=3;army=2;cvd=1;snd=1",
+        );
         assert_eq!(cfg.scene, "mission1");
         assert_eq!((cfg.optic, cfg.barrel, cfg.magazine), (1, 2, 1));
         assert_eq!((cfg.master_pct, cfg.sfx_pct), (50, 70));
         assert_eq!(cfg.sens_x100, 250);
         assert!(cfg.invert_y);
         assert_eq!(cfg.diff, 2); // Veteran
+        assert_eq!(cfg.node, 3);
+        assert_eq!(cfg.army, 2); // French Army
+        assert!(cfg.colorblind_cues);
+        assert!(cfg.visual_sound_cues);
+    }
+
+    #[test]
+    fn node_round_trips_and_missing_or_garbage_defaults_to_root() {
+        assert_eq!(parse_launch_config("node=0").node, 0);
+        assert_eq!(parse_launch_config("node=5").node, 5);
+        assert_eq!(parse_launch_config("node=4294967295").node, u32::MAX);
+        // Missing → root (0); the tolerant default.
+        assert_eq!(parse_launch_config("v=1;scene=mission1").node, 0);
+        // Negative / garbage keep the default (0).
+        assert_eq!(parse_launch_config("node=-1").node, 0);
+        assert_eq!(parse_launch_config("node=root").node, 0);
+    }
+
+    #[test]
+    fn army_round_trips_and_collapses_neutral_or_out_of_range_to_us() {
+        // The two real combatant picks round-trip.
+        assert_eq!(parse_launch_config("army=1").army, 1); // US
+        assert_eq!(parse_launch_config("army=2").army, 2); // French
+        // Neutral (0) is never a player pick → US default (mirrors desktop decode_army).
+        assert_eq!(parse_launch_config("army=0").army, ARMY_DEFAULT);
+        // Out-of-range does NOT clamp to French — it degrades to the US default.
+        assert_eq!(parse_launch_config("army=9").army, ARMY_DEFAULT);
+        assert_eq!(parse_launch_config("army=-1").army, ARMY_DEFAULT);
+        // Garbage / missing → the US default.
+        assert_eq!(parse_launch_config("army=fr").army, ARMY_DEFAULT);
+        assert_eq!(parse_launch_config("v=1;scene=mission1").army, ARMY_DEFAULT);
+    }
+
+    #[test]
+    fn accessibility_cues_round_trip_and_default_off() {
+        assert!(parse_launch_config("cvd=1").colorblind_cues);
+        assert!(parse_launch_config("cvd=true").colorblind_cues);
+        assert!(!parse_launch_config("cvd=0").colorblind_cues);
+        assert!(parse_launch_config("snd=1").visual_sound_cues);
+        assert!(!parse_launch_config("snd=false").visual_sound_cues);
+        // Missing → both OFF; garbage keeps the default (OFF).
+        let d = parse_launch_config("v=1;scene=skirmish");
+        assert!(!d.colorblind_cues && !d.visual_sound_cues);
+        let g = parse_launch_config("cvd=maybe;snd=");
+        assert!(!g.colorblind_cues && !g.visual_sound_cues);
     }
 
     #[test]

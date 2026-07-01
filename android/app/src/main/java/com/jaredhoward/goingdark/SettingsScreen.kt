@@ -109,21 +109,11 @@ fun SettingsScreen(
                     onValue = { onChange(state.copy(sensX100 = it).clamp()) },
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Invert look Y",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 15.sp,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Switch(
-                        checked = state.invertLookY,
-                        onCheckedChange = { onChange(state.copy(invertLookY = it).clamp()) },
-                    )
-                }
+                ToggleRow(
+                    label = "Invert look Y",
+                    checked = state.invertLookY,
+                    onCheckedChange = { onChange(state.copy(invertLookY = it).clamp()) },
+                )
 
                 Spacer(Modifier.height(8.dp))
                 SectionLabel("DISPLAY")
@@ -144,6 +134,21 @@ fun SettingsScreen(
                         Text(state.quality.label().uppercase(), letterSpacing = 2.sp)
                     }
                 }
+
+                Spacer(Modifier.height(8.dp))
+                SectionLabel("ACCESSIBILITY")
+                // Two opt-in cue intensifiers, fed to the engine's embodied alert HUD via the launch
+                // wire (`cvd`/`snd`) → `set_accessibility_prefs`. Labels identical to the desktop shell.
+                ToggleRow(
+                    label = "Colorblind cues",
+                    checked = state.colorblindCues,
+                    onCheckedChange = { onChange(state.copy(colorblindCues = it).clamp()) },
+                )
+                ToggleRow(
+                    label = "Visual sound cues",
+                    checked = state.visualSoundCues,
+                    onCheckedChange = { onChange(state.copy(visualSoundCues = it).clamp()) },
+                )
 
                 Spacer(Modifier.height(8.dp))
                 SectionLabel("LOADOUT")
@@ -180,6 +185,23 @@ fun SettingsScreen(
                 }
             }
         }
+    }
+}
+
+/** A labelled boolean row: the setting name on the left, a [Switch] on the right. */
+@Composable
+private fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 15.sp,
+            modifier = Modifier.weight(1f),
+        )
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

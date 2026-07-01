@@ -32,6 +32,17 @@ data class SettingsState(
     val invertLookY: Boolean = false,
     /** Render-quality preference. Mirrors desktop `QualityChoice`. */
     val quality: Quality = Quality.Auto,
+    /**
+     * Accessibility — add the colorblind (CVD) text labels to the embodied alert HUD. Default OFF (an
+     * opt-in intensifier; the base alerts already carry shape + luminance redundancy). Mirrors desktop
+     * `colorblind_cues`; carried to the engine via the `cvd` launch-wire key → `set_accessibility_prefs`.
+     */
+    val colorblindCues: Boolean = false,
+    /**
+     * Accessibility — draw the hard-of-hearing visual echoes of the audio-only signals. Default OFF.
+     * Mirrors desktop `visual_sound_cues`; carried via the `snd` launch-wire key.
+     */
+    val visualSoundCues: Boolean = false,
 ) {
     /** Return a copy with every field pinned into its valid range. Pure — the post-edit re-bound. */
     fun clamp(): SettingsState = copy(
@@ -59,6 +70,8 @@ data class SettingsState(
             sensX100 = 100,
             invertLookY = false,
             quality = Quality.Auto,
+            colorblindCues = false,
+            visualSoundCues = false,
         )
     }
 }

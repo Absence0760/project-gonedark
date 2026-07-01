@@ -40,6 +40,31 @@ data class LaunchConfig(
      * recorded at on a win; inert for non-campaign scenes. Mirrors `launch.rs`'s `diff` key.
      */
     val diff: Int = 0,
+    /**
+     * Campaign **node index** (the `NodeId` ordinal) the launch targets, for a campaign (`mission1`)
+     * scene. Mirrors `launch.rs`'s `node` key: the engine resolves it through the shared mission
+     * registry and records the win against it. Inert for non-campaign scenes; missing/garbage → `0`
+     * (the root node).
+     */
+    val node: Int = 0,
+    /**
+     * Player **army** ordinal — `1` = US, `2` = French (`core::components::Army::index`). Never
+     * `Neutral` (`0`): [clampArmy] collapses Neutral / out-of-range / garbage to the US default
+     * ([ARMY_DEFAULT]), mirroring the desktop `decode_army`. Fielded at match start via
+     * `Game::select_army`. Mirrors `launch.rs`'s `army` key.
+     */
+    val army: Int = ARMY_DEFAULT,
+    /**
+     * Accessibility: add the CVD text labels to the embodied alert HUD. Default OFF (opt-in). Fed to
+     * the engine via `Game::set_accessibility_prefs`; mirrors `launch.rs`'s `cvd` key (the desktop
+     * `cvdcues` pref). Presentation only — never the sim.
+     */
+    val colorblindCues: Boolean = false,
+    /**
+     * Accessibility: draw the visual echoes of the audio-only signals. Default OFF. Mirrors
+     * `launch.rs`'s `snd` key (the desktop `soundcues` pref). Presentation only — never the sim.
+     */
+    val visualSoundCues: Boolean = false,
 ) {
     /** Encode to the v1 wire string (clamping every field into range first). */
     fun encode(): String = buildString {
@@ -53,6 +78,10 @@ data class LaunchConfig(
         append(";sens=").append(sensX100.coerceIn(SENS_MIN, SENS_MAX))
         append(";invy=").append(if (invertY) 1 else 0)
         append(";diff=").append(diff.coerceIn(0, DIFF_MAX))
+        append(";node=").append(node.coerceAtLeast(0))
+        append(";army=").append(clampArmy(army.toString(), ARMY_DEFAULT))
+        append(";cvd=").append(if (colorblindCues) 1 else 0)
+        append(";snd=").append(if (visualSoundCues) 1 else 0)
     }
 
     companion object {
@@ -64,6 +93,14 @@ data class LaunchConfig(
         const val SENS_MIN = 10
         const val SENS_MAX = 300
         const val DIFF_MAX = 3
+
+        /**
+         * Army wire ordinals — `1` = US, `2` = French (`core::components::Army::index`); Neutral (`0`)
+         * is never a player pick. [ARMY_MAX] is the highest combatant ordinal; [ARMY_DEFAULT] (US) is
+         * the collapse target for Neutral / out-of-range / garbage. Mirrors `launch.rs`'s consts.
+         */
+        const val ARMY_MAX = 2
+        const val ARMY_DEFAULT = 1
 
         /** Tolerantly decode the v1 wire string. Null/empty/garbage → a default [LaunchConfig]. */
         fun decode(raw: String?): LaunchConfig {
@@ -87,6 +124,10 @@ data class LaunchConfig(
                     "sens" -> cfg.copy(sensX100 = clampInt(value, SENS_MIN, SENS_MAX, cfg.sensX100))
                     "invy" -> cfg.copy(invertY = parseBool(value, cfg.invertY))
                     "diff" -> cfg.copy(diff = clampInt(value, 0, DIFF_MAX, cfg.diff))
+                    "node" -> cfg.copy(node = clampInt(value, 0, Int.MAX_VALUE, cfg.node))
+                    "army" -> cfg.copy(army = clampArmy(value, cfg.army))
+                    "cvd" -> cfg.copy(colorblindCues = parseBool(value, cfg.colorblindCues))
+                    "snd" -> cfg.copy(visualSoundCues = parseBool(value, cfg.visualSoundCues))
                     else -> cfg // unknown key — ignore (forward-compat)
                 }
             }
@@ -96,6 +137,19 @@ data class LaunchConfig(
         /** Parse `value` as an integer and clamp to `min..max`; on parse failure keep `fallback`. */
         private fun clampInt(value: String, min: Int, max: Int, fallback: Int): Int =
             value.toLongOrNull()?.coerceIn(min.toLong(), max.toLong())?.toInt() ?: fallback
+
+        /**
+         * Parse the army ordinal into a valid combatant index. Mirrors the desktop `decode_army` and
+         * `launch.rs::clamp_army`: only `1` (US) and `2` (French) are real picks; Neutral (`0`),
+         * out-of-range, or unparseable values collapse to [ARMY_DEFAULT] (US). Deliberately does NOT
+         * clamp-to-[ARMY_MAX] (an out-of-range ordinal degrades to the neutral default, not French).
+         */
+        private fun clampArmy(value: String, fallback: Int): Int = when (value.trim().toLongOrNull()) {
+            1L -> 1 // US Army
+            2L -> 2 // French Army
+            null -> fallback // unparseable — keep the current value (defaults to US)
+            else -> ARMY_DEFAULT // Neutral (0) / out-of-range → US (never a player pick)
+        }
 
         /** Wire bool: `1`/`true` → true, `0`/`false` → false, else `fallback`. */
         private fun parseBool(value: String, fallback: Boolean): Boolean = when (value) {

@@ -48,6 +48,7 @@ fun TitleScreen(
     onPvp: () -> Unit,
     onSettings: () -> Unit,
     onProfile: () -> Unit,
+    onArmy: () -> Unit,
     onAbout: () -> Unit,
     onQuit: () -> Unit,
     modifier: Modifier = Modifier,
@@ -126,6 +127,14 @@ fun TitleScreen(
                 ) {
                     Text("PROFILE", letterSpacing = 2.sp)
                 }
+                // The army-select entry (US vs FR) — a pre-deploy pick fielded at every match start.
+                // Mirrors the desktop title's ARMY utility chip (`app/src/shell.rs`).
+                OutlinedButton(
+                    onClick = onArmy,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                ) {
+                    Text("ARMY", letterSpacing = 2.sp)
+                }
                 TextButton(
                     onClick = onAbout,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
@@ -162,6 +171,7 @@ private fun TitleScreenPreview() {
             onPvp = {},
             onSettings = {},
             onProfile = {},
+            onArmy = {},
             onAbout = {},
             onQuit = {},
         )
