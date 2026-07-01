@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,29 +30,63 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  * in-engine under avatar-only fog (invariant #6).
  *
  * Campaign opens the Operations hub → a mission briefing → Deploy into the mission scene (`mission1`,
- * where the loadout applies to the player's troops). PvE/PvP open a **mode/map select** → Deploy into
- * the chosen scene (**D81**: the loadout gunsmith no longer gates play — it moved behind Settings, so
- * a play-mode tap goes straight toward the match). PvE and PvP share the picker until PvP match-setup
- * lands (Q5-Phase-3-blocked, phase-4-plan §2). The loadout persists (via [ShellPrefs]) and is folded
- * into every Deploy regardless of which flow launched it. The briefing's **difficulty** selector is
- * shown but not yet threaded to the engine on Android (owed — needs a `diff` wire key + mission-tuning
- * plumbing; the desktop already threads it). Look-sensitivity from Settings is likewise owed (the
- * Android look delta is derived in `engine::touch_controls`, not scalable at the PAL boundary).
+ * where the loadout applies to the player's troops). The hub renders per-node status pills (LOCKED /
+ * AVAILABLE / CLEARED·tier) and disables locked tiles from the pure [CampaignProgress] model, and a
+ * campaign win is recorded (best-tier) and persisted via [ShellPrefs] — the split-activity twin of
+ * the desktop host's record-on-win, delivered back as an Activity result code. PvE/PvP open a
+ * **mode/map select** → Deploy into the chosen scene (**D81**: the loadout gunsmith no longer gates
+ * play — it moved behind Settings, so a play-mode tap goes straight toward the match). PvE and PvP
+ * share the picker until PvP match-setup lands (Q5-Phase-3-blocked, phase-4-plan §2). The loadout
+ * persists (via [ShellPrefs]) and is folded into every Deploy regardless of which flow launched it.
+ * The briefing's **difficulty** selector is now threaded to the engine as the `diff` wire key (the
+ * tier the clear is recorded at on a win). Look-sensitivity from Settings is likewise carried but not
+ * yet applied on Android (the look delta is derived in `engine::touch_controls`, not scalable at the
+ * PAL boundary).
  *
  * The title→screen routing goes through the unit-tested [resolveTitleAction] seam (D81), so the JVM
  * tests cover the navigation the app actually runs. NB the desktop egui shell (`app/src/shell.rs`)
  * still routes Pve/Pvp through the gunsmith — reconciling it to this flow is the owed D79 parity half.
  */
 class MainActivity : ComponentActivity() {
+    private lateinit var prefs: ShellPrefs
+
+    /**
+     * Campaign progress, hoisted to the Activity so the match-result callback (below) can record a
+     * clear the shell then re-renders from. Seeded from [ShellPrefs] in [onCreate]; the rest of the
+     * shell state (Settings/Profile/Loadout) stays in the [Shell] composable's own `remember`.
+     */
+    private var campaign by mutableStateOf(CampaignProgress())
+
+    /**
+     * The engine runs in a separate `NativeActivity`, so a campaign WIN comes back as an Activity
+     * **result code** (`Activity.setResult`, packed by the engine — see
+     * [CampaignResult.fromResultCode]). This is the split-activity twin of the desktop host's
+     * single-process record-on-win: decode the win, record the clear at the played tier (best-tier
+     * kept), and persist just the campaign key. A non-win return (`RESULT_CANCELED`) decodes to `null`
+     * → nothing recorded.
+     */
+    private val matchResult =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val win = CampaignResult.fromResultCode(result.resultCode) ?: return@registerForActivityResult
+            val updated = campaign.recordClear(win.node, win.tier)
+            if (updated != campaign) {
+                campaign = updated
+                prefs.saveCampaign(updated)
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val stamp = buildStamp(buildChannel(BuildConfig.DEBUG), BuildConfig.VERSION_NAME)
-        val prefs = ShellPrefs(this)
+        prefs = ShellPrefs(this)
+        val initial = prefs.load()
+        campaign = initial.campaign
         setContent {
             GoingDarkTheme {
                 Shell(
                     versionStamp = stamp,
-                    initial = prefs.load(),
+                    initial = initial,
+                    campaign = campaign,
                     onPersist = prefs::save,
                     onQuit = ::finish,
                     onDeploy = ::startMatch,
@@ -63,10 +98,10 @@ class MainActivity : ComponentActivity() {
     /**
      * Hand off to the shared engine: launch the NativeActivity that loads the Rust cdylib, carrying
      * the [LaunchConfig] as an `Intent` string extra ([LaunchConfig.EXTRA_KEY]) that `android_main`
-     * reads back over JNI.
+     * reads back over JNI. Launched **for a result** so a campaign win reports back (see [matchResult]).
      */
     private fun startMatch(config: LaunchConfig) {
-        startActivity(
+        matchResult.launch(
             Intent(this, NativeActivity::class.java)
                 .putExtra(LaunchConfig.EXTRA_KEY, config.encode()),
         )
@@ -87,6 +122,7 @@ private enum class ShellRoute { Title, ModeSelect, Settings, Profile, About, Mis
 private fun Shell(
     versionStamp: String,
     initial: ShellState,
+    campaign: CampaignProgress,
     onPersist: (ShellState) -> Unit,
     onQuit: () -> Unit,
     onDeploy: (LaunchConfig) -> Unit,
@@ -95,13 +131,17 @@ private fun Shell(
     var settings by remember { mutableStateOf(initial.settings) }
     var profile by remember { mutableStateOf(initial.profile) }
     var loadout by remember { mutableStateOf(initial.loadout) }
-    // Campaign flow state: the node being briefed, and the selected replay difficulty (shown in the
-    // briefing; engine-application owed). The launch scene is no longer held here — each Deploy path
-    // (ModeSelect / Briefing) carries its own scene token straight into `launchConfigOf`.
+    // Campaign flow state: the node being briefed, and the selected replay difficulty (threaded to
+    // the engine on Deploy via the `diff` wire key, C3). `campaign` (the cleared/locked progress) is
+    // hoisted to MainActivity so the match-result callback can record a win; the shell only reads it.
+    // The launch scene is not held here — each Deploy path (ModeSelect / Briefing) carries its own
+    // scene token straight into `launchConfigOf`.
     var briefedNode by remember { mutableStateOf(campaignNodes.first()) }
     var difficulty by remember { mutableStateOf(Difficulty.Recruit) }
 
-    fun persist() = onPersist(ShellState(settings, profile, loadout))
+    // Persist keeps the current (hoisted) campaign so a Settings/Profile/Loadout save never clobbers
+    // the campaign key back to empty.
+    fun persist() = onPersist(ShellState(settings, profile, loadout, campaign))
 
     // Route a title action through the SAME pure seam the JVM tests cover (D81), so the live
     // navigation can't silently drift from `resolveTitleAction`.
@@ -150,17 +190,21 @@ private fun Shell(
             onBack = { route = ShellRoute.Title },
         )
         ShellRoute.MissionSelect -> MissionSelectScreen(
-            nodes = campaignNodes,
+            campaign = campaign,
             onOpenNode = { briefedNode = it; route = ShellRoute.Briefing },
             onBack = { route = ShellRoute.Title },
         )
         ShellRoute.Briefing -> BriefingScreen(
             node = briefedNode,
+            progress = campaign.progress(briefedNode.id),
             difficulty = difficulty,
             onCycleDifficulty = { difficulty = difficulty.next() },
             // Briefing Deploy boots this mission's scene directly with the persisted loadout — the
-            // gunsmith is no longer an intermediate step (D81).
-            onDeploy = { onDeploy(launchConfigOf(briefedNode.sceneToken, settings, loadout)) },
+            // gunsmith is no longer an intermediate step (D81) — threading the chosen replay tier as
+            // `diff` (C3) so the engine records the clear at it on a win.
+            onDeploy = {
+                onDeploy(launchConfigOf(briefedNode.sceneToken, settings, loadout, difficulty.tier()))
+            },
             onBack = { route = ShellRoute.MissionSelect },
         )
         ShellRoute.Gunsmith -> GunsmithScreen(
@@ -175,14 +219,16 @@ private fun Shell(
 
 /**
  * Assemble the [LaunchConfig] the engine receives at Deploy: the chosen scene token, the
- * [LoadoutSelection] slot indices, and the [SettingsState] audio prefs folded into the wire keys
- * (`opt`/`bar`/`mag`, `vol`/`sfx`/`sens`/`invy`). Pure — kept out of the composable so the wiring is
- * obvious. (Sensitivity/invert are carried but not yet applied on Android — see the class doc.)
+ * [LoadoutSelection] slot indices, the [SettingsState] audio prefs, and the campaign replay [diff]
+ * tier folded into the wire keys (`opt`/`bar`/`mag`, `vol`/`sfx`/`sens`/`invy`, `diff`). Pure — kept
+ * out of the composable so the wiring is obvious. [diff] is the campaign tier rank (`0..=3`); it is
+ * `0` (Recruit — inert) for non-campaign Deploys (ModeSelect), so those keep their prior behaviour.
  */
 private fun launchConfigOf(
     scene: String,
     settings: SettingsState,
     loadout: LoadoutSelection,
+    diff: Int = 0,
 ): LaunchConfig =
     LaunchConfig(
         scene = scene,
@@ -193,4 +239,5 @@ private fun launchConfigOf(
         sfxPct = settings.sfxPct,
         sensX100 = settings.sensX100,
         invertY = settings.invertLookY,
+        diff = diff,
     )

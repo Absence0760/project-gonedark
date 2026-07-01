@@ -39,7 +39,7 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  */
 @Composable
 fun MissionSelectScreen(
-    nodes: List<MissionNode>,
+    campaign: CampaignProgress,
     onOpenNode: (MissionNode) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -79,8 +79,15 @@ fun MissionSelectScreen(
                 modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                for (node in nodes) {
-                    MissionTile(node = node, onClick = { onOpenNode(node) })
+                for (node in campaign.nodes) {
+                    val progress = campaign.progress(node.id)
+                    MissionTile(
+                        node = node,
+                        progress = progress,
+                        // A locked tile can't launch (the pure isPlayable gate, mirroring desktop's
+                        // playable_node) — the tap is only wired for a playable node.
+                        onClick = { if (progress.isPlayable) onOpenNode(node) },
+                    )
                 }
             }
 
@@ -102,23 +109,32 @@ fun MissionSelectScreen(
 }
 
 /**
- * One mission tile: the operation name over a one-line teaser drawn from the briefing copy. Tapping
- * it opens the briefing (the desktop's `mission_tile` → `OpenNode`). An [OutlinedButton] so it reads
- * as a quiet, tappable row in the list (the screens' established idiom), with a two-line label.
+ * One mission tile: a status pill (LOCKED / AVAILABLE / CLEARED·tier) over the operation name and a
+ * one-line teaser drawn from the briefing copy. Tapping a **playable** tile opens the briefing (the
+ * desktop's `mission_tile` → `OpenNode`); a **locked** tile is `enabled = false` and un-tappable and
+ * its text is dimmed — mirroring the desktop, which disables the button on a locked node. An
+ * [OutlinedButton] so it reads as a quiet, tappable row in the list (the screens' established idiom).
  */
 @Composable
-private fun MissionTile(node: MissionNode, onClick: () -> Unit) {
+private fun MissionTile(node: MissionNode, progress: NodeProgress, onClick: () -> Unit) {
     OutlinedButton(
         onClick = onClick,
+        enabled = progress.isPlayable,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
+            StatusPill(progress)
             Text(
                 text = node.name.uppercase(),
-                color = MaterialTheme.colorScheme.onSurface,
+                // A locked tile dims its title (desktop uses MUTED for a non-playable node).
+                color = if (progress.isPlayable) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
                 fontSize = 16.sp,
                 letterSpacing = 2.sp,
             )
@@ -129,6 +145,25 @@ private fun MissionTile(node: MissionNode, onClick: () -> Unit) {
             )
         }
     }
+}
+
+/**
+ * The per-node status pill — LOCKED / AVAILABLE / CLEARED · <tier> — the native twin of the desktop
+ * `mission_tile`'s status label. The cleared pill names the best tier reached (the replay surface).
+ */
+@Composable
+private fun StatusPill(progress: NodeProgress) {
+    val text = when (progress) {
+        NodeProgress.Locked -> "LOCKED"
+        NodeProgress.Available -> "AVAILABLE"
+        is NodeProgress.Cleared -> "CLEARED · ${progress.best.label().uppercase()}"
+    }
+    val color = when (progress) {
+        NodeProgress.Locked -> MaterialTheme.colorScheme.onSurfaceVariant
+        NodeProgress.Available -> MaterialTheme.colorScheme.primary
+        is NodeProgress.Cleared -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(text = text, color = color, fontSize = 11.sp, letterSpacing = 2.sp)
 }
 
 /** First sentence (or a trimmed lead-in) of the briefing, for the tile's one-line teaser. */
@@ -142,7 +177,7 @@ private fun teaser(briefing: String): String {
 private fun MissionSelectScreenPreview() {
     GoingDarkTheme {
         MissionSelectScreen(
-            nodes = campaignNodes,
+            campaign = CampaignProgress(),
             onOpenNode = {},
             onBack = {},
         )

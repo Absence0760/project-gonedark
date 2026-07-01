@@ -52,6 +52,16 @@ class ShellPrefs(context: Context) {
         editor.apply()
     }
 
+    /**
+     * Persist **only** the campaign cleared-set key, leaving Settings/Profile/Loadout untouched. Used
+     * for record-on-win from the match-result callback, which owns the campaign progress but not the
+     * rest of the shell state (those live in the Compose shell's own `remember`). Writing just the one
+     * key keeps that split clean — a subsequent full [save] still round-trips everything.
+     */
+    fun saveCampaign(campaign: CampaignProgress) {
+        prefs.edit().putString(ShellPrefsCodec.KEY_CAMPAIGN, campaign.encodeCleared()).apply()
+    }
+
     companion object {
         /** The private SharedPreferences file backing the out-of-match shell. */
         const val PREFS_NAME = "gonedark_shell"
@@ -71,6 +81,7 @@ class ShellPrefs(context: Context) {
             ShellPrefsCodec.KEY_OPTIC,
             ShellPrefsCodec.KEY_BARREL,
             ShellPrefsCodec.KEY_MAGAZINE,
+            ShellPrefsCodec.KEY_CAMPAIGN,
         )
     }
 }

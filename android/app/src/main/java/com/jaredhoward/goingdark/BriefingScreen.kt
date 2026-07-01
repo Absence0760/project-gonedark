@@ -42,6 +42,7 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
 @Composable
 fun BriefingScreen(
     node: MissionNode,
+    progress: NodeProgress,
     difficulty: Difficulty,
     onCycleDifficulty: () -> Unit,
     onDeploy: () -> Unit,
@@ -103,6 +104,15 @@ fun BriefingScreen(
                         Text(difficulty.label().uppercase(), letterSpacing = 2.sp)
                     }
                 }
+
+                // The clear-status line — driven by the node's derived progress, the native twin of
+                // the desktop briefing_ui's status label ("Cleared at X -- replay…" / "Not yet
+                // cleared." / "Locked.").
+                Text(
+                    text = clearStatusLine(progress),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 12.sp,
+                )
             }
 
             Spacer(Modifier.height(28.dp))
@@ -130,12 +140,25 @@ fun BriefingScreen(
     }
 }
 
+/**
+ * The clear-status copy for a node, mirroring the desktop `briefing_ui` status label **verbatim**
+ * (the "--" is the ASCII dash the egui default font renders). Kept a pure function so it is covered
+ * by [CampaignProgressTest] rather than trapped in the device-gated composable.
+ */
+fun clearStatusLine(progress: NodeProgress): String = when (progress) {
+    is NodeProgress.Cleared ->
+        "Cleared at ${progress.best.label()} -- replay to raise your best."
+    NodeProgress.Available -> "Not yet cleared."
+    NodeProgress.Locked -> "Locked."
+}
+
 @Preview(showBackground = true, widthDp = 880, heightDp = 520)
 @Composable
 private fun BriefingScreenPreview() {
     GoingDarkTheme {
         BriefingScreen(
             node = campaignNodes.first(),
+            progress = NodeProgress.Available,
             difficulty = Difficulty.Recruit,
             onCycleDifficulty = {},
             onDeploy = {},

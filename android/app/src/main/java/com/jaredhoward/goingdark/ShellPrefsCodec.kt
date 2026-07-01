@@ -31,6 +31,7 @@ data class ShellState(
     val settings: SettingsState = SettingsState.defaults(),
     val profile: ProfileState = ProfileState(),
     val loadout: LoadoutSelection = LoadoutSelection(),
+    val campaign: CampaignProgress = CampaignProgress(),
 ) {
     companion object {
         /** The shipped defaults for every shell surface — first-launch state. */
@@ -38,6 +39,7 @@ data class ShellState(
             settings = SettingsState.defaults(),
             profile = ProfileState(),
             loadout = LoadoutSelection(),
+            campaign = CampaignProgress(),
         )
     }
 }
@@ -66,6 +68,9 @@ object ShellPrefsCodec {
     const val KEY_BARREL = "loadout.barrel"
     const val KEY_MAGAZINE = "loadout.magazine"
 
+    // --- Campaign key (the cleared-set blob; see CampaignProgress.encodeCleared) ---
+    const val KEY_CAMPAIGN = "campaign.cleared"
+
     /**
      * Encode [state] to a flat string map, writing every field as its canonical, already-clamped /
      * sanitized representation. The result is exactly what [ShellPrefs.save] persists key-by-key.
@@ -88,6 +93,8 @@ object ShellPrefsCodec {
             KEY_OPTIC to l.optic.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
             KEY_BARREL to l.barrel.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
             KEY_MAGAZINE to l.magazine.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
+            // Only the cleared set is persisted; the topology is re-supplied from campaignNodes.
+            KEY_CAMPAIGN to state.campaign.encodeCleared(),
         )
     }
 
@@ -123,7 +130,10 @@ object ShellPrefsCodec {
             magazine = clampInt(map[KEY_MAGAZINE], 0, LoadoutSelection.SLOT_MAX, dl.magazine),
         )
 
-        return ShellState(settings = settings, profile = profile, loadout = loadout)
+        // The topology is re-supplied from campaignNodes; only the cleared set is decoded (tolerant).
+        val campaign = CampaignProgress.decodeCleared(map[KEY_CAMPAIGN])
+
+        return ShellState(settings = settings, profile = profile, loadout = loadout, campaign = campaign)
     }
 
     /** `"1"` for true, `"0"` for false. */

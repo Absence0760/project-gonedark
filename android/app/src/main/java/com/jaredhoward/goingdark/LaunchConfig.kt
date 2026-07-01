@@ -35,6 +35,11 @@ data class LaunchConfig(
     val sensX100: Int = 100,
     /** Invert the embodied vertical look axis. */
     val invertY: Boolean = false,
+    /**
+     * Campaign replay difficulty tier, `0..DIFF_MAX` (Recruit..Elite). The tier a campaign clear is
+     * recorded at on a win; inert for non-campaign scenes. Mirrors `launch.rs`'s `diff` key.
+     */
+    val diff: Int = 0,
 ) {
     /** Encode to the v1 wire string (clamping every field into range first). */
     fun encode(): String = buildString {
@@ -47,6 +52,7 @@ data class LaunchConfig(
         append(";sfx=").append(sfxPct.coerceIn(0, GAIN_PCT_MAX))
         append(";sens=").append(sensX100.coerceIn(SENS_MIN, SENS_MAX))
         append(";invy=").append(if (invertY) 1 else 0)
+        append(";diff=").append(diff.coerceIn(0, DIFF_MAX))
     }
 
     companion object {
@@ -57,6 +63,7 @@ data class LaunchConfig(
         const val GAIN_PCT_MAX = 100
         const val SENS_MIN = 10
         const val SENS_MAX = 300
+        const val DIFF_MAX = 3
 
         /** Tolerantly decode the v1 wire string. Null/empty/garbage → a default [LaunchConfig]. */
         fun decode(raw: String?): LaunchConfig {
@@ -79,6 +86,7 @@ data class LaunchConfig(
                     "sfx" -> cfg.copy(sfxPct = clampInt(value, 0, GAIN_PCT_MAX, cfg.sfxPct))
                     "sens" -> cfg.copy(sensX100 = clampInt(value, SENS_MIN, SENS_MAX, cfg.sensX100))
                     "invy" -> cfg.copy(invertY = parseBool(value, cfg.invertY))
+                    "diff" -> cfg.copy(diff = clampInt(value, 0, DIFF_MAX, cfg.diff))
                     else -> cfg // unknown key — ignore (forward-compat)
                 }
             }

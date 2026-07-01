@@ -23,6 +23,7 @@ class LaunchConfigTest {
         assertEquals(80, d.sfxPct)
         assertEquals(100, d.sensX100)
         assertFalse(d.invertY)
+        assertEquals(0, d.diff) // Recruit — the neutral campaign tier
     }
 
     @Test
@@ -36,7 +37,9 @@ class LaunchConfigTest {
 
     @Test
     fun decodes_a_full_v1_string() {
-        val cfg = LaunchConfig.decode("v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1")
+        val cfg = LaunchConfig.decode(
+            "v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1;diff=2",
+        )
         assertEquals("mission1", cfg.scene)
         assertEquals(1, cfg.optic)
         assertEquals(2, cfg.barrel)
@@ -45,6 +48,25 @@ class LaunchConfigTest {
         assertEquals(70, cfg.sfxPct)
         assertEquals(250, cfg.sensX100)
         assertTrue(cfg.invertY)
+        assertEquals(2, cfg.diff) // Veteran
+    }
+
+    @Test
+    fun missing_diff_defaults_to_recruit() {
+        // Back-compat: a pre-C3 emitter (no `diff` key) still decodes, campaign tier → Recruit (0).
+        val cfg = LaunchConfig.decode("v=1;scene=mission1;opt=1;vol=50")
+        assertEquals("mission1", cfg.scene)
+        assertEquals(0, cfg.diff)
+    }
+
+    @Test
+    fun diff_round_trips_every_tier_and_clamps_out_of_range() {
+        for (tier in 0..LaunchConfig.DIFF_MAX) {
+            assertEquals(tier, LaunchConfig.decode("diff=$tier").diff)
+        }
+        assertEquals(LaunchConfig.DIFF_MAX, LaunchConfig.decode("diff=9").diff)
+        assertEquals(0, LaunchConfig.decode("diff=-1").diff)
+        assertEquals(0, LaunchConfig.decode("diff=elite").diff)
     }
 
     @Test
@@ -111,7 +133,7 @@ class LaunchConfigTest {
     fun encode_then_decode_round_trips() {
         val cfg = LaunchConfig(
             scene = "mission1", optic = 2, barrel = 1, magazine = 2,
-            masterPct = 30, sfxPct = 65, sensX100 = 180, invertY = true,
+            masterPct = 30, sfxPct = 65, sensX100 = 180, invertY = true, diff = 3,
         )
         assertEquals(cfg, LaunchConfig.decode(cfg.encode()))
     }
@@ -121,7 +143,10 @@ class LaunchConfigTest {
         // The payload MainActivity.startMatch sends: a default-loadout Skirmish boot.
         val emitted = LaunchConfig(scene = "skirmish").encode()
         assertEquals(LaunchConfig(scene = "skirmish"), LaunchConfig.decode(emitted))
-        // And it is the documented v1 shape.
-        assertEquals("v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0", emitted)
+        // And it is the documented v1 shape (now carrying the campaign `diff` tier, default 0).
+        assertEquals(
+            "v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0;diff=0",
+            emitted,
+        )
     }
 }
