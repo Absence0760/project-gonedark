@@ -471,6 +471,13 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   sandbag berms, turrets) drawn in the embodied view, LOD-by-distance ([D50](decisions.md)) —
   and the embodied view now also draws the **fog-filtered, avatar-visible sim units** themselves
   (line-of-sight enemies/allies), not just static props ([D52](decisions.md))
+- [ ] **Mesh fidelity pass across the roster** — lift the remaining greybox models to the
+  trooper's bar, ranked by how close the player gets: weapon viewmodels → tanks → structures →
+  scenery. Per-*subject* technique (box-stacking stays right for the mechanical/architectural
+  models — the lever is booleans + tuned bevels, not skinning) driven by a tight render→verify
+  loop. The **trooper reskin** (an organic body via skeleton + Blender Skin modifier, commit
+  `d7cced1`) is the landed pilot that proved the method. *Scoped as **WS-F** of the
+  [visual-design plan](plans/visual-design-plan.md).*
 
 ### Release readiness — the store-facing layer
 
@@ -536,7 +543,7 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   locomotion/fire/death anims on the greybox so the eye-level view reads as a *place* — via the
   scripted pipeline ([`content-pipeline.md`](content-pipeline.md), [D41](decisions.md)/[D46](decisions.md)).
   **Explicitly not UE5 parity**; we concede photoreal fidelity and compete on the hybrid. *Scoped as
-  WS-B of the [visual-design plan](plans/visual-design-plan.md).*
+  WS-B (animation) + WS-F (mesh fidelity) of the [visual-design plan](plans/visual-design-plan.md).*
 - [ ] **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (PvE WS-D,
   [D61](decisions.md)) + a touch-target/rebind pass so controls feel CoD-Mobile-class. *Overlaps
   the touch-layout editor under UI/UX polish above.*

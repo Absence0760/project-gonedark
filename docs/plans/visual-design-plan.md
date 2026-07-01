@@ -142,6 +142,49 @@ The remaining environment polish the foundation wave set up but didn't exhaust.
 - **Files:** `tools/` (texture/mesh generators + manifests), `render`, `app` shell theming.
 - **Acceptance:** viz + title PNGs; manifest entries for every new generated texture/mesh.
 
+### WS-F — Mesh fidelity pass *(model-quality lift across the roster)*
+
+The trooper reskin (`d7cced1`) proved the method: box-stacking hit a hard ceiling on the *human* (a
+golf-ball icosphere head on a slab torso, no readable arms), and the fix was a **technique change** —
+a vertex skeleton through Blender's Skin modifier (`skinned_body`) + a proper local-space helmet cut
+(`dome`) — driven by a disciplined **render → look → fix** loop, not another chamfer nudge. This
+workstream carries that lift to the rest of the roster.
+
+**The lesson is not "skin everything."** Skinning is for *organic* forms, and we have none left. The
+remaining models are mechanical / architectural, where box-stacking is the *correct* base — the lever
+there is different: **boolean cuts** for real sloped/inset detail, **tuned bevels** (kill the "melty"
+over-rounding), denser local detail only on hero assets, and the same tight visual loop.
+
+**Honest scope-setting:** unlike the trooper, none of these are broken — they cleared the WS-0
+art-direction pass and read as acceptable greybox today. This is *polish*, ranked by how close the
+player gets to each asset, not a rescue.
+
+Priority tiers (closest-to-camera first):
+
+| Tier | Models | Why it ranks here | Technique lever |
+|---|---|---|---|
+| 1 — hero | `weapon_rifle{,_us,_fr}` | eye-level FPS viewmodel — fills the screen embodied (§4's own "honest weak axis") | most detail budget; crisp small parts; booleans for the rail / mag well |
+| 2 — embodied | `tank{,_us,_fr}` hull + `tank_turret{,_us,_fr}` | embodied tank (P7), and the hull is the weakest current model (lumpy road gear, melty slopes) | booleans for glacis + sponsons; distinct road-wheel read; tighter bevel |
+| 3 — command dressing | `camp_hq`, `turret`, `barricade` | command-view + embodied backdrop | fix the melty base; crisper architectural edges |
+| 4 — scenery | `tree`, `rock`, `crate`, `tracer` | ambient, rarely seen close | light touch; already fine (maybe a more organic tree canopy) |
+
+Process — **one model at a time** (the visual-judgment loop is the crux and doesn't delegate cleanly;
+`gen_models.py` is one file, so this is **sequential internally**, not a parallel-worktree fan-out):
+
+- Render the committed `.glb` from 3–4 angles headless (Blender), eyeball it, list the specific reads
+  that fail, fix in `gen_models.py`, re-render — repeat until it holds. The `viz-runner` token view is
+  too far-zoomed to judge a single model; render the `.glb` directly.
+- Hold the budget: LOD0 stays ≈ its current tri count (≤ ~1.5k), the LOD chain stays monotone, and the
+  cooked `.mesh` regenerates **bit-identical** (deterministic) — the golden mesh tests + `pnpm
+  desktop:viz` stay green.
+- **Commit discipline (models-lane):** a full `pnpm assets:models` regen emits incidental glTF
+  byte-noise on *unrelated* glbs; revert those and patch the manifest so only the owned models ship
+  (exactly as the trooper commit did). **One category = one commit.**
+- **Files:** `tools/models/gen_models.py`, `assets/models/**`, `assets/models/manifest.json`.
+- **Acceptance:** per category — a before/after render sheet, golden mesh tests green dev+release,
+  `pnpm desktop:viz` green, commit scoped to owned models. This is the *mesh* half of the **CP-3**
+  "reads as a place" floor — distinct from WS-B, which is CP-3's *animation* half.
+
 ---
 
 ## Sequencing & dependencies
@@ -151,14 +194,18 @@ WS-0 (foundation) ── DONE ──► WS-A (game-feel, CP-2)  ── launch-cr
                           ├──► WS-C (readability, CP-9) ── launch-important, parallel-safe
                           ├──► WS-D (accessibility)      ── invariant #6, parallel-safe
                           ├──► WS-E (world depth)        ── parallel-safe, low-risk
+                          ├──► WS-F (mesh fidelity)      ── parallel-safe across WS, sequential within
                           └──► WS-B (anim floor, CP-3)   ── conceded tier, ramps last
+                                                             (WS-B rigs on WS-F's meshes)
 ```
 
 WS-A first — it's the launch-critical row and the one a shooter player judges instantly. WS-C / WS-D /
-WS-E are independent presentation work that can land in any order (WS-D is the one with a *fairness*
-mandate, so don't let it slip). WS-B (animation) is the conceded tier and ramps last — "not jarring"
-is the bar, not parity. CP-6 (audio identity) runs as its own scripted-asset workstream and hands WS-A
-its fire/impact sounds.
+WS-E / WS-F are independent presentation work that can land in any order (WS-D is the one with a
+*fairness* mandate, so don't let it slip). WS-F (mesh fidelity) touches only `gen_models.py`, so it is
+parallel-safe against the render/app-side workstreams but must run sequentially *within itself*;
+ideally it precedes WS-B, which rigs animation on the meshes it lands. WS-B (animation) is the conceded
+tier and ramps last — "not jarring" is the bar, not parity. CP-6 (audio identity) runs as its own
+scripted-asset workstream and hands WS-A its fire/impact sounds.
 
 ## Risks & notes
 
