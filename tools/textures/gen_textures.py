@@ -22,10 +22,21 @@ world plane without visible seams.
 
 ImageMagick `+noise Random` is NOT tiling on its own. The fix: blur it with `-virtual-pixel tile`,
 so the blur convolution **wraps around the edges** — the blurred (and therefore the final) result
-tiles with no seam. We build THREE wrap-blurred octaves — a coarse *macro* swell, a *meso*
-metre-scale undulation, and a *fine* grit — and blend them (macro dominates, then mid, then a touch
-of grit), then `-normalize` for full contrast. `-seed` makes `+noise` reproducible, so the bytes
-(and the sha256 below) are stable for a given ImageMagick build.
+tiles with no seam. We stack FIVE wrap-blurred octaves plus a broad tonal *mottle*:
+
+  * **macro** swell — the large-scale terrain silhouette;
+  * **meso** undulation — the metre-scale relief the shader finite-differences into a normal;
+  * **detail** — sub-metre variation the near floor reads as texture;
+  * **micro** grit — the finest near-field speckle;
+  * **mottle** — a very-broad low-frequency drift that keeps large regions of floor from all
+    settling to the same average tone (patches of damp/dry ground).
+
+Each octave gets its own `-seed` (uncorrelated noise) and is folded into the running result with a
+`-compose blend`; the coarse octaves dominate the silhouette, the finer ones only dust detail on
+top. After the blend we `-normalize` for full contrast, then a **gentle** `-sigmoidal-contrast`
+firms the mid-tones into believable relief WITHOUT crushing the finite-difference gradients the
+normal reconstruction depends on. `-seed` makes `+noise` reproducible, so the bytes (and the
+sha256 below) are stable for a given ImageMagick build.
 
 Render-only (invariants #1/#4): the texture is a pure presentation derivation — it never touches
 the sim, carries no fog/intel (invariant #6), and can never move the per-tick checksum.
@@ -50,12 +61,11 @@ OUT_DIR = Path(__file__).resolve().parents[2] / "assets" / "textures"
 
 def bake_ground(png_path: Path, gray_path: Path) -> bytes:
     """Bake the seamless multi-octave ground HEIGHTFIELD → PNG (inspection) + raw R8 (engine)."""
-    # Three wrap-blurred noise octaves blended, then normalised. `-virtual-pixel tile` makes every
-    # blur wrap at the edges, so the result tiles seamlessly. The octaves are blended stepwise
-    # (each `-compose blend -composite` folds the next octave into the running result):
-    #   ( macro swell )  ( meso undulation )  blend 62/38  →  ( fine grit )  blend 82/18  →  normalize
-    # Macro dominates the silhouette (broad swells), meso adds the metre-scale relief the shader
-    # finite-differences into a normal, fine grit keeps near-field texture without dominating.
+    # Five wrap-blurred noise octaves + a broad mottle, blended stepwise, then normalised and given a
+    # gentle sigmoidal firm-up. `-virtual-pixel tile` makes every blur wrap at the edges, so the result
+    # tiles seamlessly. Each `-compose blend -composite` folds the next octave into the running result;
+    # the coarse octaves own the silhouette, the finer ones only dust detail on top:
+    #   (macro) (meso) 56/44 → (detail) 80/20 → (micro) 90/10 → (mottle) 86/14 → normalize → sigmoidal
     subprocess.run(
         [
             "magick",
@@ -64,7 +74,7 @@ def bake_ground(png_path: Path, gray_path: Path) -> bytes:
             "-size", f"{SIZE}x{SIZE}", "xc:",
             "-seed", str(SEED), "+noise", "Random",
             "-colorspace", "Gray",
-            "-virtual-pixel", "tile", "-blur", "0x16",
+            "-virtual-pixel", "tile", "-blur", "0x22",
             "-auto-level",
             ")",
             # meso octave — metre-scale undulation (what the shader lights as relief), own seed
@@ -72,24 +82,49 @@ def bake_ground(png_path: Path, gray_path: Path) -> bytes:
             "-size", f"{SIZE}x{SIZE}", "xc:",
             "-seed", str(SEED + 1), "+noise", "Random",
             "-colorspace", "Gray",
-            "-virtual-pixel", "tile", "-blur", "0x7",
+            "-virtual-pixel", "tile", "-blur", "0x9",
             "-auto-level",
             ")",
             # fold meso into macro (macro sets the silhouette, meso carries the relief)
-            "-define", "compose:args=55,45",
+            "-define", "compose:args=56,44",
             "-compose", "blend", "-composite",
-            # fine octave — small grit (near-field micro detail), a third uncorrelated seed
+            # detail octave — sub-metre variation the near floor reads as texture
             "(",
             "-size", f"{SIZE}x{SIZE}", "xc:",
             "-seed", str(SEED + 2), "+noise", "Random",
             "-colorspace", "Gray",
-            "-virtual-pixel", "tile", "-blur", "0x2.4",
+            "-virtual-pixel", "tile", "-blur", "0x3.4",
             "-auto-level",
             ")",
-            # fold a light dusting of grit onto the swell+undulation, then stretch to full contrast
-            "-define", "compose:args=88,12",
+            "-define", "compose:args=80,20",
             "-compose", "blend", "-composite",
+            # micro octave — the finest near-field grit, a fourth uncorrelated seed
+            "(",
+            "-size", f"{SIZE}x{SIZE}", "xc:",
+            "-seed", str(SEED + 3), "+noise", "Random",
+            "-colorspace", "Gray",
+            "-virtual-pixel", "tile", "-blur", "0x1.3",
+            "-auto-level",
+            ")",
+            "-define", "compose:args=90,10",
+            "-compose", "blend", "-composite",
+            # mottle — a very-broad tonal drift so large patches of floor aren't all one average
+            # tone (damp vs. dry ground); the macro height already handles the albedo split, this
+            # just breaks up flatness at the map scale.
+            "(",
+            "-size", f"{SIZE}x{SIZE}", "xc:",
+            "-seed", str(SEED + 4), "+noise", "Random",
+            "-colorspace", "Gray",
+            "-virtual-pixel", "tile", "-blur", "0x44",
+            "-auto-level",
+            ")",
+            "-define", "compose:args=86,14",
+            "-compose", "blend", "-composite",
+            # stretch to full contrast, then a GENTLE sigmoidal firm-up of the mid-tones. Kept light
+            # (2.5 about the mid-point) so relief reads without clipping the finite-difference
+            # gradients the shader's normal reconstruction depends on.
             "-normalize",
+            "-sigmoidal-contrast", "2.5,50%",
             "-depth", "8",
             str(png_path),
         ],

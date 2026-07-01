@@ -139,7 +139,25 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
         let tone = 1.0 + (h_meso - 0.5) * 0.20 + (h_fine - 0.5) * 0.14 * relief;
         albedo = albedo * clamp(tone, 0.78, 1.22);
 
+        // Broad terrain ZONES: an ultra-low-frequency field tints the floor between two earth moods
+        // (a drier warm rise vs a cooler damp flat) for a sense of *place* rather than one uniform
+        // dirt. Warm/neutral only — never blue — and tiny deltas, so it stays low-saturation and
+        // reads as terrain, not faction intel (invariant #6). Pure function of world XY.
+        let zone_f = sin(p.x * 0.021 - 0.5) + cos(p.y * 0.017 + 0.8);
+        let zone = smoothstep(-1.4, 1.4, zone_f);
+        albedo = albedo * mix(vec3<f32>(0.97, 0.98, 1.0), vec3<f32>(1.05, 1.01, 0.95), zone);
+
         var ground = albedo * shade;
+
+        // Damp SHEEN: a soft warm specular glint off the wet lows (low macro height) from the moon
+        // KEY, so the earth reads as a real material — waterlogged hollows catch the light while the
+        // dry rises stay matte. Warm-white (never blue) and faded by distance/relief so it can only
+        // ever whisper and can't read as intel (invariant #6). Blinn half-vector between the key and
+        // the view ray (surface→eye = −dir).
+        let half_v = normalize(key_dir - dir);
+        let spec = pow(max(dot(n, half_v), 0.0), 24.0);
+        let wet = (1.0 - macro_t) * relief;
+        ground += vec3<f32>(0.10, 0.10, 0.095) * spec * wet * 0.5;
 
         // DEMOTED grid: a faint lattice on a ~2-unit cell, kept only as a heading/parallax cue. It
         // is a low, cool ADDITIVE lift (no longer a bright line colour) and fades out with distance,

@@ -121,6 +121,20 @@ fn fs_ground(in: GroundOut) -> @location(0) vec4<f32> {
     // Fine grain so the surface isn't dead-flat up close — well below grid/unit contrast.
     let grain = sin(p.x * 0.33 + p.y * 0.21) * cos(p.y * 0.29 - p.x * 0.17);
 
+    // HILLSHADE: finite-difference the elevation field into a surface normal and light it from a
+    // fixed cartographic NW key, so the relief reads as lit 3-D terrain (the contours then hug the
+    // shading, exactly like a real topographic map) rather than flat tinting. Low contrast on
+    // purpose — cosmetic map relief that recedes under the units, never intel: it is a pure function
+    // of world position (invariant #6), identical every frame. Mirrored + range-tested on the CPU by
+    // `terrain::hillshade` (the `world::moon_glow` reference-impl pattern); keep the constants in
+    // lockstep.
+    let e = 3.0;
+    let hx = elevation(p + vec2<f32>(e, 0.0)) - elevation(p - vec2<f32>(e, 0.0));
+    let hy = elevation(p + vec2<f32>(0.0, e)) - elevation(p - vec2<f32>(0.0, e));
+    let hn = normalize(vec3<f32>(-hx * 6.0, -hy * 6.0, 1.0));
+    let hkey = normalize(vec3<f32>(-0.55, 0.62, 0.56));
+    let hill = mix(0.90, 1.14, clamp(dot(hn, hkey) * 0.5 + 0.5, 0.0, 1.0));
+
     // (3) CONTOURS: faint minor lines plus heavier index lines (~every 3rd step), topo-map style.
     let minor_c = contour(elev, 7.0, 1.3);
     let index_c = contour(elev, 7.0 / 3.0, 1.4);
@@ -135,8 +149,9 @@ fn fs_ground(in: GroundOut) -> @location(0) vec4<f32> {
     let base = vec3<f32>(0.030, 0.041, 0.061);
     // Zone tint: high-ground sector a touch brighter & cooler, basin a touch darker. Tiny deltas.
     let zone_tint = mix(vec3<f32>(-0.005, -0.005, -0.006), vec3<f32>(0.007, 0.009, 0.013), zone);
-    // Gentle elevation shading (rises lighter, hollows darker) + the fine grain.
-    var col = (base + zone_tint) * (1.0 + elev * 0.11 + grain * 0.045);
+    // Gentle elevation tinting (rises lighter, hollows darker) + the fine grain, then the hillshade
+    // relief on top. `elev` tint is eased back (the hillshade now carries the sense of relief).
+    var col = (base + zone_tint) * (1.0 + elev * 0.08 + grain * 0.045) * hill;
     // Contour brightening: cool, faint for minor, a touch stronger for the index lines.
     col = col + minor_c * vec3<f32>(0.016, 0.021, 0.030)
         + index_c * vec3<f32>(0.022, 0.028, 0.040);

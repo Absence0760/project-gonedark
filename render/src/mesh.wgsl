@@ -3,8 +3,9 @@
 // One cooked `.mesh` (flat-shaded triangle soup, position + face normal) drawn per instance. The
 // vertex shader transforms the mesh by the per-instance model matrix and the global camera matrix
 // (`view_proj` for world-space unit tokens, the projection alone for the view-space weapon
-// viewmodel). The fragment shader lights it with a key/fill/hemispheric-ambient rig, adds a faint
-// procedural material mottle + grime so the flat facets read as worn surfaces rather than paint,
+// viewmodel). The fragment shader lights it with a key/fill/hemispheric-ambient rig plus a tight
+// specular glint (a machined-metal catch-light on sloped facets), adds a faint procedural material
+// mottle + grime so the flat facets read as worn surfaces rather than paint,
 // gives the silhouette a team/identity-tinted rim so friend/enemy/avatar separate against the dark
 // ground, and adds the per-instance emissive/flash term.
 //
@@ -135,6 +136,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     let lit = ambient * ao + key_col * (key * 0.74) + fill_col * (fill * 0.22);
 
+    // Specular glint: a tight Blinn highlight off the key light, assuming a high 3/4 command
+    // camera (view ≈ up-and-slightly-toward-key). Gives sloped armour / weapon facets a hard
+    // catch-light that sells them as machined metal rather than matte paint; on cloth greybox it
+    // decays to a faint sheen. Gated by key visibility so the shaded side never glints, and kept
+    // low-intensity so it sharpens material read without flood-lighting the form (#6 stays fair).
+    let view_dir = normalize(vec3<f32>(0.16, -0.22, 0.96));
+    let half_v = normalize(-key_l + view_dir);
+    let spec = pow(max(dot(n, half_v), 0.0), 26.0) * key;
+    let specular = key_col * (spec * 0.28);
+
     // Identity-tinted rim: a thin backlight on facets turning away from the key. Picks up the
     // instance/team colour so silhouettes read friend/enemy/avatar against the dark ground. Edge-only
     // and low-intensity — it sharpens read without flood-lighting the unit (#6 stays fair).
@@ -146,5 +157,5 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Warm muzzle-flash/emissive add, driven by the per-instance alpha (0 for ordinary tokens).
     let flash = vec3<f32>(1.0, 0.7, 0.35) * in.color.a;
 
-    return vec4<f32>(tint * lit + rim + flash, 1.0);
+    return vec4<f32>(tint * lit + specular + rim + flash, 1.0);
 }

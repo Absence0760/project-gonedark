@@ -10,10 +10,10 @@
       "size": 256,
       "channels": 1,
       "format": "R8",
-      "png_bytes": 43658,
-      "png_sha256": "026dbffdc1bb258d6fcbb3077decb8754e066627429c15b632cfc644aba90f3d",
+      "png_bytes": 26338,
+      "png_sha256": "836d88d64e9817c88a5bd917a3c61cdc3d432db9068dbde0d37ba8c6dbc6bd0f",
       "gray_bytes": 65536,
-      "gray_sha256": "e4a9176f82a783b5337a9f4ecee0c7e893f234bcaebc8e62c295611830fa141f"
+      "gray_sha256": "d573bf73c6240bf57170d3c497ccc6ba8b3a31eccc8ea98df1413f0e5b0e0cc0"
     }
   ]
 }
