@@ -1,0 +1,22 @@
+{
+  "name": "pointe-du-hoc",
+  "title": "Pointe du Hoc, Normandy",
+  "map_id": 1,
+  "mode": "historical",
+  "fidelity": "faithful",
+  "era": "1944-06",
+  "bbox": [-1.0470, 49.3945, -1.0400, 49.3995],
+  "notes": "WWII US Army Ranger cliff assault. A clifftop battery: casemates and craters on an open headland above a sheer sea cliff. Chosen because its elevation (the cliff) is the whole point of the battle — it is the worked example for why real terrain wants a sim-side height layer (see docs open question Q-terrain-elevation).",
+  "sources": {
+    "elevation": {
+      "provider": "Copernicus DEM GLO-30",
+      "license": "Copernicus (free, attribution)",
+      "url": "https://portal.opentopography.org/raster?opentopoID=OTSDEM.032021.4326.3"
+    },
+    "features": {
+      "provider": "OpenStreetMap via Overpass API",
+      "license": "ODbL-1.0",
+      "url": "https://overpass-api.de/api/interpreter"
+    }
+  }
+}

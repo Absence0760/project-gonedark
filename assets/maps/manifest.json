@@ -1,0 +1,63 @@
+{
+  "note": "Real-world battlefield maps, baked from GIS data. Regenerate with `python3 tools/maps/ingest.py <name> && python3 tools/maps/bake.py <name>`. The cover grid feeds core::terrain (invariant #1: integer, checksum-stable). Elevation is render-only pending the sim-elevation decision.",
+  "grid": 128,
+  "cell_world_units": 1,
+  "maps": [
+    {
+      "name": "pointe-du-hoc",
+      "title": "Pointe du Hoc, Normandy",
+      "map_id": 1,
+      "mode": "historical",
+      "fidelity": "faithful",
+      "era": "1944-06",
+      "bbox": [
+        -1.047,
+        49.3945,
+        -1.04,
+        49.3995
+      ],
+      "grid": 128,
+      "cell_world_units": 1,
+      "synthetic_source": true,
+      "sources": {
+        "elevation": {
+          "provider": "Copernicus DEM GLO-30",
+          "license": "Copernicus (free, attribution)",
+          "url": "https://portal.opentopography.org/raster?opentopoID=OTSDEM.032021.4326.3"
+        },
+        "features": {
+          "provider": "OpenStreetMap via Overpass API",
+          "license": "ODbL-1.0",
+          "url": "https://overpass-api.de/api/interpreter"
+        }
+      },
+      "features_file": "pointe-du-hoc.features.json",
+      "features_sha256": "c2ddd98389db9c5c99a8c72e56ac07617d7a923711e7a0116be9c5ffd2c66561",
+      "covergrid_file": "pointe-du-hoc.covergrid",
+      "covergrid_sha256": "6d18cdb7ddeff632aed05510a4d8fb39dec1ef350761ba42a6fecccdf27a05a3",
+      "rust_include": "pointe-du-hoc.rs.inc",
+      "rust_sha256": "d008faae88707bf15b0f75ac49cf31cd003710444db960c71e34ecc4c9304646",
+      "cover_cells": {
+        "none": 12465,
+        "light": 634,
+        "heavy": 3285
+      },
+      "balance": {
+        "cover_density": 0.2392,
+        "quadrant_density": {
+          "sw": 0.4026,
+          "se": 0.4055,
+          "nw": 0.0813,
+          "ne": 0.0674
+        },
+        "lr_asymmetry": 0.0055,
+        "tb_asymmetry": 0.3297,
+        "note": "asymmetry near 0 = balanced start positions; large values flag a hand-tune target"
+      },
+      "elevation": "render-only (height.f32); sim has no elevation layer \u2014 see docs open question",
+      "water_handling": "mapped to Cover::Heavy; true impassability pending flow-field decision",
+      "license": "features: see sources (OSM = ODbL-1.0); baked grid: derived data",
+      "generator": "tools/maps/bake.py"
+    }
+  ]
+}
