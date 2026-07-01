@@ -74,43 +74,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 73932,
-      "sha256": "68b764af0756981f0c805eb13e2acabe924443ff786fd54aa6560368ec598cc1",
-      "cooked_bytes": 140988,
-      "cooked_sha256": "588614e496900e23c323cbaef31e305b04195b3087c412ae6db89f02f5c30d29",
+      "bytes": 91864,
+      "sha256": "2b095f7384359f0295a608cdff74192e58c002e8f481a160f35356d7ebb33bcf",
+      "cooked_bytes": 176364,
+      "cooked_sha256": "c3b44c60bccdbe37e1a170abc24d185e3db292973716d7078b789429e9ef6f45",
       "lods": [
         {
           "level": 0,
           "file": "units/tank.glb",
           "cooked": "units/tank.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 1068,
-          "bytes": 73932,
-          "sha256": "68b764af0756981f0c805eb13e2acabe924443ff786fd54aa6560368ec598cc1",
-          "cooked_bytes": 140988,
-          "cooked_sha256": "588614e496900e23c323cbaef31e305b04195b3087c412ae6db89f02f5c30d29"
+          "tri_count": 1336,
+          "bytes": 91864,
+          "sha256": "2b095f7384359f0295a608cdff74192e58c002e8f481a160f35356d7ebb33bcf",
+          "cooked_bytes": 176364,
+          "cooked_sha256": "c3b44c60bccdbe37e1a170abc24d185e3db292973716d7078b789429e9ef6f45"
         },
         {
           "level": 1,
           "file": "units/tank.lod1.glb",
           "cooked": "units/tank.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 500,
-          "bytes": 10484,
-          "sha256": "c61abc305a164b6a1070d39fd80ba280e1cf7399757e232256196b559e545a26",
-          "cooked_bytes": 66012,
-          "cooked_sha256": "938d8ebb2d83dd002bf341c07dd6518994ec44ba1f72a70565f1d8ea63ad8b8b"
+          "tri_count": 646,
+          "bytes": 12860,
+          "sha256": "c11943d01f9309ae61287f72bce04bfd25e0aca290c63bb71ac158d2ebb2b3c0",
+          "cooked_bytes": 85284,
+          "cooked_sha256": "5e15b6041b24cca0fb3a9f297f12839fd794d95bece8ad2909be7b9a403f3387"
         },
         {
           "level": 2,
           "file": "units/tank.lod2.glb",
           "cooked": "units/tank.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 215,
-          "bytes": 5420,
-          "sha256": "cf150ef5028a0552df0670b880076953e2b35e4f10cd61402a4c460aee6ccddf",
-          "cooked_bytes": 28392,
-          "cooked_sha256": "441042af7063bc3daf3d5e3c47e5c6304b08f2423e1b79e022fec69719a76db5"
+          "tri_count": 309,
+          "bytes": 6592,
+          "sha256": "9b30c6801cd39f8255db11b1a5e9c31ac8cd1d59dbda89549d173d939360ae4a",
+          "cooked_bytes": 40800,
+          "cooked_sha256": "6c64e09df26269688eb404c0cee034186d9ac6a47d84adde741f6fb2f504ba24"
         }
       ]
     },
@@ -130,43 +130,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 43448,
-      "sha256": "6a8850440010f30422692e1db64f4ee67211476678557ce733df1de8ae2312cf",
-      "cooked_bytes": 82380,
-      "cooked_sha256": "3328764376259811ddcc82dd905464b4e465647b439926cbe8e197c01705c365",
+      "bytes": 50856,
+      "sha256": "f6df1d95e5769eea8b1db6319f9d27775e58d03eff96e742156a38058253c867",
+      "cooked_bytes": 96108,
+      "cooked_sha256": "1b184e73ff70bd487e9d6129eb0480dafd9070f9095a806f0bee953f739acedc",
       "lods": [
         {
           "level": 0,
           "file": "units/tank_turret.glb",
           "cooked": "units/tank_turret.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 624,
-          "bytes": 43448,
-          "sha256": "6a8850440010f30422692e1db64f4ee67211476678557ce733df1de8ae2312cf",
-          "cooked_bytes": 82380,
-          "cooked_sha256": "3328764376259811ddcc82dd905464b4e465647b439926cbe8e197c01705c365"
+          "tri_count": 728,
+          "bytes": 50856,
+          "sha256": "f6df1d95e5769eea8b1db6319f9d27775e58d03eff96e742156a38058253c867",
+          "cooked_bytes": 96108,
+          "cooked_sha256": "1b184e73ff70bd487e9d6129eb0480dafd9070f9095a806f0bee953f739acedc"
         },
         {
           "level": 1,
           "file": "units/tank_turret.lod1.glb",
           "cooked": "units/tank_turret.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 287,
-          "bytes": 6352,
-          "sha256": "8c05d3f1a5fbf2bfa75e270e714d8936d1e8d8b77deb4d40703800011f4103ef",
-          "cooked_bytes": 37896,
-          "cooked_sha256": "e207dcd0f0b3a6836a31a5a4d0bd89c2c31de121c9fba7ea74fc238a670fa6a8"
+          "tri_count": 340,
+          "bytes": 7312,
+          "sha256": "e3d1f3aaddd1748d87f6b9462431361fa2f7a57b47ab4e66c0fe5807d1fed90e",
+          "cooked_bytes": 44892,
+          "cooked_sha256": "3553c5b6b7e467efe3c63053ca821543dc6dc17d47164480e2dfefde6612a679"
         },
         {
           "level": 2,
           "file": "units/tank_turret.lod2.glb",
           "cooked": "units/tank_turret.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 128,
-          "bytes": 3488,
-          "sha256": "90703b3404f57bf7b08f58a6016f33469d2c313441da710963fffa7bbc2f3000",
-          "cooked_bytes": 16908,
-          "cooked_sha256": "100b3ceca8cf53a07d9d671f9f7990a00c6f34b0757c30472358c3a973829cfb"
+          "tri_count": 168,
+          "bytes": 4212,
+          "sha256": "d6b344167de90e8bd2d4632313fe6f15c46f43bb6c6b576a4870eed3c66f172e",
+          "cooked_bytes": 22188,
+          "cooked_sha256": "bfe536351068c52651b21eace433ad238452aa1bd05b99cd328358eb1134f2ee"
         }
       ]
     },
@@ -746,43 +746,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 80492,
-      "sha256": "8c6de3a675055ef40351a24911f02df9986f04202a12ff808d0daccae08d8a83",
-      "cooked_bytes": 155244,
-      "cooked_sha256": "7890063780a66368d21b2ceaa11ea19ca88fc14f80e4e1e66a88d96d7afcd9ad",
+      "bytes": 102600,
+      "sha256": "537cde708ef7b71ecb35c8aa5fee555cc742f2852b821b52bb46af312b9c3d61",
+      "cooked_bytes": 198012,
+      "cooked_sha256": "79e8af0c945635ddc0807ab9852fe76bf7bac46f4d8542452ef71eb962adcc4d",
       "lods": [
         {
           "level": 0,
           "file": "units/tank_us.glb",
           "cooked": "units/tank_us.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 1176,
-          "bytes": 80492,
-          "sha256": "8c6de3a675055ef40351a24911f02df9986f04202a12ff808d0daccae08d8a83",
-          "cooked_bytes": 155244,
-          "cooked_sha256": "7890063780a66368d21b2ceaa11ea19ca88fc14f80e4e1e66a88d96d7afcd9ad"
+          "tri_count": 1500,
+          "bytes": 102600,
+          "sha256": "537cde708ef7b71ecb35c8aa5fee555cc742f2852b821b52bb46af312b9c3d61",
+          "cooked_bytes": 198012,
+          "cooked_sha256": "79e8af0c945635ddc0807ab9852fe76bf7bac46f4d8542452ef71eb962adcc4d"
         },
         {
           "level": 1,
           "file": "units/tank_us.lod1.glb",
           "cooked": "units/tank_us.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 516,
-          "bytes": 11120,
-          "sha256": "7bb7cad4b7f6c17413bb919d21e1fa145aa15195166b450d484e5d45c3864e92",
-          "cooked_bytes": 68124,
-          "cooked_sha256": "e2f3f746971acb73f58da91ba987fd86e5f617789b75ca1bf92f750db8a5c6a5"
+          "tri_count": 668,
+          "bytes": 14076,
+          "sha256": "4da78bc83db983d576d2f2fe89b56f99ee302e2eead840c828d8b8bb0b5ab7ab",
+          "cooked_bytes": 88188,
+          "cooked_sha256": "143e78f3c3ca40b972b9659e5b07fc377bb8d4e798b9d455fc2558f58cc941b4"
         },
         {
           "level": 2,
           "file": "units/tank_us.lod2.glb",
           "cooked": "units/tank_us.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 172,
-          "bytes": 5080,
-          "sha256": "585f43d37e3f74acafc510de7fe529800e60425d834b44a01ae5abb592458097",
-          "cooked_bytes": 22716,
-          "cooked_sha256": "21e8b00fc67147f1ed9583e3b0890ca46195a26122da02135f1ad7439235e35b"
+          "tri_count": 303,
+          "bytes": 6776,
+          "sha256": "49b124ffbc6ab822a3712bd877d87e617daae41ec2e137da476abb9ac0633bcd",
+          "cooked_bytes": 40008,
+          "cooked_sha256": "77ce5f3a9cea3cbac75863094a3b6c7b9e454b4cea229d1106b5fdbac232d9ad"
         }
       ]
     },
@@ -858,43 +858,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 73936,
-      "sha256": "c04ccdfa07199598f63b65fd976970e6c2d6c7440ceadcb368516f049cd167ac",
-      "cooked_bytes": 140988,
-      "cooked_sha256": "a55dee7cf38494154e5f7902147a71b8e7802d08c1b3174950b322527b35f79a",
+      "bytes": 91024,
+      "sha256": "ed7c4086818596c9ed3797e0c8db3a3fbe65c251033ea2da56ac96ed6ea1db3c",
+      "cooked_bytes": 174780,
+      "cooked_sha256": "19de3958fd02cbb8e3f5a621bc44b4583a2d22fedc387987f8ab875875650b3a",
       "lods": [
         {
           "level": 0,
           "file": "units/tank_fr.glb",
           "cooked": "units/tank_fr.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 1068,
-          "bytes": 73936,
-          "sha256": "c04ccdfa07199598f63b65fd976970e6c2d6c7440ceadcb368516f049cd167ac",
-          "cooked_bytes": 140988,
-          "cooked_sha256": "a55dee7cf38494154e5f7902147a71b8e7802d08c1b3174950b322527b35f79a"
+          "tri_count": 1324,
+          "bytes": 91024,
+          "sha256": "ed7c4086818596c9ed3797e0c8db3a3fbe65c251033ea2da56ac96ed6ea1db3c",
+          "cooked_bytes": 174780,
+          "cooked_sha256": "19de3958fd02cbb8e3f5a621bc44b4583a2d22fedc387987f8ab875875650b3a"
         },
         {
           "level": 1,
           "file": "units/tank_fr.lod1.glb",
           "cooked": "units/tank_fr.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 498,
-          "bytes": 10548,
-          "sha256": "e506e7a2010256dd782860d79ce0d4e38a7020847d789f62416e17ab188ab013",
-          "cooked_bytes": 65748,
-          "cooked_sha256": "d7a1b74e4c5ca7bc018aad8d9a5f546da7bc117db2c7fb6ef1c0fd4b111c1563"
+          "tri_count": 632,
+          "bytes": 13320,
+          "sha256": "9294fdbbdfa10293fd4fdf6045d1be5f250252f7b325b5dd16ac9f1bc7a7f9f6",
+          "cooked_bytes": 83436,
+          "cooked_sha256": "de9b3abab5a75327893a1e0e837bdd268acd550106dda9aaf6e176ef5d64c971"
         },
         {
           "level": 2,
           "file": "units/tank_fr.lod2.glb",
           "cooked": "units/tank_fr.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 190,
-          "bytes": 5072,
-          "sha256": "b97d4033d9390c88dd1e0a9dff2cbb76ea72f2763f9dcc97fc77f825cf29a1f5",
-          "cooked_bytes": 25092,
-          "cooked_sha256": "8a7b71309ce0e8e1e3677bf5688417b3e836dc9f10a8d1b16d57425a4fc68f6d"
+          "tri_count": 242,
+          "bytes": 5324,
+          "sha256": "9e20dc566980908424faa3a6471552583f8722cdbc5f4f6003a7c459b21773dc",
+          "cooked_bytes": 31956,
+          "cooked_sha256": "2ed4e7780f414481ccf3aeff766909a469658ecd838e9cc13569bd2459a742fd"
         }
       ]
     },

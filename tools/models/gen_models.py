@@ -601,30 +601,63 @@ def build_trooper():
     return weld("trooper", parts, bevel=0.0)
 
 
+def running_gear(track_y, wheel_z, wheels, track_dims, track_z, fender_dims, fender_z,
+                 wheel_depth=0.14):
+    """One side's track run + a distinct road-wheel line, then mirrored to the other side. The WS-F
+    tier-2 "distinct road-wheel read" lever: the road wheels are cylinders whose OUTER disc face sits
+    proud of the track slab's outer face (not buried inside it, the old failure that made the running
+    gear invisible), so each side reads as a row of circles. `wheels` is a list of (x, radius) — a
+    larger idler/sprocket at each end reads the gear front-to-back. verts=10 keeps the facet chunky
+    without tripping the 40° chamfer limit (at 8 the 45° inter-facet angle bevels every rim edge)."""
+    parts = []
+    for side in (1.0, -1.0):
+        y = side * track_y
+        parts.append(box(track_dims, (0, y, track_z)))                     # track run (shoe belt)
+        parts.append(box(fender_dims, (0, y, fender_z)))                   # track guard / fender
+        outer = y + side * (track_dims[1] * 0.5 - wheel_depth * 0.35)      # disc proud of the track face
+        for x, r in wheels:
+            parts.append(cyl(r, wheel_depth, (x, outer, wheel_z),
+                             rot=(math.radians(90), 0, 0), verts=10))
+    return parts
+
+
 def build_tank():
     # The tank HULL (chassis + tracks) only — the turret is a SEPARATE model
     # (`build_tank_turret`) so the renderer can slew it independently of the hull (tank
     # embodiment P7, D55). Both keep the dark-green armour tint. The turret-ring pivot sits at
     # the hull's local origin (x=0, y=0), so a turret drawn at the same world (x, y) and lifted
     # to z≈hull-top rotates about that ring exactly.
+    #
+    # WS-F tier-2 lift (visual-design-plan §WS-F): the old hull read "lumpy road gear, melty slopes".
+    # Fixes — (1) a BOOLEAN glacis: the sloped front is milled straight into the upper hull block as
+    # one crisp integral plane instead of a separate rounded plate floating off the nose; (2) a
+    # BOOLEAN sponson undercut so the upper hull visibly overhangs the tracks (a real shadow line, not
+    # a melty blob); (3) a distinct road-wheel read (`running_gear`) with the wheels proud of the track
+    # face; (4) a tight bevel (0.018, was 0.05) so the armour plates stay crisp — booleans + facets
+    # carry the detail, no soap-bar over-rounding.
     mat = make_material("tank", rgba("tank"))  # dark green
+    lower = box((2.9, 1.42, 0.44), (0, 0, 0.42))               # lower hull tub (between the tracks)
+    upper = box((2.95, 1.9, 0.42), (0, 0, 0.78))               # upper hull / sponson (overhangs tracks)
+    # Glacis: slice the top-front wedge off the upper hull along a ~34° plane → one crisp sloped nose.
+    # The cutter is a large half-space (its underside IS the glacis plane, its bulk sits up-and-forward
+    # of the hull) so only that one face touches the block — a smaller box let a stray edge clip the
+    # top deck.
+    boolean_cut(upper, [box((5.0, 3.0, 4.0), (2.59, 0, 2.23), rot=(0, math.radians(34), 0))])
+    # Sponson undercut: notch the underside of each overhang so the hull reads as sitting proud of the
+    # tracks with a defined shadow line (not a slab that melts into the running gear).
+    boolean_cut(upper, [box((2.6, 0.34, 0.20), (0, 0.86, 0.60)),
+                        box((2.6, 0.34, 0.20), (0, -0.86, 0.60))])
     parts = [
-        box((3.0, 1.6, 0.55), (0, 0, 0.62)),                   # upper hull
-        box((0.9, 1.6, 0.34), (1.35, 0, 0.52), rot=(0, math.radians(22), 0)),  # sloped front glacis
-        box((0.55, 1.6, 0.38), (-1.45, 0, 0.60), rot=(0, math.radians(-18), 0)),  # rear hull plate (sloped)
-        box((3.2, 0.45, 0.50), (0, 0.85, 0.35)),               # track R
-        box((3.2, 0.45, 0.50), (0, -0.85, 0.35)),              # track L
-        box((3.3, 0.50, 0.12), (0, 0.85, 0.62)),               # track guard / fender R
-        box((3.3, 0.50, 0.12), (0, -0.85, 0.62)),              # track guard / fender L
+        lower, upper,
+        box((0.5, 1.42, 0.34), (-1.42, 0, 0.60), rot=(0, math.radians(-18), 0)),  # rear hull plate (sloped)
     ]
-    # Road wheels: faceted drums proud of each track — break the slab side into a running-gear read.
-    # Idler/sprocket at each end are slightly larger so the running gear reads front-to-back. Keep
-    # verts=10 — at 8 the 45° inter-facet angle trips the chamfer's 40° limit and bevels every edge.
-    for side in (0.85, -0.85):
-        for x, r in ((-1.2, 0.26), (-0.6, 0.21), (0.0, 0.21), (0.6, 0.21), (1.2, 0.26)):
-            parts.append(cyl(r, 0.12, (x, side, 0.26),
-                             rot=(math.radians(90), 0, 0), verts=10))
-    return weld("tank", parts, mat, bevel=0.05)
+    parts += running_gear(
+        track_y=0.86, wheel_z=0.30,
+        wheels=((1.30, 0.28), (0.70, 0.22), (0.15, 0.22), (-0.40, 0.22), (-0.95, 0.22), (-1.42, 0.28)),
+        track_dims=(3.15, 0.42, 0.42), track_z=0.30,
+        fender_dims=(3.25, 0.48, 0.10), fender_z=0.60,
+    )
+    return weld("tank", parts, mat, bevel=0.018)
 
 
 def build_tank_turret():
@@ -634,17 +667,23 @@ def build_tank_turret():
     # height (z≈1.05, sitting on the hull top at z≈0.95). Drawing it at the hull's world (x, y) with
     # yaw = turret_yaw therefore slews it about the ring. Barrel points +X (turret_yaw 0 == hull 0).
     mat = make_material("tank_turret", rgba("tank_turret"))  # dark green (matches the hull)
+    # WS-F tier-2: a crisper turret to match the tightened hull. A boolean sloped face gives a real
+    # cast-mantlet cheek instead of a melty box, and the bevel drops 0.04→0.022 so the edges stay sharp.
+    turret = box((1.5, 1.2, 0.50), (-0.2, 0, 1.05))            # turret box (centred behind the ring)
+    boolean_cut(turret, [box((1.2, 1.6, 0.9), (0.95, 0, 1.55), rot=(0, math.radians(38), 0))])  # sloped front cheek
+    mantlet = box((0.5, 1.0, 0.40), (0.5, 0, 1.02))            # gun mantlet block
+    boolean_cut(mantlet, [box((0.6, 0.34, 0.16), (0.55, 0, 1.20)),        # recessed sight ports flanking the gun
+                          box((0.6, 0.34, 0.16), (0.55, 0, 0.86))])
     parts = [
         cyl(0.58, 0.12, (0, 0, 0.86), verts=12),               # ring base (drops into the hull socket)
-        box((1.4, 1.2, 0.50), (-0.2, 0, 1.05)),                # turret box (centred behind the ring)
-        box((0.55, 1.0, 0.34), (0.45, 0, 1.02), rot=(0, math.radians(-14), 0)),  # sloped gun mantlet
-        box((0.9, 1.3, 0.22), (-0.45, 0, 0.98)),               # rear stowage bustle (overhangs)
+        turret, mantlet,
+        box((0.9, 1.3, 0.22), (-0.55, 0, 0.98)),               # rear stowage bustle (overhangs)
         cyl(0.22, 0.16, (-0.45, 0.0, 1.38), verts=12),         # commander's cupola
         cyl(0.10, 0.22, (-0.10, 0.40, 1.34), verts=8),         # coaxial / loader's MG mount
-        cyl(0.10, 1.60, (1.2, 0, 1.05), rot=(0, math.radians(90), 0)),  # barrel, forward along +X
-        cyl(0.13, 0.20, (0.55, 0, 1.05), rot=(0, math.radians(90), 0), verts=12),  # bore-evacuator collar
+        cyl(0.09, 1.65, (1.25, 0, 1.05), rot=(0, math.radians(90), 0)),  # barrel, forward along +X
+        cyl(0.13, 0.20, (0.60, 0, 1.05), rot=(0, math.radians(90), 0), verts=12),  # bore-evacuator collar
     ]
-    return weld("tank_turret", parts, mat, bevel=0.04)
+    return weld("tank_turret", parts, mat, bevel=0.022)
 
 
 def build_tracer():
@@ -897,23 +936,29 @@ def build_trooper_fr():
 
 
 def build_tank_us():
-    # M1 Abrams HULL: long, low, flat — a broad chassis with a flat front glacis. Turret is the
-    # separate `tank_us_turret` model (slews independently, P7). Pivot at local origin like `tank`.
+    # M1 Abrams HULL: long, low, flat, wide — the WS-F tier-2 lever applied with the Abrams silhouette
+    # tell (a broad chassis and a famously LONG SHALLOW glacis, ~20°). Boolean glacis milled into the
+    # upper hull, a boolean sponson undercut, a distinct road-wheel run (7 wheels + larger idler/
+    # sprocket), and a tight 0.018 bevel — same crisp language as the Neutral hull, kept distinctly
+    # Abrams. Turret is the separate `tank_turret_us` model (slews independently, P7). Pivot at origin.
     mat = make_material("tank_us", rgba("tank_us"))
+    lower = box((3.5, 1.6, 0.42), (0, 0, 0.40))                # low broad tub
+    upper = box((3.55, 2.15, 0.36), (0, 0, 0.72))              # low wide upper hull (overhangs tracks)
+    boolean_cut(upper, [box((6.0, 3.2, 4.0), (2.46, 0, 2.42), rot=(0, math.radians(20), 0))])  # long shallow glacis
+    boolean_cut(upper, [box((3.2, 0.36, 0.18), (0, 0.99, 0.56)),
+                        box((3.2, 0.36, 0.18), (0, -0.99, 0.56))])  # sponson undercut
     parts = [
-        box((3.6, 1.9, 0.55), (0, 0, 0.55)),                   # long flat hull
-        box((1.0, 1.9, 0.30), (1.55, 0, 0.45), rot=(0, math.radians(18), 0)),  # sloped front glacis
-        box((3.7, 0.50, 0.55), (0, 1.00, 0.35)),               # track R (long)
-        box((3.7, 0.50, 0.55), (0, -1.00, 0.35)),              # track L
-        box((3.8, 0.56, 0.12), (0, 1.00, 0.62)),               # track guard / fender R
-        box((3.8, 0.56, 0.12), (0, -1.00, 0.62)),              # track guard / fender L
+        lower, upper,
+        box((0.42, 1.6, 0.30), (-1.72, 0, 0.56), rot=(0, math.radians(-16), 0)),  # rear plate
     ]
-    for side in (1.00, -1.00):
-        for x, r in ((-1.55, 0.27), (-0.93, 0.23), (-0.31, 0.23),
-                     (0.31, 0.23), (0.93, 0.23), (1.55, 0.27)):
-            parts.append(cyl(r, 0.12, (x, side, 0.26),
-                             rot=(math.radians(90), 0, 0), verts=10))  # road wheel
-    return weld("tank_us", parts, mat, bevel=0.05)
+    parts += running_gear(
+        track_y=1.00, wheel_z=0.30,
+        wheels=((1.62, 0.27), (1.02, 0.23), (0.42, 0.23), (-0.18, 0.23),
+                (-0.78, 0.23), (-1.38, 0.23), (-1.72, 0.27)),
+        track_dims=(3.7, 0.46, 0.42), track_z=0.30,
+        fender_dims=(3.8, 0.52, 0.10), fender_z=0.60,
+    )
+    return weld("tank_us", parts, mat, bevel=0.018)
 
 
 def build_tank_turret_us():
@@ -934,22 +979,26 @@ def build_tank_turret_us():
 
 
 def build_tank_fr():
-    # Leclerc HULL: more compact than the Abrams, cleaner sloped front. Separate turret model.
+    # Leclerc HULL: compact and taller than the Abrams, with a distinctly STEEPER glacis (~40°) — the
+    # WS-F tier-2 lever with the Leclerc silhouette tell. Boolean glacis + sponson undercut, a distinct
+    # 6-wheel run, a sloped rear plate, and the tight 0.018 bevel. Separate turret model (P7).
     mat = make_material("tank_fr", rgba("tank_fr"))
+    lower = box((2.95, 1.5, 0.46), (0, 0, 0.44))               # compact tub
+    upper = box((3.0, 1.95, 0.40), (0, 0, 0.80))               # taller upper hull (overhangs tracks)
+    boolean_cut(upper, [box((5.0, 3.0, 4.0), (2.79, 0, 2.13), rot=(0, math.radians(40), 0))])  # steep glacis
+    boolean_cut(upper, [box((2.7, 0.34, 0.20), (0, 0.90, 0.62)),
+                        box((2.7, 0.34, 0.20), (0, -0.90, 0.62))])  # sponson undercut
     parts = [
-        box((3.0, 1.7, 0.60), (0, 0, 0.58)),                   # compact hull
-        box((0.9, 1.7, 0.34), (1.35, 0, 0.50), rot=(0, math.radians(24), 0)),  # steeper glacis
-        box((0.5, 1.7, 0.40), (-1.45, 0, 0.58), rot=(0, math.radians(-20), 0)),  # rear hull plate
-        box((3.1, 0.46, 0.58), (0, 0.88, 0.36)),               # track R
-        box((3.1, 0.46, 0.58), (0, -0.88, 0.36)),              # track L
-        box((3.2, 0.52, 0.12), (0, 0.88, 0.64)),               # track guard / fender R
-        box((3.2, 0.52, 0.12), (0, -0.88, 0.64)),              # track guard / fender L
+        lower, upper,
+        box((0.5, 1.5, 0.34), (-1.46, 0, 0.62), rot=(0, math.radians(-20), 0)),  # sloped rear plate
     ]
-    for side in (0.88, -0.88):
-        for x, r in ((-1.1, 0.25), (-0.55, 0.21), (0.0, 0.21), (0.55, 0.21), (1.1, 0.25)):
-            parts.append(cyl(r, 0.12, (x, side, 0.25),
-                             rot=(math.radians(90), 0, 0), verts=10))  # road wheel
-    return weld("tank_fr", parts, mat, bevel=0.05)
+    parts += running_gear(
+        track_y=0.90, wheel_z=0.31,
+        wheels=((1.28, 0.27), (0.70, 0.22), (0.15, 0.22), (-0.40, 0.22), (-0.95, 0.22), (-1.42, 0.27)),
+        track_dims=(3.1, 0.44, 0.44), track_z=0.31,
+        fender_dims=(3.2, 0.50, 0.10), fender_z=0.63,
+    )
+    return weld("tank_fr", parts, mat, bevel=0.018)
 
 
 def build_tank_turret_fr():

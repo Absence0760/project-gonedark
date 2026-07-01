@@ -184,6 +184,14 @@ The remaining environment polish the foundation wave set up but didn't exhaust.
 
 ### WS-F — Mesh fidelity pass *(model-quality lift across the roster)*
 
+> **Status: tiers 1–2 landed.** Tier 1 (hero weapon viewmodels — `weapon_rifle{,_us,_fr}`) shipped
+> the `boolean_cut()`/`picatinny_slots()` levers (milled rails, mag wells, skeletonized stocks). Tier
+> 2 (embodied tanks) then tightened the hulls + neutral turret: bevel `0.05 → 0.018`, a boolean sloped
+> turret cheek, and a shared `running_gear()` helper — `tank`/`tank_us`/`tank_fr`/`tank_turret`
+> (LOD0 ≤ ~1.3k tris, monotone chains, `.mesh` cooks deterministic). **Owed:** tier 3 (structures —
+> `camp_hq`/`turret`/`barricade`), tier 4 (scenery), and the US/FR turret variants (left at the tier-1
+> baseline this pass).
+
 The trooper reskin (`d7cced1`) proved the method: box-stacking hit a hard ceiling on the *human* (a
 golf-ball icosphere head on a slab torso, no readable arms), and the fix was a **technique change** —
 a vertex skeleton through Blender's Skin modifier (`skinned_body`) + a proper local-space helmet cut
