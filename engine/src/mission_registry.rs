@@ -35,7 +35,9 @@ use gonedark_core::campaign::{
 };
 use gonedark_core::ecs::Entity;
 use gonedark_core::gunsmith::Loadout;
-use gonedark_core::mission_tuning::{Briefing, Difficulty, ScenarioModifiers, MISSION_ONE_BRIEFING};
+use gonedark_core::mission_tuning::{
+    Briefing, Difficulty, ScenarioModifiers, MISSION_ONE_BRIEFING, MISSION_TWO_BRIEFING,
+};
 use gonedark_core::sim::Sim;
 
 use crate::objectives::ObjectiveSet;
@@ -45,6 +47,10 @@ use crate::objectives::ObjectiveSet;
 /// one place and both move together. New missions get their own constant here as more
 /// `core::scenario` seeders land.
 pub const MISSION_SEIZE: MissionId = MissionId(1);
+
+/// The shared identity of the WS-A *Hold the Line* mission (Mission 2, a Survive/defense archetype).
+/// Wired to the engine's `seed_hold_mission_scene` seeder + the [`MISSION_TWO_BRIEFING`].
+pub const MISSION_HOLD: MissionId = MissionId(2);
 
 /// Seeds a `Sim` for a mission and hands back the runnable handles, matching the engine's existing
 /// GPU-free scene seeders (e.g. the crate-private `seed_seize_mission_scene`): the embodiable/
@@ -207,23 +213,32 @@ impl MissionRegistry {
     }
 }
 
-/// The shipped host-side mission registry. Today it holds the one runnable campaign mission — the
-/// WS-A *Seize* mission ("10 troops, take the base") — wired to the engine's existing GPU-free
-/// `seed_seize_mission_scene` seeder and the WS-E [`MISSION_ONE_BRIEFING`]. New missions are added
-/// here as more `core::scenario` seeders ship; [`default_campaign`] stays in lock-step with it.
+/// The shipped host-side mission registry. It holds the two runnable campaign missions WS-A has
+/// shipped — the *Seize* assault ("10 troops, take the base", [`MISSION_SEIZE`]) and the *Hold the
+/// Line* defense ([`MISSION_HOLD`]) — each wired to its GPU-free `core::scenario` seeder + WS-E
+/// briefing. New missions are added here as more seeders ship.
+///
+/// **The registry can hold more missions than [`default_campaign`] currently places in its node
+/// graph** ([`MissionRegistry::covers`] only requires that every *campaign node* resolves, not the
+/// converse). *Hold* is registered and directly playable ([`Scene::Mission2`](crate::Scene::Mission2)
+/// / `--scene hold`), but its **campaign node placement** (an unlock edge off *Seize*) is a
+/// deliberate follow-up: adding a second node would need the hand-maintained Android `CampaignModel`
+/// mirror (`compose-shell-parity.md`) to move with it, so the graph stays single-node until that
+/// cross-language step is taken together.
 pub fn default_registry() -> MissionRegistry {
-    MissionRegistry::new(vec![MissionDef::new(
-        MISSION_SEIZE,
-        crate::seed_seize_mission_scene,
-        MISSION_ONE_BRIEFING,
-    )])
+    MissionRegistry::new(vec![
+        MissionDef::new(MISSION_SEIZE, crate::seed_seize_mission_scene, MISSION_ONE_BRIEFING),
+        MissionDef::new(MISSION_HOLD, crate::seed_hold_mission_scene, MISSION_TWO_BRIEFING),
+    ])
 }
 
 /// The shipped Operations-hub campaign graph, wired to [`default_registry`]. Today it is the single
-/// root node — the *Seize* mission — because that is the one runnable scene WS-A has shipped; more
-/// nodes (and their unlock edges) land here as more missions are added to the registry. Every
-/// node's [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`] holds — a
-/// test pins it), so launching any node always resolves to a runnable mission.
+/// root node — the *Seize* mission — because placing a second node requires moving the hand-maintained
+/// Android `CampaignModel` mirror with it (see [`default_registry`] and `compose-shell-parity.md`);
+/// the second mission (*Hold the Line*) is already registered + directly playable
+/// ([`Scene::Mission2`](crate::Scene::Mission2)) and only awaits that cross-language node-placement
+/// step. Every node's [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`]
+/// holds — a test pins it), so launching any node always resolves to a runnable mission.
 pub fn default_campaign() -> Campaign {
     Campaign::new(vec![OperationNode::new(
         NodeId(0),
@@ -253,16 +268,55 @@ mod tests {
     // ---- the shipped registry + campaign ------------------------------------------------------
 
     #[test]
-    fn default_registry_holds_the_seize_mission() {
+    fn default_registry_holds_the_shipped_missions() {
         let reg = default_registry();
-        assert_eq!(reg.len(), 1);
-        let m = reg.get(MISSION_SEIZE).expect("the Seize mission is registered");
-        assert_eq!(m.id, MISSION_SEIZE);
-        // The shipped mission runs at the briefing's Recruit tier with neutral modifiers.
-        assert_eq!(m.briefing.difficulty, CommanderDifficulty::Recruit);
-        assert_eq!(m.modifiers(), ScenarioModifiers::default());
+        assert_eq!(reg.len(), 2, "the Seize assault + the Hold defense");
+
+        let seize = reg.get(MISSION_SEIZE).expect("the Seize mission is registered");
+        assert_eq!(seize.id, MISSION_SEIZE);
+        // Seize is briefed at the Recruit tier with neutral modifiers.
+        assert_eq!(seize.briefing.difficulty, CommanderDifficulty::Recruit);
+        assert_eq!(seize.modifiers(), ScenarioModifiers::default());
+
+        let hold = reg.get(MISSION_HOLD).expect("the Hold mission is registered");
+        assert_eq!(hold.id, MISSION_HOLD);
+        // Hold is briefed a step up (Veteran) with neutral modifiers.
+        assert_eq!(hold.briefing.difficulty, CommanderDifficulty::Veteran);
+        assert_eq!(hold.modifiers(), ScenarioModifiers::default());
+        assert_ne!(seize.briefing.title, hold.briefing.title, "distinct missions");
+
         // An unregistered id resolves to nothing (a content gap, never guessed).
         assert!(reg.get(MissionId(999)).is_none());
+    }
+
+    /// The Hold mission launches into a runnable defense with a live Survive objective and, at the
+    /// neutral `Regular` tier, seeds a `Sim` **byte-identical** to the bare `core::scenario` seed — the
+    /// same zero-checksum-surface guarantee the Seize launch has (invariants #1/#7).
+    #[test]
+    fn hold_launch_at_regular_is_byte_identical_to_the_bare_seed() {
+        use gonedark_core::scenario::seed_hold_mission;
+        let reg = default_registry();
+        let def = reg.get(MISSION_HOLD).unwrap();
+
+        let mut launched_sim = Sim::new(0xD00D);
+        let launched = def.launch(&mut launched_sim, Loadout::STANDARD, CampaignDifficulty::Regular);
+
+        let mut bare_sim = Sim::new(0xD00D);
+        seed_hold_mission(&mut bare_sim);
+        assert_eq!(
+            launched_sim.checksum(),
+            bare_sim.checksum(),
+            "a Regular-tier Hold launch adds no checksum surface over the bare seed",
+        );
+
+        assert!(!launched.objectives.is_empty(), "the Hold mission has a live objective set");
+        assert!(!launched.start_embodied, "a campaign mission boots in the command view");
+        assert_eq!(launched.mission, MISSION_HOLD);
+        assert_eq!(
+            launched_sim.world.faction[launched.player.index as usize],
+            Faction::Player,
+            "the followed player is a defender",
+        );
     }
 
     /// The wiring guarantee: every node in the shipped campaign resolves to a registered mission.

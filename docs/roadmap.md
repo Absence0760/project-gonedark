@@ -359,7 +359,10 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 > Net-new content pillar ([D58](decisions.md)–[D61](decisions.md)); design in
 > [`pve-campaign.md`](pve-campaign.md)/[`customization.md`](customization.md), build sequencing in
 > [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). WS-A, WS-D, and WS-E have landed; WS-B
-> and WS-C are partial — see the plan for per-WS status.
+> and WS-C are partial — see the plan for per-WS status. WS-A now ships **two** missions —
+> *Seize* (mission 1) and the *Hold* archetype's *Hold the Line* (mission 2,
+> `core::scenario::seed_hold_mission`, directly playable via `Scene::Mission2`/`--scene hold`) —
+> though the shipped campaign node graph still places only the first (see WS-B).
 
 - [x] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
   stream (generalizes [D38](decisions.md)'s `evaluate_outcome`); zero checksum surface; ships with
@@ -367,10 +370,17 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   `core::scenario::seed_seize_mission`, `render::objective_hud`)
 - [x] **Mission 1 — *Seize*** ("10 troops, take the enemy base"): the first playable mission and
   the going-dark teach beat (code landed — `core::scenario::seed_seize_mission`)
+- [x] **Mission 2 — *Hold the Line*** (the *Hold* archetype — a dug-in firing line survives a
+  scripted assault force for a fixed tick window) (code landed — `core::scenario::seed_hold_mission`,
+  `ObjectiveSet::mission_hold`; directly playable via `Scene::Mission2`/`--scene hold`; not yet
+  placed in the shipped campaign node graph — see WS-B)
 - [ ] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
   briefing (native shell, [D32](decisions.md)) (PARTIAL — host model `core/src/campaign.rs` +
-  persistence built; native shell BLOCKED on [D32](decisions.md), `MissionId→mission` registry
-  unbuilt)
+  persistence built; the `MissionId→mission` registry has landed
+  (`engine/src/mission_registry.rs`), now holding both *Seize* and *Hold*; native shell still
+  BLOCKED on [D32](decisions.md), and the campaign node graph stays single-node — placing *Hold*
+  as a second node needs the hand-maintained Android `CampaignModel` mirror
+  ([`compose-shell-parity.md`](plans/compose-shell-parity.md)) to move with it)
 - [ ] **Gunsmith loadout (WS-C)** — fixed-point sidegrade attachment model, checksum-folded, +
   pre-match loadout UI ([D60](decisions.md)) (PARTIAL — sim model `core/src/gunsmith.rs` + UI seam
   `engine/src/loadout_ui.rs` built + tested; loadout not applied at live match start)

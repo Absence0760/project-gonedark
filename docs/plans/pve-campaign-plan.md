@@ -2,10 +2,10 @@
 
 > **Status: IN PROGRESS — WS-A, WS-C, WS-D shipped and live-wired; WS-E shipped; WS-B
 > host-side only.** WS-A (mission/objective core — `engine/src/objectives.rs`,
-> `core::scenario::seed_seize_mission`, `render::objective_hud`) and WS-D (HUD layout editor —
-> `engine/src/hud_layout.rs`) are built, tested, and wired into the live host. WS-E (difficulty /
-> modifiers / briefing — `core/src/mission_tuning.rs`) is built and threaded into
-> `core::commander`. **WS-C is now live-wired:** the gunsmith sim model + fairness/checksum proofs
+> `core::scenario::seed_seize_mission`/`seed_hold_mission`, `render::objective_hud`) and WS-D
+> (HUD layout editor — `engine/src/hud_layout.rs`) are built, tested, and wired into the live
+> host. WS-E (difficulty / modifiers / briefing — `core/src/mission_tuning.rs`) is built and
+> threaded into `core::commander`. **WS-C is now live-wired:** the gunsmith sim model + fairness/checksum proofs
 > (`core/src/gunsmith.rs`) and pre-match UI seam (`engine/src/loadout_ui.rs`) feed
 > `core::scenario::seed_seize_mission_with_loadout` / `engine` `new_scene_with_loadout`, so the
 > chosen loadout is applied to every player troop's weapon **at match start** and folded into the
@@ -16,9 +16,12 @@
 > Operations-hub host model + persistence (`core/src/campaign.rs`, via `core::shell`) is built and
 > tested, and the **`MissionId→mission` registry now landed** (`engine/src/mission_registry.rs` —
 > `MissionDef`/`MissionRegistry` mapping each unlock-graph node to a runnable seeder + WS-E briefing,
-> host-side / zero new checksum surface, `default_registry()` ships the WS-A *Seize* mission, tests
-> green dev+release); only its **mission-select/briefing native shell stays BLOCKED on
-> [D32](../decisions.md)**. *(Replay-tier → combat-tuning scaling is **resolved + implemented** by
+> host-side / zero new checksum surface, `default_registry()` now ships **two** WS-A missions —
+> *Seize* and the new *Hold the Line* (`core::scenario::seed_hold_mission`,
+> `ObjectiveSet::mission_hold`) — tests green dev+release); *Hold* is directly playable
+> (`Scene::Mission2`/`--scene hold`) but not yet placed as a node in `default_campaign`, which stays
+> single-node until the hand-maintained Android `CampaignModel` mirror moves with it. Only the
+> **mission-select/briefing native shell stays BLOCKED on [D32](../decisions.md)**. *(Replay-tier → combat-tuning scaling is **resolved + implemented** by
 > [D83](../decisions.md#d83--campaign-replay-difficulty-reshapes-the-situation-not-a-4th-commander-band-resolves-q21):
 > the chosen replay tier drives both the 4→3 enemy-commander band and the `ScenarioModifiers`
 > situation, threaded through `MissionDef::launch` + `Game::apply_campaign_tuning` on both hosts —
@@ -90,6 +93,11 @@ The first playable mission proves the loop. Everything else wraps this.
   the data-driven `Sim::new` + spawn path ([`core/src/sim.rs`](../../core/src/sim.rs)) — 10 player
   Riflemen, production disabled, an enemy camp + garrison + the honest commander on a low tier;
   objective = capture-or-eliminate the enemy camp; fail = lose all ten.
+- **The *Hold* archetype + mission 2** ("Hold the Line"): a dug-in defensive scenario
+  (`core::scenario::seed_hold_mission`) — a fixed defensive line under `FireAtWill`/`HoldPosition`
+  against a scripted assault force; objective = `Survive(HOLD_TICKS)`
+  (`ObjectiveSet::mission_hold`); fail = the line is wiped before the clock runs out. Exercises the
+  `Survive` evaluator kind the WS-A design already specified.
 - **In-match objective HUD:** a thin presentation surface showing the current objective + progress
   (reuses the in-match text pass from the playability push).
 

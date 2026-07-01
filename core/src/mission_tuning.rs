@@ -223,6 +223,24 @@ pub const MISSION_ONE_BRIEFING: Briefing = Briefing {
     },
 };
 
+/// The second campaign node's briefing — Mission 2, *Hold the Line*
+/// ([`crate::scenario::seed_hold_mission`], a Survive/defense archetype). Framed a step up from the
+/// opening mission's `Recruit` (a `Veteran` commander), with neutral modifiers. The situation reframes
+/// the going-dark cost from the *defender's* side — the flank you can't see is the one that caves.
+pub const MISSION_TWO_BRIEFING: Briefing = Briefing {
+    title: "Hold the Line",
+    situation: "They're coming for your dug-in line. Fight it from cover, or embody one rifle and \
+                hold by hand — but go dark and the line you can't see is the one that breaks.",
+    objective_line: "Hold the position. Don't let them overrun you.",
+    difficulty: Difficulty::Veteran,
+    modifiers: ScenarioModifiers {
+        force_scale_pct: 100,
+        reinforcement_period: None,
+        fog: TellMode::Subtle,
+        time_limit_ticks: None,
+    },
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,5 +388,16 @@ mod tests {
         assert_eq!(MISSION_ONE_BRIEFING.modifiers, ScenarioModifiers::default());
         assert!(!MISSION_ONE_BRIEFING.title.is_empty());
         assert!(!MISSION_ONE_BRIEFING.objective_line.is_empty());
+    }
+
+    /// Mission 2 (*Hold the Line*) is briefed a step up (`Veteran`) with neutral modifiers, and is a
+    /// distinct, fully-populated node from Mission 1.
+    #[test]
+    fn mission_two_briefing_is_framed() {
+        assert_eq!(MISSION_TWO_BRIEFING.difficulty, Difficulty::Veteran);
+        assert_eq!(MISSION_TWO_BRIEFING.modifiers, ScenarioModifiers::default());
+        assert!(!MISSION_TWO_BRIEFING.title.is_empty());
+        assert!(!MISSION_TWO_BRIEFING.objective_line.is_empty());
+        assert_ne!(MISSION_TWO_BRIEFING.title, MISSION_ONE_BRIEFING.title, "a distinct mission");
     }
 }

@@ -27,8 +27,8 @@
 //! the lesson the playable sandbox teaches.
 
 use crate::components::{
-    Armor, Army, BuildingKind, EntityKind, Faction, Health, ShellKind, Stance, UnitKind, Vec2,
-    Weapon,
+    Armor, Army, BuildingKind, EntityKind, Faction, Health, Order, ShellKind, Stance, UnitKind,
+    Vec2, Weapon,
 };
 use crate::ecs::Entity;
 use crate::economy;
@@ -757,6 +757,156 @@ pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -
     }
 }
 
+// ---- Mission 2 — "Hold the Line" (PvE WS-A, the Survive/defense archetype) ----------------------
+//
+// The campaign's second authored mission and its second objective *shape*. Where the *Seize* mission
+// teaches the **assault** (cross open ground under fire, take the base), Hold teaches the
+// **defense** — and, with it, the going-dark cost from the other side. A dug-in player force must
+// hold its line against a determined enemy assault for a fixed window ([`HOLD_TICKS`]). The
+// temptation is to embody a defender and out-shoot the line by hand; but every second embodied is a
+// second the strategic map is dark and the defense cannot be repositioned — overstay and the flank
+// you could not see caves in. Same fair-blindness lesson (invariant #6), a different verb.
+//
+// **The edge is the terrain, not the numbers.** In this lethal engine (D66) an *outnumbered* dug-in
+// force still loses the firefight — focus-fire concentration beats a Light-cover durability bonus
+// (measured; see [`tests::hold_is_winnable_firing_and_lost_passive`]). So the defence holds a
+// fortified line at rough parity and wins by *using the cover*: `Light` sandbags (damage mitigation,
+// still able to fire — never a `Heavy` wall, which would block the defenders' own line of sight) are
+// what turn the fight. A passive, non-firing line squanders that edge and is overrun — which is the
+// whole teach.
+//
+// Like *Seize*, the fight is a **fixed-force attrition**: both purses are empty and income is
+// throttled, so neither side reinforces and the outcome is a deterministic function of the seeded
+// forces + cover. That is exactly what lets the host-side `Survive` objective be authored to a
+// window that a dug-in *firing* defence reliably *holds* yet a passive one reliably *loses*. The
+// attackers cross open ground carrying a baked-in [`Order::AttackMove`] onto the line — set directly
+// in world state, which is *identical* to the [`Command::AttackMove`](crate::sim::Command::AttackMove)
+// the host would issue (see [`Sim::apply`](crate::sim::Sim)), so the assault needs no commander and
+// stays deterministic.
+//
+// Pure, deterministic, fixed-point (invariant #1): fixed spawn order (defenders, then attackers),
+// integer/`Fixed` values only — two seeds of a fresh `Sim` are bit-identical.
+
+/// Player defender columns (a 2-row block ⇒ `2 * cols` defenders dug in on the line).
+const HOLD_DEFENDER_COLS: i32 = 5;
+/// Enemy attacker columns (a 2-row block ⇒ `2 * cols` attackers) — a determined assault at rough
+/// numerical parity with the defence, which the defenders' `Light` cover turns (see the module note:
+/// an *outnumbered* dug-in force loses this lethal engine, so the edge is the terrain, not a headcount
+/// advantage on either side).
+const HOLD_ATTACKER_COLS: i32 = 4;
+/// The defensive line's x (west); the assault comes from the east.
+const HOLD_DEFENDER_X: i32 = -16;
+/// The attackers' deploy x (east of the line).
+const HOLD_ATTACKER_X: i32 = 20;
+/// How long the line must hold, in seconds at the locked 60 Hz tick.
+const HOLD_SECONDS: u64 = 45;
+
+/// The tick the defence must survive to — `HOLD_SECONDS` at the locked
+/// [`TICK_HZ`](crate::sim::TICK_HZ). The host-side `Survive` objective
+/// (`ObjectiveSet::mission_hold`) is authored from this, and the whole mission is tuned so a dug-in
+/// FireAtWill defence reaches it with survivors while a passive one is wiped before it.
+pub const HOLD_TICKS: u64 = HOLD_SECONDS * crate::sim::TICK_HZ as u64;
+
+/// The handles a seeded *Hold the Line* mission hands back: the player's dug-in defenders (hold this
+/// line) and the enemy assault force. The host embodies/commands `defenders`; the objective layer
+/// watches the Player faction for a wipe (the `Survive` fail) and the clock for the hold.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct HoldMission {
+    /// The player's dug-in defenders, in stable spawn order. The first is the embodiable/selectable
+    /// handle.
+    pub defenders: Vec<Entity>,
+    /// The enemy assault force advancing on the line, in stable spawn order.
+    pub attackers: Vec<Entity>,
+}
+
+impl HoldMission {
+    /// The tick the defence must survive to ([`HOLD_TICKS`]) — the `Survive` objective's goal.
+    pub const fn hold_ticks(&self) -> u64 {
+        HOLD_TICKS
+    }
+}
+
+/// Lay the Hold defenders' `Light` cover — a sandbag belt over the defensive line that mitigates
+/// incoming fire without blocking the defenders' own line of sight (never `Heavy`, which is a
+/// LoS-blocking wall). Static integer map data (invariant #1), never in the per-tick checksum; it
+/// shelters only the defence and spawns nothing (entity/spawn order + the checksum stream untouched).
+fn build_hold_terrain(sim: &mut Sim) {
+    // West edge is the rearmost defender column; east edge is just ahead of the front rank. Two cells
+    // of vertical margin either way so the whole 2-row block sits inside the belt.
+    let west = HOLD_DEFENDER_X - (HOLD_DEFENDER_COLS - 1) * 2 - 2;
+    let (cx0, cy0) = sim.terrain.cell_of(at((west, -5)));
+    let (cx1, cy1) = sim.terrain.cell_of(at((HOLD_DEFENDER_X + 2, 5)));
+    sim.terrain.fill_rect(cx0, cy0, cx1, cy1, Cover::Light);
+}
+
+/// Seed `sim` with Mission 2 — *Hold the Line* — and return its [`HoldMission`] handles. See the
+/// module note above for the design. This is the all-`Standard` loadout entry point
+/// ([`Loadout::STANDARD`] is a proven no-op, so the seeded world is byte-identical to the
+/// pre-gunsmith mission); call [`seed_hold_mission_with_loadout`] to field the player's chosen build.
+pub fn seed_hold_mission(sim: &mut Sim) -> HoldMission {
+    seed_hold_mission_with_loadout(sim, Loadout::STANDARD)
+}
+
+/// Seed Mission 2, applying the player's chosen gunsmith [`Loadout`] to every defender's weapon **at
+/// match start** — the WS-C live-spawn wiring, with the identical determinism contract as
+/// [`seed_seize_mission_with_loadout`]: the loadout is deterministic match-setup input drawn from the
+/// Player army's gunsmith pool, applied once here, and all the modified weapon fields are already in
+/// `Sim::fold`, so it rides the per-tick checksum with **no new fold surface** (invariant #7).
+pub fn seed_hold_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> HoldMission {
+    // Fixed-force attrition: empty purses + a slow income drip ⇒ no reinforcement for either side, so
+    // the outcome is a deterministic function of the seeded forces + cover (the property the
+    // host-side `Survive` objective's authored window rests on).
+    sim.set_income_period(600);
+
+    // The PvE matchup (factions-plan WS-A/WS-D, D68): played US-side with the French Army as OPFOR,
+    // matching *Seize*. Identity only (logistics-tilted rosters, D71) — the matchup stays fair.
+    sim.set_army(Faction::Player, Army::Us);
+    sim.set_army(Faction::Enemy, Army::Fr);
+
+    let hp = economy::unit_stats(UnitKind::Rifleman).0.max;
+
+    // Player defenders: a 2-row block dug in on the west, `HoldPosition` (deliberately rooted) +
+    // `FireAtWill` (fire on any enemy that enters range) — the dug-in defence. Facing +X, toward the
+    // incoming assault.
+    let mut defenders = Vec::with_capacity((HOLD_DEFENDER_COLS * 2) as usize);
+    for col in 0..HOLD_DEFENDER_COLS {
+        for &row_y in &[-2, 2] {
+            let x = HOLD_DEFENDER_X - col * 2;
+            let d = spawn_rifleman(sim, at((x, row_y)), Faction::Player, Stance::FireAtWill, hp, Angle(0));
+            sim.world.order[d.index as usize] = Order::HoldPosition;
+            defenders.push(d);
+        }
+    }
+
+    // Apply the player's gunsmith loadout to every defender (WS-C match-setup input; `STANDARD` is a
+    // no-op ⇒ byte-identical baseline weapon). Drawn from the Player army's pool; folds into the
+    // per-tick checksum with no new fold surface (invariant #7).
+    let player_army = sim.army_of(Faction::Player);
+    for &d in &defenders {
+        player_loadout.apply_to_weapon_for(player_army, &mut sim.world.weapon[d.index as usize]);
+    }
+
+    // Enemy assault: a larger 2-row block on the east, `FireAtWill`, each carrying a baked-in
+    // `AttackMove` onto the defensive line (identical to the host issuing `Command::AttackMove`, so
+    // the assault advances deterministically without a commander). Facing −X, toward the defenders.
+    let line = at((HOLD_DEFENDER_X, 0));
+    let mut attackers = Vec::with_capacity((HOLD_ATTACKER_COLS * 2) as usize);
+    for col in 0..HOLD_ATTACKER_COLS {
+        for &row_y in &[-3, 3] {
+            let x = HOLD_ATTACKER_X + col * 2;
+            let a = spawn_rifleman(sim, at((x, row_y)), Faction::Enemy, Stance::FireAtWill, hp, Angle(ANGLE_FULL / 2));
+            sim.world.order[a.index as usize] = Order::AttackMove(line);
+            attackers.push(a);
+        }
+    }
+
+    // Lay the defenders' `Light` cover so the dug-in FireAtWill line reliably outlasts the larger
+    // open-ground assault for the hold window (it spawns nothing — entity/spawn order untouched).
+    build_hold_terrain(sim);
+
+    HoldMission { defenders, attackers }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1343,6 +1493,168 @@ mod tests {
         seed_seize_mission(&mut a);
         seed_seize_mission(&mut b);
         assert_eq!(a.checksum(), b.checksum());
+    }
+
+    // --- Mission 2 — "Hold the Line" (the Survive/defense archetype) ---------------------------
+
+    #[test]
+    fn hold_seeds_a_dug_in_defence_and_an_assault() {
+        let mut sim = fresh();
+        let m = seed_hold_mission(&mut sim);
+
+        // A 2-row defence and a 2-row assault at rough parity (the edge is the cover, not numbers).
+        assert_eq!(m.defenders.len(), (HOLD_DEFENDER_COLS * 2) as usize, "10 defenders");
+        assert_eq!(m.attackers.len(), (HOLD_ATTACKER_COLS * 2) as usize, "8 attackers");
+        assert_eq!(unit_count(&sim, Faction::Player), m.defenders.len());
+        assert_eq!(unit_count(&sim, Faction::Enemy), m.attackers.len());
+
+        // Defenders are dug in: Player Riflemen, FireAtWill, rooted with a HoldPosition order.
+        for &d in &m.defenders {
+            let i = d.index as usize;
+            assert_eq!(sim.world.faction[i], Faction::Player);
+            assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+            assert_eq!(sim.world.stance[i], Stance::FireAtWill);
+            assert_eq!(sim.world.order[i], Order::HoldPosition, "the defence is rooted");
+        }
+
+        // Attackers advance under a baked-in AttackMove onto the defensive line (x == HOLD_DEFENDER_X).
+        let line = at((HOLD_DEFENDER_X, 0));
+        for &a in &m.attackers {
+            let i = a.index as usize;
+            assert_eq!(sim.world.faction[i], Faction::Enemy);
+            assert_eq!(sim.world.order[i], Order::AttackMove(line), "the assault advances on the line");
+        }
+
+        // No player base (production disabled) — a fixed-force fight.
+        let player_buildings = (0..sim.world.capacity()).filter(|&i| {
+            sim.world.is_index_alive(i)
+                && sim.world.kind[i] == EntityKind::Building
+                && sim.world.faction[i] == Faction::Player
+        });
+        assert_eq!(player_buildings.count(), 0, "the defenders have no base");
+        assert_eq!(m.hold_ticks(), HOLD_TICKS);
+    }
+
+    #[test]
+    fn hold_shelters_the_defence_but_not_the_assault() {
+        let mut sim = fresh();
+        let m = seed_hold_mission(&mut sim);
+        // Every defender sits in Light cover (damage mitigation, sight-passing — never a Heavy wall
+        // that would block their own fire).
+        for &d in &m.defenders {
+            assert_eq!(
+                sim.terrain.cover_at(sim.world.pos[d.index as usize]),
+                Cover::Light,
+                "the defence is dug into Light cover",
+            );
+        }
+        // The assault crosses open ground — the cover belt does not fortify the attackers.
+        for &a in &m.attackers {
+            assert_eq!(
+                sim.terrain.cover_at(sim.world.pos[a.index as usize]),
+                Cover::None,
+                "the assault advances in the open",
+            );
+        }
+    }
+
+    #[test]
+    fn hold_seeding_is_deterministic() {
+        // Single-sourcing (invariant #1): two seeds of a fresh Sim are bit-identical, so the played
+        // mission and any headless Survive-objective driver agree.
+        let mut a = fresh();
+        let mut b = fresh();
+        seed_hold_mission(&mut a);
+        seed_hold_mission(&mut b);
+        assert_eq!(a.checksum(), b.checksum());
+    }
+
+    /// The mission's load-bearing design property (proven, not assumed): the *Survive* window is
+    /// authored so a **dug-in firing** defence reaches [`HOLD_TICKS`] with survivors, while a
+    /// **passive** (HoldFire) one is wiped well before it. That is exactly the "winnable-yet-losable"
+    /// footing the host-side objective's authored timer rests on — the teach beat only works if
+    /// firing-and-holding is the difference between the two outcomes. Deterministic, so this margin is
+    /// stable (a future combat re-tune that erased it would trip this test).
+    #[test]
+    fn hold_is_winnable_firing_and_lost_passive() {
+        use crate::sim::Command;
+        let drive = |stance: Stance| -> (usize, Option<u64>) {
+            let mut sim = fresh();
+            let m = seed_hold_mission(&mut sim);
+            let opening: Vec<Command> = m
+                .defenders
+                .iter()
+                .map(|&d| Command::SetStance { entity: d, stance })
+                .collect();
+            sim.step(&opening);
+            let mut wiped_at = None;
+            for _ in 0..HOLD_TICKS {
+                sim.step(&[]);
+                if wiped_at.is_none() && unit_count(&sim, Faction::Player) == 0 {
+                    wiped_at = Some(sim.tick_count());
+                }
+            }
+            (unit_count(&sim, Faction::Player), wiped_at)
+        };
+
+        // A dug-in FireAtWill defence holds to the timer with survivors (the win path).
+        let (firing_survivors, firing_wiped) = drive(Stance::FireAtWill);
+        assert!(firing_survivors > 0, "a firing defence must hold with survivors");
+        assert_eq!(firing_wiped, None, "a firing defence is never wiped before the timer");
+
+        // A passive HoldFire defence is overrun well before the timer (the loss path).
+        let (passive_survivors, passive_wiped) = drive(Stance::HoldFire);
+        assert_eq!(passive_survivors, 0, "a passive defence is wiped out");
+        let wiped = passive_wiped.expect("a passive defence is wiped");
+        assert!(wiped < HOLD_TICKS, "the wipe lands before the hold window ({wiped} < {HOLD_TICKS})");
+    }
+
+    #[test]
+    fn hold_standard_loadout_is_byte_identical_to_no_loadout() {
+        // The all-Standard loadout entry point is a proven no-op on the weapon, so the seeded world is
+        // byte-identical to the explicit STANDARD apply (the WS-C opt-out guarantee, mirroring seize).
+        let mut plain = fresh();
+        let mut std = fresh();
+        let m_plain = seed_hold_mission(&mut plain);
+        let m_std = seed_hold_mission_with_loadout(&mut std, Loadout::STANDARD);
+        assert_eq!(m_plain, m_std, "same handles");
+        assert_eq!(plain.checksum(), std.checksum(), "same seeded checksum");
+    }
+
+    /// The WS-C live-spawn application (non-Standard path, mirroring
+    /// [`seize_applies_the_chosen_loadout_to_every_player_troop`]): every defender's weapon is the
+    /// player-army (US) base Rifleman with the chosen loadout applied, and the enemy assault is
+    /// untouched by the *player's* gunsmith.
+    #[test]
+    fn hold_applies_the_chosen_loadout_to_every_defender() {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let loadout = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        };
+        let mut sim = fresh();
+        let m = seed_hold_mission_with_loadout(&mut sim, loadout);
+
+        let mut expected = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        loadout.apply_to_weapon_for(Army::Us, &mut expected);
+        for &d in &m.defenders {
+            assert_eq!(
+                sim.world.weapon[d.index as usize], expected,
+                "each US defender fields the US-pool weapon with the loadout applied"
+            );
+        }
+        // A non-Standard loadout actually moved the weapon off the bare US baseline.
+        let bare_us = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        assert_ne!(expected, bare_us, "the loadout is a real change off the baseline");
+        // The enemy (FR) assault is unaffected — this is the player's gunsmith, not the enemy's.
+        let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
+        for &a in &m.attackers {
+            assert_eq!(
+                sim.world.weapon[a.index as usize], fr_rifle,
+                "the enemy assault is untouched by the player loadout"
+            );
+        }
     }
 
     // --- factions WS-A: the seeded matchup -----------------------------------------------------

@@ -326,6 +326,19 @@ impl ObjectiveSet {
         )])
     }
 
+    /// The WS-A *Hold the Line* mission (Mission 2, `core::scenario::seed_hold_mission`): one required
+    /// objective — the Player must **survive** to `hold_ticks`. It FAILS via the universal
+    /// owner-eliminated rule the moment the Player defence is wiped out (the honest "you didn't hold"
+    /// loss), and COMPLETES when the clock reaches `hold_ticks`. `hold_ticks` is the mission's authored
+    /// window ([`HOLD_TICKS`](gonedark_core::scenario::HOLD_TICKS)).
+    pub fn mission_hold(hold_ticks: u64) -> Self {
+        ObjectiveSet::new(vec![Objective::survive(
+            Faction::Player,
+            hold_ticks,
+            "Hold the line",
+        )])
+    }
+
     /// Fold one tick into every active objective, returning the transitions that fired this tick (in
     /// objective order) for the host to surface (summary log / HUD flash).
     pub fn observe(&mut self, ctx: &ObserveCtx) -> Vec<ObjectiveEvent> {
@@ -668,5 +681,57 @@ mod tests {
         // → the Player force is wiped → the mission is LOST (the "lose all ten" fail path).
         let status = run_mission_one(Stance::HoldFire, 60 * 60);
         assert_eq!(status, MissionStatus::Lost, "ten troops that won't fight are wiped out");
+    }
+
+    // --- Mission 2 — "Hold the Line" (the Survive/defense archetype) ---------------------------
+
+    /// Drive the seeded *Hold the Line* mission with the defenders `stance`d as given, stepping the
+    /// bare `Sim` (no GPU) while the host-side `ObjectiveSet::mission_hold` observes each tick — the
+    /// same `Sim` + objective loop the live host runs, minus the renderer. The defenders keep their
+    /// seeded `HoldPosition` order (a rooted defence); only the stance is overridden. Returns the
+    /// final `MissionStatus` after up to `max_ticks`.
+    fn run_mission_hold(defender_stance: gonedark_core::components::Stance, max_ticks: u64) -> MissionStatus {
+        use gonedark_core::scenario::HOLD_TICKS;
+        let mut sim = Sim::new(0xD00D);
+        let m = gonedark_core::scenario::seed_hold_mission(&mut sim);
+        let mut set = ObjectiveSet::mission_hold(HOLD_TICKS);
+
+        // Set the defenders' stance (FireAtWill = fight from the line; HoldFire = passive).
+        let opening: Vec<Command> = m
+            .defenders
+            .iter()
+            .map(|&d| Command::SetStance { entity: d, stance: defender_stance })
+            .collect();
+        sim.step(&opening);
+
+        for _ in 0..max_ticks {
+            sim.step(&[]);
+            let forces = faction_forces_all(&sim);
+            set.observe(&ObserveCtx::new(sim.events(), &forces, sim.tick_count()));
+            match set.status() {
+                MissionStatus::Active => {}
+                decided => return decided,
+            }
+        }
+        set.status()
+    }
+
+    #[test]
+    fn mission_hold_is_won_when_the_firing_line_holds() {
+        use gonedark_core::components::Stance;
+        use gonedark_core::scenario::HOLD_TICKS;
+        // A dug-in FireAtWill defence holds its Light-cover line and survives to the timer → WON.
+        let status = run_mission_hold(Stance::FireAtWill, HOLD_TICKS + 1);
+        assert_eq!(status, MissionStatus::Won, "a firing defence holds the line to the timer");
+    }
+
+    #[test]
+    fn mission_hold_is_lost_when_the_line_wont_fire() {
+        use gonedark_core::components::Stance;
+        use gonedark_core::scenario::HOLD_TICKS;
+        // A passive HoldFire defence squanders its cover, is overrun before the timer → LOST (the
+        // survive-fail-on-owner-wipe path — the going-dark-cost teach made mechanical).
+        let status = run_mission_hold(Stance::HoldFire, HOLD_TICKS);
+        assert_eq!(status, MissionStatus::Lost, "a defence that won't fire is overrun before the timer");
     }
 }

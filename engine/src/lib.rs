@@ -1701,6 +1701,12 @@ pub enum Scene {
     /// no base (production disabled), against an enemy camp + garrison; win by eliminating the enemy,
     /// lose all ten and it's over. The objective HUD shows progress.
     Mission1,
+    /// The PvE *Hold the Line* mission (Mission 2, a Survive/defense archetype,
+    /// [`gonedark_core::scenario::seed_hold_mission`]). Booted in the command view with a live
+    /// host-side [`objectives::ObjectiveSet`]: a dug-in Player line in Light cover must survive a
+    /// determined enemy assault to the timer; a passive line is overrun and it's over. The objective
+    /// HUD shows the survive progress.
+    Mission2,
     /// **Map inspection** ([`gonedark_core::scenario::seed_map_inspect`]) — drive a baked real-world
     /// battlefield (the Pointe du Hoc map, `tools/maps/`) to diagnose it. Booted in the command view
     /// with the **cover overlay on** (F3) so the sim's actual cover grid — the cells the flow field
@@ -1719,6 +1725,7 @@ impl Scene {
             "duel" => Some(Scene::Duel),
             "infantry" => Some(Scene::Infantry),
             "mission1" | "seize" => Some(Scene::Mission1),
+            "mission2" | "hold" => Some(Scene::Mission2),
             "map" | "inspect" | "pointe" => Some(Scene::MapInspect),
             _ => None,
         }
@@ -1853,6 +1860,27 @@ fn seed_seize_mission_scene(
     let m = gonedark_core::scenario::seed_seize_mission_with_loadout(sim, player_loadout);
     let objectives = objectives::ObjectiveSet::mission_one(m.enemy_strength());
     let player = m.troops[0];
+    (player, false, objectives)
+}
+
+/// Seed the **PvE *Hold the Line* mission** (Mission 2, a Survive/defense archetype) and return
+/// `(player, start_embodied, objectives)`. Seeds the shared `core::scenario::seed_hold_mission` scene
+/// (a dug-in Player line in Light cover, an enemy assault advancing under a baked-in AttackMove) and
+/// builds the host-side [`objectives::ObjectiveSet::mission_hold`] that watches it — win by surviving
+/// to [`HOLD_TICKS`](gonedark_core::scenario::HOLD_TICKS), lose by being overrun. The `player` is the
+/// first defender (the embodiable/selectable handle); booted in the command view. GPU-free, so it is
+/// host-tested directly. The objective layer only OBSERVES the sim — never folded (invariant #1/#7).
+///
+/// The player's pre-match gunsmith `player_loadout` is applied to the defenders' weapons **at match
+/// start** (WS-C live-spawn wiring), folded into the per-tick checksum with no new fold surface;
+/// `Loadout::STANDARD` is a no-op.
+fn seed_hold_mission_scene(
+    sim: &mut Sim,
+    player_loadout: Loadout,
+) -> (Entity, bool, objectives::ObjectiveSet) {
+    let m = gonedark_core::scenario::seed_hold_mission_with_loadout(sim, player_loadout);
+    let objectives = objectives::ObjectiveSet::mission_hold(m.hold_ticks());
+    let player = m.defenders[0];
     (player, false, objectives)
 }
 
@@ -2150,6 +2178,7 @@ impl Game {
         // mission seeds a live `ObjectiveSet` that OBSERVES the sim (never mutates it).
         let (player, start_embodied, objectives) = match scene {
             Scene::Mission1 => seed_seize_mission_scene(&mut sim, player_loadout),
+            Scene::Mission2 => seed_hold_mission_scene(&mut sim, player_loadout),
             Scene::Default => {
                 let (p, e) = seed_default_scene(&mut sim, player_loadout);
                 (p, e, objectives::ObjectiveSet::default())
@@ -4283,6 +4312,8 @@ mod tests {
         assert_eq!(Scene::parse("infantry"), Some(Scene::Infantry));
         assert_eq!(Scene::parse("mission1"), Some(Scene::Mission1));
         assert_eq!(Scene::parse("seize"), Some(Scene::Mission1));
+        assert_eq!(Scene::parse("mission2"), Some(Scene::Mission2));
+        assert_eq!(Scene::parse("hold"), Some(Scene::Mission2));
         assert_eq!(Scene::parse("map"), Some(Scene::MapInspect));
         assert_eq!(Scene::parse("inspect"), Some(Scene::MapInspect));
         assert_eq!(Scene::parse("pointe"), Some(Scene::MapInspect));
@@ -4294,6 +4325,9 @@ mod tests {
         assert!(Scene::MapInspect.debug_overlay_default());
         assert!(!Scene::Default.debug_overlay_default());
         assert!(!Scene::Skirmish.debug_overlay_default());
+        // The campaign missions are real matches → overlay off.
+        assert!(!Scene::Mission1.debug_overlay_default());
+        assert!(!Scene::Mission2.debug_overlay_default());
     }
 
     // --- detection "gone dark" tell → render markers (the pure seam) -------------------------------
@@ -4445,6 +4479,43 @@ mod tests {
         };
         let mut sim = Sim::new(DEFAULT_SEED);
         let (player, _e, _o) = seed_seize_mission_scene(&mut sim, chosen);
+        assert_ne!(
+            sim.world.weapon[player.index as usize],
+            std_sim.world.weapon[std_player.index as usize],
+            "a non-Standard loadout must move the live-spawned weapon off the baseline",
+        );
+    }
+
+    /// WS-C live-spawn wiring for Mission 2 (*Hold the Line*): the `seed_hold_mission_scene` seam
+    /// applies the player's chosen gunsmith loadout to the defenders at match start, mirroring
+    /// [`mission_scene_applies_the_chosen_loadout_at_match_start`]. `Loadout::STANDARD` is a byte-equal
+    /// no-op; a non-Standard loadout moves the live-spawned defender's weapon. GPU-free seam; the
+    /// checksum/fairness proofs live in `core::scenario`/`core::gunsmith`.
+    #[test]
+    fn hold_scene_applies_the_chosen_loadout_at_match_start() {
+        use gonedark_core::gunsmith::{Barrel, Magazine, Optic};
+
+        // Standard loadout → identical to the plain seeder (no-op).
+        let mut std_sim = Sim::new(DEFAULT_SEED);
+        let (std_player, embodied, obj) = seed_hold_mission_scene(&mut std_sim, Loadout::STANDARD);
+        assert!(!embodied, "the PvE mission boots commanding, not possessing");
+        assert!(!obj.is_empty(), "the Hold mission attaches a live Survive objective");
+        let mut baseline_sim = Sim::new(DEFAULT_SEED);
+        let baseline = gonedark_core::scenario::seed_hold_mission(&mut baseline_sim);
+        assert_eq!(
+            std_sim.world.weapon[std_player.index as usize],
+            baseline_sim.world.weapon[baseline.defenders[0].index as usize],
+            "the Standard loadout is a no-op — byte-identical to the un-wired mission",
+        );
+
+        // A non-Standard loadout is actually applied to the live-spawned defender's weapon.
+        let chosen = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        };
+        let mut sim = Sim::new(DEFAULT_SEED);
+        let (player, _e, _o) = seed_hold_mission_scene(&mut sim, chosen);
         assert_ne!(
             sim.world.weapon[player.index as usize],
             std_sim.world.weapon[std_player.index as usize],

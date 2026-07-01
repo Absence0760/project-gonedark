@@ -67,6 +67,7 @@ Each archetype is a **parameterized scenario** (a starting world) plus an **obje
 |---|---|---|
 | **Seize** | *"Take 10 troops and capture the enemy base."* Fixed starting force, little/no production — a pure tactics puzzle. The user's example, and **mission 1**. | data-driven spawn ([`core/src/sim.rs`](../core/src/sim.rs) `Sim::new`) + a capture-or-eliminate objective |
 | **Hold** | Defend a point against escalating waves for N ticks (a Halo set-piece). | `territory_system` ownership + a survive-to-timeout objective |
+| **Hold — *shipped* (mission 2)** | *"Hold your dug-in line."* A first, **narrower** instance of the Hold verb: a fixed defensive line in `Light` cover vs. **one** scripted assault (a baked-in `AttackMove`), no escalating waves and no territory ownership yet — the cover, used, is the edge. | `core::scenario::seed_hold_mission` + a `Survive(HOLD_TICKS)` objective (`ObjectiveSet::mission_hold`) |
 | **Assassinate / Extract** | Eliminate a specific enemy VIP, or escort a friendly one off the map alive. | a `SimEvent::Killed` listener keyed to one entity |
 | **Push** | Capture a chain of control points down a lane, CoH-style. | sequential `territory_system` captures |
 
