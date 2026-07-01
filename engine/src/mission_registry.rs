@@ -218,13 +218,11 @@ impl MissionRegistry {
 /// Line* defense ([`MISSION_HOLD`]) — each wired to its GPU-free `core::scenario` seeder + WS-E
 /// briefing. New missions are added here as more seeders ship.
 ///
-/// **The registry can hold more missions than [`default_campaign`] currently places in its node
-/// graph** ([`MissionRegistry::covers`] only requires that every *campaign node* resolves, not the
-/// converse). *Hold* is registered and directly playable ([`Scene::Mission2`](crate::Scene::Mission2)
-/// / `--scene hold`), but its **campaign node placement** (an unlock edge off *Seize*) is a
-/// deliberate follow-up: adding a second node would need the hand-maintained Android `CampaignModel`
-/// mirror (`compose-shell-parity.md`) to move with it, so the graph stays single-node until that
-/// cross-language step is taken together.
+/// Both missions are now **placed as nodes** in [`default_campaign`] (*Seize* → *Hold*), so the
+/// registry and the campaign graph cover the same two missions. [`MissionRegistry::covers`] only
+/// requires that every *campaign node* resolves (not the converse), so the registry can still carry
+/// a mission that isn't yet node-placed — but today it doesn't: every registered mission is reachable
+/// through the graph, and its Android `CampaignModel` mirror moved with it (`compose-shell-parity.md`).
 pub fn default_registry() -> MissionRegistry {
     MissionRegistry::new(vec![
         MissionDef::new(MISSION_SEIZE, crate::seed_seize_mission_scene, MISSION_ONE_BRIEFING),
@@ -232,20 +230,32 @@ pub fn default_registry() -> MissionRegistry {
     ])
 }
 
-/// The shipped Operations-hub campaign graph, wired to [`default_registry`]. Today it is the single
-/// root node — the *Seize* mission — because placing a second node requires moving the hand-maintained
-/// Android `CampaignModel` mirror with it (see [`default_registry`] and `compose-shell-parity.md`);
-/// the second mission (*Hold the Line*) is already registered + directly playable
-/// ([`Scene::Mission2`](crate::Scene::Mission2)) and only awaits that cross-language node-placement
-/// step. Every node's [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`]
-/// holds — a test pins it), so launching any node always resolves to a runnable mission.
+/// The shipped Operations-hub campaign graph, wired to [`default_registry`]. A **two-node chain**:
+/// the root *Seize* mission ([`NodeId(0)`](NodeId) → [`MISSION_SEIZE`], framed from
+/// [`MISSION_ONE_BRIEFING`]) and, gated behind it, the *Hold the Line* defense
+/// ([`NodeId(1)`](NodeId) → [`MISSION_HOLD`], framed from [`MISSION_TWO_BRIEFING`],
+/// `.requires([NodeId(0)])` — it unlocks the moment *Seize* is cleared). Each node names its mission
+/// by [`MissionId`] only; the registry resolves the body, and [`Scene::for_mission`](crate::Scene::for_mission)
+/// maps that id to the launchable scene (*Seize* → `Mission1`, *Hold* → `Mission2`). The
+/// hand-maintained Android `CampaignModel` mirror moves in lock-step (`compose-shell-parity.md`).
+/// Every node's [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`] holds —
+/// a test pins it), so launching any playable node always resolves to a runnable mission.
 pub fn default_campaign() -> Campaign {
-    Campaign::new(vec![OperationNode::new(
-        NodeId(0),
-        MISSION_SEIZE,
-        MISSION_ONE_BRIEFING.title,
-        MISSION_ONE_BRIEFING.situation,
-    )])
+    Campaign::new(vec![
+        OperationNode::new(
+            NodeId(0),
+            MISSION_SEIZE,
+            MISSION_ONE_BRIEFING.title,
+            MISSION_ONE_BRIEFING.situation,
+        ),
+        OperationNode::new(
+            NodeId(1),
+            MISSION_HOLD,
+            MISSION_TWO_BRIEFING.title,
+            MISSION_TWO_BRIEFING.situation,
+        )
+        .requires([NodeId(0)]),
+    ])
 }
 
 #[cfg(test)]
@@ -330,6 +340,61 @@ mod tests {
             .resolve_node(&campaign, NodeId(0))
             .expect("the root node is available and registered");
         assert_eq!(def.id, MISSION_SEIZE);
+    }
+
+    /// The shipped campaign is now a **two-node chain**: Seize (root) → Hold (gated). Node 1 is
+    /// locked until Seize is cleared, then unlocks and resolves to the Hold mission; Seize stays
+    /// replayable throughout. This is the WS-B node placement of Mission 2.
+    #[test]
+    fn default_campaign_is_seize_then_hold() {
+        let reg = default_registry();
+        let mut campaign = default_campaign();
+        assert_eq!(campaign.mission_select().len(), 2, "Seize + Hold are both node-placed");
+
+        // Node 0 is the root Seize; node 1 is the gated Hold, framed from MISSION_TWO_BRIEFING.
+        assert_eq!(campaign.node(NodeId(0)).unwrap().mission, MISSION_SEIZE);
+        let hold_node = campaign.node(NodeId(1)).expect("the second node is placed");
+        assert_eq!(hold_node.mission, MISSION_HOLD);
+        assert_eq!(hold_node.title, MISSION_TWO_BRIEFING.title);
+        assert_eq!(hold_node.prerequisites, vec![NodeId(0)], "Hold is gated behind Seize");
+
+        // Locked until Seize is cleared: node 1 won't launch, even though its mission is registered.
+        assert_eq!(campaign.progress(NodeId(0)), NodeProgress::Available);
+        assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Locked);
+        assert!(reg.resolve_node(&campaign, NodeId(1)).is_none(), "Hold is locked at the start");
+
+        // Clear Seize → Hold unlocks and resolves to MISSION_HOLD; Seize stays replayable.
+        campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
+        assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Available);
+        assert_eq!(reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id), Some(MISSION_HOLD));
+        assert_eq!(
+            reg.resolve_node(&campaign, NodeId(0)).map(|m| m.id),
+            Some(MISSION_SEIZE),
+            "a cleared node stays replayable",
+        );
+
+        // Clearing Hold too leaves both replayable (the chain is complete).
+        campaign.clear(NodeId(1), CampaignDifficulty::Veteran).unwrap();
+        assert!(matches!(campaign.progress(NodeId(1)), NodeProgress::Cleared { .. }));
+        assert_eq!(reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id), Some(MISSION_HOLD));
+    }
+
+    /// The shipped 2-node graph round-trips through the host progress blob (a cleared Seize survives
+    /// serialize→apply onto a freshly-built campaign, so Hold stays unlocked across a restart).
+    #[test]
+    fn default_campaign_progress_round_trips() {
+        let mut campaign = default_campaign();
+        campaign.clear(NodeId(0), CampaignDifficulty::Veteran).unwrap();
+        let blob = campaign.serialize_progress();
+
+        let mut restored = default_campaign();
+        restored.apply_progress(&blob).expect("a same-topology blob applies cleanly");
+        assert!(matches!(restored.progress(NodeId(0)), NodeProgress::Cleared { .. }));
+        assert_eq!(restored.progress(NodeId(1)), NodeProgress::Available, "Hold stays unlocked");
+        assert_eq!(
+            default_registry().resolve_node(&restored, NodeId(1)).map(|m| m.id),
+            Some(MISSION_HOLD),
+        );
     }
 
     /// `covers` catches the authoring bug it exists for: a node naming an unregistered mission.

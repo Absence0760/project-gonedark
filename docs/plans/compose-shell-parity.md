@@ -131,7 +131,12 @@ the JNI reader.
 > wire key + mission-tuning plumbing) and **look-sensitivity** (the Android look delta is derived in
 > `engine::touch_controls`, not scalable at the PAL boundary) — both shown/carried but not yet applied
 > on Android. **Persistence:** Settings/Profile/loadout now survive restarts via `ShellPrefs`
-> (SharedPreferences). Still pending: per-mission campaign expansion, PvP match-setup (Q5/Phase-3).
+> (SharedPreferences). **Update:** the shipped campaign is now the **two-node chain** *Seize* →
+> *Hold* on both the shared model (`engine::default_campaign()`) and the Android `CampaignModel`
+> mirror, with the node→scene launch mapping (`Scene::for_mission`) wired through the backend — but
+> the Compose mission-select tiles still render/launch only the root until this D32-blocked chrome
+> renders the gated node and threads the selected `launch.node` through. Still pending: PvP
+> match-setup (Q5/Phase-3).
 
 
 | Surface | Desktop reference | What Tier 0 unblocks |
@@ -261,11 +266,18 @@ the checksum matrix is unaffected.
 These are deliberately **not** done — each is a chunk of real work, and two are symmetric gaps where
 each platform is missing the *other's* state:
 
-1. **Android has no campaign progress model.** `CampaignModel.kt` is a flat node list with every tile
-   always playable; desktop has `NodeProgress` (Locked/Available/Cleared), a `playable_node` gate, and
-   `campaign.dat` persistence (`app/src/main.rs`). Harmless while only the one *Seize* node ships, but
-   it breaks parity the moment a second/gated node lands — and the briefing's clear-status line +
-   mission-tile status pill follow from it.
+1. **Campaign progress model — parity reached; the 2-node graph now ships mirrored (was the
+   single-node risk).** `CampaignModel.kt` now carries the full `CampaignProgress`/`NodeProgress`
+   (Locked/Available/Cleared) derivation, the clear gate, best-tier tracking, and the persistence
+   codec — the JVM-testable twin of desktop's `Campaign`. **The shipped campaign is now the two-node
+   chain** *Seize* → *Hold* (`engine::default_campaign()`), and `campaignNodes` mirrors it (Hold
+   `prerequisites = [0]`, gated behind Seize); the node→scene launch mapping (`Scene::for_mission`)
+   is wired on both hosts, and the `CampaignModelTest`/`CampaignProgressTest` pin the 2-node
+   structure + the Hold briefing verbatim. So the old "breaks parity the moment a second/gated node
+   lands" risk is **resolved** for this node. What's left is only the **D32-blocked Compose chrome**
+   (the native mission-select/briefing tiles that read this model) and threading the *selected* node
+   index through the Android launch wire (`launch.node`) once that chrome exists — the desktop egui
+   hub + the Android backend's node-resolution path are already correct.
 2. **Desktop doesn't persist shell prefs.** Settings/Profile/loadout are in-memory only on desktop and
    lost on exit; only `campaign.dat` (campaign progress) persists. **Android is ahead here** — it
    round-trips all three via `ShellPrefs`. The two shells persist *disjoint* state.

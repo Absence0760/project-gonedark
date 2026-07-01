@@ -207,7 +207,8 @@ impl App {
 
     /// Create the `Game` and switch to the in-match screen, fielding the persisted gunsmith loadout
     /// ([`App::loadout`]). If a campaign launch was queued ([`App::pending_launch`], set by a
-    /// briefing's DEPLOY) it boots the mission scene ([`Scene::Mission1`]) and applies the player's
+    /// briefing's DEPLOY) it boots the *selected* node's mission scene (resolved via the shared
+    /// `resolve_node` + [`Scene::for_mission`] seams — Seize → `Mission1`, Hold → `Mission2`) and applies the player's
     /// chosen replay tier's combat tuning via the shared [`Game::apply_campaign_tuning`] seam (D83:
     /// the 4→3 enemy-commander band + the scenario situation modifiers); otherwise it fields
     /// [`App::scene`] (the CLI default, or the scene a mode-select pick chose). The chosen tier is
@@ -224,14 +225,21 @@ impl App {
         let format = surface.format();
         let loadout = self.loadout.current();
         let mut game = if let Some((node, difficulty)) = self.pending_launch.take() {
+            // Resolve the launched node's mission → its scene (Seize → `Mission1`, Hold →
+            // `Mission2`) through the shared engine seams (`resolve_node` + `Scene::for_mission`,
+            // never a per-platform fork, invariant #2), so the *selected* node boots its own scene
+            // rather than a hardcoded Mission1. A node that doesn't resolve (defensively
+            // unplayable/unregistered) tunes nothing and falls back to Mission1.
+            let mission = self.registry.resolve_node(&self.campaign, node).map(|def| def.id);
+            let scene = mission.and_then(Scene::for_mission).unwrap_or(Scene::Mission1);
             let mut game =
-                Game::new_scene_with_loadout(device, format, DEFAULT_SEED, Scene::Mission1, loadout);
+                Game::new_scene_with_loadout(device, format, DEFAULT_SEED, scene, loadout);
             // D83 (resolves Q21): the player's chosen replay tier drives the fight on both axes —
             // the 4→3 enemy-commander band and the scenario situation modifiers — through the shared
             // `core::campaign` mapping (never a per-platform fork, invariant #2). Applied before tick
             // 0, so it is deterministic match-setup like `select_army`. Guarded on `resolve_node` so a
             // (defensive) unplayable/unregistered node tunes nothing.
-            if self.registry.resolve_node(&self.campaign, node).is_some() {
+            if mission.is_some() {
                 game.apply_campaign_tuning(difficulty);
             }
             self.active_mission = Some((node, difficulty));

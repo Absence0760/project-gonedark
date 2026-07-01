@@ -1741,6 +1741,21 @@ impl Scene {
         }
     }
 
+    /// The [`Scene`] a campaign mission's [`MissionId`](gonedark_core::campaign::MissionId) boots
+    /// into — the single node→scene mapping the shells launch a *selected* campaign node through:
+    /// [`MISSION_SEIZE`](crate::mission_registry::MISSION_SEIZE) →
+    /// [`Mission1`](Scene::Mission1), [`MISSION_HOLD`](crate::mission_registry::MISSION_HOLD) →
+    /// [`Mission2`](Scene::Mission2). `None` for a `MissionId` with no scene of its own (a content
+    /// gap — never guessed). Pure + host-tested (no GPU), like [`parse`](Scene::parse); it lets the
+    /// desktop/Android shells boot the node the player picked rather than a hardcoded Mission1.
+    pub fn for_mission(mission: gonedark_core::campaign::MissionId) -> Option<Scene> {
+        match mission {
+            crate::mission_registry::MISSION_SEIZE => Some(Scene::Mission1),
+            crate::mission_registry::MISSION_HOLD => Some(Scene::Mission2),
+            _ => None,
+        }
+    }
+
     /// Whether this scene boots with the debug hitbox/facet overlay on — the debug sandboxes do,
     /// a real match does not. The map-inspection scene boots it on so the cover overlay is visible
     /// immediately (that is the whole point of the scene).
@@ -4351,6 +4366,17 @@ mod tests {
         // The campaign missions are real matches → overlay off.
         assert!(!Scene::Mission1.debug_overlay_default());
         assert!(!Scene::Mission2.debug_overlay_default());
+    }
+
+    #[test]
+    fn scene_for_mission_maps_each_campaign_mission_to_its_scene() {
+        use crate::mission_registry::{MISSION_HOLD, MISSION_SEIZE};
+        use gonedark_core::campaign::MissionId;
+        // The node→scene mapping the shells launch a selected campaign node through.
+        assert_eq!(Scene::for_mission(MISSION_SEIZE), Some(Scene::Mission1));
+        assert_eq!(Scene::for_mission(MISSION_HOLD), Some(Scene::Mission2));
+        // An unmapped MissionId (no scene of its own) resolves to nothing — never guessed.
+        assert_eq!(Scene::for_mission(MissionId(999)), None);
     }
 
     // --- detection "gone dark" tell → render markers (the pure seam) -------------------------------

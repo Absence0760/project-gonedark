@@ -361,8 +361,9 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 > [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). WS-A, WS-D, and WS-E have landed; WS-B
 > and WS-C are partial — see the plan for per-WS status. WS-A now ships **two** missions —
 > *Seize* (mission 1) and the *Hold* archetype's *Hold the Line* (mission 2,
-> `core::scenario::seed_hold_mission`, directly playable via `Scene::Mission2`/`--scene hold`) —
-> though the shipped campaign node graph still places only the first (see WS-B).
+> `core::scenario::seed_hold_mission`) — and both are now **placed as nodes** in the shipped
+> campaign graph: a two-node chain *Seize* → *Hold* (Hold unlocks once Seize is cleared), with the
+> Android `CampaignModel` mirror moved in lock-step (see WS-B).
 
 - [x] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
   stream (generalizes [D38](decisions.md)'s `evaluate_outcome`); zero checksum surface; ships with
@@ -372,15 +373,17 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   the going-dark teach beat (code landed — `core::scenario::seed_seize_mission`)
 - [x] **Mission 2 — *Hold the Line*** (the *Hold* archetype — a dug-in firing line survives a
   scripted assault force for a fixed tick window) (code landed — `core::scenario::seed_hold_mission`,
-  `ObjectiveSet::mission_hold`; directly playable via `Scene::Mission2`/`--scene hold`; not yet
-  placed in the shipped campaign node graph — see WS-B)
+  `ObjectiveSet::mission_hold`; directly playable via `Scene::Mission2`/`--scene hold`; now **placed
+  as the second campaign node**, gated behind *Seize* — see WS-B)
 - [ ] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
   briefing (native shell, [D32](decisions.md)) (PARTIAL — host model `core/src/campaign.rs` +
   persistence built; the `MissionId→mission` registry has landed
-  (`engine/src/mission_registry.rs`), now holding both *Seize* and *Hold*; native shell still
-  BLOCKED on [D32](decisions.md), and the campaign node graph stays single-node — placing *Hold*
-  as a second node needs the hand-maintained Android `CampaignModel` mirror
-  ([`compose-shell-parity.md`](plans/compose-shell-parity.md)) to move with it)
+  (`engine/src/mission_registry.rs`), holding both *Seize* and *Hold*; the shipped campaign graph is
+  now the **two-node chain** *Seize* → *Hold* (`default_campaign()`), with the node→scene launch
+  mapping (`Scene::for_mission`) wired on desktop + Android and the Android `CampaignModel` mirror
+  moved in lock-step ([`compose-shell-parity.md`](plans/compose-shell-parity.md)); the egui
+  mission-select/briefing hub reaches both nodes, native (Compose) shell chrome still BLOCKED on
+  [D32](decisions.md))
 - [ ] **Gunsmith loadout (WS-C)** — fixed-point sidegrade attachment model, checksum-folded, +
   pre-match loadout UI ([D60](decisions.md)) (PARTIAL — sim model `core/src/gunsmith.rs` + UI seam
   `engine/src/loadout_ui.rs` built + tested; loadout not applied at live match start)

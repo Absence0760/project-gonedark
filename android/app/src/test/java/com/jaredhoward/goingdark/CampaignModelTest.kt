@@ -75,11 +75,42 @@ class CampaignModelTest {
     fun campaign_nodes_non_empty_and_carry_the_seize_mission() {
         assertTrue("campaign ships at least one node", campaignNodes.isNotEmpty())
 
-        // The one shipped playable node mirrors engine::default_campaign(): the Seize mission.
+        // The root playable node mirrors engine::default_campaign(): the Seize mission.
         val seize = campaignNodes.firstOrNull { it.sceneToken == "mission1" }
         assertNotNull("a node wired to scene token mission1", seize)
         assertTrue("mission name is non-blank", seize!!.name.isNotBlank())
         assertTrue("briefing copy is non-blank", seize.briefing.isNotBlank())
+    }
+
+    @Test
+    fun campaign_is_the_two_node_seize_then_hold_chain() {
+        // Mirrors engine::default_campaign()'s WS-B 2-node graph: NodeId(0)=Seize (root),
+        // NodeId(1)=Hold gated behind it. The list index == the node id (Rust's NodeId(i)==nodes[i]).
+        assertEquals("Seize + Hold are both node-placed", 2, campaignNodes.size)
+
+        val seize = campaignNodes[0]
+        assertEquals(0, seize.id)
+        assertEquals("mission1", seize.sceneToken)
+        assertTrue("Seize is a root (no prerequisites)", seize.prerequisites.isEmpty())
+
+        val hold = campaignNodes[1]
+        assertEquals(1, hold.id)
+        assertEquals("mission2", hold.sceneToken)
+        // Hold is gated behind Seize — the unlock edge that mirrors `.requires([NodeId(0)])`.
+        assertEquals(listOf(0), hold.prerequisites)
+    }
+
+    @Test
+    fun hold_name_and_briefing_mirror_the_rust_source_verbatim() {
+        // Pins the D79 mirror against core::mission_tuning::MISSION_TWO_BRIEFING (title + situation).
+        // Like the Seize node, the briefing surface shows only `situation` (not `objective_line`).
+        val hold = campaignNodes.first { it.sceneToken == "mission2" }
+        assertEquals("Hold the Line", hold.name)
+        assertEquals(
+            "They're coming for your dug-in line. Fight it from cover, or embody one rifle " +
+                "and hold by hand — but go dark and the line you can't see is the one that breaks.",
+            hold.briefing,
+        )
     }
 
     @Test

@@ -49,10 +49,29 @@ class CampaignProgressTest {
 
     @Test
     fun shipped_default_campaign_root_is_available() {
-        // The one shipped node (Seize) is a root with no prerequisites → immediately playable.
+        // The shipped root node (Seize) has no prerequisites → immediately playable.
         val c = CampaignProgress()
         assertEquals(NodeProgress.Available, c.progress(0))
         assertTrue(c.progress(0).isPlayable)
+    }
+
+    @Test
+    fun shipped_default_campaign_gates_hold_behind_seize() {
+        // The WS-B 2-node chain over the real `campaignNodes`: Hold (node 1) is Locked until Seize
+        // (node 0) is cleared, then unlocks and stays replayable — mirrors engine::default_campaign().
+        var c = CampaignProgress()
+        assertEquals(NodeProgress.Available, c.progress(0))
+        assertEquals(NodeProgress.Locked, c.progress(1))
+        assertFalse("Hold cannot be launched while locked", c.progress(1).isPlayable)
+
+        c = c.recordClear(0, Difficulty.Veteran)
+        assertEquals(NodeProgress.Cleared(Difficulty.Veteran), c.progress(0))
+        assertEquals(NodeProgress.Available, c.progress(1))
+        assertTrue("Hold unlocks once Seize is cleared", c.progress(1).isPlayable)
+
+        // The cleared set round-trips over the shipped topology (Hold stays unlocked across a restart).
+        val restored = CampaignProgress.decodeCleared(c.encodeCleared())
+        assertEquals(NodeProgress.Available, restored.progress(1))
     }
 
     @Test

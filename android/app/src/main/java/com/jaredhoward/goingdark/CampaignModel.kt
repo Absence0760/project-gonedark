@@ -18,10 +18,12 @@ package com.jaredhoward.goingdark
  * or the two shells silently disagree. The [CampaignModelTest] pins the id strings and the cycle so a
  * drift trips a test rather than shipping.
  *
- * [campaignNodes] mirrors `engine::mission_registry::default_campaign()`: today exactly **one**
- * playable node — the WS-A *Seize* mission ("10 troops, take the base"). Integration (not this file)
- * resolves a node's [MissionNode.sceneToken] to a real launchable scene and wires the
- * Campaign → MissionSelect → Briefing → gunsmith flow; this model only names the mission.
+ * [campaignNodes] mirrors `engine::mission_registry::default_campaign()`: the WS-B **two-node
+ * chain** — the root *Seize* mission ("10 troops, take the base") and, gated behind it, the *Hold
+ * the Line* defense (unlocks once Seize is cleared). Integration (not this file) resolves a node's
+ * [MissionNode.sceneToken] to a real launchable scene (via the Rust `Scene::for_mission` seam —
+ * `mission1`/`mission2`) and wires the Campaign → MissionSelect → Briefing flow; this model only
+ * names the mission.
  */
 
 /**
@@ -252,12 +254,14 @@ data class CampaignResult(val node: Int, val tier: Difficulty) {
 }
 
 /**
- * The shipped campaign nodes, mirroring `engine::mission_registry::default_campaign()`. Today exactly
- * one playable node: the WS-A *Seize* mission. The [name] mirrors `MISSION_ONE_BRIEFING.title` and the
- * [briefing] mirrors `MISSION_ONE_BRIEFING.situation` **verbatim** (the desktop briefing surface shows
- * only the situation, not the separate `objective_line`, so neither does this) — a D79 mirrored string
- * the [CampaignModelTest] pins so a future edit to the Rust copy can't silently diverge. More nodes
- * land here as more Rust missions ship — keep in lock-step.
+ * The shipped campaign nodes, mirroring `engine::mission_registry::default_campaign()`: the WS-B
+ * **two-node chain** — the root *Seize* mission and, gated behind it ([prerequisites] = `[0]`), the
+ * *Hold the Line* defense. Each node's [name]/[briefing] mirror the Rust `MISSION_*_BRIEFING`
+ * `title`/`situation` **verbatim** (the desktop/Compose briefing surface shows only the situation,
+ * not the separate `objective_line`, so neither does this), and each [sceneToken] mirrors the Rust
+ * `Scene::for_mission` mapping (Seize → `mission1`, Hold → `mission2`) — D79 mirrored strings the
+ * [CampaignModelTest] pins so a future edit to the Rust copy can't silently diverge. More nodes land
+ * here as more Rust missions ship — keep in lock-step.
  */
 val campaignNodes: List<MissionNode> = listOf(
     MissionNode(
@@ -266,5 +270,13 @@ val campaignNodes: List<MissionNode> = listOf(
         sceneToken = "mission1",
         briefing = "Ten of yours against a dug-in garrison. Command them — or go dark and fight one " +
             "yourself. Just don't stay blind too long.",
+    ),
+    MissionNode(
+        id = 1,
+        name = "Hold the Line",
+        sceneToken = "mission2",
+        briefing = "They're coming for your dug-in line. Fight it from cover, or embody one rifle " +
+            "and hold by hand — but go dark and the line you can't see is the one that breaks.",
+        prerequisites = listOf(0),
     ),
 )

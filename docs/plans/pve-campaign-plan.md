@@ -18,10 +18,13 @@
 > `MissionDef`/`MissionRegistry` mapping each unlock-graph node to a runnable seeder + WS-E briefing,
 > host-side / zero new checksum surface, `default_registry()` now ships **two** WS-A missions —
 > *Seize* and the new *Hold the Line* (`core::scenario::seed_hold_mission`,
-> `ObjectiveSet::mission_hold`) — tests green dev+release); *Hold* is directly playable
-> (`Scene::Mission2`/`--scene hold`) but not yet placed as a node in `default_campaign`, which stays
-> single-node until the hand-maintained Android `CampaignModel` mirror moves with it. Only the
-> **mission-select/briefing native shell stays BLOCKED on [D32](../decisions.md)**. *(Replay-tier → combat-tuning scaling is **resolved + implemented** by
+> `ObjectiveSet::mission_hold`) — tests green dev+release). **Both are now placed as nodes** in
+> `default_campaign()`: a **two-node chain** *Seize* → *Hold* (Hold `.requires([NodeId(0)])`, so it
+> unlocks once Seize is cleared), with the node→scene launch mapping (`Scene::for_mission`:
+> Seize → `Mission1`, Hold → `Mission2`) wired into the desktop shell and the Android backend, and
+> the hand-maintained Android `CampaignModel` mirror moved in lock-step. The egui
+> mission-select/briefing hub reaches both nodes; only the **native (Compose) mission-select/briefing
+> shell chrome stays BLOCKED on [D32](../decisions.md)**. *(Replay-tier → combat-tuning scaling is **resolved + implemented** by
 > [D83](../decisions.md#d83--campaign-replay-difficulty-reshapes-the-situation-not-a-4th-commander-band-resolves-q21):
 > the chosen replay tier drives both the 4→3 enemy-commander band and the `ScenarioModifiers`
 > situation, threaded through `MissionDef::launch` + `Game::apply_campaign_tuning` on both hosts —
@@ -108,16 +111,26 @@ the `determinism.yml` cross-arch matrix stays green (the objective layer is host
 checksum surface — confirm the sim it observes is unchanged). This is the WS that most needs
 [`/check`](../../.claude/commands) + the test-gap-checker before commit.
 
-### WS-B — Operations hub — **PARTIAL (host model built; native shell BLOCKED on [D32](../decisions.md))**
+### WS-B — Operations hub — **PARTIAL (host model + 2-node graph + node→scene launch built; native (Compose) shell chrome BLOCKED on [D32](../decisions.md))**
 
 - Node-graph meta-progression: a `Campaign`/`OperationNode` model (host/shell-side), unlock state
-  (clearing a node opens successors), replay-at-higher-difficulty.
+  (clearing a node opens successors), replay-at-higher-difficulty. **The shipped graph is now the
+  two-node chain** *Seize* → *Hold* (`engine::mission_registry::default_campaign()`; Hold gated
+  behind Seize), resolved to runnable missions by `default_registry()` and launched into the right
+  scene by `Scene::for_mission` (Seize → `Mission1`, Hold → `Mission2`) — wired on both the desktop
+  shell (`app/src/main.rs`) and the Android backend (`pal-android/src/android_backend.rs`), with the
+  Android `CampaignModel` Kotlin mirror kept in lock-step.
 - Mission-select + briefing surface in the **native shell** ([D32](../decisions.md)) reached through
   the `core::shell` seam ([D34](../decisions.md)); progress persisted **outside** the checksum fold as
   **a separate host file** (campaign metadata, not sim state) — the host-side content model
-  [D76](../decisions.md) locks in.
+  [D76](../decisions.md) locks in. *(The **egui** hub already reaches both nodes end-to-end; the
+  reachability gap is only the Compose/native chrome, still D32-blocked.)*
 
-**Tests:** unlock-graph transitions; persistence round-trip of campaign progress.
+**Tests:** unlock-graph transitions (both the synthetic chain and the shipped `default_campaign()`
+2-node graph — Hold locked until Seize clears, then available/replayable); `covers` + `resolve_node`
+on node 1 resolves to `MISSION_HOLD`; the `MissionId→Scene` mapping (`Scene::for_mission`);
+persistence round-trip of campaign progress over the 2-node topology. Kotlin: the `CampaignModel`
+mirror + progress tests assert the same 2-node chain.
 
 ### WS-C — Gunsmith loadout — **DONE on desktop (sim model + UI seam + match-start application + egui gunsmith screen); mobile-native screen D32-blocked**
 

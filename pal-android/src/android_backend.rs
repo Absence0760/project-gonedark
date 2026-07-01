@@ -273,8 +273,11 @@ fn android_main(app: AndroidApp) {
                                 // picked), so a 2nd/gated node resolves correctly — matching the desktop
                                 // host, which threads its `pending_launch` node through `resolve_node`.
                                 // Missing/garbage decoded to `0` (the root node), so a bare Mission1
-                                // launch still targets the root.
-                                if scene == Scene::Mission1 {
+                                // launch still targets the root. Both campaign mission scenes take
+                                // this path — the Compose mission-select's `sceneToken` resolves
+                                // Seize → `Mission1` and the gated Hold node → `Mission2` (the WS-B
+                                // 2-node graph), so the selected node's own scene is what booted here.
+                                if matches!(scene, Scene::Mission1 | Scene::Mission2) {
                                     let node = NodeId(launch.node);
                                     let campaign =
                                         gonedark_engine::mission_registry::default_campaign();
