@@ -233,6 +233,25 @@ impl Sim {
         self.tick
     }
 
+    /// Load a static map by id: rebuild [`terrain`](Self::terrain) from it **and** record the
+    /// `map_id`, so the two never drift. This matters because the authoritative snapshot serializes
+    /// only the `map_id` and re-derives the grid on resume (D28) — if a scenario set `terrain`
+    /// without setting `map_id`, a snapshot round-trip would silently rebuild the *wrong* (open) map
+    /// and desync on the first tick (invariant #7). Setting both here makes that impossible.
+    ///
+    /// Returns `false` and leaves the sim unchanged for an unknown id (the caller chose a map this
+    /// build can't rebuild). Intended for scenario builders at seed time.
+    pub fn load_map(&mut self, id: MapId) -> bool {
+        match Terrain::from_map_id(id) {
+            Some(t) => {
+                self.terrain = t;
+                self.map_id = id;
+                true
+            }
+            None => false,
+        }
+    }
+
     #[inline]
     pub fn rng(&mut self) -> &mut Rng {
         &mut self.rng
@@ -1194,6 +1213,43 @@ fn read_shell(r: &mut Reader) -> Result<ShellKind, DeserializeError> {
 mod tests {
     use super::*;
     use crate::systems::MOVE_SPEED;
+    use crate::terrain::Cover;
+
+    #[test]
+    fn load_map_sets_terrain_and_survives_snapshot_roundtrip() {
+        let mut sim = Sim::new(0);
+        // A fresh sim is on the open map — no cover anywhere.
+        assert!(sim.terrain.cover_at_cell(0, 0) == Cover::None);
+
+        assert!(sim.load_map(Terrain::POINTE_DU_HOC_MAP_ID), "known map id loads");
+
+        // The baked map has cover somewhere (proves terrain was actually rebuilt).
+        let has_cover = (0..crate::flow_field::GRID as i32).any(|cy| {
+            (0..crate::flow_field::GRID as i32).any(|cx| sim.terrain.cover_at_cell(cx, cy) != Cover::None)
+        });
+        assert!(has_cover, "baked map must have cover after load_map");
+
+        // The snapshot carries only the map_id (D28); a round-trip must rebuild the SAME terrain —
+        // which only works because load_map set map_id in lockstep with terrain (invariant #7).
+        let restored = Sim::deserialize(&sim.serialize()).expect("round-trips");
+        for cy in 0..crate::flow_field::GRID as i32 {
+            for cx in 0..crate::flow_field::GRID as i32 {
+                assert_eq!(
+                    restored.terrain.cover_at_cell(cx, cy),
+                    sim.terrain.cover_at_cell(cx, cy),
+                    "restored map must match at ({cx},{cy})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn load_map_rejects_unknown_id_without_mutating() {
+        let mut sim = Sim::new(0);
+        sim.terrain.set_cover(1, 1, Cover::Heavy); // a distinctive pre-state
+        assert!(!sim.load_map(9999), "unknown id returns false");
+        assert_eq!(sim.terrain.cover_at_cell(1, 1), Cover::Heavy, "sim left unchanged");
+    }
 
     /// Spawn one embodied unit at the origin and return its entity + the sim.
     fn sim_with_embodied_unit() -> (Sim, Entity) {

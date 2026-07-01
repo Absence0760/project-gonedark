@@ -18,7 +18,18 @@
 //! carry no fog mask — it is debug chrome over an already-visible scene, not intel. It is gated
 //! behind a developer toggle, off by default outside the debug scenes.
 
+use gonedark_core::flow_field::GRID;
+use gonedark_core::terrain::{Cover, Terrain};
 use std::f32::consts::PI;
+
+/// World half-extent of the sim grid as f32 — mirrors `core::flow_field::HALF_EXTENT` (`GRID/2`,
+/// with `CELL_SIZE == 1`). Cell `(cx,cy)` spans world `[-GRID_HALF + cx, -GRID_HALF + cx + 1)`, the
+/// same mapping `core::terrain` uses, so the overlay squares land exactly on the sim's cells.
+const GRID_HALF: f32 = (GRID / 2) as f32;
+
+/// Cover-overlay colors: Light cover amber, Heavy cover (walls / water) steel.
+const COLOR_COVER_LIGHT: [f32; 3] = [0.85, 0.70, 0.25];
+const COLOR_COVER_HEAVY: [f32; 3] = [0.55, 0.62, 0.75];
 
 /// Segments approximating each unit's hit-radius ring. A multiple of 6 so the 60°/120° facet
 /// boundaries land exactly on a segment edge (no segment straddles two facets).
@@ -411,6 +422,35 @@ impl DebugRenderer {
     }
 }
 
+/// Outline every non-open cover cell of `terrain` as a world-space square, colored by cover level
+/// (Light = amber, Heavy = steel). The **map-diagnostics** seam: it makes the sim's actual cover
+/// grid — the cells the flow field and line-of-sight read — visible in the command view, so a
+/// mis-baked or misaligned map (a wall one cell off, a sealed pocket, water where it shouldn't be)
+/// is obvious at a glance. Open cells draw nothing (an empty map ⇒ no verts). Each cell is 4 edges
+/// as a `LineList` (8 verts). Pure (no GPU) — the testable seam.
+pub fn covergrid_lines(terrain: &Terrain) -> Vec<DebugVertex> {
+    let mut v = Vec::new();
+    for cy in 0..GRID as i32 {
+        for cx in 0..GRID as i32 {
+            let color = match terrain.cover_at_cell(cx, cy) {
+                Cover::None => continue,
+                Cover::Light => COLOR_COVER_LIGHT,
+                Cover::Heavy => COLOR_COVER_HEAVY,
+            };
+            let x0 = -GRID_HALF + cx as f32;
+            let y0 = -GRID_HALF + cy as f32;
+            let x1 = x0 + 1.0;
+            let y1 = y0 + 1.0;
+            let corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+            for i in 0..4 {
+                v.push(DebugVertex { world: corners[i], color });
+                v.push(DebugVertex { world: corners[(i + 1) % 4], color });
+            }
+        }
+    }
+    v
+}
+
 #[cfg(test)]
 mod tests {
     //! `render` is the float boundary, so the f32 line math is fair game. `DebugRenderer::new` needs
@@ -418,6 +458,51 @@ mod tests {
     //! geometry is factored into [`hitbox_lines`] / [`tracer_lines`] / [`facet_color`].
 
     use super::*;
+
+    #[test]
+    fn covergrid_open_field_draws_nothing() {
+        assert!(covergrid_lines(&Terrain::open()).is_empty());
+    }
+
+    #[test]
+    fn covergrid_outlines_one_cell_at_the_right_world_square() {
+        let mut t = Terrain::open();
+        t.set_cover(0, 0, Cover::Heavy); // south-west corner cell
+        let v = covergrid_lines(&t);
+        assert_eq!(v.len(), 8, "one cell = 4 edges = 8 line verts");
+        assert!(v.iter().all(|d| d.color == COLOR_COVER_HEAVY));
+        // Cell (0,0) spans world [-GRID_HALF, -GRID_HALF+1) on each axis.
+        let lo = -GRID_HALF;
+        let hi = lo + 1.0;
+        let xs: Vec<f32> = v.iter().map(|d| d.world[0]).collect();
+        let ys: Vec<f32> = v.iter().map(|d| d.world[1]).collect();
+        assert_eq!(xs.iter().cloned().fold(f32::INFINITY, f32::min), lo);
+        assert_eq!(xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max), hi);
+        assert_eq!(ys.iter().cloned().fold(f32::INFINITY, f32::min), lo);
+        assert_eq!(ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max), hi);
+    }
+
+    #[test]
+    fn covergrid_colors_by_cover_level_and_counts_cells() {
+        let mut t = Terrain::open();
+        t.set_cover(3, 4, Cover::Light);
+        t.set_cover(5, 6, Cover::Heavy);
+        let v = covergrid_lines(&t);
+        assert_eq!(v.len(), 16, "two covered cells = 16 verts");
+        assert_eq!(v.iter().filter(|d| d.color == COLOR_COVER_LIGHT).count(), 8);
+        assert_eq!(v.iter().filter(|d| d.color == COLOR_COVER_HEAVY).count(), 8);
+    }
+
+    #[test]
+    fn covergrid_scales_with_a_baked_map() {
+        // A real baked map produces a non-trivial, deterministic vertex count (8 per covered cell).
+        let t = Terrain::from_map_id(Terrain::POINTE_DU_HOC_MAP_ID).unwrap();
+        let covered = (0..GRID as i32)
+            .flat_map(|cy| (0..GRID as i32).map(move |cx| (cx, cy)))
+            .filter(|&(cx, cy)| t.cover_at_cell(cx, cy) != Cover::None)
+            .count();
+        assert_eq!(covergrid_lines(&t).len(), covered * 8);
+    }
 
     fn tank(hull_yaw: f32) -> DebugUnit {
         DebugUnit {

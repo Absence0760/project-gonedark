@@ -289,6 +289,60 @@ pub fn seed_infantry(sim: &mut Sim) -> Infantry {
     }
 }
 
+// --- Map inspection: drive a baked real-world map to diagnose it -------------------------------
+
+/// Handles from [`seed_map_inspect`]: the Player troops dropped on the baked map.
+pub struct MapInspect {
+    /// The player troops (the first is the embodiable/selectable handle).
+    pub troops: Vec<Entity>,
+}
+
+/// Seed `sim` on a **baked real-world map** for inspection/diagnosis. Loads `map_id` (its cover grid,
+/// baked from GIS data by `tools/maps/`) via [`Sim::load_map`] — so `map_id` and `terrain` agree and
+/// a snapshot round-trips (invariant #7) — then drops a few Player riflemen on open, reachable ground
+/// so you can drive the map, watch line-of-sight against the real walls, and eyeball the F3 cover
+/// overlay. This is the in-engine half of map diagnosis; `tools/maps/lint.py` is the headless half.
+///
+/// Not a balanced match — a diagnostic sandbox. Deterministic + fixed-point like every scene.
+/// Returns `None` for an unknown map id (nothing to inspect).
+pub fn seed_map_inspect(sim: &mut Sim, map_id: crate::terrain::MapId) -> Option<MapInspect> {
+    if !sim.load_map(map_id) {
+        return None;
+    }
+    // Three Player riflemen on open, reachable ground. World (36,36) maps to cell (100,100), which
+    // `tools/maps/lint.py --spawn 100,100` confirms is passable and in the main connected region;
+    // the two neighbours sit just west of it, clear of every enumerated structure. `HoldFire` — a
+    // static diagnostic scene, so nothing dies while you look around the map.
+    let troops = [(36, 36), (33, 36), (30, 36)]
+        .iter()
+        .map(|&p| {
+            spawn_rifleman(
+                sim,
+                at(p),
+                Faction::Player,
+                Stance::HoldFire,
+                INF_PLAYER_HP,
+                Angle(0),
+            )
+        })
+        .collect();
+    // A couple of Enemy riflemen across the field. Two reasons: (1) they give the Player→Enemy
+    // line-of-sight overlay real targets to test the map's walls against; (2) a scene with **zero**
+    // enemies would trip the elimination win-condition on tick 0 (instant VICTORY), so they keep the
+    // sandbox from auto-resolving. `HoldFire` + out of rifle range of the player troops → no combat.
+    for &p in &[(10, 36), (13, 36)] {
+        spawn_rifleman(
+            sim,
+            at(p),
+            Faction::Enemy,
+            Stance::HoldFire,
+            INF_PLAYER_HP,
+            Angle(ANGLE_FULL / 2),
+        );
+    }
+    Some(MapInspect { troops })
+}
+
 // --- The skirmish: the first *real* (non-debug) match ------------------------------------------
 //
 // Unlike the duel / infantry sandboxes above — which isolate one mechanic for a harness — this is
@@ -680,6 +734,39 @@ mod tests {
 
     fn fresh() -> Sim {
         Sim::new(0xD0E1)
+    }
+
+    #[test]
+    fn seed_map_inspect_loads_the_baked_map_with_reachable_troops() {
+        let mut sim = fresh();
+        let h = seed_map_inspect(&mut sim, crate::terrain::Terrain::POINTE_DU_HOC_MAP_ID)
+            .expect("known map id");
+        assert_eq!(h.troops.len(), 3, "three inspection troops");
+        // Every troop is a Player rifleman standing on open, sight-passable ground (not in a wall).
+        for &e in &h.troops {
+            let i = e.index as usize;
+            assert_eq!(sim.world.faction[i], Faction::Player);
+            assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+            assert_ne!(
+                sim.terrain.cover_at(sim.world.pos[i]),
+                Cover::Heavy,
+                "an inspection troop must not spawn inside a wall"
+            );
+        }
+        // At least one Enemy exists so the elimination win-condition doesn't fire instantly (the
+        // "instant VICTORY on an enemy-less map" bug this scene originally had).
+        let enemies = (0..sim.world.capacity())
+            .filter(|&i| {
+                sim.world.kind[i] == EntityKind::Unit && sim.world.faction[i] == Faction::Enemy
+            })
+            .count();
+        assert!(enemies > 0, "inspection scene must seed an enemy so it doesn't auto-win");
+    }
+
+    #[test]
+    fn seed_map_inspect_unknown_map_is_none() {
+        let mut sim = fresh();
+        assert!(seed_map_inspect(&mut sim, 9999).is_none());
     }
 
     /// The aim vector for a `+X`-travelling shot (player → enemy), as a unit `Fixed` vector.
