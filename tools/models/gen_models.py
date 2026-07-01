@@ -392,7 +392,7 @@ def build_trooper():
         box((0.36, 0.14, 0.34), (0, 0.21, 1.40)),              # front plate slab
         box((0.30, 0.20, 0.46), (0, -0.21, 1.32)),             # backpack
         cyl(0.075, 0.12, (0, 0, 1.66), verts=8),               # neck
-        sphere(0.135, (0, 0, 1.76), segments=8, rings=5),      # head
+        icosphere(0.14, (0, 0, 1.76), subdivisions=1),         # head (faceted — deterministic, no UV-sphere wobble)
         icosphere(0.175, (0, 0, 1.80), subdivisions=1),        # rounded combat helmet (faceted dome)
         box((0.34, 0.32, 0.06), (0, 0.02, 1.82)),              # helmet brow / NVG-mount slab
         cyl(0.105, 0.84, (0.12, 0, 0.48), verts=10),           # leg R (single tapered limb)
@@ -404,6 +404,10 @@ def build_trooper():
         # Forearms angled forward + inward so the hands meet across the chest (weapon-ready).
         cyl(0.06, 0.36, (0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),    # forearm R
         cyl(0.06, 0.36, (-0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm L
+        # Carried rifle held forward across the hands — a compact bar + magazine so the token reads
+        # "armed rifleman" at command-view distance (welds into the body tint; silhouette is the read).
+        box((0.065, 0.50, 0.075), (0.02, 0.30, 1.11), rot=(math.radians(-7), 0, math.radians(9))),  # rifle body (+Y forward)
+        box((0.05, 0.06, 0.15), (0.05, 0.20, 1.02), rot=(math.radians(-7), 0, math.radians(9))),    # magazine
     ]
     return weld("trooper", parts, mat, bevel=0.02)
 
@@ -646,7 +650,7 @@ def build_trooper_us():
         box((0.40, 0.16, 0.36), (0, 0.22, 1.40)),              # front plate slab
         box((0.32, 0.22, 0.46), (0, -0.22, 1.32)),             # backpack
         cyl(0.08, 0.12, (0, 0, 1.66), verts=8),                # neck
-        sphere(0.14, (0, 0, 1.76), segments=8, rings=5),       # head
+        icosphere(0.145, (0, 0, 1.76), subdivisions=1),        # head (faceted — deterministic, no UV-sphere wobble)
         icosphere(0.185, (0, 0, 1.80), subdivisions=1),        # rounded ACH/ECH combat helmet
         box((0.40, 0.32, 0.07), (0, 0.02, 1.82)),              # helmet brow / NVG-mount slab
         cyl(0.11, 0.84, (0.13, 0, 0.48), verts=10),            # leg R (single tapered limb)
@@ -657,6 +661,9 @@ def build_trooper_us():
         cyl(0.08, 0.34, (-0.30, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10),  # upper arm L
         cyl(0.065, 0.36, (0.19, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm R
         cyl(0.065, 0.36, (-0.19, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),  # forearm L
+        # Carried M4 held forward across the hands — reads "armed rifleman" at command-view distance.
+        box((0.07, 0.52, 0.08), (0.02, 0.31, 1.11), rot=(math.radians(-7), 0, math.radians(9))),   # rifle body (+Y forward)
+        box((0.05, 0.06, 0.16), (0.05, 0.20, 1.01), rot=(math.radians(-7), 0, math.radians(9))),   # magazine
     ]
     return weld("trooper_us", parts, mat, bevel=0.02)
 
@@ -674,7 +681,7 @@ def build_trooper_fr():
         box((0.30, 0.14, 0.34), (0, 0.19, 1.40)),              # front plate slab (slimmer)
         box((0.28, 0.19, 0.42), (0, -0.19, 1.30)),             # backpack
         cyl(0.07, 0.12, (0, 0, 1.66), verts=8),                # neck
-        sphere(0.135, (0, 0, 1.75), segments=8, rings=5),      # head
+        icosphere(0.14, (0, 0, 1.75), subdivisions=1),         # head (faceted — deterministic, no UV-sphere wobble)
         cyl(0.185, 0.13, (0, 0, 1.80), verts=10),              # flatter SPECTRA helmet dome
         box((0.40, 0.20, 0.05), (0.0, 0.11, 1.77)),            # brim accent (forward — the FR tell)
         cyl(0.10, 0.84, (0.12, 0, 0.48), verts=10),            # leg R (single tapered limb)
@@ -685,6 +692,9 @@ def build_trooper_fr():
         cyl(0.07, 0.34, (-0.27, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10),  # upper arm L
         cyl(0.06, 0.36, (0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),    # forearm R
         cyl(0.06, 0.36, (-0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm L
+        # Carried FAMAS held forward across the hands — reads "armed rifleman" at command-view distance.
+        box((0.065, 0.48, 0.075), (0.02, 0.29, 1.11), rot=(math.radians(-7), 0, math.radians(9))),  # rifle body (+Y forward)
+        box((0.05, 0.06, 0.15), (0.05, 0.19, 1.02), rot=(math.radians(-7), 0, math.radians(9))),    # magazine
     ]
     return weld("trooper_fr", parts, mat, bevel=0.02)
 
