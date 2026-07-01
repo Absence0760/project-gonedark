@@ -3796,3 +3796,50 @@ its own commits, then a single integration + full-suite verification pass — th
 / fire-mode button *placement* is greybox-reasonable and unit-tested for non-overlap but not
 HUD-editor-exposed (WS-D) or device-playtested. On-device look-sensitivity shakeout still pending (no
 device on hand).
+
+---
+
+## D83 — Campaign replay difficulty reshapes the *situation*, not a 4th commander band (resolves Q21)
+
+**Decision.** The 4-tier campaign progression/replay coordinate (`core::campaign::Difficulty`:
+Recruit / Regular / Veteran / Elite) maps onto the running fight on **two axes**, not one —
+resolving [Q21](open-questions.md#q21--replay-tier-to-commander-tier) with **option (iii)**:
+
+- **Commander aggression stays 3 tiers.** The 4→3 collapse applies to the *aggression axis only*:
+  Recruit→Recruit, {Regular, Veteran}→Veteran, Elite→Elite. This reuses the shipped, golden-checksum-
+  stable `core::mission_tuning::DifficultyParams` bands ([D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness)
+  context) **unchanged** — no re-measurement of the commander constants.
+- **Scenario modifiers carry the full 4-tier resolution.** The complete progression coordinate drives
+  `core::mission_tuning::ScenarioModifiers` intensity (starting-force `force_scale_pct`, reinforcement
+  cadence `reinforcement_period`, fog `TellMode`, host time limit), so **no two replay tiers produce an
+  identical fight** — Regular and Veteran share a commander band but differ in the *situation* they put
+  you in.
+- A pure mapping seam (`core::campaign::Difficulty → (mission_tuning::Difficulty, ScenarioModifiers)`)
+  is the single bridge between the two enums; `engine::mission_registry` consumes it at
+  `LaunchedMission` launch, applying the commander tier via `Game::set_commander_difficulty` and the
+  modifiers via `ScenarioModifiers::apply_to_sim` + the scenario seeder's force/time consumption. The
+  `Regular` tier reproduces the mission's shipped baseline (neutral modifiers, `Veteran` commander) so
+  the default fight stays bit-identical; the other three tiers deviate deliberately.
+
+**Why.** This is the project's *already-locked* difficulty philosophy applied verbatim:
+[D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness) says difficulty **reshapes the
+situation, never the balance numbers**, and `ScenarioModifiers` is exactly that instrument — so
+resolving Q21 this way keeps difficulty expressed through one philosophy instead of forking a second
+one. It fixes the only real weakness of a bare 4→3 collapse (option (i): two replay tiers feel
+identical, making the replay reward cosmetic for one step) *without* paying option (ii)'s cost — a 4th
+commander aggression band would force a re-balance of the carefully-tuned D30 constants and add
+permanent sim-tuning surface to maintain and keep checksum-folded forever. The honest-AI constraint
+(invariants #3/#6, [D39](#d39--the-enemy-is-a-commander-level-scripted-ai-issuing-orders-via-the-lockstep-stream)) holds at every
+tier: a harder replay never makes the commander omniscient, it faces you with more bodies / a faster
+drip / a harsher fog regime. Every lever is integer, so the mapping stays fixed-point and
+checksum-folded (invariants #1/#7). Until this landed, replaying a node at a higher tier recorded a
+best-tier badge but the fight was unchanged — the progression coordinate was inert; D83 makes replay a
+real player-facing feature.
+
+**Status.** Design locked here; the mapping seam + host wiring land as the immediate follow-up
+(pure `core::campaign` mapping, threaded through `mission_registry` launch + both hosts, shipped with
+tests). Until that lands, the host still applies the mission's authored tier.
+
+**Cross-link:** [`plans/pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-B/WS-E,
+[D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness),
+[D39](#d39--the-enemy-is-a-commander-level-scripted-ai-issuing-orders-via-the-lockstep-stream).

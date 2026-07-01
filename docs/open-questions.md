@@ -516,7 +516,18 @@ projectile whether AI-driven or embodied (`combat::combat_system` spawns a `Proj
 consistent and emergent without making the AI a strategist (it fires along current aim, does not lead);
 the new sim writes are index-ordered, fixed-point, checksum-folded, and must keep the arch matrix green.
 
-## Q21 — Campaign replay tier → commander aggression: how do the 4 progression tiers map onto the 3 commander tiers? <a id="q21--replay-tier-to-commander-tier"></a>
+## Q21 — Campaign replay tier → commander aggression: how do the 4 progression tiers map onto the 3 commander tiers? — RESOLVED ([D83](decisions.md#d83--campaign-replay-difficulty-reshapes-the-situation-not-a-4th-commander-band-resolves-q21)) <a id="q21--replay-tier-to-commander-tier"></a>
+
+**Resolved in [D83](decisions.md#d83--campaign-replay-difficulty-reshapes-the-situation-not-a-4th-commander-band-resolves-q21): option (iii).**
+The 4-tier progression coordinate maps on **two axes** — the commander aggression stays 3 tiers (a 4→3
+collapse on that axis only, reusing the golden-checksum-stable D30 bands unchanged), and the *full*
+4-tier resolution drives `ScenarioModifiers` (force size / reinforcement cadence / fog), so no two
+replay tiers feel identical. This applies the already-locked D30 philosophy (reshape the situation,
+never the balance numbers) rather than forking a 4th commander band and re-measuring the tuning. A pure
+`campaign::Difficulty → (mission_tuning::Difficulty, ScenarioModifiers)` seam bridges the two enums,
+consumed at `engine::mission_registry` launch. Original analysis retained below.
+
+---
 
 There are **two distinct `Difficulty` enums**, and nothing yet bridges them:
 
