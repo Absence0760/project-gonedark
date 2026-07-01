@@ -7,7 +7,7 @@
       "category": "units",
       "file": "units/trooper.glb",
       "cooked": "units/trooper.mesh",
-      "description": "Greybox infantry unit \u2014 boxy humanoid (hips/torso/head/limbs).",
+      "description": "Infantry unit \u2014 an organic skinned humanoid (skeleton + Skin modifier) in fatigues cradling an M16 under an M1 steel-pot helmet, with a rucksack + bedroll.",
       "base_color": [
         0.3,
         0.34,
@@ -18,43 +18,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 120104,
-      "sha256": "546a40d7bdafd50ce30b9294946cfe0e95bd45126bc3b1ad643e3c4aed1e34ff",
-      "cooked_bytes": 208044,
-      "cooked_sha256": "fa9a23c649e0dd1a6fa92fd12837afc7bc0045cc85fd50d055d6fa9fa38ffae2",
+      "bytes": 105108,
+      "sha256": "857966213ba77a51384eee9a1da7c35d2b87a418bbcddbcae7e301817e920a2d",
+      "cooked_bytes": 178476,
+      "cooked_sha256": "8178a456bd1291ca565e2e8c8ed1fc8ab9aa6af106129a0a9dd293683fcc2386",
       "lods": [
         {
           "level": 0,
           "file": "units/trooper.glb",
           "cooked": "units/trooper.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 1576,
-          "bytes": 120104,
-          "sha256": "546a40d7bdafd50ce30b9294946cfe0e95bd45126bc3b1ad643e3c4aed1e34ff",
-          "cooked_bytes": 208044,
-          "cooked_sha256": "fa9a23c649e0dd1a6fa92fd12837afc7bc0045cc85fd50d055d6fa9fa38ffae2"
+          "tri_count": 1352,
+          "bytes": 105108,
+          "sha256": "857966213ba77a51384eee9a1da7c35d2b87a418bbcddbcae7e301817e920a2d",
+          "cooked_bytes": 178476,
+          "cooked_sha256": "8178a456bd1291ca565e2e8c8ed1fc8ab9aa6af106129a0a9dd293683fcc2386"
         },
         {
           "level": 1,
           "file": "units/trooper.lod1.glb",
           "cooked": "units/trooper.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 850,
-          "bytes": 20472,
-          "sha256": "ded12ea3cbbb149999c7aeedddd7478193a3d34640f9a973a325fc872a0334d6",
-          "cooked_bytes": 112212,
-          "cooked_sha256": "8de137d9c456071e1d479f7be6da88e54cb40bdd88ae1b9959c8c3ff09b03914"
+          "tri_count": 796,
+          "bytes": 19308,
+          "sha256": "974dc8f050d0701d3dfa3d5938112b74c1284dd57b8d7cf5b10d4f07eddf929c",
+          "cooked_bytes": 105084,
+          "cooked_sha256": "6d741429b8ee5b13b1b1c8ec12ef813af000d92f4c2dfa2205fdac1e0a277387"
         },
         {
           "level": 2,
           "file": "units/trooper.lod2.glb",
           "cooked": "units/trooper.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 618,
-          "bytes": 16144,
-          "sha256": "17760eb483551c1f7d520e6a4c4f13fa82e92a32155222c878dc6de7c25c4237",
-          "cooked_bytes": 81588,
-          "cooked_sha256": "0907a1f0f3fe0c02d1819bde99b62b75f501f8474bde94d667ccb51a7e43c4c7"
+          "tri_count": 509,
+          "bytes": 14168,
+          "sha256": "bdbfa4d78c92e6e9ec598ac07c7de7fd3a29d763c1e4fe805fa351f9a65c76f3",
+          "cooked_bytes": 67200,
+          "cooked_sha256": "5f10d943b27bc7916b1b15bd8ecff72ee78633d0b17e7b0ba9ac76b04fa6add0"
         }
       ]
     },
@@ -623,7 +623,7 @@
       "category": "units",
       "file": "units/trooper_us.glb",
       "cooked": "units/trooper_us.mesh",
-      "description": "US Army infantry silhouette \u2014 rounded combat helmet, plate-carrier torso (WS-C).",
+      "description": "US Army infantry \u2014 skinned GI, bulkier build, M1 steel pot, frag grenade + rucksack (WS-C).",
       "base_color": [
         0.3,
         0.34,
@@ -634,43 +634,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 123404,
-      "sha256": "1f5610ec1d8a08baf6f2b7a681d93797b5e339ee19332882b47c3db6ee39e054",
-      "cooked_bytes": 213852,
-      "cooked_sha256": "114f653cc84871745c74cc161b305881136a902d83d8df7368091adeeaa0445e",
+      "bytes": 106300,
+      "sha256": "c586c916c438ba774d7a52540379806e059fbf78182152619d7bf2a3f7a5c0d0",
+      "cooked_bytes": 180060,
+      "cooked_sha256": "ded0c2461fabb4a1bf362eff5a0a02fc6b33823b646fa54d780d5fabbb311390",
       "lods": [
         {
           "level": 0,
           "file": "units/trooper_us.glb",
           "cooked": "units/trooper_us.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 1620,
-          "bytes": 123404,
-          "sha256": "1f5610ec1d8a08baf6f2b7a681d93797b5e339ee19332882b47c3db6ee39e054",
-          "cooked_bytes": 213852,
-          "cooked_sha256": "114f653cc84871745c74cc161b305881136a902d83d8df7368091adeeaa0445e"
+          "tri_count": 1364,
+          "bytes": 106300,
+          "sha256": "c586c916c438ba774d7a52540379806e059fbf78182152619d7bf2a3f7a5c0d0",
+          "cooked_bytes": 180060,
+          "cooked_sha256": "ded0c2461fabb4a1bf362eff5a0a02fc6b33823b646fa54d780d5fabbb311390"
         },
         {
           "level": 1,
           "file": "units/trooper_us.lod1.glb",
           "cooked": "units/trooper_us.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 881,
-          "bytes": 21188,
-          "sha256": "8a69969a39807e1854472b018f3e92ba79e28ec14163abf978033142cffed22c",
-          "cooked_bytes": 116304,
-          "cooked_sha256": "b467a6e17f6168bc436e213b00061692f62db367cc937fee66b1d5c6c2d58240"
+          "tri_count": 813,
+          "bytes": 19632,
+          "sha256": "f636bcbc12c2b3d36e8ccc429a72d01cbab4f205b0f9444a5519d0c2cd5d5883",
+          "cooked_bytes": 107328,
+          "cooked_sha256": "429880e81d023f33d50cee8af87ae3f6b6bfedb679ce27155229c6e1333552b2"
         },
         {
           "level": 2,
           "file": "units/trooper_us.lod2.glb",
           "cooked": "units/trooper_us.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 608,
-          "bytes": 15828,
-          "sha256": "7694529c2b70f0d42d87a7ea5bcbc7b034810fbddd285b239f38c503335d9533",
-          "cooked_bytes": 80268,
-          "cooked_sha256": "11d9f0a7040db6353cb2a3e461aad68e5795b77a57fdb7af9a8aeed542347521"
+          "tri_count": 510,
+          "bytes": 14200,
+          "sha256": "d7f0f0ac60d859393fb62c33197bcfdea04a791be64556483871f47705c6377d",
+          "cooked_bytes": 67332,
+          "cooked_sha256": "84c9a4d2b669b3e90509a7d96596a2a734779667cc9a486c65ff3fa4621063bd"
         }
       ]
     },
@@ -679,7 +679,7 @@
       "category": "units",
       "file": "units/trooper_fr.glb",
       "cooked": "units/trooper_fr.mesh",
-      "description": "French Army infantry silhouette \u2014 flatter brimmed SPECTRA helmet, slimmer profile (WS-C).",
+      "description": "French Army infantry \u2014 skinned soldier, slimmer build, flatter brimmed SPECTRA helmet (WS-C).",
       "base_color": [
         0.27,
         0.31,
@@ -690,21 +690,21 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 92812,
-      "sha256": "27111a39ec22a4b4e26807ed4d49f9312c24eba30d8df36a7c8a010144bc27b1",
-      "cooked_bytes": 161580,
-      "cooked_sha256": "6a5bcc2d9634860e1ea03b4c5734b7b9c37c804039dcc3347c1076086cac1ee3",
+      "bytes": 106248,
+      "sha256": "f167db448e49d20cc55e2609e626e80db6281f77eb0460bb4bef52e4eb752edb",
+      "cooked_bytes": 178476,
+      "cooked_sha256": "b502dc031cf4f84ac50fdcf65bbb9d4782a3d1af0879d16ac2bf9bd3937092e0",
       "lods": [
         {
           "level": 0,
           "file": "units/trooper_fr.glb",
           "cooked": "units/trooper_fr.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 1224,
-          "bytes": 92812,
-          "sha256": "27111a39ec22a4b4e26807ed4d49f9312c24eba30d8df36a7c8a010144bc27b1",
-          "cooked_bytes": 161580,
-          "cooked_sha256": "6a5bcc2d9634860e1ea03b4c5734b7b9c37c804039dcc3347c1076086cac1ee3"
+          "tri_count": 1352,
+          "bytes": 106248,
+          "sha256": "f167db448e49d20cc55e2609e626e80db6281f77eb0460bb4bef52e4eb752edb",
+          "cooked_bytes": 178476,
+          "cooked_sha256": "b502dc031cf4f84ac50fdcf65bbb9d4782a3d1af0879d16ac2bf9bd3937092e0"
         },
         {
           "level": 1,
@@ -712,21 +712,21 @@
           "cooked": "units/trooper_fr.lod1.mesh",
           "simplify_ratio": 0.5,
           "tri_count": 720,
-          "bytes": 18048,
-          "sha256": "fd1beb78b2ed2c9c0b3f513818ff58a3a96e64a1dac82a5bea6df7fda98e6a43",
+          "bytes": 18076,
+          "sha256": "fed63ed0b3c2743ed30f84696f459184eef8e5c936571272a5cab4fc8c0022ec",
           "cooked_bytes": 95052,
-          "cooked_sha256": "efefdff82e3c9be368d8616945303efc42c334a09e2a4d42b48fa868a7bd3b8a"
+          "cooked_sha256": "c48d2cb4507f4ab5f9d67ef2f28dfb6d360f485b04f08d4d341e399cf75b9c10"
         },
         {
           "level": 2,
           "file": "units/trooper_fr.lod2.glb",
           "cooked": "units/trooper_fr.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 481,
-          "bytes": 13516,
-          "sha256": "ed6fa6bb718044774e32ef4c329f44e6ef8ea8371db3e5962670e554b9bce36a",
-          "cooked_bytes": 63504,
-          "cooked_sha256": "289f6d447cc82fa4167ebf9b255004230f51901255d431b21acc3ca6ef4e7179"
+          "tri_count": 446,
+          "bytes": 13212,
+          "sha256": "f8edf71754e7a7f9ab3c8de90dbe97350aec9ac84e4f9c3d49f6a0dc94015e35",
+          "cooked_bytes": 58884,
+          "cooked_sha256": "66a1063f476f394aafc4c484c1974b589e8e2f31e47058b48097a09909ff99e3"
         }
       ]
     },
