@@ -13,6 +13,32 @@ const FLAG_RING: u32 = 2u;     // a territory control point — drawn as a hollo
 const FLAG_SELECTED: u32 = 4u; // command-layer selected — bright rim around the quad
 const FLAG_MESH: u32 = 8u;     // a 3D token mesh draws this body — the quad is UI decals only
 
+// Faction footprint shape tags (WS-D non-colour redundancy) — mirror of the `SHAPE_*` constants in
+// `lib.rs` (WGSL shares no constant with Rust). A per-faction silhouette drawn under each 3D token so
+// factions read by SHAPE, not hue alone (colourblind-safe; redundant with the faction colour, never
+// new intel — invariant #6). SHAPE_BAND is the outline thickness in quad-local units [-1,1]^2.
+const SHAPE_NONE: u32 = 0u;
+const SHAPE_CIRCLE: u32 = 1u;   // Player
+const SHAPE_TRIANGLE: u32 = 2u; // Enemy
+const SHAPE_SQUARE: u32 = 3u;   // Neutral
+const SHAPE_BAND: f32 = 0.34;
+
+// Signed "outsideness" of a quad-local point for a footprint shape: <= 0 inside the boundary, 0 on it,
+// > 0 outside. Exact mirror of `render::shape_signed` (unit-tested off-GPU on the Rust side).
+fn shape_signed(shape: u32, p: vec2<f32>) -> f32 {
+    if shape == SHAPE_CIRCLE {
+        return length(p) - 1.0;
+    }
+    if shape == SHAPE_SQUARE {
+        return max(abs(p.x), abs(p.y)) - 1.0;
+    }
+    if shape == SHAPE_TRIANGLE {
+        // Upward triangle: apex (0, 1), base corners (±1, -1). Max of the three edge functions.
+        return max(max(2.0 * p.x + p.y - 1.0, -2.0 * p.x + p.y - 1.0), -p.y - 1.0);
+    }
+    return 1.0; // SHAPE_NONE / unknown → never inside
+}
+
 // Column-major 4x4 view-projection, uploaded by the wiring layer (glam Mat4).
 struct Camera {
     view_proj: mat4x4<f32>,
@@ -27,6 +53,7 @@ struct VertexOut {
     @location(1) local: vec2<f32>,        // the quad corner in [-1, 1] (interpolated)
     @location(2) health: f32,             // [0,1], or negative for "no bar"
     @location(3) @interpolate(flat) flags: u32,
+    @location(4) @interpolate(flat) shape: u32, // faction footprint shape tag (WS-D)
 };
 
 // Per-vertex: the quad corner in local space. Per-instance: world position, half-extent,
@@ -39,6 +66,7 @@ fn vs_main(
     @location(3) color: vec3<f32>,
     @location(4) health: f32,
     @location(5) flags: u32,
+    @location(6) shape: u32,
 ) -> VertexOut {
     let world = vec2<f32>(
         inst_pos.x + corner.x * half_extent,
@@ -52,6 +80,7 @@ fn vs_main(
     out.local = corner;
     out.health = health;
     out.flags = flags;
+    out.shape = shape;
     return out;
 }
 
@@ -84,12 +113,27 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
 
     // 3D-token units/buildings (FLAG_MESH): the body is drawn by the mesh pass underneath, so the
-    // quad contributes only the UI decals that must read on top — the selection rim (handled above)
-    // and the health bar (below). Everything else discards, letting the 3D mesh show through. Placed
-    // after the rim/ring checks so those still win, but before the opaque body fill + outline.
+    // quad contributes only the UI decals that must read on top — the selection rim (handled above),
+    // the health bar (below), and the WS-D faction footprint shape marker. Everything else discards,
+    // letting the 3D mesh show through. Placed after the rim/ring checks so those still win.
     let is_mesh_token = (in.flags & FLAG_MESH) != 0u;
-    if is_mesh_token && !(in.health >= 0.0 && in.local.y > 0.55) {
-        discard;
+    if is_mesh_token {
+        let in_health_strip = in.health >= 0.0 && in.local.y > 0.55;
+        if !in_health_strip {
+            // WS-D non-colour redundancy: a per-faction footprint SHAPE (circle / triangle / square)
+            // drawn as a thin outline band under the token, so a colourblind player tells factions
+            // apart by silhouette, not hue. Drawn in a brightened faction tint (still redundant with
+            // the colour, never new intel — invariant #6); the interior discards so the 3D mesh shows
+            // through. `shape_signed <= 0` is inside the boundary; the band is its outer SHAPE_BAND.
+            if in.shape != SHAPE_NONE {
+                let m = shape_signed(in.shape, in.local);
+                if m <= 0.0 && m >= -SHAPE_BAND {
+                    let marker = min(in.color * 1.35 + vec3<f32>(0.10), vec3<f32>(1.0));
+                    return vec4<f32>(marker, 1.0);
+                }
+            }
+            discard;
+        }
     }
 
     // Unit / building: body color, with a health bar across the top strip and a thin dark outline

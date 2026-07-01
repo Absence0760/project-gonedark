@@ -221,6 +221,64 @@ pub const FLAG_RING: u32 = 2; // a territory control point — drawn as a hollow
 pub const FLAG_SELECTED: u32 = 4; // command-layer selected — drawn with a bright rim (presentation)
 pub const FLAG_MESH: u32 = 8; // a 3D token mesh draws this body — the quad is UI decals only (D44)
 
+/// Command-view faction **shape tags** (visual-design WS-D — non-colour redundancy). The quad shader
+/// ([`shader.wgsl`]) draws a per-faction footprint marker in this silhouette under each 3D token, so a
+/// colourblind player tells factions apart by *shape*, not hue alone. Redundant with the faction
+/// colour ([`faction_color_in`]) — same information in a second channel, never new strategic intel, so
+/// it stays inside invariant #6 (a faction identity tag the colour already conveyed). **Always-on**:
+/// the tag is derived from the already-drawn faction, reads better for *everyone*, adds no sim read and
+/// no checksum surface (invariant #1/#4). Kept in lockstep by hand with the `SHAPE_*` constants in
+/// `shader.wgsl` (WGSL shares no constant with Rust) — change one, mirror the other.
+pub const SHAPE_NONE: u32 = 0; // no footprint marker (control-point rings, the embodied avatar)
+pub const SHAPE_CIRCLE: u32 = 1; // Player
+pub const SHAPE_TRIANGLE: u32 = 2; // Enemy
+pub const SHAPE_SQUARE: u32 = 3; // Neutral
+
+/// Outline-band thickness (in quad-local units, the `[-1,1]^2` corner space) of a faction footprint
+/// [`shape`](SHAPE_CIRCLE) marker: the marker is drawn as the outer band `[-SHAPE_BAND, 0]` of the
+/// shape (inside the boundary, near its edge) so it *frames* the token without hiding the 3D mesh
+/// underneath. Mirrors `SHAPE_BAND` in `shader.wgsl`. Wide enough that the silhouette (circle vs
+/// triangle vs square) reads at the small command-view token size, while the hollow centre still lets
+/// the 3D token mesh + its unit-kind glyph show through.
+pub const SHAPE_BAND: f32 = 0.55;
+
+/// Map a [`Faction`] to its command-view footprint [`shape tag`](SHAPE_CIRCLE) (WS-D): Player → circle,
+/// Enemy → triangle, Neutral → square — three silhouettes a colourblind player distinguishes without
+/// relying on the faction hue. Pure + unit-tested; presentation only (the shape never reaches `core`,
+/// adds no checksum surface — invariant #1/#4/#6).
+pub fn faction_shape(faction: Faction) -> u32 {
+    match faction {
+        Faction::Player => SHAPE_CIRCLE,
+        Faction::Enemy => SHAPE_TRIANGLE,
+        Faction::Neutral => SHAPE_SQUARE,
+    }
+}
+
+/// Signed "outsideness" of a quad-local point in `[-1,1]^2` for a footprint [`shape`](SHAPE_CIRCLE):
+/// `<= 0` inside the shape boundary, `0` on it, `> 0` outside. This is the **exact mirror** of the
+/// shape geometry in `shader.wgsl` (kept in lockstep by hand — WGSL shares no constant with Rust),
+/// extracted so the geometry that proves the three faction silhouettes are genuinely *distinct* is
+/// unit-testable off-GPU. Pure float math (invariant #1: floats live only on the render side).
+pub fn shape_signed(shape: u32, x: f32, y: f32) -> f32 {
+    match shape {
+        SHAPE_CIRCLE => (x * x + y * y).sqrt() - 1.0,
+        SHAPE_SQUARE => x.abs().max(y.abs()) - 1.0,
+        // Upward triangle: apex (0, 1), base corners (±1, -1). Each edge function is <= 0 inside the
+        // triangle and 0 on that edge; the max over the three is the point's outsideness.
+        SHAPE_TRIANGLE => (2.0 * x + y - 1.0).max(-2.0 * x + y - 1.0).max(-y - 1.0),
+        _ => 1.0, // SHAPE_NONE / unknown: never inside, so no marker is drawn
+    }
+}
+
+/// Whether a quad-local point falls on a footprint shape's outline **band** (WS-D): inside the
+/// boundary but within [`SHAPE_BAND`] of it. Mirrors the band test in `shader.wgsl`; the shader draws
+/// the faction colour here and discards the interior so the 3D token mesh shows through. Pure +
+/// unit-tested — the distinctness of the three silhouettes is asserted through this seam.
+pub fn shape_on_band(shape: u32, x: f32, y: f32) -> bool {
+    let m = shape_signed(shape, x, y);
+    m <= 0.0 && m >= -SHAPE_BAND
+}
+
 /// Drawn half-extent (world units) per kind. Render-only cosmetic scale.
 const UNIT_HALF: f32 = 0.5;
 const BUILDING_HALF: f32 = 1.6;
@@ -599,6 +657,16 @@ pub fn interpolate_instances(
         let anim_clip = anim::select_clip(&anim_state).as_u32();
         let anim_phase = anim::unit_phase(curr.tick, alpha, b.entity_index);
 
+        // The faction footprint shape (WS-D non-colour redundancy): a per-faction silhouette drawn
+        // under the token by the quad shader so factions read without relying on hue. The embodied
+        // avatar gets no footprint marker — while embodied the quad LOADs over the first-person world
+        // (no top-down field to frame), so a base ring around your own avatar would be nonsense.
+        let shape = if b.embodied {
+            SHAPE_NONE
+        } else {
+            faction_shape(b.faction)
+        };
+
         out.push(UnitInstance {
             x: ax + (bx - ax) * alpha,
             y: ay + (by - ay) * alpha,
@@ -608,6 +676,7 @@ pub fn interpolate_instances(
             b: color[2],
             health,
             flags,
+            shape,
             model,
             hull_yaw,
             turret_yaw,
@@ -630,6 +699,7 @@ pub fn interpolate_instances(
             b: color[2],
             health: NO_HEALTH_BAR,
             flags: FLAG_RING,
+            shape: SHAPE_NONE, // a control point already reads as a hollow ring — no footprint marker
             model: 0, // unused: FLAG_RING makes `token_meshes` empty (rings stay hollow quads)
             hull_yaw: 0.0,    // unused for rings (no mesh)
             turret_yaw: 0.0,
@@ -745,6 +815,13 @@ pub struct UnitInstance {
     pub health: f32,
     /// [`FLAG_EMBODIED`] | [`FLAG_RING`] | [`FLAG_SELECTED`].
     pub flags: u32,
+    /// The command-view faction footprint **shape tag** ([`SHAPE_CIRCLE`]/[`SHAPE_TRIANGLE`]/
+    /// [`SHAPE_SQUARE`], or [`SHAPE_NONE`]), derived from the unit's faction by [`faction_shape`] at
+    /// [`interpolate_instances`] (WS-D non-colour redundancy). **GPU-read** by the quad shader (vertex
+    /// attribute location 6) — it MUST sit here, immediately after [`flags`](Self::flags), so the
+    /// pipeline's sequential `vertex_attr_array` offset (location 6 → byte 32) lands on this field; the
+    /// trailing CPU-only fields below stay untouched. Presentation only (invariant #1/#4/#6).
+    pub shape: u32,
     /// The 3D token mesh this instance draws as ([`mesh::ModelKind`] `as u32`), resolved from the
     /// snapshot's unit-kind / building flag by [`model_for_unit`]. CPU-side only — [`token_meshes`]
     /// reads it to bucket the mesh pass; it is a trailing field so the quad pipeline's instance
@@ -959,13 +1036,16 @@ impl Renderer {
         let instance_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<UnitInstance>() as u64,
             step_mode: wgpu::VertexStepMode::Instance,
-            // 1=pos(vec2), 2=half_extent(f32), 3=color(vec3), 4=health(f32), 5=flags(u32).
+            // 1=pos(vec2), 2=half_extent(f32), 3=color(vec3), 4=health(f32), 5=flags(u32),
+            // 6=shape(u32). The macro assigns byte offsets sequentially, so location 6 lands on the
+            // `shape` field (which is why it sits immediately after `flags` in `UnitInstance`).
             attributes: &wgpu::vertex_attr_array![
                 1 => Float32x2,
                 2 => Float32,
                 3 => Float32x3,
                 4 => Float32,
-                5 => Uint32
+                5 => Uint32,
+                6 => Uint32
             ],
         };
 
@@ -2264,6 +2344,99 @@ mod tests {
         assert_eq!([cp.r, cp.g, cp.b], faction_color(Faction::Enemy));
         assert!((cp.x - 7.0).abs() < EPS && (cp.y + 3.0).abs() < EPS);
         assert!(cp.health < 0.0, "rings carry no health bar");
+    }
+
+    // ---- WS-D faction footprint shape (non-colour redundancy) ----------------------------------
+
+    #[test]
+    fn faction_shape_is_distinct_per_faction() {
+        // The whole point of WS-D: each faction maps to its OWN silhouette so colour is not the sole
+        // faction cue. Player=circle, Enemy=triangle, Neutral=square — three different tags.
+        assert_eq!(faction_shape(Faction::Player), SHAPE_CIRCLE);
+        assert_eq!(faction_shape(Faction::Enemy), SHAPE_TRIANGLE);
+        assert_eq!(faction_shape(Faction::Neutral), SHAPE_SQUARE);
+        let all = [
+            faction_shape(Faction::Player),
+            faction_shape(Faction::Enemy),
+            faction_shape(Faction::Neutral),
+        ];
+        for s in all {
+            assert_ne!(s, SHAPE_NONE, "a real faction always gets a marker shape");
+        }
+        // Pairwise distinct.
+        assert_ne!(all[0], all[1]);
+        assert_ne!(all[1], all[2]);
+        assert_ne!(all[0], all[2]);
+    }
+
+    #[test]
+    fn shape_geometry_silhouettes_are_genuinely_different() {
+        // The corner (0.9, 0.9): inside the SQUARE (max=0.9<1), outside the CIRCLE (len≈1.27>1) and
+        // outside the up-TRIANGLE (right edge 2*0.9+0.9-1=1.7>0). One local point already separates
+        // all three silhouettes — proof the shapes are not the same footprint.
+        assert!(shape_signed(SHAPE_SQUARE, 0.9, 0.9) <= 0.0, "square covers its corner");
+        assert!(shape_signed(SHAPE_CIRCLE, 0.9, 0.9) > 0.0, "circle excludes the corner");
+        assert!(shape_signed(SHAPE_TRIANGLE, 0.9, 0.9) > 0.0, "triangle excludes the corner");
+
+        // A point low-and-wide (0.8, -0.9): inside square & triangle (near its base) but outside the
+        // circle — separates the circle from the polygons on a second, independent point.
+        assert!(shape_signed(SHAPE_SQUARE, 0.8, -0.9) <= 0.0);
+        assert!(shape_signed(SHAPE_TRIANGLE, 0.8, -0.9) <= 0.0);
+        assert!(shape_signed(SHAPE_CIRCLE, 0.8, -0.9) > 0.0);
+
+        // The triangle pinches toward its apex: it contains the apex column (0.0, 0.9) but excludes a
+        // point that is high AND off-axis (0.6, 0.6) — a shape the square/circle both still cover.
+        assert!(shape_signed(SHAPE_TRIANGLE, 0.0, 0.9) <= 0.0, "triangle contains its apex column");
+        assert!(shape_signed(SHAPE_TRIANGLE, 0.6, 0.6) > 0.0, "triangle pinches in toward the apex");
+
+        // Every real shape contains the centre; SHAPE_NONE never does (no marker ever draws).
+        for s in [SHAPE_CIRCLE, SHAPE_TRIANGLE, SHAPE_SQUARE] {
+            assert!(shape_signed(s, 0.0, 0.0) <= 0.0, "shape {s} covers the centre");
+        }
+        assert!(shape_signed(SHAPE_NONE, 0.0, 0.0) > 0.0, "SHAPE_NONE is never inside");
+    }
+
+    #[test]
+    fn shape_band_is_an_outline_not_a_fill() {
+        // The band is the outer SHAPE_BAND of the shape: on the boundary and just inside → true; deep
+        // in the interior (the centre) → false, so the 3D mesh shows through the marker.
+        assert!(shape_on_band(SHAPE_CIRCLE, 1.0, 0.0), "the circle boundary is on the band");
+        assert!(shape_on_band(SHAPE_SQUARE, 1.0, 0.0), "the square edge is on the band");
+        assert!(!shape_on_band(SHAPE_CIRCLE, 0.0, 0.0), "the centre is hollow (mesh shows through)");
+        assert!(!shape_on_band(SHAPE_SQUARE, 0.0, 0.0), "the centre is hollow (mesh shows through)");
+        // Well outside any boundary never bands.
+        assert!(!shape_on_band(SHAPE_CIRCLE, 2.0, 2.0));
+        // SHAPE_NONE bands nowhere.
+        assert!(!shape_on_band(SHAPE_NONE, 1.0, 0.0));
+    }
+
+    #[test]
+    fn interpolate_stamps_faction_shape_and_avatar_none() {
+        // A non-embodied unit carries its faction's footprint shape; the embodied avatar carries none
+        // (its quad LOADs over the first-person world — no top-down field to frame).
+        let mut enemy = unit(Fixed::ZERO, Fixed::ZERO, false);
+        enemy.faction = Faction::Enemy;
+        let mut player = unit(Fixed::ONE, Fixed::ONE, false);
+        player.faction = Faction::Player;
+        let avatar = unit(Fixed::ZERO, Fixed::ONE, true); // embodied
+        let s = snapshot(0, vec![enemy, player, avatar]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
+        assert_eq!(out[0].shape, SHAPE_TRIANGLE, "enemy → triangle");
+        assert_eq!(out[1].shape, SHAPE_CIRCLE, "player → circle");
+        assert_eq!(out[2].shape, SHAPE_NONE, "the embodied avatar gets no footprint marker");
+    }
+
+    #[test]
+    fn control_point_ring_has_no_shape_marker() {
+        let mut s = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, false)]);
+        s.control_points = vec![ControlPointSnapshot {
+            pos: Vec2::new(Fixed::from_int(2), Fixed::from_int(2)),
+            owner: Faction::Player,
+            progress: Fixed::ZERO,
+        }];
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
+        assert_eq!(out[1].flags & FLAG_RING, FLAG_RING);
+        assert_eq!(out[1].shape, SHAPE_NONE, "a ring already reads as a shape — no extra marker");
     }
 
     #[test]
