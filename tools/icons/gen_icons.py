@@ -43,6 +43,8 @@ ICONS = [
     "move",       # 6 — an arrow (the move order)
     "attack",     # 7 — a crosshair (the attack order)
     "hold",       # 8 — a shield (the hold-position stance)
+    "medic",      # 9 — a medical cross (a Medic unit token, CP-9 command-view glanceability)
+    "antitank",   # 10 — a rocket / bazooka round (an AntiTank unit token, CP-9 glanceability)
 ]
 ICON_COUNT = len(ICONS)
 ROWS = (ICON_COUNT + COLS - 1) // COLS  # 3
@@ -135,6 +137,21 @@ def svg_for(name: str) -> str:
         body = (
             f'<path d="M32,7 L53,15 L53,32 C53,46 43,54 32,59 '
             f'C21,54 11,46 11,32 L11,15 Z" {_FILL}/>'
+        )
+    elif name == "medic":
+        # A bold medical cross (a Medic unit token) — two centred bars, legible tiny.
+        body = (
+            f'<rect x="26" y="10" width="12" height="44" rx="3" {_FILL}/>'
+            f'<rect x="10" y="26" width="44" height="12" rx="3" {_FILL}/>'
+        )
+    elif name == "antitank":
+        # A rocket / bazooka round pointing right (an AntiTank unit token): a pointed warhead + body,
+        # two swept tail fins, and a stub nozzle — reads as a projectile, distinct from the move arrow.
+        body = (
+            f'<path d="M14,27 L44,27 L56,32 L44,37 L14,37 Z" {_FILL}/>'   # body + nose cone
+            f'<path d="M14,21 L24,27 L14,27 Z" {_FILL}/>'                 # upper tail fin
+            f'<path d="M14,43 L24,37 L14,37 Z" {_FILL}/>'                 # lower tail fin
+            f'<rect x="7" y="29" width="8" height="6" rx="1.5" {_FILL}/>' # exhaust nozzle
         )
     else:
         raise ValueError(f"no geometry for icon {name!r}")

@@ -337,6 +337,16 @@ fn is_muzzle_flash(p: [u8; 4]) -> bool {
 fn is_hitmarker(p: [u8; 4]) -> bool {
     p[0] > 235 && p[1] > 235 && p[2] > 235
 }
+/// A command-view **unit-kind glyph** pixel (CP-9 / WS-C — `render::token_icons`). The kind icons are
+/// drawn as the last command pass: flat, UNSHADED, faction-tinted glyphs at the pure theme colour,
+/// composited over the tokens. That makes them brighter and more saturated than the LIT 3D token
+/// meshes underneath (whose fragment colours are multiplied down by the mesh lighting). The player
+/// glyph is `theme::PLAYER` (a bright blue with a HIGH green channel); the mesh player token, being
+/// shaded, never reaches this brightness in both blue AND green at once. So a pixel that is bright-blue
+/// *and* bright-green *and* blue-dominant reads as a flat player-faction glyph, not a shaded token.
+fn is_kind_glyph(p: [u8; 4]) -> bool {
+    p[2] > 185 && p[1] > 150 && p[2] as i32 > p[0] as i32 + 45 && p[1] as i32 > p[0] as i32 + 20
+}
 fn count(rgba: &[u8], f: impl Fn([u8; 4]) -> bool) -> usize {
     px(rgba).filter(|&p| f(p)).count()
 }
@@ -543,6 +553,19 @@ fn main() {
         "command_has_enemy_units",
         red > 50,
         format!("{red} enemy-red px (>50)"),
+    );
+    // CP-9 (WS-C): a small unit-kind glyph is drawn over each command-view token so the player reads
+    // composition at a glance. The glyphs are flat, unshaded, faction-tinted — a signature the lit 3D
+    // tokens can't reach (see `is_kind_glyph`). Several player units each get a ~0.05-NDC glyph, so the
+    // lit command frame carries a clear band of these bright flat-blue pixels; the embodied dark frame
+    // has NONE (the fairness gate `token_icons` returns empty over `world_dark`, re-checked by the
+    // Scenario 2 `embodied_strategic_map_dark` player-blue collapse).
+    let kind_glyphs = count(&cmd, is_kind_glyph);
+    check(
+        &mut failures,
+        "command_draws_kind_glyphs",
+        kind_glyphs > 150,
+        format!("{kind_glyphs} flat unit-kind-glyph px (>150 — the CP-9 kind icons render over tokens)"),
     );
     // Baseline: with nothing selected the command frame draws no bright selection rim.
     let baseline_rim = count(&cmd, is_select_rim);
