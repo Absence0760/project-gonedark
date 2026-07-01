@@ -1061,6 +1061,7 @@ fn render_touch_hud(
     viewport: (u32, u32),
     crouched: bool,
     has_scope: bool,
+    fire_mode: fire::FireMode,
     opacity: &hud_layout::Opacity,
 ) -> gonedark_render::touch_controls::TouchControlsHud {
     use gonedark_render::touch_controls as r;
@@ -1107,6 +1108,23 @@ fn render_touch_hud(
             hud.surface_pressed,
             false,
             opacity.surface,
+        ),
+        // Jump: the cosmetic hop (the Android twin of desktop Space). Full opacity — the HUD editor
+        // doesn't expose it yet (like the ADS button below).
+        jump: button(&layout.jump, r::TouchGlyph::Jump, hud.jump_pressed, false, 1.0),
+        // Select-fire: the glyph reflects the CURRENT mode (single dot = semi, three dots = auto), so
+        // the button doubles as the on-screen fire-mode readout — the Android player can read the mode
+        // the desktop player infers. `active` lights the sticky highlight while in AUTO so the
+        // sustained-fire mode is visible even at rest.
+        fire_mode: button(
+            &layout.fire_mode,
+            match fire_mode {
+                fire::FireMode::Semi => r::TouchGlyph::FireSemi,
+                fire::FireMode::Auto => r::TouchGlyph::FireAuto,
+            },
+            hud.fire_mode_pressed,
+            fire_mode == fire::FireMode::Auto,
+            1.0,
         ),
         // The ADS button only appears for a scope-capable avatar — the W2 turret/tank gate
         // (`has_scope`). Drawn at full opacity (the HUD-editor doesn't expose it yet; that's a later
@@ -2148,6 +2166,18 @@ impl Game {
         }
     }
 
+    /// Push the player's embodied **look prefs** (Compose shell Settings) into the touch look seam —
+    /// the Android twin of `pal-desktop::DesktopInput::set_look_prefs`. `sensitivity` multiplies the
+    /// drag-look delta (`1.0` = stock); `invert_y` flips the pitch axis. Desktop scales its raw mouse
+    /// delta at the PAL boundary (`scale_look`), but the Android look delta is produced *inside*
+    /// `touch_controls::TouchControls::update`, so the host hands the prefs down to that seam here.
+    /// Host/presentation only — it shapes input above `core` and never enters the deterministic sim
+    /// or the per-tick checksum (invariants #1/#2/#4). The pal backend calls this each frame from its
+    /// stored Settings values; the prefs persist across embody/surface resets.
+    pub fn set_touch_look_prefs(&mut self, sensitivity: f32, invert_y: bool) {
+        self.touch.set_look_prefs(sensitivity, invert_y);
+    }
+
     /// Whether any in-session shell overlay (pause / reconnect prompt / post-match summary) is
     /// currently up — i.e. the match is *not* in the plain `Playing` surface. The host reads this
     /// to free the OS cursor (so the overlay's buttons are clickable) and to stop feeding
@@ -2823,8 +2853,17 @@ impl Game {
         if input.touch_count > 0 {
             self.seen_touch = true;
         }
-        let (look_axis, move_axis, fire, aim, crouch_edge, reload_edge, surface_edge) =
-            if self.embodied && self.seen_touch {
+        let (
+            look_axis,
+            move_axis,
+            fire,
+            aim,
+            crouch_edge,
+            reload_edge,
+            surface_edge,
+            jump_edge,
+            select_fire_edge,
+        ) = if self.embodied && self.seen_touch {
                 // Resolve the active HUD-editor preset to the embodied control geometry (WS-D). The
                 // draw step below re-resolves the SAME profile + viewport, so the hit shapes the
                 // input seam tests and the shapes the renderer draws can never drift. Runs even with
@@ -2844,6 +2883,11 @@ impl Game {
                     out.crouch_edge,
                     out.reload_edge,
                     out.surface_edge,
+                    // Jump + select-fire touch EDGES — the Android twins of the desktop
+                    // `input.jump_pressed` / `input.select_fire_pressed`, consumed in the same two
+                    // branches below (`jump::start_jump` / `fire_mode.toggled`).
+                    out.jump_edge,
+                    out.fire_mode_edge,
                 )
             } else {
                 self.touch_hud = None;
@@ -2855,6 +2899,8 @@ impl Game {
                     input.crouch_pressed,
                     input.reload_pressed,
                     false, // desktop ejects via the Q-key surface path in `map_input_commands`
+                    input.jump_pressed,        // desktop Space
+                    input.select_fire_pressed, // desktop select-fire key
                 )
             };
 
@@ -2880,7 +2926,7 @@ impl Game {
         // Embodied jump (standard-FPS Space): launch a cosmetic hop on the press edge while grounded,
         // then advance the arc off the WALL-CLOCK `dt`. Presentation only (invariant #4/#5): it raises
         // the embodied eye + viewmodel for the arc, never sim state (the 2-D sim has no vertical axis).
-        if self.embodied && input.jump_pressed {
+        if self.embodied && jump_edge {
             self.jump_t = jump::start_jump(self.jump_t, true);
         }
         self.jump_t = jump::step_jump(self.jump_t, dt_secs);
@@ -2898,7 +2944,7 @@ impl Game {
 
         // Embodied select-fire (X): toggle semi ⇄ auto. INPUT STATE ONLY — it changes only how Fire
         // is emitted (edge vs. held) and which viewmodel animation plays, never the sim (#4/#5).
-        if self.embodied && input.select_fire_pressed {
+        if self.embodied && select_fire_edge {
             self.fire_mode = self.fire_mode.toggled();
         }
 
@@ -3728,6 +3774,7 @@ impl Game {
                     viewport,
                     crouched,
                     can_ads,
+                    self.fire_mode,
                     &resolved.opacity,
                 );
                 self.renderer
@@ -5081,11 +5128,21 @@ mod tests {
             crouch_pressed: false,
             reload_pressed: false,
             surface_pressed: false,
+            jump_pressed: true,
+            fire_mode_pressed: false,
             aim_pressed: true,
         };
         let op = hud_layout::Opacity::default();
-        // A scope-capable avatar (`has_scope = true`) gets the ADS button.
-        let r = render_touch_hud(&layout, &hud, (1280, 720), /* crouched = */ true, true, &op);
+        // A scope-capable avatar (`has_scope = true`) gets the ADS button; the weapon is in AUTO.
+        let r = render_touch_hud(
+            &layout,
+            &hud,
+            (1280, 720),
+            /* crouched = */ true,
+            true,
+            fire::FireMode::Auto,
+            &op,
+        );
         let s = r.stick.expect("the fixed stick ring is always drawn");
         // Base + radius come from the layout anchor (fixed ring), NOT the transient hud state.
         assert_eq!((s.base_x, s.base_y), (layout.stick_base.cx, layout.stick_base.cy));
@@ -5097,23 +5154,51 @@ mod tests {
         assert!(!r.crouch.pressed);
         // Button circles pass straight through from the layout (pixels).
         assert_eq!((r.fire.cx, r.fire.cy, r.fire.r), (layout.fire.cx, layout.fire.cy, layout.fire.r));
+        // Jump carries its held flash + the layout circle.
+        assert!(r.jump.pressed, "held jump carries the pressed flash");
+        assert_eq!((r.jump.cx, r.jump.cy, r.jump.r), (layout.jump.cx, layout.jump.cy, layout.jump.r));
+        // The fire-mode button's glyph reflects the current mode (AUTO here) and lights its toggle.
+        assert_eq!(
+            r.fire_mode.glyph,
+            gonedark_render::touch_controls::TouchGlyph::FireAuto,
+            "AUTO mode draws the auto glyph — the on-screen readout"
+        );
+        assert!(r.fire_mode.active, "AUTO lights the sticky mode highlight");
+        assert_eq!(
+            (r.fire_mode.cx, r.fire_mode.cy, r.fire_mode.r),
+            (layout.fire_mode.cx, layout.fire_mode.cy, layout.fire_mode.r)
+        );
         // The ADS button shows for a scope unit, carries the held flash + the layout circle.
         let a = r.aim.expect("scope-capable avatar → an ADS button");
         assert!(a.pressed, "held ADS carries the pressed flash");
         assert_eq!((a.cx, a.cy, a.r), (layout.aim.cx, layout.aim.cy, layout.aim.r));
 
         // Idle stick (no finger) → ring still drawn, thumb rests at the fixed centre; a scope-LESS
-        // avatar (`has_scope = false`) hides ADS.
+        // avatar (`has_scope = false`) hides ADS; SEMI mode draws the semi glyph and no toggle light.
         let hud2 = touch_controls::TouchHud {
             stick_thumb: (layout.stick_base.cx, layout.stick_base.cy),
             ..Default::default()
         };
-        let r2 = render_touch_hud(&layout, &hud2, (1280, 720), false, false, &op);
+        let r2 = render_touch_hud(
+            &layout,
+            &hud2,
+            (1280, 720),
+            false,
+            false,
+            fire::FireMode::Semi,
+            &op,
+        );
         let s2 = r2.stick.expect("the ring is drawn even with no finger down");
         assert_eq!((s2.thumb_x, s2.thumb_y), (layout.stick_base.cx, layout.stick_base.cy),
             "idle thumb rests at the fixed centre");
         assert!(!r2.crouch.active);
         assert!(r2.aim.is_none(), "a unit with no gun-sight gets no ADS button (W2 turret gate)");
+        assert_eq!(
+            r2.fire_mode.glyph,
+            gonedark_render::touch_controls::TouchGlyph::FireSemi,
+            "SEMI mode draws the semi glyph"
+        );
+        assert!(!r2.fire_mode.active, "SEMI does not light the toggle");
     }
 
     /// One-shot/edge commands force a sub-tick catch-up; held/continuous ones (locomote, fire) do

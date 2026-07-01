@@ -277,6 +277,15 @@ fn android_main(app: AndroidApp) {
 
         if window.surface_up {
             if let (Some(rhi), Some(game)) = (rhi.as_mut(), game.as_mut()) {
+                // Push the player's embodied look prefs (Compose Settings) into the engine's touch-look
+                // seam — the Android twin of `pal-desktop::scale_look`. Android's drag-look delta is
+                // produced *inside* `engine::touch_controls`, not at this PAL boundary, so the prefs
+                // ride a `Game` setter instead of scaling `InputFrame.look_axis` (which the touch path
+                // ignores). Host/presentation only — it never enters the deterministic sim or checksum
+                // (invariants #1/#2). Cheap (two field writes); done each frame so a mid-match Settings
+                // change would take effect immediately.
+                game.set_touch_look_prefs(input.look_sensitivity(), input.invert_y());
+
                 // Shell overlay buttons (pause / reconnect / post-match summary). A tap-up while an
                 // overlay is up belongs to that overlay, not the match world: hit-test it in NDC and
                 // either feed the resolved session action back to the shell (pause → Resume /
@@ -559,15 +568,14 @@ pub struct AndroidInput {
     /// deterministic input). `look_sensitivity` is a multiplier (`1.0` = stock); `invert_y` flips the
     /// embodied pitch axis. Default `1.0` / `false` (a stock pass-through).
     ///
-    /// **NOT YET APPLIED — see [`set_look_prefs`](Self::set_look_prefs).** They are stored (so the
-    /// host wiring is real and the values are logged) but do not yet shape the embodied look on
-    /// Android, because the embodied look delta is produced *inside* the engine's `touch_controls`
-    /// seam from raw finger positions and is not exposed at this PAL boundary as a scalar to scale.
-    /// `#[allow(dead_code)]`: written by `set_look_prefs` but not yet read — the application point is
-    /// an engine-crate seam this PAL-only change can't touch (the TODO on `set_look_prefs`).
-    #[allow(dead_code)]
+    /// APPLIED via [`look_sensitivity`](Self::look_sensitivity) / [`invert_y`](Self::invert_y): the
+    /// host reads these each frame and pushes them into the engine's touch-look seam with
+    /// `Game::set_touch_look_prefs`, which scales the drag-look delta produced inside
+    /// `engine::touch_controls::TouchControls::update` — the Android twin of `pal-desktop::scale_look`
+    /// (desktop scales its raw mouse delta at the PAL boundary; Android's delta is produced in the
+    /// engine, so the prefs are handed down to that seam). Host/presentation only, never the sim
+    /// (invariants #1/#2).
     look_sensitivity: f32,
-    #[allow(dead_code)]
     invert_y: bool,
 }
 
@@ -589,27 +597,32 @@ impl AndroidInput {
     /// The host calls this once after reading the launch config. The mirror of
     /// `pal-desktop::set_look_prefs`.
     ///
-    /// **HONEST STUB — stores the prefs but does NOT yet apply them on Android.** Desktop scales the
-    /// raw *mouse-look delta* at drain time (`pal-desktop::scale_look`) because that delta is produced
-    /// at the desktop PAL boundary. On Android the embodied look delta is **not** produced here: this
-    /// backend forwards the raw down-finger set (`capture_touches` → [`InputFrame::touches`]), and the
-    /// engine's pure `touch_controls::TouchControls::update` seam derives the drag-look `look_delta`
-    /// from those raw finger *positions* inside the engine — `input.look_axis` is ignored while
-    /// embodied (see `engine`'s embodied-input branch). So there is no scalar look axis at this PAL
-    /// boundary to multiply, and scaling the raw touch coordinates would corrupt the stick centers and
-    /// button hit-tests (position-based, not delta-based). Applying sensitivity/invert cleanly
-    /// therefore needs a multiplier plumbed *into* `engine::touch_controls` (the touch-look seam), or
-    /// for that seam to emit a boundary-scalable `look_delta` — both are engine-crate changes, out of
-    /// scope for this PAL-only task (and a risky edit to force). Wired honestly instead: the values
-    /// are captured + logged so the plumbing is complete the moment the engine seam grows a
-    /// sensitivity input.
-    /// TODO(compose-parity Tier 1): thread `look_sensitivity`/`invert_y` into
-    ///   `engine::touch_controls::TouchControls::update` (scale + pitch-flip the derived `look_delta`),
-    ///   then apply them here / there and add an engine-side unit test, the touch twin of
-    ///   `pal-desktop::scale_look`.
+    /// Desktop scales the raw *mouse-look delta* at drain time (`pal-desktop::scale_look`) because that
+    /// delta is produced at the desktop PAL boundary. On Android the embodied look delta is **not**
+    /// produced here: this backend forwards the raw down-finger set (`capture_touches` →
+    /// [`InputFrame::touches`]), and the engine's pure `touch_controls::TouchControls::update` seam
+    /// derives the drag-look `look_delta` from those raw finger *positions* inside the engine —
+    /// `input.look_axis` is ignored while embodied. Scaling the raw touch coordinates here would
+    /// corrupt the stick centres and button hit-tests (position-based, not delta-based), so instead the
+    /// prefs are stored and the host pushes them into that engine seam once per frame with
+    /// [`Game::set_touch_look_prefs`], which scales + pitch-flips the derived `look_delta`. This method
+    /// is the mirror of `pal-desktop::DesktopInput::set_look_prefs`; the getters
+    /// [`look_sensitivity`](Self::look_sensitivity) / [`invert_y`](Self::invert_y) feed the engine.
     pub fn set_look_prefs(&mut self, sensitivity: f32, invert_y: bool) {
         self.look_sensitivity = sensitivity;
         self.invert_y = invert_y;
+    }
+
+    /// The stored look-sensitivity multiplier (`1.0` = stock) — the host pushes it into the engine's
+    /// touch-look seam each frame via `Game::set_touch_look_prefs` (see [`set_look_prefs`](Self::set_look_prefs)).
+    pub fn look_sensitivity(&self) -> f32 {
+        self.look_sensitivity
+    }
+
+    /// Whether the player has enabled pitch-invert for the embodied look — handed to the engine's
+    /// touch-look seam alongside [`look_sensitivity`](Self::look_sensitivity).
+    pub fn invert_y(&self) -> bool {
+        self.invert_y
     }
 
     /// Take (and clear) the pending **back-gesture** edge — the host calls this once per loop after

@@ -26,10 +26,18 @@ pub enum TouchGlyph {
     /// Aim-down-sight (ADS) — a sniper-scope reticle. Drawn only for a unit that has a gun-sight
     /// (the engine omits this button otherwise; the W2 turret/tank gate, wave-2 W6).
     Aim,
+    /// Jump — an upward double-chevron (the cosmetic first-person hop; the touch twin of Space).
+    Jump,
+    /// Select-fire in SEMI mode — a single dot ("one shot per pull"). The engine picks this vs
+    /// [`FireAuto`](TouchGlyph::FireAuto) from the CURRENT fire mode, so the button doubles as the
+    /// on-screen fire-mode readout.
+    FireSemi,
+    /// Select-fire in AUTO mode — three dots in a row ("sustained spray").
+    FireAuto,
 }
 
 impl TouchGlyph {
-    /// The shader `shape` id for this glyph (2..6; 0/1 are the stick ring/thumb).
+    /// The shader `shape` id for this glyph (2..9; 0/1 are the stick ring/thumb).
     fn shape(self) -> f32 {
         match self {
             TouchGlyph::Fire => 2.0,
@@ -37,6 +45,9 @@ impl TouchGlyph {
             TouchGlyph::Reload => 4.0,
             TouchGlyph::Surface => 5.0,
             TouchGlyph::Aim => 6.0,
+            TouchGlyph::Jump => 7.0,
+            TouchGlyph::FireSemi => 8.0,
+            TouchGlyph::FireAuto => 9.0,
         }
     }
 }
@@ -85,6 +96,11 @@ pub struct TouchControlsHud {
     /// The aim-down-sight (ADS / zoom) button — `None` when the embodied unit has no gun-sight, so
     /// the button only appears for a scope-capable avatar (the engine mirrors W2's `has_scope` gate).
     pub aim: Option<TouchButton>,
+    /// The Jump button (the cosmetic first-person hop; the Android twin of the desktop Space key).
+    pub jump: TouchButton,
+    /// The select-fire button. Its glyph ([`TouchGlyph::FireSemi`] / [`TouchGlyph::FireAuto`]) is set
+    /// by the engine from the current fire mode, so it reads as the on-screen fire-mode indicator.
+    pub fire_mode: TouchButton,
 }
 
 /// One overlay quad ready to upload. `repr(C)` + `Pod` so it streams into the per-instance vertex
@@ -115,6 +131,8 @@ const CROUCH_COL: [f32; 3] = [0.45, 0.78, 0.80];
 const RELOAD_COL: [f32; 3] = [0.96, 0.74, 0.32];
 const SURFACE_COL: [f32; 3] = [0.86, 0.88, 0.92];
 const AIM_COL: [f32; 3] = [0.70, 0.86, 0.58];
+const JUMP_COL: [f32; 3] = [0.62, 0.80, 0.96];
+const FIREMODE_COL: [f32; 3] = [0.96, 0.60, 0.36];
 
 /// Resting / pressed / toggle-active alpha for a button (pressed or active reads brighter).
 const IDLE_ALPHA: f32 = 0.42;
@@ -145,6 +163,8 @@ fn button_quad(b: &TouchButton, w: f32, h: f32) -> TouchQuad {
         TouchGlyph::Reload => RELOAD_COL,
         TouchGlyph::Surface => SURFACE_COL,
         TouchGlyph::Aim => AIM_COL,
+        TouchGlyph::Jump => JUMP_COL,
+        TouchGlyph::FireSemi | TouchGlyph::FireAuto => FIREMODE_COL,
     };
     let base_a = if b.pressed || b.active {
         HOT_ALPHA
@@ -172,7 +192,7 @@ pub fn build_quads(hud: &TouchControlsHud) -> Vec<TouchQuad> {
     let (wi, hi) = hud.viewport;
     let w = wi.max(1) as f32;
     let h = hi.max(1) as f32;
-    let mut quads = Vec::with_capacity(7);
+    let mut quads = Vec::with_capacity(9);
 
     if let Some(s) = hud.stick {
         let op = s.opacity.clamp(0.0, 1.0);
@@ -210,6 +230,8 @@ pub fn build_quads(hud: &TouchControlsHud) -> Vec<TouchQuad> {
     quads.push(button_quad(&hud.crouch, w, h));
     quads.push(button_quad(&hud.reload, w, h));
     quads.push(button_quad(&hud.surface, w, h));
+    quads.push(button_quad(&hud.jump, w, h));
+    quads.push(button_quad(&hud.fire_mode, w, h));
     // The ADS button only exists for a scope-capable avatar (gated host-side); skip it otherwise.
     if let Some(aim) = hud.aim {
         quads.push(button_quad(&aim, w, h));
@@ -233,7 +255,7 @@ const QUAD_VERTS: [QuadVertex; 6] = [
     QuadVertex { corner: [-1.0, 1.0] },
 ];
 
-const INITIAL_CAP: usize = 8;
+const INITIAL_CAP: usize = 10;
 
 /// Screen-space FPS-controls overlay (its own pipeline + buffers, like [`hud`](crate::hud)).
 pub struct TouchControlsRenderer {
@@ -407,33 +429,48 @@ mod tests {
             crouch: btn(700.0, 430.0, TouchGlyph::Crouch),
             reload: btn(950.0, 250.0, TouchGlyph::Reload),
             surface: btn(940.0, 40.0, TouchGlyph::Surface),
+            jump: btn(580.0, 430.0, TouchGlyph::Jump),
+            // Default avatar reads semi-auto: the button glyph reflects the current mode.
+            fire_mode: btn(840.0, 230.0, TouchGlyph::FireSemi),
             // A scope-less default avatar: no ADS button (the engine sets `Some` only for a tank).
             aim: None,
         }
     }
 
     #[test]
-    fn four_buttons_without_a_stick_or_scope_yields_four_quads() {
+    fn six_buttons_without_a_stick_or_scope_yields_six_quads() {
         let q = build_quads(&hud());
-        assert_eq!(q.len(), 4, "no stick and no scope → just the four core buttons");
-        // Glyph ids in order: fire, crouch, reload, surface.
+        assert_eq!(q.len(), 6, "no stick and no scope → the six core buttons");
+        // Glyph ids in order: fire, crouch, reload, surface, jump, fire-mode (semi here).
         assert_eq!(q[0].shape, 2.0);
         assert_eq!(q[1].shape, 3.0);
         assert_eq!(q[2].shape, 4.0);
         assert_eq!(q[3].shape, 5.0);
+        assert_eq!(q[4].shape, 7.0, "jump is shape id 7");
+        assert_eq!(q[5].shape, 8.0, "semi fire-mode is shape id 8");
+    }
+
+    #[test]
+    fn fire_mode_glyph_reads_the_current_mode() {
+        // The engine picks the glyph from the live fire mode; AUTO draws shape id 9 (three dots).
+        let mut h = hud();
+        h.fire_mode = btn(840.0, 230.0, TouchGlyph::FireAuto);
+        let q = build_quads(&h);
+        assert_eq!(q[5].shape, 9.0, "auto fire-mode is shape id 9");
+        assert_eq!([q[5].r, q[5].g, q[5].b], FIREMODE_COL, "and carries the fire-mode colour");
     }
 
     #[test]
     fn a_scope_capable_avatar_adds_the_ads_button_last() {
-        // For a tank (has a gun-sight) the engine fills `aim` → a fifth button, shape id 6, drawn
-        // after the core four. A scope-less unit leaves it `None` (covered above), so it never shows.
+        // For a tank (has a gun-sight) the engine fills `aim` → an extra button, shape id 6, drawn
+        // after the six core ones. A scope-less unit leaves it `None` (covered above).
         let mut h = hud();
         h.aim = Some(btn(700.0, 310.0, TouchGlyph::Aim));
         let q = build_quads(&h);
-        assert_eq!(q.len(), 5, "the ADS button adds one quad");
-        assert_eq!(q[4].shape, 6.0, "ADS reticle is shape id 6, drawn last");
+        assert_eq!(q.len(), 7, "the ADS button adds one quad");
+        assert_eq!(q[6].shape, 6.0, "ADS reticle is shape id 6, drawn last");
         // It carries its own color (a secondary cue), not Fire's.
-        assert_eq!([q[4].r, q[4].g, q[4].b], AIM_COL);
+        assert_eq!([q[6].r, q[6].g, q[6].b], AIM_COL);
     }
 
     #[test]
@@ -445,7 +482,7 @@ mod tests {
             a.pressed = true;
         }
         let q = build_quads(&h);
-        assert_eq!(q[4].a, HOT_ALPHA, "held ADS reads at the hot alpha");
+        assert_eq!(q[6].a, HOT_ALPHA, "held ADS reads at the hot alpha");
     }
 
     #[test]
@@ -460,7 +497,7 @@ mod tests {
             opacity: 1.0,
         });
         let q = build_quads(&h);
-        assert_eq!(q.len(), 6, "stick base + thumb + four buttons");
+        assert_eq!(q.len(), 8, "stick base + thumb + six buttons");
         assert_eq!(q[0].shape, 0.0, "base ring first");
         assert_eq!(q[1].shape, 1.0, "thumb disc second");
         // Thumb disc is smaller than the base.
