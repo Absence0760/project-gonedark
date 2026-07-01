@@ -2,13 +2,16 @@
 //! the egui title screen ([D36](../docs/decisions.md)) — and, on **Start**, drives the shared
 //! [`gonedark_engine::Game`].
 //!
-//! Three host screens, the desktop counterpart of Android's `MainActivity → NativeActivity` split
-//! ([D35](../docs/decisions.md)): the out-of-match **Title** screen, the pre-match **Loadout**
-//! (gunsmith) screen — both egui, in [`shell`] — and the in-match **Game** (the shared engine loop —
-//! deterministic fixed-tick sim, render interpolation (invariant #4), the embodiment input-source
-//! swap (invariant #5)). The shell holds no game logic and reaches `core` only through host-side
-//! seams; **Start** opens the gunsmith, and the gunsmith's **Deploy** creates the `Game` fielding the
-//! player's chosen `core::gunsmith::Loadout` via [`Game::new_scene_with_loadout`] (WS-C, D60).
+//! The out-of-match host screens are the desktop counterpart of Android's `MainActivity →
+//! NativeActivity` split ([D35](../docs/decisions.md)): the **Title** screen, the Pve/Pvp
+//! **mode-select** and campaign **mission-select/briefing** deploy gates, the **Settings** screen and
+//! the gunsmith **Loadout** customization screen behind it — all egui, in [`shell`] — and the in-match
+//! **Game** (the shared engine loop — deterministic fixed-tick sim, render interpolation (invariant
+//! #4), the embodiment input-source swap (invariant #5)). The shell holds no game logic and reaches
+//! `core` only through host-side seams. **D81:** a play-mode / briefing DEPLOY creates the `Game`
+//! directly (via [`App::enter_match`]), fielding the player's persisted `core::gunsmith::Loadout` via
+//! [`Game::new_scene_with_loadout`] (WS-C, D60); the gunsmith is customization-only behind Settings,
+//! not a play gate.
 //!
 //! This binary owns only the desktop concerns: the window, the wgpu surface, input plumbing, the
 //! egui shell, and the wall clock that feeds per-frame `dt` into the engine's fixed-tick accumulator.
@@ -31,8 +34,9 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, Window
 mod shell;
 use shell::{
     apply_briefing_action, apply_loadout_action, apply_profile_action, apply_settings_action,
-    build_channel, build_stamp, resolve_title_action, BriefingOutcome, EguiShell, HostTransition,
-    LoadoutStep, MissionSelectAction, ProfileState, ProfileStep, SettingsState, SettingsStep,
+    build_channel, build_stamp, resolve_title_action, AboutReturn, BriefingOutcome, EguiShell,
+    HostTransition, LoadoutStep, MissionSelectAction, ModeSelectAction, ProfileState, ProfileStep,
+    SettingsState, SettingsStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -40,22 +44,29 @@ use shell::{
 /// `resumed`), fielding the loadout chosen on the gunsmith screen.
 enum Screen {
     Title,
-    /// The pre-match gunsmith / loadout screen (egui). The editable selection itself lives on
-    /// [`App::loadout`] (host-side pre-match state), so this variant carries no data.
+    /// The gunsmith / loadout customization screen (egui). **D81: reached from Settings,
+    /// customization-only** (RESET / DONE, no Deploy) — it edits the persisted loadout, it does not
+    /// start a match. The editable selection itself lives on [`App::loadout`] (host-side state), so
+    /// this variant carries no data.
     Loadout,
     /// The out-of-match Settings screen (audio / controls / video prefs). State lives on
     /// [`App::settings`], so this variant carries no data.
     Settings,
     /// The out-of-match player Profile screen. State lives on [`App::profile`].
     Profile,
+    /// The Pve/Pvp **mode / map select** screen (D81). Reads the static
+    /// [`gonedark_engine::shell_modes::SHELL_GAME_MODES`]; carries no host data. Picking a mode sets
+    /// [`App::scene`] and deploys straight into the match with the persisted loadout.
+    ModeSelect,
     /// The Operations-hub **mission-select** screen (PvE campaign, D58). Reads [`App::campaign`];
     /// carries no data of its own.
     MissionSelect,
     /// The **briefing** screen for one campaign node. Carries the [`NodeId`] whose briefing it shows;
     /// the replay-tier selector lives on [`App::briefing_difficulty`].
     Briefing(NodeId),
-    /// The About / controls-reference screen (reached from Settings). Static content, no host state.
-    About,
+    /// The About / controls-reference screen. Carries the [`AboutReturn`] entry point BACK lands on —
+    /// About is reachable from both the title (returns to title) and Settings (returns to Settings).
+    About(AboutReturn),
     // `Game` is large (the renderer + sim state); box it so the idle `Title` variant doesn't carry
     // that footprint around (clippy::large_enum_variant).
     InMatch(Box<Game>),
@@ -96,11 +107,12 @@ struct App {
     /// `Game::new_scene` seeding runs.
     scene: Scene,
 
-    /// The player's pre-match gunsmith selection (the `engine::loadout_ui` seam over
-    /// `core::gunsmith`). Edited on the [`Screen::Loadout`] gunsmith screen and handed to
-    /// [`Game::new_scene_with_loadout`] at Deploy. Host-side pre-match state — it never touches the
-    /// sim until the scenario seeder applies it at match start (WS-C, D60). Persists across matches so
-    /// the player keeps their build; the gunsmith's RESET button returns it to the neutral baseline.
+    /// The player's gunsmith selection (the `engine::loadout_ui` seam over `core::gunsmith`). Edited
+    /// on the [`Screen::Loadout`] gunsmith screen (D81: customization-only, reached from Settings) and
+    /// handed to [`Game::new_scene_with_loadout`] by [`App::enter_match`] whenever a match deploys.
+    /// Host-side state — it never touches the sim until the scenario seeder applies it at match start
+    /// (WS-C, D60). Persists across matches so the player keeps their build; the gunsmith's RESET
+    /// button returns it to the neutral baseline.
     loadout: LoadoutEditor,
 
     /// Host-side player preferences (audio / look / video / quality) edited on the Settings screen.
@@ -143,6 +155,10 @@ impl App {
         // load is all-or-nothing, never partial). Host-side meta-state only (invariants #1/#7).
         let mut campaign = default_campaign();
         load_campaign_progress(&mut campaign);
+        // Restore the player's Settings / Profile / gunsmith loadout from the last session (falls back
+        // to defaults on a fresh device or a corrupt blob). Host-side presentation state only — never
+        // sim state (invariant #1), persisted to its own blob alongside campaign progress.
+        let (settings, profile, loadout) = load_shell_prefs();
         App {
             surface: None,
             shell: None,
@@ -155,9 +171,9 @@ impl App {
             alt_held: false,
             fullscreen: false,
             scene,
-            loadout: LoadoutEditor::new(),
-            settings: SettingsState::default(),
-            profile: ProfileState::default(),
+            loadout,
+            settings,
+            profile,
             campaign,
             registry: default_registry(),
             briefing_difficulty: Difficulty::default(),
@@ -178,6 +194,45 @@ impl App {
         self.fullscreen = !self.fullscreen;
         let mode = self.fullscreen.then(|| Fullscreen::Borderless(None));
         surface.window().set_fullscreen(mode);
+    }
+
+    /// Create the `Game` and switch to the in-match screen, fielding the persisted gunsmith loadout
+    /// ([`App::loadout`]). If a campaign launch was queued ([`App::pending_launch`], set by a
+    /// briefing's DEPLOY) it boots the mission scene ([`Scene::Mission1`]) and applies the mission's
+    /// authored enemy-commander tier (a host-side planning knob, never sim state); otherwise it fields
+    /// [`App::scene`] (the CLI default, or the scene a mode-select pick chose). The campaign tier the
+    /// player picked is carried in [`App::active_mission`] for clear-recording, NOT pushed into the
+    /// commander (that stays the authored tier — the 4→3 tier mapping is open question Q21).
+    ///
+    /// Shared by the [`EnterMatch`](HostTransition::EnterMatch) and
+    /// [`LaunchMission`](HostTransition::LaunchMission) transitions: under D81 both deploy **directly**
+    /// (no gunsmith intermediate — the gunsmith is customization-only behind Settings now). The
+    /// deterministic sim is untouched: the loadout only reaches the sim through the scenario seeder at
+    /// match start (WS-C, D60), exactly as before.
+    fn enter_match(&mut self) {
+        let surface = self.surface.as_ref().expect("surface exists in resumed");
+        let device = surface.device();
+        let format = surface.format();
+        let loadout = self.loadout.current();
+        let game = if let Some((node, difficulty)) = self.pending_launch.take() {
+            let mut game =
+                Game::new_scene_with_loadout(device, format, DEFAULT_SEED, Scene::Mission1, loadout);
+            if let Some(def) = self.registry.resolve_node(&self.campaign, node) {
+                game.set_commander_difficulty(def.briefing.difficulty);
+            }
+            self.active_mission = Some((node, difficulty));
+            game
+        } else {
+            // Field the player's chosen gunsmith loadout at match start (WS-C, D60). For scenes that
+            // carry no player loadout it is inert; `Loadout::STANDARD` (the untouched editor)
+            // reproduces `new_scene` exactly.
+            self.active_mission = None;
+            Game::new_scene_with_loadout(device, format, DEFAULT_SEED, self.scene, loadout)
+        };
+        self.mission_recorded = false;
+        self.screen = Screen::InMatch(Box::new(game));
+        // Don't charge the time spent on the out-of-match screens to the first sim tick.
+        self.last_frame = Instant::now();
     }
 
     /// Desktop-host-only keys that apply on **every** screen (title or match): **F11** toggles
@@ -285,13 +340,12 @@ impl App {
             Screen::Loadout => {
                 if let Some(sh) = self.shell.as_mut() {
                     if let Some(action) = sh.draw_loadout(surface, &self.loadout) {
-                        // Edits mutate the editor in place (Stay); Deploy/Back are screen
-                        // transitions. Deploy enters the match (the loadout is read at creation);
-                        // Back returns to the title (reusing the no-Game ExitToTitle screen swap).
+                        // D81: customization-only. Edits mutate the editor in place (Stay); DONE
+                        // returns to Settings (the gunsmith's entry point) with the edits persisted.
+                        // There is no Deploy here — matches start from the mode/mission-select gates.
                         transition = match apply_loadout_action(action, &mut self.loadout) {
                             LoadoutStep::Stay => None,
-                            LoadoutStep::Deploy => Some(HostTransition::EnterMatch),
-                            LoadoutStep::Back => Some(HostTransition::ExitToTitle),
+                            LoadoutStep::Done => Some(HostTransition::OpenSettings),
                         };
                     }
                 }
@@ -305,7 +359,10 @@ impl App {
                         transition = match apply_settings_action(action, &mut self.settings) {
                             SettingsStep::Stay => None,
                             SettingsStep::ToggleFullscreen => Some(HostTransition::ToggleFullscreen),
-                            SettingsStep::About => Some(HostTransition::OpenAbout),
+                            SettingsStep::OpenLoadout => Some(HostTransition::OpenLoadout),
+                            SettingsStep::About => {
+                                Some(HostTransition::OpenAbout(AboutReturn::Settings))
+                            }
                             SettingsStep::Back => Some(HostTransition::ExitToTitle),
                         };
                     }
@@ -317,6 +374,27 @@ impl App {
                         transition = match apply_profile_action(action, &mut self.profile) {
                             ProfileStep::Stay => None,
                             ProfileStep::Back => Some(HostTransition::ExitToTitle),
+                        };
+                    }
+                }
+            }
+            Screen::ModeSelect => {
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) = sh.draw_mode_select(surface) {
+                        transition = match action {
+                            // Pick a mode → resolve its scene (the engine-tested `GameMode::scene`
+                            // seam) and deploy straight in with the persisted loadout (D81 — no
+                            // gunsmith gate). An un-parseable token (forbidden by the shell_modes
+                            // test) defensively keeps the current scene.
+                            ModeSelectAction::Pick(mode) => {
+                                if let Some(scene) = mode.scene() {
+                                    self.scene = scene;
+                                }
+                                // A mode-select deploy is never a campaign launch.
+                                self.pending_launch = None;
+                                Some(HostTransition::EnterMatch)
+                            }
+                            ModeSelectAction::Back => Some(HostTransition::ExitToTitle),
                         };
                     }
                 }
@@ -354,11 +432,15 @@ impl App {
                     }
                 }
             }
-            Screen::About => {
+            Screen::About(ret) => {
+                let ret = *ret;
                 if let Some(sh) = self.shell.as_mut() {
-                    // BACK from About returns to Settings (where it was opened from).
+                    // BACK from About returns to whichever entry point opened it (title or Settings).
                     if sh.draw_about(surface) {
-                        transition = Some(HostTransition::OpenSettings);
+                        transition = Some(match ret {
+                            AboutReturn::Title => HostTransition::ExitToTitle,
+                            AboutReturn::Settings => HostTransition::OpenSettings,
+                        });
                     }
                 }
             }
@@ -445,11 +527,31 @@ impl App {
             }
         }
 
+        // Persist the shell prefs whenever we leave a screen that edits them (Settings / Profile /
+        // the gunsmith), so an edit survives a restart — the same best-effort lifecycle `campaign.dat`
+        // rides. `self.screen` is still the screen we're leaving here (the swap happens below). This
+        // captures the final in-place-edited state (sliders / callsign / slot cyclers) on the way out.
+        if transition.is_some()
+            && matches!(
+                self.screen,
+                Screen::Settings | Screen::Profile | Screen::Loadout
+            )
+        {
+            persist_shell_prefs(&self.settings, &self.profile, &self.loadout);
+        }
+
         match transition {
-            // Start → the pre-match gunsmith. The editor (App::loadout) is already populated; the
-            // screen edits it in place until the player Deploys or Backs out.
+            // Settings → the gunsmith (D81: customization-only, reached from Settings). The editor
+            // (App::loadout) is already populated; the screen edits it in place until DONE returns to
+            // Settings with the edits persisted.
             Some(HostTransition::OpenLoadout) => {
                 self.screen = Screen::Loadout;
+                self.last_frame = Instant::now();
+            }
+            // PvE/PvP → the mode/map select (D81). Picking a mode there deploys straight into the
+            // match with the persisted loadout (no gunsmith gate).
+            Some(HostTransition::OpenModeSelect) => {
+                self.screen = Screen::ModeSelect;
                 self.last_frame = Instant::now();
             }
             // CAMPAIGN → the Operations-hub mission-select (PvE pillar, D58).
@@ -469,50 +571,15 @@ impl App {
                 self.screen = Screen::Briefing(node);
                 self.last_frame = Instant::now();
             }
-            // A briefing's DEPLOY: queue the campaign launch, then route through the gunsmith exactly
-            // like any other Start. The gunsmith's Deploy lands on `EnterMatch`, which consumes
-            // `pending_launch` to boot the mission and remember the node for clear-recording.
+            // A briefing's DEPLOY (D81): queue the campaign launch and deploy **directly** into the
+            // mission — the gunsmith is no longer an intermediate step (it's customization-only behind
+            // Settings). `enter_match` consumes `pending_launch` to boot the mission scene and
+            // remember the node for clear-recording, fielding the persisted loadout.
             Some(HostTransition::LaunchMission { node, difficulty }) => {
                 self.pending_launch = Some((node, difficulty));
-                self.screen = Screen::Loadout;
-                self.last_frame = Instant::now();
+                self.enter_match();
             }
-            Some(HostTransition::EnterMatch) => {
-                let surface = self.surface.as_ref().expect("surface exists in resumed");
-                let device = surface.device();
-                let format = surface.format();
-                let loadout = self.loadout.current();
-                // A campaign launch was queued (briefing → gunsmith → here): boot the mission scene
-                // and apply the mission's authored enemy-commander tier (a host-side planning knob,
-                // never sim state). Otherwise field the host's CLI `scene` exactly as before — a
-                // strict superset of the old call. The campaign tier the player picked is carried in
-                // `active_mission` for clear-recording, NOT pushed into the commander (that stays the
-                // authored tier — the 4→3 tier mapping is open question Q21).
-                let game = if let Some((node, difficulty)) = self.pending_launch.take() {
-                    let mut game = Game::new_scene_with_loadout(
-                        device,
-                        format,
-                        DEFAULT_SEED,
-                        Scene::Mission1,
-                        loadout,
-                    );
-                    if let Some(def) = self.registry.resolve_node(&self.campaign, node) {
-                        game.set_commander_difficulty(def.briefing.difficulty);
-                    }
-                    self.active_mission = Some((node, difficulty));
-                    game
-                } else {
-                    // Field the player's chosen gunsmith loadout at match start (WS-C, D60). For
-                    // scenes that carry no player loadout it is inert; `Loadout::STANDARD` (the
-                    // untouched editor) reproduces `new_scene` exactly.
-                    self.active_mission = None;
-                    Game::new_scene_with_loadout(device, format, DEFAULT_SEED, self.scene, loadout)
-                };
-                self.mission_recorded = false;
-                self.screen = Screen::InMatch(Box::new(game));
-                // Don't charge the time spent on the title/gunsmith screens to the first sim tick.
-                self.last_frame = Instant::now();
-            }
+            Some(HostTransition::EnterMatch) => self.enter_match(),
             // Out-of-match utility screens — drawn over the same 3D backdrop as the title.
             Some(HostTransition::OpenSettings) => {
                 self.screen = Screen::Settings;
@@ -522,8 +589,8 @@ impl App {
                 self.screen = Screen::Profile;
                 self.last_frame = Instant::now();
             }
-            Some(HostTransition::OpenAbout) => {
-                self.screen = Screen::About;
+            Some(HostTransition::OpenAbout(ret)) => {
+                self.screen = Screen::About(ret);
                 self.last_frame = Instant::now();
             }
             // The Settings video toggle: flip the window mode, stay on the current screen.
@@ -600,9 +667,10 @@ impl ApplicationHandler for App {
             | Screen::Loadout
             | Screen::Settings
             | Screen::Profile
+            | Screen::ModeSelect
             | Screen::MissionSelect
             | Screen::Briefing(_)
-            | Screen::About => {
+            | Screen::About(_) => {
                 if let (Some(sh), Some(surface)) = (self.shell.as_mut(), self.surface.as_ref()) {
                     sh.on_window_event(surface.window(), &event);
                 }
@@ -719,6 +787,49 @@ fn load_campaign_progress(campaign: &mut Campaign) {
     if let Ok(bytes) = std::fs::read(&path) {
         let _ = campaign.apply_progress(&bytes);
     }
+}
+
+/// The shell-prefs blob filename (Settings / Profile / gunsmith loadout), a sibling of
+/// [`CAMPAIGN_PROGRESS_FILE`] under the same host data dir ([`campaign_dir`]). Separate from
+/// campaign progress so a corrupt one can't take down the other.
+const SHELL_PREFS_FILE: &str = "shell.dat";
+
+/// The full path to the shell-prefs blob, or `None` when no writable home dir is known. Reuses the
+/// pure [`campaign_dir`] seam the campaign blob uses (same env resolution), so both ride one location.
+fn shell_prefs_path() -> Option<PathBuf> {
+    let xdg = std::env::var("XDG_DATA_HOME").ok();
+    let home = std::env::var("HOME").ok();
+    campaign_dir(xdg.as_deref(), home.as_deref()).map(|d| d.join(SHELL_PREFS_FILE))
+}
+
+/// Load persisted Settings / Profile / gunsmith loadout, decoding through the pure
+/// [`shell::decode_shell_prefs`] seam. A missing file or a malformed blob falls back to the shipped
+/// defaults (decode is total — it never fails), so a fresh device or a corrupt save just starts
+/// clean. **Host-side presentation state only** — never sim state, never checksummed (invariant #1).
+/// Glue (fs); the decode logic + its tolerance are unit-tested in `shell`.
+fn load_shell_prefs() -> (SettingsState, ProfileState, LoadoutEditor) {
+    let defaults = || (SettingsState::default(), ProfileState::default(), LoadoutEditor::new());
+    let Some(path) = shell_prefs_path() else {
+        return defaults();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(blob) => shell::decode_shell_prefs(&blob),
+        Err(_) => defaults(),
+    }
+}
+
+/// Persist the current Settings / Profile / gunsmith loadout via the pure
+/// [`shell::encode_shell_prefs`] seam, creating the data dir if needed. Best-effort (a write failure
+/// is swallowed — the state is in memory regardless), and on the same lifecycle as
+/// [`persist_campaign`]. Presentation state only, never a sim/checksum surface. Glue (fs).
+fn persist_shell_prefs(settings: &SettingsState, profile: &ProfileState, loadout: &LoadoutEditor) {
+    let Some(path) = shell_prefs_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, shell::encode_shell_prefs(settings, profile, loadout));
 }
 
 fn main() {

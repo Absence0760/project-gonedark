@@ -135,6 +135,10 @@ pub mod tuning;
 /// smooths measured RTT (host-side `f64` EWMA) and decides when to ask `core::lockstep` to change
 /// the integer input delay. Floats stay here (engine glue), never `core`/sim (invariants #1/#2).
 pub mod net_tuning;
+/// The Pve/Pvp mode/map-select model (D81): `GameMode` + `SHELL_GAME_MODES`, the pure picker table the
+/// out-of-match shells render. Host presentation only — maps a picked mode to a `Scene`; no sim state
+/// (invariants #1/#7). The Rust twin of Android's `GameMode.kt`.
+pub mod shell_modes;
 
 pub use tuning::RenderTuning;
 pub use net_tuning::{DelayPolicy, RttDelayEstimator};

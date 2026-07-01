@@ -14,7 +14,9 @@
 use gonedark_core::campaign::{
     Campaign, Difficulty, MissionSelectEntry, NodeId, NodeProgress,
 };
+use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
+use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
 use gonedark_pal_desktop::DesktopRenderSurface;
 use gonedark_render::title_backdrop::TitleBackdrop;
 use winit::window::Window;
@@ -35,8 +37,23 @@ pub enum TitleAction {
     Settings,
     /// Open the player profile / progression surface (a no-op placeholder until it lands).
     Profile,
+    /// Open the About / field-manual (controls-reference) screen straight from the title. Mirrors
+    /// Android's `TitleAction.About` — on desktop About is *also* reachable from Settings, so its
+    /// return target is carried through [`AboutReturn`] rather than fixed.
+    About,
     /// Quit the app.
     Quit,
+}
+
+/// Where the About / field-manual screen returns on BACK — the entry point it was opened from. About
+/// is reachable from **both** the title (Android parity) and Settings (the pre-existing desktop path),
+/// so BACK must land back where the player came from rather than a fixed screen. Pure data.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AboutReturn {
+    /// Opened from the title screen — BACK returns to the title.
+    Title,
+    /// Opened from Settings — BACK returns to Settings (the original desktop path).
+    Settings,
 }
 
 /// What the host does in response to a title action — the decision table the run loop switches on.
@@ -46,6 +63,11 @@ pub enum HostTransition {
     /// Switch the host to the pre-match gunsmith / loadout screen. Start now lands here first; the
     /// screen's **Deploy** is what subsequently creates the `Game` (carrying the chosen loadout).
     OpenLoadout,
+    /// Switch the host to the Pve/Pvp **mode / map select** screen (D81). Reached from the title's
+    /// PvE / PvP buttons; picking a mode deploys straight into that scene with the persisted loadout
+    /// (the gunsmith no longer gates play — it moved behind Settings). No data: the mode table is the
+    /// static [`gonedark_engine::shell_modes::SHELL_GAME_MODES`].
+    OpenModeSelect,
     /// Switch the host to the **Operations-hub mission-select** screen — the PvE campaign entry
     /// (`docs/pve-campaign.md`, D58). Reached from the title's CAMPAIGN button; the player picks a
     /// node tile there, which opens its [`OpenBriefing`](HostTransition::OpenBriefing).
@@ -66,8 +88,9 @@ pub enum HostTransition {
     OpenSettings,
     /// Switch the host to the player Profile screen (callsign, faction preference, lifetime record).
     OpenProfile,
-    /// Switch the host to the About / controls-reference screen (reached from Settings).
-    OpenAbout,
+    /// Switch the host to the About / controls-reference screen, remembering where BACK returns to
+    /// ([`AboutReturn`]) — reachable from both the title and Settings.
+    OpenAbout(AboutReturn),
     /// Toggle borderless fullscreen and stay on the current screen — the Settings video toggle. The
     /// window mode lives on the host (`App::fullscreen`), so this defers the actual flip to the run
     /// loop rather than carrying a second source of truth into the settings model.
@@ -82,32 +105,36 @@ pub enum HostTransition {
 /// Map a title action to the host transition it triggers (the pure run-loop decision).
 pub fn resolve_title_action(action: TitleAction) -> HostTransition {
     match action {
-        // CAMPAIGN now opens the Operations-hub mission-select (the PvE pillar, D58) — the player
-        // picks a node, reads its briefing, and launches it (still through the gunsmith). PvE/PvP
-        // keep the direct gunsmith→match flow: there is no PvP lobby or standalone-skirmish picker
-        // yet, so each still folds straight to the loadout screen (their mode divergence is future
-        // work, exactly as before).
+        // CAMPAIGN opens the Operations-hub mission-select (the PvE pillar, D58) — the player picks a
+        // node, reads its briefing, and launches it. PvE/PvP open the mode/map select (D81); the
+        // gunsmith is customization-only behind Settings, no longer a play gate.
         TitleAction::Campaign => HostTransition::OpenMissionSelect,
-        TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenLoadout,
+        // PvE/PvP open the mode/map select (D81) — the deploy gate that boots the chosen scene with
+        // the persisted loadout. The gunsmith no longer gates play (it moved behind Settings). PvE
+        // and PvP share the picker until PvP match-setup lands (Q5).
+        TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenModeSelect,
         TitleAction::Settings => HostTransition::OpenSettings,
         TitleAction::Profile => HostTransition::OpenProfile,
+        // The FIELD MANUAL button opens About and returns to the title on BACK (Android parity).
+        TitleAction::About => HostTransition::OpenAbout(AboutReturn::Title),
         TitleAction::Quit => HostTransition::Exit,
     }
 }
 
 // ---- The gunsmith / loadout screen — pure seam (unit-tested) -------------------------------------
 
-/// An action the pre-match gunsmith / loadout screen can emit in a frame.
+/// An action the gunsmith / loadout screen can emit in a frame. **D81: the gunsmith is
+/// customization-only** — reached from Settings, it edits the persisted loadout and never starts a
+/// match (the mode/mission-select screens are the deploy gates). So it has no Deploy: only edits
+/// (`Cycle`/`Reset`) and DONE ([`LoadoutAction::Done`], which returns to Settings).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoadoutAction {
     /// Cycle the slot at on-screen index `slot_index` forward (`true`) or back (`false`) — an edit.
     Cycle { slot_index: usize, forward: bool },
     /// Reset every slot to the neutral all-`Standard` baseline.
     Reset,
-    /// Deploy with the current loadout — leave the gunsmith and enter the match.
-    Deploy,
-    /// Abandon the gunsmith and return to the title screen (no match started).
-    Back,
+    /// Finish customizing — leave the gunsmith and return to Settings (the edits persist).
+    Done,
 }
 
 /// The screen-level outcome of a [`LoadoutAction`] once applied to the editor — what the host run
@@ -116,18 +143,16 @@ pub enum LoadoutAction {
 pub enum LoadoutStep {
     /// Stay on the gunsmith (an edit was applied, or nothing happened this frame).
     Stay,
-    /// Enter the match, fielding the editor's current loadout.
-    Deploy,
-    /// Return to the title screen without starting a match.
-    Back,
+    /// Finished customizing — return to Settings (the gunsmith's entry point, D81).
+    Done,
 }
 
 /// Apply a [`LoadoutAction`] to the player's [`LoadoutEditor`] and report the resulting screen step.
-/// Edits (`Cycle`/`Reset`) mutate the editor and keep us on the gunsmith; `Deploy`/`Back` are screen
-/// transitions the run loop acts on. Pure (no egui/window) — the gunsmith's testable decision seam,
-/// mirroring [`resolve_title_action`]. The actual loadout *model* (validation + the sidegrade-fairness
-/// proof) lives in `core::gunsmith` and is consumed through the editor read-only; this never touches
-/// the sim.
+/// Edits (`Cycle`/`Reset`) mutate the editor and keep us on the gunsmith; `Done` is the screen
+/// transition the run loop acts on (back to Settings — the gunsmith is customization-only under D81).
+/// Pure (no egui/window) — the gunsmith's testable decision seam, mirroring [`resolve_title_action`].
+/// The actual loadout *model* (validation + the sidegrade-fairness proof) lives in `core::gunsmith`
+/// and is consumed through the editor read-only; this never touches the sim.
 pub fn apply_loadout_action(action: LoadoutAction, editor: &mut LoadoutEditor) -> LoadoutStep {
     match action {
         LoadoutAction::Cycle {
@@ -142,8 +167,7 @@ pub fn apply_loadout_action(action: LoadoutAction, editor: &mut LoadoutEditor) -
             editor.reset();
             LoadoutStep::Stay
         }
-        LoadoutAction::Deploy => LoadoutStep::Deploy,
-        LoadoutAction::Back => LoadoutStep::Back,
+        LoadoutAction::Done => LoadoutStep::Done,
     }
 }
 
@@ -230,6 +254,18 @@ impl QualityChoice {
         let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
+
+    /// This choice's stable index in [`Self::ALL`] — the persisted ordinal (mirrors the Android
+    /// codec storing enums by ordinal so a renamed variant can't silently invalidate a saved blob).
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&c| c == self).unwrap_or(0)
+    }
+
+    /// The choice at persisted index `i`, or the default ([`QualityChoice::Auto`]) for an
+    /// out-of-range ordinal — the tolerant decode side of [`Self::index`].
+    pub fn from_index(i: usize) -> QualityChoice {
+        Self::ALL.get(i).copied().unwrap_or(QualityChoice::Auto)
+    }
 }
 
 /// Host-side player preferences edited on the Settings screen. **Presentation only** — none of these
@@ -304,6 +340,9 @@ pub enum SettingsAction {
     ToggleFullscreen,
     /// Restore the shipped defaults.
     ResetDefaults,
+    /// Open the gunsmith / loadout customization screen (D81: the gunsmith lives under Settings now,
+    /// as customization-only — not a play gate).
+    OpenLoadout,
     /// Open the About / controls-reference screen.
     About,
     /// Return to the title screen.
@@ -317,6 +356,8 @@ pub enum SettingsStep {
     Stay,
     /// Toggle fullscreen and stay (the host flips the window mode).
     ToggleFullscreen,
+    /// Leave for the gunsmith / loadout customization screen (D81).
+    OpenLoadout,
     /// Leave for the About screen.
     About,
     /// Return to the title screen.
@@ -333,6 +374,7 @@ pub fn apply_settings_action(action: SettingsAction, state: &mut SettingsState) 
             SettingsStep::Stay
         }
         SettingsAction::ToggleFullscreen => SettingsStep::ToggleFullscreen,
+        SettingsAction::OpenLoadout => SettingsStep::OpenLoadout,
         SettingsAction::About => SettingsStep::About,
         SettingsAction::Back => SettingsStep::Back,
     }
@@ -350,6 +392,9 @@ pub enum FactionPref {
 }
 
 impl FactionPref {
+    /// Every faction, in a fixed order (the persisted-ordinal order and the cycle order).
+    pub const ALL: [FactionPref; 2] = [FactionPref::UsArmy, FactionPref::FrenchArmy];
+
     /// The on-screen label.
     pub fn label(self) -> &'static str {
         match self {
@@ -364,6 +409,17 @@ impl FactionPref {
             FactionPref::UsArmy => FactionPref::FrenchArmy,
             FactionPref::FrenchArmy => FactionPref::UsArmy,
         }
+    }
+
+    /// This faction's stable index in [`Self::ALL`] — the persisted ordinal.
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&f| f == self).unwrap_or(0)
+    }
+
+    /// The faction at persisted index `i`, or the default ([`FactionPref::UsArmy`]) for an
+    /// out-of-range ordinal — the tolerant decode side of [`Self::index`].
+    pub fn from_index(i: usize) -> FactionPref {
+        Self::ALL.get(i).copied().unwrap_or(FactionPref::UsArmy)
     }
 }
 
@@ -463,6 +519,140 @@ pub fn apply_profile_action(action: ProfileAction, profile: &mut ProfileState) -
     }
 }
 
+// ---- Shell-prefs persistence codec — pure seam (unit-tested) ------------------------------------
+
+/// The blob format version tag (the first line). Bumped only on an incompatible layout change; a
+/// mismatched or missing tag is tolerated — decode still reads whatever keys it recognises.
+const SHELL_PREFS_VERSION: &str = "gonedark-shell 1";
+
+/// This [`Optic`]'s stable index in [`Optic::ALL`] — the persisted ordinal (an unknown ordinal
+/// decodes to the slot's `Default`, so a reordered table can't inject an invalid selection).
+fn optic_index(o: Optic) -> usize {
+    Optic::ALL.iter().position(|&x| x == o).unwrap_or(0)
+}
+/// This [`Barrel`]'s stable index in [`Barrel::ALL`].
+fn barrel_index(b: Barrel) -> usize {
+    Barrel::ALL.iter().position(|&x| x == b).unwrap_or(0)
+}
+/// This [`Magazine`]'s stable index in [`Magazine::ALL`].
+fn magazine_index(m: Magazine) -> usize {
+    Magazine::ALL.iter().position(|&x| x == m).unwrap_or(0)
+}
+
+/// Serialize the three player-owned shell state objects — [`SettingsState`] (audio/look/video),
+/// [`ProfileState`] (callsign/faction/record), and the gunsmith [`LoadoutEditor`] — to a flat,
+/// line-based `key=value` blob for the host to persist across launches. The Rust counterpart of the
+/// Android `ShellPrefsCodec.encode` (a desktop-appropriate blob, **not** the Kotlin wire format — the
+/// format is not required to match, only the pattern). Every field is written in its canonical,
+/// already-clamped / sanitized form (settings are clamped, the callsign sanitized, enums stored by
+/// stable ordinal via [`QualityChoice::index`]/[`FactionPref::index`]), so a save→load round-trip is
+/// stable. Pure (no fs/env) — the file I/O around it is the exempt host glue (in `main.rs`).
+///
+/// **Presentation only** — none of this is sim state (invariant #1 is about the sim's fixed-point
+/// state, not host prefs), so it is never checksummed and can't desync anything.
+pub fn encode_shell_prefs(
+    settings: &SettingsState,
+    profile: &ProfileState,
+    loadout: &LoadoutEditor,
+) -> String {
+    let mut s = *settings;
+    s.clamp();
+    let l = loadout.current();
+    // Strip any newline from the free-text callsign so it can't break the line-based format (the one
+    // value that isn't a number/ordinal). `sanitize_callsign` handles trim/truncate/empty-fallback.
+    let callsign = sanitize_callsign(&profile.callsign).replace(['\n', '\r'], " ");
+    format!(
+        "{SHELL_PREFS_VERSION}\n\
+         master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nquality={}\n\
+         callsign={}\nfaction={}\nmatches={}\nwins={}\n\
+         optic={}\nbarrel={}\nmagazine={}\n",
+        s.master_volume,
+        s.sfx_volume,
+        s.music_volume,
+        s.mouse_sensitivity,
+        s.invert_look_y as u8,
+        s.quality.index(),
+        callsign,
+        profile.faction.index(),
+        profile.matches_played,
+        profile.wins,
+        optic_index(l.optic),
+        barrel_index(l.barrel),
+        magazine_index(l.magazine),
+    )
+}
+
+/// Tolerantly decode a [`encode_shell_prefs`] blob back to the three state objects. Any missing,
+/// unparseable, or out-of-range value falls back to that field's default — this **never** panics
+/// (mirroring the Android codec's forward-compat + corruption-safety contract). An empty/garbage blob
+/// therefore decodes to the shipped defaults. Settings are re-clamped and the callsign re-sanitized on
+/// the way out, so the result is always valid. Pure — unit-tested without touching the filesystem.
+pub fn decode_shell_prefs(blob: &str) -> (SettingsState, ProfileState, LoadoutEditor) {
+    use std::collections::HashMap;
+
+    // Parse `key=value` lines (split on the FIRST '=', so a value may itself contain '='). The
+    // version tag and any unrecognised line are simply ignored.
+    let map: HashMap<&str, &str> = blob
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(k, v)| (k.trim(), v.trim()))
+        .collect();
+
+    let ds = SettingsState::default();
+    let mut settings = SettingsState {
+        master_volume: parse_or(map.get("master"), ds.master_volume),
+        sfx_volume: parse_or(map.get("sfx"), ds.sfx_volume),
+        music_volume: parse_or(map.get("music"), ds.music_volume),
+        mouse_sensitivity: parse_or(map.get("sens"), ds.mouse_sensitivity),
+        invert_look_y: parse_bool(map.get("inverty"), ds.invert_look_y),
+        quality: QualityChoice::from_index(parse_or::<usize>(map.get("quality"), 0)),
+    };
+    // The clamp guards a stored-but-out-of-range numeric (e.g. a hand-edited blob) exactly as the
+    // Settings sliders do.
+    settings.clamp();
+
+    let dp = ProfileState::default();
+    let profile = ProfileState {
+        // `sanitize_callsign("")` yields the default callsign, so a missing key is handled here.
+        callsign: sanitize_callsign(map.get("callsign").copied().unwrap_or("")),
+        faction: FactionPref::from_index(parse_or::<usize>(map.get("faction"), 0)),
+        matches_played: parse_or(map.get("matches"), dp.matches_played),
+        wins: parse_or(map.get("wins"), dp.wins),
+    };
+
+    let loadout = LoadoutEditor::with_loadout(Loadout {
+        optic: Optic::ALL
+            .get(parse_or::<usize>(map.get("optic"), 0))
+            .copied()
+            .unwrap_or_default(),
+        barrel: Barrel::ALL
+            .get(parse_or::<usize>(map.get("barrel"), 0))
+            .copied()
+            .unwrap_or_default(),
+        magazine: Magazine::ALL
+            .get(parse_or::<usize>(map.get("magazine"), 0))
+            .copied()
+            .unwrap_or_default(),
+    });
+
+    (settings, profile, loadout)
+}
+
+/// Parse a stored value to `T`, falling back to `fallback` on a missing key or a parse failure. The
+/// numeric decode primitive the codec leans on (mirrors the Android codec's tolerant field reads).
+fn parse_or<T: std::str::FromStr>(value: Option<&&str>, fallback: T) -> T {
+    value.and_then(|s| s.parse::<T>().ok()).unwrap_or(fallback)
+}
+
+/// Decode a stored boolean: `"1"`/`"true"` → true, `"0"`/`"false"` → false, anything else → fallback.
+fn parse_bool(value: Option<&&str>, fallback: bool) -> bool {
+    match value.map(|s| *s) {
+        Some("1") | Some("true") => true,
+        Some("0") | Some("false") => false,
+        _ => fallback,
+    }
+}
+
 // ---- The About / controls-reference screen — pure seam (unit-tested) ----------------------------
 
 /// One control-reference row: the input and what it does, grouped by layer.
@@ -476,9 +666,26 @@ pub struct ControlRow {
     pub action: &'static str,
 }
 
+/// The one-paragraph "what is this game" pitch shown atop the About / field-manual screen — the
+/// canonical blurb, kept **verbatim** in step with Android's `FIELD_MANUAL_BLURB`
+/// (`FieldManual.kt`) so both shells read identically (A2 parity). Android's fuller three-sentence
+/// copy is the source of truth; this must match it byte-for-byte. Pure `&'static str`, so it's
+/// unit-tested (non-empty, ASCII — never a tofu glyph in egui's default font).
+pub const FIELD_MANUAL_BLURB: &str =
+    "Command and grow your camps from above, then possess a single soldier and fight it in first \
+     person while the strategic map goes dark. One commander does both jobs; the tension is your \
+     divided attention. Stay embodied too long and the map you left behind moves without you.";
+
 /// The desktop controls reference shown on the About screen — the **real** default keymap (kept in
 /// sync with `pal-desktop`'s `DesktopInput` doc + `app`'s host keys). Static data, so it's unit-tested
 /// for shape (every group present, no empty cells). ASCII only — never a tofu glyph.
+///
+/// The list is **prefixed by a non-keybinding "GOING DARK" concept section** (A1 parity with
+/// Android's `fieldManualSections`): those rows reuse the `ControlRow` shape with the concept name in
+/// the `keys` column and its one-line framing in `action`, so the grouped `about_ui` renderer draws
+/// them ahead of the COMMAND/EMBODIED/GLOBAL keymap groups with no special case. Content is Android's
+/// verbatim, with its "Going dark" em-dash rendered as ASCII `--` (the file's default-font/no-tofu
+/// rule is the one deviation).
 pub fn controls_reference() -> &'static [ControlRow] {
     const fn row(group: &'static str, keys: &'static str, action: &'static str) -> ControlRow {
         ControlRow {
@@ -489,6 +696,13 @@ pub fn controls_reference() -> &'static [ControlRow] {
     }
     // A `static` (not a returned temporary) so the slice is genuinely `'static`.
     static ROWS: &[ControlRow] = &[
+        // The "GOING DARK" concept block — the game's framing ahead of the keymap (mirrors Android's
+        // `fieldManualSections` leading section). Not keybindings: the `keys` cell is the concept
+        // name, `action` its one-line explanation.
+        row("GOING DARK", "Embodiment", "Possess one unit and fight it in first person"),
+        row("GOING DARK", "Going dark", "Embodying blacks out the strategic map -- alerts, not intel"),
+        row("GOING DARK", "Surface", "Eject back to command; death also ejects you (no respawn)"),
+        row("GOING DARK", "Stay fair", "While dark you get a directional flash + audio, never a map reveal"),
         // Command layer (RTS) — pal-desktop keymap (D42 classic-RTS split).
         row("COMMAND", "Left-click", "Select / band-select"),
         row("COMMAND", "Right-click", "Move or attack-move the selection"),
@@ -509,6 +723,21 @@ pub fn controls_reference() -> &'static [ControlRow] {
         row("GLOBAL", "F3", "Toggle the debug overlay"),
     ];
     ROWS
+}
+
+// ---- The Pve/Pvp mode-select screen — pure seam (unit-tested) -----------------------------------
+
+/// An action the Pve/Pvp mode/map-select screen (D81) can emit in a frame. Picking a mode deploys
+/// straight into its scene with the persisted loadout (no gunsmith); BACK returns to the title. The
+/// mode table itself is the static [`SHELL_GAME_MODES`] (tested in `gonedark_engine::shell_modes`);
+/// the picked mode's scene resolution is [`GameMode::scene`] — both live in `engine` so the
+/// scene-token guard is unit-tested there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModeSelectAction {
+    /// Deploy the picked mode — the host resolves its [`GameMode::scene`] and boots the match.
+    Pick(GameMode),
+    /// Return to the title screen.
+    Back,
 }
 
 // ---- The Operations-hub mission-select screen — pure seam (unit-tested) -------------------------
@@ -853,6 +1082,18 @@ impl EguiShell {
             .is_some()
     }
 
+    /// Draw the Pve/Pvp **mode / map select** screen for one frame and return the
+    /// [`ModeSelectAction`] used, if any (D81). The mode table is the static [`SHELL_GAME_MODES`];
+    /// this holds no host state. Over the live 3D backdrop, same as the other out-of-match screens.
+    /// Pure presentation — the picked mode's scene resolution is the `engine`-tested
+    /// [`GameMode::scene`] seam, this is the device-gated glue.
+    pub fn draw_mode_select(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+    ) -> Option<ModeSelectAction> {
+        self.run_and_paint(surface, true, mode_select_ui)
+    }
+
     /// Draw the Operations-hub **mission-select** screen for one frame and return the
     /// [`MissionSelectAction`] used, if any. `campaign` is the host-side campaign model (read-only
     /// here — it is never sim state, never checksummed). Over the live 3D backdrop, same as the
@@ -1125,6 +1366,11 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
                 if chip_button(ui, "PROFILE") {
                     action = Some(TitleAction::Profile);
                 }
+                // The field manual (About) — reachable straight from the title, mirroring Android's
+                // title About entry (it is also reachable from Settings).
+                if chip_button(ui, "MANUAL") {
+                    action = Some(TitleAction::About);
+                }
             });
         });
 
@@ -1176,7 +1422,8 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
 /// Reads the current selection from `editor` (host-side pre-match state — never the sim) and returns
 /// the action whose control was used this frame. Layout: a centered column of the three attachment
 /// slots — each a `<` / `>` cycler over its current option plus the slot's trade-axis hint — the
-/// sidegrade explainer, then DEPLOY / RESET / BACK. All the decision logic is in the pure seam
+/// sidegrade explainer, then DONE / RESET (D81: customization-only, no Deploy). All the decision
+/// logic is in the pure seam
 /// ([`apply_loadout_action`], [`slot_trade_hint`], and the `core::gunsmith`-backed editor); this fn
 /// is just the egui glue.
 fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction> {
@@ -1261,16 +1508,14 @@ fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction
             });
 
             ui.add_space(22.0);
-            if menu_button(ui, "DEPLOY", Emphasis::Primary) {
-                action = Some(LoadoutAction::Deploy);
+            // D81: customization-only — DONE returns to Settings (the entry point), RESET clears to
+            // baseline. There is no Deploy here: the mode/mission-select screens start matches.
+            if menu_button(ui, "DONE", Emphasis::Primary) {
+                action = Some(LoadoutAction::Done);
             }
             ui.add_space(10.0);
             if menu_button(ui, "RESET", Emphasis::Secondary) {
                 action = Some(LoadoutAction::Reset);
-            }
-            ui.add_space(10.0);
-            if menu_button(ui, "BACK", Emphasis::Tertiary) {
-                action = Some(LoadoutAction::Back);
             }
         });
     });
@@ -1379,6 +1624,13 @@ fn settings_ui(
         // might not).
         state.clamp();
 
+        // The gunsmith lives here now (D81): customization-only, reached from Settings, not a play
+        // gate. Its edits persist for the next match.
+        section_label(ui, "LOADOUT");
+        if menu_button(ui, "GUNSMITH", Emphasis::Secondary) {
+            action = Some(SettingsAction::OpenLoadout);
+        }
+
         ui.add_space(18.0);
         if menu_button(ui, "BACK", Emphasis::Primary) {
             action = Some(SettingsAction::Back);
@@ -1475,14 +1727,7 @@ fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
     over_backdrop_screen(ui, 0.06, |ui| {
         ui.set_min_width(460.0);
         screen_banner(ui, "FIELD MANUAL", 120.0);
-        ui.label(
-            RichText::new(
-                "Command and grow your camps from above -- then possess a single soldier and \
-                 fight it in first person, while the strategic map goes dark.",
-            )
-            .color(ASH)
-            .size(TYPE_BODY),
-        );
+        ui.label(RichText::new(FIELD_MANUAL_BLURB).color(ASH).size(TYPE_BODY));
         ui.add_space(14.0);
 
         // The keymap, grouped by layer. A bounded ScrollArea keeps the card sane on a short window.
@@ -1547,6 +1792,62 @@ fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Option<Mission
     clicked
         .then(|| playable_node(entry).map(MissionSelectAction::OpenNode))
         .flatten()
+}
+
+/// One mode/map tile: the mode name over its one-line blurb, as a full-width button; clicking it
+/// deploys that mode. Mirrors Android's `ModeTile`. Glue (needs a live `Ui`) — the launch decision is
+/// the pure [`GameMode::scene`] seam the host resolves; this only reports the pick. ASCII only.
+fn mode_tile(ui: &mut egui::Ui, mode: &GameMode) -> Option<ModeSelectAction> {
+    use egui::{Button, RichText};
+    let label = RichText::new(mode.name.to_uppercase())
+        .color(BONE)
+        .size(TYPE_SUBHEAD)
+        .strong();
+    let mut clicked = false;
+    card_frame().show(ui, |ui| {
+        ui.set_min_width(MENU_BUTTON_W);
+        let resp = ui.add(Button::new(label).frame(false).min_size([MENU_BUTTON_W, 28.0].into()));
+        ui.label(RichText::new(mode.blurb).color(ASH).size(TYPE_CAPTION));
+        clicked = resp.clicked();
+    });
+    clicked.then_some(ModeSelectAction::Pick(*mode))
+}
+
+/// The immediate-mode Pve/Pvp mode/map-select screen (D81): the standing battle scenes as tiles in a
+/// card over the backdrop, then BACK. Reads the static [`SHELL_GAME_MODES`] (host presentation, never
+/// the sim); each pick routes through the `engine`-tested [`GameMode::scene`] seam at the host. Glue.
+fn mode_select_ui(ui: &mut egui::Ui) -> Option<ModeSelectAction> {
+    use egui::RichText;
+    let mut action = None;
+
+    over_backdrop_screen(ui, 0.08, |ui| {
+        ui.set_min_width(460.0);
+        screen_banner(ui, "SELECT MODE", 130.0);
+        ui.label(
+            RichText::new(
+                "Pick a battle to deploy into. Your loadout is set in the gunsmith, under Settings.",
+            )
+            .color(ASH)
+            .size(TYPE_BODY),
+        );
+        ui.add_space(18.0);
+
+        for (i, mode) in SHELL_GAME_MODES.iter().enumerate() {
+            if let Some(act) = mode_tile(ui, mode) {
+                action = Some(act);
+            }
+            if i + 1 < SHELL_GAME_MODES.len() {
+                ui.add_space(12.0);
+            }
+        }
+
+        ui.add_space(22.0);
+        if menu_button(ui, "BACK", Emphasis::Tertiary) {
+            action = Some(ModeSelectAction::Back);
+        }
+    });
+
+    action
 }
 
 /// The immediate-mode Operations-hub mission-select screen: the campaign's nodes as
@@ -1708,14 +2009,15 @@ mod tests {
     }
 
     #[test]
-    fn pve_and_pvp_still_open_the_gunsmith() {
-        // PvE/PvP keep the direct gunsmith→match flow (no lobby / skirmish picker yet) — each routes
-        // through the loadout screen first, and Deploy from there creates the `Game`.
+    fn pve_and_pvp_open_the_mode_select() {
+        // D81: PvE/PvP now open the mode/map select (the deploy gate), not the gunsmith — the
+        // gunsmith moved behind Settings as customization-only. PvE and PvP share the picker until
+        // PvP match-setup lands (Q5).
         for mode in [TitleAction::Pve, TitleAction::Pvp] {
             assert_eq!(
                 resolve_title_action(mode),
-                HostTransition::OpenLoadout,
-                "{mode:?} must open the gunsmith"
+                HostTransition::OpenModeSelect,
+                "{mode:?} must open the mode select"
             );
         }
     }
@@ -1733,6 +2035,16 @@ mod tests {
         assert_eq!(
             resolve_title_action(TitleAction::Profile),
             HostTransition::OpenProfile
+        );
+    }
+
+    #[test]
+    fn title_about_opens_the_field_manual_returning_to_the_title() {
+        // T2 parity: the title's FIELD MANUAL button opens About and BACK returns to the title
+        // (the Settings entry — tested via the run loop — returns to Settings instead).
+        assert_eq!(
+            resolve_title_action(TitleAction::About),
+            HostTransition::OpenAbout(AboutReturn::Title)
         );
     }
 
@@ -1845,7 +2157,9 @@ mod tests {
     }
 
     #[test]
-    fn deploy_and_back_are_screen_transitions_that_leave_the_editor_alone() {
+    fn done_is_a_screen_transition_that_leaves_the_editor_alone() {
+        // D81: the gunsmith is customization-only — DONE returns to Settings carrying the edited
+        // (persisted) loadout unchanged; there is no Deploy here.
         let mut ed = LoadoutEditor::new();
         apply_loadout_action(
             LoadoutAction::Cycle {
@@ -1855,11 +2169,8 @@ mod tests {
             &mut ed,
         );
         let chosen = ed.current();
-        // Deploy/Back report a screen step but never mutate the chosen loadout.
-        assert_eq!(apply_loadout_action(LoadoutAction::Deploy, &mut ed), LoadoutStep::Deploy);
-        assert_eq!(ed.current(), chosen, "Deploy carries the chosen loadout unchanged");
-        assert_eq!(apply_loadout_action(LoadoutAction::Back, &mut ed), LoadoutStep::Back);
-        assert_eq!(ed.current(), chosen, "Back doesn't alter the editor either");
+        assert_eq!(apply_loadout_action(LoadoutAction::Done, &mut ed), LoadoutStep::Done);
+        assert_eq!(ed.current(), chosen, "Done doesn't alter the editor");
     }
 
     // ---- The shell theme (pure egui::Style data — no GPU/window, so it IS testable) --------------
@@ -1984,6 +2295,11 @@ mod tests {
             SettingsStep::ToggleFullscreen
         );
         assert_eq!(
+            apply_settings_action(SettingsAction::OpenLoadout, &mut s),
+            SettingsStep::OpenLoadout,
+            "the gunsmith is reached from Settings (D81)"
+        );
+        assert_eq!(
             apply_settings_action(SettingsAction::About, &mut s),
             SettingsStep::About
         );
@@ -2079,7 +2395,120 @@ mod tests {
         assert_eq!(p.callsign, "Ghost");
     }
 
+    // ---- The shell-prefs persistence codec -------------------------------------------------------
+
+    use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
+
+    /// A non-default state across all three objects, to prove the round-trip carries every field.
+    fn sample_state() -> (SettingsState, ProfileState, LoadoutEditor) {
+        let settings = SettingsState {
+            master_volume: 0.35,
+            sfx_volume: 0.5,
+            music_volume: 0.25,
+            mouse_sensitivity: 2.4,
+            invert_look_y: true,
+            quality: QualityChoice::High,
+        };
+        let profile = ProfileState {
+            callsign: "Reaper".to_string(),
+            faction: FactionPref::FrenchArmy,
+            matches_played: 12,
+            wins: 7,
+        };
+        let loadout = LoadoutEditor::with_loadout(Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        });
+        (settings, profile, loadout)
+    }
+
+    #[test]
+    fn shell_prefs_round_trip_preserves_every_field() {
+        let (s, p, l) = sample_state();
+        let blob = encode_shell_prefs(&s, &p, &l);
+        let (s2, p2, l2) = decode_shell_prefs(&blob);
+        assert_eq!(s2, s, "settings survive the round-trip");
+        assert_eq!(p2, p, "profile survives the round-trip");
+        assert_eq!(l2.current(), l.current(), "loadout survives the round-trip");
+    }
+
+    #[test]
+    fn shell_prefs_encode_is_stable_under_re_encode() {
+        // A decode→encode of an encoded blob reproduces the same bytes (canonical, already-clamped).
+        let (s, p, l) = sample_state();
+        let blob = encode_shell_prefs(&s, &p, &l);
+        let (s2, p2, l2) = decode_shell_prefs(&blob);
+        assert_eq!(encode_shell_prefs(&s2, &p2, &l2), blob);
+    }
+
+    #[test]
+    fn empty_or_garbage_blob_decodes_to_defaults() {
+        for blob in ["", "gonedark-shell 1\n", "total nonsense\n???\n", "master\nsfx=\n"] {
+            let (s, p, l) = decode_shell_prefs(blob);
+            assert_eq!(s, SettingsState::default(), "blob {blob:?} → default settings");
+            assert_eq!(p, ProfileState::default(), "blob {blob:?} → default profile");
+            assert_eq!(
+                l.current(),
+                LoadoutEditor::new().current(),
+                "blob {blob:?} → default loadout"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_tolerates_out_of_range_and_unparseable_values() {
+        // Out-of-range numerics are clamped; out-of-range enum ordinals fall back to the default;
+        // an unparseable value keeps the field default. Never panics.
+        let blob = "master=9.9\nsfx=-3\nsens=999\ninverty=maybe\nquality=42\n\
+                    faction=99\nmatches=notanumber\noptic=7\nbarrel=-1\nmagazine=abc\n\
+                    callsign=   \n";
+        let (s, p, l) = decode_shell_prefs(blob);
+        assert_eq!(s.master_volume, 1.0, "over-range gain clamps to 1.0");
+        assert_eq!(s.sfx_volume, 0.0, "negative gain clamps to 0.0");
+        assert_eq!(s.mouse_sensitivity, SettingsState::SENS_MAX, "over-range sens clamps");
+        assert!(!s.invert_look_y, "unparseable bool keeps the default (false)");
+        assert_eq!(s.quality, QualityChoice::Auto, "out-of-range quality ordinal → default");
+        assert_eq!(p.faction, FactionPref::UsArmy, "out-of-range faction ordinal → default");
+        assert_eq!(p.matches_played, 0, "unparseable count keeps the default");
+        // A blank callsign sanitises to the default; the out-of-range loadout ordinals default.
+        assert_eq!(p.callsign, DEFAULT_CALLSIGN);
+        assert_eq!(l.current(), Loadout::STANDARD, "out-of-range slot ordinals → Standard");
+    }
+
+    #[test]
+    fn decode_sanitizes_and_strips_a_newline_injected_callsign() {
+        // A callsign carrying a newline can't corrupt the line-based blob: encode strips it, and the
+        // decoded value is the sanitized single-line name.
+        let p = ProfileState {
+            callsign: "Rea\nper".to_string(),
+            ..ProfileState::default()
+        };
+        let blob = encode_shell_prefs(&SettingsState::default(), &p, &LoadoutEditor::new());
+        assert_eq!(blob.lines().filter(|l| l.starts_with("callsign=")).count(), 1);
+        let (_, p2, _) = decode_shell_prefs(&blob);
+        assert!(!p2.callsign.contains('\n'));
+        assert_eq!(p2.callsign, "Rea per");
+    }
+
     // ---- The About controls reference ------------------------------------------------------------
+
+    #[test]
+    fn field_manual_blurb_is_the_canonical_three_sentence_copy() {
+        // A2 parity: the desktop blurb converges on Android's fuller `FIELD_MANUAL_BLURB` verbatim.
+        // Guard the exact canonical string so a future one-side edit re-opens the drift the sync
+        // closed, and keep it ASCII (default-font, no tofu).
+        assert_eq!(
+            FIELD_MANUAL_BLURB,
+            "Command and grow your camps from above, then possess a single soldier and fight it in \
+             first person while the strategic map goes dark. One commander does both jobs; the \
+             tension is your divided attention. Stay embodied too long and the map you left behind \
+             moves without you."
+        );
+        assert!(FIELD_MANUAL_BLURB.is_ascii(), "the blurb must render in egui's default font");
+        // Three sentences (the "richer" copy the sync adopted), not the old one-liner.
+        assert_eq!(FIELD_MANUAL_BLURB.matches(". ").count() + 1, 3);
+    }
 
     #[test]
     fn controls_reference_is_well_formed_and_covers_every_layer() {
@@ -2097,6 +2526,33 @@ mod tests {
                 "the {layer} layer must have at least one binding"
             );
         }
+    }
+
+    #[test]
+    fn controls_reference_leads_with_the_going_dark_concept_section() {
+        // A1 parity: the field manual prepends a GOING DARK concept block (mirrors Android's
+        // `fieldManualSections`) ahead of the keymap groups, so the first rows are that section.
+        let rows = controls_reference();
+        assert_eq!(rows[0].group, "GOING DARK", "the concept section must lead the manual");
+        // The four concept rows, in order and verbatim (em-dash rendered ASCII per the no-tofu rule).
+        let concept: Vec<(&str, &str)> = rows
+            .iter()
+            .filter(|r| r.group == "GOING DARK")
+            .map(|r| (r.keys, r.action))
+            .collect();
+        assert_eq!(
+            concept,
+            vec![
+                ("Embodiment", "Possess one unit and fight it in first person"),
+                ("Going dark", "Embodying blacks out the strategic map -- alerts, not intel"),
+                ("Surface", "Eject back to command; death also ejects you (no respawn)"),
+                ("Stay fair", "While dark you get a directional flash + audio, never a map reveal"),
+            ]
+        );
+        // The concept block sits entirely before the first keymap group (no interleaving).
+        let last_concept = rows.iter().rposition(|r| r.group == "GOING DARK").unwrap();
+        let first_keymap = rows.iter().position(|r| r.group != "GOING DARK").unwrap();
+        assert!(last_concept < first_keymap, "the concept section is not interleaved with the keymap");
     }
 
     // ---- The Operations-hub mission-select + briefing pure seams ---------------------------------
