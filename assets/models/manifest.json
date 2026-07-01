@@ -186,43 +186,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 64372,
-      "sha256": "89f238e8386442af26d149282aeb37151d6c0eaf02490973166146a134360024",
-      "cooked_bytes": 113532,
-      "cooked_sha256": "6f2316a0f08732d65ad07a100334170122a8c99f487e1eb23ba51625e36facee",
+      "bytes": 74776,
+      "sha256": "753c2300505f3c46048f6cc472bc5d403f031c20119980b5871516857ada400b",
+      "cooked_bytes": 133596,
+      "cooked_sha256": "97bf300965220dcae8aa2eaff754ba8914a1a34dadd502eaec29fb4345f3f6f2",
       "lods": [
         {
           "level": 0,
           "file": "structures/camp_hq.glb",
           "cooked": "structures/camp_hq.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 860,
-          "bytes": 64372,
-          "sha256": "89f238e8386442af26d149282aeb37151d6c0eaf02490973166146a134360024",
-          "cooked_bytes": 113532,
-          "cooked_sha256": "6f2316a0f08732d65ad07a100334170122a8c99f487e1eb23ba51625e36facee"
+          "tri_count": 1012,
+          "bytes": 74776,
+          "sha256": "753c2300505f3c46048f6cc472bc5d403f031c20119980b5871516857ada400b",
+          "cooked_bytes": 133596,
+          "cooked_sha256": "97bf300965220dcae8aa2eaff754ba8914a1a34dadd502eaec29fb4345f3f6f2"
         },
         {
           "level": 1,
           "file": "structures/camp_hq.lod1.glb",
           "cooked": "structures/camp_hq.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 378,
-          "bytes": 8516,
-          "sha256": "589a54af53c550dbcd988818835b09119e47e53641b1d36f18cfd9d203a2b1f2",
-          "cooked_bytes": 49908,
-          "cooked_sha256": "801d5516f42bd49deff8c726ddd7ddb6a4a1552c3ef6e19d898fd8db0655a717"
+          "tri_count": 441,
+          "bytes": 9464,
+          "sha256": "bae687993a8cba46856a050030a6f8fa1a569b56d16f279769e8d0ed470f055a",
+          "cooked_bytes": 58224,
+          "cooked_sha256": "6b47b0351389c6d7db99992818dea8725b1fd336c3c7a572c3e0c60482f3ed73"
         },
         {
           "level": 2,
           "file": "structures/camp_hq.lod2.glb",
           "cooked": "structures/camp_hq.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 184,
-          "bytes": 5000,
-          "sha256": "f49e3ed7d1b6544fda160b12fc567e902e5a0362e8636b30050ffc6fe1c1525b",
-          "cooked_bytes": 24300,
-          "cooked_sha256": "5814138cbccba439c4bb4342605a2ed32fd42ba1d86c82a7057dde7ca2b56040"
+          "tri_count": 198,
+          "bytes": 5072,
+          "sha256": "4440586fff660515e8e37ad351691280b96691ec8d4f868a1660746da03d074d",
+          "cooked_bytes": 26148,
+          "cooked_sha256": "3e5a5d233a8b1d0fb75e918402fdf42e262e25f5dbaa1de68682c8f281e53bb0"
         }
       ]
     },
@@ -354,43 +354,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 55328,
-      "sha256": "167dac1eccdf4d911000e72351685f9c34b343a9f7fe551a629c0858c9ead439",
-      "cooked_bytes": 100860,
-      "cooked_sha256": "bfd4d200f3f312f5256279d27006c4b6e109152b08adc4c766a9b78b1588980c",
+      "bytes": 67988,
+      "sha256": "d42ed3011fd0de3efc59585bb035157bfc6b2e6cbb6f9b5367d86bba100be9b3",
+      "cooked_bytes": 127260,
+      "cooked_sha256": "503caf051b49441caf3490c00fc9dff6449bc7273f11d44f4a738e877217ae18",
       "lods": [
         {
           "level": 0,
           "file": "structures/turret.glb",
           "cooked": "structures/turret.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 764,
-          "bytes": 55328,
-          "sha256": "167dac1eccdf4d911000e72351685f9c34b343a9f7fe551a629c0858c9ead439",
-          "cooked_bytes": 100860,
-          "cooked_sha256": "bfd4d200f3f312f5256279d27006c4b6e109152b08adc4c766a9b78b1588980c"
+          "tri_count": 964,
+          "bytes": 67988,
+          "sha256": "d42ed3011fd0de3efc59585bb035157bfc6b2e6cbb6f9b5367d86bba100be9b3",
+          "cooked_bytes": 127260,
+          "cooked_sha256": "503caf051b49441caf3490c00fc9dff6449bc7273f11d44f4a738e877217ae18"
         },
         {
           "level": 1,
           "file": "structures/turret.lod1.glb",
           "cooked": "structures/turret.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 358,
-          "bytes": 8020,
-          "sha256": "6a8949644b14c0c5feb2357c5faa340381b4c015dda5168bc3d2a18ebdb1b87e",
-          "cooked_bytes": 47268,
-          "cooked_sha256": "4343429ca019ff965f8d17dde01cb68da45135fe06d77739535df9ca3e5969d5"
+          "tri_count": 452,
+          "bytes": 9904,
+          "sha256": "ac7ba6651471540a8daad19013e85512b50834c4d13352be3618fc4b58bfccc9",
+          "cooked_bytes": 59676,
+          "cooked_sha256": "6a91efb5b5f311598a34a3c27f08c346157feffa82bc31c8d9d1f81c4557d0cd"
         },
         {
           "level": 2,
           "file": "structures/turret.lod2.glb",
           "cooked": "structures/turret.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 166,
-          "bytes": 4440,
-          "sha256": "45fd892df4d3a136f64791724fa5cd8701d08e2bc9e8617ecff9c17f5f5404b9",
-          "cooked_bytes": 21924,
-          "cooked_sha256": "71a5779897bdd45a0f9ce051a4ef8649e15b6adc99d14391cfa0df2bcb8b2836"
+          "tri_count": 211,
+          "bytes": 5256,
+          "sha256": "2ce84c376a6eadb9da78c3450021f1ecd8c9d8a785cc1b9fc3fc0e139f807977",
+          "cooked_bytes": 27864,
+          "cooked_sha256": "ef3da314e20259ecc8abe04b24d934cfb09467e311ea04aeb18824a575a86cbe"
         }
       ]
     },
@@ -522,10 +522,10 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 41264,
-      "sha256": "e71d39f9f95642573765bcae070d622308b6f5f7f763eced319bd2cdac8cdafb",
+      "bytes": 41260,
+      "sha256": "4c963e07a6094259cad1d06e08c10a5ce6051eb33dd47eebd32c5d9f6abf0589",
       "cooked_bytes": 69708,
-      "cooked_sha256": "f4202126acfd6fb520630056c3bc6be1e6311aa6245374e59f27620c3b0b292a",
+      "cooked_sha256": "a0b8dc79c28df9c719a3ff27da6991e89c0b567ecf04e616e41f15097748f24c",
       "lods": [
         {
           "level": 0,
@@ -533,32 +533,32 @@
           "cooked": "structures/barricade.mesh",
           "simplify_ratio": 1.0,
           "tri_count": 528,
-          "bytes": 41264,
-          "sha256": "e71d39f9f95642573765bcae070d622308b6f5f7f763eced319bd2cdac8cdafb",
+          "bytes": 41260,
+          "sha256": "4c963e07a6094259cad1d06e08c10a5ce6051eb33dd47eebd32c5d9f6abf0589",
           "cooked_bytes": 69708,
-          "cooked_sha256": "f4202126acfd6fb520630056c3bc6be1e6311aa6245374e59f27620c3b0b292a"
+          "cooked_sha256": "a0b8dc79c28df9c719a3ff27da6991e89c0b567ecf04e616e41f15097748f24c"
         },
         {
           "level": 1,
           "file": "structures/barricade.lod1.glb",
           "cooked": "structures/barricade.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 259,
-          "bytes": 4896,
-          "sha256": "b5f321c23a21a4b41228d0471e9c96cc981e19ff2a6819613e540b6143d49ff1",
-          "cooked_bytes": 34200,
-          "cooked_sha256": "1cdd66edfb780933218ec335d1d64adba2d604d9f03d6a331f7761d46d151a71"
+          "tri_count": 196,
+          "bytes": 4368,
+          "sha256": "70bfd430dacdef073bd85994d9883448e3e25116d743939b5d6b023da1a417e1",
+          "cooked_bytes": 25884,
+          "cooked_sha256": "be2ae8667dac4e7c1f153c58aa3131b567aac5a6a5a805845f0f2734625b0038"
         },
         {
           "level": 2,
           "file": "structures/barricade.lod2.glb",
           "cooked": "structures/barricade.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 224,
-          "bytes": 4376,
-          "sha256": "24ab30ea0f3c17b090e79b491ef4db4ef74aa7f348bdfc88b92f3d4a2e309f3e",
-          "cooked_bytes": 29580,
-          "cooked_sha256": "960cd01e566edbd15d74793591b2cedecd11d3815235e04bb3d2473a5ce2be7d"
+          "tri_count": 154,
+          "bytes": 3464,
+          "sha256": "8e47e70f5614d612f0ed03f2bd21c97711e77502781392f94f65b713730af057",
+          "cooked_bytes": 20340,
+          "cooked_sha256": "f4bd3ed8b2ff90e86c7a34bd18db1a6a3f9b25e7b6b62176617c60240b8f8f6f"
         }
       ]
     },

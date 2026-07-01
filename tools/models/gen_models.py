@@ -704,32 +704,47 @@ def build_tracer():
 
 def build_camp_hq():
     mat = make_material("camp_hq", rgba("camp_hq"))  # tan
-    # A real command building: a hipped roof over a cornice, the front (eye-level hero) face given
-    # the detail — corner pilasters framing a recessed doorway under a sloped entrance awning on two
-    # posts, flanked by windows — plus a rooftop vent and an antenna mast with a cross-spreader for
-    # the top-down read. Kept lean: only the silhouette-defining masses, so the tri count stays low.
+    # A real command building. WS-F tier-3 lift (visual-design-plan §WS-F): kill the melty base and
+    # sharpen the facade with BOOLEAN inset detail instead of proud slabs.
+    #   (1) a crisp foundation PLINTH, proud of the walls, gives a hard groundline (was: the walls
+    #       melting straight into the ground under the heavy 0.06 bevel);
+    #   (2) the two front windows + the doorway are now BOOLEAN-CUT recesses — real reveals with a
+    #       pane / door set back in the opening — instead of boxes stuck onto the wall face;
+    #   (3) the bevel drops 0.06 → 0.03 so the cornice, pilasters and the new recess edges read as
+    #       crisp cast chamfers, not soap-bar rounding.
+    # Silhouette identity is unchanged: hipped roof + ridge vent, pilaster-framed entrance under a
+    # sloped awning on two posts, flanking windows, rooftop vent + antenna mast (top-down read).
+    walls = box((3.5, 3.0, 1.8), (0, 0, 0.90))                 # main wall block (front face at y=+1.5)
+    # Boolean recesses milled into the front (+Y) face: two windows + a doorway. Each cutter pokes
+    # ~0.21 m into the wall from the face, leaving a reveal the bevel then crisps into a cast edge.
+    boolean_cut(walls, [
+        box((0.66, 0.42, 0.56), (-1.05, 1.5, 1.22)),           # window opening L
+        box((0.66, 0.42, 0.56), (1.05, 1.5, 1.22)),            # window opening R
+        box((0.78, 0.42, 1.16), (0, 1.5, 0.58)),               # doorway opening
+    ])
     parts = [
-        box((3.5, 3.0, 1.8), (0, 0, 0.90)),                    # walls
+        walls,
+        box((3.66, 3.16, 0.26), (0, 0, 0.13)),                 # foundation plinth (proud footing → hard groundline)
         box((0.28, 0.28, 1.9), (-1.73, 1.48, 0.95)),           # front pilaster L (frames the facade)
         box((0.28, 0.28, 1.9), (1.73, 1.48, 0.95)),            # front pilaster R
         box((3.7, 3.2, 0.20), (0, 0, 1.80)),                   # eave / cornice band (roofline lip)
         pyramid(2.55, 1.10, (0, 0, 2.34)),                     # hipped roof
         box((1.7, 0.55, 0.20), (0, 0, 2.88)),                  # ridge vent cap along the roof apex
-        # Front entrance: recessed door panel in a frame under a sloped awning on two posts.
-        box((1.10, 0.22, 1.20), (0, 1.49, 0.60)),              # door frame surround (proud of wall)
-        box((0.72, 0.10, 1.02), (0, 1.57, 0.51)),              # recessed door panel
+        # Panes + door set back in the boolean reveals (depth read, not proud slabs).
+        box((0.60, 0.06, 0.50), (-1.05, 1.42, 1.22)),          # window pane L (recessed)
+        box((0.60, 0.06, 0.50), (1.05, 1.42, 1.22)),           # window pane R (recessed)
+        box((0.72, 0.07, 1.08), (0, 1.42, 0.56)),              # door panel (recessed)
+        # Front entrance awning on two posts over the doorway.
         box((1.34, 0.60, 0.10), (0, 1.84, 1.34), rot=(math.radians(-12), 0, 0)),  # sloped entrance awning
         box((0.09, 0.09, 1.20), (-0.58, 2.02, 0.60)),          # awning post L
         box((0.09, 0.09, 1.20), (0.58, 2.02, 0.60)),           # awning post R
-        box((0.74, 0.12, 0.50), (-1.05, 1.52, 1.20)),          # window slab L (front face)
-        box((0.74, 0.12, 0.50), (1.05, 1.52, 1.20)),           # window slab R
         # Rooftop kit + mast (top-down read).
         box((0.46, 0.46, 0.52), (-0.2, -0.2, 2.94)),           # rooftop vent housing
         cyl(0.045, 1.60, (1.15, 1.0, 3.55)),                   # antenna mast
         cyl(0.11, 0.34, (1.15, 1.0, 2.96), verts=8),           # antenna base
         box((0.56, 0.05, 0.05), (1.15, 1.0, 3.85)),            # mast cross-spreader
     ]
-    return weld("camp_hq", parts, mat, bevel=0.06)
+    return weld("camp_hq", parts, mat, bevel=0.03)
 
 
 def picatinny_slots(x0, x1, y_half, z_top, count, slot_w=0.013, depth=0.016):
@@ -818,12 +833,23 @@ def build_turret():
     # armoured gun housing with a sloped face shield, twin elevation trunnion arms cradling the gun, a
     # top sensor/optic block, a side ammo can, a recoil cylinder slung under the barrel, and a muzzle
     # brake. Kept lean — only the parts that make it read as a weapon, not a box on a stick.
+    #
+    # WS-F tier-3 lift (visual-design-plan §WS-F): real BOOLEAN inset detail on the two parts the
+    # player reads closest — (1) a recessed armoured vision slit milled into the sloped face shield
+    # (the hero +X plate) instead of a blank slab, and (2) transverse ports cut through the muzzle
+    # brake so it reads as a brake, not a plain collar. The bevel tightens 0.03 → 0.022 so the shield
+    # slope, ring plate and housing edges stay crisp (no soap-bar rounding).
+    shield = box((0.50, 0.98, 0.62), (0.40, 0, 1.20), rot=(0, math.radians(-10), 0))  # sloped face shield (+X)
+    boolean_cut(shield, [box((0.28, 0.58, 0.10), (0.60, 0, 1.34), rot=(0, math.radians(-10), 0))])  # vision slit
+    brake = cyl(0.11, 0.16, (1.42, 0, 1.20), rot=(0, math.radians(90), 0), verts=10)  # muzzle brake
+    boolean_cut(brake, [box((0.05, 0.30, 0.30), (1.40, 0, 1.20)),   # transverse ports (two gaps → three fins)
+                        box((0.05, 0.30, 0.30), (1.46, 0, 1.20))])
     parts = [
         box((1.6, 1.6, 0.40), (0, 0, 0.20)),                   # base pad
         box((1.2, 1.2, 0.14), (0, 0, 0.47)),                   # bolted ring plate on the pad
         cyl(0.55, 0.70, (0, 0, 0.70), verts=12),               # rotating drum
         box((0.74, 0.84, 0.46), (-0.05, 0, 1.15)),             # gun housing
-        box((0.50, 0.98, 0.62), (0.40, 0, 1.20), rot=(0, math.radians(-10), 0)),  # sloped face shield (+X)
+        shield,
         box((0.16, 0.10, 0.40), (0.52, 0.42, 1.20)),           # elevation trunnion arm L
         box((0.16, 0.10, 0.40), (0.52, -0.42, 1.20)),          # elevation trunnion arm R
         box((0.32, 0.34, 0.22), (-0.20, 0, 1.47)),             # sensor / optic block (on top)
@@ -831,9 +857,9 @@ def build_turret():
         cyl(0.07, 0.30, (0.55, 0, 1.04), rot=(0, math.radians(90), 0), verts=8),  # recoil cylinder stub (under barrel)
         cyl(0.07, 1.30, (0.78, 0, 1.20), rot=(0, math.radians(90), 0), verts=10),  # barrel
         cyl(0.10, 0.18, (0.34, 0, 1.20), rot=(0, math.radians(90), 0), verts=10),  # barrel shroud
-        cyl(0.11, 0.16, (1.42, 0, 1.20), rot=(0, math.radians(90), 0), verts=10),  # muzzle brake
+        brake,
     ]
-    return weld("turret", parts, mat, bevel=0.03)
+    return weld("turret", parts, mat, bevel=0.022)
 
 
 def build_tree():
@@ -874,27 +900,35 @@ def build_rock():
 def build_barricade():
     mat = make_material("barricade", rgba("barricade"))  # sandbag berm cover
     # A stacked sandbag berm: discrete bags laid in three offset (running-bond) courses. Each bag is
-    # a flattened, heavily-chamfered box rotated a few degrees off-axis and dipped in height, so the
-    # course sags and bulges like real filled bags rather than a tidy brick wall. A deterministic
-    # per-bag wobble (indexed, not random) keeps the regen bit-reproducible.
+    # a flattened, chamfered box rotated a few degrees off-axis and dipped in height, so the course
+    # sags and bulges like real filled bags rather than a tidy brick wall. A deterministic per-bag
+    # wobble (indexed, not random) keeps the regen bit-reproducible.
+    #
+    # WS-F tier-3 lift (visual-design-plan §WS-F): tighten the read from "spaced chocolate bars" to a
+    # packed berm. (1) Courses now OVERLAP in x (bag width > pitch) so there are no gaps at the bevel
+    # seams; (2) each bag is nudged fore/aft (±y) so the wall face is a bulging stack, not one flat
+    # plane; (3) the bevel eases 0.09 → 0.07 — still a soft filled-bag pillow, but crisp enough not to
+    # read as molten. The sandbag silhouette identity is unchanged.
     parts = []
-    # (x, base_dims, z, +/- sag tweak, yaw nudge in deg) per course. Bags overlap slightly so the
-    # berm reads as a continuous packed wall with no gaps.
-    lower = [-1.05, -0.52, 0.0, 0.52, 1.05]
-    upper = [-0.78, -0.26, 0.26, 0.78]
-    top = [-0.40, 0.10, 0.55]
+    # (x centres per course). Pitch < bag width → neighbours overlap into a continuous packed wall.
+    lower = [-1.00, -0.50, 0.0, 0.50, 1.00]      # widest base course (5 bags)
+    upper = [-0.75, -0.25, 0.25, 0.75]           # mid course, running-bond offset (4 bags)
+    top = [-0.50, 0.0, 0.50]                      # short crest course (3 bags)
     for i, x in enumerate(lower):
         sag = 0.02 if i % 2 else -0.02
-        parts.append(box((0.52, 0.74, 0.30 + sag), (x, 0.01 * (i % 3 - 1), 0.15 + sag * 0.5),
+        fb = 0.05 if i % 2 else -0.05            # fore/aft nudge → bulging face, not a flat plane
+        parts.append(box((0.60, 0.76, 0.30 + sag), (x, fb, 0.15 + sag * 0.5),
                          rot=(0, 0, math.radians(4 if i % 2 else -3))))  # lower course bag
     for i, x in enumerate(upper):
         sag = -0.02 if i % 2 else 0.015
-        parts.append(box((0.50, 0.64, 0.28 + sag), (x, 0.02 * (i % 2), 0.45 + sag * 0.5),
+        fb = -0.05 if i % 2 else 0.05
+        parts.append(box((0.58, 0.66, 0.28 + sag), (x, fb, 0.44 + sag * 0.5),
                          rot=(0, 0, math.radians(-4 if i % 2 else 5))))  # mid course bag (running bond)
     for i, x in enumerate(top):
-        parts.append(box((0.44, 0.54, 0.24), (x, -0.01, 0.70),
+        fb = 0.04 if i % 2 else -0.04
+        parts.append(box((0.52, 0.56, 0.24), (x, fb, 0.68),
                          rot=(0, 0, math.radians(3 if i % 2 else -4))))  # short top crest course
-    return weld("barricade", parts, mat, bevel=0.09)
+    return weld("barricade", parts, mat, bevel=0.07)
 
 
 # --- Faction cosmetic silhouettes (factions-plan WS-C, D68) -----------------------------------
