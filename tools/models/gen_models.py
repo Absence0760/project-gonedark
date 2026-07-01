@@ -461,6 +461,8 @@ COLORS = {
     "tank_turret_fr": (0.22, 0.27, 0.18),   # Leclerc turret — matches the hull
     "weapon_rifle_us": (0.12, 0.12, 0.13),  # M4 carbine — gunmetal
     "weapon_rifle_fr": (0.13, 0.13, 0.12),  # FAMAS bullpup — warmer gunmetal
+    "turret_us": (0.30, 0.31, 0.24),        # US emplacement — CARC grey-green (matches Abrams hull)
+    "turret_fr": (0.22, 0.27, 0.18),        # FR emplacement — darker French green (matches Leclerc hull)
 }
 
 
@@ -489,6 +491,8 @@ CATEGORY = {
     "tank_turret_fr": "units",
     "weapon_rifle_us": "weapons",
     "weapon_rifle_fr": "weapons",
+    "turret_us": "structures",
+    "turret_fr": "structures",
 }
 
 
@@ -814,7 +818,14 @@ def build_weapon_rifle():
 def build_crate():
     mat = make_material("crate", rgba("crate"))  # wood — low cover prop
     # Slatted shipping crate: a core box, four proud corner posts, and a mid-height banding course
-    # so it reads as built planks instead of a featureless 1 m cube. Bevel chamfers every edge.
+    # so it reads as built planks instead of a featureless 1 m cube.
+    #
+    # WS-F tier-4 lift (visual-design-plan §WS-F): raise it off flat-panel greybox to a built
+    # military shipping crate, on the mechanical/architectural lever (booleans + battens + tighter
+    # bevel — NOT skinning). (1) A diagonal cross-brace batten sits proud on every side face (the
+    # classic reinforced-crate tell); (2) the lid gains a milled centre seam plus a pair of proud
+    # cleats bracing it; (3) the bevel tightens 0.03 → 0.02 so the battens, banding and plank edges
+    # stay crisp instead of soap-bar rounded.
     parts = [box((0.94, 0.94, 1.0), (0, 0, 0.50))]            # core
     for sx in (-1, 1):
         for sy in (-1, 1):
@@ -822,9 +833,22 @@ def build_crate():
     parts += [
         box((1.02, 1.02, 0.10), (0, 0, 0.30)),                 # lower banding course
         box((1.02, 1.02, 0.10), (0, 0, 0.70)),                 # upper banding course
-        box((1.0, 1.0, 0.08), (0, 0, 1.0)),                    # lid rim
     ]
-    return weld("crate", parts, mat, bevel=0.03)
+    # Diagonal cross-brace battens — proud on each of the four side faces (the reinforced-crate read).
+    # +/-X faces: batten lies in the Y-Z plane (rotate about X); +/-Y faces: in the X-Z plane.
+    for sx in (-1, 1):
+        parts.append(box((0.045, 0.10, 1.24), (sx * 0.49, 0, 0.50), rot=(math.radians(38 * sx), 0, 0)))
+    for sy in (-1, 1):
+        parts.append(box((0.10, 0.045, 1.24), (0, sy * 0.49, 0.50), rot=(0, math.radians(38 * sy), 0)))
+    # Lid: a centre seam milled across it + two proud cleats bracing the boards.
+    lid = box((1.0, 1.0, 0.08), (0, 0, 1.0))
+    boolean_cut(lid, [box((1.05, 0.018, 0.11), (0, 0, 1.0))])  # centre seam across the lid
+    parts += [
+        lid,
+        box((0.80, 0.09, 0.05), (0, -0.30, 1.05)),             # lid cleat (fore)
+        box((0.80, 0.09, 0.05), (0, 0.30, 1.05)),              # lid cleat (aft)
+    ]
+    return weld("crate", parts, mat, bevel=0.02)
 
 
 def build_turret():
@@ -864,37 +888,60 @@ def build_turret():
 
 def build_tree():
     mat = make_material("tree", rgba("tree"))  # foliage greybox (single material)
-    # A stylized low-poly conifer: a tapered trunk plus four stacked cone tiers of decreasing radius.
+    # A stylized low-poly conifer: a tapered trunk plus stacked cone tiers of decreasing radius.
     # Cones/cylinders are deterministic (the old two-UV-sphere canopy varied run-to-run). Each tier
     # is rotated a few degrees so its facets don't line up with the tier below and is nudged slightly
     # off the trunk axis, giving the canopy a natural, hand-grown irregularity instead of a perfect
     # stack of identical cones. The tiers overlap in z so the skirts read as one ragged silhouette.
+    #
+    # WS-F tier-4 lift (visual-design-plan §WS-F — "maybe a more organic tree canopy"): a light
+    # touch, not a rescue. (1) A splayed ROOT-FLARE ring at the base grounds the trunk instead of a
+    # stick poking the dirt; (2) the canopy goes 4 → 6 tiers with denser skirts (verts 10 → 12) and
+    # a wider spread of per-tier rotation/offset, so the silhouette reads as a full, layered conifer
+    # rather than a tidy 4-cone stack; (3) the crown tapers through two small tiers to a finer point.
+    # All offsets are hand-tuned constants → the regen stays bit-reproducible.
     parts = [
-        cone(0.22, 0.13, 1.50, (0, 0, 0.72), verts=8),                              # tapered trunk
-        cone(1.05, 0.30, 1.20, (0.04, -0.02, 1.55), rot=(0, 0, math.radians(0)), verts=10),   # lower skirt tier
-        cone(0.86, 0.22, 1.10, (-0.05, 0.03, 2.10), rot=(0, 0, math.radians(18)), verts=10),  # mid-low tier
-        cone(0.64, 0.16, 1.00, (0.03, -0.03, 2.65), rot=(0, 0, math.radians(36)), verts=10),  # mid-high tier
-        cone(0.40, 0.0, 0.95, (-0.02, 0.02, 3.20), rot=(0, 0, math.radians(12)), verts=8),    # crown tier
+        cone(0.34, 0.14, 0.24, (0, 0, 0.12), verts=10),                                       # splayed root flare
+        cone(0.22, 0.13, 1.42, (0, 0, 0.78), verts=8),                                        # tapered trunk
+        cone(1.12, 0.34, 1.10, (0.05, -0.03, 1.42), rot=(0, 0, math.radians(0)), verts=12),   # lowest skirt (widest)
+        cone(0.94, 0.28, 1.00, (-0.06, 0.04, 1.92), rot=(0, 0, math.radians(15)), verts=12),  # lower tier
+        cone(0.76, 0.22, 0.95, (0.04, -0.04, 2.40), rot=(0, 0, math.radians(30)), verts=12),  # mid-low tier
+        cone(0.58, 0.16, 0.90, (-0.03, 0.05, 2.86), rot=(0, 0, math.radians(9)), verts=10),   # mid-high tier
+        cone(0.42, 0.11, 0.85, (0.03, -0.02, 3.28), rot=(0, 0, math.radians(24)), verts=10),  # upper tier
+        cone(0.27, 0.0, 0.78, (-0.02, 0.02, 3.70), rot=(0, 0, math.radians(6)), verts=8),     # crown point
     ]
     return weld("tree", parts, mat, bevel=0.0)
 
 
 def build_rock():
     mat = make_material("rock", rgba("rock"))  # grey boulder
-    # A cluster of three faceted icospheres (deterministic — the old UV sphere tessellated
-    # differently each run), each squashed, tilted, and offset so the silhouette is an irregular
-    # cleaved boulder, not a ball. No chamfer — the raw flat-shaded triangular facets are exactly the
-    # sharp fractured-stone read we want (and a bevel on a sphere bevels every facet edge, ballooning
-    # the tri count for no aesthetic gain).
-    main = icosphere(0.90, (0, 0, 0.52), subdivisions=1)
-    main.dimensions = (1.85, 1.45, 1.02)               # squash to a boulder, base near z=0
-    main.rotation_euler = (0, math.radians(7), math.radians(20))  # tilt the cleavage plane
-    spur = icosphere(0.55, (0.62, -0.32, 0.38), subdivisions=1)
-    spur.dimensions = (1.00, 0.82, 0.74)               # offset lobe — breaks the symmetry
+    # A cluster of faceted icospheres (deterministic — the old UV sphere tessellated differently each
+    # run), each squashed, tilted, and offset so the silhouette is an irregular cleaved boulder, not
+    # a ball. No chamfer — the raw flat-shaded triangular facets are exactly the sharp fractured-stone
+    # read we want (and a bevel on a sphere bevels every facet edge, ballooning the tri count for no
+    # aesthetic gain).
+    #
+    # WS-F tier-4 lift (visual-design-plan §WS-F — "light touch; already fine"): sharpen the cleaved
+    # read without leaving the faceted-primitive lever. (1) A tall angular SHARD lobe rises off the
+    # main mass so the boulder has a jutting broken edge, not a smooth dome; (2) a fourth shed CHIP at
+    # the far foot spreads the debris field and breaks the last of the radial symmetry; (3) the main
+    # mass is squashed a touch flatter + tilted harder so it reads as a cleaved slab. Subdivisions
+    # stay at 1 — the coarse facets ARE the fractured-stone look.
+    main = icosphere(0.90, (0, 0, 0.50), subdivisions=1)
+    main.dimensions = (1.92, 1.40, 0.98)               # squash to a cleaved slab, base near z=0
+    main.rotation_euler = (0, math.radians(11), math.radians(20))  # tilt the cleavage plane harder
+    shard = icosphere(0.50, (-0.10, 0.20, 0.72), subdivisions=1)
+    shard.dimensions = (0.72, 0.62, 1.02)              # tall jutting broken shard off the top
+    shard.rotation_euler = (math.radians(-14), math.radians(9), math.radians(35))
+    spur = icosphere(0.55, (0.62, -0.32, 0.36), subdivisions=1)
+    spur.dimensions = (1.02, 0.80, 0.72)               # offset lobe — breaks the symmetry
     spur.rotation_euler = (math.radians(10), 0, math.radians(-15))
-    chip = icosphere(0.34, (-0.58, 0.30, 0.26), subdivisions=1)
-    chip.dimensions = (0.66, 0.58, 0.46)               # small shed chip at the foot
-    return weld("rock", [main, spur, chip], mat)
+    chip = icosphere(0.34, (-0.58, 0.30, 0.24), subdivisions=1)
+    chip.dimensions = (0.64, 0.56, 0.44)               # small shed chip at the foot
+    chip2 = icosphere(0.26, (0.44, 0.52, 0.20), subdivisions=1)
+    chip2.dimensions = (0.52, 0.44, 0.34)              # second shed fragment — spreads the debris field
+    chip2.rotation_euler = (math.radians(18), 0, math.radians(40))
+    return weld("rock", [main, shard, spur, chip, chip2], mat)
 
 
 def build_barricade():
@@ -1129,6 +1176,71 @@ def build_weapon_rifle_fr():
     return weld("weapon_rifle_fr", parts, mat, bevel=0.006)
 
 
+def build_turret_us():
+    # US Army defensive emplacement — WS-F tier-4 / faction variant of the neutral `turret`. Reads as
+    # a heavy US crew-served gun position: a low, broad, bolted-armour housing with an M2 .50-cal-style
+    # heavy MG on a pintle, a big rectangular ammo can, and a squared face shield with a boxy vision
+    # slit. Same mechanical/architectural lever as tier 3 (booleans + tuned bevels), same emplacement
+    # footprint/pivot as the neutral turret, but a distinctly US-heavy silhouette. CARC grey-green.
+    mat = make_material("turret_us", rgba("turret_us"))
+    # Squared armoured face shield (broad, low) with a boxy boolean vision slit — the US "armour slab".
+    shield = box((0.44, 1.16, 0.52), (0.42, 0, 1.16), rot=(0, math.radians(-6), 0))
+    boolean_cut(shield, [box((0.24, 0.40, 0.12), (0.60, 0, 1.24), rot=(0, math.radians(-6), 0))])  # vision slit
+    # Heavy MG barrel with a perforated jacket (boolean cooling slots) + a slotted flash hider — the
+    # M2/.50-cal read, chunkier than the neutral turret's slim gun.
+    jacket = cyl(0.10, 0.44, (0.70, 0, 1.14), rot=(0, math.radians(90), 0), verts=10)
+    boolean_cut(jacket, [box((0.30, 0.06, 0.24), (0.70, 0, 1.14)),   # transverse cooling slots (perforated jacket)
+                         box((0.30, 0.24, 0.06), (0.70, 0, 1.14))])
+    flash = cyl(0.09, 0.14, (1.16, 0, 1.14), rot=(0, math.radians(90), 0), verts=8)
+    boolean_cut(flash, [box((0.05, 0.24, 0.06), (1.16, 0, 1.14)),    # slotted flash hider
+                        box((0.05, 0.06, 0.24), (1.16, 0, 1.14))])
+    parts = [
+        box((1.7, 1.7, 0.40), (0, 0, 0.20)),                   # broad base pad
+        box((1.3, 1.3, 0.16), (0, 0, 0.48)),                   # bolted ring plate
+        cyl(0.60, 0.60, (0, 0, 0.72), verts=12),               # rotating drum (low + broad)
+        box((0.90, 1.00, 0.50), (-0.10, 0, 1.12)),             # heavy bolted gun housing (low, wide)
+        shield,
+        box((0.20, 0.12, 0.44), (0.46, 0.46, 1.14)),           # pintle trunnion arm L
+        box((0.20, 0.12, 0.44), (0.46, -0.46, 1.14)),          # pintle trunnion arm R
+        box((0.46, 0.40, 0.34), (-0.34, 0.42, 1.10)),          # big rectangular ammo can (side)
+        box((0.30, 0.24, 0.14), (0.12, 0, 1.46)),              # spade/butterfly grips + backplate (top-rear)
+        box((0.30, 0.36, 0.20), (-0.26, 0, 1.44)),             # boxy optic/sensor block (on top)
+        cyl(0.06, 0.24, (0.50, 0, 1.14), rot=(0, math.radians(90), 0), verts=8),  # receiver stub
+        cyl(0.05, 0.30, (1.00, 0, 1.14), rot=(0, math.radians(90), 0), verts=8),  # barrel (jacket → flash hider)
+        jacket, flash,
+    ]
+    return weld("turret_us", parts, mat, bevel=0.02)
+
+
+def build_turret_fr():
+    # French Army defensive emplacement — WS-F tier-4 / faction variant of the neutral `turret`. Reads
+    # as a sleeker modern REMOTE weapon station (RWS): a compact stabilised gun pod carried high on a
+    # narrow slewing mast, a boxed thermal-sight housing beside the gun, and a slim barrel — no crew
+    # shield (it's remote-operated), the deliberate silhouette contrast with the US crew-served gun.
+    # Same emplacement footprint/pivot; French army green.
+    mat = make_material("turret_fr", rgba("turret_fr"))
+    # Slim gun with a stepped muzzle (boolean-cut ports) — a modern medium autocannon read.
+    barrel = cyl(0.055, 0.90, (0.66, 0, 1.52), rot=(0, math.radians(90), 0), verts=10)
+    muzzle = cyl(0.075, 0.14, (1.14, 0, 1.52), rot=(0, math.radians(90), 0), verts=10)
+    boolean_cut(muzzle, [box((0.05, 0.22, 0.05), (1.14, 0, 1.52)),
+                         box((0.05, 0.05, 0.22), (1.14, 0, 1.52))])  # ported muzzle
+    # Angular gun cradle with a milled recess where the barrel seats (the sculpted RWS look).
+    cradle = box((0.52, 0.40, 0.30), (0.22, 0, 1.52))
+    boolean_cut(cradle, [box((0.40, 0.16, 0.16), (0.34, 0, 1.58))])  # barrel trough
+    parts = [
+        cyl(0.62, 0.28, (0, 0, 0.14), verts=12),               # low circular base pad
+        cyl(0.40, 0.20, (0, 0, 0.36), verts=12),               # slewing ring
+        box((0.44, 0.44, 0.90), (-0.05, 0, 0.86), rot=(0, math.radians(4), 0)),  # narrow slewing mast (carries the pod high)
+        box((0.56, 0.72, 0.34), (0.0, 0, 1.42)),               # compact stabilised gun pod
+        cradle,
+        box((0.34, 0.34, 0.30), (-0.18, 0.40, 1.44), rot=(0, math.radians(-8), 0)),  # boxed thermal-sight housing (side)
+        box((0.10, 0.10, 0.22), (-0.20, -0.36, 1.60)),         # laser/RF sensor stalk (opposite side)
+        box((0.30, 0.20, 0.16), (-0.28, 0, 1.30)),             # rear electronics/counterweight box
+        barrel, muzzle,
+    ]
+    return weld("turret_fr", parts, mat, bevel=0.018)
+
+
 MODELS = [
     ("trooper", build_trooper,
      "Infantry unit — an organic skinned humanoid (skeleton + Skin modifier) in fatigues cradling an "
@@ -1172,6 +1284,12 @@ MODELS = [
      "US M4 carbine viewmodel — conventional layout, magazine forward of the grip, flat-top rail (WS-C)."),
     ("weapon_rifle_fr", build_weapon_rifle_fr,
      "French FAMAS bullpup viewmodel — magazine behind the grip, full-length carry handle (WS-C)."),
+    ("turret_us", build_turret_us,
+     "US Army emplacement — heavy crew-served .50-cal: low broad bolted housing, perforated-jacket "
+     "gun + slotted flash hider, big ammo can, squared shield (WS-F/WS-C)."),
+    ("turret_fr", build_turret_fr,
+     "French Army emplacement — remote weapon station: compact stabilised gun pod on a narrow "
+     "slewing mast, boxed thermal sight, slim ported gun, no crew shield (WS-F/WS-C)."),
 ]
 
 
