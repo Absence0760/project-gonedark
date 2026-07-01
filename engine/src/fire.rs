@@ -39,6 +39,63 @@ pub fn fire_command(embodied_entity: Entity, yaw: f32, fire_pressed: bool) -> Op
     })
 }
 
+/// The embodied weapon's **select-fire mode** — a host-side input preference (never sim state). It
+/// changes only how the host EMITS [`Command::Fire`] and which viewmodel animation plays; the sim's
+/// authoritative rate of fire is still the weapon cooldown, identical on every peer either way.
+///
+/// - [`Semi`](FireMode::Semi): one shot per trigger *pull* (the rising edge). Holding does nothing
+///   after the first shot; the viewmodel visibly works the action between shots (`semi_cycle_phase`).
+/// - [`Auto`](FireMode::Auto): fires every frame the trigger is held (the cooldown paces the spray),
+///   with a continuous muzzle-climb spray on the viewmodel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FireMode {
+    #[default]
+    Semi,
+    Auto,
+}
+
+impl FireMode {
+    /// The other mode — the select-fire toggle (X on desktop).
+    pub fn toggled(self) -> Self {
+        match self {
+            FireMode::Semi => FireMode::Auto,
+            FireMode::Auto => FireMode::Semi,
+        }
+    }
+}
+
+/// Whether to EMIT a `Command::Fire` this frame, given the fire `mode`, the current held-trigger
+/// level (`held`), and last frame's held level (`prev_held`). Semi-auto fires only on the rising
+/// edge (`held && !prev_held`) — one shot per pull, so holding the trigger can never "keep firing";
+/// full-auto fires every held frame and lets the sim cooldown pace it. PURE → host-tested; this is
+/// the single seam that gives the two modes their behaviour.
+#[inline]
+pub fn should_emit_fire(mode: FireMode, held: bool, prev_held: bool) -> bool {
+    match mode {
+        FireMode::Semi => held && !prev_held,
+        FireMode::Auto => held,
+    }
+}
+
+/// How many sim ticks the semi-auto **chambering cycle** animation plays for after a shot — the
+/// window over which the viewmodel works the action and returns to ready. ~0.3 s at 60 Hz.
+pub const CHAMBER_CYCLE_TICKS: u64 = 18;
+
+/// The semi-auto chambering phase `[0,1]` for the viewmodel this frame: `0` right after the shot
+/// (`last_fire_tick == tick`, action just opened) ramping to `1` (fully chambered / ready) over
+/// [`CHAMBER_CYCLE_TICKS`]. `1` when the player hasn't fired, or the shot is older than the window,
+/// or the tick predates it. PRESENTATION ONLY (fed to `render::world::WeaponPose.cycle`); pure →
+/// host-tested. The host only uses this in semi-auto — full-auto pins the pose's cycle to `1`.
+pub fn semi_cycle_phase(last_fire_tick: Option<u64>, tick: u64) -> f32 {
+    let Some(fired) = last_fire_tick else {
+        return 1.0;
+    };
+    if tick < fired {
+        return 1.0;
+    }
+    ((tick - fired) as f32 / CHAMBER_CYCLE_TICKS as f32).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +143,44 @@ mod tests {
         };
         assert_eq!(dir.x, Fixed::ZERO);
         assert_eq!(dir.y, Fixed::ONE);
+    }
+
+    #[test]
+    fn semi_auto_fires_only_on_the_press_edge() {
+        // Holding the trigger (held stays true) emits exactly one shot: the frame the press begins.
+        assert!(should_emit_fire(FireMode::Semi, true, false), "rising edge fires");
+        assert!(!should_emit_fire(FireMode::Semi, true, true), "still-held does NOT keep firing");
+        assert!(!should_emit_fire(FireMode::Semi, false, true), "release does not fire");
+        assert!(!should_emit_fire(FireMode::Semi, false, false), "idle does not fire");
+    }
+
+    #[test]
+    fn full_auto_fires_every_held_frame() {
+        assert!(should_emit_fire(FireMode::Auto, true, false), "auto fires on the edge");
+        assert!(should_emit_fire(FireMode::Auto, true, true), "and keeps firing while held (spray)");
+        assert!(!should_emit_fire(FireMode::Auto, false, true), "but not once released");
+    }
+
+    #[test]
+    fn select_fire_toggles_between_the_two_modes() {
+        assert_eq!(FireMode::default(), FireMode::Semi, "default is semi-auto");
+        assert_eq!(FireMode::Semi.toggled(), FireMode::Auto);
+        assert_eq!(FireMode::Auto.toggled(), FireMode::Semi);
+    }
+
+    #[test]
+    fn chamber_cycle_ramps_from_zero_at_the_shot_to_ready() {
+        assert_eq!(semi_cycle_phase(None, 100), 1.0, "no shot → ready");
+        assert_eq!(semi_cycle_phase(Some(100), 100), 0.0, "just fired → action open");
+        let mid = semi_cycle_phase(Some(100), 100 + CHAMBER_CYCLE_TICKS / 2);
+        assert!(mid > 0.0 && mid < 1.0, "mid-cycle is working the action ({mid})");
+        assert_eq!(
+            semi_cycle_phase(Some(100), 100 + CHAMBER_CYCLE_TICKS),
+            1.0,
+            "chambered by the end of the window",
+        );
+        assert_eq!(semi_cycle_phase(Some(100), 100 + CHAMBER_CYCLE_TICKS + 50), 1.0, "and stays ready");
+        assert_eq!(semi_cycle_phase(Some(100), 90), 1.0, "a future-stamped shot reads as ready");
     }
 
     #[test]

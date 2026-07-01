@@ -117,6 +117,17 @@ pub struct InputFrame {
     /// ([`Command::Reload`](../../core)). Desktop latches a key; touch derives it from the on-screen
     /// Reload button. Ignored while not embodied / for a weapon with no magazine.
     pub reload_pressed: bool,
+    /// **Embodied jump** intent — a one-shot edge that starts a cosmetic first-person hop (the
+    /// standard FPS Space binding). PRESENTATION ONLY: the sim is 2-D fixed-point with no vertical
+    /// axis, so a jump is a host-side camera/viewmodel arc (invariant #4), never a sim state change.
+    /// Desktop latches the Space key. Ignored while not embodied.
+    pub jump_pressed: bool,
+    /// **Select-fire** intent — a one-shot edge that toggles the embodied weapon between semi-auto
+    /// (one shot per trigger pull) and full-auto (held spray). A host-side input preference that only
+    /// changes how the host EMITS `Command::Fire` (edge vs. held) and which viewmodel animation
+    /// plays; the sim's rate of fire is still the weapon cooldown, so this never enters `core`.
+    /// Desktop latches a key. Ignored while not embodied.
+    pub select_fire_pressed: bool,
     /// Currently-down touch points this frame, feeding the Android FPS HUD (floating move stick,
     /// drag-look, and the Fire / Crouch / Reload / Surface buttons). The first
     /// [`touch_count`](Self::touch_count) entries are valid. While embodied, the engine's

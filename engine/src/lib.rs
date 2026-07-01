@@ -90,6 +90,9 @@ mod scope;
 /// `crosshair_bloom`), driven off the wall-clock `dt`. Presentation/input only (invariant #4): a
 /// transient view punch + reticle spread, never sim state.
 mod recoil;
+/// Embodied **jump** seam — the standard-FPS Space hop, a cosmetic camera/viewmodel arc off the
+/// wall-clock `dt` (invariant #4/#5: the 2-D sim has no vertical axis, so a jump is never sim state).
+mod jump;
 /// On-screen FPS touch controls (the COD-style embodied HUD). Owns the pure `TouchControls` seam:
 /// raw multi-touch points → embodied intents (`move_axis`/look/fire/crouch/reload/surface) + the
 /// screen-space layout the renderer draws. The testable logic `pal-android` can't host. Public so
@@ -480,22 +483,26 @@ fn embodied_shows_rifle_viewmodel(kind: UnitKind) -> bool {
 /// Test-only base-FOV wrapper; production paths thread the live FOV via [`embodied_view_proj_fov`].
 #[cfg(test)]
 fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, pitch: f32, width: u32, height: u32) -> Mat4 {
-    embodied_view_proj_fov(eye_x, eye_y, yaw, pitch, width, height, EMBODIED_FOV_DEG)
+    embodied_view_proj_fov(eye_x, eye_y, 0.0, yaw, pitch, width, height, EMBODIED_FOV_DEG)
 }
 
 /// Embodied perspective view-projection at an explicit `fov_deg` — the zoom-aware twin of
 /// [`embodied_view_proj`] (the sniper/zoom gun-sight narrows `fov_deg` toward [`scope::SCOPED_FOV_DEG`],
 /// P9). Same eye/look construction; only the projection's field of view changes.
+#[allow(clippy::too_many_arguments)]
 fn embodied_view_proj_fov(
     eye_x: f32,
     eye_y: f32,
+    eye_rise: f32,
     yaw: f32,
     pitch: f32,
     width: u32,
     height: u32,
     fov_deg: f32,
 ) -> Mat4 {
-    let eye = Vec3::new(eye_x, eye_y, EYE_HEIGHT);
+    // `eye_rise` is the cosmetic jump hop added to the standing eye height (invariant #4/#5): the
+    // whole camera lifts through the arc, so the world drops away as you jump. Never a sim read.
+    let eye = Vec3::new(eye_x, eye_y, EYE_HEIGHT + eye_rise);
     // Spherical look direction: pitch tilts the (yaw) heading up/down about the horizon. Already
     // unit-length (cos²+sin² folds to 1), but normalize defensively against fp drift.
     let (cp, sp) = (pitch.cos(), pitch.sin());
@@ -932,6 +939,21 @@ fn avatar_hit_pos(events: &[SimEvent], avatar: Entity, embodied: bool) -> Option
     })
 }
 
+/// Whether the embodied avatar committed a shot this tick — `true` iff the deterministic event
+/// stream carries a `SimEvent::Fired` whose `entity` is the `avatar` (and the player is embodied).
+/// This is the AUTHORITATIVE "a round left my barrel" signal: `core::combat::resolve_fire` emits it
+/// only when a ready, loaded trigger pull commits (hit OR miss), so presentation keyed on it pulses
+/// at the true rate of fire — the muzzle flash, the gun-crack cue, and the recoil bump — instead of
+/// firing every held-trigger render frame (the old "acts like it keeps firing" bug). PURE (no
+/// `Game`/device): reads only the already-checksummed event copies + the embodied flag, mutates
+/// nothing, never enters `core`. Invariant #6-safe — feedback on the player's OWN action.
+fn avatar_fired(events: &[SimEvent], avatar: Entity, embodied: bool) -> bool {
+    embodied
+        && events
+            .iter()
+            .any(|e| matches!(*e, SimEvent::Fired { entity, .. } if entity == avatar))
+}
+
 /// The embodied crouch button → a `Command::Crouch` for `player`, or `None` when no press edge
 /// fired this frame. PURE (no `Game`/device) so the toggle inversion is unit-testable. A press
 /// **edge** flips posture off the avatar's CURRENT (authoritative sim) crouched state — the host
@@ -950,13 +972,12 @@ fn crouch_toggle_command(
     })
 }
 
-/// The sim commands an embodied frame's resolved control intents produce, plus the two presentation
-/// side effects the caller ([`Game::frame`]) must apply itself (it holds the `Game`, this fn does
-/// not): `fired` → stamp the muzzle-flash tick, `surfaced` → flip the local camera back to command.
+/// The sim commands an embodied frame's resolved control intents produce, plus the one presentation
+/// side effect the caller ([`Game::frame`]) must apply itself (it holds the `Game`, this fn does
+/// not): `surfaced` → flip the local camera back to command. (The muzzle flash is no longer signalled
+/// from here — it is driven after the sim step by the authoritative `avatar_fired` cue.)
 struct EmbodiedCommands {
     commands: Vec<Command>,
-    /// A `Command::Fire` was emitted this frame (the trigger was held) — drives `last_fire_tick`.
-    fired: bool,
     /// A `Command::Surface` was emitted via the on-screen eject button (touch) — the host flips its
     /// camera/embodiment state to match (desktop ejects through `map_input_commands` instead).
     surfaced: bool,
@@ -985,15 +1006,14 @@ fn embodied_input_commands(
 ) -> EmbodiedCommands {
     let mut commands: Vec<Command> = Vec::new();
 
-    // Embodied fire (W1, invariant #5/#1): a pressed trigger emits a `Command::Fire` whose aim is the
-    // host yaw quantized to `Fixed` AT THE BOUNDARY (pure seam `fire::fire_command`). The cone-hitscan
-    // hit resolves sim-side, bit-identically on every peer. Embodied units never auto-fire.
-    let fired = if let Some(cmd) = fire::fire_command(player, yaw, fire) {
+    // Embodied fire (W1, invariant #5/#1): a fire intent emits a `Command::Fire` whose aim is the host
+    // yaw quantized to `Fixed` AT THE BOUNDARY (pure seam `fire::fire_command`). The `fire` bool is the
+    // caller's already-mode-resolved intent (the semi-auto EDGE or the full-auto held level, decided
+    // by `fire::should_emit_fire`), so this seam stays mode-agnostic. The cone-hitscan hit resolves
+    // sim-side, bit-identically on every peer. Units never auto-fire on their own (invariant #3).
+    if let Some(cmd) = fire::fire_command(player, yaw, fire) {
         commands.push(cmd);
-        true
-    } else {
-        false
-    };
+    }
 
     // Embodied locomotion (twin-stick): the WASD / virtual-stick `move_axis` becomes a
     // camera-relative `Command::Locomote` whose world heading is quantized to `Fixed` AT THE BOUNDARY
@@ -1026,7 +1046,6 @@ fn embodied_input_commands(
 
     EmbodiedCommands {
         commands,
-        fired,
         surfaced,
     }
 }
@@ -1056,10 +1075,13 @@ fn render_touch_hud(
     };
     r::TouchControlsHud {
         viewport,
-        stick: hud.stick_active.then_some(r::StickView {
-            base_x: hud.stick_origin.0,
-            base_y: hud.stick_origin.1,
-            radius: layout.stick_radius,
+        // The fixed stick ring is ALWAYS drawn (discoverability): base + radius come from the
+        // layout anchor, the thumb from the seam (which rests it at the centre when no finger is
+        // down). This is a fixed, not floating, stick — the ring never disappears while embodied.
+        stick: Some(r::StickView {
+            base_x: layout.stick_base.cx,
+            base_y: layout.stick_base.cy,
+            radius: layout.stick_base.r,
             thumb_x: hud.stick_thumb.0,
             thumb_y: hud.stick_thumb.1,
             opacity: opacity.stick,
@@ -1431,6 +1453,21 @@ pub struct Game {
     /// toward rest every frame by the pure [`recoil`] seam. Drives the upward camera-pitch view-kick
     /// (cosmetic — the sim aim is 2-D yaw) and the crosshair bloom. Never enters the sim.
     view_recoil: f32,
+    /// The embodied **select-fire mode** (semi ⇄ auto), toggled by the desktop X key while embodied.
+    /// INPUT-STATE ONLY (invariant #4/#5): it changes only whether the host emits `Command::Fire` on
+    /// the trigger EDGE (semi: one shot per pull) or every held frame (auto: spray) — and which
+    /// viewmodel animation plays — never the sim's rate of fire (that stays the weapon cooldown, so
+    /// two peers with different local fire modes still resolve the same shots). Never enters `core`.
+    fire_mode: fire::FireMode,
+    /// Last frame's held-trigger level, for the semi-auto press-edge detection in [`fire::should_emit_fire`].
+    /// Reset to `true` on possession so a trigger already held at embody time doesn't auto-fire the
+    /// first frame — the player must release and pull. INPUT-STATE ONLY; never a sim read.
+    prev_fire: bool,
+    /// The embodied **jump** timer (seconds remaining in the current hop; `0` = grounded), stepped
+    /// off the wall-clock `dt` by the pure [`jump`] seam. PRESENTATION ONLY (invariant #4/#5): the
+    /// 2-D sim has no vertical axis, so this only raises the embodied camera eye + viewmodel for the
+    /// arc — never sim state, never checksummed.
+    jump_t: f32,
     /// The sim tick the avatar's own shot last *landed* on, for the impact VFX fade clock (the
     /// downrange twin of `last_hit_tick`/`last_fire_tick`), or `None`. Presentation only.
     last_impact_tick: Option<u64>,
@@ -1464,6 +1501,11 @@ pub struct Game {
     /// frame (e.g. desktop, or command view). Set in `frame`, read by the render step. Presentation
     /// only.
     touch_hud: Option<touch_controls::TouchHud>,
+
+    /// Latched `true` the first frame any touch arrives — marks this as a touch device so the
+    /// embodied on-screen HUD (fixed move ring + buttons) keeps drawing between touches. Desktop
+    /// (keyboard/mouse, no touches) leaves it `false`, so it never draws the Android-only GUI.
+    seen_touch: bool,
 
     /// Whether the debug hitbox / facet overlay is on (host **F3** toggle via
     /// [`Game::toggle_debug_hitboxes`]). Drawn ONLY in the command view (invariant #6) — surface to
@@ -1514,6 +1556,12 @@ pub enum Scene {
     /// no base (production disabled), against an enemy camp + garrison; win by eliminating the enemy,
     /// lose all ten and it's over. The objective HUD shows progress.
     Mission1,
+    /// **Map inspection** ([`gonedark_core::scenario::seed_map_inspect`]) — drive a baked real-world
+    /// battlefield (the Pointe du Hoc map, `tools/maps/`) to diagnose it. Booted in the command view
+    /// with the **cover overlay on** (F3) so the sim's actual cover grid — the cells the flow field
+    /// and line-of-sight read — is drawn over the field. A few Player riflemen spawn on open ground to
+    /// select/possess and test movement + LoS against real walls. A diagnostic sandbox, not a match.
+    MapInspect,
 }
 
 impl Scene {
@@ -1526,14 +1574,16 @@ impl Scene {
             "duel" => Some(Scene::Duel),
             "infantry" => Some(Scene::Infantry),
             "mission1" | "seize" => Some(Scene::Mission1),
+            "map" | "inspect" | "pointe" => Some(Scene::MapInspect),
             _ => None,
         }
     }
 
     /// Whether this scene boots with the debug hitbox/facet overlay on — the debug sandboxes do,
-    /// a real match does not.
+    /// a real match does not. The map-inspection scene boots it on so the cover overlay is visible
+    /// immediately (that is the whole point of the scene).
     fn debug_overlay_default(self) -> bool {
-        matches!(self, Scene::Duel | Scene::Infantry)
+        matches!(self, Scene::Duel | Scene::Infantry | Scene::MapInspect)
     }
 }
 
@@ -1671,6 +1721,19 @@ fn seed_infantry_scene(sim: &mut Sim) -> (Entity, bool) {
     (inf.player, true)
 }
 
+/// Seed the **map-inspection sandbox** on the baked Pointe du Hoc map and return `(player,
+/// start_embodied)`. Booted in the **command view** (`start_embodied == false`) so the F3 cover
+/// overlay is visible top-down over the real map from frame one; the returned `player` is the first
+/// inspection troop (select/possess it to test movement + LoS). GPU-free, so it is host-tested.
+fn seed_map_inspect_scene(sim: &mut Sim) -> (Entity, bool) {
+    let h = gonedark_core::scenario::seed_map_inspect(
+        sim,
+        gonedark_core::terrain::Terrain::POINTE_DU_HOC_MAP_ID,
+    )
+    .expect("POINTE_DU_HOC_MAP_ID is a known, registered map");
+    (h.troops[0], false)
+}
+
 /// Faction tint for an infantry unit's debug range ring.
 fn faction_ring_color(f: Faction) -> [f32; 3] {
     match f {
@@ -1717,6 +1780,12 @@ fn debug_overlay_lines(
 
     let mut verts: Vec<DebugVertex> = Vec::new();
     let yaw = |a| interp_angle(a, a, 0.0); // Angle → f32 radians (no interpolation needed)
+
+    // Cover-grid overlay: outline every non-open sim cell so the map's ACTUAL cover — the cells the
+    // flow field and line-of-sight read — is visible under the same F3 toggle. This is the in-engine
+    // half of map diagnosis (the headless half is tools/maps/lint.py): a wall a cell off, a sealed
+    // pocket, or water where it shouldn't be jumps out. Drawn first so unit rings read on top.
+    verts.extend(dbg::covergrid_lines(terrain));
 
     // Tanks: armour-facet hitbox rings + spokes, and a tracer behind every in-flight shell.
     let radius = fx(gonedark_core::projectile::HIT_RADIUS);
@@ -1930,6 +1999,10 @@ impl Game {
                 let (p, e) = seed_infantry_scene(&mut sim);
                 (p, e, objectives::ObjectiveSet::default())
             }
+            Scene::MapInspect => {
+                let (p, e) = seed_map_inspect_scene(&mut sim);
+                (p, e, objectives::ObjectiveSet::default())
+            }
         };
         // The debug overlay defaults on for the sandboxes (their whole point), off for a real
         // match; F3 toggles it either way.
@@ -2000,6 +2073,9 @@ impl Game {
             last_hit_tick: None,
             // Gunplay feel (WS-A): a settled gun, no impact in flight.
             view_recoil: 0.0,
+            fire_mode: fire::FireMode::default(),
+            prev_fire: false,
+            jump_t: 0.0,
             last_impact_tick: None,
             last_impact_pos: None,
             // No upgrade attempted yet → no feedback banner.
@@ -2009,6 +2085,7 @@ impl Game {
             // The shipped-default HUD layout (no overrides → resolves to the stock `TouchLayout`).
             hud_layout: hud_layout::HudLayoutProfile::default(),
             touch_hud: None,
+            seen_touch: false,
             debug_hitboxes,
             // The "gone dark" detection tell: D33 `Subtle` baseline, with its own per-client linger
             // memory. Presentation/intel only — never sim state, never checksummed (invariant #6/#7).
@@ -2344,7 +2421,9 @@ impl Game {
         // bullet, and the screen-center crosshair stays aligned with the fire direction). The
         // horizontal half of recoil is carried by the crosshair bloom, not a camera-yaw offset.
         let pitch = self.pitch + recoil::view_pitch_kick(self.view_recoil);
-        embodied_view_proj_fov(px, py, self.yaw, pitch, width, height, self.embodied_fov_deg())
+        // Cosmetic jump: lift the whole eye by the current hop height (0 while grounded).
+        let rise = jump::jump_height(self.jump_t);
+        embodied_view_proj_fov(px, py, rise, self.yaw, pitch, width, height, self.embodied_fov_deg())
     }
 
     /// The embodied camera FOV (degrees) for this frame — the base [`EMBODIED_FOV_DEG`] narrowed by
@@ -2737,11 +2816,19 @@ impl Game {
         // `input.touches`) or the desktop keyboard/mouse `InputFrame` fields. The touch seam runs
         // only while embodied and only when fingers are down; otherwise the on-screen HUD is cleared
         // (the GUI is Android-only, and never drawn in the command view).
+        // Latch that this is a touch device the first time any finger arrives, so the on-screen HUD
+        // (fixed move ring + buttons) stays drawn while embodied even between touches — a fixed
+        // stick you can't see is not discoverable. Desktop never sets this (no touches ever), so it
+        // never draws the Android-only GUI.
+        if input.touch_count > 0 {
+            self.seen_touch = true;
+        }
         let (look_axis, move_axis, fire, aim, crouch_edge, reload_edge, surface_edge) =
-            if self.embodied && input.touch_count > 0 {
+            if self.embodied && self.seen_touch {
                 // Resolve the active HUD-editor preset to the embodied control geometry (WS-D). The
                 // draw step below re-resolves the SAME profile + viewport, so the hit shapes the
-                // input seam tests and the shapes the renderer draws can never drift.
+                // input seam tests and the shapes the renderer draws can never drift. Runs even with
+                // zero fingers down (empty slice → neutral intents) so the HUD keeps drawing.
                 let layout = self.hud_layout.resolve_embodied(width, height).layout;
                 let n = (input.touch_count as usize).min(input.touches.len());
                 let out = self.touch.update(&layout, &input.touches[..n]);
@@ -2786,8 +2873,17 @@ impl Game {
 
         // Recoil settle (WS-A): decay the view-kick / crosshair-bloom accumulator toward rest every
         // frame on the WALL-CLOCK `dt` (never the sim tick), so the punch recovers frame-rate-
-        // independently. The shot-time bump happens on `out.fired` below. Presentation only (#4).
+        // independently. The shot-time bump happens on the authoritative `avatar_fired` cue after the
+        // sim step below (the true rate of fire, not the held trigger). Presentation only (#4).
         self.view_recoil = recoil::decay_recoil(self.view_recoil, dt_secs, recoil::RECOIL_RECOVERY);
+
+        // Embodied jump (standard-FPS Space): launch a cosmetic hop on the press edge while grounded,
+        // then advance the arc off the WALL-CLOCK `dt`. Presentation only (invariant #4/#5): it raises
+        // the embodied eye + viewmodel for the arc, never sim state (the 2-D sim has no vertical axis).
+        if self.embodied && input.jump_pressed {
+            self.jump_t = jump::start_jump(self.jump_t, true);
+        }
+        self.jump_t = jump::step_jump(self.jump_t, dt_secs);
 
         // Integrate look into presentation-only yaw + pitch (D15: never into the sim), scaling the
         // deltas by the WS-A ADS look-sensitivity ramp so aiming down sight steadies the aim (eased
@@ -2800,21 +2896,40 @@ impl Game {
         self.yaw = integrate_look_yaw(self.yaw, look_axis.0 * look_scale);
         self.pitch = integrate_look_pitch(self.pitch, look_axis.1 * look_scale);
 
+        // Embodied select-fire (X): toggle semi ⇄ auto. INPUT STATE ONLY — it changes only how Fire
+        // is emitted (edge vs. held) and which viewmodel animation plays, never the sim (#4/#5).
+        if self.embodied && input.select_fire_pressed {
+            self.fire_mode = self.fire_mode.toggled();
+        }
+
+        // Did a SEMI-auto trigger EDGE fire this frame? Hoisted so the sub-tick catch-up below forces
+        // a tick for it — a semi shot is a genuine one-shot input (drop it and the single pull is
+        // lost); an AUTO held-fire re-emits every frame and must NOT force a tick (that would scale
+        // the fire rate with FPS), so only the semi edge sets this.
+        let mut oneshot_fire = false;
+
         if self.embodied {
             // The whole embodied input→command pipeline lives in the pure `embodied_input_commands`
             // seam (GPU-free, host-tested end to end): trigger→Fire (aim quantized at the boundary),
             // stick→Locomote, crouch toggle, reload, surface — same lockstep stream as taps, the
             // cone-hitscan / move resolved sim-side bit-identically on every peer. `frame` resolves
-            // only the authoritative sim reads (alive + posture) the seam can't, then applies the two
+            // only the authoritative sim reads (alive + posture) the seam can't, then applies the
             // presentation side effects it returns (the seam holds no `Game`).
             let player_alive = self.sim.world.is_alive(self.player);
             let crouched = player_alive
                 && self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
+            // Semi-auto emits Fire on the trigger's RISING EDGE (one shot per pull — holding can
+            // never "keep firing"); full-auto emits every held frame and lets the sim cooldown pace
+            // the spray. `should_emit_fire` is the single seam encoding that; `prev_fire` tracks the
+            // held level for the edge.
+            let emit_fire = fire::should_emit_fire(self.fire_mode, fire, self.prev_fire);
+            self.prev_fire = fire;
+            oneshot_fire = emit_fire && self.fire_mode == fire::FireMode::Semi;
             let out = embodied_input_commands(
                 self.player,
                 self.yaw,
                 move_axis,
-                fire,
+                emit_fire,
                 crouch_edge,
                 reload_edge,
                 surface_edge,
@@ -2822,19 +2937,9 @@ impl Game {
                 player_alive,
             );
             commands.extend(out.commands);
-            if out.fired {
-                // Stamp the muzzle-flash cue (W5, presentation only): the weapon viewmodel flares
-                // for a few ticks after this shot. Never read by the sim — it rides the host clock
-                // alongside the authoritative `Command::Fire`, not in place of it (invariant #4/#6).
-                self.last_fire_tick = Some(self.sim.tick_count());
-                // Recoil view-kick + crosshair bloom (WS-A): bump the accumulator on the shot (it
-                // decays each frame above). Host presentation state, never the sim.
-                self.view_recoil = recoil::add_recoil(self.view_recoil, 1);
-                // Host-clock fire cue (WS-A): crack the gun the instant the muzzle flashes, DECOUPLED
-                // from the Damaged-event `Gunfire` (which fires only for a connecting shot) — so a
-                // MISSED shot still sounds. Host-side, never the sim (invariant #4/#6).
-                audio.play_oneshot(audio::weapon_fire_cue());
-            }
+            // NOTE: the muzzle flash / gun-crack / recoil are NO LONGER stamped here off the held
+            // trigger — they are driven after the sim step by the authoritative `avatar_fired` cue
+            // (the sim's `SimEvent::Fired`), so they pulse at the true rate of fire, not per frame.
             if out.surfaced {
                 // The transition loop already ran THIS frame, so flip the camera state here directly
                 // (mirroring it) now that the on-screen Surface button emitted its eject.
@@ -2842,6 +2947,10 @@ impl Game {
                 self.camera = CameraMode::TopDown;
                 self.touch.reset();
             }
+        } else {
+            // Not embodied: forget the held-trigger history so a button held across a surface→embody
+            // transition doesn't auto-fire the first embodied frame — the player must pull afresh.
+            self.prev_fire = true;
         }
 
         // 1c. Enemy commander (W3). On a once-per-second gate (`tick % COMMANDER_PERIOD == 0`) the
@@ -2923,12 +3032,17 @@ impl Game {
         // drained input frame), advance ONE tick anyway so it is not dropped. (At delay 0 a
         // submitted-but-not-advanced tick would strand the input.)
         //
-        // CRUCIALLY this must NOT bump for HELD/continuous commands (locomote, fire), which are
-        // re-emitted every frame. Bumping on those forced a tick on every render frame, so the sim
-        // advanced at the *render* rate while a key was held — movement/fire scaled with FPS (a
-        // 2x/4x avatar overspeed at 120/240 Hz). A held command dropped on a sub-tick frame is
+        // CRUCIALLY this must NOT bump for HELD/continuous commands (locomote, and FULL-AUTO fire),
+        // which are re-emitted every frame. Bumping on those forced a tick on every render frame, so
+        // the sim advanced at the *render* rate while a key was held — movement/fire scaled with FPS
+        // (a 2x/4x avatar overspeed at 120/240 Hz). A held command dropped on a sub-tick frame is
         // harmless: next frame re-emits it, and it applies on the next whole tick at the true 60 Hz.
-        if budget == 0 && commands.iter().any(is_oneshot_command) {
+        //
+        // A SEMI-auto fire IS a one-shot (a single pull, not re-emitted), so `oneshot_fire` force it
+        // here just like a tap — otherwise a quick semi shot on a sub-tick frame would be lost. Fire
+        // stays out of `is_oneshot_command` (so full-auto held-fire never forces a tick); the mode
+        // distinction lives in this flag, set only for the semi edge above.
+        if budget == 0 && (oneshot_fire || commands.iter().any(is_oneshot_command)) {
             budget = 1;
         }
 
@@ -3088,6 +3202,19 @@ impl Game {
             self.last_impact_tick = Some(tick);
             self.last_impact_pos = Some((fixed_to_f32(hit.x), fixed_to_f32(hit.y)));
             audio.play_oneshot(audio::impact_cue());
+        }
+
+        // Muzzle flash / gun-crack / recoil — driven off the AUTHORITATIVE per-shot cue, not the held
+        // trigger. `avatar_fired` is true iff the sim actually committed a round for the avatar this
+        // frame (`SimEvent::Fired` from `resolve_fire`, hit OR miss), so the flare + crack + view-kick
+        // pulse at the true rate of fire — the fix for "holding fire looks/sounds like it keeps
+        // firing." A cooling-down or dry-clicked pull emits no Fired, so nothing flares. Presentation
+        // only (invariant #4/#6): a copy of already-checksummed event state, never re-folded, and a
+        // MISSED shot still cracks + flashes because the sim now commits misses too.
+        if avatar_fired(&frame_events, self.player, self.embodied) {
+            self.last_fire_tick = Some(tick);
+            self.view_recoil = recoil::add_recoil(self.view_recoil, 1);
+            audio.play_oneshot(audio::weapon_fire_cue());
         }
         // Accumulate this frame's events over the match so the post-match summary assembler can
         // tally produced/lost/killed (a presentation derivation; the events are already-checksummed
@@ -3306,16 +3433,35 @@ impl Game {
             // Match the world camera's current FOV (the sniper/zoom gun-sight may have narrowed it,
             // P9) so the view-space gun never drifts from the world it sits in.
             let proj = embodied_proj_fov(width, height, self.embodied_fov_deg()).to_cols_array_2d();
+            // The animated viewmodel pose (presentation only): the per-shot muzzle flash + recoil
+            // kick, plus the two mode-specific channels the select-fire feature adds — SEMI shows the
+            // chambering cycle between shots (the round worked in by hand), AUTO shows the sustained
+            // spray climb. Only the active mode's channel is non-neutral, so the two modes read
+            // distinctly. All derived from the host clock (`tick`) + the recoil accumulator.
             let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
+            let cycle = if self.fire_mode == fire::FireMode::Semi {
+                fire::semi_cycle_phase(self.last_fire_tick, tick)
+            } else {
+                1.0
+            };
+            let spray = if self.fire_mode == fire::FireMode::Auto {
+                (self.view_recoil / recoil::RECOIL_MAX).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let pose = gonedark_render::world::WeaponPose { flash, cycle, spray };
             self.renderer
-                .render_world_weapon(device, queue, &scene_view, &proj, flash, sw, sh);
+                .render_world_weapon(device, queue, &scene_view, &proj, pose, sw, sh);
             // 7a'. Shaped muzzle flash (WS-A): an additive flare at the gun muzzle, flaring with the
             // same host-clock `flash` curve, drawn into the scene target so it scales with the gun it
             // comes off. A no-op between shots (`flash <= 0`). Presentation only; no world position
-            // (invariant #4/#6). Aspect is the NATIVE viewport (scale-invariant).
+            // (invariant #4/#6). Aspect is the NATIVE viewport (scale-invariant). The anchor is the
+            // rifle's barrel tip run through the SAME projection + view-space POSE as the gun mesh
+            // (recoil kick + rack + spray included), so the flare lands on the actual muzzle.
             let aspect = width.max(1) as f32 / height.max(1) as f32;
+            let anchor = gonedark_render::world::muzzle_anchor_ndc(&proj, pose);
             self.renderer
-                .render_muzzle_flash(device, queue, &scene_view, flash, aspect);
+                .render_muzzle_flash(device, queue, &scene_view, flash, aspect, anchor);
         }
 
         // 7b'. Present (Phase 4 WS-C): upscale the dyn-res scene target onto the swapchain `view`.
@@ -3834,11 +3980,15 @@ mod tests {
         assert_eq!(Scene::parse("infantry"), Some(Scene::Infantry));
         assert_eq!(Scene::parse("mission1"), Some(Scene::Mission1));
         assert_eq!(Scene::parse("seize"), Some(Scene::Mission1));
+        assert_eq!(Scene::parse("map"), Some(Scene::MapInspect));
+        assert_eq!(Scene::parse("inspect"), Some(Scene::MapInspect));
+        assert_eq!(Scene::parse("pointe"), Some(Scene::MapInspect));
         assert_eq!(Scene::parse("nope"), None);
         assert_eq!(Scene::default(), Scene::Default);
         // The debug sandboxes default the overlay on; a real match (skirmish/demo) leaves it off.
         assert!(Scene::Duel.debug_overlay_default());
         assert!(Scene::Infantry.debug_overlay_default());
+        assert!(Scene::MapInspect.debug_overlay_default());
         assert!(!Scene::Default.debug_overlay_default());
         assert!(!Scene::Skirmish.debug_overlay_default());
     }
@@ -4917,15 +5067,16 @@ mod tests {
         }
     }
 
-    /// The engine→render touch-HUD mapping: an active stick + a crouched avatar produce a stick view
-    /// and a lit Crouch toggle, and the button circles carry over from the layout in pixels.
+    /// The engine→render touch-HUD mapping: the fixed stick ring is always drawn from the layout
+    /// anchor (base + radius), the thumb tracks the seam, a crouched avatar lights the Crouch
+    /// toggle, and the button circles carry over from the layout in pixels.
     #[test]
     fn render_touch_hud_maps_layout_state_and_crouch_highlight() {
         let layout = touch_controls::TouchLayout::new(1280, 720);
         let hud = touch_controls::TouchHud {
             stick_active: true,
-            stick_origin: (120.0, 600.0),
-            stick_thumb: (150.0, 580.0),
+            stick_origin: (layout.stick_base.cx, layout.stick_base.cy),
+            stick_thumb: (layout.stick_base.cx + 30.0, layout.stick_base.cy - 20.0),
             fire_pressed: true,
             crouch_pressed: false,
             reload_pressed: false,
@@ -4935,10 +5086,11 @@ mod tests {
         let op = hud_layout::Opacity::default();
         // A scope-capable avatar (`has_scope = true`) gets the ADS button.
         let r = render_touch_hud(&layout, &hud, (1280, 720), /* crouched = */ true, true, &op);
-        assert!(r.stick.is_some(), "active stick → a stick view");
-        let s = r.stick.unwrap();
-        assert_eq!((s.base_x, s.base_y), (120.0, 600.0));
-        assert_eq!(s.radius, layout.stick_radius);
+        let s = r.stick.expect("the fixed stick ring is always drawn");
+        // Base + radius come from the layout anchor (fixed ring), NOT the transient hud state.
+        assert_eq!((s.base_x, s.base_y), (layout.stick_base.cx, layout.stick_base.cy));
+        assert_eq!(s.radius, layout.stick_base.r);
+        assert_eq!((s.thumb_x, s.thumb_y), hud.stick_thumb, "the thumb tracks the seam");
         assert_eq!(s.opacity, 1.0, "default profile → full opacity");
         assert!(r.fire.pressed, "held fire carries the pressed flash");
         assert!(r.crouch.active, "crouched avatar lights the Crouch toggle");
@@ -4950,10 +5102,16 @@ mod tests {
         assert!(a.pressed, "held ADS carries the pressed flash");
         assert_eq!((a.cx, a.cy, a.r), (layout.aim.cx, layout.aim.cy, layout.aim.r));
 
-        // No active stick → no stick view drawn; a scope-LESS avatar (`has_scope = false`) hides ADS.
-        let hud2 = touch_controls::TouchHud::default();
+        // Idle stick (no finger) → ring still drawn, thumb rests at the fixed centre; a scope-LESS
+        // avatar (`has_scope = false`) hides ADS.
+        let hud2 = touch_controls::TouchHud {
+            stick_thumb: (layout.stick_base.cx, layout.stick_base.cy),
+            ..Default::default()
+        };
         let r2 = render_touch_hud(&layout, &hud2, (1280, 720), false, false, &op);
-        assert!(r2.stick.is_none());
+        let s2 = r2.stick.expect("the ring is drawn even with no finger down");
+        assert_eq!((s2.thumb_x, s2.thumb_y), (layout.stick_base.cx, layout.stick_base.cy),
+            "idle thumb rests at the fixed centre");
         assert!(!r2.crouch.active);
         assert!(r2.aim.is_none(), "a unit with no gun-sight gets no ADS button (W2 turret gate)");
     }
@@ -5121,7 +5279,10 @@ mod tests {
             let out = embodied_input_commands(
                 player, yaw, (0.0, 0.0), true, false, false, false, false, true,
             );
-            assert!(out.fired, "a held trigger sets the muzzle-flash `fired` flag");
+            assert!(
+                out.commands.iter().any(|c| matches!(c, Command::Fire { .. })),
+                "a fire intent emits a Command::Fire",
+            );
             let (ax, ay) = fire_dir_of(&out, player);
             assert!(
                 (ax - yaw.cos()).abs() < QUANT_TOL && (ay - yaw.sin()).abs() < QUANT_TOL,
@@ -5131,11 +5292,10 @@ mod tests {
             );
         }
 
-        // Trigger released → no Fire command, no muzzle-flash stamp.
+        // Trigger released (no fire intent) → no Fire command.
         let none = embodied_input_commands(
             player, 1.0, (0.0, 0.0), false, false, false, false, false, true,
         );
-        assert!(!none.fired);
         assert!(!none.commands.iter().any(|c| matches!(c, Command::Fire { .. })));
     }
 
@@ -5268,7 +5428,16 @@ mod tests {
             world.health[ei].cur, full,
             "crouch tightens the cone past the off-axis bearing — same aim now misses",
         );
-        assert!(events.is_empty(), "a missed crouched shot deals no damage");
+        // A missed crouched shot deals no damage, but the round is still fired downrange (the sim
+        // commits misses now — the reload-bug fix), so no `Damaged`, exactly one `Fired`.
+        assert!(
+            !events.iter().any(|e| matches!(e, SimEvent::Damaged { .. })),
+            "a missed crouched shot deals no damage",
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, SimEvent::Fired { .. })),
+            "but the shot is still committed (Fired)",
+        );
     }
 
     /// Command pan maps the screen stick to world ground motion: `D` (+mx) pans +X, `W` (−my) pans

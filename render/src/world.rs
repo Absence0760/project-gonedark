@@ -71,11 +71,71 @@ pub fn muzzle_flash_intensity(last_fire_tick: Option<u64>, tick: u64) -> f32 {
 /// (forward, into the screen), local `+Z` (up) → view `+Y` (up). `flash` adds a small recoil kick
 /// back toward the camera so firing reads as a jolt, not just a colour flare.
 pub fn weapon_view_model(flash: f32) -> [[f32; 4]; 4] {
+    weapon_view_model_posed(WeaponPose::from_flash(flash))
+}
+
+/// The animated state of the embodied weapon viewmodel for one frame — the presentation inputs the
+/// host derives from the fire cadence and fire mode. All `f32` (the render float boundary). The two
+/// mode-specific channels give the two fire modes their distinct feel (the select-fire request):
+/// **semi-auto** shows a visible chambering **cycle** between shots ("the next round is worked in by
+/// hand"), while **full-auto** shows a continuous **spray** climb.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeaponPose {
+    /// Muzzle-flash / recoil-kick intensity `[0,1]` — the per-shot jolt (also the emissive flare).
+    pub flash: f32,
+    /// Semi-auto chambering phase `[0,1]`: `0` = just fired (action open / bolt back), `1` = fully
+    /// chambered and ready. The viewmodel works the action mid-cycle (`≈0.5`) and settles by `1`. In
+    /// full-auto this stays `1` (the weapon cycles itself — no manual rack is shown).
+    pub cycle: f32,
+    /// Full-auto spray intensity `[0,1]` — sustained-fire muzzle climb. `0` in semi-auto (each shot
+    /// is deliberate) and while not holding the trigger.
+    pub spray: f32,
+}
+
+impl WeaponPose {
+    /// A ready weapon at rest: no flash, fully chambered, no spray.
+    pub fn at_rest() -> Self {
+        WeaponPose { flash: 0.0, cycle: 1.0, spray: 0.0 }
+    }
+
+    /// Just the recoil/flash channel (chambered, no spray) — the pre-animation behaviour, kept for
+    /// [`weapon_view_model`] and its tests.
+    pub fn from_flash(flash: f32) -> Self {
+        WeaponPose { flash, cycle: 1.0, spray: 0.0 }
+    }
+}
+
+/// A smooth 0→1→0 bump over `t ∈ [0,1]`, peaking at `t = 0.5`. Used to shape the semi-auto
+/// chambering motion so the action works open then closes, rather than snapping.
+#[inline]
+fn bump(t: f32) -> f32 {
+    (t * (1.0 - t) * 4.0).clamp(0.0, 1.0)
+}
+
+/// Build the column-major **view-space** model matrix that places the weapon viewmodel in the
+/// avatar's hands for the given [`WeaponPose`] — anchored lower-right, pointing into the world, with
+/// the per-frame recoil kick, the semi-auto chambering rack, and the full-auto spray climb composed
+/// in. Because the host hands the mesh pipeline the *projection alone* as its camera matrix, the gun
+/// lives in view space and stays put under camera yaw/pitch, exactly like a real FPS viewmodel. Pure
+/// scalar `f32` (no `glam`, D19) so it is unit-testable.
+///
+/// View space is camera-at-origin looking down `-Z`, `+Y` up, `+X` right. The rifle mesh is modelled
+/// Z-up with its barrel along local `+X`, so we re-base its axes: local `+X` (barrel) → view `-Z`
+/// (forward), local `+Z` (up) → view `+Y`. `flash` kicks the gun back toward the camera (recoil);
+/// `cycle < 1` racks it back-and-down mid-stroke (the manual chambering of a semi-auto); `spray`
+/// rides the muzzle up under sustained auto fire.
+pub fn weapon_view_model_posed(pose: WeaponPose) -> [[f32; 4]; 4] {
     let s = 0.42; // gun size in view units
-                  // Lower-right anchor, a little in front of the near plane. Recoil kicks it back/up.
-    let tx = 0.16;
-    let ty = -0.20 + flash * 0.03;
-    let tz = -0.62 + flash * 0.07;
+    let flash = pose.flash.clamp(0.0, 1.0);
+    // The chambering rack: a bump that opens the action mid-cycle. `cycle == 1` (ready) → 0 motion.
+    let rack = bump(pose.cycle.clamp(0.0, 1.0));
+    let spray = pose.spray.clamp(0.0, 1.0);
+
+    // Lower-right anchor, a little in front of the near plane. Recoil kicks it back/up; the rack
+    // pulls it further back + down + inboard (the hand working the charging handle); spray climbs it.
+    let tx = 0.16 + rack * 0.05;
+    let ty = -0.20 + flash * 0.03 - rack * 0.05 + spray * 0.045;
+    let tz = -0.62 + flash * 0.07 + rack * 0.10 + spray * 0.02;
 
     // Columns = images of the scaled local axes in view space, then the translation column.
     //   local +X (barrel) → view -Z;  local +Y → view -X;  local +Z (up) → view +Y.
@@ -161,10 +221,41 @@ pub fn moon_glow(cos_ang: f32) -> f32 {
     core + halo + bloom
 }
 
-/// Screen-space NDC anchor of the **shaped muzzle flash** (WS-A) — where the flare blooms relative to
-/// the lower-right weapon viewmodel's muzzle. Pure presentation constant; the flare is drawn here so
-/// it reads as light coming off the gun the player is holding (no world position → no intel, #6).
+/// Fallback screen-space NDC anchor of the **shaped muzzle flash** (WS-A) — used only when the
+/// projected barrel tip is degenerate (w≈0). Production anchors the flare at the *actual* muzzle via
+/// [`muzzle_anchor_ndc`]; this constant is a lower-right last resort. No world position → no intel (#6).
 pub const MUZZLE_ANCHOR: (f32, f32) = (0.14, -0.07);
+
+/// Muzzle tip in the rifle's LOCAL model space (barrel along +X, receiver at origin). The
+/// `weapon_rifle` greybox seats its muzzle device at x≈0.64 (length 0.06), so the barrel tip is
+/// ~0.67 (see `tools/models/gen_models.py::build_weapon_rifle`). Used to anchor the shaped muzzle
+/// flash at the *actual* gun muzzle rather than a fixed screen constant.
+pub const MUZZLE_TIP_LOCAL: [f32; 3] = [0.67, 0.0, 0.0];
+
+/// NDC (x, y) where the muzzle flash should bloom: the weapon's [`MUZZLE_TIP_LOCAL`] barrel tip run
+/// through the view-space [`weapon_view_model_posed`] placement for the SAME `pose` the gun mesh is
+/// drawn with (so it tracks the recoil kick, the chambering rack, and the spray climb) and the camera
+/// `proj` (column-major), then perspective-divided. Because the gun lives in view space and the host
+/// hands the mesh pass the *projection alone* as its camera matrix, `proj * (weapon_view_model * tip)`
+/// is exactly the clip position of the barrel tip — the flare lands where the muzzle actually renders.
+/// Falls back to the static [`MUZZLE_ANCHOR`] if the point is degenerate (w≈0). Pure `f32`
+/// (presentation boundary) → unit-testable off-GPU.
+pub fn muzzle_anchor_ndc(proj: &[[f32; 4]; 4], pose: WeaponPose) -> (f32, f32) {
+    let m = weapon_view_model_posed(pose);
+    let l = MUZZLE_TIP_LOCAL;
+    // view = model * (l, 1)  (column-major: v = Σ lᵢ·colᵢ + col3)
+    let vx = l[0] * m[0][0] + l[1] * m[1][0] + l[2] * m[2][0] + m[3][0];
+    let vy = l[0] * m[0][1] + l[1] * m[1][1] + l[2] * m[2][1] + m[3][1];
+    let vz = l[0] * m[0][2] + l[1] * m[1][2] + l[2] * m[2][2] + m[3][2];
+    // clip = proj * (view, 1)
+    let cx = vx * proj[0][0] + vy * proj[1][0] + vz * proj[2][0] + proj[3][0];
+    let cy = vx * proj[0][1] + vy * proj[1][1] + vz * proj[2][1] + proj[3][1];
+    let cw = vx * proj[0][3] + vy * proj[1][3] + vz * proj[2][3] + proj[3][3];
+    if cw.abs() < 1e-6 {
+        return MUZZLE_ANCHOR;
+    }
+    (cx / cw, cy / cw)
+}
 
 /// The muzzle-flash uniform — `params = (flash, aspect, anchor_x, anchor_y)` matching `world.wgsl`'s
 /// `Muzzle` struct. `repr(C)` + `Pod` so it uploads straight into the uniform buffer.
@@ -175,11 +266,12 @@ pub struct MuzzleUniform {
 }
 
 impl MuzzleUniform {
-    /// Build the uniform from the muzzle-flash `intensity` (clamped to `[0,1]`) and viewport `aspect`,
-    /// anchored at [`MUZZLE_ANCHOR`]. Pure + device-free → unit-testable.
-    pub fn new(intensity: f32, aspect: f32) -> Self {
+    /// Build the uniform from the muzzle-flash `intensity` (clamped to `[0,1]`), viewport `aspect`,
+    /// and the NDC `anchor` where the flare blooms (the projected barrel tip, see
+    /// [`muzzle_anchor_ndc`]). Pure + device-free → unit-testable.
+    pub fn new(intensity: f32, aspect: f32, anchor: (f32, f32)) -> Self {
         MuzzleUniform {
-            params: [intensity.clamp(0.0, 1.0), aspect, MUZZLE_ANCHOR.0, MUZZLE_ANCHOR.1],
+            params: [intensity.clamp(0.0, 1.0), aspect, anchor.0, anchor.1],
         }
     }
 }
@@ -553,11 +645,12 @@ impl WorldRenderer {
         view: &wgpu::TextureView,
         intensity: f32,
         aspect: f32,
+        anchor: (f32, f32),
     ) {
         if intensity <= 0.0 {
             return;
         }
-        let uniform = MuzzleUniform::new(intensity, aspect);
+        let uniform = MuzzleUniform::new(intensity, aspect, anchor);
         queue.write_buffer(&self.muzzle_uniform_buf, 0, bytemuck::bytes_of(&uniform));
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -721,16 +814,88 @@ mod tests {
 
     #[test]
     fn muzzle_uniform_carries_flash_aspect_and_anchor() {
-        let u = MuzzleUniform::new(0.5, 16.0 / 9.0);
+        let u = MuzzleUniform::new(0.5, 16.0 / 9.0, (0.2, -0.1));
         assert!((u.params[0] - 0.5).abs() < EPS, "flash threads through");
         assert!((u.params[1] - 16.0 / 9.0).abs() < EPS, "aspect threads through");
-        assert_eq!((u.params[2], u.params[3]), MUZZLE_ANCHOR, "anchor is MUZZLE_ANCHOR");
+        assert_eq!((u.params[2], u.params[3]), (0.2, -0.1), "anchor threads through");
     }
 
     #[test]
     fn muzzle_uniform_clamps_flash() {
-        assert_eq!(MuzzleUniform::new(5.0, 1.0).params[0], 1.0, "over-range flash clamps to 1");
-        assert_eq!(MuzzleUniform::new(-2.0, 1.0).params[0], 0.0, "under-range flash clamps to 0");
+        let a = (0.0, 0.0);
+        assert_eq!(MuzzleUniform::new(5.0, 1.0, a).params[0], 1.0, "over-range flash clamps to 1");
+        assert_eq!(MuzzleUniform::new(-2.0, 1.0, a).params[0], 0.0, "under-range flash clamps to 0");
+    }
+
+    /// A simple right-handed DirectX-style perspective (glam's `rh::proj::directx::perspective`),
+    /// column-major, so the anchor test projects with the same convention the host uses.
+    fn test_proj(fov_deg: f32, aspect: f32) -> [[f32; 4]; 4] {
+        let f = 1.0 / (fov_deg.to_radians() * 0.5).tan();
+        let (near, far) = (0.05_f32, 500.0_f32);
+        // RH, z ∈ [0,1] (wgpu/DirectX): looks down -Z.
+        [
+            [f / aspect, 0.0, 0.0, 0.0],
+            [0.0, f, 0.0, 0.0],
+            [0.0, 0.0, far / (near - far), -1.0],
+            [0.0, 0.0, (near * far) / (near - far), 0.0],
+        ]
+    }
+
+    #[test]
+    fn muzzle_anchor_projects_barrel_tip_to_lower_right() {
+        // The barrel tip sits to the right of and below the camera axis (view x>0, y<0), so its NDC
+        // anchor must land in the lower-right quadrant (x>0, y<0) — where the viewmodel is drawn.
+        let proj = test_proj(70.0, 16.0 / 9.0);
+        let (ax, ay) = muzzle_anchor_ndc(&proj, WeaponPose::at_rest());
+        assert!(ax > 0.0, "muzzle anchors right of centre (x={ax})");
+        assert!(ay < 0.0, "muzzle anchors below centre (y={ay})");
+        assert!(ax.abs() <= 1.0 && ay.abs() <= 1.0, "anchor stays on-screen ({ax}, {ay})");
+    }
+
+    #[test]
+    fn muzzle_anchor_tracks_recoil_kick() {
+        // Firing kicks the gun back/up (the pose shifts ty/tz with flash), so the projected muzzle
+        // anchor must MOVE between rest and a fresh shot — the flare rides the recoil, it is not
+        // pinned to a static screen point.
+        let proj = test_proj(70.0, 16.0 / 9.0);
+        let rest = muzzle_anchor_ndc(&proj, WeaponPose::at_rest());
+        let fired = muzzle_anchor_ndc(&proj, WeaponPose::from_flash(1.0));
+        assert!(
+            (rest.0 - fired.0).abs() > 1e-4 || (rest.1 - fired.1).abs() > 1e-4,
+            "anchor shifts with recoil (rest={rest:?} fired={fired:?})"
+        );
+    }
+
+    #[test]
+    fn muzzle_anchor_falls_back_when_degenerate() {
+        // A zero projection yields w≈0 for every point → the function must return the static
+        // MUZZLE_ANCHOR rather than dividing by zero.
+        let zero = [[0.0f32; 4]; 4];
+        assert_eq!(
+            muzzle_anchor_ndc(&zero, WeaponPose::at_rest()),
+            MUZZLE_ANCHOR,
+            "degenerate w falls back"
+        );
+    }
+
+    #[test]
+    fn chambering_rack_moves_the_viewmodel_then_settles() {
+        // Semi-auto feel: mid-cycle (cycle≈0.5) the action is worked — the gun is pulled back toward
+        // the camera (view +Z) and dropped (−Y) relative to a fully-chambered ready pose (cycle=1).
+        let ready = weapon_view_model_posed(WeaponPose { flash: 0.0, cycle: 1.0, spray: 0.0 });
+        let racking = weapon_view_model_posed(WeaponPose { flash: 0.0, cycle: 0.5, spray: 0.0 });
+        assert!(racking[3][2] > ready[3][2], "the rack pulls the gun back toward the camera");
+        assert!(racking[3][1] < ready[3][1], "and drops it while the action is open");
+        // By the end of the cycle it is back at the ready placement (bump → 0 at cycle=1).
+        assert_eq!(racking[3][0].max(ready[3][0]).is_finite(), true);
+    }
+
+    #[test]
+    fn spray_climbs_the_viewmodel() {
+        // Full-auto feel: sustained spray rides the muzzle up (view +Y) vs. no spray.
+        let calm = weapon_view_model_posed(WeaponPose { flash: 0.0, cycle: 1.0, spray: 0.0 });
+        let spraying = weapon_view_model_posed(WeaponPose { flash: 0.0, cycle: 1.0, spray: 1.0 });
+        assert!(spraying[3][1] > calm[3][1], "spray climbs the muzzle upward");
     }
 
     // ---- shaped muzzle-flare geometry (WS-A) ----

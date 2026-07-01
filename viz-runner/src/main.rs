@@ -966,6 +966,38 @@ fn main() {
         format!("center hitmarker px {pre_hit_center} pre-hit → {best_hit_center} peak while firing (the \"I hit him\" X drew on a connecting shot)"),
     );
 
+    // --- Scenario 5.9: a baked real-world map draws its cover grid under the debug overlay ------
+    // Boot the map-inspection scene (Scene::MapInspect) on the baked Pointe du Hoc map. Its F3 cover
+    // overlay is ON by default, so `render::debug::covergrid_lines` outlines the sim's actual cover
+    // cells (amber Light, steel Heavy) over the command view — the in-engine half of map diagnosis.
+    // Toggling the overlay OFF must change a large number of pixels (the thousands of cover-cell
+    // edges vanish): the visual proof the baked map's cover is BOTH loaded into the sim AND drawn for
+    // inspection. A frame diff (not a color match) keeps this robust to the present-grade transform.
+    println!("[map_inspect] the baked Pointe du Hoc map draws its cover grid in the debug overlay");
+    let mut g = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::MapInspect);
+    advance(&mut g, 2, InputFrame::default(), &gpu, &view); // settle the camera on the command view
+    let overlay_on = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/map_inspect.png", &overlay_on);
+    g.toggle_debug_hitboxes(); // F3: cover overlay OFF
+    advance(&mut g, 1, InputFrame::default(), &gpu, &view);
+    let overlay_off = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/map_inspect_no_overlay.png", &overlay_off);
+    let changed = overlay_on
+        .chunks_exact(4)
+        .zip(overlay_off.chunks_exact(4))
+        .filter(|(a, b)| {
+            (a[0] as i16 - b[0] as i16).abs() > 12
+                || (a[1] as i16 - b[1] as i16).abs() > 12
+                || (a[2] as i16 - b[2] as i16).abs() > 12
+        })
+        .count();
+    check(
+        &mut failures,
+        "baked_map_cover_overlay_draws",
+        changed > 3000,
+        format!("toggling the cover overlay changed {changed} px on the baked map (the cover grid draws)"),
+    );
+
     // --- Scenario 6: animated parallax title backdrop (render-crate component) -----------------
     backdrop_scene(&gpu, &mut failures);
 

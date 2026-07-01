@@ -1254,9 +1254,10 @@ impl Renderer {
         view: &wgpu::TextureView,
         intensity: f32,
         aspect: f32,
+        anchor: (f32, f32),
     ) {
         self.world
-            .render_muzzle_flash(device, queue, view, intensity, aspect);
+            .render_muzzle_flash(device, queue, view, intensity, aspect, anchor);
     }
 
     /// Draw the embodied **tank** gunner-sight HUD (tank embodiment P8) on top of the current frame (a
@@ -1758,10 +1759,10 @@ impl Renderer {
     /// Draw the embodied weapon viewmodel (W5/D44) on top of the current frame (a LOAD colour pass —
     /// never clears colour; clears its own depth). The gun is the real `weapon_rifle` greybox **3D
     /// mesh** drawn through the shared [`mesh::MeshPipeline`], anchored in **view space** by
-    /// [`world::weapon_view_model`] so it stays glued to the lower-right under camera yaw. The host
-    /// hands in the **projection alone** (`proj`, column-major) as the camera matrix — the model
-    /// matrix is the view-space placement — plus the muzzle-`flash` intensity (clamped `[0,1]`),
-    /// which both flares the gun and kicks it back as recoil. `width`/`height` size the depth buffer.
+    /// [`world::weapon_view_model_posed`] so it stays glued to the lower-right under camera yaw. The
+    /// host hands in the **projection alone** (`proj`, column-major) as the camera matrix — the model
+    /// matrix is the view-space placement — plus the animated [`world::WeaponPose`] (recoil flash +
+    /// semi-auto chambering rack + full-auto spray climb). `width`/`height` size the depth buffer.
     /// The host calls this AFTER [`Renderer::render`] (so the gun sits over the world + avatar) and
     /// before the alert HUD. It has no world position → reveals no intel (invariant #6).
     #[allow(clippy::too_many_arguments)]
@@ -1771,18 +1772,19 @@ impl Renderer {
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         proj: &[[f32; 4]; 4],
-        flash: f32,
+        pose: world::WeaponPose,
         width: u32,
         height: u32,
     ) {
         self.ensure_depth(device, width, height);
-        let f = flash.clamp(0.0, 1.0);
+        let f = pose.flash.clamp(0.0, 1.0);
         let c = mesh::ModelKind::WeaponRifle.base_color();
         let batch = mesh::MeshBatch {
             mesh: self.mesh_lib.get(mesh::ModelKind::WeaponRifle),
-            // color.a carries the flash so the shader adds a warm emissive flare on fire.
+            // color.a carries the flash so the shader adds a warm emissive flare on fire; the model
+            // matrix carries the full animated pose (recoil kick + chambering rack + spray climb).
             instances: vec![mesh::MeshInstance {
-                model: world::weapon_view_model(f),
+                model: world::weapon_view_model_posed(pose),
                 color: [c[0], c[1], c[2], f],
             }],
         };

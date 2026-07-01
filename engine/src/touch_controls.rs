@@ -12,15 +12,24 @@
 //! seams extract their logic out of un-constructible window events. The desktop backend leaves
 //! `touches` empty, so this seam never runs there (the Android-only GUI, per the design).
 //!
-//! ## The scheme (D14's validated layout, now the shipping UI)
-//! - **Left half** is a *floating* movement joystick: the first finger down in the left zone sets
-//!   the stick origin; its offset (clamped to [`STICK_RADIUS_FRAC`]) is `move_axis`.
-//! - **Right half** is a free *drag-to-look* region (no visible stick): a finger's per-frame motion
-//!   becomes the look delta (same convention as the desktop mouse delta, so it feeds
-//!   `integrate_look_yaw`/`_pitch` unchanged).
+//! ## The scheme (COD-Mobile "fixed joystick", D14's validated split)
+//! - **Move stick** is a *fixed*, always-drawn ring anchored in the lower-left ([`stick_base`]): a
+//!   finger-down **inside the visible ring** claims the stick, and deflection is measured from the
+//!   ring's (fixed) centre, clamped to its radius, to give `move_axis`. Fixed — not floating — so
+//!   there is a discoverable target and a touch can never be silently mis-classified as look
+//!   (the bug the fixed ring fixes: a touch just outside the ring does *nothing* rather than
+//!   panning the camera).
+//! - **Right half** is a free *drag-to-look* region: a finger's per-frame motion becomes the look
+//!   delta (same convention as the desktop mouse delta, so it feeds `integrate_look_yaw`/`_pitch`
+//!   unchanged).
 //! - Floating over the right half: **Fire** (held = auto-fire), **Crouch** (tap = toggle),
 //!   **Reload** (tap), **Surface** (tap = eject back to command — this REPLACES the two-finger
 //!   gesture while embodied, since two fingers now mean move+look).
+//! - **Buttons always win** (COD-Mobile): any finger inside a button circle presses it, even one
+//!   that was mid-look-drag and slid onto it — a dragging look finger *releases* look the moment it
+//!   crosses a button, so Fire/Crouch/etc. fire without lifting first.
+//!
+//! [`stick_base`]: TouchLayout::stick_base
 //!
 //! Floats are fine here: this is host-side presentation/input, the platform side of the PAL seam.
 //! Nothing in this module touches the sim — the intents it returns are quantized to `Fixed` *later*
@@ -40,8 +49,16 @@ const SURFACE_R_FRAC: f32 = 0.055;
 /// drawn/honored for a unit that actually has a gun-sight (the host gates the visual + the zoom on
 /// `has_scope`, exactly as W2's `scope::zoom_active` does).
 const AIM_R_FRAC: f32 = 0.072;
-/// Full-deflection radius of the floating move stick, as a fraction of min(viewport).
+/// Full-deflection radius of the move stick — and the radius of its visible ring — as a fraction
+/// of min(viewport). Generous so the fixed ring is an easy thumb target (COD-Mobile forgiveness).
 const STICK_RADIUS_FRAC: f32 = 0.16;
+/// Fixed anchor of the move-stick ring centre: a fraction of width (x) / height (y), lower-left.
+const STICK_ANCHOR_X_FRAC: f32 = 0.15;
+const STICK_ANCHOR_Y_FRAC: f32 = 0.72;
+/// Left edge of the drag-to-look region, as a fraction of width. Everything to the right is look
+/// (buttons take hit priority); the move ring sits well left of this, and the narrow inert band
+/// between them means a slightly-missed move touch does *nothing* rather than swinging the camera.
+const LOOK_SPLIT_FRAC: f32 = 0.42;
 /// Converts a look-region finger's pixel drag this frame into the look-axis units
 /// `integrate_look_yaw`/`_pitch` expect (those were tuned for raw mouse-pixel deltas, so ~1.0 keeps
 /// a touch drag feeling like a mouse drag; tune for device feel later).
@@ -88,10 +105,10 @@ impl Circle {
 pub struct TouchLayout {
     pub width: f32,
     pub height: f32,
-    /// The left region where a finger-down starts the floating move stick.
-    pub stick_zone: Rect,
-    /// Full-deflection radius of the move stick, in pixels.
-    pub stick_radius: f32,
+    /// The fixed move-stick ring: a finger-down **inside this circle** claims the stick; deflection
+    /// is measured from its (fixed) centre and clamped to `r`. Drawn at the anchor every frame
+    /// while embodied (discoverability), whether or not a finger is down.
+    pub stick_base: Circle,
     /// The right region treated as the free drag-to-look area (buttons take hit priority over it).
     pub look_zone: Rect,
     pub fire: Circle,
@@ -118,17 +135,16 @@ impl TouchLayout {
         TouchLayout {
             width: w,
             height: h,
-            // Lower-left ~40% width, lower ~70% height: a generous thumb area for the floating stick.
-            stick_zone: Rect {
-                x0: 0.0,
-                y0: 0.30 * h,
-                x1: 0.42 * w,
-                y1: h,
+            // Fixed move-stick ring anchored in the lower-left. Its radius is both the visible ring
+            // and the max-deflection distance, so what you see is exactly what activates + clamps.
+            stick_base: Circle {
+                cx: STICK_ANCHOR_X_FRAC * w,
+                cy: STICK_ANCHOR_Y_FRAC * h,
+                r: STICK_RADIUS_FRAC * m,
             },
-            stick_radius: STICK_RADIUS_FRAC * m,
-            // The whole right side is drag-to-look; button circles below win the hit test inside it.
+            // The right side is drag-to-look; button circles below win the hit test inside it.
             look_zone: Rect {
-                x0: 0.42 * w,
+                x0: LOOK_SPLIT_FRAC * w,
                 y0: 0.0,
                 x1: w,
                 y1: h,
@@ -218,7 +234,6 @@ pub struct TouchOutput {
 #[derive(Clone, Debug, Default)]
 pub struct TouchControls {
     move_id: Option<u64>,
-    move_origin: (f32, f32),
     look_id: Option<u64>,
     look_last: (f32, f32),
     prev_fire: bool,
@@ -238,8 +253,9 @@ impl TouchControls {
         *self = Self::default();
     }
 
-    /// Is `id` the finger currently driving the stick or the look region? Such a finger is excluded
-    /// from button hit-tests and from being re-claimed by the other control.
+    /// Is `id` the finger currently driving the stick or the look region? Such a finger can't be
+    /// re-claimed by the *other* control (move ↔ look). Buttons are exempt — they win over an
+    /// owning finger (COD-Mobile), so a look finger sliding onto Fire still fires.
     #[inline]
     fn owns(&self, id: u64) -> bool {
         self.move_id == Some(id) || self.look_id == Some(id)
@@ -248,9 +264,10 @@ impl TouchControls {
     /// Translate this frame's currently-down `touches` into embodied intents + HUD geometry.
     ///
     /// Ordering is deliberate: resolve the move finger, then the look finger (so a freshly claimed
-    /// look finger can't also be the move finger), then hit-test buttons against the *unowned*
-    /// fingers (so a dragging aim finger crossing a button doesn't fire it). A finger that lifts
-    /// releases its control; the next finger down in that zone re-captures it.
+    /// look finger can't also be the move finger), then hit-test buttons. **Buttons always win**
+    /// (COD-Mobile): any finger inside a button circle presses it, and a look finger that slides
+    /// onto a button releases look *this frame* so the button fires without a lift. A finger that
+    /// lifts releases its control; the next finger down in that zone/ring re-captures it.
     pub fn update(&mut self, layout: &TouchLayout, touches: &[TouchSample]) -> TouchOutput {
         let find = |id: u64| {
             touches
@@ -258,8 +275,12 @@ impl TouchControls {
                 .find(|t| t.id == id)
                 .map(|t| (t.x, t.y))
         };
+        // A button press is ANY finger inside the circle — buttons win over look/move (COD-Mobile).
+        let pressed = |c: &Circle| touches.iter().any(|t| c.contains(t.x, t.y));
+        // The stick's neutral origin IS the fixed ring centre (this is a fixed, not floating, stick).
+        let base = (layout.stick_base.cx, layout.stick_base.cy);
 
-        // --- Move stick (floating): claim a finger-down in the left zone; offset → axis. ---
+        // --- Move stick (fixed ring): claim a finger-down inside the ring; deflect from centre. ---
         if let Some(id) = self.move_id {
             if find(id).is_none() {
                 self.move_id = None;
@@ -268,50 +289,51 @@ impl TouchControls {
         if self.move_id.is_none() {
             if let Some(t) = touches
                 .iter()
-                .find(|t| !self.owns(t.id) && layout.stick_zone.contains(t.x, t.y))
+                .find(|t| !self.owns(t.id) && layout.stick_base.contains(t.x, t.y))
             {
                 self.move_id = Some(t.id);
-                self.move_origin = (t.x, t.y);
             }
         }
         let mut move_axis = (0.0, 0.0);
-        let mut stick_thumb = self.move_origin;
+        let mut stick_thumb = base;
         let stick_active = self.move_id.is_some();
         if let Some(id) = self.move_id {
             if let Some((x, y)) = find(id) {
-                let r = layout.stick_radius.max(1.0);
-                let dx = x - self.move_origin.0;
-                let dy = y - self.move_origin.1;
+                let r = layout.stick_base.r.max(1.0);
+                let dx = x - base.0;
+                let dy = y - base.1;
                 let len = (dx * dx + dy * dy).sqrt();
                 let (cdx, cdy) = if len > r {
                     (dx * r / len, dy * r / len)
                 } else {
                     (dx, dy)
                 };
-                stick_thumb = (self.move_origin.0 + cdx, self.move_origin.1 + cdy);
+                stick_thumb = (base.0 + cdx, base.1 + cdy);
                 move_axis = (cdx / r, cdy / r);
             }
         }
 
-        // --- Look region (drag): per-frame motion of the owning finger → look delta. ---
+        // --- Look region (drag): per-frame motion of the owning finger → look delta. A look finger
+        //     that lifts OR slides onto a button gives up look ownership (buttons win). ---
         let mut look_delta = (0.0, 0.0);
         if let Some(id) = self.look_id {
             match find(id) {
-                Some((x, y)) => {
+                Some((x, y)) if !Self::on_any_button(layout, x, y) => {
                     look_delta = (
                         (x - self.look_last.0) * LOOK_DRAG_SCALE,
                         (y - self.look_last.1) * LOOK_DRAG_SCALE,
                     );
                     self.look_last = (x, y);
                 }
-                None => self.look_id = None,
+                // Finger gone, or it crossed onto a button: release look so the button can fire.
+                _ => self.look_id = None,
             }
         }
         if self.look_id.is_none() {
             if let Some(t) = touches.iter().find(|t| {
                 !self.owns(t.id)
                     && layout.look_zone.contains(t.x, t.y)
-                    && !self.on_any_button(layout, t.x, t.y)
+                    && !Self::on_any_button(layout, t.x, t.y)
             }) {
                 self.look_id = Some(t.id);
                 self.look_last = (t.x, t.y);
@@ -319,13 +341,13 @@ impl TouchControls {
             }
         }
 
-        // --- Buttons: pressed = an UNOWNED finger inside the circle; edges vs last frame. ---
-        let fire = self.button_pressed(&layout.fire, touches);
+        // --- Buttons: pressed = ANY finger inside the circle (buttons win); edges vs last frame. ---
+        let fire = pressed(&layout.fire);
         // ADS is HELD (the zoom level signal), exactly like Fire — no edge detection.
-        let aim = self.button_pressed(&layout.aim, touches);
-        let crouch = self.button_pressed(&layout.crouch, touches);
-        let reload = self.button_pressed(&layout.reload, touches);
-        let surface = self.button_pressed(&layout.surface, touches);
+        let aim = pressed(&layout.aim);
+        let crouch = pressed(&layout.crouch);
+        let reload = pressed(&layout.reload);
+        let surface = pressed(&layout.surface);
 
         let out = TouchOutput {
             move_axis,
@@ -337,7 +359,7 @@ impl TouchControls {
             surface_edge: surface && !self.prev_surface,
             hud: TouchHud {
                 stick_active,
-                stick_origin: self.move_origin,
+                stick_origin: base,
                 stick_thumb,
                 fire_pressed: fire,
                 crouch_pressed: crouch,
@@ -354,17 +376,10 @@ impl TouchControls {
         out
     }
 
-    /// Any **unowned** finger inside `c` (a finger driving the stick/look never also taps a button).
+    /// Is `(x, y)` inside any button circle? Keeps the drag-look claim from stealing a button tap,
+    /// and releases a look finger that slides onto a button so the button wins.
     #[inline]
-    fn button_pressed(&self, c: &Circle, touches: &[TouchSample]) -> bool {
-        touches
-            .iter()
-            .any(|t| !self.owns(t.id) && c.contains(t.x, t.y))
-    }
-
-    /// Is `(x, y)` inside any button circle? Keeps the drag-look claim from stealing a button tap.
-    #[inline]
-    fn on_any_button(&self, layout: &TouchLayout, x: f32, y: f32) -> bool {
+    fn on_any_button(layout: &TouchLayout, x: f32, y: f32) -> bool {
         layout.fire.contains(x, y)
             || layout.aim.contains(x, y)
             || layout.crouch.contains(x, y)
@@ -393,19 +408,25 @@ mod tests {
         (c.cx, c.cy)
     }
 
+    /// The fixed ring centre (a guaranteed neutral-origin hit).
+    fn stick_center(l: &TouchLayout) -> (f32, f32) {
+        (l.stick_base.cx, l.stick_base.cy)
+    }
+
     #[test]
-    fn left_zone_finger_drives_move_axis_from_its_origin() {
+    fn ring_finger_drives_move_axis_from_the_fixed_centre() {
         let l = layout();
         let mut tc = TouchControls::new();
-        // Finger down inside the stick zone establishes the origin (axis ~0 on the first frame).
-        let origin = (l.stick_zone.x0 + 100.0, l.stick_zone.y0 + 100.0);
-        let out = tc.update(&l, &[t(1, origin.0, origin.1)]);
-        assert_eq!(out.move_axis, (0.0, 0.0), "first contact is the neutral origin");
+        // Finger down at the ring centre: neutral (deflection measured from the FIXED centre).
+        let (cx, cy) = stick_center(&l);
+        let out = tc.update(&l, &[t(1, cx, cy)]);
+        assert_eq!(out.move_axis, (0.0, 0.0), "a touch at the centre is neutral");
         assert!(out.hud.stick_active);
+        assert_eq!(out.hud.stick_origin, (cx, cy), "the origin is the fixed ring centre");
 
-        // Push it right + up by less than the radius: axis is the normalized offset.
-        let dx = l.stick_radius * 0.5;
-        let out = tc.update(&l, &[t(1, origin.0 + dx, origin.1 - dx)]);
+        // Push right + up by half the radius: axis is the normalized offset from the centre.
+        let dx = l.stick_base.r * 0.5;
+        let out = tc.update(&l, &[t(1, cx + dx, cy - dx)]);
         assert!((out.move_axis.0 - 0.5).abs() < 1e-5, "right half-deflection");
         assert!((out.move_axis.1 + 0.5).abs() < 1e-5, "up is -y (screen convention)");
     }
@@ -414,13 +435,33 @@ mod tests {
     fn move_axis_clamps_to_unit_magnitude_beyond_the_radius() {
         let l = layout();
         let mut tc = TouchControls::new();
-        let origin = (50.0, l.stick_zone.y0 + 50.0);
-        tc.update(&l, &[t(1, origin.0, origin.1)]);
+        let (cx, cy) = stick_center(&l);
+        tc.update(&l, &[t(1, cx, cy)]);
         // Shove far past the radius straight down: magnitude clamps to 1.
-        let out = tc.update(&l, &[t(1, origin.0, origin.1 + l.stick_radius * 10.0)]);
+        let out = tc.update(&l, &[t(1, cx, cy + l.stick_base.r * 10.0)]);
         let mag = (out.move_axis.0 * out.move_axis.0 + out.move_axis.1 * out.move_axis.1).sqrt();
         assert!((mag - 1.0).abs() < 1e-5, "deflection clamps to the unit circle, got {mag}");
         assert!(out.move_axis.1 > 0.99, "straight down is +y");
+    }
+
+    #[test]
+    fn a_touch_just_outside_the_ring_does_nothing_not_look() {
+        // THE reported bug: a move-intent touch that lands just outside the ring must NOT be
+        // re-classified as a look drag (which would swing the camera). It is simply inert — the
+        // player re-touches the visible ring. This is the whole reason the stick is fixed.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        let (cx, cy) = stick_center(&l);
+        // A point just past the ring, still on the left (well clear of the look zone).
+        let p = (cx + l.stick_base.r + 8.0, cy);
+        assert!(!l.stick_base.contains(p.0, p.1), "precondition: outside the ring");
+        assert!(!l.look_zone.contains(p.0, p.1), "precondition: not in the look zone either");
+        let out = tc.update(&l, &[t(1, p.0, p.1)]);
+        assert!(!out.hud.stick_active, "no stick claim outside the ring");
+        assert_eq!(out.move_axis, (0.0, 0.0), "and no movement");
+        // Dragging that inert finger produces NO look delta — it never became a look finger.
+        let out = tc.update(&l, &[t(1, p.0 + 40.0, p.1)]);
+        assert_eq!(out.look_delta, (0.0, 0.0), "an off-ring left touch never pans the camera");
     }
 
     #[test]
@@ -488,7 +529,7 @@ mod tests {
         let mut tc = TouchControls::new();
         let (ax, ay) = center(&l.aim);
         let (fx, fy) = center(&l.fire);
-        let stick_o = (60.0, l.stick_zone.y0 + 60.0);
+        let stick_o = stick_center(&l);
 
         // Establish stick + an ADS hold (frame 1).
         tc.update(&l, &[t(1, stick_o.0, stick_o.1), t(2, ax, ay)]);
@@ -496,7 +537,7 @@ mod tests {
         let out = tc.update(
             &l,
             &[
-                t(1, stick_o.0, stick_o.1 + l.stick_radius), // full down
+                t(1, stick_o.0, stick_o.1 + l.stick_base.r), // full down
                 t(2, ax + 40.0, ay),                         // ADS finger dragged
                 t(3, fx, fy),                                // fire
             ],
@@ -536,7 +577,7 @@ mod tests {
         // The load-bearing case: walk + aim + shoot at once, the whole point of the layout.
         let l = layout();
         let mut tc = TouchControls::new();
-        let stick_o = (60.0, l.stick_zone.y0 + 60.0);
+        let stick_o = stick_center(&l);
         let look_o = (l.look_zone.x0 + 150.0, 120.0);
         let (firex, firey) = center(&l.fire);
 
@@ -546,7 +587,7 @@ mod tests {
         let out = tc.update(
             &l,
             &[
-                t(1, stick_o.0, stick_o.1 + l.stick_radius), // full down
+                t(1, stick_o.0, stick_o.1 + l.stick_base.r), // full down
                 t(2, look_o.0 + 25.0, look_o.1),             // look right 25 px
                 t(3, firex, firey),                          // fire
             ],
@@ -560,19 +601,43 @@ mod tests {
     fn lifting_a_finger_releases_its_control_and_recaptures_on_next_touch() {
         let l = layout();
         let mut tc = TouchControls::new();
-        let a = (40.0, l.stick_zone.y0 + 40.0);
-        tc.update(&l, &[t(1, a.0, a.1)]);
-        let out = tc.update(&l, &[t(1, a.0 + l.stick_radius, a.1)]);
+        let (cx, cy) = stick_center(&l);
+        tc.update(&l, &[t(1, cx, cy)]);
+        let out = tc.update(&l, &[t(1, cx + l.stick_base.r, cy)]);
         assert!(out.move_axis.0 > 0.99, "finger 1 drives the stick right");
-        // Lift finger 1: stick goes neutral/inactive.
+        // Lift finger 1: stick goes neutral/inactive, thumb snaps back to the fixed centre.
         let out = tc.update(&l, &[]);
         assert!(!out.hud.stick_active);
         assert_eq!(out.move_axis, (0.0, 0.0));
-        // A NEW finger down at a different origin re-captures the stick from there.
-        let b = (300.0, l.stick_zone.y0 + 10.0);
-        let out = tc.update(&l, &[t(9, b.0, b.1)]);
+        assert_eq!(out.hud.stick_thumb, (cx, cy), "released thumb rests at the fixed centre");
+        // A NEW finger anywhere in the ring re-captures the stick — origin is ALWAYS the fixed
+        // centre (fixed stick), and deflection is measured from there.
+        let out = tc.update(&l, &[t(9, cx - l.stick_base.r * 0.5, cy)]);
         assert!(out.hud.stick_active);
-        assert_eq!(out.hud.stick_origin, b, "new origin is the new finger-down point");
+        assert_eq!(out.hud.stick_origin, (cx, cy), "origin stays the fixed ring centre");
+        assert!((out.move_axis.0 + 0.5).abs() < 1e-5, "left half-deflection from the centre");
+    }
+
+    #[test]
+    fn a_look_finger_sliding_onto_fire_fires_without_lifting() {
+        // COD-Mobile "buttons win": a right-thumb finger that is drag-looking and then slides onto
+        // the Fire button must FIRE — not keep panning, and not require a lift-and-retap. This is
+        // the "fire doesn't work immediately" half of the report.
+        let l = layout();
+        let mut tc = TouchControls::new();
+        let (fx, fy) = center(&l.fire);
+        // Start looking in the bare right region (clear of every button).
+        let start = (l.look_zone.x0 + 250.0, 90.0);
+        assert!(!TouchControls::on_any_button(&l, start.0, start.1), "precondition: not on a button");
+        tc.update(&l, &[t(5, start.0, start.1)]);
+        let out = tc.update(&l, &[t(5, start.0 + 20.0, start.1)]);
+        assert!(out.look_delta.0 > 0.0, "it is looking first");
+        assert!(!out.fire, "and not yet firing");
+        // Same finger slides onto Fire: it fires, and look stops the moment it crosses the button.
+        let out = tc.update(&l, &[t(5, fx, fy)]);
+        assert!(out.fire, "the look finger now fires (buttons win)");
+        assert_eq!(out.look_delta, (0.0, 0.0), "and it stops panning the camera");
+        assert!(tc.look_id.is_none(), "look ownership was released to the button");
     }
 
     #[test]
@@ -611,7 +676,10 @@ mod tests {
             assert!(c.cx - c.r >= 0.0 && c.cx + c.r <= l.width, "button within width");
             assert!(c.cy - c.r >= 0.0 && c.cy + c.r <= l.height, "button within height");
         }
-        // Stick zone is on the left, look zone on the right, and they partition horizontally.
-        assert!(l.stick_zone.x1 <= l.look_zone.x0 + 1.0);
+        // The move ring sits on the left, entirely clear of the look zone (its right edge is left
+        // of the look split) — so the two controls can never claim the same touch.
+        assert!(l.stick_base.cx + l.stick_base.r < l.look_zone.x0, "ring is clear of the look zone");
+        assert!(l.stick_base.cx - l.stick_base.r >= 0.0, "ring stays on-screen");
+        assert!(l.stick_base.cy + l.stick_base.r <= l.height, "ring stays on-screen");
     }
 }

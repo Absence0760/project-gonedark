@@ -129,8 +129,8 @@ impl HudElement {
         // Centers are fractions of the viewport; these mirror `TouchLayout::new` so the editor's
         // "reset" point and the renderer's stock layout can never drift (asserted in tests).
         let (cx, cy) = match self {
-            // Stick zone center: x in [0, 0.42], y in [0.30, 1.0] → (0.21, 0.65).
-            HudElement::MoveStick => (0.21, 0.65),
+            // Fixed stick ring anchor — mirrors `TouchLayout::new`'s `stick_base` centre.
+            HudElement::MoveStick => (0.15, 0.72),
             HudElement::Fire => (0.84, 0.74),
             HudElement::Crouch => (0.70, 0.86),
             HudElement::Reload => (0.95, 0.50),
@@ -592,16 +592,11 @@ pub fn resolve_embodied_layer(
         let cy = p.center.1 * h;
         match element {
             HudElement::MoveStick => {
-                // Resize the deflection radius; re-center the (floating) stick zone around the new
-                // anchor, preserving its default extent.
-                let base = &mut layout.stick_zone;
-                let half_w = (base.x1 - base.x0) * 0.5;
-                let half_h = (base.y1 - base.y0) * 0.5;
-                base.x0 = cx - half_w;
-                base.x1 = cx + half_w;
-                base.y0 = cy - half_h;
-                base.y1 = cy + half_h;
-                layout.stick_radius *= p.scale;
+                // Re-anchor the fixed stick ring to the new centre and scale its radius (the ring is
+                // both the visible target and the max-deflection distance).
+                layout.stick_base.cx = cx;
+                layout.stick_base.cy = cy;
+                layout.stick_base.r *= p.scale;
                 opacity.stick = p.opacity;
             }
             HudElement::Fire => {
@@ -693,11 +688,10 @@ mod tests {
                     assert!((r.layout.surface.cy - stock.surface.cy).abs() < 0.5);
                 }
                 HudElement::MoveStick => {
-                    // Stick zone center matches the stock zone center.
-                    let scx = (stock.stick_zone.x0 + stock.stick_zone.x1) * 0.5;
-                    let rcx = (r.layout.stick_zone.x0 + r.layout.stick_zone.x1) * 0.5;
-                    assert!((scx - rcx).abs() < 0.5);
-                    assert!((r.layout.stick_radius - stock.stick_radius).abs() < 1e-3);
+                    // Stick ring centre + radius match the stock ring.
+                    assert!((r.layout.stick_base.cx - stock.stick_base.cx).abs() < 0.5);
+                    assert!((r.layout.stick_base.cy - stock.stick_base.cy).abs() < 0.5);
+                    assert!((r.layout.stick_base.r - stock.stick_base.r).abs() < 1e-3);
                 }
                 _ => unreachable!(),
             }
@@ -764,9 +758,10 @@ mod tests {
     }
 
     #[test]
-    fn relocating_the_stick_zone_moves_where_the_move_stick_claims() {
-        // Put the stick zone in the upper-right corner; a finger there should now drive the stick,
-        // and a finger at the stock lower-left should not.
+    fn relocating_the_stick_ring_moves_where_the_move_stick_claims() {
+        // Put the stick ring in the upper-right corner; a finger at the new centre should now drive
+        // the stick, and a finger at the stock lower-left ring should not.
+        let stock = TouchLayout::new(W, H);
         let mut preset = HudPreset::new("flip");
         let mut p = HudElement::MoveStick.default_placement();
         p.center = (0.80, 0.20);
@@ -775,15 +770,18 @@ mod tests {
         profile.push_preset(preset);
         let resolved = profile.resolve_embodied(W, H);
 
-        let zone = resolved.layout.stick_zone;
-        let zcx = (zone.x0 + zone.x1) * 0.5;
-        let zcy = (zone.y0 + zone.y1) * 0.5;
-        // The relocated zone really is in the upper-right (away from its stock lower-left home).
-        assert!(zcx > 0.5 * W as f32 && zcy < 0.5 * H as f32);
+        let ring = resolved.layout.stick_base;
+        // The relocated ring really is in the upper-right (away from its stock lower-left home).
+        assert!(ring.cx > 0.5 * W as f32 && ring.cy < 0.5 * H as f32);
 
         let mut tc = TouchControls::new();
-        let out = tc.update(&resolved.layout, &[t(1, zcx, zcy)]);
-        assert!(out.hud.stick_active, "finger in the relocated zone claims the stick");
+        let out = tc.update(&resolved.layout, &[t(1, ring.cx, ring.cy)]);
+        assert!(out.hud.stick_active, "finger in the relocated ring claims the stick");
+
+        // A finger at the ring's OLD stock home no longer claims the stick.
+        let mut tc2 = TouchControls::new();
+        let out2 = tc2.update(&resolved.layout, &[t(1, stock.stick_base.cx, stock.stick_base.cy)]);
+        assert!(!out2.hud.stick_active, "the stock lower-left spot no longer claims the stick");
     }
 
     // ---- Invariant #6: placement not information ----

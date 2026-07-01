@@ -259,9 +259,12 @@ pub struct DesktopInput {
     train_slot: Option<u8>,
     upgrade_latch: bool,
     // Embodied FPS edges (the on-screen GUI is Android-only, but desktop keys exercise the same
-    // mechanics): C toggles crouch, V starts a reload. One-shot, cleared on drain.
+    // mechanics): C toggles crouch, R/V start a reload, Space starts a (cosmetic) jump, X toggles
+    // the fire mode (semi ⇄ auto). One-shot, cleared on drain.
     crouch_latch: bool,
     reload_latch: bool,
+    jump_latch: bool,
+    select_fire_latch: bool,
     // Embodied aim-down-sight / zoom: a HELD/level signal driven by the RIGHT mouse button while
     // embodied (the genre-standard ADS button). The command view consumes the right button as an
     // edge (`command_latch`) and ignores `aim`; the embodied view consumes `aim` (held) and ignores
@@ -300,6 +303,8 @@ impl Default for DesktopInput {
             upgrade_latch: false,
             crouch_latch: false,
             reload_latch: false,
+            jump_latch: false,
+            select_fire_latch: false,
             aim_held: false,
             look_sensitivity: 1.0,
             invert_look_y: false,
@@ -444,8 +449,13 @@ impl DesktopInput {
             KeyCode::KeyS => self.move_down = pressed,
             KeyCode::KeyA => self.move_left = pressed,
             KeyCode::KeyD => self.move_right = pressed,
-            // Fire (alternate to left-click), held — convenient for embodied combat from the keyboard.
-            KeyCode::Space => self.fire = pressed,
+            // Jump (standard FPS Space binding) — a one-shot edge that starts a cosmetic embodied
+            // hop. Space no longer fires: fire is the left mouse button, matching the genre.
+            KeyCode::Space => {
+                if pressed && !repeat {
+                    self.jump_latch = true;
+                }
+            }
             // Touch-UI desktop bindings: F opens the order/stance context; number keys pick a
             // vocabulary slot (0-based on the wire) — 1–9 → slots 0–8, 0 → slot 9 (see
             // engine::command_ui for the slot table).
@@ -469,13 +479,21 @@ impl DesktopInput {
             // at the cursor's ground point; R(ifleman)/H(eavy) queue that unit at the active camp;
             // U(pgrade) levels the active camp. (These bindings are recorded in docs/decisions.md.)
             KeyCode::KeyB if pressed && !repeat => self.building_slot = Some(0),
-            KeyCode::KeyR if pressed && !repeat => self.train_slot = Some(0),
+            // R queues a Rifleman in the command view AND reloads while embodied (the standard FPS
+            // reload key). The two consumers are mode-exclusive — the engine reads `train_slot` only
+            // in the command view and `reload_pressed` only while embodied — so one key is unambiguous.
+            KeyCode::KeyR if pressed && !repeat => {
+                self.train_slot = Some(0);
+                self.reload_latch = true;
+            }
             KeyCode::KeyH if pressed && !repeat => self.train_slot = Some(1),
             KeyCode::KeyU if pressed && !repeat => self.upgrade_latch = true,
             // Embodied FPS keys (mirror the Android Crouch/Reload buttons so the mechanics are
             // testable on desktop). Edge-latched; the engine ignores them while not embodied.
+            // C=crouch, R/V=reload (V kept as a secondary), X=select-fire (semi ⇄ auto).
             KeyCode::KeyC if pressed && !repeat => self.crouch_latch = true,
             KeyCode::KeyV if pressed && !repeat => self.reload_latch = true,
+            KeyCode::KeyX if pressed && !repeat => self.select_fire_latch = true,
             _ => {}
         }
     }
@@ -533,6 +551,8 @@ impl DesktopInput {
             aim: self.aim_held,
             crouch_pressed: self.crouch_latch,
             reload_pressed: self.reload_latch,
+            jump_pressed: self.jump_latch,
+            select_fire_pressed: self.select_fire_latch,
             // No on-screen touch controls on desktop — the embodied GUI is Android-only.
             touches: Default::default(),
             touch_count: 0,
@@ -553,6 +573,8 @@ impl DesktopInput {
         self.upgrade_latch = false;
         self.crouch_latch = false;
         self.reload_latch = false;
+        self.jump_latch = false;
+        self.select_fire_latch = false;
         self.look_dx = 0.0;
         self.look_dy = 0.0;
         self.scroll = 0.0;
@@ -732,15 +754,36 @@ mod input_tests {
     }
 
     #[test]
-    fn left_click_and_space_both_fire_held() {
-        // Classic-RTS split (D42): fire rides the LEFT button (FPS convention) + Space, not RMB.
+    fn left_click_fires_and_space_jumps_not_fires() {
+        // Standard FPS bindings: fire rides the LEFT mouse button; Space is JUMP, not fire (and
+        // never the RMB command edge). This is the "why is Space shoot?" fix.
         let mut input = DesktopInput::new();
         input.on_mouse_button(MouseButton::Left, true);
         assert!(input.drain_frame().fire, "LMB fires (embodied)");
         input.on_mouse_button(MouseButton::Left, false);
         assert!(!input.drain_frame().fire, "LMB released → no fire");
+        // Space no longer fires — it latches a one-shot jump edge instead.
         input.on_key(KeyCode::Space, true, false);
-        assert!(input.drain_frame().fire, "Space also fires");
+        let f = input.drain_frame();
+        assert!(!f.fire, "Space does NOT fire");
+        assert!(f.jump_pressed, "Space latches a jump edge");
+        // The jump edge is one-shot: cleared on the next drain.
+        assert!(!input.drain_frame().jump_pressed, "jump edge clears after one drain");
+    }
+
+    #[test]
+    fn r_reloads_while_x_selects_fire_mode() {
+        // Standard reload is R (also queues a Rifleman in the command view — mode-exclusive), and X
+        // toggles the fire mode. Both are one-shot edges cleared on drain.
+        let mut input = DesktopInput::new();
+        input.on_key(KeyCode::KeyR, true, false);
+        let f = input.drain_frame();
+        assert!(f.reload_pressed, "R reloads while embodied");
+        assert_eq!(f.train_slot, Some(0), "and queues a Rifleman in the command view");
+        assert!(!input.drain_frame().reload_pressed, "reload edge clears after one drain");
+        input.on_key(KeyCode::KeyX, true, false);
+        assert!(input.drain_frame().select_fire_pressed, "X toggles fire mode");
+        assert!(!input.drain_frame().select_fire_pressed, "select-fire edge clears after one drain");
     }
 
     #[test]

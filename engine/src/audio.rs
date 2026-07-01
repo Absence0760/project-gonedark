@@ -84,6 +84,11 @@ pub fn mix_cues(
             SimEvent::Killed { pos, .. } => (pos, SoundId::UnitDown),
             SimEvent::Captured { pos, .. } => (pos, SoundId::Capture),
             SimEvent::UnitProduced { pos, .. } => (pos, SoundId::ProductionReady),
+            // A committed trigger pull. The *player's own* gun crack is played host-side off the
+            // `avatar_fired` seam (a single, non-positional cue — it's the weapon in your hands), so
+            // the positional mix skips `Fired` here to avoid a doubled report. `resolve_fire` — hence
+            // `Fired` — is embodied-only, so this is never an AI unit's shot.
+            SimEvent::Fired { .. } => continue,
         };
 
         // Q16.16 → f32 hop happens HERE, via the one sanctioned converter (never in core).
