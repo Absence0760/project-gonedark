@@ -281,7 +281,9 @@ mod tests {
             // D85 (gunsmith breadth): re-pinned after the Weapon fold grew four Stock/Muzzle delta
             // words per slot (all zero here — the duel gun carries no loadout), so the fight is
             // byte-identical and only the raw stream value shifted, by design.
-            Some(0x4209_3fde_b61c_0eb2),
+            // Camp spawn-rally: re-pinned after the per-slot `Building` fold grew a rally presence
+            // byte (the duel camps set no rally → 0 byte); fight byte-identical, raw stream shifted.
+            Some(0xe264_e728_1224_50c4),
         );
     }
 

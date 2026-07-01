@@ -45,7 +45,9 @@ use crate::sim::Command;
 /// 9 added the anti-tank infantry `UnitKind::AntiTank` (unit-kind codec tag 4, D73) — so a pre-D73
 /// peer (which cannot decode a `QueueProduction { unit: AntiTank }`) fails the handshake rather than
 /// hitting `BadTag(4)` mid-game or, worse, silently desyncing on the new archetype.
-const WIRE_VERSION: u8 = 9;
+/// 10 added the camp spawn-rally `Command::SetCampRally` (tag 18) — the troop-training rally seam —
+/// so a pre-rally peer's frame is rejected at the handshake, not on `BadTag(18)` mid-game.
+const WIRE_VERSION: u8 = 10;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
 /// carry command sets, checksum reports, and delay-change proposals over the one wire format.
@@ -424,6 +426,14 @@ fn put_command(w: &mut Writer, c: &Command) {
             put_entity(w, entity);
             put_shell(w, shell);
         }
+        Command::SetCampRally { camp, rally } => {
+            // Camp spawn-rally (troop-training rally seam). Carries an Entity + a fixed-point Vec2
+            // (the rally point), exactly like a Move target, so it decodes bit-identically on every
+            // peer (invariant #7). WIRE_VERSION bumped 9→10 so a pre-rally peer fails the handshake.
+            w.u8(18);
+            put_entity(w, camp);
+            put_vec2(w, rally);
+        }
     }
 }
 
@@ -497,6 +507,10 @@ fn get_command(r: &mut Reader) -> Result<Command, DecodeError> {
         17 => Command::SelectShell {
             entity: get_entity(r)?,
             shell: get_shell(r)?,
+        },
+        18 => Command::SetCampRally {
+            camp: get_entity(r)?,
+            rally: get_vec2(r)?,
         },
         t => return Err(DecodeError::BadTag(t)),
     })
@@ -1121,6 +1135,13 @@ mod tests {
             Command::SelectShell {
                 entity: ent(11, 2),
                 shell: ShellKind::He,
+            },
+            // Camp spawn-rally (troop-training rally seam): the SetCampRally must survive the wire
+            // codec — its Entity + fixed-point Vec2 decode bit-identically on every peer (invariant
+            // #7). WIRE_VERSION bumped 9→10 so a pre-rally peer is rejected at the handshake.
+            Command::SetCampRally {
+                camp: ent(7, 3),
+                rally: v(18, -6),
             },
             // Cover the remaining Order variants too.
             Command::SetOrder {

@@ -519,7 +519,9 @@ mod tests {
             // per-slot bytes, by design.
             // D85 (gunsmith breadth): re-pinned after the Weapon fold grew four Stock/Muzzle delta
             // words per slot (all zero in this loadout-free scene); only the raw stream value shifted.
-            Some(0xeaea_32f9_18e4_4190),
+            // Camp spawn-rally: re-pinned after the per-slot `Building` fold grew a rally presence
+            // byte (this scene's camps set no rally → 0 byte); fight byte-identical, raw stream shifted.
+            Some(0x3054_142c_2d3e_4964),
         );
     }
 

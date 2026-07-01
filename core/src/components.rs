@@ -579,4 +579,13 @@ pub struct Building {
     pub build_ticks_left: u16,
     /// FIFO production queue; the front item counts down each tick.
     pub queue: Vec<ProductionItem>,
+    /// Spawn **rally point** for units produced here (`None` = no rally set). Set by
+    /// [`Command::SetCampRally`](crate::sim::Command::SetCampRally); a freshly-produced unit
+    /// inherits it as its FIRST order — [`Order::MoveTo(rally)`](Order::MoveTo) — so it walks off
+    /// the pad toward the rally instead of spawning [`Idle`](Order::Idle) on top of the camp. This
+    /// is a literal-executor order (invariant #3): the unit just moves to the point, it makes no
+    /// autonomous decision. Fixed-point [`Vec2`] (invariant #1). `None` by default, so a camp with
+    /// no rally set spawns units exactly as before (byte-identical). Sim state: it folds into the
+    /// per-tick checksum and serializes (a peer that set a different rally must diverge — invariant #7).
+    pub rally: Option<Vec2>,
 }

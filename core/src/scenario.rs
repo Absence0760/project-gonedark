@@ -1407,8 +1407,12 @@ mod tests {
         // D85 (gunsmith breadth): re-pinned after the Weapon fold grew four Stock/Muzzle delta words
         // (move_speed/cone/supp/falloff) per slot. The duel gun carries no loadout (all four are 0),
         // so the fight is byte-for-byte identical; only the raw stream value shifted by the appended
-        // zero words, by design.)
-        assert_eq!(sum, 0x8c7b_8654_7b5d_1857);
+        // zero words, by design.
+        // Camp spawn-rally (troop-training rally seam): re-pinned after the per-slot `Building` fold
+        // grew a rally presence byte. The duel scene's camps set no rally (the byte is 0), so the
+        // fight is byte-for-byte identical; only the raw stream value shifted by the appended zero
+        // byte, by design.)
+        assert_eq!(sum, 0x0322_c4f8_99fe_853d);
         // And it is reproducible run-to-run on this arch.
         assert_eq!(run_ballistic_duel(130), sum);
     }

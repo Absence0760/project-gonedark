@@ -24,18 +24,24 @@
 //! ([`economy::queue_production`](gonedark_core::economy::queue_production)); this
 //! seam does not pre-check those (it has no `&World`), it only forms the intent.
 //!
-//! # Rally point — a documented follow-up seam (NOT a new sim Command)
+//! # Rally point — the camp spawn-rally seam ([`Command::SetCampRally`])
 //!
-//! Setting a rally point for a camp's *produced* units has **no sim `Command` today**. The only
-//! rally concept in `core` is the per-unit [`Order::FallBack(rally)`](gonedark_core::components::Order::FallBack)
-//! retreat order — that is a unit order, not a building's spawn rally, and produced units spawn
-//! [`Order::Idle`](gonedark_core::components::Order::Idle) at the camp (`economy::economy_system`).
-//! Per the task's hard boundary we do **not** invent a new sim `Command` here. Instead
-//! [`rally_point`] exposes the pure input-boundary step — quantizing the tapped world point to
-//! `Fixed` via [`crate::world_to_fixed`] (invariant #1) — and returns the `Vec2` for an integrator
-//! to wire once a `Command::SetCampRally { camp, rally }` (or equivalent building-rally field +
-//! "new units inherit the rally as their first Move") lands in `core::sim`. Until then this fn is
-//! the tested quantization seam; emitting the order is the flagged follow-up.
+//! Setting a rally point for a camp's *produced* units emits
+//! [`Command::SetCampRally { camp, rally }`](gonedark_core::sim::Command::SetCampRally): the sim
+//! stores it on the producing building, and a freshly-produced unit inherits it as its FIRST order —
+//! [`Order::MoveTo(rally)`](gonedark_core::components::Order::MoveTo) — so it walks off the pad toward
+//! the rally instead of piling up [`Order::Idle`](gonedark_core::components::Order::Idle) on the camp
+//! (`economy::economy_system`). That first move is a literal-executor order (invariant #3): the unit
+//! just moves to the point, it makes no autonomous decision. (Distinct from the per-unit
+//! [`Order::FallBack(rally)`](gonedark_core::components::Order::FallBack) retreat, which is a unit
+//! order, not a building's spawn rally.)
+//!
+//! [`rally_commands`] is the presentation→intent mapping (the [`train_commands`] pattern): it takes
+//! the selected camp + the tapped world point, quantizes the point to exact `Fixed` bits at the input
+//! boundary via [`crate::world_to_fixed`] (invariant #1, so no float ever crosses into `core`) with
+//! the pure [`rally_point`] step, and forms at most one `SetCampRally`. It never mutates sim state and
+//! has no `&World`, so it does not pre-check the camp (the sim's `economy::set_camp_rally` no-ops a
+//! dead / non-building handle).
 
 use gonedark_core::components::{UnitKind, Vec2};
 use gonedark_core::ecs::Entity;
@@ -79,21 +85,33 @@ pub fn train_commands(unit_slot: Option<u8>, camp: Option<Entity>) -> Vec<Comman
     vec![Command::QueueProduction { camp, unit }]
 }
 
-/// The **rally-point** input-boundary seam for a camp's produced units.
-///
-/// There is **no sim `Command` for a camp rally today** (see the module docs): the only rally in
-/// `core` is the per-unit `Order::FallBack` retreat, not a building's spawn rally. Per the task's
-/// hard boundary this fn does **not** invent one — it performs only the pure, testable part the
-/// integrator needs: quantizing the tapped world point to exact `Fixed` bits at the input boundary
-/// via [`crate::world_to_fixed`] (invariant #1), so no float ever crosses into `core`.
-///
-/// Returns `None` when no rally point was tapped this frame. When a `Command::SetCampRally`
-/// (or a building-rally field that new units inherit as their first `Move`) lands in `core::sim`,
-/// the integrator wires this `Vec2` into it — **that command is the flagged follow-up**, not this
-/// seam.
+/// The pure **rally-point quantization** step: turn the tapped world point into exact `Fixed` bits
+/// at the input boundary via [`crate::world_to_fixed`] (invariant #1), so no float ever crosses into
+/// `core`. Returns `None` when no rally point was tapped this frame. [`rally_commands`] wraps this to
+/// form the sim command.
 pub fn rally_point(target_world: Option<(f32, f32)>) -> Option<Vec2> {
     let (x, y) = target_world?;
     Some(Vec2::new(crate::world_to_fixed(x), crate::world_to_fixed(y)))
+}
+
+/// Map a troop-training rally-point choice onto the [`Command::SetCampRally`] for the selected camp.
+///
+/// Pure intent → `Command`s (the [`train_commands`] pattern): it never mutates sim state and forms at
+/// most one `SetCampRally`. It quantizes the tapped point with [`rally_point`] (invariant #1).
+///
+/// - `target_world`: the world point tapped as the rally this frame. `None` (no tap) emits nothing.
+/// - `camp`: the currently selected camp entity. `None` emits nothing — a rally has no meaning
+///   without a camp to set it on.
+///
+/// Emits a single-element `Vec` on a valid (tap, camp) pair, or an empty `Vec` otherwise. The sim
+/// applies the alive / is-a-building checks
+/// ([`economy::set_camp_rally`](gonedark_core::economy::set_camp_rally)); this seam only forms the
+/// intent (it has no `&World` to pre-check against).
+pub fn rally_commands(target_world: Option<(f32, f32)>, camp: Option<Entity>) -> Vec<Command> {
+    let (Some(rally), Some(camp)) = (rally_point(target_world), camp) else {
+        return Vec::new();
+    };
+    vec![Command::SetCampRally { camp, rally }]
 }
 
 #[cfg(test)]
@@ -192,6 +210,40 @@ mod tests {
         assert!(
             rally_point(None).is_none(),
             "no tapped point this frame → no rally"
+        );
+    }
+
+    #[test]
+    fn rally_commands_emits_set_camp_rally_for_a_tapped_point_at_the_selected_camp() {
+        let camp = camp_entity(3);
+        let (x, y) = (12.5_f32, -4.25_f32);
+        let cmds = rally_commands(Some((x, y)), Some(camp));
+        assert_eq!(cmds.len(), 1, "exactly one rally command");
+        match &cmds[0] {
+            Command::SetCampRally { camp: c, rally } => {
+                assert_eq!(*c, camp);
+                // Bit-exact against the shared input-boundary quantizer (invariant #1).
+                assert_eq!(rally.x.to_bits(), crate::world_to_fixed(x).to_bits());
+                assert_eq!(rally.y.to_bits(), crate::world_to_fixed(y).to_bits());
+            }
+            other => panic!("expected SetCampRally, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rally_commands_needs_both_a_tap_and_a_camp() {
+        let camp = camp_entity(1);
+        assert!(
+            rally_commands(None, Some(camp)).is_empty(),
+            "a selected camp without a tap must not set a rally"
+        );
+        assert!(
+            rally_commands(Some((1.0, 2.0)), None).is_empty(),
+            "a tapped point without a selected camp must not set a rally"
+        );
+        assert!(
+            rally_commands(None, None).is_empty(),
+            "neither a tap nor a camp → nothing"
         );
     }
 }

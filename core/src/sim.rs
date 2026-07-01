@@ -66,6 +66,16 @@ pub enum Command {
     Upgrade { camp: Entity },
     /// Queue a unit for production at a built camp (spends resources).
     QueueProduction { camp: Entity, unit: UnitKind },
+    /// Set a producing building's **spawn rally point** (the troop-training UI's rally seam). Units
+    /// produced at `camp` thereafter inherit `rally` as their FIRST order
+    /// ([`Order::MoveTo`](crate::components::Order::MoveTo)) instead of spawning
+    /// [`Order::Idle`](crate::components::Order::Idle) on the pad — a literal-executor move
+    /// (invariant #3), not autonomous AI. `rally` is already quantized to `Fixed` bits at the host
+    /// boundary (invariant #1), exactly like a [`Move`](Self::Move) target. Writes the per-building
+    /// `rally` field, which folds into the per-tick checksum + serializes, so a peer that set a
+    /// different rally diverges and the arch matrix catches it (invariant #7). A no-op for a dead or
+    /// non-building handle.
+    SetCampRally { camp: Entity, rally: Vec2 },
     /// An embodied unit fires its weapon along `dir` (a unit aim vector, already quantized to
     /// `Fixed` bits at the host boundary — invariant #1). The sim resolves a fixed-point cone
     /// hitscan ([`combat::resolve_fire`]); embodied units fire ONLY via this command, never the
@@ -369,6 +379,9 @@ impl Sim {
             }
             Command::QueueProduction { camp, unit } => {
                 economy::queue_production(&mut self.world, &mut self.resources, camp, unit);
+            }
+            Command::SetCampRally { camp, rally } => {
+                economy::set_camp_rally(&mut self.world, camp, rally);
             }
             Command::Fire { entity, dir } => {
                 if self.world.is_alive(entity) {
@@ -949,7 +962,10 @@ impl Sim {
 /// 9→10 by D73 (anti-tank infantry): the `unit_kind` tag space gained value 4 (`UnitKind::AntiTank`).
 /// The layout width is unchanged (still one tag byte), but bumping deliberately rejects a pre-D73
 /// build's snapshot at the version gate rather than letting it silently misread a tag-4 unit.
-const SNAPSHOT_VERSION: u8 = 10;
+/// 10→11 by the camp spawn-rally (troop-training rally seam): the per-slot `Building` fold grew a
+/// rally presence byte (+ a fixed-point `Vec2` when set), so a pre-rally snapshot is rejected at the
+/// version gate rather than misparsed against the longer building layout.
+const SNAPSHOT_VERSION: u8 = 11;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.
@@ -999,6 +1015,18 @@ fn write_building<S: StateSink>(sink: &mut S, b: &Building) {
     for item in &b.queue {
         sink.write_u8(unit_kind_tag(item.kind));
         sink.write_u32(item.ticks_left as u32);
+    }
+    // Spawn rally point — sim state (a produced unit inherits it as its first order). Encoded as a
+    // presence byte + the fixed-point Vec2 when set, APPENDED after the queue. `None` (the default,
+    // every camp until a `SetCampRally` lands) writes a single 0 byte, so a rally-free scene stays
+    // deterministic; a set rally folds so a peer that chose a different point diverges (invariant #7).
+    match b.rally {
+        Some(r) => {
+            sink.write_u8(1);
+            sink.write_i32(r.x.to_bits());
+            sink.write_i32(r.y.to_bits());
+        }
+        None => sink.write_u8(0),
     }
 }
 
@@ -1117,11 +1145,19 @@ fn read_building(r: &mut Reader) -> Result<Building, DeserializeError> {
             ticks_left: read_u16(r)?,
         });
     }
+    // Spawn rally — mirror write_building's presence byte + fixed-point Vec2, in the same order
+    // (after the queue). A tag other than 0/1 is corruption (BadTag), never a silent wrong rally.
+    let rally = match r.read_u8()? {
+        0 => None,
+        1 => Some(read_vec2(r)?),
+        t => return Err(DeserializeError::BadTag(t)),
+    };
     Ok(Building {
         kind,
         level,
         build_ticks_left,
         queue,
+        rally,
     })
 }
 
@@ -1576,6 +1612,75 @@ mod tests {
             Some(DeserializeError::BadTag(0x7F)) => {}
             other => panic!("expected BadTag(0x7F) for a corrupt army tag, got {other:?}"),
         }
+    }
+
+    // --- camp spawn-rally (troop-training rally seam) --------------------------------------------
+
+    /// Build one operational Player camp at the origin; returns `(sim, camp)`.
+    fn camp_scene(seed: u64) -> (Sim, Entity) {
+        let mut sim = Sim::new(seed);
+        sim.resources = Resources::new(100_000);
+        let camp = economy::build(
+            &mut sim.world,
+            &mut sim.resources,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::ZERO,
+        )
+        .expect("camp affordable");
+        sim.world.building[camp.index as usize].build_ticks_left = 0;
+        (sim, camp)
+    }
+
+    #[test]
+    fn set_camp_rally_command_writes_the_building_rally_deterministically() {
+        let rally = Vec2::new(Fixed::from_int(14), Fixed::from_int(-9));
+        let (mut sim, camp) = camp_scene(0x2A11);
+        sim.step(&[Command::SetCampRally { camp, rally }]);
+        assert_eq!(
+            sim.world.building[camp.index as usize].rally,
+            Some(rally),
+            "SetCampRally writes the building's rally field"
+        );
+    }
+
+    #[test]
+    fn camp_rally_folds_into_the_checksum() {
+        // The rally is per-tick sim state (a produced unit inherits it), so setting one MUST move the
+        // per-tick checksum — a peer that set a different rally has to diverge (invariant #7). Two
+        // identical camp scenes; one sets a rally. After a step their checksums must differ.
+        let seed = 0x2A12;
+        let (mut with, camp) = camp_scene(seed);
+        let (mut without, _) = camp_scene(seed);
+        let rally = Vec2::new(Fixed::from_int(20), Fixed::from_int(5));
+        with.step(&[Command::SetCampRally { camp, rally }]);
+        without.step(&[]);
+        assert_ne!(
+            with.checksum(),
+            without.checksum(),
+            "a set rally must fold into the per-tick checksum"
+        );
+    }
+
+    #[test]
+    fn camp_rally_survives_the_snapshot_round_trip() {
+        // fold↔deserialize round trip: a rally-set sim resumes with the same rally, its checksum is
+        // byte-identical, and re-serialize reproduces the exact bytes (the rally is folded state).
+        let rally = Vec2::new(Fixed::from_int(-7), Fixed::from_int(13));
+        let (mut sim, camp) = camp_scene(0x2A13);
+        sim.step(&[Command::SetCampRally { camp, rally }]);
+        for _ in 0..5 {
+            sim.step(&[]);
+        }
+        let bytes = sim.serialize();
+        let restored = Sim::deserialize(&bytes).expect("rally-set sim round-trips");
+        assert_eq!(
+            restored.world.building[camp.index as usize].rally,
+            Some(rally),
+            "the rally must survive resume, not silently reset to None"
+        );
+        assert_eq!(restored.checksum(), sim.checksum(), "checksum is byte-identical");
+        assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
     }
 
     // --- factions WS-B: per-faction rosters fold into the checksum --------------------------------

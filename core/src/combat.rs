@@ -1738,6 +1738,7 @@ mod tests {
                 kind: UnitKind::Rifleman,
                 ticks_left: 1,
             }],
+            rally: None,
         };
 
         // An embodied player razes the camp before the unit finishes.

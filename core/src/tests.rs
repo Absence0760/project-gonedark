@@ -681,6 +681,10 @@ fn ecs_respawn_resets_component_arrays() {
             kind: UnitKind::Heavy,
             ticks_left: 3,
         }],
+        rally: Some(crate::components::Vec2::new(
+            crate::fixed::Fixed::from_int(4),
+            crate::fixed::Fixed::from_int(-2),
+        )),
     };
     w.despawn(a);
     let b = w.spawn();
@@ -1470,6 +1474,7 @@ fn two_peers_agree_producing_and_fighting_an_antitank_unit() {
             level: 0,
             build_ticks_left: 0,
             queue: vec![ProductionItem { kind: UnitKind::AntiTank, ticks_left: 30 }],
+            rally: None,
         };
     }
 

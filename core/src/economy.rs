@@ -705,6 +705,7 @@ pub fn build(
         level: 0,
         build_ticks_left: build_ticks(kind),
         queue: Vec::new(),
+        rally: None, // no spawn rally until a SetCampRally lands
     };
     Some(e)
 }
@@ -755,6 +756,25 @@ pub fn queue_production(
         kind: unit,
         ticks_left: prod_time(unit, level),
     });
+    true
+}
+
+/// Set a producing building's **spawn rally point** — the troop-training rally seam. Units produced
+/// at `camp` thereafter inherit `rally` as their first order ([`economy_system`] spawns them with
+/// [`Order::MoveTo(rally)`](Order::MoveTo) instead of [`Order::Idle`](Order::Idle)). A literal-executor
+/// move (invariant #3): the unit just walks to the point, it decides nothing. Returns whether it was
+/// set. A no-op (returns `false`) for a dead handle or a non-building entity; a rally may be set on a
+/// still-constructing building (it takes effect once it produces). Deterministic: a plain fixed-point
+/// field write (invariant #1), so every peer records the identical rally.
+pub fn set_camp_rally(world: &mut World, camp: Entity, rally: Vec2) -> bool {
+    if !world.is_alive(camp) {
+        return false;
+    }
+    let i = camp.index as usize;
+    if world.kind[i] != EntityKind::Building {
+        return false;
+    }
+    world.building[i].rally = Some(rally);
     true
 }
 
@@ -823,6 +843,10 @@ pub fn economy_system(
     for (camp_i, unit_kind) in completed {
         let faction = world.faction[camp_i];
         let pos = world.pos[camp_i];
+        // Spawn rally (troop-training rally seam): read the producing building's rally BEFORE the
+        // spawn below (which may reallocate the SoA Vecs). `None` for a camp with no rally set, so a
+        // rally-free scene is byte-identical to before.
+        let rally = world.building[camp_i].rally;
         // Draw the spawned unit's stats from the PRODUCING faction's army roster (factions-plan
         // WS-B): a US camp fields the US variant, an FR camp the FR variant; a non-aligned camp
         // (`Army::Neutral`) spawns the shared baseline, byte-identical to before factions. These
@@ -841,7 +865,14 @@ pub fn economy_system(
         // archetype draws the unarmoured default, so non-tank production is byte-identical to before
         // and the checksum only moves once an armoured tank is actually on the field (invariant #7).
         world.armor[ei] = unit_armor(unit_kind);
-        world.order[ei] = Order::Idle;
+        // Inherit the camp's spawn rally as the FIRST order (troop-training rally seam): a literal
+        // Move to the rally point (invariant #3 — the unit walks there, it makes no decision), so a
+        // reinforcement leaves the pad toward the front instead of piling up Idle on the camp. With
+        // no rally set the unit spawns `Idle` exactly as before (byte-identical checksum).
+        world.order[ei] = match rally {
+            Some(target) => Order::MoveTo(target),
+            None => Order::Idle,
+        };
         // A produced unit enters the match on FireAtWill (the engagement default) so it actually
         // fights — it engages any enemy in weapon range + LoS (invariant #3: firing in place, never
         // autonomous movement). ReturnFire here would deadlock: a fresh reinforcement only shoots
@@ -1024,6 +1055,106 @@ mod tests {
             }
         }
         assert!(found);
+    }
+
+    #[test]
+    fn set_camp_rally_writes_the_field_and_rejects_bad_handles() {
+        let mut world = World::new();
+        let mut res = Resources::new(CAMP_BUILD_COST);
+        let camp = build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::ZERO,
+        )
+        .unwrap();
+        let ci = camp.index as usize;
+        assert_eq!(world.building[ci].rally, None, "no rally by default");
+
+        let rally = Vec2::new(Fixed::from_int(10), Fixed::from_int(-6));
+        assert!(set_camp_rally(&mut world, camp, rally), "a building accepts a rally");
+        assert_eq!(world.building[ci].rally, Some(rally), "rally is stored");
+
+        // A dead / stale handle is a no-op.
+        let dead = Entity {
+            index: camp.index,
+            generation: camp.generation + 1,
+        };
+        assert!(!set_camp_rally(&mut world, dead, rally));
+
+        // A non-building entity (a plain unit) is a no-op — rally is a building's spawn point.
+        let u = world.spawn();
+        world.kind[u.index as usize] = EntityKind::Unit;
+        assert!(!set_camp_rally(&mut world, u, rally));
+        assert_eq!(world.building[u.index as usize].rally, None);
+    }
+
+    #[test]
+    fn produced_unit_inherits_the_camp_rally_as_its_first_move_order() {
+        let mut world = World::new();
+        let mut res = Resources::new(CAMP_BUILD_COST + RIFLEMAN_COST);
+        let camp = build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::ZERO,
+        )
+        .unwrap();
+        let terr = empty_terr();
+        for _ in 0..CAMP_BUILD_TICKS {
+            tick(&mut world, &mut res, &terr);
+        }
+
+        // Set a rally, then produce a rifleman.
+        let rally = Vec2::new(Fixed::from_int(12), Fixed::from_int(8));
+        assert!(set_camp_rally(&mut world, camp, rally));
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+        for _ in 0..prod_time(UnitKind::Rifleman, 0) {
+            tick(&mut world, &mut res, &terr);
+        }
+
+        // The spawned unit's FIRST order is a literal Move to the rally (invariant #3), not Idle.
+        let unit_idx = (0..world.capacity())
+            .find(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)
+            .expect("a rifleman should have spawned");
+        assert_eq!(
+            world.order[unit_idx],
+            Order::MoveTo(rally),
+            "produced unit rallies to the camp's rally point as its first order"
+        );
+    }
+
+    #[test]
+    fn production_without_a_rally_still_spawns_idle() {
+        // The byte-neutral baseline: a camp with no rally set spawns units Idle, exactly as before.
+        let mut world = World::new();
+        let mut res = Resources::new(CAMP_BUILD_COST + RIFLEMAN_COST);
+        let camp = build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::ZERO,
+        )
+        .unwrap();
+        let terr = empty_terr();
+        for _ in 0..CAMP_BUILD_TICKS {
+            tick(&mut world, &mut res, &terr);
+        }
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+        for _ in 0..prod_time(UnitKind::Rifleman, 0) {
+            tick(&mut world, &mut res, &terr);
+        }
+        let unit_idx = (0..world.capacity())
+            .find(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)
+            .expect("a rifleman should have spawned");
+        assert_eq!(
+            world.order[unit_idx],
+            Order::Idle,
+            "no rally set → the produced unit spawns Idle (unchanged behaviour)"
+        );
     }
 
     #[test]

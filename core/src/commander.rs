@@ -360,6 +360,7 @@ mod tests {
             level: 0,
             build_ticks_left: 0, // finished → can produce
             queue: Vec::new(),
+            rally: None,
         };
         e
     }

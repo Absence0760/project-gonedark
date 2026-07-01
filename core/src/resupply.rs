@@ -129,6 +129,7 @@ mod tests {
             level: 0,
             build_ticks_left,
             queue: Vec::new(),
+            rally: None,
         };
         i
     }
