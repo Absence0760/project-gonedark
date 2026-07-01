@@ -962,6 +962,108 @@ fn avatar_fired(events: &[SimEvent], avatar: Entity, embodied: bool) -> bool {
             .any(|e| matches!(*e, SimEvent::Fired { entity, .. } if entity == avatar))
 }
 
+/// One **accessibility visual-sound echo** — an audio-only signal the coarse 4-kind alert HUD never
+/// draws, kept as a fading directional mark so a hard-of-hearing player has parity with the primary
+/// embodied-audio channel (invariant #6). PRESENTATION only: derived from the deterministic
+/// `SimEvent` stream, a copy of already-checksummed state, never sim state and never checksummed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SoundEcho {
+    pub kind: SoundEchoKind,
+    pub pos: Vec2,
+    pub tick: u64,
+}
+
+/// Which audio-only signal a [`SoundEcho`] mirrors. Deliberately only the two the alert HUD misses:
+/// local combat (gunfire / a death) already maps to the `TakingFire` / `UnitLost` alerts, and the
+/// player's own hits/shots already have visual feedback (hitmarker / muzzle flash / impact).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SoundEchoKind {
+    /// Your reinforcement finished production (`SimEvent::UnitProduced` for the Player) — the audio
+    /// `ProductionReady` bell, which has NO alert-HUD equivalent at all.
+    ProductionReady,
+    /// A control point changed hands without you losing it (`SimEvent::Captured`, `from != Player`) —
+    /// the *muffled strategic Capture bleed*. (A capture you lose is already the `TerritoryLost`
+    /// alert; this covers the ones the alert channel deliberately drops.)
+    CaptureBleed,
+}
+
+/// Fold this tick's `events` into the accessibility visual-sound echo buffer, then prune faded ones,
+/// so the "Visual sound cues" overlay mirrors the audio-only signals the alert HUD misses: your own
+/// `ProductionReady`, and any capture you did NOT lose (`from != Player`, the muffled strategic
+/// bleed). Deterministic stream order; PURE — a copy of already-checksummed event state, never a sim
+/// mutation, never re-folded (invariants #1/#7). Prunes on the SAME window the HUD fades on so the
+/// buffer stays bounded. Unit-tested.
+pub fn ingest_sound_echoes(echoes: &mut Vec<SoundEcho>, events: &[SimEvent], tick: u64) {
+    for event in events {
+        match *event {
+            SimEvent::UnitProduced {
+                faction: Faction::Player,
+                pos,
+            } => {
+                echoes.push(SoundEcho {
+                    kind: SoundEchoKind::ProductionReady,
+                    pos,
+                    tick,
+                });
+            }
+            SimEvent::Captured { from, pos, .. } if from != Faction::Player => {
+                echoes.push(SoundEcho {
+                    kind: SoundEchoKind::CaptureBleed,
+                    pos,
+                    tick,
+                });
+            }
+            _ => {}
+        }
+    }
+    // Drop echoes past the HUD fade window — they render as `None` anyway (place_marker floors at
+    // FADE_TICKS). `saturating_add` guards the (unreachable in practice) tick-space wrap.
+    let fade = gonedark_render::hud::FADE_TICKS;
+    echoes.retain(|e| tick < e.tick.saturating_add(fade));
+}
+
+/// Fresh-green "reinforcement" tint for the production-ready echo — off the alert palette so the
+/// accessibility echoes read as their own channel, not another alert.
+const ECHO_COLOR_PRODUCTION: [f32; 3] = [0.30, 0.85, 0.45];
+/// Cool-blue tint for the distant-capture echo (again off the warm alert axis).
+const ECHO_COLOR_CAPTURE: [f32; 3] = [0.45, 0.70, 0.95];
+/// The distant/off-map capture echo draws dimmer than a local alert — the *visual analog* of the
+/// audio low-pass "muffle" on strategic bleed (it's happening off-map, not right next to you).
+const ECHO_CAPTURE_ALPHA_SCALE: f32 = 0.6;
+
+/// Build the accessibility visual-sound-cue markers from the echo buffer for the current avatar pose,
+/// placed on the alert edge ring by bearing + faded by age (the shared [`gonedark_render::hud::
+/// place_marker`] seam), each with a per-kind glyph/color: a "+" reinforcement mark (production
+/// ready) and a dimmed ring (the distant capture bleed). PURE (GPU-free), unit-tested. Reveals only a
+/// direction — the same fairness bound as the alert HUD (invariant #6).
+fn sound_echo_markers(
+    echoes: &[SoundEcho],
+    avatar_world: (f32, f32),
+    yaw: f32,
+    tick: u64,
+) -> Vec<gonedark_render::hud::HudMarker> {
+    echoes
+        .iter()
+        .filter_map(|e| {
+            let (color, shape, alpha_scale) = match e.kind {
+                SoundEchoKind::ProductionReady => {
+                    (ECHO_COLOR_PRODUCTION, gonedark_render::hud::SHAPE_PLUS, 1.0)
+                }
+                SoundEchoKind::CaptureBleed => (
+                    ECHO_COLOR_CAPTURE,
+                    gonedark_render::hud::SHAPE_RING,
+                    ECHO_CAPTURE_ALPHA_SCALE,
+                ),
+            };
+            let pos = (fixed_to_f32(e.pos.x), fixed_to_f32(e.pos.y));
+            let mut m =
+                gonedark_render::hud::place_marker(pos, e.tick, avatar_world, yaw, tick, color, shape)?;
+            m.alpha *= alpha_scale;
+            Some(m)
+        })
+        .collect()
+}
+
 /// The embodied crouch button → a `Command::Crouch` for `player`, or `None` when no press edge
 /// fired this frame. PURE (no `Game`/device) so the toggle inversion is unit-testable. A press
 /// **edge** flips posture off the avatar's CURRENT (authoritative sim) crouched state — the host
@@ -1551,6 +1653,23 @@ pub struct Game {
     /// never checksummed (invariant #6/#7). Mutated only by the read-only `detectable_embodiment`
     /// derivation in the command-view render path.
     detection_memory: DetectionMemory,
+
+    /// Accessibility — the player's **Colorblind cues** toggle (Settings). When on, the embodied alert
+    /// HUD gains a short text label (FIRE/LOST/BASE/TERR) under each ring marker so the four alert
+    /// kinds are unmistakable without hue (invariant #6 fairness). PRESENTATION only: it changes only
+    /// what chrome the embodied render step draws, never the sim or the per-tick checksum. Default off.
+    colorblind_cues: bool,
+    /// Accessibility — the player's **Visual sound cues** toggle (Settings). When on, the audio-only
+    /// signals the coarse 4-kind alert HUD never draws get a visual echo on the same edge ring (a
+    /// production-ready "+" and a dimmed distant-capture ring), so a hard-of-hearing player has parity
+    /// with the primary embodied-audio channel (invariant #6). PRESENTATION only. Default off.
+    visual_sound_cues: bool,
+    /// The rolling buffer of accessibility visual-sound echoes ([`SoundEcho`]), folded from this
+    /// match's deterministic `SimEvent` stream ([`ingest_sound_echoes`]) and faded on the SAME window
+    /// as the alert HUD. PRESENTATION only — a copy of already-checksummed event state, never
+    /// re-folded and never checksummed (invariants #1/#7). Always ingested (cheap, bounded); it only
+    /// *renders* when `visual_sound_cues` is on.
+    sound_echoes: Vec<SoundEcho>,
 }
 
 /// Which world [`Game::new_scene`] seeds. The default match is the Phase 2 demo skirmish; the
@@ -2139,7 +2258,25 @@ impl Game {
             // memory. Presentation/intel only — never sim state, never checksummed (invariant #6/#7).
             detection: DetectionConfig::default(),
             detection_memory: DetectionMemory::new(),
+            // Accessibility cues default OFF — the base alert channel already carries shape +
+            // luminance-spread CVD redundancy and the primary audio channel, so these are opt-in
+            // intensifiers a player enables in Settings, not always-on chrome. The host pushes the
+            // stored toggles in each frame via `set_accessibility_prefs`.
+            colorblind_cues: false,
+            visual_sound_cues: false,
+            sound_echoes: Vec::new(),
         }
+    }
+
+    /// Push the player's **accessibility** prefs (Settings) into the embodied presentation layer — the
+    /// parallel to the desktop `set_gains` / `set_look_prefs` and the Android `set_touch_look_prefs`.
+    /// `colorblind_cues` adds the CVD text labels (FIRE/LOST/BASE/TERR) to the alert HUD;
+    /// `visual_sound_cues` draws the hard-of-hearing visual echoes of the audio-only signals. Host /
+    /// presentation only — neither reaches the deterministic sim or the per-tick checksum (invariants
+    /// #1/#4/#6). The host calls this each match frame from its stored Settings values.
+    pub fn set_accessibility_prefs(&mut self, colorblind_cues: bool, visual_sound_cues: bool) {
+        self.colorblind_cues = colorblind_cues;
+        self.visual_sound_cues = visual_sound_cues;
     }
 
     /// Toggle the debug hitbox / facet overlay (the host's **F3**). Visible only in the command
@@ -3287,6 +3424,12 @@ impl Game {
         let tick = self.sim.tick_count();
         self.alerts
             .ingest(&frame_events, &self.sim.world, Faction::Player, tick);
+        // Accessibility (invariant #6 fairness): fold the audio-only signals the alert HUD misses
+        // (your ProductionReady, captures you didn't lose) into the visual-sound echo buffer, faded on
+        // the same window. Cheap + bounded, so it always runs; it only *renders* when the player has
+        // the "Visual sound cues" toggle on. Presentation only — a copy of already-checksummed event
+        // state, never re-folded, never a sim mutation (invariants #1/#7).
+        ingest_sound_echoes(&mut self.sound_echoes, &frame_events, tick);
 
         // WS-4 — local hit feedback. The "I hit him" signal the game never sent: if the embodied
         // avatar's OWN shot dealt damage this frame (the pure `avatar_hit_pos` seam over the
@@ -3714,6 +3857,35 @@ impl Game {
                 viewport,
                 tick,
             );
+
+            // 8-a11y. Accessibility cues (invariant #6 fairness) — two opt-in threads that widen the
+            // going-dark channel for colorblind / hard-of-hearing players WITHOUT adding intel; both
+            // are PRESENTATION-only chrome over the dark frame, gated by their Settings toggle.
+            //
+            // CVD: label each ring marker (FIRE/LOST/BASE/TERR) so the four alert kinds read without
+            // hue. Uses the shared TextRenderer (idle embodied — command readouts are command-view);
+            // `aspect` is set every frame (the chrome-text NDC footgun). Reveals only the same
+            // directions the alert markers already do.
+            if self.colorblind_cues {
+                let aspect = width.max(1) as f32 / height.max(1) as f32;
+                self.renderer.render_alert_labels(
+                    device,
+                    queue,
+                    view,
+                    &self.alerts,
+                    listener,
+                    self.yaw,
+                    tick,
+                    aspect,
+                );
+            }
+            // HoH: echo the audio-only signals the coarse alert HUD never draws — a production-ready
+            // "+" and a dimmed distant-capture ring — on the same edge ring, mirroring the primary
+            // embodied-audio channel. Built by the pure `sound_echo_markers` seam from the echo buffer.
+            if self.visual_sound_cues {
+                let markers = sound_echo_markers(&self.sound_echoes, listener, self.yaw, tick);
+                self.renderer.render_hud_markers(device, queue, view, &markers);
+            }
 
             // 8a''. WS-A — the bullet-impact VFX: an additive spark/dust burst at the world point the
             // avatar's OWN shot last landed, projected to NDC through the active camera. A no-op once
@@ -5184,6 +5356,82 @@ mod tests {
             avatar_hit_pos(&[SimEvent::UnitProduced { faction: Faction::Player, pos: hit }], avatar, true),
             None
         );
+    }
+
+    // ---- accessibility: visual-sound echoes (HoH parity) --------------------------------------
+
+    #[test]
+    fn ingest_sound_echoes_captures_only_the_audio_only_gaps() {
+        use gonedark_core::fixed::Fixed;
+        let p = |x: i32, y: i32| Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
+        let unit = Entity { index: 1, generation: 0 };
+        let mut echoes = Vec::new();
+        ingest_sound_echoes(
+            &mut echoes,
+            &[
+                // Captured: your own reinforcement finished → a ProductionReady echo.
+                SimEvent::UnitProduced { faction: Faction::Player, pos: p(4, 4) },
+                // An enemy's production is not YOUR reinforcement bell → ignored.
+                SimEvent::UnitProduced { faction: Faction::Enemy, pos: p(5, 5) },
+                // A capture you did NOT lose (from != Player) → the muffled distant-capture bleed.
+                SimEvent::Captured { pos: p(9, 0), from: Faction::Enemy, to: Faction::Player },
+                // A capture you LOST is already the TerritoryLost alert → not echoed here.
+                SimEvent::Captured { pos: p(1, 1), from: Faction::Player, to: Faction::Enemy },
+                // Local combat is already covered by the alert HUD (TakingFire / UnitLost) → ignored.
+                SimEvent::Damaged { entity: unit, faction: Faction::Player, source: unit, amount: Fixed::from_int(3), pos: p(2, 2) },
+                SimEvent::Killed { entity: unit, faction: Faction::Player, source: unit, pos: p(2, 2) },
+            ],
+            7,
+        );
+        assert_eq!(echoes.len(), 2, "only the two audio-only gaps are echoed");
+        assert_eq!(echoes[0].kind, SoundEchoKind::ProductionReady);
+        assert_eq!(echoes[0].pos, p(4, 4));
+        assert_eq!(echoes[0].tick, 7);
+        assert_eq!(echoes[1].kind, SoundEchoKind::CaptureBleed);
+        assert_eq!(echoes[1].pos, p(9, 0));
+    }
+
+    #[test]
+    fn ingest_sound_echoes_prunes_past_the_fade_window() {
+        use gonedark_core::fixed::Fixed;
+        let fade = gonedark_render::hud::FADE_TICKS;
+        let p = Vec2::new(Fixed::from_int(1), Fixed::from_int(0));
+        let mut echoes = vec![
+            SoundEcho { kind: SoundEchoKind::ProductionReady, pos: p, tick: 0 },
+            SoundEcho { kind: SoundEchoKind::CaptureBleed, pos: p, tick: 10 },
+        ];
+        // Ingest at a tick where the first echo has just aged out (age == fade) but the second is
+        // still live; nothing new to add.
+        ingest_sound_echoes(&mut echoes, &[], fade);
+        assert_eq!(echoes.len(), 1, "the faded echo is pruned, the live one stays");
+        assert_eq!(echoes[0].tick, 10);
+    }
+
+    #[test]
+    fn sound_echo_markers_build_per_kind_glyphs_and_fade() {
+        use gonedark_core::fixed::Fixed;
+        let p = |x: i32, y: i32| Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
+        let echoes = vec![
+            SoundEcho { kind: SoundEchoKind::ProductionReady, pos: p(10, 0), tick: 0 },
+            SoundEcho { kind: SoundEchoKind::CaptureBleed, pos: p(10, 0), tick: 0 },
+        ];
+        let markers = sound_echo_markers(&echoes, (0.0, 0.0), 0.0, 0);
+        assert_eq!(markers.len(), 2);
+        // Production ready → the reinforcement "+", full-bright.
+        assert_eq!(markers[0].shape, gonedark_render::hud::SHAPE_PLUS);
+        assert_eq!([markers[0].r, markers[0].g, markers[0].b], ECHO_COLOR_PRODUCTION);
+        assert!((markers[0].alpha - 1.0).abs() < 1e-4, "fresh production echo is full alpha");
+        // Distant capture → a dimmed ring (the visual analog of the audio muffle).
+        assert_eq!(markers[1].shape, gonedark_render::hud::SHAPE_RING);
+        assert_eq!([markers[1].r, markers[1].g, markers[1].b], ECHO_COLOR_CAPTURE);
+        assert!(
+            (markers[1].alpha - ECHO_CAPTURE_ALPHA_SCALE).abs() < 1e-4,
+            "the distant capture echo is muffled (dimmer): {}",
+            markers[1].alpha
+        );
+        // Both aged past the window → nothing drawn (the frame stays untouched).
+        let faded = sound_echo_markers(&echoes, (0.0, 0.0), 0.0, gonedark_render::hud::FADE_TICKS);
+        assert!(faded.is_empty());
     }
 
     /// The crouch button toggles posture off the avatar's CURRENT sim state: standing → crouch,
