@@ -242,43 +242,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 49972,
-      "sha256": "8a6318988ad157b882fa73b5c5b4bab88c37942552ce51bfead69c2b226e9bd4",
-      "cooked_bytes": 90300,
-      "cooked_sha256": "40b0b28d9322abe98182ac9bb59c0e5699d7f11dc4f268db4bc158602e331c34",
+      "bytes": 100704,
+      "sha256": "fb32f0fac59c8e5aad6bbae268e9af4cac5b519b2671caa2d63dc9596908502a",
+      "cooked_bytes": 182700,
+      "cooked_sha256": "23a7373bab7902bb095c4664bbe43035604ef0de4f9ea4a7b4aa90dba96bbc7f",
       "lods": [
         {
           "level": 0,
           "file": "weapons/weapon_rifle.glb",
           "cooked": "weapons/weapon_rifle.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 684,
-          "bytes": 49972,
-          "sha256": "8a6318988ad157b882fa73b5c5b4bab88c37942552ce51bfead69c2b226e9bd4",
-          "cooked_bytes": 90300,
-          "cooked_sha256": "40b0b28d9322abe98182ac9bb59c0e5699d7f11dc4f268db4bc158602e331c34"
+          "tri_count": 1384,
+          "bytes": 100704,
+          "sha256": "fb32f0fac59c8e5aad6bbae268e9af4cac5b519b2671caa2d63dc9596908502a",
+          "cooked_bytes": 182700,
+          "cooked_sha256": "23a7373bab7902bb095c4664bbe43035604ef0de4f9ea4a7b4aa90dba96bbc7f"
         },
         {
           "level": 1,
           "file": "weapons/weapon_rifle.lod1.glb",
           "cooked": "weapons/weapon_rifle.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 329,
-          "bytes": 7400,
-          "sha256": "dd7b05a4f6bbc2c171f59459bcfb81940ff225da90db5f93d8c8db5f806f28f7",
-          "cooked_bytes": 43440,
-          "cooked_sha256": "8febfbb3e689a073f45b583c637bcffcf505283e40e2ce504a4999fd586da189"
+          "tri_count": 628,
+          "bytes": 13176,
+          "sha256": "c46b0f46e23187a1a208193342aad450ab87ea0af80d547cb8638e3d7b2988e4",
+          "cooked_bytes": 82908,
+          "cooked_sha256": "c5bb5827957233b92a49c510396444bb161461fd7d2c19d1523eea69c7817a4f"
         },
         {
           "level": 2,
           "file": "weapons/weapon_rifle.lod2.glb",
           "cooked": "weapons/weapon_rifle.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 160,
-          "bytes": 4336,
-          "sha256": "471305a85de835a5b6a44f5d82e80ddbeca10dc7f477418adbcc23cf75e0a6a2",
-          "cooked_bytes": 21132,
-          "cooked_sha256": "c3b7e68620f5e92964d2bc54bd96a2986b83a5f978f68869a36c469def094840"
+          "tri_count": 308,
+          "bytes": 7316,
+          "sha256": "e52382ebdb30b3214a936051212db0c23533e405961be0a50e5e77eb032b771b",
+          "cooked_bytes": 40668,
+          "cooked_sha256": "999681423644f5fee8088a0458d9006483eed86d0a4bd59df36191f19e7ab543"
         }
       ]
     },
@@ -970,43 +970,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 41796,
-      "sha256": "173f2cd14f312d01e0357596e7ca07d4b8030e466d8da2009a79b4677639a96f",
-      "cooked_bytes": 74988,
-      "cooked_sha256": "782cee408fb942e63b25d7079ffa36c1e7e2f4150df7f80a7f45b683630a08f2",
+      "bytes": 92076,
+      "sha256": "c084c343de5a8a0bbfb7e73662377d4357822fcbab63b43f8c3303072cbd68fa",
+      "cooked_bytes": 167388,
+      "cooked_sha256": "217c1a1a91f43545347e2b6caaa7be8386494c772f48b02c71336a409449d77d",
       "lods": [
         {
           "level": 0,
           "file": "weapons/weapon_rifle_us.glb",
           "cooked": "weapons/weapon_rifle_us.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 568,
-          "bytes": 41796,
-          "sha256": "173f2cd14f312d01e0357596e7ca07d4b8030e466d8da2009a79b4677639a96f",
-          "cooked_bytes": 74988,
-          "cooked_sha256": "782cee408fb942e63b25d7079ffa36c1e7e2f4150df7f80a7f45b683630a08f2"
+          "tri_count": 1268,
+          "bytes": 92076,
+          "sha256": "c084c343de5a8a0bbfb7e73662377d4357822fcbab63b43f8c3303072cbd68fa",
+          "cooked_bytes": 167388,
+          "cooked_sha256": "217c1a1a91f43545347e2b6caaa7be8386494c772f48b02c71336a409449d77d"
         },
         {
           "level": 1,
           "file": "weapons/weapon_rifle_us.lod1.glb",
           "cooked": "weapons/weapon_rifle_us.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 269,
-          "bytes": 6060,
-          "sha256": "44cef21464a523cf3dba38b83aa238c7cbefb29194633c9509b8e029e6a9ca23",
-          "cooked_bytes": 35520,
-          "cooked_sha256": "7887a99b2e17e8fab560c2c9f0a4bf65a1f5c7d8ee77a68bd8eb0f797d3ee54b"
+          "tri_count": 614,
+          "bytes": 12612,
+          "sha256": "f7dfaf6924a9b1078570a30de2b15578910ec475045194dcf890aaf6c96cf80f",
+          "cooked_bytes": 81060,
+          "cooked_sha256": "f9eddbc6be6a6baeb4f1bc456e420230040ca5eb30c3adfc2f6e16f326917eb8"
         },
         {
           "level": 2,
           "file": "weapons/weapon_rifle_us.lod2.glb",
           "cooked": "weapons/weapon_rifle_us.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 119,
-          "bytes": 3376,
-          "sha256": "890efb13e54bd1841442884ba6272069d57631f1ff8a0fbc9d0780ae4aa374bd",
-          "cooked_bytes": 15720,
-          "cooked_sha256": "43bbca969a22d35fb33623bb9eee952e214889a216aaeed4c3005da45a54199b"
+          "tri_count": 306,
+          "bytes": 7044,
+          "sha256": "41f5ea18db34f3119f631cba5801c7670fb320b7f58b6b4e5e8bfbe0949e6ad9",
+          "cooked_bytes": 40404,
+          "cooked_sha256": "755c9a926a245e65297ea7e7031c10e567058795573cefd6fad93728dc8d0b6c"
         }
       ]
     },
@@ -1026,43 +1026,43 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 29188,
-      "sha256": "9ecd97d5042bf987239a703b46c44a4842bc8e1d13c63155d3e05d2ddba54730",
-      "cooked_bytes": 51228,
-      "cooked_sha256": "a55da970bce1c5de8bc9ce38667f6027a2e8d1f475c8ae45767274c1455ca18e",
+      "bytes": 52692,
+      "sha256": "5a089653a9a22f26028d824e4406ef8400ef72418787f0a386d7ee7700a34e06",
+      "cooked_bytes": 95052,
+      "cooked_sha256": "1c0b8bfc30d9c04f37febdf0be1dd81510866a435e5dff3d69a43fd7b8421416",
       "lods": [
         {
           "level": 0,
           "file": "weapons/weapon_rifle_fr.glb",
           "cooked": "weapons/weapon_rifle_fr.mesh",
           "simplify_ratio": 1.0,
-          "tri_count": 388,
-          "bytes": 29188,
-          "sha256": "9ecd97d5042bf987239a703b46c44a4842bc8e1d13c63155d3e05d2ddba54730",
-          "cooked_bytes": 51228,
-          "cooked_sha256": "a55da970bce1c5de8bc9ce38667f6027a2e8d1f475c8ae45767274c1455ca18e"
+          "tri_count": 720,
+          "bytes": 52692,
+          "sha256": "5a089653a9a22f26028d824e4406ef8400ef72418787f0a386d7ee7700a34e06",
+          "cooked_bytes": 95052,
+          "cooked_sha256": "1c0b8bfc30d9c04f37febdf0be1dd81510866a435e5dff3d69a43fd7b8421416"
         },
         {
           "level": 1,
           "file": "weapons/weapon_rifle_fr.lod1.glb",
           "cooked": "weapons/weapon_rifle_fr.lod1.mesh",
           "simplify_ratio": 0.5,
-          "tri_count": 194,
-          "bytes": 4884,
-          "sha256": "65397b64a1f5ce2102380a4ceae14006b8f6a98c11d749faf051eff717f5bafc",
-          "cooked_bytes": 25620,
-          "cooked_sha256": "2f4e5936af7be6e8916814eab4f54980e7a2eb3ff60855e9f65685c848150390"
+          "tri_count": 360,
+          "bytes": 7872,
+          "sha256": "3b7075f2a4446142ef37a8f2a37a88cad8ed34555b022055250592396e936806",
+          "cooked_bytes": 47532,
+          "cooked_sha256": "b6ba69ddb63626c5279a55dd7a17c585a8aa8807ced3dfa362ab3253cf33a6e6"
         },
         {
           "level": 2,
           "file": "weapons/weapon_rifle_fr.lod2.glb",
           "cooked": "weapons/weapon_rifle_fr.lod2.mesh",
           "simplify_ratio": 0.25,
-          "tri_count": 92,
-          "bytes": 3040,
-          "sha256": "bc273129520a96c09cb722bda24c6f7b81e07140b87bc9d8f14f0c41bdb63424",
-          "cooked_bytes": 12156,
-          "cooked_sha256": "2295146873c29c100859f05edd73445993cf33db47c18135ea5bde642d1324d6"
+          "tri_count": 160,
+          "bytes": 4268,
+          "sha256": "37e6617d4bbf080d34b33c92b3d86b3412c36ffaaff5774b91b2104828a100f3",
+          "cooked_bytes": 21132,
+          "cooked_sha256": "c3b16e0e3a6eebfe7450753c98ee86c5d346086eff0c6b647dc5489751cd88b2"
         }
       ]
     }

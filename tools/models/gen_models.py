@@ -228,6 +228,29 @@ def chamfer(obj, width, segments=1, angle_deg=40.0):
     return obj
 
 
+def boolean_cut(target, cutters):
+    """Subtract each `cutters` object from `target` with the EXACT boolean solver, applying the
+    modifier immediately and deleting the spent cutter. This is the WS-F "boolean cuts for real
+    sloped/inset detail" lever (visual-design-plan §WS-F): a Picatinny rail's transverse slots, a
+    magazine well's inset, a skeletonized stock's lightening cut — geometry a box-stack can only fake.
+    The exact solver is a pure function of its input geometry, so `pnpm assets:models` regenerates
+    bit-identical (content-pipeline determinism). New faces inherit `target`'s material_index 0, i.e.
+    the part's own gunmetal — the cut walls stay the same colour, no extra material slot. Returns the
+    cut `target`."""
+    for c in cutters:
+        bpy.ops.object.select_all(action="DESELECT")
+        target.select_set(True)
+        bpy.context.view_layer.objects.active = target
+        m = target.modifiers.new("bool", "BOOLEAN")
+        m.operation = "DIFFERENCE"
+        m.solver = "EXACT"
+        m.object = c
+        bpy.ops.object.modifier_apply(modifier=m.name)
+    for c in cutters:
+        bpy.data.objects.remove(c, do_unlink=True)
+    return target
+
+
 def weld(name, parts, material=None, bevel=0.0):
     """Apply each part's transform, assign its material, then join into one mesh. `parts` is a list
     of either a bare object (uses the default `material`) or an `(object, material)` tuple — so a
@@ -670,23 +693,65 @@ def build_camp_hq():
     return weld("camp_hq", parts, mat, bevel=0.06)
 
 
+def picatinny_slots(x0, x1, y_half, z_top, count, slot_w=0.013, depth=0.016):
+    """Cutter boxes for a Picatinny rail's transverse recoil-groove ladder — `count` slots evenly
+    spread across [x0, x1], each a thin box straddling the rail top (`z_top`) so `boolean_cut` mills a
+    crisp cross-slot. Returns the cutter list (caller boolean-subtracts them from the rail)."""
+    cutters = []
+    for i in range(count):
+        cx = x0 + (x1 - x0) * (i + 0.5) / count
+        cutters.append(box((slot_w, y_half * 2.4, depth), (cx, 0, z_top)))
+    return cutters
+
+
 def build_weapon_rifle():
     mat = make_material("weapon_rifle", rgba("weapon_rifle"))  # gunmetal
-    # The eye-level hero prop — gets the most silhouette care: flat-top rail, ribbed handguard,
-    # front sight post, a canted magazine and a real grip+stock. Receiver at origin, barrel +X.
+    # The eye-level HERO prop (§4's own "honest weak axis") — the WS-F tier-1 model: it fills the
+    # screen embodied, so it gets the most detail budget and the boolean lever. Real Picatinny slots
+    # milled into the flat-top rail, a flared magazine WELL seating the mag into the receiver (kills
+    # the old "floating mag" read), rib bands on the handguard (the "ribbed" claim finally met), a
+    # skeletonized/lightened collapsible stock, and a proud ejection-port cover + charging handle for
+    # small-part credibility. Receiver at origin, barrel +X. bevel stays tight (0.006) — booleans do
+    # the detail, so no melty over-rounding.
+    receiver = box((0.46, 0.06, 0.11), (0.0, 0, 0))            # upper/lower receiver
+    # Ejection-port cover cut into the +Y side of the receiver, then a proud cover lip beside it.
+    boolean_cut(receiver, [box((0.11, 0.02, 0.05), (0.075, 0.031, 0.012))])
+
+    rail = box((0.40, 0.05, 0.037), (0.0, 0, 0.083))           # flat-top picatinny rail
+    # Slot the exposed rail fore & aft of where the optic clamps on (optic body spans x≈[-0.075,-0.005]).
+    boolean_cut(rail, picatinny_slots(0.02, 0.19, 0.025, 0.106, 3)
+                      + picatinny_slots(-0.185, -0.105, 0.025, 0.106, 1))
+
+    # Ribbed handguard: a smooth core tube banded by three proud rib rings — reads as segmented/ribbed
+    # rather than a plain pipe (the old failure). Rings are along +X like the tube they hug.
+    handguard = [cyl(0.030, 0.22, (0.26, 0, -0.012), rot=(0, math.radians(90), 0), verts=12)]
+    for rx in (0.17, 0.26, 0.35):
+        handguard.append(cyl(0.038, 0.018, (rx, 0, -0.012), rot=(0, math.radians(90), 0), verts=8))
+
+    # Skeletonized collapsible stock: a solid buttstock lightened by a boolean through-slot, so it
+    # reads as a wire/collapsible stock instead of a solid brick.
+    stock = box((0.20, 0.05, 0.10), (-0.32, 0, 0.0))
+    boolean_cut(stock, [box((0.11, 0.08, 0.042), (-0.335, 0, 0.0))])
+
+    # Flared magazine well bridging the receiver bottom to the canted STANAG mag — the boolean-adjacent
+    # inset read the plan calls for, minus a wasted hidden cut (the mag plugs the opening).
+    magwell = box((0.115, 0.062, 0.085), (-0.015, 0, -0.078))
+
     parts = [
-        box((0.46, 0.06, 0.11), (0.0, 0, 0)),                  # upper/lower receiver
-        box((0.40, 0.05, 0.035), (0.0, 0, 0.082)),             # flat-top picatinny rail
-        box((0.07, 0.05, 0.05), (-0.04, 0, 0.125)),            # optic body (low-profile red-dot)
-        box((0.05, 0.055, 0.025), (-0.04, 0, 0.16)),           # optic hood
-        cyl(0.032, 0.22, (0.26, 0, -0.012), rot=(0, math.radians(90), 0), verts=12),  # ribbed handguard
+        receiver, rail,
+        box((0.07, 0.05, 0.05), (-0.04, 0, 0.126)),            # optic body (low-profile red-dot)
+        box((0.05, 0.055, 0.025), (-0.04, 0, 0.161)),          # optic hood
+        box((0.04, 0.048, 0.014), (-0.055, 0, 0.14)),          # optic lens bezel (front face)
+        *handguard,
         box((0.20, 0.066, 0.012), (0.26, 0, -0.05)),           # handguard underrail (M-LOK slab)
         cyl(0.018, 0.46, (0.42, 0, 0), rot=(0, math.radians(90), 0), verts=10),  # barrel
         box((0.02, 0.03, 0.07), (0.40, 0, 0.05)),              # front sight post
         cyl(0.035, 0.06, (0.64, 0, 0), rot=(0, math.radians(90), 0), verts=10),  # muzzle device
-        box((0.07, 0.05, 0.22), (-0.02, 0, -0.15), rot=(0, math.radians(8), 0)),  # magazine (canted STANAG)
-        box((0.20, 0.05, 0.085), (-0.32, 0, 0.0)),             # collapsible stock
+        magwell,
+        box((0.07, 0.05, 0.20), (-0.02, 0, -0.155), rot=(0, math.radians(8), 0)),  # magazine (canted STANAG)
+        stock,
         box((0.06, 0.045, 0.05), (-0.20, 0, 0.05)),            # cheek riser
+        box((0.045, 0.03, 0.02), (-0.185, 0, 0.09)),           # charging-handle latch (rear-top)
         box((0.06, 0.05, 0.14), (-0.10, 0, -0.10), rot=(0, math.radians(-14), 0)),  # grip
     ]
     return weld("weapon_rifle", parts, mat, bevel=0.006)
@@ -909,16 +974,36 @@ def build_weapon_rifle_us():
     # BELOW/forward of the grip, collapsible stock to the rear, flat-top rail on top. Modelled in the
     # same frame as `weapon_rifle` so `weapon_view_model` re-bases +X→forward unchanged.
     mat = make_material("weapon_rifle_us", rgba("weapon_rifle_us"))
+    receiver = box((0.46, 0.06, 0.11), (0.0, 0, 0))            # upper/lower receiver
+    boolean_cut(receiver, [box((0.11, 0.02, 0.05), (0.075, 0.031, 0.012))])  # ejection-port pocket (+Y)
+
+    rail = box((0.40, 0.05, 0.04), (0.0, 0, 0.085))            # flat-top picatinny rail
+    boolean_cut(rail, picatinny_slots(0.02, 0.19, 0.025, 0.108, 3)
+                      + picatinny_slots(-0.19, -0.11, 0.025, 0.108, 1))  # milled recoil grooves
+
+    # Ribbed M4 handguard: smooth core + rib bands (the WS-F "ribbed" read the old smooth tube missed).
+    handguard = [cyl(0.032, 0.20, (0.30, 0, -0.02), rot=(0, math.radians(90), 0), verts=12)]
+    for rx in (0.23, 0.31, 0.39):
+        handguard.append(cyl(0.040, 0.018, (rx, 0, -0.02), rot=(0, math.radians(90), 0), verts=8))
+
+    # Skeletonized collapsible stock — the distinctive M4 lightened buttstock, via a boolean slot.
+    stock = box((0.22, 0.05, 0.10), (-0.34, 0, 0.0))
+    boolean_cut(stock, [box((0.12, 0.08, 0.044), (-0.355, 0, 0.0))])
+
+    magwell = box((0.10, 0.062, 0.085), (0.02, 0, -0.065))     # flared STANAG mag well (seats the mag)
+
     parts = [
-        box((0.46, 0.06, 0.11), (0.0, 0, 0)),                  # upper/lower receiver
-        box((0.40, 0.05, 0.04), (0.0, 0, 0.085)),              # flat-top picatinny rail
+        receiver, rail,
         box((0.07, 0.05, 0.05), (-0.05, 0, 0.13)),             # optic body (low-profile red-dot)
         box((0.05, 0.055, 0.025), (-0.05, 0, 0.165)),          # optic hood
+        box((0.04, 0.048, 0.014), (-0.065, 0, 0.145)),         # optic lens bezel (front face)
         cyl(0.018, 0.46, (0.42, 0, 0), rot=(0, math.radians(90), 0)),  # barrel (forward)
-        cyl(0.032, 0.20, (0.30, 0, -0.02), rot=(0, math.radians(90), 0), verts=12),  # ribbed handguard
-        box((0.06, 0.05, 0.20), (0.02, 0, -0.14)),             # STANAG magazine (curved, forward of grip)
+        *handguard,
+        magwell,
+        box((0.06, 0.05, 0.19), (0.02, 0, -0.145)),            # STANAG magazine (forward of grip)
         box((0.07, 0.05, 0.14), (-0.10, 0, -0.10), rot=(0, math.radians(-14), 0)),  # pistol grip
-        box((0.22, 0.05, 0.10), (-0.34, 0, 0.0)),              # collapsible stock
+        stock,
+        box((0.045, 0.03, 0.02), (-0.185, 0, 0.09)),           # charging-handle latch (rear-top)
         box((0.02, 0.03, 0.06), (0.40, 0, 0.05)),              # front sight post
     ]
     return weld("weapon_rifle_us", parts, mat, bevel=0.006)
@@ -929,13 +1014,33 @@ def build_weapon_rifle_fr():
     # (toward the stock), a tall full-length carry handle on top, short overall. Receiver at origin,
     # barrel +X, same frame as `weapon_rifle`.
     mat = make_material("weapon_rifle_fr", rgba("weapon_rifle_fr"))
+    body = box((0.50, 0.07, 0.15), (-0.05, 0, 0))              # bullpup body (action sits at the rear)
+    # Ejection-port pocket on the +Y side (bullpup port sits well aft), plus a proud cocking-handle
+    # slot milled under the carry handle up front.
+    boolean_cut(body, [box((0.10, 0.02, 0.05), (-0.16, 0.036, 0.02))])
+
+    # The FAMAS tell — the tall full-length carry handle — milled with a longitudinal sight channel
+    # down its top (the iron-sight trough), so it reads as a real sighting rib, not a plain slab.
+    handle = box((0.34, 0.03, 0.10), (-0.02, 0, 0.16))
+    boolean_cut(handle, [box((0.28, 0.016, 0.035), (-0.02, 0, 0.205))])
+
+    # Vented forward handguard under the barrel — two cooling slots cut through, the classic FAMAS
+    # ribbed forestock read (boolean lever, not a smooth block).
+    foregrip = box((0.15, 0.075, 0.075), (0.22, 0, -0.055))
+    boolean_cut(foregrip, [box((0.03, 0.09, 0.04), (0.19, 0, -0.05)),
+                           box((0.03, 0.09, 0.04), (0.26, 0, -0.05))])
+
+    magwell = box((0.075, 0.062, 0.06), (-0.20, 0, -0.05))     # flared mag well (seats the bullpup mag)
+
     parts = [
-        box((0.50, 0.07, 0.15), (-0.05, 0, 0)),                # bullpup body (action sits at the rear)
-        box((0.34, 0.03, 0.10), (-0.02, 0, 0.16)),             # tall full-length carry handle (the FAMAS tell)
+        body, handle,
         box((0.02, 0.03, 0.10), (0.15, 0, 0.11)),              # front handle post
         box((0.02, 0.03, 0.10), (-0.19, 0, 0.11)),             # rear handle post
+        box((0.045, 0.045, 0.03), (-0.19, 0, 0.075)),          # rear aperture sight (in the trough)
         cyl(0.016, 0.34, (0.38, 0, 0.0), rot=(0, math.radians(90), 0)),  # thin barrel (forward)
-        box((0.05, 0.05, 0.16), (-0.20, 0, -0.12)),            # magazine BEHIND the grip (bullpup)
+        foregrip,
+        magwell,
+        box((0.05, 0.05, 0.15), (-0.20, 0, -0.125)),           # magazine BEHIND the grip (bullpup)
         box((0.06, 0.05, 0.13), (0.02, 0, -0.10), rot=(0, math.radians(-10), 0)),  # pistol grip (forward of mag)
     ]
     return weld("weapon_rifle_fr", parts, mat, bevel=0.006)
