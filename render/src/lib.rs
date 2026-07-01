@@ -458,18 +458,23 @@ fn unit_draw_plan(
         .collect()
 }
 
-/// The base RGB color for a faction (the embodied avatar overrides this to amber).
-pub fn faction_color(faction: Faction) -> [f32; 3] {
+/// The base RGB color for a faction (the embodied avatar overrides this to amber), from a given
+/// [`theme::Palette`] — the accessibility-aware seam. The active palette is [`theme::Palette::DEFAULT`]
+/// unless the player has picked a colourblind ramp in Settings (WS-D), in which case the renderer
+/// holds the swapped palette and hands it in here. Pure; presentation only (invariant #1/#4/#6).
+pub fn faction_color_in(faction: Faction, palette: &theme::Palette) -> [f32; 3] {
     match faction {
-        Faction::Player => theme::PLAYER,
-        Faction::Enemy => theme::ENEMY,
-        Faction::Neutral => theme::NEUTRAL,
+        Faction::Player => palette.player,
+        Faction::Enemy => palette.enemy,
+        Faction::Neutral => palette.neutral,
     }
 }
 
-/// The embodied avatar's color — warm amber, the unit you possess. `pub(crate)` so the command-view
-/// readout (`readout.rs`) can exclude the avatar from the per-faction unit tally.
-pub(crate) const AVATAR_COLOR: [f32; 3] = theme::AVATAR;
+/// The base RGB color for a faction under the shipped default palette — the back-compat convenience
+/// over [`faction_color_in`] for call sites (and tests) that don't thread an accessibility palette.
+pub fn faction_color(faction: Faction) -> [f32; 3] {
+    faction_color_in(faction, &theme::Palette::DEFAULT)
+}
 
 /// Uniform scale for a tracer bolt (the `tracer` mesh is ~0.6 m along its travel axis). Render-only
 /// cosmetic scale.
@@ -523,13 +528,16 @@ pub fn interpolate_projectiles(prev: &Snapshot, alpha: f32) -> Vec<mesh::MeshIns
 /// the *current* snapshot. Control points are appended from the current snapshot (they are
 /// static, so they are not interpolated). `selected` is the set of currently-selected world
 /// (ECS) indices (command-view-only presentation state — empty while embodied); a unit whose
-/// `entity_index` is in `selected` gets [`FLAG_SELECTED`] so the shader rims it. Device-free
+/// `entity_index` is in `selected` gets [`FLAG_SELECTED`] so the shader rims it. `palette` is the
+/// active faction colour ramp (WS-D accessibility): the shipped hue palette, or a colourblind-safe
+/// alternate the player enabled in Settings — the renderer holds it and passes it in. Device-free
 /// and pure, so it is unit-testable.
 pub fn interpolate_instances(
     prev: &Snapshot,
     curr: &Snapshot,
     alpha: f32,
     selected: &[u32],
+    palette: &theme::Palette,
 ) -> Vec<UnitInstance> {
     let n = prev.units.len().min(curr.units.len());
     let mut out = Vec::with_capacity(n + curr.control_points.len());
@@ -541,11 +549,14 @@ pub fn interpolate_instances(
         let (bx, by) = (fixed_to_f32(b.pos.x), fixed_to_f32(b.pos.y));
 
         let mut flags = 0u32;
+        // Faction / avatar body colour from the ACTIVE palette (WS-D): normally the default hue
+        // ramp, or a colourblind-safe alternate when the player has one enabled in Settings. The
+        // renderer threads its held palette in; this seam never reads the sim (invariant #1/#4/#6).
         let color = if b.embodied {
             flags |= FLAG_EMBODIED;
-            AVATAR_COLOR
+            palette.avatar
         } else {
-            faction_color(b.faction)
+            faction_color_in(b.faction, palette)
         };
         // Command-layer selection highlight (presentation only — never sim state).
         if selected.contains(&b.entity_index) {
@@ -609,7 +620,7 @@ pub fn interpolate_instances(
     // Control points — static map markers, drawn as hollow rings in the owner's color. They
     // carry no embodied flag, so the dark-frame filter hides them (they are map intel).
     for cp in &curr.control_points {
-        let color = faction_color(cp.owner);
+        let color = faction_color_in(cp.owner, palette);
         out.push(UnitInstance {
             x: fixed_to_f32(cp.pos.x),
             y: fixed_to_f32(cp.pos.y),
@@ -887,6 +898,12 @@ pub struct Renderer {
     /// passes that run AFTER it this frame (radial menu, etc.) keep their glyphs square in pixels too.
     /// Pure presentation — never a sim input (invariant #1/#4). Defaults to `1.0` (square).
     chrome_aspect: f32,
+    /// The active faction colour ramp (WS-D accessibility). [`theme::Palette::DEFAULT`] until the
+    /// host pushes a colourblind-safe alternate via [`Renderer::set_palette_mode`]. Both the
+    /// instance-colour bake ([`Renderer::prepare`]) and the readout tally ([`readout::tally`]) read
+    /// from THIS palette, so the corner counts stay consistent with the colours actually drawn. Pure
+    /// presentation state — never a sim read (invariant #1/#4/#6).
+    palette: theme::Palette,
 }
 
 impl Renderer {
@@ -1053,7 +1070,17 @@ impl Renderer {
             scene_target,
             readout_tally: readout::Tally::default(),
             chrome_aspect: 1.0,
+            palette: theme::Palette::DEFAULT,
         }
+    }
+
+    /// Set the active faction colour ramp from a [`theme::PaletteMode`] (WS-D accessibility). The host
+    /// calls this each frame from the player's Settings choice (the parallel to `set_gains` /
+    /// `set_look_prefs`), BEFORE [`Renderer::prepare`], so the instance-colour bake and the readout
+    /// tally both use the same palette this frame. `Off` restores the shipped hue palette exactly.
+    /// Presentation only — never a sim input (invariant #1/#4/#6).
+    pub fn set_palette_mode(&mut self, mode: theme::PaletteMode) {
+        self.palette = theme::palette(mode);
     }
 
     /// Ensure the mesh-pass depth buffer matches `(width, height)`, recreating it only when the
@@ -1112,7 +1139,7 @@ impl Renderer {
     /// [`Renderer::render`]. `selected` carries the command-layer selected world indices so the
     /// renderer rims them (empty while embodied — presentation state only, never sim state).
     pub fn prepare(&mut self, prev: &Snapshot, curr: &Snapshot, alpha: f32, selected: &[u32]) {
-        self.instances = interpolate_instances(prev, curr, alpha, selected);
+        self.instances = interpolate_instances(prev, curr, alpha, selected, &self.palette);
         self.projectiles = interpolate_projectiles(prev, alpha);
     }
 
@@ -1170,7 +1197,7 @@ impl Renderer {
         // riding the (possibly sub-native) dyn-res scene target and upscaling soft. Pure count of the
         // visible set — no new sim read (invariant #4). While embodied this is the avatar-only set, but
         // `readout_labels` withholds the readout over the dark frame anyway (invariant #6).
-        self.readout_tally = readout::tally(&draw_set);
+        self.readout_tally = readout::tally(&draw_set, &self.palette);
 
         if world_dark {
             // Embodied: LOAD the avatar over the first-person world the host already drew. No grid,
@@ -2067,7 +2094,7 @@ mod tests {
     #[test]
     fn interpolate_classifies_still_unit_as_idle() {
         let s = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, false)]);
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[0].anim_clip, anim::AnimClip::Idle.as_u32());
     }
 
@@ -2077,7 +2104,7 @@ mod tests {
         let mut u = unit(Fixed::ZERO, Fixed::ZERO, false);
         u.vel = Vec2::new(Fixed::ONE, Fixed::ZERO); // 1 unit/tick ≫ WALK_SPEED_THRESHOLD
         let s = snapshot(0, vec![u]);
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[0].anim_clip, anim::AnimClip::Walk.as_u32());
     }
 
@@ -2088,7 +2115,7 @@ mod tests {
         u.vel = Vec2::new(Fixed::ONE, Fixed::ZERO);
         u.firing = true;
         let s = snapshot(0, vec![u]);
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[0].anim_clip, anim::AnimClip::Fire.as_u32());
     }
 
@@ -2149,7 +2176,7 @@ mod tests {
             1,
             vec![unit(Fixed::from_int(10), Fixed::from_int(20), false)],
         );
-        let out = interpolate_instances(&prev, &curr, 0.0, &[]);
+        let out = interpolate_instances(&prev, &curr, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out.len(), 1);
         assert!((out[0].x - 2.0).abs() < EPS);
         assert!((out[0].y - 4.0).abs() < EPS);
@@ -2162,7 +2189,7 @@ mod tests {
             1,
             vec![unit(Fixed::from_int(10), Fixed::from_int(20), false)],
         );
-        let out = interpolate_instances(&prev, &curr, 0.5, &[]);
+        let out = interpolate_instances(&prev, &curr, 0.5, &[], &theme::Palette::DEFAULT);
         assert_eq!(out.len(), 1);
         assert!((out[0].x - 6.0).abs() < EPS);
         assert!((out[0].y - 12.0).abs() < EPS);
@@ -2181,7 +2208,7 @@ mod tests {
             1,
             vec![unit(Fixed::from_int(10), Fixed::from_int(10), false)],
         );
-        let out = interpolate_instances(&prev, &curr, 1.0, &[]);
+        let out = interpolate_instances(&prev, &curr, 1.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out.len(), 1);
         assert!((out[0].x - 10.0).abs() < EPS);
     }
@@ -2193,9 +2220,9 @@ mod tests {
         // curr says embodied → amber color, FLAG_EMBODIED set (survives the dark filter).
         let prev = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, true)]);
         let curr = snapshot(1, vec![unit(Fixed::ONE, Fixed::ONE, true)]);
-        let out = interpolate_instances(&prev, &curr, 0.5, &[]);
+        let out = interpolate_instances(&prev, &curr, 0.5, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[0].flags & FLAG_EMBODIED, FLAG_EMBODIED);
-        assert_eq!([out[0].r, out[0].g, out[0].b], AVATAR_COLOR);
+        assert_eq!([out[0].r, out[0].g, out[0].b], theme::AVATAR);
     }
 
     #[test]
@@ -2203,7 +2230,7 @@ mod tests {
         let mut enemy = unit(Fixed::ZERO, Fixed::ZERO, false);
         enemy.faction = Faction::Enemy;
         let s = snapshot(0, vec![enemy]);
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(
             [out[0].r, out[0].g, out[0].b],
             faction_color(Faction::Enemy)
@@ -2217,7 +2244,7 @@ mod tests {
         b.building = true;
         b.health = Fixed::HALF;
         let s = snapshot(0, vec![b]);
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert!(out[0].half_extent > UNIT_HALF);
         assert!((out[0].health - 0.5).abs() < EPS);
     }
@@ -2230,7 +2257,7 @@ mod tests {
             owner: Faction::Enemy,
             progress: Fixed::ZERO,
         }];
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out.len(), 2, "one unit + one control point");
         let cp = &out[1];
         assert_eq!(cp.flags & FLAG_RING, FLAG_RING);
@@ -2242,7 +2269,7 @@ mod tests {
     #[test]
     fn empty_snapshots_yield_empty() {
         let empty = snapshot(0, vec![]);
-        assert!(interpolate_instances(&empty, &empty, 0.5, &[]).is_empty());
+        assert!(interpolate_instances(&empty, &empty, 0.5, &[], &theme::Palette::DEFAULT).is_empty());
     }
 
     // ---- selection highlight (command-view presentation) ----
@@ -2265,7 +2292,7 @@ mod tests {
                 unit_at(7, Fixed::ONE, Fixed::ONE),
             ],
         );
-        let out = interpolate_instances(&s, &s, 0.0, &[7]);
+        let out = interpolate_instances(&s, &s, 0.0, &[7], &theme::Palette::DEFAULT);
         assert_eq!(out[0].flags & FLAG_SELECTED, 0, "index 3 not selected");
         assert_eq!(
             out[1].flags & FLAG_SELECTED,
@@ -2278,7 +2305,7 @@ mod tests {
     #[test]
     fn empty_selection_flags_nothing() {
         let s = snapshot(0, vec![unit_at(3, Fixed::ZERO, Fixed::ZERO)]);
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[0].flags & FLAG_SELECTED, 0);
     }
 
@@ -2288,7 +2315,7 @@ mod tests {
         let mut u = unit(Fixed::ZERO, Fixed::ZERO, true);
         u.entity_index = 5;
         let s = snapshot(0, vec![u]);
-        let out = interpolate_instances(&s, &s, 0.0, &[5]);
+        let out = interpolate_instances(&s, &s, 0.0, &[5], &theme::Palette::DEFAULT);
         assert_eq!(out[0].flags & FLAG_EMBODIED, FLAG_EMBODIED);
         assert_eq!(out[0].flags & FLAG_SELECTED, FLAG_SELECTED);
     }
@@ -2539,7 +2566,7 @@ mod tests {
         heavy.unit_kind = UnitKind::Heavy;
         let rifle = unit(Fixed::ONE, Fixed::ONE, false);
         let s = snapshot(0, vec![heavy, rifle]);
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[0].model, mesh::ModelKind::Tank as u32, "Heavy → tank");
         assert_eq!(
             out[1].model,
@@ -2576,7 +2603,7 @@ mod tests {
         let mut base = unit(Fixed::ONE, Fixed::ONE, false);
         base.building = true;
         let s = snapshot(0, vec![at, base]);
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[0].kind, UnitKind::AntiTank as u32, "AT infantry keeps its kind");
         assert_eq!(out[1].kind, NO_TOKEN_ICON, "a building carries no kind glyph");
     }
@@ -2591,7 +2618,7 @@ mod tests {
             owner: Faction::Neutral,
             progress: Fixed::ZERO,
         }];
-        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         let ring = out.iter().find(|i| i.flags & FLAG_RING != 0).expect("a ring is appended");
         assert_eq!(ring.kind, NO_TOKEN_ICON, "a control-point ring carries no kind glyph");
     }
@@ -2686,7 +2713,7 @@ mod tests {
     fn token_icons_skips_avatar_rings_and_buildings() {
         let cam = ortho_camera(1.0);
         let set = [
-            token(0.0, 0.0, FLAG_EMBODIED, UnitKind::Rifleman as u32, AVATAR_COLOR),
+            token(0.0, 0.0, FLAG_EMBODIED, UnitKind::Rifleman as u32, theme::AVATAR),
             token(0.1, 0.0, FLAG_RING, NO_TOKEN_ICON, theme::NEUTRAL),
             token(0.2, 0.0, 0, NO_TOKEN_ICON, theme::PLAYER), // a building
             token(0.3, 0.0, 0, UnitKind::Heavy as u32, theme::PLAYER), // a real unit
@@ -2749,7 +2776,7 @@ mod tests {
     fn unit_draw_plan_drops_avatar_and_rings_keeps_visible_units() {
         // The fog-filtered set the embodied pass sees: the avatar's own body (FLAG_EMBODIED), a
         // control-point ring (FLAG_RING — map intel), and an in-sight enemy. Only the enemy is drawn.
-        let avatar = uinst(0.0, 0.0, FLAG_EMBODIED, mesh::ModelKind::Trooper, AVATAR_COLOR);
+        let avatar = uinst(0.0, 0.0, FLAG_EMBODIED, mesh::ModelKind::Trooper, theme::AVATAR);
         let ring = uinst(1.0, 0.0, FLAG_RING, mesh::ModelKind::Trooper, [0.5, 0.5, 0.6]);
         let enemy = uinst(5.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Enemy));
         let plan = unit_draw_plan(&[avatar, ring, enemy], [0.0, 0.0, 1.6]);
@@ -2826,7 +2853,7 @@ mod tests {
         curr_u.turret_yaw = Angle(ANGLE_FULL / 2); // turret turns 0 → 180°
         let prev = snapshot(0, vec![prev_u]);
         let curr = snapshot(1, vec![curr_u]);
-        let out = interpolate_instances(&prev, &curr, 0.5, &[]);
+        let out = interpolate_instances(&prev, &curr, 0.5, &[], &theme::Palette::DEFAULT);
         assert!(
             (out[0].hull_yaw - std::f32::consts::FRAC_PI_2 / 2.0).abs() < 1e-5,
             "hull tweens to 45°"

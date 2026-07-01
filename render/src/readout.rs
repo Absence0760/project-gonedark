@@ -47,7 +47,7 @@
 
 use crate::overlay::{OverlayQuad, QuadRole};
 use crate::text::{measure, Anchor};
-use crate::{faction_color, UnitInstance, FLAG_RING};
+use crate::{UnitInstance, FLAG_RING};
 use gonedark_core::components::Faction;
 // Compile-time CONSTS only — the truthful single source of the balance/tick numbers the displayed
 // income figure must agree with. Importing a `const` is not a runtime sim read: it inlines to a
@@ -71,25 +71,28 @@ pub struct Tally {
 /// the interpolator bakes the literal [`faction_color`] bytes (no shading), so a unit's body color
 /// is an exact tag. The embodied avatar (amber, [`crate::FLAG_EMBODIED`]) matches no faction here and
 /// is counted separately by the caller if needed.
-fn is_color(inst: &UnitInstance, faction: Faction) -> bool {
-    let [r, g, b] = faction_color(faction);
+fn is_color(inst: &UnitInstance, faction: Faction, palette: &crate::theme::Palette) -> bool {
+    let [r, g, b] = crate::faction_color_in(faction, palette);
     inst.r == r && inst.g == g && inst.b == b
 }
 
 /// Count the command-view draw set into a [`Tally`]. Pure (no GPU, no sim) — the testable seam.
 /// Control points are the [`FLAG_RING`] instances; player/enemy units are the non-ring instances
-/// whose body color matches the respective [`faction_color`]. Neutral/avatar instances are not
-/// tallied into either side (they are neither the player's nor the opponent's count).
-pub fn tally(instances: &[UnitInstance]) -> Tally {
+/// whose body color matches the respective [`crate::faction_color_in`] under the ACTIVE `palette`
+/// (WS-D). The palette MUST be the same one [`crate::interpolate_instances`] baked the instances with
+/// — the renderer holds one palette and threads it into both — or a colourblind ramp would zero the
+/// counts. Neutral/avatar instances are not tallied into either side (neither the player's nor the
+/// opponent's count).
+pub fn tally(instances: &[UnitInstance], palette: &crate::theme::Palette) -> Tally {
     let mut t = Tally::default();
     for inst in instances {
         if inst.flags & FLAG_RING != 0 {
             t.control_points += 1;
             continue;
         }
-        if is_color(inst, Faction::Player) {
+        if is_color(inst, Faction::Player, palette) {
             t.player_units += 1;
-        } else if is_color(inst, Faction::Enemy) {
+        } else if is_color(inst, Faction::Enemy, palette) {
             t.enemy_units += 1;
         }
     }
@@ -295,7 +298,8 @@ mod tests {
     //! seams are tested here without a GPU.
 
     use super::*;
-    use crate::{AVATAR_COLOR, FLAG_EMBODIED};
+    use crate::theme::AVATAR;
+    use crate::{faction_color, FLAG_EMBODIED};
 
     fn unit_of(faction: Faction) -> UnitInstance {
         let [r, g, b] = faction_color(faction);
@@ -324,7 +328,7 @@ mod tests {
             ring(Faction::Player),
             ring(Faction::Enemy),
         ];
-        let t = tally(&set);
+        let t = tally(&set, &crate::theme::Palette::DEFAULT);
         assert_eq!(t.player_units, 2);
         assert_eq!(t.enemy_units, 1);
         assert_eq!(t.control_points, 2, "both rings counted regardless of owner");
@@ -334,7 +338,10 @@ mod tests {
     fn rings_are_points_not_units() {
         // A ring carries a faction body color but is a control point, not a unit — it must not be
         // double-counted into the unit tallies.
-        let t = tally(&[ring(Faction::Player), ring(Faction::Enemy)]);
+        let t = tally(
+            &[ring(Faction::Player), ring(Faction::Enemy)],
+            &crate::theme::Palette::DEFAULT,
+        );
         assert_eq!(t.player_units, 0);
         assert_eq!(t.enemy_units, 0);
         assert_eq!(t.control_points, 2);
@@ -345,13 +352,13 @@ mod tests {
         // Neutral grey and the amber avatar are neither the player's nor the enemy's count.
         let neutral = unit_of(Faction::Neutral);
         let avatar = UnitInstance {
-            r: AVATAR_COLOR[0],
-            g: AVATAR_COLOR[1],
-            b: AVATAR_COLOR[2],
+            r: AVATAR[0],
+            g: AVATAR[1],
+            b: AVATAR[2],
             flags: FLAG_EMBODIED,
             ..Default::default()
         };
-        let t = tally(&[neutral, avatar]);
+        let t = tally(&[neutral, avatar], &crate::theme::Palette::DEFAULT);
         assert_eq!(t.player_units, 0);
         assert_eq!(t.enemy_units, 0);
         assert_eq!(t.control_points, 0);
@@ -359,7 +366,7 @@ mod tests {
 
     #[test]
     fn empty_set_tallies_zero() {
-        assert_eq!(tally(&[]), Tally::default());
+        assert_eq!(tally(&[], &crate::theme::Palette::DEFAULT), Tally::default());
     }
 
     // ---- readout_labels ----

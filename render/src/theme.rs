@@ -169,6 +169,175 @@ pub const DATA_TERRITORY: Rgb = [0.52, 0.82, 0.46];
 /// Resources banked.
 pub const DATA_RESOURCE: Rgb = [0.95, 0.74, 0.32];
 
+// ---- Colorblind-safe palette ramps (WS-D accessibility, invariant #6) ---------------------------
+//
+// Faction identity ("mine / theirs / neutral / the one I possess") rests on hue in the default
+// palette: cool blue vs hostile red vs grey vs amber. For a colour-vision-deficient (CVD) player
+// that hue split can collapse — red↔green under protanopia/deuteranopia, blue↔yellow under
+// tritanopia — which is unfair on a game whose whole read is "whose unit is that". The going-dark
+// alert HUD already carries redundant SHAPE + a luminance-spread palette + optional CVD text labels
+// (`hud.rs`); this is the *other* half — an opt-in alternate faction ramp, chosen so the four
+// identity colours stay mutually separable *after* the relevant dichromacy is simulated.
+//
+// The ramps are picked from the Okabe-Ito CVD-safe qualitative set (blue / orange / yellow for the
+// red-green modes; a red-green-axis set for tritanopia, whose deficiency spares that axis). This is
+// **presentation only** — the swap changes only which `f32` colour the renderer bakes into an
+// instance; it never reaches `core`/the sim or the per-tick checksum (invariant #1/#4).
+
+/// The hue-carrying identity colours the renderer bakes per unit — the subset a colourblind ramp
+/// swaps. Everything else in the palette (ink/panel/text ramp) is neutral/luminance-ordered and does
+/// not rely on hue, so it is shared across modes. A plain `Copy` value so a caller can hold the
+/// active palette and hand its fields to `faction_color_in`.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Palette {
+    /// You — the local commander's units.
+    pub player: Rgb,
+    /// Them — the hostile faction.
+    pub enemy: Rgb,
+    /// Unowned / neutral.
+    pub neutral: Rgb,
+    /// The one unit you inhabit (embodiment signature).
+    pub avatar: Rgb,
+}
+
+impl Palette {
+    /// The shipped default palette — the named [`PLAYER`]/[`ENEMY`]/[`NEUTRAL`]/[`AVATAR`] consts.
+    /// `palette(PaletteMode::Off)` returns exactly this, so the default look is byte-identical.
+    pub const DEFAULT: Palette = Palette {
+        player: PLAYER,
+        enemy: ENEMY,
+        neutral: NEUTRAL,
+        avatar: AVATAR,
+    };
+
+    /// Red-green (protanopia / deuteranopia) safe ramp. Blue + orange + yellow are the classic
+    /// Okabe-Ito pairing that survives both red-green dichromacies; neutral stays a mid grey. Avatar
+    /// (yellow) separates from enemy (orange) chiefly by luminance, which red-green CVD preserves.
+    pub const CVD_REDGREEN: Palette = Palette {
+        player: [0.00, 0.45, 0.70],  // Okabe-Ito blue
+        enemy: [0.90, 0.52, 0.00],   // orange (warm "warning", CVD-distinct from blue)
+        neutral: [0.60, 0.60, 0.62], // mid grey
+        avatar: [0.95, 0.90, 0.25],  // bright yellow — highest luminance, the possessed unit
+    };
+
+    /// Tritanopia (blue-yellow deficiency) safe ramp. Tritanopia SPARES the red-green axis, so the
+    /// ramp leans on it: green player vs red enemy vs grey neutral, with a near-white bright avatar
+    /// that separates from all three by luminance (white is stable under tritanopia).
+    pub const CVD_TRITAN: Palette = Palette {
+        player: [0.15, 0.60, 0.30],  // green (red-green axis, spared by tritanopia)
+        enemy: [0.90, 0.15, 0.20],   // red
+        neutral: [0.60, 0.60, 0.62], // mid grey
+        avatar: [0.96, 0.92, 0.90],  // bright near-white — luminance-separated from the rest
+    };
+}
+
+/// The player's colourblind-palette choice (Settings → Accessibility). `Off` is the shipped hue
+/// palette; the three CVD modes swap in an alternate faction ramp tuned for that deficiency. Stored
+/// by stable ordinal for persistence (the [`Self::index`]/[`Self::from_index`] pair), mirroring the
+/// shell's `QualityChoice`/`FactionPref`. Presentation only — never a sim input.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PaletteMode {
+    /// The shipped hue palette (blue / red / grey / amber).
+    #[default]
+    Off,
+    /// Red-green deficiency (the most common CVD) — the blue/orange ramp.
+    Deuteranopia,
+    /// The other red-green deficiency — same blue/orange ramp (both spare the blue-yellow axis).
+    Protanopia,
+    /// Blue-yellow deficiency — the red-green-axis ramp.
+    Tritanopia,
+}
+
+impl PaletteMode {
+    /// Every mode, in the stable cycle + persisted-ordinal order.
+    pub const ALL: [PaletteMode; 4] = [
+        PaletteMode::Off,
+        PaletteMode::Deuteranopia,
+        PaletteMode::Protanopia,
+        PaletteMode::Tritanopia,
+    ];
+
+    /// The on-screen label for the Settings cycler.
+    pub fn label(self) -> &'static str {
+        match self {
+            PaletteMode::Off => "Off",
+            PaletteMode::Deuteranopia => "Deuteranopia (red-green)",
+            PaletteMode::Protanopia => "Protanopia (red-green)",
+            PaletteMode::Tritanopia => "Tritanopia (blue-yellow)",
+        }
+    }
+
+    /// The next mode, wrapping — what the Settings cycler advances to.
+    pub fn next(self) -> PaletteMode {
+        let i = self.index();
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    /// This mode's stable index in [`Self::ALL`] — the persisted ordinal.
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&m| m == self).unwrap_or(0)
+    }
+
+    /// The mode at persisted index `i`, or [`PaletteMode::Off`] for an out-of-range ordinal — the
+    /// tolerant decode side of [`Self::index`].
+    pub fn from_index(i: usize) -> PaletteMode {
+        Self::ALL.get(i).copied().unwrap_or(PaletteMode::Off)
+    }
+}
+
+/// Select the active faction [`Palette`] for a [`PaletteMode`] — the pure, unit-tested selection
+/// seam. `Off` returns [`Palette::DEFAULT`] (byte-identical to the shipped look); the two red-green
+/// modes share [`Palette::CVD_REDGREEN`]; tritanopia gets [`Palette::CVD_TRITAN`].
+pub fn palette(mode: PaletteMode) -> Palette {
+    match mode {
+        PaletteMode::Off => Palette::DEFAULT,
+        PaletteMode::Deuteranopia | PaletteMode::Protanopia => Palette::CVD_REDGREEN,
+        PaletteMode::Tritanopia => Palette::CVD_TRITAN,
+    }
+}
+
+/// A dichromacy to simulate — the three single-cone-missing forms of colour blindness.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CvdSim {
+    /// Missing L-cones (red-deficient).
+    Protanopia,
+    /// Missing M-cones (green-deficient).
+    Deuteranopia,
+    /// Missing S-cones (blue-deficient).
+    Tritanopia,
+}
+
+/// Simulate how an sRGB colour `c` appears to a dichromat of type `sim`. Uses the standard
+/// full-severity sRGB-space dichromacy matrices (the Viénot/Brettel-derived approximations used by
+/// the common colourblindness simulators). Presentation-side `f32` math (invariant #1: floats live
+/// only in rendering); its only consumer is the accessibility ramp tests, which assert the CVD ramps
+/// stay mutually separable *after* this projection — i.e. that a CVD player can still tell the
+/// factions apart. Output is clamped back into `[0, 1]`.
+pub fn simulate_cvd(c: Rgb, sim: CvdSim) -> Rgb {
+    let m: [[f32; 3]; 3] = match sim {
+        CvdSim::Protanopia => [
+            [0.567, 0.433, 0.000],
+            [0.558, 0.442, 0.000],
+            [0.000, 0.242, 0.758],
+        ],
+        CvdSim::Deuteranopia => [
+            [0.625, 0.375, 0.000],
+            [0.700, 0.300, 0.000],
+            [0.000, 0.300, 0.700],
+        ],
+        CvdSim::Tritanopia => [
+            [0.950, 0.050, 0.000],
+            [0.000, 0.433, 0.567],
+            [0.000, 0.475, 0.525],
+        ],
+    };
+    let mut out = [0.0f32; 3];
+    for (i, row) in m.iter().enumerate() {
+        out[i] = (row[0] * c[0] + row[1] * c[1] + row[2] * c[2]).clamp(0.0, 1.0);
+    }
+    out
+}
+
 // ---- Type scale (NDC heights) -------------------------------------------------------------------
 //
 // The in-match HUD lays out in NDC ([-1,1], so the full screen height is 2.0). A small, fixed type
@@ -247,6 +416,141 @@ mod tests {
                     fams[i],
                     fams[j]
                 );
+            }
+        }
+    }
+
+    // ---- colourblind-safe palette ramps (WS-D) ----
+
+    fn dist2(a: Rgb, b: Rgb) -> f32 {
+        (0..3).map(|i| (a[i] - b[i]).powi(2)).sum()
+    }
+
+    /// `palette(Off)` must be byte-identical to the shipped named consts, so enabling then disabling
+    /// the accessibility ramp returns the default look exactly (no drift).
+    #[test]
+    fn off_palette_matches_the_shipped_consts() {
+        let p = palette(PaletteMode::Off);
+        assert_eq!(p, Palette::DEFAULT);
+        assert_eq!(p.player, PLAYER);
+        assert_eq!(p.enemy, ENEMY);
+        assert_eq!(p.neutral, NEUTRAL);
+        assert_eq!(p.avatar, AVATAR);
+    }
+
+    /// Every colour in every mode's palette stays a valid normalised component in `[0,1]` — an
+    /// out-of-range channel would clip unpredictably on the way to the swapchain.
+    #[test]
+    fn every_palette_mode_is_in_unit_range() {
+        for &mode in &PaletteMode::ALL {
+            let p = palette(mode);
+            for c in [p.player, p.enemy, p.neutral, p.avatar] {
+                for ch in c {
+                    assert!((0.0..=1.0).contains(&ch), "{mode:?} colour {c:?} out of [0,1]");
+                }
+            }
+        }
+    }
+
+    /// The four identity colours must be mutually distinct in EVERY mode (raw, before any CVD
+    /// projection) — the same floor the default palette holds, so a CVD ramp never accidentally
+    /// collapses two factions for a *non*-CVD player either.
+    #[test]
+    fn every_palette_modes_factions_are_mutually_distinct() {
+        for &mode in &PaletteMode::ALL {
+            let p = palette(mode);
+            let fams = [p.player, p.enemy, p.neutral, p.avatar];
+            for i in 0..fams.len() {
+                for j in (i + 1)..fams.len() {
+                    assert!(
+                        dist2(fams[i], fams[j]) > 0.05,
+                        "{mode:?}: faction colours too close: {:?} vs {:?}",
+                        fams[i],
+                        fams[j]
+                    );
+                }
+            }
+        }
+    }
+
+    /// The accessibility guarantee, made testable: for each CVD mode, SIMULATE the very deficiency it
+    /// targets on its own ramp, and assert the four factions are STILL mutually separable. This is
+    /// the property that makes the ramp fair (invariant #6) — a CVD player can still tell "mine /
+    /// theirs / neutral / possessed" apart. The floor is lower than the raw one because a dichromat
+    /// projection compresses the gamut, but it must stay well clear of a collision.
+    #[test]
+    fn cvd_ramps_stay_separable_under_their_own_deficiency() {
+        const FLOOR: f32 = 0.02; // squared-distance ≈ 0.14 Euclidean, in the compressed dichromat gamut
+        for (mode, sim) in [
+            (PaletteMode::Deuteranopia, CvdSim::Deuteranopia),
+            (PaletteMode::Protanopia, CvdSim::Protanopia),
+            (PaletteMode::Tritanopia, CvdSim::Tritanopia),
+        ] {
+            let p = palette(mode);
+            let fams = [p.player, p.enemy, p.neutral, p.avatar]
+                .map(|c| simulate_cvd(c, sim));
+            for i in 0..fams.len() {
+                for j in (i + 1)..fams.len() {
+                    assert!(
+                        dist2(fams[i], fams[j]) > FLOOR,
+                        "{mode:?}: under {sim:?} factions collide: {:?} vs {:?} (d²={})",
+                        fams[i],
+                        fams[j],
+                        dist2(fams[i], fams[j])
+                    );
+                }
+            }
+        }
+    }
+
+    /// The DEFAULT hue palette FAILS a red-green player (this is *why* the alternate ramp exists):
+    /// blue player vs red enemy is fine, but the default enemy-red and status-good-green collapse.
+    /// We prove the ramp earns its keep by showing the default player/enemy pair, while distinct,
+    /// loses a chunk of its separation under deuteranopia yet the CVD ramp keeps more — a guard that
+    /// the alternate ramp is genuinely better, not cosmetic.
+    #[test]
+    fn cvd_ramp_beats_the_default_under_red_green() {
+        let d = palette(PaletteMode::Off);
+        let c = palette(PaletteMode::Deuteranopia);
+        let sim = CvdSim::Deuteranopia;
+        // Player↔enemy separation under simulated deuteranopia, default vs CVD ramp.
+        let def_sep = dist2(simulate_cvd(d.player, sim), simulate_cvd(d.enemy, sim));
+        let cvd_sep = dist2(simulate_cvd(c.player, sim), simulate_cvd(c.enemy, sim));
+        assert!(
+            cvd_sep > def_sep,
+            "CVD ramp should separate player/enemy better under deuteranopia (cvd={cvd_sep}, default={def_sep})"
+        );
+    }
+
+    /// `PaletteMode` ordinals round-trip and `next` cycles through every mode back to the start —
+    /// the persistence + Settings-cycler contract (mirrors `QualityChoice`).
+    #[test]
+    fn palette_mode_index_round_trips_and_next_cycles() {
+        for (i, &mode) in PaletteMode::ALL.iter().enumerate() {
+            assert_eq!(mode.index(), i);
+            assert_eq!(PaletteMode::from_index(i), mode);
+        }
+        // Out-of-range ordinal falls back to Off (tolerant decode).
+        assert_eq!(PaletteMode::from_index(999), PaletteMode::Off);
+        // `next` walks the whole cycle and returns to the start after ALL.len() steps.
+        let mut m = PaletteMode::Off;
+        for _ in 0..PaletteMode::ALL.len() {
+            m = m.next();
+        }
+        assert_eq!(m, PaletteMode::Off);
+    }
+
+    /// `simulate_cvd` keeps its output in `[0,1]` and leaves a pure grey unchanged (a dichromat still
+    /// sees achromatic values), which anchors the projection as sane.
+    #[test]
+    fn simulate_cvd_is_bounded_and_greys_pass_through() {
+        for sim in [CvdSim::Protanopia, CvdSim::Deuteranopia, CvdSim::Tritanopia] {
+            for v in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                let out = simulate_cvd([v, v, v], sim);
+                for ch in out {
+                    assert!((0.0..=1.0).contains(&ch));
+                    assert!((ch - v).abs() < 1e-3, "grey {v} shifted under {sim:?}: {out:?}");
+                }
             }
         }
     }

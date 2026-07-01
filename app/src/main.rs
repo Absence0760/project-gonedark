@@ -485,13 +485,14 @@ impl App {
                     .set_look_prefs(self.settings.mouse_sensitivity, self.settings.invert_look_y);
                 self.audio
                     .set_gains(self.settings.master_volume, self.settings.sfx_volume);
-                // Accessibility cues (invariant #6 fairness): the CVD alert-HUD labels + the
-                // hard-of-hearing visual sound echoes are host-side presentation chrome; push the
-                // stored toggles into the engine before it draws this embodied frame. Neither reaches
-                // the deterministic sim.
+                // Accessibility cues (invariant #6 fairness): the CVD alert-HUD labels, the
+                // hard-of-hearing visual sound echoes, and the colourblind-safe faction palette (WS-D)
+                // are host-side presentation chrome; push the stored settings into the engine before it
+                // draws this frame. None reaches the deterministic sim.
                 game.set_accessibility_prefs(
                     self.settings.colorblind_cues,
                     self.settings.visual_sound_cues,
+                    self.settings.cvd_palette,
                 );
                 let mut input = self.input.drain_frame();
                 let viewport = surface.size();

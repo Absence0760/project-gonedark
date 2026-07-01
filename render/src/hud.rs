@@ -990,6 +990,26 @@ mod tests {
         assert!(place_marker((10.0, 0.0), 100, (0.0, 0.0), 0.0, 50, color, SHAPE_PLUS).is_none());
     }
 
+    #[test]
+    fn marker_position_encodes_only_bearing_not_distance() {
+        // Fairness guard (invariant #6) that holds under EVERY accessibility cue mode: the alert is a
+        // DIRECTIONAL ping, never a position. Two events on the same bearing from the avatar but at
+        // very different ranges must land at the SAME screen point — the marker leaks a direction, not
+        // a distance (which would be strategic intel while the map is dark). The CVD labels
+        // (`alert_labels`) and the host's visual-sound echoes both go through this same `place_marker`
+        // ring math, so proving it here proves it for every cue mode.
+        let near = alert(AlertKind::TakingFire, 3, 0, 0); // dead ahead, close
+        let far = alert(AlertKind::TakingFire, 300, 0, 0); // dead ahead, far
+        let mn = marker_for(&near, (0.0, 0.0), 0.0, 0).unwrap();
+        let mf = marker_for(&far, (0.0, 0.0), 0.0, 0).unwrap();
+        assert!((mn.ndc_x - mf.ndc_x).abs() < 1e-4 && (mn.ndc_y - mf.ndc_y).abs() < 1e-4,
+            "same bearing must map to the same screen point regardless of range: {mn:?} vs {mf:?}");
+        // Every marker also rides the fixed edge ring (its radius is RING_RADIUS), so its distance
+        // from screen-centre is constant — the position carries no range information at all.
+        let r = (mn.ndc_x * mn.ndc_x + mn.ndc_y * mn.ndc_y).sqrt();
+        assert!((r - RING_RADIUS).abs() < 1e-4, "marker sits on the fixed bearing ring, not a range");
+    }
+
     /// Validate `hud.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails
     /// the test suite instead of only blowing up at pipeline creation on a real GPU.
     #[test]

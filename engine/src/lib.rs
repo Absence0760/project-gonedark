@@ -146,6 +146,10 @@ pub mod shell_modes;
 
 pub use tuning::RenderTuning;
 pub use net_tuning::{DelayPolicy, RttDelayEstimator};
+/// The colourblind-palette accessibility mode (WS-D), re-exported so hosts that drive
+/// [`Game::set_accessibility_prefs`] can name it without a direct `gonedark_render` dependency (e.g.
+/// the Android PAL). It lives in `render::theme` — the palette single source of truth.
+pub use gonedark_render::theme::PaletteMode;
 
 /// The seed both hosts start the sim with, so desktop and Android run the bit-identical
 /// deterministic scene (invariant #1 / #7).
@@ -1664,6 +1668,12 @@ pub struct Game {
     /// production-ready "+" and a dimmed distant-capture ring), so a hard-of-hearing player has parity
     /// with the primary embodied-audio channel (invariant #6). PRESENTATION only. Default off.
     visual_sound_cues: bool,
+    /// Accessibility — the player's **Colorblind palette** choice (Settings). When not `Off`, the
+    /// renderer swaps the faction colour ramp for a colourblind-safe alternate so "mine / theirs /
+    /// neutral / possessed" stay separable without hue (WS-D, invariant #6). PRESENTATION only: it is
+    /// pushed into the renderer each frame BEFORE the instance-colour bake, and never reaches the sim
+    /// or the per-tick checksum. Default `Off`.
+    cvd_palette: gonedark_render::theme::PaletteMode,
     /// The rolling buffer of accessibility visual-sound echoes ([`SoundEcho`]), folded from this
     /// match's deterministic `SimEvent` stream ([`ingest_sound_echoes`]) and faded on the SAME window
     /// as the alert HUD. PRESENTATION only — a copy of already-checksummed event state, never
@@ -2293,6 +2303,7 @@ impl Game {
             // stored toggles in each frame via `set_accessibility_prefs`.
             colorblind_cues: false,
             visual_sound_cues: false,
+            cvd_palette: gonedark_render::theme::PaletteMode::Off,
             sound_echoes: Vec::new(),
         }
     }
@@ -2300,12 +2311,20 @@ impl Game {
     /// Push the player's **accessibility** prefs (Settings) into the embodied presentation layer — the
     /// parallel to the desktop `set_gains` / `set_look_prefs` and the Android `set_touch_look_prefs`.
     /// `colorblind_cues` adds the CVD text labels (FIRE/LOST/BASE/TERR) to the alert HUD;
-    /// `visual_sound_cues` draws the hard-of-hearing visual echoes of the audio-only signals. Host /
-    /// presentation only — neither reaches the deterministic sim or the per-tick checksum (invariants
-    /// #1/#4/#6). The host calls this each match frame from its stored Settings values.
-    pub fn set_accessibility_prefs(&mut self, colorblind_cues: bool, visual_sound_cues: bool) {
+    /// `visual_sound_cues` draws the hard-of-hearing visual echoes of the audio-only signals;
+    /// `cvd_palette` swaps the faction colour ramp for a colourblind-safe alternate (WS-D). Host /
+    /// presentation only — none reaches the deterministic sim or the per-tick checksum (invariants
+    /// #1/#4/#6). The host calls this each match frame from its stored Settings values; the palette
+    /// choice is applied to the renderer at the start of the next frame draw.
+    pub fn set_accessibility_prefs(
+        &mut self,
+        colorblind_cues: bool,
+        visual_sound_cues: bool,
+        cvd_palette: gonedark_render::theme::PaletteMode,
+    ) {
         self.colorblind_cues = colorblind_cues;
         self.visual_sound_cues = visual_sound_cues;
+        self.cvd_palette = cvd_palette;
     }
 
     /// Toggle the debug hitbox / facet overlay (the host's **F3**). Visible only in the command
@@ -3623,6 +3642,10 @@ impl Game {
         } else {
             self.selection.units.iter().map(|e| e.index).collect()
         };
+        // Accessibility (WS-D): push the player's colourblind-palette choice into the renderer BEFORE
+        // it bakes instance colours + tallies the readout this frame, so both use the same ramp. `Off`
+        // restores the shipped hue palette. Presentation only — never a sim read (invariant #1/#4/#6).
+        self.renderer.set_palette_mode(self.cvd_palette);
         self.renderer
             .prepare(&self.prev, &self.curr, alpha, &selected_indices);
 
