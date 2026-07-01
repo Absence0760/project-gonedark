@@ -109,7 +109,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Which out-of-match shell surface is up — the Compose twin of the desktop host's `Screen` enum. */
-private enum class ShellRoute { Title, ModeSelect, Settings, Profile, About, MissionSelect, Briefing, Gunsmith }
+private enum class ShellRoute { Title, ModeSelect, Settings, Profile, ArmySelect, About, MissionSelect, Briefing, Gunsmith }
 
 /**
  * The out-of-match shell navigator: a flat `when` over [ShellRoute] holding the player's prefs,
@@ -131,6 +131,9 @@ private fun Shell(
     var settings by remember { mutableStateOf(initial.settings) }
     var profile by remember { mutableStateOf(initial.profile) }
     var loadout by remember { mutableStateOf(initial.loadout) }
+    // The player's picked real-army roster (US/French), fielded at every Deploy via the `army` wire
+    // key → `Game::select_army`. Persisted like the loadout; the twin of the desktop `army_select`.
+    var army by remember { mutableStateOf(initial.army) }
     // Campaign flow state: the node being briefed, and the selected replay difficulty (threaded to
     // the engine on Deploy via the `diff` wire key, C3). `campaign` (the cleared/locked progress) is
     // hoisted to MainActivity so the match-result callback can record a win; the shell only reads it.
@@ -141,7 +144,7 @@ private fun Shell(
 
     // Persist keeps the current (hoisted) campaign so a Settings/Profile/Loadout save never clobbers
     // the campaign key back to empty.
-    fun persist() = onPersist(ShellState(settings, profile, loadout, campaign))
+    fun persist() = onPersist(ShellState(settings, profile, loadout, campaign, army))
 
     // Route a title action through the SAME pure seam the JVM tests cover (D81), so the live
     // navigation can't silently drift from `resolveTitleAction`.
@@ -151,6 +154,7 @@ private fun Shell(
             TitleRoute.ModeSelect -> route = ShellRoute.ModeSelect
             TitleRoute.Settings -> route = ShellRoute.Settings
             TitleRoute.Profile -> route = ShellRoute.Profile
+            TitleRoute.ArmySelect -> route = ShellRoute.ArmySelect
             TitleRoute.About -> route = ShellRoute.About
             TitleRoute.Quit -> onQuit()
         }
@@ -164,13 +168,15 @@ private fun Shell(
             onPvp = { applyTitle(TitleAction.Pvp) },
             onSettings = { applyTitle(TitleAction.Settings) },
             onProfile = { applyTitle(TitleAction.Profile) },
+            onArmy = { applyTitle(TitleAction.Army) },
             onAbout = { applyTitle(TitleAction.About) },
             onQuit = { applyTitle(TitleAction.Quit) },
         )
         ShellRoute.ModeSelect -> ModeSelectScreen(
             modes = shellGameModes,
-            // Pick a mode → Deploy straight into its scene with the persisted loadout (no gunsmith).
-            onPick = { onDeploy(launchConfigOf(it.sceneToken, settings, loadout)) },
+            // Pick a mode → Deploy straight into its scene with the persisted loadout + army (no
+            // gunsmith). Non-campaign, so `node` stays 0 (inert for these scenes).
+            onPick = { onDeploy(launchConfigOf(it.sceneToken, settings, loadout, army)) },
             onBack = { route = ShellRoute.Title },
         )
         ShellRoute.Settings -> SettingsScreen(
@@ -183,6 +189,15 @@ private fun Shell(
         ShellRoute.Profile -> ProfileScreen(
             state = profile,
             onChange = { profile = it; persist() },
+            onBack = { route = ShellRoute.Title },
+        )
+        ShellRoute.ArmySelect -> ArmySelectScreen(
+            selected = army,
+            // Choosing an army edits the pick in place (stays on-screen so the two identities can be
+            // compared, mirroring the desktop); it persists immediately so it survives a restart.
+            onChoose = { army = it; persist() },
+            // CONFIRM returns to the title; the confirmed pick is fielded at the next Deploy.
+            onConfirm = { route = ShellRoute.Title },
             onBack = { route = ShellRoute.Title },
         )
         ShellRoute.About -> AboutScreen(
@@ -203,7 +218,19 @@ private fun Shell(
             // gunsmith is no longer an intermediate step (D81) — threading the chosen replay tier as
             // `diff` (C3) so the engine records the clear at it on a win.
             onDeploy = {
-                onDeploy(launchConfigOf(briefedNode.sceneToken, settings, loadout, difficulty.tier()))
+                // Thread the selected campaign node index (`briefedNode.id` == the `NodeId` ordinal)
+                // as the `node` wire key so the engine resolves the right mission through the shared
+                // registry (matching the desktop host's `pending_launch` node) — no longer pinned to 0.
+                onDeploy(
+                    launchConfigOf(
+                        briefedNode.sceneToken,
+                        settings,
+                        loadout,
+                        army,
+                        difficulty.tier(),
+                        briefedNode.id,
+                    ),
+                )
             },
             onBack = { route = ShellRoute.MissionSelect },
         )
@@ -219,16 +246,19 @@ private fun Shell(
 
 /**
  * Assemble the [LaunchConfig] the engine receives at Deploy: the chosen scene token, the
- * [LoadoutSelection] slot indices, the [SettingsState] audio prefs, and the campaign replay [diff]
- * tier folded into the wire keys (`opt`/`bar`/`mag`, `vol`/`sfx`/`sens`/`invy`, `diff`). Pure — kept
- * out of the composable so the wiring is obvious. [diff] is the campaign tier rank (`0..=3`); it is
- * `0` (Recruit — inert) for non-campaign Deploys (ModeSelect), so those keep their prior behaviour.
+ * [LoadoutSelection] slot indices, the [SettingsState] audio / look / accessibility prefs, the picked
+ * [army], and the campaign replay [diff] tier + [node] index folded into the wire keys
+ * (`opt`/`bar`/`mag`, `vol`/`sfx`/`sens`/`invy`, `army`, `cvd`/`snd`, `diff`/`node`). Pure — kept out of
+ * the composable so the wiring is obvious. [diff]/[node] are the campaign replay tier + node index; both
+ * are inert (`0`) for non-campaign Deploys (ModeSelect), so those keep their prior behaviour.
  */
 private fun launchConfigOf(
     scene: String,
     settings: SettingsState,
     loadout: LoadoutSelection,
+    army: Army,
     diff: Int = 0,
+    node: Int = 0,
 ): LaunchConfig =
     LaunchConfig(
         scene = scene,
@@ -240,4 +270,8 @@ private fun launchConfigOf(
         sensX100 = settings.sensX100,
         invertY = settings.invertLookY,
         diff = diff,
+        node = node,
+        army = army.index,
+        colorblindCues = settings.colorblindCues,
+        visualSoundCues = settings.visualSoundCues,
     )

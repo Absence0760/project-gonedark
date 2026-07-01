@@ -24,6 +24,10 @@ class LaunchConfigTest {
         assertEquals(100, d.sensX100)
         assertFalse(d.invertY)
         assertEquals(0, d.diff) // Recruit — the neutral campaign tier
+        assertEquals(0, d.node) // the root campaign node
+        assertEquals(LaunchConfig.ARMY_DEFAULT, d.army) // US Army — Neutral is never a player pick
+        assertFalse(d.colorblindCues) // accessibility cues opt-in, default OFF
+        assertFalse(d.visualSoundCues)
     }
 
     @Test
@@ -38,7 +42,7 @@ class LaunchConfigTest {
     @Test
     fun decodes_a_full_v1_string() {
         val cfg = LaunchConfig.decode(
-            "v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1;diff=2",
+            "v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1;diff=2;node=3;army=2;cvd=1;snd=1",
         )
         assertEquals("mission1", cfg.scene)
         assertEquals(1, cfg.optic)
@@ -49,6 +53,50 @@ class LaunchConfigTest {
         assertEquals(250, cfg.sensX100)
         assertTrue(cfg.invertY)
         assertEquals(2, cfg.diff) // Veteran
+        assertEquals(3, cfg.node)
+        assertEquals(2, cfg.army) // French Army
+        assertTrue(cfg.colorblindCues)
+        assertTrue(cfg.visualSoundCues)
+    }
+
+    @Test
+    fun node_round_trips_and_missing_or_garbage_defaults_to_root() {
+        assertEquals(0, LaunchConfig.decode("node=0").node)
+        assertEquals(5, LaunchConfig.decode("node=5").node)
+        // Missing → root (0); negative / garbage keep the default (0).
+        assertEquals(0, LaunchConfig.decode("v=1;scene=mission1").node)
+        assertEquals(0, LaunchConfig.decode("node=-1").node)
+        assertEquals(0, LaunchConfig.decode("node=root").node)
+    }
+
+    @Test
+    fun army_round_trips_and_collapses_neutral_or_out_of_range_to_us() {
+        assertEquals(1, LaunchConfig.decode("army=1").army) // US
+        assertEquals(2, LaunchConfig.decode("army=2").army) // French
+        // Neutral (0) is never a player pick → US default (mirrors desktop decode_army).
+        assertEquals(LaunchConfig.ARMY_DEFAULT, LaunchConfig.decode("army=0").army)
+        // Out-of-range does NOT clamp to French — it degrades to the US default.
+        assertEquals(LaunchConfig.ARMY_DEFAULT, LaunchConfig.decode("army=9").army)
+        assertEquals(LaunchConfig.ARMY_DEFAULT, LaunchConfig.decode("army=-1").army)
+        // Garbage / missing → the US default.
+        assertEquals(LaunchConfig.ARMY_DEFAULT, LaunchConfig.decode("army=fr").army)
+        assertEquals(LaunchConfig.ARMY_DEFAULT, LaunchConfig.decode("v=1;scene=mission1").army)
+    }
+
+    @Test
+    fun accessibility_cues_round_trip_and_default_off() {
+        assertTrue(LaunchConfig.decode("cvd=1").colorblindCues)
+        assertTrue(LaunchConfig.decode("cvd=true").colorblindCues)
+        assertFalse(LaunchConfig.decode("cvd=0").colorblindCues)
+        assertTrue(LaunchConfig.decode("snd=1").visualSoundCues)
+        assertFalse(LaunchConfig.decode("snd=false").visualSoundCues)
+        // Missing → both OFF; garbage keeps the default (OFF).
+        val d = LaunchConfig.decode("v=1;scene=skirmish")
+        assertFalse(d.colorblindCues)
+        assertFalse(d.visualSoundCues)
+        val g = LaunchConfig.decode("cvd=maybe;snd=")
+        assertFalse(g.colorblindCues)
+        assertFalse(g.visualSoundCues)
     }
 
     @Test
@@ -134,6 +182,7 @@ class LaunchConfigTest {
         val cfg = LaunchConfig(
             scene = "mission1", optic = 2, barrel = 1, magazine = 2,
             masterPct = 30, sfxPct = 65, sensX100 = 180, invertY = true, diff = 3,
+            node = 4, army = 2, colorblindCues = true, visualSoundCues = true,
         )
         assertEquals(cfg, LaunchConfig.decode(cfg.encode()))
     }
@@ -143,9 +192,10 @@ class LaunchConfigTest {
         // The payload MainActivity.startMatch sends: a default-loadout Skirmish boot.
         val emitted = LaunchConfig(scene = "skirmish").encode()
         assertEquals(LaunchConfig(scene = "skirmish"), LaunchConfig.decode(emitted))
-        // And it is the documented v1 shape (now carrying the campaign `diff` tier, default 0).
+        // And it is the documented v1 shape (now carrying the campaign `diff`/`node`, the `army` pick,
+        // and the accessibility `cvd`/`snd` cues — all at their defaults).
         assertEquals(
-            "v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0;diff=0",
+            "v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0",
             emitted,
         )
     }

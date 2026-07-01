@@ -43,6 +43,9 @@ enum class TitleAction {
     /** Open the player profile / progression surface. */
     Profile,
 
+    /** Open the army-select screen (US vs French) — the pre-deploy roster pick (mirrors desktop). */
+    Army,
+
     /** Open the About / field-manual (controls-reference) screen. */
     About,
 
@@ -67,6 +70,9 @@ enum class TitleRoute {
 
     /** The player Profile screen (mirrors `OpenProfile`). */
     Profile,
+
+    /** The army-select screen (mirrors the desktop `OpenArmySelect`). */
+    ArmySelect,
 
     /** The About / field-manual screen (mirrors `OpenAbout`). */
     About,
@@ -94,6 +100,7 @@ fun resolveTitleAction(action: TitleAction): TitleRoute =
         TitleAction.Pve, TitleAction.Pvp -> TitleRoute.ModeSelect
         TitleAction.Settings -> TitleRoute.Settings
         TitleAction.Profile -> TitleRoute.Profile
+        TitleAction.Army -> TitleRoute.ArmySelect
         TitleAction.About -> TitleRoute.About
         TitleAction.Quit -> TitleRoute.Quit
     }

@@ -32,6 +32,8 @@ data class ShellState(
     val profile: ProfileState = ProfileState(),
     val loadout: LoadoutSelection = LoadoutSelection(),
     val campaign: CampaignProgress = CampaignProgress(),
+    /** The player's picked real-army roster (US/French), fielded at match start. Mirrors desktop. */
+    val army: Army = Army.DEFAULT,
 ) {
     companion object {
         /** The shipped defaults for every shell surface — first-launch state. */
@@ -40,6 +42,7 @@ data class ShellState(
             profile = ProfileState(),
             loadout = LoadoutSelection(),
             campaign = CampaignProgress(),
+            army = Army.DEFAULT,
         )
     }
 }
@@ -56,6 +59,8 @@ object ShellPrefsCodec {
     const val KEY_SENS = "settings.sens"
     const val KEY_INVERT_Y = "settings.invertY"
     const val KEY_QUALITY = "settings.quality"
+    const val KEY_CVD_CUES = "settings.cvdCues"
+    const val KEY_SOUND_CUES = "settings.soundCues"
 
     // --- Profile keys ---
     const val KEY_CALLSIGN = "profile.callsign"
@@ -70,6 +75,9 @@ object ShellPrefsCodec {
 
     // --- Campaign key (the cleared-set blob; see CampaignProgress.encodeCleared) ---
     const val KEY_CAMPAIGN = "campaign.cleared"
+
+    // --- Army key (the player's real-army roster pick, stored by Army.index ordinal) ---
+    const val KEY_ARMY = "army"
 
     /**
      * Encode [state] to a flat string map, writing every field as its canonical, already-clamped /
@@ -86,6 +94,8 @@ object ShellPrefsCodec {
             KEY_SENS to s.sensX100.toString(),
             KEY_INVERT_Y to boolToWire(s.invertLookY),
             KEY_QUALITY to s.quality.ordinal.toString(),
+            KEY_CVD_CUES to boolToWire(s.colorblindCues),
+            KEY_SOUND_CUES to boolToWire(s.visualSoundCues),
             KEY_CALLSIGN to sanitizeCallsign(p.callsign),
             KEY_FACTION to p.faction.ordinal.toString(),
             KEY_MATCHES to p.matchesPlayed.coerceAtLeast(0).toString(),
@@ -95,6 +105,8 @@ object ShellPrefsCodec {
             KEY_MAGAZINE to l.magazine.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
             // Only the cleared set is persisted; the topology is re-supplied from campaignNodes.
             KEY_CAMPAIGN to state.campaign.encodeCleared(),
+            // The army pick as its stable Army.index ordinal (the same tag order the wire/sim use).
+            KEY_ARMY to state.army.index.toString(),
         )
     }
 
@@ -114,6 +126,8 @@ object ShellPrefsCodec {
             sensX100 = clampInt(map[KEY_SENS], SettingsState.SENS_MIN, SettingsState.SENS_MAX, ds.sensX100),
             invertLookY = parseBool(map[KEY_INVERT_Y], ds.invertLookY),
             quality = parseQuality(map[KEY_QUALITY], ds.quality),
+            colorblindCues = parseBool(map[KEY_CVD_CUES], ds.colorblindCues),
+            visualSoundCues = parseBool(map[KEY_SOUND_CUES], ds.visualSoundCues),
         )
 
         val profile = ProfileState(
@@ -133,7 +147,16 @@ object ShellPrefsCodec {
         // The topology is re-supplied from campaignNodes; only the cleared set is decoded (tolerant).
         val campaign = CampaignProgress.decodeCleared(map[KEY_CAMPAIGN])
 
-        return ShellState(settings = settings, profile = profile, loadout = loadout, campaign = campaign)
+        // Army pick by ordinal; Neutral / out-of-range / garbage collapse to the US default (tolerant).
+        val army = Army.fromOrdinal(map[KEY_ARMY]?.trim()?.toIntOrNull() ?: Army.DEFAULT.index)
+
+        return ShellState(
+            settings = settings,
+            profile = profile,
+            loadout = loadout,
+            campaign = campaign,
+            army = army,
+        )
     }
 
     /** `"1"` for true, `"0"` for false. */

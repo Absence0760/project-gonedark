@@ -37,6 +37,12 @@ class TitleActionTest {
     }
 
     @Test
+    fun army_opens_the_army_select() {
+        // Mirrors the desktop `TitleAction::Army -> HostTransition::OpenArmySelect`.
+        assertEquals(TitleRoute.ArmySelect, resolveTitleAction(TitleAction.Army))
+    }
+
+    @Test
     fun about_opens_about() {
         assertEquals(TitleRoute.About, resolveTitleAction(TitleAction.About))
     }
@@ -55,7 +61,7 @@ class TitleActionTest {
         assertEquals(TitleRoute.ModeSelect, routes[TitleAction.Pvp])
         // No title action routes to the gunsmith any more — it lives behind Settings now (D81), and
         // TitleRoute has no Loadout member, so that's guaranteed at compile time.
-        // All seven actions produce a route (no action left unmapped — `when` is exhaustive, but this
+        // Every action produces a route (no action left unmapped — `when` is exhaustive, but this
         // pins it as the table grows).
         assertEquals(TitleAction.entries.size, routes.size)
     }

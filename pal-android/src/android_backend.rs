@@ -28,6 +28,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use gonedark_core::campaign::NodeId;
+use gonedark_core::components::{Army, Faction};
 use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 use gonedark_engine::objectives::MissionStatus;
 use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
@@ -99,7 +100,7 @@ fn android_main(app: AndroidApp) {
     // config (Scene::Skirmish, the real match — desktop's default boot), never a crash.
     let launch = read_launch_config(&app);
     info!(
-        "launch config: scene={:?} loadout=({},{},{}) vol={}% sfx={}% sens={} invy={}",
+        "launch config: scene={:?} loadout=({},{},{}) vol={}% sfx={}% sens={} invy={} diff={} node={} army={} cvd={} snd={}",
         launch.scene,
         launch.optic,
         launch.barrel,
@@ -108,6 +109,11 @@ fn android_main(app: AndroidApp) {
         launch.sfx_pct,
         launch.sens_x100,
         launch.invert_y,
+        launch.diff,
+        launch.node,
+        launch.army,
+        launch.colorblind_cues,
+        launch.visual_sound_cues,
     );
 
     // On-device frame-rate + sim-checksum heartbeat (Phase 1 exit criterion: "running at
@@ -218,6 +224,34 @@ fn android_main(app: AndroidApp) {
                                     scene,
                                     loadout,
                                 );
+                                // Field the player's picked army (Compose army-select → the `army`
+                                // wire key). Routes through the SHARED, platform-agnostic
+                                // `Game::select_army` → `core::shell` SelectArmy seam — the same
+                                // lockstep-ordered command a peer would apply, never a forked copy
+                                // (invariant #2) — exactly as the desktop host does at match start
+                                // (`app/src/main.rs`: `game.select_army(Faction::Player, ...)`). The
+                                // parser guarantees a valid combatant ordinal (1=US, 2=FR; Neutral /
+                                // out-of-range collapsed to US), so this is a deterministic match-setup
+                                // knob applied before tick 0 (checksum-neutral, WS-B). The guarded
+                                // lookup can never index past `Army::ALL`.
+                                let army = Army::ALL
+                                    .get(launch.army as usize)
+                                    .copied()
+                                    .unwrap_or(Army::Us);
+                                new_game.select_army(Faction::Player, army);
+                                // Push the player's accessibility cues (Compose Settings → the `cvd` /
+                                // `snd` wire keys) into the embodied presentation layer via the shared
+                                // `Game::set_accessibility_prefs` — the twin of the desktop host's
+                                // per-frame push (`app/src/main.rs`). Host / presentation only: it adds
+                                // the CVD text labels + visual sound echoes to the alert HUD and never
+                                // reaches the deterministic sim or the per-tick checksum (invariants
+                                // #1/#4/#6). Applied once at (re)build since the launch config is fixed
+                                // for the match's life (the surface-recreate path rebuilds the game and
+                                // re-applies from the captured config).
+                                new_game.set_accessibility_prefs(
+                                    launch.colorblind_cues,
+                                    launch.visual_sound_cues,
+                                );
                                 // Campaign-launch path (Compose parity C4): the campaign mission scene
                                 // resolves its node through the SHARED engine registry seam — never a
                                 // forked copy (invariant #2) — and applies the mission's *authored*
@@ -225,19 +259,23 @@ fn android_main(app: AndroidApp) {
                                 // (`app/src/main.rs`: `game.set_commander_difficulty(def.briefing.
                                 // difficulty)`). The commander tier is the mission's own, NOT the
                                 // player's replay `diff` (Q21: the 4→3 tier mapping is unsettled); the
-                                // `diff` tier is only remembered for the win-record below. Today the
-                                // campaign ships a single root node (`NodeId(0)` → `mission1`), so a
-                                // `Mission1` launch is that node — when a 2nd/gated node lands, the
-                                // launch wire must carry the node index (flagged in the parity report).
+                                // `diff` tier is only remembered for the win-record below. The launch
+                                // wire now carries the selected node index (`launch.node`, the
+                                // `NodeId` ordinal the Compose mission-select picked), so a 2nd/gated
+                                // node resolves correctly — matching the desktop host, which threads its
+                                // `pending_launch` node through `resolve_node` (`app/src/main.rs`).
+                                // Missing/garbage decoded to `0` (the root node), so a bare Mission1
+                                // launch still targets the root.
                                 if scene == Scene::Mission1 {
+                                    let node = NodeId(launch.node);
                                     let campaign =
                                         gonedark_engine::mission_registry::default_campaign();
                                     let registry =
                                         gonedark_engine::mission_registry::default_registry();
-                                    if let Some(def) = registry.resolve_node(&campaign, NodeId(0)) {
+                                    if let Some(def) = registry.resolve_node(&campaign, node) {
                                         new_game.set_commander_difficulty(def.briefing.difficulty);
                                     }
-                                    campaign_launch = Some((0, launch.diff));
+                                    campaign_launch = Some((launch.node, launch.diff));
                                     // A fresh launch: clear any stale win result from a prior match.
                                     campaign_result_code = None;
                                 }

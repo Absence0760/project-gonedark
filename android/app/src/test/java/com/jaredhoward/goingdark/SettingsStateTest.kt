@@ -21,6 +21,27 @@ class SettingsStateTest {
         assertEquals(100, d.sensX100)
         assertFalse(d.invertLookY)
         assertEquals(Quality.Auto, d.quality)
+        assertFalse(d.colorblindCues) // accessibility cues opt-in, default OFF
+        assertFalse(d.visualSoundCues)
+    }
+
+    @Test
+    fun accessibility_cues_default_off_and_survive_clamp() {
+        val d = SettingsState.defaults()
+        assertFalse(d.colorblindCues)
+        assertFalse(d.visualSoundCues)
+        // clamp() only re-bounds the numeric fields; the boolean cues pass through untouched.
+        val edited = SettingsState(colorblindCues = true, visualSoundCues = true, masterPct = 999).clamp()
+        assertTrue(edited.colorblindCues)
+        assertTrue(edited.visualSoundCues)
+        assertEquals(SettingsState.GAIN_PCT_MAX, edited.masterPct)
+    }
+
+    @Test
+    fun reset_clears_accessibility_cues() {
+        val edited = SettingsState(colorblindCues = true, visualSoundCues = true)
+        assertFalse(edited.reset().colorblindCues)
+        assertFalse(edited.reset().visualSoundCues)
     }
 
     @Test
