@@ -77,6 +77,9 @@ pub mod loadout_ui;
 pub mod upgrade_ui;
 /// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
 mod selection;
+/// Command-panel glanceability seams (WS-C / CP-9): pure composition-row budgeting + HP→style
+/// thresholds so a selection reads at a glance on a phone screen. Feeds `command_panel_view`.
+pub mod panel_summary;
 /// Embodied-fire input seam (W1). Owns `fire_command`: host yaw + trigger → `Command::Fire`,
 /// quantizing the aim direction to `Fixed` at the boundary (invariant #1).
 mod fire;
@@ -825,19 +828,27 @@ fn command_panel_view(
             .iter()
             .all(|&e| world.stance[e.index as usize] == first_stance);
 
+        // Composition rows via the pure glanceability seam: collapse the per-kind counts to at most
+        // COMPOSITION_ROW_BUDGET rows (with a "+N more" roll-up) so a big mixed selection can't run
+        // the panel off the bottom of a phone screen (WS-C).
+        const COMPOSITION_ROW_BUDGET: usize = 4;
         let mut lines = Vec::new();
-        for (count, label) in [
-            (riflemen, "Rifleman"),
-            (heavies, "Heavy"),
-            (tanks, "Tank"),
-            (medics, "Medic"),
-            (antitanks, "Anti-Tank"),
-        ] {
-            if count > 0 {
-                lines.push(PanelLine::new(format!("{count}x {label}"), LineStyle::Normal));
-            }
+        let counts = [
+            ("Rifleman", riflemen as u32),
+            ("Heavy", heavies as u32),
+            ("Tank", tanks as u32),
+            ("Medic", medics as u32),
+            ("Anti-Tank", antitanks as u32),
+        ];
+        for row in crate::panel_summary::composition_rows(&counts, COMPOSITION_ROW_BUDGET) {
+            lines.push(PanelLine::new(row, LineStyle::Normal));
         }
-        lines.push(PanelLine::new(format!("Avg HP: {avg_hp}%"), LineStyle::Normal));
+        // Tint the health row via the shared state language: a hurt group reads red, a healthy one
+        // green, so wounded troops register at a glance instead of as a flat neutral number (WS-C).
+        lines.push(PanelLine::new(
+            format!("Avg HP: {avg_hp}%"),
+            crate::panel_summary::hp_line_style(avg_hp),
+        ));
         lines.push(PanelLine::new(
             format!(
                 "Stance: {}",

@@ -25,10 +25,10 @@ const TOP: f32 = 0.93;
 const HALF_W: f32 = 0.30;
 /// Inner padding between the box edge and its content.
 const PAD: f32 = 0.022;
-/// Title ("OBJECTIVE") text height.
-const TITLE_SIZE: f32 = 0.044;
-/// Objective + progress row text height.
-const ROW_SIZE: f32 = 0.040;
+/// Title ("OBJECTIVE") text height — the shared type scale's section-title step (`theme`).
+const TITLE_SIZE: f32 = crate::theme::TYPE_TITLE;
+/// Objective + progress row text height — the shared type scale's body step.
+const ROW_SIZE: f32 = crate::theme::TYPE_BODY;
 /// Vertical step between row tops.
 const ROW_STEP: f32 = 0.058;
 /// Gap between the title and the first row.
@@ -41,7 +41,9 @@ const BG_ALPHA: f32 = 0.84;
 const RIM_COLOR: [f32; 3] = crate::theme::RIM;
 const RIM_ALPHA: f32 = 0.92;
 
-const TITLE_COLOR: [f32; 3] = [0.80, 0.86, 1.0];
+/// The card title tint — the shared primary bone, matching the contextual command panel's title so
+/// the two corner cards read as one designed set (WS-C: one state language across the HUD).
+const TITLE_COLOR: [f32; 3] = crate::theme::BONE;
 
 /// How the current objective reads — drives the objective line's tint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,11 +57,14 @@ pub enum ObjectiveStateView {
 }
 
 impl ObjectiveStateView {
+    /// The objective line's tint, from the shared [`theme`](crate::theme) status language so
+    /// "in progress / done / failed" matches the command panel's neutral / good / bad rows exactly:
+    /// active is the primary bone, completed the shared status-good green, failed the status-crit red.
     fn color(self) -> [f32; 3] {
         match self {
-            ObjectiveStateView::Active => [0.82, 0.84, 0.90],
-            ObjectiveStateView::Completed => [0.55, 0.85, 0.50],
-            ObjectiveStateView::Failed => [0.88, 0.48, 0.42],
+            ObjectiveStateView::Active => crate::theme::BONE,
+            ObjectiveStateView::Completed => crate::theme::STATUS_GOOD,
+            ObjectiveStateView::Failed => crate::theme::STATUS_CRIT,
         }
     }
 }
@@ -255,6 +260,20 @@ mod tests {
         let with_progress = objective_hud_quads(&view("X", ObjectiveStateView::Active, Some((1, 3))));
         let binary = objective_hud_quads(&v);
         assert!(binary[1].hh < with_progress[1].hh, "no progress row → shorter box");
+    }
+
+    #[test]
+    fn state_language_matches_the_shared_theme_palette() {
+        // WS-C: the objective card's good/bad/neutral tints are the SAME theme consts the command
+        // panel's rows use, so "done / failed / in progress" reads identically across both cards.
+        assert_eq!(ObjectiveStateView::Completed.color(), crate::theme::STATUS_GOOD);
+        assert_eq!(ObjectiveStateView::Failed.color(), crate::theme::STATUS_CRIT);
+        assert_eq!(ObjectiveStateView::Active.color(), crate::theme::BONE);
+        // Title tint + glyph sizes asserted on the actual laid-out labels (covers the wiring).
+        let ls = objective_hud_labels(&view("Take the base", ObjectiveStateView::Active, Some((1, 3))));
+        assert_eq!(ls[0].color, crate::theme::BONE, "title in the primary bone");
+        assert_eq!(ls[0].px_size, crate::theme::TYPE_TITLE, "title on the type scale");
+        assert_eq!(ls[1].px_size, crate::theme::TYPE_BODY, "rows on the type scale");
     }
 
     #[test]
