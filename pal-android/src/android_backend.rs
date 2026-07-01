@@ -27,7 +27,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use gonedark_core::campaign::NodeId;
 use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
+use gonedark_engine::objectives::MissionStatus;
 use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
 use gonedark_pal::mix::{oneshot_sound, scaled_gain, synth_bank, voice_from_cue, Mixer};
 use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Window, MAX_TOUCHES};
@@ -80,6 +82,15 @@ fn android_main(app: AndroidApp) {
     let mut rhi: Option<AndroidRhi> = None;
     let mut game: Option<Game> = None;
     let mut last_frame = Instant::now();
+    // Campaign win-reporting (Compose shell parity — the split-activity twin of the desktop host's
+    // record-on-win, `app/src/main.rs`). `campaign_launch` is `Some((node, tier))` when this launch
+    // is a campaign mission — the campaign `NodeId` index it maps to and the replay `diff` tier the
+    // clear will be recorded at. On the first frame the match reads `Won`, `campaign_result_code`
+    // latches the packed Activity result code the finish path hands back to the Compose shell (which
+    // owns campaign progress in `SharedPreferences`). A non-campaign launch or a non-win never sets
+    // it, so nothing is recorded — mirroring the desktop's "a loss records nothing".
+    let mut campaign_launch: Option<(u32, u8)> = None;
+    let mut campaign_result_code: Option<i32> = None;
 
     // The Compose shell's launch payload (scene/loadout/prefs), read once off the launching
     // `Intent` (Compose shell parity, Tier 0). Read here at startup — the engine `Game` is built
@@ -200,13 +211,37 @@ fn android_main(app: AndroidApp) {
                                     barrel: Barrel::ALL[launch.barrel as usize],
                                     magazine: Magazine::ALL[launch.magazine as usize],
                                 };
-                                game = Some(Game::new_scene_with_loadout(
+                                let mut new_game = Game::new_scene_with_loadout(
                                     new_rhi.device(),
                                     new_rhi.format(),
                                     DEFAULT_SEED,
                                     scene,
                                     loadout,
-                                ));
+                                );
+                                // Campaign-launch path (Compose parity C4): the campaign mission scene
+                                // resolves its node through the SHARED engine registry seam — never a
+                                // forked copy (invariant #2) — and applies the mission's *authored*
+                                // enemy-commander tier, exactly as the desktop host does
+                                // (`app/src/main.rs`: `game.set_commander_difficulty(def.briefing.
+                                // difficulty)`). The commander tier is the mission's own, NOT the
+                                // player's replay `diff` (Q21: the 4→3 tier mapping is unsettled); the
+                                // `diff` tier is only remembered for the win-record below. Today the
+                                // campaign ships a single root node (`NodeId(0)` → `mission1`), so a
+                                // `Mission1` launch is that node — when a 2nd/gated node lands, the
+                                // launch wire must carry the node index (flagged in the parity report).
+                                if scene == Scene::Mission1 {
+                                    let campaign =
+                                        gonedark_engine::mission_registry::default_campaign();
+                                    let registry =
+                                        gonedark_engine::mission_registry::default_registry();
+                                    if let Some(def) = registry.resolve_node(&campaign, NodeId(0)) {
+                                        new_game.set_commander_difficulty(def.briefing.difficulty);
+                                    }
+                                    campaign_launch = Some((0, launch.diff));
+                                    // A fresh launch: clear any stale win result from a prior match.
+                                    campaign_result_code = None;
+                                }
+                                game = Some(new_game);
                                 rhi = Some(new_rhi);
                                 last_frame = Instant::now();
                                 info!("wgpu surface + engine created at {w}x{h}");
@@ -305,7 +340,9 @@ fn android_main(app: AndroidApp) {
                                 input_frame.pointer_up = false;
                                 input_frame.pointer_down = false;
                             }
-                            Some(OverlayClick::Dismiss) => finish_activity(&app),
+                            Some(OverlayClick::Dismiss) => {
+                                finish_activity(&app, campaign_result_code)
+                            }
                             None => {}
                         }
                     }
@@ -334,6 +371,21 @@ fn android_main(app: AndroidApp) {
                         &thermal,
                     );
                     rhi.present(frame);
+
+                    // Record-on-win (Compose parity C5): the first frame a campaign match reads
+                    // `Won`, latch the packed Activity result code so the finish path reports the
+                    // clear back to the Compose shell. `mission_status()` is a `&self` read of the
+                    // host-side objective layer — safe now that `game.frame` (which took `&mut self`)
+                    // has returned — and never folded into the sim/checksum (invariants #1/#7), so it
+                    // cannot desync. Latched once; a loss/exit leaves it `None` and records nothing.
+                    if let Some((node, tier)) = campaign_launch {
+                        if campaign_result_code.is_none()
+                            && game.mission_status() == MissionStatus::Won
+                        {
+                            campaign_result_code =
+                                Some(crate::launch::campaign_result_code(node, tier));
+                        }
+                    }
 
                     // Heartbeat: count this presented frame, then ~once per second emit a
                     // single line with achieved FPS + the read-only sim tick/checksum + the
@@ -376,13 +428,19 @@ fn android_main(app: AndroidApp) {
 /// the post-match summary's DISMISS is tapped (`OverlayClick::Dismiss`). The `MainEvent::Destroy`
 /// that `Activity.finish()` triggers then breaks the run loop cleanly on the next poll.
 ///
+/// When `result_code` is `Some` (a campaign mission was WON — Compose parity C5), it is handed back
+/// via `Activity.setResult(int)` *before* `finish()` so the Compose shell's `ActivityResult`
+/// callback can record the clear (the split-activity twin of the desktop host's single-process
+/// record-on-win). `None` leaves the default `RESULT_CANCELED`, so a non-win return records nothing.
+/// The pure packing lives in the host-tested [`crate::launch::campaign_result_code`].
+///
 /// Best-effort over JNI and **never fatal**: any attach/lookup failure is swallowed, and a pending
 /// JVM exception is cleared so a failed call can't abort the process on the next JNI op — the same
 /// discipline the thermal reader uses (see [`crate::thermal`]). This is un-constructible glue (no
 /// real `JNIEnv`/`Activity` off a device), so it is exempt from unit coverage; the click→action
 /// decision it serves (`overlay_click_action`) is host-tested in the `engine` crate.
-fn finish_activity(app: &AndroidApp) {
-    use jni::objects::JObject;
+fn finish_activity(app: &AndroidApp, result_code: Option<i32>) {
+    use jni::objects::{JObject, JValue};
     use jni::{jni_sig, jni_str, JavaVM};
 
     // SAFETY: the pointers come from `android-activity`'s live `AndroidApp`, valid while the
@@ -395,6 +453,17 @@ fn finish_activity(app: &AndroidApp) {
     let _ = vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
         // SAFETY: `activity_ptr` is a live local ref android-activity owns for the call's duration.
         let activity = unsafe { JObject::from_raw(&*env, activity_ptr) };
+        // A campaign win: Activity.setResult(int) : void — reported BEFORE finish() so the launcher's
+        // ActivityResult callback receives it. A failed call clears the pending exception and we
+        // still fall through to finish() (fail-safe: the match must still tear down).
+        if let Some(code) = result_code {
+            if env
+                .call_method(&activity, jni_str!("setResult"), jni_sig!("(I)V"), &[JValue::Int(code)])
+                .is_err()
+            {
+                env.exception_clear();
+            }
+        }
         // Activity.finish() : void. On any failure, clear the pending exception so we fail safe.
         if env
             .call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[])

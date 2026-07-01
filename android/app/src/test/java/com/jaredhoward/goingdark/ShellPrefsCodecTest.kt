@@ -84,6 +84,32 @@ class ShellPrefsCodecTest {
     }
 
     @Test
+    fun cleared_campaign_progress_survives_the_round_trip() {
+        // Record the shipped root node cleared at Veteran, then round-trip the whole shell state.
+        val campaign = CampaignProgress().recordClear(0, Difficulty.Veteran)
+        val state = ShellState.defaults().copy(campaign = campaign)
+        val decoded = ShellPrefsCodec.decode(ShellPrefsCodec.encode(state))
+        assertEquals(campaign, decoded.campaign)
+        assertEquals(Difficulty.Veteran, decoded.campaign.bestCleared(0))
+    }
+
+    @Test
+    fun campaign_key_is_written_and_defaults_empty() {
+        // A fresh (uncleared) campaign encodes its key as an empty string; decode restores no clears.
+        val encoded = ShellPrefsCodec.encode(ShellState.defaults())
+        assertEquals("", encoded[ShellPrefsCodec.KEY_CAMPAIGN])
+        val decoded = ShellPrefsCodec.decode(encoded)
+        assertEquals(emptyMap<Int, Difficulty>(), decoded.campaign.clearedByNode)
+    }
+
+    @Test
+    fun garbage_campaign_blob_falls_back_to_no_clears() {
+        val map = mapOf(ShellPrefsCodec.KEY_CAMPAIGN to "totally-bogus;;99:99")
+        val decoded = ShellPrefsCodec.decode(map)
+        assertEquals(emptyMap<Int, Difficulty>(), decoded.campaign.clearedByNode)
+    }
+
+    @Test
     fun garbage_int_values_fall_back_to_field_defaults() {
         val ds = SettingsState.defaults()
         val dl = LoadoutSelection()

@@ -51,6 +51,15 @@ pub const SENS_MIN: u16 = 10;
 /// See [`SENS_MIN`].
 pub const SENS_MAX: u16 = 300;
 
+/// The campaign **replay difficulty** tier is carried as an integer rank `0..=3` (Recruit, Regular,
+/// Veteran, Elite — `core::campaign::Difficulty::tier`). This is the tier the campaign clear is
+/// recorded at on a win (mirroring the desktop host's `active_mission` tier, `app::main`), NOT the
+/// enemy-commander tier — the commander stays the mission's *authored* difficulty (resolved from the
+/// registry; the 4-tier campaign → 3-tier commander mapping is open question Q21). Out-of-range /
+/// missing values clamp to `Recruit` (`0`) so a stale or older wire string degrades to the neutral
+/// tier rather than failing.
+pub const DIFF_MAX: u8 = 3;
+
 /// The parsed launch payload the Compose shell hands the engine across the Activity boundary.
 ///
 /// All fields are primitives (no `engine`/`core` types) so this stays a std-only, host-compiled
@@ -75,6 +84,9 @@ pub struct LaunchConfig {
     pub sens_x100: u16,
     /// Invert the embodied vertical look axis.
     pub invert_y: bool,
+    /// Campaign replay difficulty tier, `0..=`[`DIFF_MAX`] (Recruit..Elite). The tier a campaign
+    /// clear is recorded at on a win; inert for non-campaign scenes. See [`DIFF_MAX`].
+    pub diff: u8,
 }
 
 impl Default for LaunchConfig {
@@ -91,6 +103,7 @@ impl Default for LaunchConfig {
             sfx_pct: 80,
             sens_x100: 100,
             invert_y: false,
+            diff: 0,
         }
     }
 }
@@ -130,6 +143,7 @@ pub fn parse_launch_config(raw: &str) -> LaunchConfig {
             "sfx" => cfg.sfx_pct = clamp_u8(value, GAIN_PCT_MAX, cfg.sfx_pct),
             "sens" => cfg.sens_x100 = clamp_u16(value, SENS_MIN, SENS_MAX, cfg.sens_x100),
             "invy" => cfg.invert_y = parse_bool(value, cfg.invert_y),
+            "diff" => cfg.diff = clamp_u8(value, DIFF_MAX, cfg.diff),
             _ => {} // unknown key — ignore (forward-compat)
         }
     }
@@ -190,6 +204,33 @@ pub fn sens_x100_to_f32(x: u16) -> f32 {
     x as f32 / 100.0
 }
 
+// ---------------------------------------------------------------------------------------
+// Campaign win → Activity-result code (the engine → shell return channel).
+//
+// Campaign progress is HOST-side and, on Android, lives in the Compose shell's `SharedPreferences`
+// (the `ShellPrefs`/`CampaignProgress` seam), NOT in the engine's separate `NativeActivity`. So when
+// a campaign mission is WON, the engine must report the win back to the shell for it to record the
+// clear — the split-activity analogue of the desktop host's single-process record-on-win
+// (`app::main`, where the same process owns both the match and the campaign). The lowest-friction,
+// no-Intent-construction channel is the Activity **result code** (`Activity.setResult(int)`): the
+// engine sets it before finishing, and the Compose `MainActivity`'s `ActivityResult` callback
+// decodes it. A non-win finish (loss / back-out) leaves the default `RESULT_CANCELED` (0), so the
+// shell records nothing — exactly the desktop's "a loss records nothing".
+//
+// The code packs `(node, tier)` into a single positive int at/above `RESULT_FIRST_USER` (1):
+// `code = 1 + node*4 + tier` (tier is `0..=3`). `0` (RESULT_CANCELED) and negative
+// (RESULT_OK/RESULT_FIRST_USER-relative) codes decode to "no clear". This pure packing is host-
+// tested here and mirrored by the Kotlin `CampaignResult` decoder (D79 mirrored-constants).
+// ---------------------------------------------------------------------------------------
+
+/// Pack a campaign win `(node, tier)` into the positive Activity result code the engine hands the
+/// Compose shell via `Activity.setResult`. `tier` is a campaign difficulty rank `0..=`[`DIFF_MAX`]
+/// (clamped). Always `>= 1` (RESULT_FIRST_USER), so it never collides with `RESULT_CANCELED` (0).
+pub fn campaign_result_code(node: u32, tier: u8) -> i32 {
+    let tier = tier.min(DIFF_MAX) as i32;
+    1 + node as i32 * (DIFF_MAX as i32 + 1) + tier
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +243,7 @@ mod tests {
         assert_eq!((d.master_pct, d.sfx_pct), (80, 80));
         assert_eq!(d.sens_x100, 100);
         assert!(!d.invert_y);
+        assert_eq!(d.diff, 0); // Recruit — the neutral campaign tier
     }
 
     #[test]
@@ -214,12 +256,14 @@ mod tests {
 
     #[test]
     fn parses_a_full_v1_string() {
-        let cfg = parse_launch_config("v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1");
+        let cfg =
+            parse_launch_config("v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1;diff=2");
         assert_eq!(cfg.scene, "mission1");
         assert_eq!((cfg.optic, cfg.barrel, cfg.magazine), (1, 2, 1));
         assert_eq!((cfg.master_pct, cfg.sfx_pct), (50, 70));
         assert_eq!(cfg.sens_x100, 250);
         assert!(cfg.invert_y);
+        assert_eq!(cfg.diff, 2); // Veteran
     }
 
     #[test]
@@ -231,12 +275,52 @@ mod tests {
     }
 
     #[test]
+    fn missing_diff_defaults_to_recruit() {
+        // Back-compat: an emitter from before the `diff` key (the pre-C3 wire) still decodes, with
+        // the campaign tier defaulting to Recruit (0) — the tolerant-decode contract.
+        let cfg = parse_launch_config("v=1;scene=mission1;opt=1;vol=50");
+        assert_eq!(cfg.scene, "mission1");
+        assert_eq!(cfg.diff, 0);
+    }
+
+    #[test]
+    fn diff_round_trips_every_tier_and_clamps_out_of_range() {
+        for tier in 0u8..=DIFF_MAX {
+            assert_eq!(parse_launch_config(&format!("diff={tier}")).diff, tier);
+        }
+        // Out-of-range / negative / garbage degrade to the neutral tier (clamp, keep-default).
+        assert_eq!(parse_launch_config("diff=9").diff, DIFF_MAX);
+        assert_eq!(parse_launch_config("diff=-1").diff, 0);
+        assert_eq!(parse_launch_config("diff=elite").diff, 0);
+    }
+
+    #[test]
     fn unknown_keys_are_ignored() {
-        // A future tier's key (`diff`) an older decoder doesn't know must not break the rest.
-        let cfg = parse_launch_config("scene=mission1;diff=3;newthing=foo;opt=2");
+        // A still-future key an older decoder doesn't know must not break the rest.
+        let cfg = parse_launch_config("scene=mission1;newthing=foo;opt=2");
         assert_eq!(cfg.scene, "mission1");
         assert_eq!(cfg.optic, 2);
         assert_eq!(cfg.barrel, 0); // untouched
+    }
+
+    #[test]
+    fn campaign_result_code_packs_node_and_tier_above_result_cancelled() {
+        // Every code is >= 1 (RESULT_FIRST_USER), never colliding with RESULT_CANCELLED (0).
+        for node in 0u32..3 {
+            for tier in 0u8..=DIFF_MAX {
+                let code = campaign_result_code(node, tier);
+                assert!(code >= 1, "code {code} must be >= 1");
+                // Unpacks back to the same node/tier (the Kotlin side decodes identically).
+                let base = code - 1;
+                assert_eq!(base % (DIFF_MAX as i32 + 1), tier as i32);
+                assert_eq!(base / (DIFF_MAX as i32 + 1), node as i32);
+            }
+        }
+        // The single shipped campaign node (0) at each tier maps to 1..=4.
+        assert_eq!(campaign_result_code(0, 0), 1);
+        assert_eq!(campaign_result_code(0, 3), 4);
+        // Out-of-range tier clamps rather than overflowing into the next node's range.
+        assert_eq!(campaign_result_code(0, 99), campaign_result_code(0, DIFF_MAX));
     }
 
     #[test]
