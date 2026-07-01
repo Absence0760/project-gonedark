@@ -17,6 +17,7 @@
 //! egui shell, and the wall clock that feeds per-frame `dt` into the engine's fixed-tick accumulator.
 
 use gonedark_core::campaign::{Campaign, Difficulty, NodeId};
+use gonedark_core::components::Faction;
 use gonedark_engine::loadout_ui::LoadoutEditor;
 use gonedark_engine::mission_registry::{default_campaign, default_registry, MissionRegistry};
 use gonedark_engine::objectives::MissionStatus;
@@ -33,10 +34,10 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, Window
 
 mod shell;
 use shell::{
-    apply_briefing_action, apply_loadout_action, apply_profile_action, apply_settings_action,
-    build_channel, build_stamp, resolve_title_action, AboutReturn, BriefingOutcome, EguiShell,
-    HostTransition, LoadoutStep, MissionSelectAction, ModeSelectAction, ProfileState, ProfileStep,
-    SettingsState, SettingsStep,
+    apply_army_select_action, apply_briefing_action, apply_loadout_action, apply_profile_action,
+    apply_settings_action, build_channel, build_stamp, resolve_title_action, AboutReturn,
+    ArmySelectState, ArmySelectStep, BriefingOutcome, EguiShell, HostTransition, LoadoutStep,
+    MissionSelectAction, ModeSelectAction, ProfileState, ProfileStep, SettingsState, SettingsStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -54,6 +55,9 @@ enum Screen {
     Settings,
     /// The out-of-match player Profile screen. State lives on [`App::profile`].
     Profile,
+    /// The **army-select** screen — pick the US/FR roster the player deploys as (factions-plan WS-D,
+    /// D68). State lives on [`App::army_select`]; carries no data of its own.
+    ArmySelect,
     /// The Pve/Pvp **mode / map select** screen (D81). Reads the static
     /// [`gonedark_engine::shell_modes::SHELL_GAME_MODES`]; carries no host data. Picking a mode sets
     /// [`App::scene`] and deploys straight into the match with the persisted loadout.
@@ -120,6 +124,10 @@ struct App {
     settings: SettingsState,
     /// Host-side player identity + lifetime record shown on the Profile screen. Presentation only.
     profile: ProfileState,
+    /// Host-side army pick (US/FR) edited on the army-select screen. **Match-setup config**: it never
+    /// reaches the sim except through the `core::shell` SelectArmy seam at match start
+    /// ([`App::enter_match`] → `Game::select_army`), and persists across launches in the shell prefs.
+    army_select: ArmySelectState,
 
     /// The Operations-hub campaign model (PvE WS-B, D58) the mission-select / briefing screens read
     /// and a win advances. **Host-side meta-progression — never sim state, never in the per-tick
@@ -158,7 +166,7 @@ impl App {
         // Restore the player's Settings / Profile / gunsmith loadout from the last session (falls back
         // to defaults on a fresh device or a corrupt blob). Host-side presentation state only — never
         // sim state (invariant #1), persisted to its own blob alongside campaign progress.
-        let (settings, profile, loadout) = load_shell_prefs();
+        let (settings, profile, loadout, army_select) = load_shell_prefs();
         App {
             surface: None,
             shell: None,
@@ -174,6 +182,7 @@ impl App {
             loadout,
             settings,
             profile,
+            army_select,
             campaign,
             registry: default_registry(),
             briefing_difficulty: Difficulty::default(),
@@ -214,7 +223,7 @@ impl App {
         let device = surface.device();
         let format = surface.format();
         let loadout = self.loadout.current();
-        let game = if let Some((node, difficulty)) = self.pending_launch.take() {
+        let mut game = if let Some((node, difficulty)) = self.pending_launch.take() {
             let mut game =
                 Game::new_scene_with_loadout(device, format, DEFAULT_SEED, Scene::Mission1, loadout);
             if let Some(def) = self.registry.resolve_node(&self.campaign, node) {
@@ -229,6 +238,12 @@ impl App {
             self.active_mission = None;
             Game::new_scene_with_loadout(device, format, DEFAULT_SEED, self.scene, loadout)
         };
+        // Field the player's picked army at match setup. `Game::select_army` routes it through the
+        // `core::shell` SelectArmy seam (the same lockstep-ordered command a peer would apply) and
+        // records it on the sim before tick 0 — match-setup config, checksum-neutral (invariant #7),
+        // so `gunsmith::pool_for` / `economy::unit_stats_for` field the chosen roster (WS-B). The
+        // enemy side keeps its scene/mission-seeded army (not this host pick).
+        game.select_army(Faction::Player, self.army_select.selected);
         self.mission_recorded = false;
         self.screen = Screen::InMatch(Box::new(game));
         // Don't charge the time spent on the out-of-match screens to the first sim tick.
@@ -374,6 +389,18 @@ impl App {
                         transition = match apply_profile_action(action, &mut self.profile) {
                             ProfileStep::Stay => None,
                             ProfileStep::Back => Some(HostTransition::ExitToTitle),
+                        };
+                    }
+                }
+            }
+            Screen::ArmySelect => {
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) = sh.draw_army_select(surface, &self.army_select) {
+                        // Choosing an army edits the pick in place (Stay); CONFIRM returns to the
+                        // title with the pick persisted (the persist gate below fires on the way out).
+                        transition = match apply_army_select_action(action, &mut self.army_select) {
+                            ArmySelectStep::Stay => None,
+                            ArmySelectStep::Confirm => Some(HostTransition::ExitToTitle),
                         };
                     }
                 }
@@ -534,10 +561,10 @@ impl App {
         if transition.is_some()
             && matches!(
                 self.screen,
-                Screen::Settings | Screen::Profile | Screen::Loadout
+                Screen::Settings | Screen::Profile | Screen::Loadout | Screen::ArmySelect
             )
         {
-            persist_shell_prefs(&self.settings, &self.profile, &self.loadout);
+            persist_shell_prefs(&self.settings, &self.profile, &self.loadout, &self.army_select);
         }
 
         match transition {
@@ -587,6 +614,10 @@ impl App {
             }
             Some(HostTransition::OpenProfile) => {
                 self.screen = Screen::Profile;
+                self.last_frame = Instant::now();
+            }
+            Some(HostTransition::OpenArmySelect) => {
+                self.screen = Screen::ArmySelect;
                 self.last_frame = Instant::now();
             }
             Some(HostTransition::OpenAbout(ret)) => {
@@ -662,11 +693,12 @@ impl ApplicationHandler for App {
         // nothing leaks between the shell and the sim.)
         match self.screen {
             // The egui shell owns input on every out-of-match screen (title, gunsmith, settings,
-            // profile, mission-select, briefing, about).
+            // profile, army-select, mode-select, mission-select, briefing, about).
             Screen::Title
             | Screen::Loadout
             | Screen::Settings
             | Screen::Profile
+            | Screen::ArmySelect
             | Screen::ModeSelect
             | Screen::MissionSelect
             | Screen::Briefing(_)
@@ -807,8 +839,15 @@ fn shell_prefs_path() -> Option<PathBuf> {
 /// defaults (decode is total — it never fails), so a fresh device or a corrupt save just starts
 /// clean. **Host-side presentation state only** — never sim state, never checksummed (invariant #1).
 /// Glue (fs); the decode logic + its tolerance are unit-tested in `shell`.
-fn load_shell_prefs() -> (SettingsState, ProfileState, LoadoutEditor) {
-    let defaults = || (SettingsState::default(), ProfileState::default(), LoadoutEditor::new());
+fn load_shell_prefs() -> (SettingsState, ProfileState, LoadoutEditor, ArmySelectState) {
+    let defaults = || {
+        (
+            SettingsState::default(),
+            ProfileState::default(),
+            LoadoutEditor::new(),
+            ArmySelectState::default(),
+        )
+    };
     let Some(path) = shell_prefs_path() else {
         return defaults();
     };
@@ -822,14 +861,19 @@ fn load_shell_prefs() -> (SettingsState, ProfileState, LoadoutEditor) {
 /// [`shell::encode_shell_prefs`] seam, creating the data dir if needed. Best-effort (a write failure
 /// is swallowed — the state is in memory regardless), and on the same lifecycle as
 /// [`persist_campaign`]. Presentation state only, never a sim/checksum surface. Glue (fs).
-fn persist_shell_prefs(settings: &SettingsState, profile: &ProfileState, loadout: &LoadoutEditor) {
+fn persist_shell_prefs(
+    settings: &SettingsState,
+    profile: &ProfileState,
+    loadout: &LoadoutEditor,
+    army: &ArmySelectState,
+) {
     let Some(path) = shell_prefs_path() else {
         return;
     };
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&path, shell::encode_shell_prefs(settings, profile, loadout));
+    let _ = std::fs::write(&path, shell::encode_shell_prefs(settings, profile, loadout, army));
 }
 
 fn main() {

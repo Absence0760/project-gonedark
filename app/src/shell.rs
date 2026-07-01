@@ -14,6 +14,7 @@
 use gonedark_core::campaign::{
     Campaign, Difficulty, MissionSelectEntry, NodeId, NodeProgress,
 };
+use gonedark_core::components::Army;
 use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
@@ -37,6 +38,10 @@ pub enum TitleAction {
     Settings,
     /// Open the player profile / progression surface (a no-op placeholder until it lands).
     Profile,
+    /// Open the **army-select** screen — pick which real-army roster (US vs French, `docs/factions.md`,
+    /// D68) the player deploys as. A pre-deploy pick that routes through the `core::shell` SelectArmy
+    /// seam and is fielded at every match start.
+    Army,
     /// Open the About / field-manual (controls-reference) screen straight from the title. Mirrors
     /// Android's `TitleAction.About` — on desktop About is *also* reachable from Settings, so its
     /// return target is carried through [`AboutReturn`] rather than fixed.
@@ -88,6 +93,10 @@ pub enum HostTransition {
     OpenSettings,
     /// Switch the host to the player Profile screen (callsign, faction preference, lifetime record).
     OpenProfile,
+    /// Switch the host to the **army-select** screen — choose the US/FR roster the player fields
+    /// (factions-plan WS-D, D68). Reached from the title; the confirmed pick persists and is fielded
+    /// at every subsequent match start (both the PvE/PvP mode-select and the campaign deploy paths).
+    OpenArmySelect,
     /// Switch the host to the About / controls-reference screen, remembering where BACK returns to
     /// ([`AboutReturn`]) — reachable from both the title and Settings.
     OpenAbout(AboutReturn),
@@ -115,6 +124,9 @@ pub fn resolve_title_action(action: TitleAction) -> HostTransition {
         TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenModeSelect,
         TitleAction::Settings => HostTransition::OpenSettings,
         TitleAction::Profile => HostTransition::OpenProfile,
+        // The ARMY chip opens the army-select screen (US vs FR); the confirmed pick routes through
+        // the SelectArmy seam at match start.
+        TitleAction::Army => HostTransition::OpenArmySelect,
         // The FIELD MANUAL button opens About and returns to the title on BACK (Android parity).
         TitleAction::About => HostTransition::OpenAbout(AboutReturn::Title),
         TitleAction::Quit => HostTransition::Exit,
@@ -519,6 +531,91 @@ pub fn apply_profile_action(action: ProfileAction, profile: &mut ProfileState) -
     }
 }
 
+// ---- The army-select screen — pure seam (unit-tested) -------------------------------------------
+
+/// The player-selectable armies on the army-select screen, in the fixed cycle/display order. Only the
+/// **combatant** rosters (US, French) are offered — [`Army::Neutral`] is the non-aligned default and
+/// is never a player pick (a commander always fields a real army; factions-plan WS-A). Pure data.
+pub const SELECTABLE_ARMIES: [Army; 2] = [Army::Us, Army::Fr];
+
+/// The on-screen name for an [`Army`] (the army-select card + title readout). ASCII only so it can
+/// never tofu in egui's default font. Pure — unit-tested.
+pub fn army_label(army: Army) -> &'static str {
+    match army {
+        Army::Us => "US Army",
+        Army::Fr => "French Army",
+        Army::Neutral => "Non-aligned",
+    }
+}
+
+/// A one-line identity/flavour blurb for an [`Army`] — the real-platform anchors from
+/// `docs/factions.md` §4, so the two cards read as distinct forces. Flavour only: asymmetry is of
+/// feel, never of power (the fairness bound, factions.md §2 / pillar 4). ASCII only. Pure —
+/// unit-tested.
+pub fn army_flavor(army: Army) -> &'static str {
+    match army {
+        Army::Us => "M4 carbines, M1 Abrams armour, combat medics -- the US Army roster.",
+        Army::Fr => "FAMAS rifles, Leclerc armour, auxiliaires sanitaires -- the French Army roster.",
+        Army::Neutral => "No real-army identity -- the non-aligned default.",
+    }
+}
+
+/// Host-side army-select state — which real-army roster the player fields. **Match-setup config**, not
+/// sim state: it is routed to the sim through the `core::shell` SelectArmy seam at match start (never
+/// checksummed itself — invariant #7). Persists across launches like the loadout / faction preference.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ArmySelectState {
+    /// The currently-selected army. Defaults to [`Army::Us`] (a real combatant roster — never the
+    /// non-aligned [`Army::Neutral`], which is not a player pick).
+    pub selected: Army,
+}
+
+impl Default for ArmySelectState {
+    fn default() -> Self {
+        ArmySelectState {
+            selected: Army::Us,
+        }
+    }
+}
+
+/// An action the army-select screen can emit in a frame. Choosing an army is an in-place edit (stays
+/// on-screen so the player can compare the two identities); CONFIRM commits and returns.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ArmySelectAction {
+    /// Select an army (an in-place edit — stays on the screen).
+    Choose(Army),
+    /// Confirm the current selection and return to the title (the pick persists + is fielded next
+    /// match).
+    Confirm,
+}
+
+/// The screen-level outcome of an [`ArmySelectAction`] once applied — what the run loop switches on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ArmySelectStep {
+    /// Stay on army-select (a selection changed, or nothing happened this frame).
+    Stay,
+    /// Confirm the pick and return to the title.
+    Confirm,
+}
+
+/// Apply an [`ArmySelectAction`] to the army-select state and report the resulting screen step.
+/// `Choose` records the selection and stays; `Confirm` is the screen transition the run loop acts on.
+/// Pure (no egui/window) — the army-select testable decision seam, mirroring [`apply_profile_action`].
+/// It never touches the sim; the sim only sees the pick via the `core::shell` SelectArmy seam that the
+/// host resolves at match start (`Game::select_army`).
+pub fn apply_army_select_action(
+    action: ArmySelectAction,
+    state: &mut ArmySelectState,
+) -> ArmySelectStep {
+    match action {
+        ArmySelectAction::Choose(army) => {
+            state.selected = army;
+            ArmySelectStep::Stay
+        }
+        ArmySelectAction::Confirm => ArmySelectStep::Confirm,
+    }
+}
+
 // ---- Shell-prefs persistence codec — pure seam (unit-tested) ------------------------------------
 
 /// The blob format version tag (the first line). Bumped only on an incompatible layout change; a
@@ -554,6 +651,7 @@ pub fn encode_shell_prefs(
     settings: &SettingsState,
     profile: &ProfileState,
     loadout: &LoadoutEditor,
+    army: &ArmySelectState,
 ) -> String {
     let mut s = *settings;
     s.clamp();
@@ -565,7 +663,8 @@ pub fn encode_shell_prefs(
         "{SHELL_PREFS_VERSION}\n\
          master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nquality={}\n\
          callsign={}\nfaction={}\nmatches={}\nwins={}\n\
-         optic={}\nbarrel={}\nmagazine={}\n",
+         optic={}\nbarrel={}\nmagazine={}\n\
+         army={}\n",
         s.master_volume,
         s.sfx_volume,
         s.music_volume,
@@ -579,6 +678,9 @@ pub fn encode_shell_prefs(
         optic_index(l.optic),
         barrel_index(l.barrel),
         magazine_index(l.magazine),
+        // The selected army as its stable `Army::index` ordinal (the same tag order the sim/wire
+        // codecs use), tolerant-decoded back by [`decode_army`].
+        army.selected.index(),
     )
 }
 
@@ -587,7 +689,9 @@ pub fn encode_shell_prefs(
 /// (mirroring the Android codec's forward-compat + corruption-safety contract). An empty/garbage blob
 /// therefore decodes to the shipped defaults. Settings are re-clamped and the callsign re-sanitized on
 /// the way out, so the result is always valid. Pure — unit-tested without touching the filesystem.
-pub fn decode_shell_prefs(blob: &str) -> (SettingsState, ProfileState, LoadoutEditor) {
+pub fn decode_shell_prefs(
+    blob: &str,
+) -> (SettingsState, ProfileState, LoadoutEditor, ArmySelectState) {
     use std::collections::HashMap;
 
     // Parse `key=value` lines (split on the FIRST '=', so a value may itself contain '='). The
@@ -635,7 +739,27 @@ pub fn decode_shell_prefs(blob: &str) -> (SettingsState, ProfileState, LoadoutEd
             .unwrap_or_default(),
     });
 
-    (settings, profile, loadout)
+    let army = ArmySelectState {
+        selected: decode_army(map.get("army")),
+    };
+
+    (settings, profile, loadout, army)
+}
+
+/// Decode a stored [`Army`] ordinal to a **player-selectable** army, defaulting to the shipped
+/// [`ArmySelectState::default`] (US) for a missing, unparseable, out-of-range, or non-combatant
+/// value. [`Army::Neutral`] is never a valid player pick (factions-plan WS-A), so a stored `0`
+/// (Neutral) decodes to the default just like garbage would — the tolerant, corruption-safe read
+/// mirroring the enum-ordinal fields above.
+fn decode_army(value: Option<&&str>) -> Army {
+    let default = ArmySelectState::default().selected;
+    match value
+        .and_then(|s| s.parse::<usize>().ok())
+        .and_then(|i| Army::ALL.get(i).copied())
+    {
+        Some(Army::Neutral) | None => default,
+        Some(a) => a,
+    }
 }
 
 /// Parse a stored value to `T`, falling back to `fallback` on a missing key or a parse failure. The
@@ -1074,6 +1198,18 @@ impl EguiShell {
         self.run_and_paint(surface, true, |ui| profile_ui(ui, profile))
     }
 
+    /// Draw the **army-select** screen for one frame and return the [`ArmySelectAction`] used, if any.
+    /// `state` is the host-side army pick (read here to highlight the current card). Over the live 3D
+    /// backdrop, same as the other out-of-match screens. Pure presentation — the decision logic is the
+    /// pure [`apply_army_select_action`] seam and the sim routing is the `core::shell` SelectArmy seam.
+    pub fn draw_army_select(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+        state: &ArmySelectState,
+    ) -> Option<ArmySelectAction> {
+        self.run_and_paint(surface, true, |ui| army_select_ui(ui, state))
+    }
+
     /// Draw the About / controls-reference screen for one frame. Returns `true` on BACK (the only
     /// control), so the run loop returns to Settings. Static content over the backdrop. Pure.
     pub fn draw_about(&mut self, surface: &mut DesktopRenderSurface) -> bool {
@@ -1365,6 +1501,10 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
                 }
                 if chip_button(ui, "PROFILE") {
                     action = Some(TitleAction::Profile);
+                }
+                // The army-select entry (US vs FR) — a pre-deploy pick fielded at every match start.
+                if chip_button(ui, "ARMY") {
+                    action = Some(TitleAction::Army);
                 }
                 // The field manual (About) — reachable straight from the title, mirroring Android's
                 // title About entry (it is also reachable from Settings).
@@ -1711,6 +1851,71 @@ fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Option<ProfileAc
         ui.add_space(10.0);
         if menu_button(ui, "RESET RECORD", Emphasis::Tertiary) {
             action = Some(ProfileAction::ResetStats);
+        }
+    });
+
+    action
+}
+
+/// One army card: the army name over its one-line identity blurb, in a framed card whose name is
+/// clickable to select it. The currently-selected army reads amber with a SELECTED marker (legible
+/// beyond colour alone); clicking a card emits [`ArmySelectAction::Choose`]. Mirrors [`mode_tile`].
+/// Glue (needs a live `Ui`) — the decision seam is the pure [`apply_army_select_action`]. ASCII only.
+fn army_card(ui: &mut egui::Ui, army: Army, selected: bool) -> Option<ArmySelectAction> {
+    use egui::{Button, RichText};
+    // The selected card reads amber (the lone accent); the others stay bone.
+    let name_color = if selected { AMBER } else { BONE };
+    let label = RichText::new(army_label(army).to_uppercase())
+        .color(name_color)
+        .size(TYPE_SUBHEAD)
+        .strong();
+    let mut clicked = false;
+    card_frame().show(ui, |ui| {
+        ui.set_min_width(MENU_BUTTON_W);
+        let resp = ui.add(Button::new(label).frame(false).min_size([MENU_BUTTON_W, 28.0].into()));
+        ui.label(RichText::new(army_flavor(army)).color(ASH).size(TYPE_CAPTION));
+        if selected {
+            ui.label(RichText::new("SELECTED").color(AMBER).size(TYPE_CAPTION).strong());
+        }
+        clicked = resp.clicked();
+    });
+    clicked.then_some(ArmySelectAction::Choose(army))
+}
+
+/// The immediate-mode army-select screen (factions-plan WS-D, D68): the US / French rosters as
+/// selectable cards in a column over the backdrop, then CONFIRM. Reads the host-side
+/// [`ArmySelectState`] to highlight the current pick; each card's click routes through the pure
+/// [`apply_army_select_action`] seam, and the confirmed pick reaches the sim via the `core::shell`
+/// SelectArmy seam (`Game::select_army`) at match start. Glue.
+fn army_select_ui(ui: &mut egui::Ui, state: &ArmySelectState) -> Option<ArmySelectAction> {
+    use egui::RichText;
+    let mut action = None;
+
+    over_backdrop_screen(ui, 0.08, |ui| {
+        ui.set_min_width(460.0);
+        screen_banner(ui, "SELECT ARMY", 130.0);
+        ui.label(
+            RichText::new(
+                "Choose the real-army roster you deploy as. Asymmetry is of flavour and feel, \
+                 never of power -- no army is stronger than the other.",
+            )
+            .color(ASH)
+            .size(TYPE_BODY),
+        );
+        ui.add_space(18.0);
+
+        for (i, &army) in SELECTABLE_ARMIES.iter().enumerate() {
+            if let Some(act) = army_card(ui, army, state.selected == army) {
+                action = Some(act);
+            }
+            if i + 1 < SELECTABLE_ARMIES.len() {
+                ui.add_space(12.0);
+            }
+        }
+
+        ui.add_space(22.0);
+        if menu_button(ui, "CONFIRM", Emphasis::Primary) {
+            action = Some(ArmySelectAction::Confirm);
         }
     });
 
@@ -2399,8 +2604,8 @@ mod tests {
 
     use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 
-    /// A non-default state across all three objects, to prove the round-trip carries every field.
-    fn sample_state() -> (SettingsState, ProfileState, LoadoutEditor) {
+    /// A non-default state across all four objects, to prove the round-trip carries every field.
+    fn sample_state() -> (SettingsState, ProfileState, LoadoutEditor, ArmySelectState) {
         let settings = SettingsState {
             master_volume: 0.35,
             sfx_volume: 0.5,
@@ -2420,32 +2625,37 @@ mod tests {
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
         });
-        (settings, profile, loadout)
+        // A non-default army pick (FR, not the US default) so the round-trip proves the field carries.
+        let army = ArmySelectState {
+            selected: Army::Fr,
+        };
+        (settings, profile, loadout, army)
     }
 
     #[test]
     fn shell_prefs_round_trip_preserves_every_field() {
-        let (s, p, l) = sample_state();
-        let blob = encode_shell_prefs(&s, &p, &l);
-        let (s2, p2, l2) = decode_shell_prefs(&blob);
+        let (s, p, l, a) = sample_state();
+        let blob = encode_shell_prefs(&s, &p, &l, &a);
+        let (s2, p2, l2, a2) = decode_shell_prefs(&blob);
         assert_eq!(s2, s, "settings survive the round-trip");
         assert_eq!(p2, p, "profile survives the round-trip");
         assert_eq!(l2.current(), l.current(), "loadout survives the round-trip");
+        assert_eq!(a2, a, "army pick survives the round-trip");
     }
 
     #[test]
     fn shell_prefs_encode_is_stable_under_re_encode() {
         // A decode→encode of an encoded blob reproduces the same bytes (canonical, already-clamped).
-        let (s, p, l) = sample_state();
-        let blob = encode_shell_prefs(&s, &p, &l);
-        let (s2, p2, l2) = decode_shell_prefs(&blob);
-        assert_eq!(encode_shell_prefs(&s2, &p2, &l2), blob);
+        let (s, p, l, a) = sample_state();
+        let blob = encode_shell_prefs(&s, &p, &l, &a);
+        let (s2, p2, l2, a2) = decode_shell_prefs(&blob);
+        assert_eq!(encode_shell_prefs(&s2, &p2, &l2, &a2), blob);
     }
 
     #[test]
     fn empty_or_garbage_blob_decodes_to_defaults() {
         for blob in ["", "gonedark-shell 1\n", "total nonsense\n???\n", "master\nsfx=\n"] {
-            let (s, p, l) = decode_shell_prefs(blob);
+            let (s, p, l, a) = decode_shell_prefs(blob);
             assert_eq!(s, SettingsState::default(), "blob {blob:?} → default settings");
             assert_eq!(p, ProfileState::default(), "blob {blob:?} → default profile");
             assert_eq!(
@@ -2453,6 +2663,7 @@ mod tests {
                 LoadoutEditor::new().current(),
                 "blob {blob:?} → default loadout"
             );
+            assert_eq!(a, ArmySelectState::default(), "blob {blob:?} → default army pick");
         }
     }
 
@@ -2462,8 +2673,8 @@ mod tests {
         // an unparseable value keeps the field default. Never panics.
         let blob = "master=9.9\nsfx=-3\nsens=999\ninverty=maybe\nquality=42\n\
                     faction=99\nmatches=notanumber\noptic=7\nbarrel=-1\nmagazine=abc\n\
-                    callsign=   \n";
-        let (s, p, l) = decode_shell_prefs(blob);
+                    army=42\ncallsign=   \n";
+        let (s, p, l, a) = decode_shell_prefs(blob);
         assert_eq!(s.master_volume, 1.0, "over-range gain clamps to 1.0");
         assert_eq!(s.sfx_volume, 0.0, "negative gain clamps to 0.0");
         assert_eq!(s.mouse_sensitivity, SettingsState::SENS_MAX, "over-range sens clamps");
@@ -2474,6 +2685,7 @@ mod tests {
         // A blank callsign sanitises to the default; the out-of-range loadout ordinals default.
         assert_eq!(p.callsign, DEFAULT_CALLSIGN);
         assert_eq!(l.current(), Loadout::STANDARD, "out-of-range slot ordinals → Standard");
+        assert_eq!(a, ArmySelectState::default(), "out-of-range army ordinal → default (US)");
     }
 
     #[test]
@@ -2484,11 +2696,102 @@ mod tests {
             callsign: "Rea\nper".to_string(),
             ..ProfileState::default()
         };
-        let blob = encode_shell_prefs(&SettingsState::default(), &p, &LoadoutEditor::new());
+        let blob = encode_shell_prefs(
+            &SettingsState::default(),
+            &p,
+            &LoadoutEditor::new(),
+            &ArmySelectState::default(),
+        );
         assert_eq!(blob.lines().filter(|l| l.starts_with("callsign=")).count(), 1);
-        let (_, p2, _) = decode_shell_prefs(&blob);
+        let (_, p2, _, _) = decode_shell_prefs(&blob);
         assert!(!p2.callsign.contains('\n'));
         assert_eq!(p2.callsign, "Rea per");
+    }
+
+    // ---- The army-select pure seam ---------------------------------------------------------------
+
+    #[test]
+    fn army_opens_the_army_select_screen() {
+        assert_eq!(
+            resolve_title_action(TitleAction::Army),
+            HostTransition::OpenArmySelect
+        );
+    }
+
+    #[test]
+    fn army_select_default_is_a_real_combatant_roster() {
+        // The player always fields a real army — never the non-aligned Neutral default.
+        let a = ArmySelectState::default();
+        assert_eq!(a.selected, Army::Us);
+        assert_ne!(a.selected, Army::Neutral);
+        // Both selectable armies are real combatants, in a stable US-then-FR order, no Neutral.
+        assert_eq!(SELECTABLE_ARMIES, [Army::Us, Army::Fr]);
+        assert!(!SELECTABLE_ARMIES.contains(&Army::Neutral));
+    }
+
+    #[test]
+    fn army_choose_edits_the_selection_and_stays() {
+        let mut a = ArmySelectState::default();
+        assert_eq!(a.selected, Army::Us);
+        let step = apply_army_select_action(ArmySelectAction::Choose(Army::Fr), &mut a);
+        assert_eq!(step, ArmySelectStep::Stay, "a choice keeps the player on-screen");
+        assert_eq!(a.selected, Army::Fr, "the choice is recorded in place");
+        // Choosing again switches back (an idempotent in-place edit).
+        apply_army_select_action(ArmySelectAction::Choose(Army::Us), &mut a);
+        assert_eq!(a.selected, Army::Us);
+    }
+
+    #[test]
+    fn army_confirm_is_a_transition_that_leaves_the_selection_alone() {
+        let mut a = ArmySelectState {
+            selected: Army::Fr,
+        };
+        let step = apply_army_select_action(ArmySelectAction::Confirm, &mut a);
+        assert_eq!(step, ArmySelectStep::Confirm);
+        assert_eq!(a.selected, Army::Fr, "confirm carries the current pick, unchanged");
+    }
+
+    #[test]
+    fn army_labels_and_flavor_are_distinct_ascii() {
+        // Every selectable army has a distinct, non-empty ASCII name + flavour (no tofu in the default
+        // font), and the flavour anchors the real-platform identity (factions.md §4).
+        let labels: Vec<&str> = SELECTABLE_ARMIES.iter().map(|&a| army_label(a)).collect();
+        let flavors: Vec<&str> = SELECTABLE_ARMIES.iter().map(|&a| army_flavor(a)).collect();
+        for text in labels.iter().chain(flavors.iter()) {
+            assert!(!text.is_empty() && text.is_ascii(), "{text:?} must be non-empty ASCII");
+        }
+        assert_ne!(labels[0], labels[1], "the two armies have distinct names");
+        assert_ne!(flavors[0], flavors[1], "the two armies have distinct flavour");
+        assert_eq!(army_label(Army::Us), "US Army");
+        assert_eq!(army_label(Army::Fr), "French Army");
+    }
+
+    #[test]
+    fn army_round_trips_each_selectable_pick() {
+        // Each real army survives a save→load round-trip through the codec (the ordinal is the sim/wire
+        // tag order), independent of the other prefs.
+        for &army in &SELECTABLE_ARMIES {
+            let a = ArmySelectState { selected: army };
+            let blob = encode_shell_prefs(
+                &SettingsState::default(),
+                &ProfileState::default(),
+                &LoadoutEditor::new(),
+                &a,
+            );
+            let (_, _, _, a2) = decode_shell_prefs(&blob);
+            assert_eq!(a2.selected, army, "{army:?} must survive the round-trip");
+        }
+    }
+
+    #[test]
+    fn decode_army_rejects_neutral_and_missing_falling_back_to_default() {
+        // A stored Neutral ordinal (0) is not a valid player pick → the US default; a missing key →
+        // the US default. A real ordinal decodes faithfully.
+        let default = ArmySelectState::default().selected;
+        assert_eq!(decode_army(Some(&"0")), default, "Neutral ordinal → default (US)");
+        assert_eq!(decode_army(None), default, "missing key → default (US)");
+        assert_eq!(decode_army(Some(&"2")), Army::Fr, "ordinal 2 → French Army");
+        assert_eq!(decode_army(Some(&"1")), Army::Us, "ordinal 1 → US Army");
     }
 
     // ---- The About controls reference ------------------------------------------------------------

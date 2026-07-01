@@ -21,7 +21,9 @@
 use glam::{Mat4, Vec3, Vec4};
 use gonedark_core::alerts::AlertChannel;
 use gonedark_core::commander::{self, CommanderConfig, COMMANDER_PERIOD};
-use gonedark_core::components::{BuildingKind, EntityKind, Faction, Posture, Stance, UnitKind, Vec2};
+use gonedark_core::components::{
+    Army, BuildingKind, EntityKind, Faction, Posture, Stance, UnitKind, Vec2,
+};
 use gonedark_core::detection::{
     self, detectable_embodiment, DetectionConfig, DetectionMemory, Tell,
 };
@@ -33,7 +35,9 @@ use gonedark_core::fog::{self, Visibility};
 use gonedark_core::gunsmith::Loadout;
 use gonedark_core::lockstep::Lockstep;
 use gonedark_core::rng::Rng;
-use gonedark_core::shell::{ConnectionStatus, LinkState, MatchOutcome};
+use gonedark_core::shell::{
+    resolve_intent, ConnectionStatus, LinkState, MatchOutcome, ResolvedIntent, ShellIntent,
+};
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
 use gonedark_core::territory::ControlPoint;
@@ -2355,6 +2359,34 @@ impl Game {
     /// The enemy commander's current difficulty tier (a read-only host/test window).
     pub fn commander_difficulty(&self) -> gonedark_core::mission_tuning::Difficulty {
         self.commander_config.difficulty
+    }
+
+    /// Field a [`Faction`]'s [`Army`] identity at **match setup** — the native army-select shell's
+    /// pick (factions-plan WS-A/WS-D, [D68](../docs/decisions.md)). The pick is routed through the
+    /// `core::shell` [`SelectArmy`](ShellIntent::SelectArmy) seam so it is the *same*
+    /// lockstep-ordered [`Command::SelectArmy`] every peer would apply (single-sourced command
+    /// construction, invariant #7), then recorded on the sim **before the first tick** via
+    /// [`Sim::set_army`](gonedark_core::sim::Sim::set_army). It writes only the non-folded per-side
+    /// army config, so it never perturbs the per-tick checksum (its roster effect is WS-B) and,
+    /// applied pre-tick, is deterministic by construction. The Operations hub / mode-select flow
+    /// calls this from the host [`enter_match`](../../app/src/main.rs) path so the chosen army reaches
+    /// `gunsmith::pool_for` / `economy::unit_stats_for` when WS-B consumes it. A pure setup knob — the
+    /// literal-executor sim brain (invariant #3) is untouched.
+    pub fn select_army(&mut self, faction: Faction, army: Army) {
+        // Resolve through the one canonical seam mapping so the command can never drift from what a
+        // peer would put on the wire. `SelectArmy` maps unconditionally to `Command::SelectArmy`; any
+        // other arm is unreachable, and a no-op keeps this total.
+        if let ResolvedIntent::Command(Command::SelectArmy { faction, army }) =
+            resolve_intent(ShellIntent::SelectArmy { faction, army })
+        {
+            self.sim.set_army(faction, army);
+        }
+    }
+
+    /// The [`Army`] a [`Faction`] currently fields (a read-only host/test window over the sim's
+    /// match-setup config — never folded into the per-tick checksum, WS-A).
+    pub fn army_of(&self, faction: Faction) -> Army {
+        self.sim.army_of(faction)
     }
 
     /// The player's authoritative world position, read straight from the sim world (read
