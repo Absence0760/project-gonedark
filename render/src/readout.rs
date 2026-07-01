@@ -112,21 +112,24 @@ pub struct ReadoutLabel {
     pub alpha: f32,
 }
 
-/// Label glyph height in NDC (cf. `text` module: practical label sizes ~0.03–0.08).
-const LABEL_SIZE: f32 = 0.05;
+/// Label glyph height in NDC — the shared type scale's section-title step (`theme`), so the corner
+/// tally reads at the same prominence as the panel/objective titles (WS-C: one type scale).
+const LABEL_SIZE: f32 = crate::theme::TYPE_TITLE;
 /// Inset from the screen edge for the top-left readout stack, in NDC.
 const MARGIN: f32 = 0.04;
 /// Vertical step between stacked readout lines, in NDC (a touch more than the glyph height so the
 /// lines don't touch).
 const LINE_STEP: f32 = 0.075;
 
-/// Label colors — keyed to the faction palette so each count reads as "mine" / "theirs" / "objective".
-const PLAYER_LABEL: [f32; 3] = [0.55, 0.78, 1.0];
-const ENEMY_LABEL: [f32; 3] = [1.0, 0.55, 0.48];
-const NEUTRAL_LABEL: [f32; 3] = [0.85, 0.85, 0.9];
-/// Economy lines (banked resources + income) — a credits-gold tint so cost/income read as their
-/// own legible class, distinct from the unit counts.
-const ECON_LABEL: [f32; 3] = [1.0, 0.86, 0.4];
+// Label colors — sourced from the shared `theme` palette so each count reads in the SAME faction /
+// status language as the rest of the HUD (WS-C consistency): "mine" = player-blue, "theirs" =
+// enemy-red, control points = neutral bone, economy = the credits-gold data accent.
+const PLAYER_LABEL: [f32; 3] = crate::theme::PLAYER;
+const ENEMY_LABEL: [f32; 3] = crate::theme::ENEMY;
+const NEUTRAL_LABEL: [f32; 3] = crate::theme::BONE;
+/// Economy lines (banked resources + income) — the palette's resource data accent so cost/income
+/// read as their own legible class, distinct from the unit counts.
+const ECON_LABEL: [f32; 3] = crate::theme::DATA_RESOURCE;
 
 /// The economy figures a host hands render to fill the resource/income readout. Plain data — the
 /// renderer never reads these from the sim (invariant #4); the integrator supplies them from the
@@ -232,11 +235,11 @@ pub fn readout_labels(
 /// Inner padding (NDC) between the readout text and its backing card edge.
 const CARD_PAD_X: f32 = 0.020;
 const CARD_PAD_Y: f32 = 0.014;
-/// Backing-card fill + rim — shared with the contextual command panel's palette so the two HUD
-/// surfaces read as one designed set, not ad-hoc debug text.
-const CARD_BG: [f32; 3] = [0.05, 0.06, 0.09];
+/// Backing-card fill + rim — the SAME `theme::PANEL` / `theme::RIM` the contextual command panel and
+/// objective card use, so the three HUD surfaces read as one designed set, not ad-hoc debug text.
+const CARD_BG: [f32; 3] = crate::theme::PANEL;
 const CARD_BG_ALPHA: f32 = 0.74;
-const CARD_RIM: [f32; 3] = [0.16, 0.18, 0.24];
+const CARD_RIM: [f32; 3] = crate::theme::RIM;
 const CARD_RIM_ALPHA: f32 = 0.85;
 /// The rim quad extends this far past the card on each side to draw a thin border.
 const CARD_RIM_PAD: f32 = 0.008;
@@ -566,6 +569,22 @@ mod tests {
         let sq = readout_card(&labels, 1.0);
         let wide = readout_card(&labels, 16.0 / 9.0);
         assert!(wide[1].hw < sq[1].hw, "card is narrower on a wide viewport");
+    }
+
+    #[test]
+    fn label_and_card_colors_are_sourced_from_the_shared_theme() {
+        // WS-C consistency: the readout speaks the same faction/status language and wears the same
+        // card chrome as the command panel + objective HUD — every colour is a `theme` const.
+        let labels = readout_labels(&Tally::default(), Some(econ(100, income_per_tick(1))), false);
+        assert_eq!(labels[0].color, crate::theme::PLAYER, "UNITS line is player-blue");
+        assert_eq!(labels[1].color, crate::theme::ENEMY, "ENEMY line is enemy-red");
+        assert_eq!(labels[2].color, crate::theme::BONE, "POINTS line is neutral bone");
+        assert_eq!(labels[3].color, crate::theme::DATA_RESOURCE, "economy is the resource accent");
+        assert_eq!(labels[0].px_size, crate::theme::TYPE_TITLE, "rides the shared type scale");
+        // The backing card is the shared panel fill + rim.
+        let card = readout_card(&labels, 1.0);
+        assert_eq!(card[0].r, crate::theme::RIM[0]);
+        assert_eq!(card[1].r, crate::theme::PANEL[0]);
     }
 
     #[test]

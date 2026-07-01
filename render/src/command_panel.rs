@@ -27,10 +27,11 @@ const MIN_HALF_W: f32 = 0.20;
 const MAX_HALF_W: f32 = 0.46;
 /// Inner padding between the box edge and its content.
 const PAD: f32 = 0.022;
-/// Title text height.
-const TITLE_SIZE: f32 = 0.050;
-/// Body row text height.
-const ROW_SIZE: f32 = 0.040;
+/// Title text height — the shared type scale's section-title step (`theme`, the single source of
+/// truth for type/space so panels don't drift apart).
+const TITLE_SIZE: f32 = crate::theme::TYPE_TITLE;
+/// Body row text height — the shared type scale's body step.
+const ROW_SIZE: f32 = crate::theme::TYPE_BODY;
 /// Vertical step between body row tops.
 const ROW_STEP: f32 = 0.058;
 /// Gap between the title and the first body row.
@@ -59,16 +60,26 @@ pub enum LineStyle {
 }
 
 impl LineStyle {
+    /// The row tint, drawn entirely from the shared [`theme`](crate::theme) palette so the panel,
+    /// the objective HUD, and the readout all speak ONE state language: section headers take the
+    /// amber signal accent (they read as the "jump here to act" groups when scanning), body rows the
+    /// primary bone, unavailable rows the muted grey, and affordable/unaffordable (good/bad) the
+    /// shared green/red status pair.
     fn color(self) -> [f32; 3] {
         match self {
-            LineStyle::Header => [0.80, 0.86, 1.0],
-            LineStyle::Normal => [0.82, 0.84, 0.90],
-            LineStyle::Dim => [0.50, 0.50, 0.56],
-            LineStyle::Good => [0.55, 0.85, 0.50],
-            LineStyle::Bad => [0.88, 0.48, 0.42],
+            LineStyle::Header => crate::theme::AMBER,
+            LineStyle::Normal => crate::theme::BONE,
+            LineStyle::Dim => crate::theme::MUTED,
+            LineStyle::Good => crate::theme::STATUS_GOOD,
+            LineStyle::Bad => crate::theme::STATUS_CRIT,
         }
     }
 }
+
+/// The panel title's tint — the primary bone, the brightest neutral, so the "what am I looking at"
+/// line reads as the top of the hierarchy above the amber section headers. Shared with the objective
+/// HUD title so the two card headers match.
+const TITLE_COLOR: [f32; 3] = crate::theme::BONE;
 
 /// One body row of the panel: its text and how it reads.
 #[derive(Clone, Debug, PartialEq)]
@@ -191,7 +202,7 @@ pub fn command_panel_labels(view: &CommandPanelView, aspect: f32) -> Vec<PanelLa
         pos: [left, top_inner],
         px_size: TITLE_SIZE,
         anchor: Anchor::TopLeft,
-        color: LineStyle::Header.color(),
+        color: TITLE_COLOR,
         alpha: 1.0,
     });
     let rows_top = top_inner - TITLE_SIZE - TITLE_GAP;
@@ -277,7 +288,7 @@ mod tests {
         let ls = command_panel_labels(&v, 1.0);
         assert_eq!(ls.len(), 4, "title + 3 rows");
         assert_eq!(ls[0].text, "SELECTED — 3");
-        assert_eq!(ls[0].color, LineStyle::Header.color(), "title reads as a header");
+        assert_eq!(ls[0].color, TITLE_COLOR, "title reads in the primary title tint");
         assert_eq!(ls[3].color, LineStyle::Dim.color(), "dim row is dimmed");
         // Rows stack downward and sit below the title.
         assert!(ls[1].pos[1] < ls[0].pos[1]);
@@ -346,6 +357,24 @@ mod tests {
         // Right edge stays pinned; left edge stays on screen.
         assert!((wide[1].cx + wide[1].hw - RIGHT).abs() < 1e-6);
         assert!(wide[1].cx - wide[1].hw > -1.0);
+    }
+
+    #[test]
+    fn state_language_is_sourced_from_the_shared_theme_palette() {
+        // WS-C consistency: every row tint is a `theme` const, so the panel, objective HUD, and
+        // readout speak one language and a palette retune never leaves an ad-hoc literal behind.
+        assert_eq!(LineStyle::Header.color(), crate::theme::AMBER);
+        assert_eq!(LineStyle::Normal.color(), crate::theme::BONE);
+        assert_eq!(LineStyle::Dim.color(), crate::theme::MUTED);
+        assert_eq!(LineStyle::Good.color(), crate::theme::STATUS_GOOD);
+        assert_eq!(LineStyle::Bad.color(), crate::theme::STATUS_CRIT);
+        // The title label + its glyph size ride the shared palette/type scale — asserted on the
+        // actual laid-out label so the wiring (not just the const) is covered.
+        let v = view("CAMP — TIER 1", &[("Resources 300", LineStyle::Normal)]);
+        let ls = command_panel_labels(&v, 1.0);
+        assert_eq!(ls[0].color, crate::theme::BONE, "title in the primary bone");
+        assert_eq!(ls[0].px_size, crate::theme::TYPE_TITLE, "title on the type scale");
+        assert_eq!(ls[1].px_size, crate::theme::TYPE_BODY, "rows on the type scale");
     }
 
     #[test]

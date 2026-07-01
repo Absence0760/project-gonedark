@@ -21,10 +21,10 @@ use crate::text::Anchor;
 const LABEL_SIZE: f32 = 0.044;
 const FILL_ALPHA: f32 = 0.82;
 const RIM_ALPHA: f32 = 0.9;
-/// Resting fill / rim colors (RGB). Match the `command_panel` palette family so the bar reads as the
-/// same chrome.
-const FILL: [f32; 3] = [0.10, 0.12, 0.17];
-const RIM: [f32; 3] = [0.30, 0.34, 0.44];
+/// Resting fill / rim colors (RGB) — the shared `theme` raised-surface + rim, so the bar wears the
+/// SAME chrome as the command panel and readout cards (WS-C: one designed set, no ad-hoc literals).
+const FILL: [f32; 3] = crate::theme::PANEL_RAISED;
+const RIM: [f32; 3] = crate::theme::RIM;
 const LABEL_COLOR: [f32; 3] = crate::theme::BONE;
 /// NDC rim thickness added around each button's fill (a crisp border, like the panels' rim).
 const RIM_PAD: f32 = 0.006;
@@ -111,14 +111,21 @@ pub fn command_bar_labels(view: &CommandBarView) -> Vec<PanelLabel> {
 }
 
 /// Map a button label to the tactical icon that belongs beside it (and its tint). The engine fills
-/// labels from `command_touch::CommandButton::label` ("RIFLE" / "HEAVY" / "UPGRADE"); an unrecognised
-/// label gets no icon (returns `None`), so the bar degrades gracefully if the vocabulary grows. Unit-
-/// type buttons take the player-faction blue; the upgrade button takes the amber signal accent — both
-/// from `theme`, so the icon language matches the rest of the HUD. Pure + GPU-free → unit-tested.
+/// labels from `command_touch::CommandButton::label` (today "RIFLE" / "HEAVY" / "UPGRADE"); an
+/// unrecognised label gets no icon (returns `None`), so the bar degrades gracefully. The mapping
+/// covers the WHOLE unit/action command vocabulary — every unit kind (`token_icons`'
+/// `icon_for_unit_kind` and the command-panel rows use the same [`IconKind`]s) plus build/upgrade —
+/// so a button always carries the same glyph the rest of the HUD uses for that thing (WS-C: one icon
+/// language across the bar, menus, and radial). Unit-type buttons take the player-faction blue; the
+/// build + upgrade action buttons take the amber signal accent — both from `theme`. Pure + GPU-free
+/// → unit-tested.
 fn icon_for_label(label: &str) -> Option<(IconKind, [f32; 3])> {
     match label {
-        "RIFLE" => Some((IconKind::Infantry, crate::theme::PLAYER)),
-        "HEAVY" => Some((IconKind::Armor, crate::theme::PLAYER)),
+        "RIFLE" | "RIFLEMAN" | "INFANTRY" => Some((IconKind::Infantry, crate::theme::PLAYER)),
+        "HEAVY" | "TANK" | "ARMOR" => Some((IconKind::Armor, crate::theme::PLAYER)),
+        "MEDIC" => Some((IconKind::Medic, crate::theme::PLAYER)),
+        "ANTI-TANK" | "ANTITANK" | "AT" => Some((IconKind::AntiTank, crate::theme::PLAYER)),
+        "BUILD" => Some((IconKind::Build, crate::theme::AMBER)),
         "UPGRADE" => Some((IconKind::Upgrade, crate::theme::AMBER)),
         _ => None,
     }
@@ -233,6 +240,53 @@ mod tests {
             crate::theme::AMBER,
             "upgrade button → amber accent"
         );
+    }
+
+    #[test]
+    fn icon_vocabulary_covers_every_unit_kind_and_action() {
+        // WS-C: the bar can glyph the whole command vocabulary, so a future Medic / Anti-Tank /
+        // Build button reads with the SAME icon the token glyphs + panel rows use, not bare text.
+        let v = CommandBarView {
+            buttons: vec![
+                btn("RIFLE"),
+                btn("HEAVY"),
+                btn("MEDIC"),
+                btn("ANTI-TANK"),
+                btn("BUILD"),
+                btn("UPGRADE"),
+            ],
+        };
+        let icons = command_bar_icons(&v);
+        assert_eq!(icons.len(), 6, "every vocabulary button gets an icon");
+        let kinds: Vec<IconKind> = icons.iter().map(|i| i.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                IconKind::Infantry,
+                IconKind::Armor,
+                IconKind::Medic,
+                IconKind::AntiTank,
+                IconKind::Build,
+                IconKind::Upgrade,
+            ]
+        );
+        // Unit tokens take faction blue; the build + upgrade actions take the amber accent.
+        assert_eq!(icons[2].tint, crate::theme::PLAYER, "medic → faction blue");
+        assert_eq!(icons[3].tint, crate::theme::PLAYER, "anti-tank → faction blue");
+        assert_eq!(icons[4].tint, crate::theme::AMBER, "build → amber action accent");
+        assert_eq!(icons[5].tint, crate::theme::AMBER, "upgrade → amber action accent");
+    }
+
+    #[test]
+    fn bar_chrome_is_sourced_from_the_shared_theme() {
+        // The drawn rim + fill + label are `theme` colours (one designed set with the panel/readout
+        // cards) — asserted on the actual emitted quads/labels so the wiring is covered.
+        let v = CommandBarView { buttons: vec![btn("RIFLE")] };
+        let q = command_bar_quads(&v);
+        let (rim, fill) = (&q[0], &q[1]);
+        assert_eq!([rim.r, rim.g, rim.b], crate::theme::RIM, "rim is theme::RIM");
+        assert_eq!([fill.r, fill.g, fill.b], crate::theme::PANEL_RAISED, "fill is theme::PANEL_RAISED");
+        assert_eq!(command_bar_labels(&v)[0].color, crate::theme::BONE, "label is theme::BONE");
     }
 
     #[test]

@@ -200,8 +200,9 @@ pub fn radial_quads(menu: &RadialMenu, aspect: f32) -> Vec<RadialQuad> {
 /// Glyph cell height (NDC) of a wedge label — small, to sit inside a wedge slot (and to keep the
 /// longer command names from colliding around a crowded ring).
 const WEDGE_LABEL_SIZE: f32 = 0.026;
-/// Light off-white the wedge labels draw in, so they read over the wedge chrome.
-const LABEL_COLOR: [f32; 3] = [0.92, 0.94, 0.98];
+/// The wedge labels draw in the shared primary bone, so the radial's action text reads in the SAME
+/// tint as the command bar / panel labels (WS-C: one type + colour language across the HUD).
+const LABEL_COLOR: [f32; 3] = crate::theme::BONE;
 
 /// A screen-space wedge label, computed alongside [`radial_quads`] (W4). Pure data: `pos` is NDC
 /// (the wedge center), `text` is the action name. Its own type so [`radial_labels`] is a GPU-free,
