@@ -580,3 +580,76 @@ authorable, and the shared content set is already a thing [D76](decisions.md)'s 
 introduces. Decide **before CT-G's terrain half ships**; the placement half needs none of it.
 Cross-link: [`content-tooling-plan.md`](plans/content-tooling-plan.md) CT-G, [D28](decisions.md),
 [D76](decisions.md).
+
+---
+
+## Q23 — Sim-side terrain elevation: does the simulation get a height layer? <a id="q23--sim-elevation"></a>
+
+`core::terrain` is **flat**: a `GRID×GRID` grid of `Cover` (None/Light/Heavy) with **no height**.
+Real-world map ingestion ([`maps.md`](maps.md)) pulls a real DEM, but that float elevation feeds
+**only the render mesh** (`tools/maps/terrain_mesh.py`) — the sim treats every battlefield as a
+plane. For a game whose worked example is *Pointe du Hoc* (a cliff assault), "the sim doesn't know
+the cliff exists" is a real gap: no high-ground sightlines, no slope cost, no defilade.
+
+Whatever lands must be **fixed-point** (invariant #1) — a real DEM is float metres, so it is
+quantised to integer height-per-cell at bake time, never sampled as float in the sim.
+
+| Option | For | Against |
+|---|---|---|
+| **(i) Stay flat — elevation is render-only** | Zero sim change; keeps the grid + LoS DDA as-is; ships today | The map's defining feature (the cliff, the ridge) is cosmetic; no tactical high ground |
+| **(ii) Fixed-point height per cell, folded into LoS + flow field** | High ground blocks/opens sightlines and slows movement — real terrain tactics; content-addressable like the cover grid ([D77](decisions.md)) | New sim state + a 3D-ish LoS (height into the supercover DDA); slope→cost in `flow_field`; more determinism surface |
+| **(iii) Coarse height *tiers*** (a few discrete levels, e.g. low/mid/high) | Most of the tactical payoff (defilade, high ground) at a fraction of (ii)'s complexity; still integer | An authoring/quantisation choice (how many tiers, thresholds); still touches LoS + cost |
+
+**Current lean:** **(iii) coarse tiers** first — the cliff/ridge tactics without a full continuous
+heightfield — with (ii) reserved if playtests want finer relief. Blocks nothing shipping now
+(ingest already produces the render height); decide before elevation is claimed as a *gameplay*
+feature. Ties to [Q24](#q24--terrain-traversal-cost). Cross-link: [`maps.md`](maps.md),
+[`architecture.md`](architecture.md), [D77](decisions.md).
+
+---
+
+## Q24 — Terrain traversal cost / true impassability: where does "you can't walk here" live? <a id="q24--terrain-traversal-cost"></a>
+
+`Cover` has only None/Light/Heavy — there is **no "impassable"**. Baked maps ([`maps.md`](maps.md))
+map water and cliff edges to `Cover::Heavy` (a wall: blocks sight, and units path around it *because*
+combat treats it as a wall) — but that is a stand-in. The flow field (`core::flow_field`) is
+Phase-1 obstacle-free; its own docs note obstacles are "the Phase-2 generalisation, by raising
+per-cell entry costs" — not yet implemented. So "impassable water", "slow mud", and "a wall you
+route around" all collapse onto one `Heavy` today.
+
+| Option | For | Against |
+|---|---|---|
+| **(i) Keep `Heavy` as the de-facto wall** | No new state; already works for the coarse case | Can't express *slow* (marsh) vs *blocked* (water) vs *cover* (wall); overloads one enum |
+| **(ii) Add a per-cell entry-cost layer to `flow_field`** (the noted Phase-2 generalisation) | Real traversal cost (mud slows, water blocks) independent of cover; the pathing home for it | New fixed-point grid folded into map content ([D77](decisions.md)-style hash) + the airlock; more determinism surface |
+| **(iii) Derive cost from cover + elevation ([Q23](#q23--sim-elevation))** | One source of truth; steep slope / heavy cover imply cost — fewer authored layers | Couples pathing to cover/height; less direct authorial control; waits on Q23 |
+
+**Current lean:** **(ii) an explicit per-cell cost layer** in `flow_field` (the generalisation
+already anticipated), authored/baked alongside the cover grid and content-addressed the same way.
+Decide with [Q23](#q23--sim-elevation) (slope is a cost source). Cross-link: [`maps.md`](maps.md),
+[`architecture.md`](architecture.md), [D77](decisions.md).
+
+---
+
+## Q25 — Destructible terrain: can walls and cover be destroyed mid-match? <a id="q25--destructible-terrain"></a>
+
+Terrain is **static**: set once at scenario build, deliberately **not folded into the per-tick
+checksum** ([D28](decisions.md)/[D77](decisions.md)), and content-addressed by the hash of its
+**initial** grid. A destructible battlefield (blow a hole in a wall, crater the ground, collapse a
+building) is a common expectation — but it collides head-on with that design: destructible terrain is
+**mutable per-tick state**, so it **must** enter the checksum (invariant #7) or lockstep desyncs
+silently, and the content-hash id ([D77](decisions.md)) would then identify only the *starting*
+state.
+
+| Option | For | Against |
+|---|---|---|
+| **(i) Fully static (today)** | Terrain stays out of the checksum; lean snapshots; content-hash is the whole story | No destruction — a real expressive/immersion gap; "that wall should have blown up" |
+| **(ii) Destructible via *entity* cover-props only** ([D50](decisions.md) crate/tree/rock/barricade/turret) | Props are **already** ECS entities in the checksum — destroying them is *already* deterministic; no terrain-grid change; "buildings" become destructible prop clusters | Grid-baked `Heavy` walls (from OSM footprints) stay indestructible; two classes of "wall" (prop vs grid) to reconcile |
+| **(iii) Mutable terrain overlay folded into the checksum** | True grid destruction (breach any wall/cover); initial grid still content-addressed, per-tick **deltas** ride the fold | New per-tick fold surface + delta serialization in `persist`; the biggest determinism/perf surface of the three; re-opens D28's lean-snapshot posture |
+
+**Current lean:** **(ii) entity-prop destruction** — it is the cheapest *and* already-deterministic
+path (props are in the ECS/checksum today), so "destructible buildings" become destructible prop
+clusters over a static grid, with (iii) held for genuine grid-breaching if the game demands it. This
+is exactly the kind of thing to verify in the map **debug mode** ([`maps.md`](maps.md) §Diagnostics:
+the `MapInspect` scene + cover overlay). Relevant invariants: #1 (any mutable terrain stays
+fixed-point), #4 (render never mutates sim terrain), #7 (mutable terrain **must** be checksum-folded).
+Cross-link: [`maps.md`](maps.md), [D28](decisions.md), [D50](decisions.md), [D77](decisions.md).

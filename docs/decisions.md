@@ -3660,3 +3660,57 @@ alongside the (exempt) Compose UI, keeping the CLAUDE.md "logic ships with tests
 the shell. The bounds live in one place per platform with a cross-check test; if `core` ever changes
 a bound, the Kotlin mirror test fails until updated. Single-sourcing over JNI stays available as a
 later option if the duplicated surface ever grows beyond trivial helpers.
+
+## D80 — Real-world battlefield maps: a scripted GIS ingest→bake→lint pipeline, faithful-then-balance-passed
+
+**Decision.** Real-place and historical battlefields are built by a **scripted asset pipeline**
+(`tools/maps/`, [`maps.md`](maps.md)), the real-world-sourced sibling of the CT-G procedural
+generator ([`content-tooling-plan.md`](plans/content-tooling-plan.md)): **ingest** a lon/lat bounding
+box (elevation from a public DEM — Copernicus GLO-30 / SRTM / USGS 3DEP; features from OpenStreetMap),
+**bake** the vector features into a deterministic integer `Cover` grid, and **lint** it headlessly for
+playability. The imported terrain is **faithful first, then balance-passed**: import the real ground
+1:1, then hand-tune where it is structurally unfair (fairness wins — invariant #6); the linter emits
+symmetry/density metrics to target that pass. Modern, historical, and real-inspired maps all use the
+one pipeline, selected by a per-map `mode`/`fidelity` config.
+
+One source produces **two decoupled artifacts** (invariant #4): a **float render mesh** (real
+elevation, detail; render-only) and an **integer, byte-stable cover grid** (the sim's terrain).
+Float GIS data lives only offline in the baker and in the render mesh; **only integers cross into the
+sim** (invariant #1), so lockstep can't silently desync on a real-world map (invariant #7).
+
+**Why.** Commissioned battlefield art is off-model for this project (D41/D46: every asset is a
+committed *generator script* + manifest, not an opaque blob). Real GIS data is abundant, free, and
+machine-readable, so a bake pipeline makes "author a real battlefield" a scripted content task — the
+same ethos as CT-G, pointed at the real world. The two-artifact split is forced by the invariants: a
+faithful DEM is float metres, which must never reach the fixed-point sim, but is exactly what a
+render mesh wants. Faithful-then-balance-pass is the honest resolution of realism vs. fairness: a real
+valley can be a one-sided killbox, and a competitive/PvE map must be fair, so realism is the starting
+material and fairness is the veto.
+
+**Determinism.** The bake runs offline (floats permitted there); its output — the `.covergrid` — is
+integer `Cover` per cell, and `Terrain::from_cover_grid`/`apply_cover_grid` build a `Terrain` from it
+with integer-only math (invariant #1). `bake.py --verify` asserts a byte-stable re-bake. This is the
+D77 "map carries its grid as data → Terrain" primitive; see the interim note below.
+
+**Interim vs. [D77](#d77--content-addressed-terrain-maps-carry-the-grid-persist-serializes-a-content-hash-id-resolves-q22)/[D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15).**
+D77 locks *content-addressed* terrain (`MapId` = content-hash, `Terrain::from_content` lookup, loaded
+through the D76 airlock), but the **code is not yet migrated** — `core::terrain` still uses the `u16`
+`from_map_id` registry. So the first baked map is wired the only way the current code allows: a
+`Terrain::POINTE_DU_HOC_MAP_ID` arm that `include_str!`s its `.covergrid`, plus `Sim::load_map`
+(sets `map_id` **and** terrain together so a snapshot round-trips — invariant #7). This is an
+**explicit interim bridge**: when the D77/D76 content-set loader lands, the `.covergrid` becomes CT-C
+map content identified by its content hash, `from_content` replaces the hardcoded arm, and the bridge
+is deleted. `tools/maps/lint.py` is likewise the interim, real-world analogue of the **CT-F**
+content-lint + CT-G PvP-symmetry validator.
+
+**Diagnostics.** Map bugs are found two ways (invariant: debug scenes get a live overlay *and* a
+headless harness): headlessly via `tools/maps/lint.py` (reachability, sealed pockets, spawn validity,
+structure enumeration with cell coords, PNG preview), and in-engine via `render::debug::covergrid_lines`
+(F3 draws the sim's actual cover cells) inside a `Scene::MapInspect` sandbox that loads a baked map.
+
+**Consequences.** New real-world maps are a config + `pnpm assets:maps` + `pnpm maps:lint`, not
+hand-work. Elevation is render-only until [Q23](open-questions.md#q23--sim-elevation) lands a sim
+height layer; water/cliffs are `Cover::Heavy` until [Q24](open-questions.md#q24--terrain-traversal-cost)
+adds a traversal-cost layer; destructibility is deferred to
+[Q25](open-questions.md#q25--destructible-terrain). Licensing rides the manifest per source (OSM =
+ODbL-1.0, attribution + share-alike).

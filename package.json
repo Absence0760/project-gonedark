@@ -37,6 +37,7 @@
     "assets:icons": "python3 tools/icons/gen_icons.py",
     "assets:app-icon": "python3 tools/icons/gen_app_icon.py",
     "assets:maps": "python3 tools/maps/ingest.py --all && python3 tools/maps/bake.py --all --verify",
+    "maps:lint": "python3 tools/maps/lint.py --all",
 
     "test": "cargo test --workspace --exclude gonedark-pal-android",
     "lint": "cargo clippy --workspace --exclude gonedark-pal-android -- -D warnings",

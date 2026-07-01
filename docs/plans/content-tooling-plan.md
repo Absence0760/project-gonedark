@@ -185,6 +185,13 @@ validator **rejects** a deliberately-asymmetric fixture and **accepts** a mirror
 generated maps each build a deterministic `Sim`. No GPU; ships in `cargo test` + the content-lint
 script.
 
+> **Real-world sibling — [`maps.md`](../maps.md) ([D80](../decisions.md)).** CT-G generates
+> battlefields from a *seed*; the `tools/maps/` pipeline generates them from *real GIS data* (a DEM +
+> OpenStreetMap bounding box) — same script-not-binary ethos, same content-addressed output. Its
+> `bake.py` is a real-world CT-G, and `lint.py` is the interim real-world analogue of the CT-F lint +
+> the PvP-symmetry validator (reachability, spawn validity, structure enumeration, symmetry metrics).
+> Both feed the same D77 content-addressed terrain.
+
 ---
 
 ## Sequencing
