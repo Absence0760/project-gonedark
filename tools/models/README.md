@@ -26,9 +26,15 @@ antenna mast with cross-spreader); the **defensive turret** is a credible weapon
 (ring-plated pad, rotating drum, armoured housing with a sloped face shield, elevation trunnions,
 a sensor block, and a barrel with shroud + muzzle brake); the **barricade** is a three-course
 sagging sandbag berm (offset running bond, each bag flattened/rotated with a deterministic
-per-bag wobble); the **tree** is a four-tier conifer whose tiers are rotated + nudged off-axis for
-a ragged, hand-grown silhouette; the **rock** is a three-lobe tilted boulder. (The barricade and
+per-bag wobble); the **crate** carries diagonal cross-brace battens + a milled lid seam + bracing
+cleats (a reinforced military crate, not a flat cube); the **tree** is a six-tier conifer whose tiers
+are rotated + nudged off-axis for a ragged, hand-grown silhouette with a splayed root flare; the
+**rock** is a tilted cleaved boulder with a jutting broken shard + shed chips. (The barricade and
 sandbag courses are deliberately tri-light box stacks; the heavy per-bag chamfer does the rounding.)
+Per-faction **`turret_us`** (crew-served .50-cal emplacement — low bolted housing, perforated jacket,
+ammo can, squared shield; CARC grey-green) and **`turret_fr`** (remote weapon station — stabilised gun
+pod on a slewing mast, boxed thermal sight, no crew shield; French green) give the two armies
+contrasting emplacement silhouettes (`factions.md` identity language).
 
 One budget note: at the chamfer's 40° angle limit, cylinder side edges stay un-beveled only at
 **≥10 facets** (a 9- or 8-gon's wider inter-facet angle trips the limit and bevels every edge,
@@ -42,7 +48,7 @@ Models live in role subfolders under `assets/models/` (set per model by `CATEGOR
 | Folder | Models |
 |---|---|
 | `units/` | `trooper`, `tank`, `tank_turret` |
-| `structures/` | `camp_hq`, `turret`, `barricade` |
+| `structures/` | `camp_hq`, `turret`, `turret_us`, `turret_fr`, `barricade` |
 | `weapons/` | `weapon_rifle` |
 | `props/` | `crate`, `tree`, `rock` |
 | `fx/` | `tracer` |
@@ -79,11 +85,13 @@ Eleven models — units, structures, weapons, props, scenery, fx:
 | `tank_turret` | `units` | Tank turret (mantlet + barrel, slews on the hull's ring) |
 | `camp_hq` | `structures` | Command building (hipped roof, doorway + awning, windows, antenna mast) |
 | `turret` | `structures` | Weapon emplacement (pad/drum/housing/shield/trunnions/barrel + muzzle brake) |
+| `turret_us` | `structures` | US crew-served .50-cal emplacement (bolted housing, perforated jacket, ammo can, squared shield) |
+| `turret_fr` | `structures` | FR remote weapon station (stabilised gun pod on a slewing mast, boxed thermal sight, no crew shield) |
 | `barricade` | `structures` | Three-course sagging sandbag berm cover |
 | `weapon_rifle` | `weapons` | First-person weapon viewmodel |
-| `crate` | `props` | 1 m cover prop |
-| `tree` | `props` | Scenery / soft cover (trunk + four-tier ragged conifer canopy) |
-| `rock` | `props` | Scenery / hard cover (three-lobe faceted boulder) |
+| `crate` | `props` | 1 m reinforced cover crate (cross-brace battens + lid seam) |
+| `tree` | `props` | Scenery / soft cover (trunk + six-tier ragged conifer canopy + root flare) |
+| `rock` | `props` | Scenery / hard cover (cleaved boulder + broken shard) |
 | `tracer` | `fx` | Tank-shell tracer (small +X-elongated bolt) |
 
 ## The LOD chain

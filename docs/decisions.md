@@ -3963,3 +3963,56 @@ determinism-auditor loop, not fire-and-forget.
 **Cross-link:** [D60](#d60--gunsmith-is-horizontal-fixed-point-sidegrades-checksum-folded),
 [`roadmap.md`](roadmap.md) CP-1, [`plans/pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-C,
 [`customization.md`](customization.md) §1.
+
+## D86 — Camp spawn-rally is authoritative folded sim state, inherited as a literal-executor first Move
+
+**Status: landed.** Closes the dangling rally seam the roadmap flagged under *Playable game loop →
+Troop-training UI* (the `engine::train_ui::rally_point` quantizer existed but had **no sim `Command`**
+to emit into). A camp can now hold a spawn-rally point, and units it produces path there on spawn.
+
+- **Command + state.** New `Command::SetCampRally { camp, rally: Vec2 }` (applied via
+  `economy::set_camp_rally`, a no-op on a dead/non-building handle) writes a new `Building.rally:
+  Option<Vec2>` component field (default `None`). `engine::train_ui::rally_commands` quantizes the
+  tapped world point through the existing pure `rally_point()` seam and emits the command.
+- **Literal-executor inheritance (invariant #3).** In `economy_system`'s spawn pass a produced unit
+  receives `Order::MoveTo(rally)` as its **first** order when the camp has a rally set, else `Idle` as
+  before. The unit just walks to the point — **no autonomous pathing/AI**; depth stays in the
+  order/stance vocabulary, not the brain. The rally applies only to units produced *after* it is set
+  (no re-issue to in-flight units) — the minimal deterministic behavior.
+
+**Why.** A spawn rally is genuine, authoritative game state — two clients must agree on it or units
+diverge — so it is **folded into the per-tick checksum**, serialized in `core::persist`, and encoded
+in the `core::lockstep` wire codec (new **tag 18**), never a presentation-side convenience. That fold
+shifted the raw serialized stream by design, so it bumps both format versions —
+**`SNAPSHOT_VERSION` 10 → 11** and **`WIRE_VERSION` 9 → 10** — and re-pins the camp-bearing golden
+checksums (ballistic duel, sim-runner duel/infantry), fights byte-identical. Ships with `core` tests
+(command writes the field; produced unit inherits the rally; rally folds into the checksum;
+persist round-trips) + an `engine` `train_ui` test, green dev+release; 2-peer lockstep agreed with no
+desync.
+
+**Cross-link:** [D18](#d18) (SoA ECS), [D27](#d27) (lockstep), [D28](#d28) (snapshot/persist),
+invariant #1/#3/#7, [`roadmap.md`](roadmap.md) *Playable game loop → Troop-training UI*.
+
+## D87 — Runtime skeletal playback landed, completing the D84 deferral
+
+**Status: landed.** [D84](#d84--animation-floor-cp3ws-b-is-a-pure-clip-selection-seam--a-procedural-pose-rig-authoring-lands-skeletal-playback-deferred)
+shipped the animation floor as a clip-selection seam + a procedural pose and **explicitly deferred**
+the runtime skeletal player that consumes the authored rig. That deferred half is now built: the
+generic `ModelKind::Trooper` draws through the authored 7-bone rigid-part rig
+(`assets/models/rigs/trooper_rig.skel`, cooked `GDSK`) instead of the procedural stand-in, in **both**
+the command-view token pass and the embodied world pass.
+
+**Why.** As D84 designed, the skeletal player slots in *behind* the already-stable `AnimClip`
+interface, so nothing upstream changed. "Skinning" is one matrix per rigid part —
+`model = place · A_bone(t) · inverse_bind[bone]` — drawn as ordinary instanced `MeshInstance`s
+through the **existing** `MeshPipeline`: no new shader, no skinning shader, no new vertex attribute,
+no glTF-at-runtime (render stays `wgpu` + `bytemuck` only, [D19](#d19)/[D46](#d46)). Render never
+touches sim state (invariant #4) — all inputs are the already-interpolated float render snapshot.
+Since `interpolate_instances` forces `Army::Neutral`, essentially all in-game infantry are generic
+Troopers, so this animates the whole roster; per-faction rigs (`TrooperUs`/`TrooperFr` keep the
+procedural floor) and runtime-driven death (dead units drop from the snapshot) remain follow-ups.
+491 render tests green dev+release.
+
+**Cross-link:** [D84](#d84--animation-floor-cp3ws-b-is-a-pure-clip-selection-seam--a-procedural-pose-rig-authoring-lands-skeletal-playback-deferred),
+[D19](#d19), [D46](#d46), invariant #4, [`roadmap.md`](roadmap.md) CP-3 / *Art & assets*,
+[`plans/visual-design-plan.md`](plans/visual-design-plan.md) WS-B.

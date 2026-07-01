@@ -228,8 +228,9 @@ model.
 > the first native surface buildable once the seam landed; only the **iOS** Boot & title shell is
  still pending (no iOS target at all). **Desktop Settings is now partial** — the egui Settings /
 > Profile / About screens landed with audio master/SFX volume + look sensitivity wired into the host
-> ([D75](decisions.md); music volume + graphics tiers stay dormant, accessibility + the rebind editor
-> still owed). **The Android Compose out-of-match shell has since reached parity with that desktop
+> ([D75](decisions.md)); **graphics-tier selection is now live** (Settings → `render::tiers` quality
+> band) and **music volume is wired to a host seam but dormant** (no music bus exists yet);
+> accessibility + the rebind editor still owed. **The Android Compose out-of-match shell has since reached parity with that desktop
 > shell** — Settings/Profile/About, the gunsmith, and the Operations-hub mission-select/briefing all
 > re-authored in Compose ([D78](decisions.md)/[D79](decisions.md)) and a parity-gap sweep closing the
 > last UI/content divergences; the product-of-record status (and the structural items still open — an
@@ -342,8 +343,10 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   (`engine::build_ui::build_commands` seam; B-key on desktop, [D48](decisions.md))
 - [x] **Troop-training UI** — pick a unit type, see cost + queue + ETA
   (`engine::train_ui::train_commands` seam; R/H keys on desktop, [D48](decisions.md)). *Rally
-  point: the `rally_point` quantization seam exists, but emitting it awaits a camp-rally sim
-  command (flagged follow-up — there is no `Command` for a building's spawn rally yet).*
+  point: **now landed** ([D86](decisions.md)) — `Command::SetCampRally` writes authoritative
+  `Building.rally` sim state (checksum-folded, `SNAPSHOT_VERSION` 11 / `WIRE_VERSION` 10) and
+  produced units inherit it as a literal-executor first `Move`; `engine::train_ui::rally_commands`
+  emits it.*
 - [x] **Camp upgrades** — a readable tier display + one-button level-up
   (`engine::upgrade_ui::upgrade_commands` seam; U-key on desktop, [D48](decisions.md)). *Linear
   camp-tier leveling today; a richer per-structure/per-unit prerequisite **tree** is a `core`
@@ -384,9 +387,13 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   moved in lock-step ([`compose-shell-parity.md`](plans/compose-shell-parity.md)); the egui
   mission-select/briefing hub reaches both nodes, native (Compose) shell chrome still BLOCKED on
   [D32](decisions.md))
-- [ ] **Gunsmith loadout (WS-C)** — fixed-point sidegrade attachment model, checksum-folded, +
-  pre-match loadout UI ([D60](decisions.md)) (PARTIAL — sim model `core/src/gunsmith.rs` + UI seam
-  `engine/src/loadout_ui.rs` built + tested; loadout not applied at live match start)
+- [x] **Gunsmith loadout (WS-C)** — fixed-point sidegrade attachment model, checksum-folded, +
+  pre-match loadout UI ([D60](decisions.md)) (sim model `core/src/gunsmith.rs` + UI seam
+  `engine/src/loadout_ui.rs`; the chosen loadout **is applied at live match start** — desktop
+  `enter_match` + Android `android_backend` feed `Game::new_scene_with_loadout` → the
+  `*_with_loadout` seeders → `Loadout::apply_to_weapon`; the GPU-free boot dispatch
+  (`seed_scene_with_loadout`) is now covered by a test asserting the default path stays
+  checksum-identical (invariants #1/#7))
 - [x] **HUD layout editor (WS-D)** — per-layer drag/resize/opacity presets over the existing touch
   seams, presentation/input-only, invariant-#6-bounded ([D61](decisions.md); also tracked under
   *UI / UX polish* below) (code landed — `engine/src/hud_layout.rs`)
@@ -445,8 +452,10 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   (command-HUD glanceability — unified state/colour language on `render::theme` + the
   `engine::panel_summary` seam), WS-D (accessibility — audio/haptic equivalents of the directional
   flash + a persisted `AlertCueMode`), and WS-E (embodied-dark tunnel-vision tonemap + detail maps +
-  shell-palette unification). Remaining game-feel work (CP-2 human-feel playtest, CP-3 runtime
-  skeletal playback) is sequenced in the **[visual-design plan](plans/visual-design-plan.md)**.
+  shell-palette unification). **CP-3 runtime skeletal playback has since landed** ([D87](decisions.md)):
+  the generic trooper draws through the authored 7-bone rigid-part rig via the existing `MeshPipeline`
+  in both the command and embodied passes, superseding the procedural pose. Remaining game-feel work
+  (CP-2 human-feel playtest) is sequenced in the **[visual-design plan](plans/visual-design-plan.md)**.
 - [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface).
   **Now scoped as the CoD-Mobile/MLBB HUD layout editor** — per-layer drag/resize/opacity presets,
   presentation/input-only, invariant-#6-bounded ([D61](decisions.md); PvE pillar WS-D)
@@ -460,7 +469,9 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 - [~] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
   cue for the directional-flash + audio alert channel). **Accessibility cue landed** (WS-D: a
   persisted `AlertCueMode` selecting audio/haptic equivalents of the flash + the existing colourblind
-  ramps/shape glyphs); graphics tiers, the rebind editor, and music-volume wiring still owed.
+  ramps/shape glyphs); **graphics-tier selection now drives `render::tiers` live and music volume is
+  wired to a host seam (dormant until a music bus exists)** ([D75](decisions.md) follow-up); the
+  rebind editor still owed.
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions.
   **Hit feedback (the embodied "I hit him" cue) is tracked as TF-4** under *Test & feedback
   hardening* above ([`test-harness-plan.md`](plans/test-harness-plan.md) WS-4)
@@ -489,14 +500,17 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   sandbag berms, turrets) drawn in the embodied view, LOD-by-distance ([D50](decisions.md)) —
   and the embodied view now also draws the **fog-filtered, avatar-visible sim units** themselves
   (line-of-sight enemies/allies), not just static props ([D52](decisions.md))
-- [~] **Mesh fidelity pass across the roster** — lift the remaining greybox models to the
+- [x] **Mesh fidelity pass across the roster** — lift the remaining greybox models to the
   trooper's bar, ranked by how close the player gets: weapon viewmodels → tanks → structures →
   scenery. Per-*subject* technique (box-stacking stays right for the mechanical/architectural
   models — the lever is booleans + tuned bevels, not skinning) driven by a tight render→verify
   loop. The **trooper reskin** (an organic body via skeleton + Blender Skin modifier, commit
-  `d7cced1`) is the landed pilot that proved the method. **Tiers 1–3 landed** (weapon viewmodels,
-  tanks, and structures — `camp_hq`/`turret`/`barricade`); tier 4 (scenery) + the US/FR turret
-  variants remain. *Scoped as **WS-F** of the [visual-design plan](plans/visual-design-plan.md).*
+  `d7cced1`) is the landed pilot that proved the method. **All tiers landed** — tiers 1–3 (weapon
+  viewmodels, tanks, `camp_hq`/`turret`/`barricade`) plus **tier 4 (scenery lift — crate/tree/rock)
+  and the US/FR turret emplacement variants** (`gen_models.py`, cook→LOD chain + manifest sha256,
+  golden mesh tests green). *Scoped as **WS-F** of the [visual-design plan](plans/visual-design-plan.md).
+  **Follow-up:** the new `turret_us`/`turret_fr` assets are generated + manifested but not yet
+  render-wired — they need `MeshId` variants in `render/src/mesh.rs`.*
 
 ### Release readiness — the store-facing layer
 
@@ -559,8 +573,8 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   `shell` (byte-neutral fast path preserved), `GunsmithPool`/`pool_for` + `loadout_ui` gained all six
   rows, and the fairness proof generalized to the full `3⁵ = 243`-build space per army — 2-peer
   checksum agreement + the D69/D70 Rifleman↔Heavy RPS re-validated green. All six categories now
-  exist as sidegrades (Grip cosmetic-only). *Remaining: apply the chosen loadout at live match start
-  (PvE WS-C).*
+  exist as sidegrades (Grip cosmetic-only). *The chosen loadout is now applied at live match start on
+  both platforms, with the boot dispatch test-locked (PvE WS-C).*
 - [ ] **CP-2 — Embodied game-feel bar (launch-critical).** A focused gunplay pass so a Delta
   Force player doesn't bounce in ten seconds: hit feedback (impact/hitmarker/damage-direction),
   recoil/kick readability, responsive ADS, audio-coupled firing. **Presentation/feel only — never
@@ -571,9 +585,11 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   scripted pipeline ([`content-pipeline.md`](content-pipeline.md), [D41](decisions.md)/[D46](decisions.md)).
   **Explicitly not UE5 parity**; we concede photoreal fidelity and compete on the hybrid. *Scoped as
   WS-B (animation) + WS-F (mesh fidelity) of the [visual-design plan](plans/visual-design-plan.md).*
-  **WS-B floor slice landed ([D84](decisions.md)):** the clip-selection seam + a procedural pose
-  (troopers visibly animate) + rig authoring (`trooper_rig.glb`, 4 clips); runtime skeletal playback
-  + WS-F mesh fidelity still owed.
+  **WS-B landed ([D84](decisions.md) + [D87](decisions.md)):** the clip-selection seam + a procedural
+  pose + rig authoring (`trooper_rig.glb`, 4 clips), and **runtime skeletal playback now drives the
+  generic trooper** through the authored rigid-part rig via the existing `MeshPipeline`. **WS-F mesh
+  fidelity is also complete** (all four tiers + US/FR turret variants). Remaining CP-3 work is
+  per-faction rigs + runtime-driven death anim.
 - [ ] **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (PvE WS-D,
   [D61](decisions.md)) + a touch-target/rebind pass so controls feel CoD-Mobile-class. *Overlaps
   the touch-layout editor under UI/UX polish above.*
