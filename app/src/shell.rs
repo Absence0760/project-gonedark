@@ -1016,23 +1016,41 @@ pub fn apply_briefing_action(action: BriefingAction, selected: &mut Difficulty) 
 
 // ---- The "going-dark" palette + theme -----------------------------------------------------------
 
-// A near-black field, dim chrome, one amber alert accent (the game's directional-alert colour).
-// These five base values (INK/PANEL/BONE/ASH/AMBER) are kept **bit-identical to the canonical
-// renderer palette** documented in `render/src/theme.rs` (gonedark_render::theme) so the out-of-match
-// egui chrome and the in-match wgpu HUD read as one art-directed identity. (`app` now *does* depend
-// on `gonedark-render` — for the 3D title backdrop, see [`EguiShell`] — but we still mirror the hex
-// here rather than pull the colour table through that dep: egui wants `Color32`, render wants linear
-// `[f32; 4]`, and this egui chrome predates the dep. The two palettes must still move together; see
-// the doc-hex annotations in theme.rs.)
-const INK: egui::Color32 = egui::Color32::from_rgb(0x07, 0x09, 0x0C);
+// A near-black field, dim chrome, one amber alert accent (the game's directional-alert colour). The
+// **shared-identity** ramp (ink / text / hairline) is now DERIVED from the canonical renderer palette
+// (`gonedark_render::theme`, `render/src/theme.rs`) through [`rgb8`], so there is ONE source of truth
+// instead of a duplicated hex table that could silently drift (closing the D75 "the two palettes must
+// still move together" hazard — it is now enforced by [`shell_palette_shares_the_render_theme`]).
+//
+// egui wants `Color32` (8-bit sRGB) and render wants `[f32; 3]` in [0,1]; `rgb8` is the one bridge.
+// The **in-match-tuned** variants (PANEL / PANEL_RAISED / AMBER) are DELIBERATELY *not* derived: the
+// renderer's `theme::{PANEL, PANEL_RAISED, AMBER}` are nudged deeper/warmer for the in-match HUD (see
+// their doc-hex in theme.rs), while the out-of-match shell keeps the lighter/cooler card + amber it
+// shipped with. Those stay explicit here and are pinned by tests so a retune is a conscious edit.
+
+/// Convert a `gonedark_render::theme` sRGB colour (`[0,1]` components) to an egui `Color32` (8-bit
+/// sRGB) — the single bridge that lets the shell chrome share the renderer's palette source of truth.
+/// Round-to-nearest (`+0.5` then truncate; components are non-negative). `const` so it seeds the
+/// palette consts below.
+const fn rgb8(c: gonedark_render::theme::Rgb) -> egui::Color32 {
+    egui::Color32::from_rgb(
+        (c[0] * 255.0 + 0.5) as u8,
+        (c[1] * 255.0 + 0.5) as u8,
+        (c[2] * 255.0 + 0.5) as u8,
+    )
+}
+
+// Shared-identity ramp — derived straight from the renderer theme.
+const INK: egui::Color32 = rgb8(gonedark_render::theme::INK);
+const BONE: egui::Color32 = rgb8(gonedark_render::theme::BONE);
+const ASH: egui::Color32 = rgb8(gonedark_render::theme::ASH);
+const RIM: egui::Color32 = rgb8(gonedark_render::theme::RIM);
+// In-match-tuned variants — deliberately the SHELL values (the renderer nudges these deeper/warmer
+// for the in-match HUD); kept explicit and pinned by tests. PANEL is the card fill; PANEL_RAISED the
+// raised/hover/active surface; AMBER the lone signal accent; MUTED the dimmest legible text.
 const PANEL: egui::Color32 = egui::Color32::from_rgb(0x12, 0x18, 0x20);
-const BONE: egui::Color32 = egui::Color32::from_rgb(0xE7, 0xEC, 0xEF);
-const ASH: egui::Color32 = egui::Color32::from_rgb(0x8A, 0x94, 0x9C);
 const AMBER: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x79, 0x1F);
-// One step lighter than PANEL for raised/hovered/active surfaces; a hairline RIM lifts a card off
-// the ink; MUTED is the dimmest legible text (mirrors theme.rs PANEL_RAISED/RIM/MUTED).
 const PANEL_RAISED: egui::Color32 = egui::Color32::from_rgb(0x1B, 0x25, 0x31);
-const RIM: egui::Color32 = egui::Color32::from_rgb(0x29, 0x30, 0x42);
 const MUTED: egui::Color32 = egui::Color32::from_rgb(0x61, 0x68, 0x75);
 // A semi-opaque PANEL for chrome floated over the live 3D title backdrop: the PANEL hue at ~88%
 // alpha (224/255) so the moving sky reads faintly behind a card without costing text legibility.
@@ -1072,7 +1090,10 @@ fn shell_style() -> egui::Style {
     v.faint_bg_color = PANEL;
     v.extreme_bg_color = INK;
     v.hyperlink_color = AMBER;
-    v.selection.bg_fill = egui::Color32::from_rgba_unmultiplied(0xE0, 0x79, 0x1F, 96);
+    // The selection fill is AMBER at ~38% alpha — derived from the const, not a re-typed hex, so it
+    // tracks any AMBER retune (was a duplicated 0xE0/0x79/0x1F literal).
+    v.selection.bg_fill =
+        egui::Color32::from_rgba_unmultiplied(AMBER.r(), AMBER.g(), AMBER.b(), 96);
     v.selection.stroke = Stroke::new(1.0, AMBER);
 
     // The widget interaction ramp: a button at rest sits on PANEL with a RIM hairline; hover/active
@@ -2470,6 +2491,55 @@ mod tests {
         let chosen = ed.current();
         assert_eq!(apply_loadout_action(LoadoutAction::Done, &mut ed), LoadoutStep::Done);
         assert_eq!(ed.current(), chosen, "Done doesn't alter the editor");
+    }
+
+    // ---- The shell palette (derived from the shared render theme) --------------------------------
+
+    /// `rgb8` rounds an sRGB `[0,1]` colour to 8-bit correctly (the bridge from `render::theme` to
+    /// egui `Color32`).
+    #[test]
+    fn rgb8_rounds_srgb_to_8bit() {
+        assert_eq!(rgb8([0.0, 0.5, 1.0]), egui::Color32::from_rgb(0, 128, 255));
+        assert_eq!(rgb8([1.0, 1.0, 1.0]), egui::Color32::from_rgb(255, 255, 255));
+        // The renderer INK maps to the shell's shipped ink hex.
+        assert_eq!(rgb8(gonedark_render::theme::INK), egui::Color32::from_rgb(0x07, 0x09, 0x0C));
+    }
+
+    /// The shared-identity ramp is DERIVED from `gonedark_render::theme` — one source of truth, so a
+    /// renderer palette retune can't silently drift the out-of-match shell (the D75 hazard, now a
+    /// compile-time link + this guard).
+    #[test]
+    fn shell_shared_ramp_tracks_the_render_theme() {
+        use gonedark_render::theme;
+        assert_eq!(INK, rgb8(theme::INK));
+        assert_eq!(BONE, rgb8(theme::BONE));
+        assert_eq!(ASH, rgb8(theme::ASH));
+        assert_eq!(RIM, rgb8(theme::RIM));
+    }
+
+    /// Switching the shared ramp to derivation did NOT shift the shipped look: the derived colours
+    /// still equal the exact hex the shell shipped (INK/BONE/ASH/RIM).
+    #[test]
+    fn shell_shared_ramp_preserves_the_shipped_hex() {
+        assert_eq!(INK, egui::Color32::from_rgb(0x07, 0x09, 0x0C));
+        assert_eq!(BONE, egui::Color32::from_rgb(0xE7, 0xEC, 0xEF));
+        assert_eq!(ASH, egui::Color32::from_rgb(0x8A, 0x94, 0x9C));
+        assert_eq!(RIM, egui::Color32::from_rgb(0x29, 0x30, 0x42));
+    }
+
+    /// The in-match-tuned variants are deliberately the SHELL values (the renderer nudges its own
+    /// `PANEL`/`PANEL_RAISED`/`AMBER` deeper/warmer for the HUD). Pin them so a retune is a conscious
+    /// edit, and assert they genuinely differ from a naive derivation of the renderer consts.
+    #[test]
+    fn shell_in_match_variants_are_pinned_and_distinct() {
+        use gonedark_render::theme;
+        assert_eq!(PANEL, egui::Color32::from_rgb(0x12, 0x18, 0x20));
+        assert_eq!(PANEL_RAISED, egui::Color32::from_rgb(0x1B, 0x25, 0x31));
+        assert_eq!(AMBER, egui::Color32::from_rgb(0xE0, 0x79, 0x1F));
+        assert_eq!(MUTED, egui::Color32::from_rgb(0x61, 0x68, 0x75));
+        // The shell PANEL/AMBER are intentionally NOT the renderer's in-match variants.
+        assert_ne!(PANEL, rgb8(theme::PANEL), "shell PANEL is lighter than the in-match HUD PANEL");
+        assert_ne!(AMBER, rgb8(theme::AMBER), "shell AMBER is cooler than the in-match HUD AMBER");
     }
 
     // ---- The shell theme (pure egui::Style data — no GPU/window, so it IS testable) --------------

@@ -97,9 +97,31 @@ fn surface_mottle(p: vec3<f32>) -> f32 {
     return (n1 - 0.5) * 0.66 + (n2 - 0.5) * 0.34;
 }
 
+// WS-E micro-relief normal: tilt the flat face normal `n` by the LOCAL GRADIENT of the surface
+// mottle so greybox facets catch light as faintly-bumpy worn material rather than perfectly flat
+// planes. Budget-driven (invariant #4 / mobile 200-unit budget, D49): it adds NO texture fetch and
+// reuses the same tested `surface_mottle` noise the albedo already samples — an arbitrary tangent
+// basis off `n` plus two extra taps (the base mottle at `p` is passed in). `base_mottle` is
+// `surface_mottle(p)`; `strength` is kept low so it reads as texture, never lumps. **Mirrored by
+// `mesh.rs::detail_normal` (the golden reference + tests); keep the two in step.** Presentation
+// only — perturbs a normal, touches no position/sim/intel (invariant #6).
+fn detail_normal(n: vec3<f32>, p: vec3<f32>, base_mottle: f32) -> vec3<f32> {
+    // Least-aligned helper axis to avoid a degenerate cross product on near-vertical facets.
+    let helper = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.z) < 0.9);
+    let t = normalize(cross(helper, n));
+    let b = cross(n, t);
+    let eps = 0.35;
+    let gx = (surface_mottle(p + t * eps) - base_mottle) / eps;
+    let gy = (surface_mottle(p + b * eps) - base_mottle) / eps;
+    let strength = 0.5;
+    return normalize(n - (t * gx + b * gy) * strength);
+}
+
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let n = normalize(in.world_normal);
+    // The raw FACE normal — flat-shaded facet orientation. Used for the directional grime/dust cue
+    // (which is about which way a facet faces), then perturbed below into the lit `n`.
+    let n_face = normalize(in.world_normal);
 
     // --- material: per-part albedo, team colour blended in only by the per-part mask. ---
     // `in.albedo.rgb` is the real material (olive fatigues, dark helmet, near-black rifle, tan
@@ -124,9 +146,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Procedural mottle + a directional grime/dust cue: undersides accumulate grime (darker), tops
     // catch a faint dust lift. All low-contrast — material, not paint. (+z is world up.)
     let mottle = surface_mottle(in.world_pos);
-    let dust = max(n.z, 0.0) * 0.05;
-    let grime = max(-n.z, 0.0) * 0.08;
+    let dust = max(n_face.z, 0.0) * 0.05;
+    let grime = max(-n_face.z, 0.0) * 0.08;
     let tint = base * clamp(1.0 + mottle * 0.16 + dust - grime, 0.55, 1.35);
+
+    // WS-E: perturb the face normal by the mottle gradient for micro-surface relief in the lighting
+    // below. Reuses the mottle already sampled above; adds two noise taps, no texture fetch.
+    let n = detail_normal(n_face, in.world_pos, mottle);
 
     // --- lighting: key (warm) + fill (cool) + hemispheric ambient with a cavity term. ---
 

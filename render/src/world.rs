@@ -41,6 +41,13 @@ pub const GROUND_TEX_SIZE: u32 = 256;
 /// by `tools/textures/gen_textures.py`; render-only, carries no sim/intel (invariants #1/#4/#6).
 const GROUND_TEX_BYTES: &[u8] = include_bytes!("../../assets/textures/ground.gray");
 
+/// The baked seamless **high-frequency detail** heightfield (WS-E): raw `GROUND_TEX_SIZE²` R8 bytes,
+/// same size/format as [`GROUND_TEX_BYTES`] but a crisper, higher-contrast field. Sampled by the
+/// floor shader at a tight world scale and finite-differenced for sharp near-field micro-relief the
+/// smooth `ground` field can't carry. Generated with ImageMagick by `tools/textures/gen_textures.py`
+/// (the `detail` entry); render-only, carries no sim/intel (invariants #1/#4/#6).
+const DETAIL_TEX_BYTES: &[u8] = include_bytes!("../../assets/textures/detail.gray");
+
 /// Compute the muzzle-flash intensity in `[0, 1]` for the current `tick`, given the tick the
 /// player last fired on (`None` if they have not fired). Fresh shot → `1.0`, then a linear ramp to
 /// `0.0` over [`MUZZLE_FLASH_TICKS`]; a future-stamped or long-past fire is dark. Pure float math
@@ -339,7 +346,11 @@ pub struct WorldRenderer {
     /// [`render_sky`](Self::render_sky) (the construction path has only a `device`, not a `queue` —
     /// the same lazy-upload pattern as `text::TextRenderer::ensure_atlas_uploaded`).
     ground_tex: wgpu::Texture,
-    /// Whether [`ground_tex`](Self::ground_tex)'s bytes have been written yet.
+    /// The high-frequency detail heightfield (WS-E), uploaded lazily alongside [`ground_tex`] and
+    /// sampled by the floor shader for crisp near-field micro-relief.
+    detail_tex: wgpu::Texture,
+    /// Whether [`ground_tex`](Self::ground_tex)'s + [`detail_tex`](Self::detail_tex)'s bytes have
+    /// been written yet (both upload together on the first render).
     ground_uploaded: bool,
 }
 
@@ -377,6 +388,23 @@ impl WorldRenderer {
             view_formats: &[],
         });
         let ground_view = ground_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // The high-frequency detail heightfield (WS-E) — same R8 format/size as the ground map,
+        // bytes written lazily on the first render_sky(). Shares the ground's REPEAT/Linear sampler.
+        let detail_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gonedark.world_detail_tex"),
+            size: wgpu::Extent3d {
+                width: GROUND_TEX_SIZE,
+                height: GROUND_TEX_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let detail_view = detail_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let ground_samp = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("gonedark.world_ground_sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -415,6 +443,17 @@ impl WorldRenderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // binding 3: the WS-E detail heightfield (shares binding 2's sampler).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -433,6 +472,10 @@ impl WorldRenderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&ground_samp),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&detail_view),
                 },
             ],
         });
@@ -556,6 +599,7 @@ impl WorldRenderer {
             muzzle_uniform_buf,
             muzzle_bind_group,
             ground_tex,
+            detail_tex,
             ground_uploaded: false,
         }
     }
@@ -567,25 +611,32 @@ impl WorldRenderer {
         if self.ground_uploaded {
             return;
         }
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.ground_tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            GROUND_TEX_BYTES,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(GROUND_TEX_SIZE),
-                rows_per_image: Some(GROUND_TEX_SIZE),
-            },
-            wgpu::Extent3d {
-                width: GROUND_TEX_SIZE,
-                height: GROUND_TEX_SIZE,
-                depth_or_array_layers: 1,
-            },
-        );
+        let extent = wgpu::Extent3d {
+            width: GROUND_TEX_SIZE,
+            height: GROUND_TEX_SIZE,
+            depth_or_array_layers: 1,
+        };
+        let layout = wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(GROUND_TEX_SIZE),
+            rows_per_image: Some(GROUND_TEX_SIZE),
+        };
+        for (tex, bytes) in [
+            (&self.ground_tex, GROUND_TEX_BYTES),
+            (&self.detail_tex, DETAIL_TEX_BYTES),
+        ] {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytes,
+                layout,
+                extent,
+            );
+        }
         self.ground_uploaded = true;
     }
 
@@ -975,6 +1026,28 @@ mod tests {
             GROUND_TEX_BYTES.len(),
             (GROUND_TEX_SIZE * GROUND_TEX_SIZE) as usize,
             "raw R8 ground size must match GROUND_TEX_SIZE² — regenerate with `pnpm assets:textures`"
+        );
+    }
+
+    #[test]
+    fn detail_tex_matches_metrics() {
+        // The WS-E detail heightfield is the SAME R8 GROUND_TEX_SIZE² blob shape as the ground map
+        // (it shares the texture descriptor + the bytes_per_row upload), so its length must match
+        // too or the near-field crunch would shear at runtime.
+        assert_eq!(
+            DETAIL_TEX_BYTES.len(),
+            (GROUND_TEX_SIZE * GROUND_TEX_SIZE) as usize,
+            "raw R8 detail size must match GROUND_TEX_SIZE² — regenerate with `pnpm assets:textures`"
+        );
+    }
+
+    #[test]
+    fn detail_field_differs_from_ground() {
+        // The two heightfields must be genuinely different noise (distinct seeds) — otherwise the
+        // detail sample would just re-add the ground field's own gradients and buy no crisper relief.
+        assert_ne!(
+            GROUND_TEX_BYTES, DETAIL_TEX_BYTES,
+            "detail must be an independent field, not a copy of ground"
         );
     }
 
