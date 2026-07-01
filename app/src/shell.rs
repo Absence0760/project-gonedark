@@ -35,8 +35,23 @@ pub enum TitleAction {
     Settings,
     /// Open the player profile / progression surface (a no-op placeholder until it lands).
     Profile,
+    /// Open the About / field-manual (controls-reference) screen straight from the title. Mirrors
+    /// Android's `TitleAction.About` — on desktop About is *also* reachable from Settings, so its
+    /// return target is carried through [`AboutReturn`] rather than fixed.
+    About,
     /// Quit the app.
     Quit,
+}
+
+/// Where the About / field-manual screen returns on BACK — the entry point it was opened from. About
+/// is reachable from **both** the title (Android parity) and Settings (the pre-existing desktop path),
+/// so BACK must land back where the player came from rather than a fixed screen. Pure data.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AboutReturn {
+    /// Opened from the title screen — BACK returns to the title.
+    Title,
+    /// Opened from Settings — BACK returns to Settings (the original desktop path).
+    Settings,
 }
 
 /// What the host does in response to a title action — the decision table the run loop switches on.
@@ -66,8 +81,9 @@ pub enum HostTransition {
     OpenSettings,
     /// Switch the host to the player Profile screen (callsign, faction preference, lifetime record).
     OpenProfile,
-    /// Switch the host to the About / controls-reference screen (reached from Settings).
-    OpenAbout,
+    /// Switch the host to the About / controls-reference screen, remembering where BACK returns to
+    /// ([`AboutReturn`]) — reachable from both the title and Settings.
+    OpenAbout(AboutReturn),
     /// Toggle borderless fullscreen and stay on the current screen — the Settings video toggle. The
     /// window mode lives on the host (`App::fullscreen`), so this defers the actual flip to the run
     /// loop rather than carrying a second source of truth into the settings model.
@@ -91,6 +107,8 @@ pub fn resolve_title_action(action: TitleAction) -> HostTransition {
         TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenLoadout,
         TitleAction::Settings => HostTransition::OpenSettings,
         TitleAction::Profile => HostTransition::OpenProfile,
+        // The FIELD MANUAL button opens About and returns to the title on BACK (Android parity).
+        TitleAction::About => HostTransition::OpenAbout(AboutReturn::Title),
         TitleAction::Quit => HostTransition::Exit,
     }
 }
@@ -1149,6 +1167,11 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
                 if chip_button(ui, "PROFILE") {
                     action = Some(TitleAction::Profile);
                 }
+                // The field manual (About) — reachable straight from the title, mirroring Android's
+                // title About entry (it is also reachable from Settings).
+                if chip_button(ui, "MANUAL") {
+                    action = Some(TitleAction::About);
+                }
             });
         });
 
@@ -1750,6 +1773,16 @@ mod tests {
         assert_eq!(
             resolve_title_action(TitleAction::Profile),
             HostTransition::OpenProfile
+        );
+    }
+
+    #[test]
+    fn title_about_opens_the_field_manual_returning_to_the_title() {
+        // T2 parity: the title's FIELD MANUAL button opens About and BACK returns to the title
+        // (the Settings entry — tested via the run loop — returns to Settings instead).
+        assert_eq!(
+            resolve_title_action(TitleAction::About),
+            HostTransition::OpenAbout(AboutReturn::Title)
         );
     }
 

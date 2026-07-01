@@ -31,8 +31,9 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, Window
 mod shell;
 use shell::{
     apply_briefing_action, apply_loadout_action, apply_profile_action, apply_settings_action,
-    build_channel, build_stamp, resolve_title_action, BriefingOutcome, EguiShell, HostTransition,
-    LoadoutStep, MissionSelectAction, ProfileState, ProfileStep, SettingsState, SettingsStep,
+    build_channel, build_stamp, resolve_title_action, AboutReturn, BriefingOutcome, EguiShell,
+    HostTransition, LoadoutStep, MissionSelectAction, ProfileState, ProfileStep, SettingsState,
+    SettingsStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -54,8 +55,9 @@ enum Screen {
     /// The **briefing** screen for one campaign node. Carries the [`NodeId`] whose briefing it shows;
     /// the replay-tier selector lives on [`App::briefing_difficulty`].
     Briefing(NodeId),
-    /// The About / controls-reference screen (reached from Settings). Static content, no host state.
-    About,
+    /// The About / controls-reference screen. Carries the [`AboutReturn`] entry point BACK lands on —
+    /// About is reachable from both the title (returns to title) and Settings (returns to Settings).
+    About(AboutReturn),
     // `Game` is large (the renderer + sim state); box it so the idle `Title` variant doesn't carry
     // that footprint around (clippy::large_enum_variant).
     InMatch(Box<Game>),
@@ -305,7 +307,9 @@ impl App {
                         transition = match apply_settings_action(action, &mut self.settings) {
                             SettingsStep::Stay => None,
                             SettingsStep::ToggleFullscreen => Some(HostTransition::ToggleFullscreen),
-                            SettingsStep::About => Some(HostTransition::OpenAbout),
+                            SettingsStep::About => {
+                                Some(HostTransition::OpenAbout(AboutReturn::Settings))
+                            }
                             SettingsStep::Back => Some(HostTransition::ExitToTitle),
                         };
                     }
@@ -354,11 +358,15 @@ impl App {
                     }
                 }
             }
-            Screen::About => {
+            Screen::About(ret) => {
+                let ret = *ret;
                 if let Some(sh) = self.shell.as_mut() {
-                    // BACK from About returns to Settings (where it was opened from).
+                    // BACK from About returns to whichever entry point opened it (title or Settings).
                     if sh.draw_about(surface) {
-                        transition = Some(HostTransition::OpenSettings);
+                        transition = Some(match ret {
+                            AboutReturn::Title => HostTransition::ExitToTitle,
+                            AboutReturn::Settings => HostTransition::OpenSettings,
+                        });
                     }
                 }
             }
@@ -522,8 +530,8 @@ impl App {
                 self.screen = Screen::Profile;
                 self.last_frame = Instant::now();
             }
-            Some(HostTransition::OpenAbout) => {
-                self.screen = Screen::About;
+            Some(HostTransition::OpenAbout(ret)) => {
+                self.screen = Screen::About(ret);
                 self.last_frame = Instant::now();
             }
             // The Settings video toggle: flip the window mode, stay on the current screen.
@@ -602,7 +610,7 @@ impl ApplicationHandler for App {
             | Screen::Profile
             | Screen::MissionSelect
             | Screen::Briefing(_)
-            | Screen::About => {
+            | Screen::About(_) => {
                 if let (Some(sh), Some(surface)) = (self.shell.as_mut(), self.surface.as_ref()) {
                     sh.on_window_event(surface.window(), &event);
                 }
