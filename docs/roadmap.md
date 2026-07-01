@@ -544,6 +544,9 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   scripted pipeline ([`content-pipeline.md`](content-pipeline.md), [D41](decisions.md)/[D46](decisions.md)).
   **Explicitly not UE5 parity**; we concede photoreal fidelity and compete on the hybrid. *Scoped as
   WS-B (animation) + WS-F (mesh fidelity) of the [visual-design plan](plans/visual-design-plan.md).*
+  **WS-B floor slice landed ([D84](decisions.md)):** the clip-selection seam + a procedural pose
+  (troopers visibly animate) + rig authoring (`trooper_rig.glb`, 4 clips); runtime skeletal playback
+  + WS-F mesh fidelity still owed.
 - [ ] **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (PvE WS-D,
   [D61](decisions.md)) + a touch-target/rebind pass so controls feel CoD-Mobile-class. *Overlaps
   the touch-layout editor under UI/UX polish above.*

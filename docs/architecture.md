@@ -377,6 +377,16 @@ pipeline (`mesh.wgsl`) draws them: the embodied first-person weapon viewmodel an
 command-view 3D unit/structure tokens. This is render-only (invariant #1/#4) and keeps the
 crate `glam`/windowing-free (D19).
 
+**Animation (greybox floor, [D84](decisions.md)).** The `.mesh` cook is static — it carries no
+skeleton. The animation floor (CP-3/WS-B) therefore has two halves: a **rigged interchange artifact**
+(`tools/models/gen_trooper_rig.py` → `assets/models/rigs/trooper_rig.glb`, a rigid-part trooper +
+four glTF clips idle/walk/fire/death, committed with a provenance manifest) that is **authored but
+not yet loaded at runtime**; and the **live** presentation path in `render::anim` — a pure
+clip-selection seam (`select_clip`, reading the snapshot's `vel`/`firing`) that today drives a cheap
+**procedural** per-instance pose (bob / lean / recoil / topple) folded into the token model matrix,
+infantry-gated and `REST`-identical to `mesh::model_matrix`. A runtime skeletal/rigid-part loader that
+consumes the `.glb` behind the same `AnimClip` interface is the owed follow-up.
+
 ## Mobile realities
 
 - **Frame pacing** via Swappy; cap to 30/60 by device class. Smoothness > peak FPS.
