@@ -227,6 +227,41 @@ pub fn tick_marks(half_extent: f32, spacing: f32) -> Vec<GridLine> {
     out
 }
 
+/// CPU **reference implementation** of `terrain.wgsl`'s `elevation` — the smooth, alias-free
+/// procedural relief field the command ground is shaded and contoured from, normalized to ~[-1, 1].
+/// A few low-frequency, mutually-rotated sinusoids sum into broad rolling relief. The ground pass is
+/// a pure function of world position through this field (no sim/fog input), so mirroring it here
+/// lets its range + shape be unit-tested off-GPU — the `world::star_hash21` / `world::moon_glow`
+/// pattern. `render` is the float boundary (invariant #1), so `f32` transcendentals are fair game.
+/// Keep in lockstep with the shader (same constants, same operation order).
+pub fn elevation(x: f32, y: f32) -> f32 {
+    let h = (x * 0.045 + 0.7).sin() * (y * 0.039 - 0.3).cos()
+        + 0.60 * (x * 0.021 - y * 0.018 + 1.7).sin()
+        + 0.50 * (y * 0.030 + x * 0.013).cos();
+    (h / 2.10).clamp(-1.0, 1.0)
+}
+
+/// CPU **reference implementation** of `terrain.wgsl`'s `hill` term: the cartographic hillshade
+/// weight at world `(x, y)`. Finite-differences [`elevation`] into a surface normal and lights it
+/// from a fixed NW key, returning a low-contrast multiplier in `[0.90, 1.14]` (rises catch the key,
+/// hollows fall into shade) so the command floor reads as lit 3-D relief without ever competing with
+/// the units. Pure — a function of world position ONLY (no sim/fog), so it is identical every frame
+/// (invariant #6) and its range + response are unit-testable. Keep the constants in lockstep with
+/// the shader.
+pub fn hillshade(x: f32, y: f32) -> f32 {
+    const E: f32 = 3.0;
+    let hx = elevation(x + E, y) - elevation(x - E, y);
+    let hy = elevation(x, y + E) - elevation(x, y - E);
+    // Surface normal from the height gradient (z up), then a normalized NW key light.
+    let (nx, ny, nz) = (-hx * 6.0, -hy * 6.0, 1.0);
+    let nlen = (nx * nx + ny * ny + nz * nz).sqrt();
+    let (kx, ky, kz) = (-0.55f32, 0.62, 0.56);
+    let klen = (kx * kx + ky * ky + kz * kz).sqrt();
+    let ndotl = (nx * kx + ny * ky + nz * kz) / (nlen * klen);
+    let t = (ndotl * 0.5 + 0.5).clamp(0.0, 1.0);
+    0.90 + t * (1.14 - 0.90)
+}
+
 /// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-line half-size).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -653,6 +688,70 @@ mod tests {
             assert!((v.world[0].abs() - GROUND_FILL_HALF).abs() < EPS);
             assert!((v.world[1].abs() - GROUND_FILL_HALF).abs() < EPS);
         }
+    }
+
+    // ---- elevation field + hillshade (command-ground relief mirror) ----
+
+    #[test]
+    fn elevation_stays_in_normalized_range() {
+        // The field is the single source for both shading and contours; it MUST stay in [-1,1] (the
+        // shader clamps to it) so the tonal + contour math downstream is sound.
+        for i in 0..64 {
+            for j in 0..64 {
+                let x = i as f32 * 2.3 - 70.0;
+                let y = j as f32 * 2.9 - 90.0;
+                let e = elevation(x, y);
+                assert!((-1.0..=1.0).contains(&e), "elevation {e} out of range at ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn elevation_is_deterministic_and_not_constant() {
+        // A fixed cosmetic reference (invariant #6): the same world point always gives the same
+        // relief (identical every frame) — but the field is not flat, so it carries real relief.
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for i in 0..40 {
+            let x = i as f32 * 3.1 - 40.0;
+            let y = i as f32 * -1.7 + 12.0;
+            assert_eq!(elevation(x, y), elevation(x, y), "relief is stable at ({x},{y})");
+            let e = elevation(x, y);
+            min = min.min(e);
+            max = max.max(e);
+        }
+        assert!(max - min > 0.4, "the field must carry relief, spread {}", max - min);
+    }
+
+    #[test]
+    fn hillshade_stays_in_the_low_contrast_band() {
+        // The relief lighting is a gentle multiplier the map recedes under — never a hard shadow
+        // that could hide or reveal anything. It must stay inside [0.90, 1.14].
+        for i in 0..80 {
+            for j in 0..80 {
+                let x = i as f32 * 1.9 - 76.0;
+                let y = j as f32 * 2.1 - 84.0;
+                let h = hillshade(x, y);
+                assert!((0.90 - EPS..=1.14 + EPS).contains(&h), "hillshade {h} out of band");
+            }
+        }
+    }
+
+    #[test]
+    fn hillshade_is_deterministic_and_shades_the_relief() {
+        // Pure function of position (identical every frame), and it actually lights the slopes — a
+        // sunlit rise reads brighter than a shaded hollow, so the terrain looks 3-D, not flat.
+        let mut min = f32::INFINITY;
+        let mut max = f32::NEG_INFINITY;
+        for i in 0..60 {
+            let x = i as f32 * 2.7 - 60.0;
+            let y = i as f32 * 1.3 - 30.0;
+            assert_eq!(hillshade(x, y), hillshade(x, y), "hillshade stable at ({x},{y})");
+            let h = hillshade(x, y);
+            min = min.min(h);
+            max = max.max(h);
+        }
+        assert!(max - min > 0.05, "hillshade must vary with the slope, spread {}", max - min);
     }
 
     #[test]
