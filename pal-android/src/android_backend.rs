@@ -251,6 +251,12 @@ fn android_main(app: AndroidApp) {
                                 new_game.set_accessibility_prefs(
                                     launch.colorblind_cues,
                                     launch.visual_sound_cues,
+                                    // WS-D colourblind-palette parity is not yet on the Compose
+                                    // launch wire; Android stays on the default hue ramp for now (the
+                                    // CVD text labels + visual sound echoes above already ship). This
+                                    // is a deferred parity item, not a fork of game logic (invariant
+                                    // #2) — the desktop host drives the palette from its Settings.
+                                    gonedark_engine::PaletteMode::Off,
                                 );
                                 // Campaign-launch path (Compose parity C4): the campaign mission scene
                                 // resolves its node through the SHARED engine registry seam — never a

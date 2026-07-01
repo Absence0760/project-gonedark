@@ -19,7 +19,7 @@
 //! 1 = a visual assertion failed. PNGs land in `target/viz/` for eyeballing.
 
 use gonedark_core::components::Faction;
-use gonedark_engine::{Game, Scene, DEFAULT_SEED};
+use gonedark_engine::{Game, PaletteMode, Scene, DEFAULT_SEED};
 use gonedark_pal::{Audio, AudioCue, InputFrame, ThermalSensor, ThermalState};
 
 const W: u32 = 512;
@@ -284,6 +284,13 @@ fn is_player_blue(p: [u8; 4]) -> bool {
 /// Enemy red (warm, red-dominant).
 fn is_enemy_red(p: [u8; 4]) -> bool {
     p[0] > 150 && p[0] as i32 > p[1] as i32 + 40 && p[0] as i32 > p[2] as i32 + 40
+}
+/// A saturated faction-GREEN token pixel — green clearly dominant over both red and blue. Used by the
+/// WS-D accessibility scene: under the tritanopia ramp the player faction is green, a hue the default
+/// command frame (cool blue tokens + blue-grey terrain) essentially never produces, so a jump in this
+/// count is a clean signal the alternate ramp was baked into the command-view tokens.
+fn is_faction_green(p: [u8; 4]) -> bool {
+    p[1] > 110 && p[1] as i32 > p[0] as i32 + 35 && p[1] as i32 > p[2] as i32 + 25
 }
 /// The selection rim is a bright cool-white (R,G,B all high). No other renderable draws this:
 /// faction bodies are saturated, the health bar is green/dark-red, the clear is a dark slate. So
@@ -896,6 +903,86 @@ fn main() {
         format!("{hud_map_intel} non-marker player-blue px during embodied combat (<20 and <10% of command's {blue} — the map stays dark; alerts are pings, not intel)"),
     );
     let _ = dark_nondark; // (the pre-/post-alert dark counts are now both ~0 with a world drawn)
+
+    // --- Scenario 3b: accessibility cues (WS-D, invariant #6) ----------------------------------
+    // The going-dark alert is a directional flash + audio; a colourblind or hard-of-hearing player
+    // needs an equivalent or the core mechanic is unfair. Two halves are proven here:
+    //   (i)  the colourblind-safe faction PALETTE actually swaps the rendered ramp (command view),
+    //        while the readout tally still classifies units (interpolate + tally share one palette);
+    //   (ii) the embodied ALERT HUD still reads under the CVD cue mode — the directional pings draw
+    //        over the FPS world with the palette swapped and CVD labels on, and STILL leak no intel.
+    println!("[a11y_palette] the colourblind palette swaps the faction ramp in the command view");
+    let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
+    // Enable all accessibility cues; the palette + toggles persist on the Game across frames (the
+    // host would re-push them each frame — a single set is equivalent here). Tritanopia's ramp makes
+    // the player faction GREEN (not blue) — a large, lighting-stable recolour the `is_player_blue`
+    // predicate can key on, unlike the red-green ramp whose blue/orange sit adjacent to the defaults.
+    g.set_accessibility_prefs(true, true, PaletteMode::Tritanopia);
+    advance(&mut g, 40, InputFrame::default(), &gpu, &view);
+    let cmd_cvd = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/command_cvd.png", &cmd_cvd);
+    check(
+        &mut failures,
+        "cvd_command_not_dark",
+        dark_fraction(&cmd_cvd) < 0.5,
+        format!("dark fraction {:.3} (<0.5 — the CVD command frame is still a lit field)", dark_fraction(&cmd_cvd)),
+    );
+    // The palette swap must actually recolour the faction tokens: under tritanopia the player ramp is
+    // green, so the strong player-blue signature of the default command frame (`cmd`, same seed + 40
+    // frames) collapses. That the same tokens now render green — not blue — is the on-screen proof the
+    // renderer baked the alternate ramp (interpolate_instances) into the command view.
+    let green_default = count(&cmd, is_faction_green);
+    let green_cvd = count(&cmd_cvd, is_faction_green);
+    check(
+        &mut failures,
+        "cvd_palette_recolors_player_tokens",
+        green_cvd > green_default + 200,
+        format!("{green_cvd} faction-green px under the tritanopia ramp vs {green_default} default (the player tokens render GREEN under the CVD ramp — the alternate ramp is baked into the command view)"),
+    );
+
+    println!("[a11y_alert] the embodied alert HUD reads under the CVD cue mode (pings, still no intel)");
+    let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
+    g.set_accessibility_prefs(true, true, PaletteMode::Deuteranopia);
+    g.frame(&embody, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio, &NullThermal);
+    let a11y_pre = read_pixels(&gpu.device, &gpu.queue, &target);
+    let a11y_pre_marker = count(&a11y_pre, is_alert_marker);
+    let mut a11y_marker = 0usize;
+    let mut a11y_frame: Vec<u8> = Vec::new();
+    let mut a11y_captured = false;
+    for _ in 0..240 {
+        let input = if g.is_embodied() {
+            InputFrame::default()
+        } else {
+            embody.clone()
+        };
+        g.frame(&input, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio, &NullThermal);
+        if g.is_embodied() && !g.shell_overlay_active() {
+            let f = read_pixels(&gpu.device, &gpu.queue, &target);
+            let m = count(&f, is_alert_marker);
+            if !a11y_captured || m >= a11y_marker {
+                a11y_marker = m;
+                a11y_frame = f;
+                a11y_captured = true;
+            }
+        }
+    }
+    save_png("target/viz/embodied_a11y.png", &a11y_frame);
+    check(
+        &mut failures,
+        "a11y_embodied_frame_captured",
+        a11y_captured,
+        "held a genuinely embodied combat frame under the CVD cue mode to assert against".to_string(),
+    );
+    check(
+        &mut failures,
+        "a11y_alert_hud_reads",
+        a11y_marker > a11y_pre_marker + 30,
+        format!("{a11y_marker} alert-marker px under the CVD cue mode vs {a11y_pre_marker} before (the alert still reads)"),
+    );
+    // (Fairness under the cue mode — no strategic map intel while embodied — is proven by Scenarios 2
+    // & 3 above, and by the pure directional-only guard `marker_position_encodes_only_bearing` in
+    // `render::hud` tests: the CVD labels/echoes ride the same bearing-only ring, adding no world
+    // position. A pixel re-test here would false-positive on the legitimate teal TerritoryLost ping.)
 
     // --- Scenario 4: command-view muzzle flash (TF-1) ------------------------------------------
     // The debug overlay draws a bright muzzle-flash burst on any unit that fired in the last few

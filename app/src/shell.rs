@@ -19,6 +19,7 @@ use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
 use gonedark_pal_desktop::DesktopRenderSurface;
+use gonedark_render::theme::PaletteMode;
 use gonedark_render::title_backdrop::TitleBackdrop;
 use winit::window::Window;
 
@@ -315,6 +316,12 @@ pub struct SettingsState {
     /// a hard-of-hearing player has parity with the primary embodied-audio channel (invariant #6).
     /// Presentation only.
     pub visual_sound_cues: bool,
+    /// Accessibility — **Colorblind palette** ([`PaletteMode`]). When not `Off`, the renderer swaps
+    /// the faction colour ramp for a colourblind-safe alternate (blue/orange for red-green
+    /// deficiencies, a red-green-axis ramp for tritanopia) so unit identity does not rest on hue
+    /// alone (WS-D, invariant #6 fairness). Fed to the engine via `Game::set_accessibility_prefs` →
+    /// `Renderer::set_palette_mode`. Presentation only.
+    pub cvd_palette: PaletteMode,
 }
 
 impl Default for SettingsState {
@@ -331,6 +338,8 @@ impl Default for SettingsState {
             // intensifiers, not always-on chrome.
             colorblind_cues: false,
             visual_sound_cues: false,
+            // The shipped hue palette; a CVD-safe alternate is opt-in per player.
+            cvd_palette: PaletteMode::Off,
         }
     }
 }
@@ -677,7 +686,7 @@ pub fn encode_shell_prefs(
     format!(
         "{SHELL_PREFS_VERSION}\n\
          master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nquality={}\n\
-         cvdcues={}\nsoundcues={}\n\
+         cvdcues={}\nsoundcues={}\ncvdpal={}\n\
          callsign={}\nfaction={}\nmatches={}\nwins={}\n\
          optic={}\nbarrel={}\nmagazine={}\n\
          army={}\n",
@@ -689,6 +698,7 @@ pub fn encode_shell_prefs(
         s.quality.index(),
         s.colorblind_cues as u8,
         s.visual_sound_cues as u8,
+        s.cvd_palette.index(),
         callsign,
         profile.faction.index(),
         profile.matches_played,
@@ -730,6 +740,8 @@ pub fn decode_shell_prefs(
         quality: QualityChoice::from_index(parse_or::<usize>(map.get("quality"), 0)),
         colorblind_cues: parse_bool(map.get("cvdcues"), ds.colorblind_cues),
         visual_sound_cues: parse_bool(map.get("soundcues"), ds.visual_sound_cues),
+        // Tolerant ordinal decode (an unknown/missing ordinal → `Off`), the `quality` pattern.
+        cvd_palette: PaletteMode::from_index(parse_or::<usize>(map.get("cvdpal"), 0)),
     };
     // The clamp guards a stored-but-out-of-range numeric (e.g. a hand-edited blob) exactly as the
     // Settings sliders do.
@@ -1768,6 +1780,20 @@ fn settings_ui(
         section_label(ui, "ACCESSIBILITY");
         ui.checkbox(&mut state.colorblind_cues, "Colorblind cues");
         ui.checkbox(&mut state.visual_sound_cues, "Visual sound cues");
+        // Colourblind-safe faction palette (WS-D): a cycling button over the modes (a direct edit —
+        // no action needed), the `quality` pattern. Swaps the render ramp so "mine / theirs / neutral
+        // / possessed" stay separable without hue; presentation only, pushed via
+        // `set_accessibility_prefs` → `Renderer::set_palette_mode`.
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Colorblind palette").color(BONE).size(TYPE_BODY));
+            ui.add_space(8.0);
+            if ui
+                .button(RichText::new(state.cvd_palette.label()).color(AMBER).size(TYPE_BODY))
+                .clicked()
+            {
+                state.cvd_palette = state.cvd_palette.next();
+            }
+        });
 
         section_label(ui, "VIDEO");
         // The window-mode source of truth is the host: reflect it, and emit the toggle action rather
@@ -2521,6 +2547,30 @@ mod tests {
     }
 
     #[test]
+    fn colorblind_palette_round_trips_every_mode_and_defaults_when_missing() {
+        // Every palette mode survives an encode→decode round-trip (WS-D accessibility).
+        for &mode in &PaletteMode::ALL {
+            let s = SettingsState {
+                cvd_palette: mode,
+                ..SettingsState::default()
+            };
+            let blob = encode_shell_prefs(
+                &s,
+                &ProfileState::default(),
+                &LoadoutEditor::new(),
+                &ArmySelectState::default(),
+            );
+            let (s2, _, _, _) = decode_shell_prefs(&blob);
+            assert_eq!(s2.cvd_palette, mode, "{mode:?} palette survives round-trip");
+        }
+        // A blob missing the key (an older save) decodes to Off; a garbage ordinal also falls back.
+        let (s, _, _, _) = decode_shell_prefs("gonedark-shell 1\nmaster=0.5\n");
+        assert_eq!(s.cvd_palette, PaletteMode::Off, "missing cvdpal → Off");
+        let (s2, _, _, _) = decode_shell_prefs("cvdpal=999\n");
+        assert_eq!(s2.cvd_palette, PaletteMode::Off, "out-of-range cvdpal → Off");
+    }
+
+    #[test]
     fn settings_clamp_rebounds_every_out_of_range_field() {
         let mut s = SettingsState {
             master_volume: 5.0,
@@ -2531,6 +2581,7 @@ mod tests {
             quality: QualityChoice::High,
             colorblind_cues: false,
             visual_sound_cues: false,
+            cvd_palette: PaletteMode::Off,
         };
         s.clamp();
         assert_eq!(s.master_volume, 1.0);
@@ -2676,6 +2727,7 @@ mod tests {
             quality: QualityChoice::High,
             colorblind_cues: true,
             visual_sound_cues: true,
+            cvd_palette: PaletteMode::Tritanopia,
         };
         let profile = ProfileState {
             callsign: "Reaper".to_string(),
