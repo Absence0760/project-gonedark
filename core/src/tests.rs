@@ -658,6 +658,7 @@ fn ecs_respawn_resets_component_arrays() {
         dispersion: Fixed::from_ratio(1, 7),
         // A non-default loaded shell, so the fold/serialize round-trip exercises a real `shell` tag.
         shell: ShellKind::Aphe,
+        ..Weapon::default()
     };
     w.posture[i] = crate::components::Posture::Crouched;
     w.suppression[i] = Fixed::HALF;
@@ -1725,6 +1726,7 @@ fn embodied_tank(sim: &mut Sim, x: i32, y: i32, muzzle_vel: i32, damage: i32, ra
         penetration: Fixed::ZERO,
         dispersion: Fixed::ZERO,
         shell: crate::components::ShellKind::Ap,
+        ..crate::components::Weapon::default()
     };
     e
 }

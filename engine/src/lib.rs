@@ -4525,6 +4525,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let mut sim = Sim::new(DEFAULT_SEED);
         let (player, _e, _o) = seed_seize_mission_scene(&mut sim, chosen);
@@ -4562,6 +4563,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let mut sim = Sim::new(DEFAULT_SEED);
         let (player, _e, _o) = seed_hold_mission_scene(&mut sim, chosen);
@@ -4599,6 +4601,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let mut sim = Sim::new(DEFAULT_SEED);
         let (player, _e) = seed_skirmish_scene(&mut sim, chosen);

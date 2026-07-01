@@ -14,29 +14,41 @@
 //! anything, and the fairness guarantee (no strictly-dominant build) is proven in `core::gunsmith`,
 //! so *every* state this editor can reach is a fair sidegrade by construction.
 
-use gonedark_core::gunsmith::{Loadout, StatDelta};
+use gonedark_core::gunsmith::{Grip, Loadout, StatDelta};
 
-/// The editable attachment slots, in a fixed on-screen order (the order the UI lays them out and
-/// the order [`LoadoutSlot::ALL`] / a numeric slot index follow).
+/// The editable gunsmith rows, in a fixed on-screen order (the order the UI lays them out and the
+/// order [`LoadoutSlot::ALL`] / a numeric slot index follow). Five are **sim** slots (they feed the
+/// [`Loadout`] applied to the weapon); [`Grip`](LoadoutSlot::Grip) is the sixth row and is
+/// **cosmetic/feel-only** (D85) — it carries no sim effect (invariant #4), tracked separately by
+/// the editor and never applied to the weapon.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoadoutSlot {
-    /// Range ↔ fire-rate ([`Optic`]).
+    /// Range ↔ fire-rate (`Optic`).
     Optic,
-    /// Damage ↔ reserve ([`Barrel`]).
+    /// Damage ↔ reserve (`Barrel`).
     Barrel,
-    /// Capacity ↔ handling ([`Magazine`]).
+    /// Capacity ↔ handling (`Magazine`).
     Magazine,
+    /// Mobility ↔ steadiness (`Stock`) — gunsmith breadth, CP-1 / D85.
+    Stock,
+    /// Suppression ↔ downrange retention (`Muzzle`) — gunsmith breadth, CP-1 / D85.
+    Muzzle,
+    /// Recoil / hipfire **feel** (`Grip`) — **cosmetic only**, no sim effect (D85).
+    Grip,
 }
 
 impl LoadoutSlot {
-    /// Every slot, in fixed on-screen order.
-    pub const ALL: [LoadoutSlot; 3] = [
+    /// Every row, in fixed on-screen order (five sim slots + the cosmetic Grip).
+    pub const ALL: [LoadoutSlot; 6] = [
         LoadoutSlot::Optic,
         LoadoutSlot::Barrel,
         LoadoutSlot::Magazine,
+        LoadoutSlot::Stock,
+        LoadoutSlot::Muzzle,
+        LoadoutSlot::Grip,
     ];
 
-    /// The slot at on-screen index `i` (`0..3`), or `None` for an out-of-range index — so a stray
+    /// The slot at on-screen index `i` (`0..6`), or `None` for an out-of-range index — so a stray
     /// UI slot value is a harmless no-op, mirroring `command_ui`'s out-of-range slot handling.
     #[inline]
     pub fn from_index(i: usize) -> Option<LoadoutSlot> {
@@ -50,7 +62,17 @@ impl LoadoutSlot {
             LoadoutSlot::Optic => "Optic",
             LoadoutSlot::Barrel => "Barrel",
             LoadoutSlot::Magazine => "Magazine",
+            LoadoutSlot::Stock => "Stock",
+            LoadoutSlot::Muzzle => "Muzzle",
+            LoadoutSlot::Grip => "Grip",
         }
+    }
+
+    /// Is this row a **sim** slot (feeds the applied [`Loadout`])? `false` only for
+    /// [`Grip`](LoadoutSlot::Grip), which is cosmetic/feel-only (D85).
+    #[inline]
+    pub fn is_sim(self) -> bool {
+        !matches!(self, LoadoutSlot::Grip)
     }
 }
 
@@ -61,6 +83,10 @@ impl LoadoutSlot {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct LoadoutEditor {
     loadout: Loadout,
+    /// The cosmetic Grip selection (D85). Kept **out** of [`Loadout`] on purpose — it has no sim
+    /// effect, so it is never applied to the weapon or folded; it exists only so the UI can show and
+    /// cycle the sixth gunsmith row.
+    grip: Grip,
 }
 
 impl LoadoutEditor {
@@ -69,19 +95,31 @@ impl LoadoutEditor {
     pub fn new() -> Self {
         LoadoutEditor {
             loadout: Loadout::STANDARD,
+            grip: Grip::Standard,
         }
     }
 
-    /// An editor seeded with a previously-saved loadout.
+    /// An editor seeded with a previously-saved loadout (cosmetic Grip resets to `Standard`).
     #[inline]
     pub fn with_loadout(loadout: Loadout) -> Self {
-        LoadoutEditor { loadout }
+        LoadoutEditor {
+            loadout,
+            grip: Grip::Standard,
+        }
     }
 
-    /// The currently-selected loadout — the value the scenario seeder applies at match start.
+    /// The currently-selected loadout — the value the scenario seeder applies at match start. Note
+    /// this is the **sim** loadout only; the cosmetic [`grip`](LoadoutEditor::grip) is not part of it.
     #[inline]
     pub fn current(&self) -> Loadout {
         self.loadout
+    }
+
+    /// The currently-selected cosmetic Grip (D85) — a feel/presentation choice, never applied to
+    /// the sim.
+    #[inline]
+    pub fn grip(&self) -> Grip {
+        self.grip
     }
 
     /// The net [`StatDelta`] of the current selection — the "net power across the build" the UI can
@@ -118,6 +156,28 @@ impl LoadoutEditor {
                     self.loadout.magazine.prev()
                 };
             }
+            LoadoutSlot::Stock => {
+                self.loadout.stock = if forward {
+                    self.loadout.stock.next()
+                } else {
+                    self.loadout.stock.prev()
+                };
+            }
+            LoadoutSlot::Muzzle => {
+                self.loadout.muzzle = if forward {
+                    self.loadout.muzzle.next()
+                } else {
+                    self.loadout.muzzle.prev()
+                };
+            }
+            // Cosmetic-only (D85): cycles the separate `grip` field, never the sim `Loadout`.
+            LoadoutSlot::Grip => {
+                self.grip = if forward {
+                    self.grip.next()
+                } else {
+                    self.grip.prev()
+                };
+            }
         }
     }
 
@@ -134,10 +194,12 @@ impl LoadoutEditor {
         }
     }
 
-    /// Reset to the neutral all-`Standard` loadout (the gunsmith "reset" button).
+    /// Reset to the neutral all-`Standard` loadout (the gunsmith "reset" button), including the
+    /// cosmetic Grip row.
     #[inline]
     pub fn reset(&mut self) {
         self.loadout = Loadout::STANDARD;
+        self.grip = Grip::Standard;
     }
 
     /// The currently-selected option label for `slot` (the cell text in the gunsmith UI).
@@ -146,6 +208,9 @@ impl LoadoutEditor {
             LoadoutSlot::Optic => self.loadout.optic.label(),
             LoadoutSlot::Barrel => self.loadout.barrel.label(),
             LoadoutSlot::Magazine => self.loadout.magazine.label(),
+            LoadoutSlot::Stock => self.loadout.stock.label(),
+            LoadoutSlot::Muzzle => self.loadout.muzzle.label(),
+            LoadoutSlot::Grip => self.grip.label(),
         }
     }
 }
@@ -153,7 +218,7 @@ impl LoadoutEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gonedark_core::gunsmith::{Barrel, Magazine, Optic};
+    use gonedark_core::gunsmith::{Barrel, Magazine, Muzzle, Optic, Stock};
 
     #[test]
     fn new_editor_is_the_neutral_baseline() {
@@ -167,6 +232,45 @@ mod tests {
         assert_eq!(ed.option_label(LoadoutSlot::Optic), "Standard");
         assert_eq!(ed.option_label(LoadoutSlot::Barrel), "Standard");
         assert_eq!(ed.option_label(LoadoutSlot::Magazine), "Standard");
+        assert_eq!(ed.option_label(LoadoutSlot::Stock), "Standard");
+        assert_eq!(ed.option_label(LoadoutSlot::Muzzle), "Standard");
+        assert_eq!(ed.option_label(LoadoutSlot::Grip), "Standard");
+    }
+
+    #[test]
+    fn there_are_six_rows_five_sim_plus_cosmetic_grip() {
+        assert_eq!(LoadoutSlot::ALL.len(), 6);
+        let sim: Vec<_> = LoadoutSlot::ALL.iter().filter(|s| s.is_sim()).collect();
+        assert_eq!(sim.len(), 5, "five functional sim slots");
+        assert!(!LoadoutSlot::Grip.is_sim(), "Grip is cosmetic-only (D85)");
+        assert_eq!(LoadoutSlot::from_index(5), Some(LoadoutSlot::Grip));
+        assert_eq!(LoadoutSlot::from_index(6), None);
+    }
+
+    #[test]
+    fn cycling_the_grip_row_never_touches_the_sim_loadout() {
+        // The load-bearing D85 property: the Grip row is cosmetic — cycling it changes only the
+        // editor's grip feel, never the sim `Loadout` the seeder applies.
+        let mut ed = LoadoutEditor::new();
+        let loadout_before = ed.current();
+        ed.cycle(LoadoutSlot::Grip, true);
+        assert_eq!(ed.grip(), gonedark_core::gunsmith::Grip::Vertical);
+        assert_eq!(
+            ed.current(),
+            loadout_before,
+            "Grip is cosmetic: the applied sim loadout is unchanged"
+        );
+        assert_eq!(ed.net_delta(), StatDelta::ZERO, "Grip contributes no stat delta");
+    }
+
+    #[test]
+    fn cycling_stock_and_muzzle_edits_the_sim_loadout() {
+        let mut ed = LoadoutEditor::new();
+        ed.cycle(LoadoutSlot::Stock, true);
+        assert_eq!(ed.current().stock, Stock::Agile);
+        ed.cycle(LoadoutSlot::Muzzle, true);
+        assert_eq!(ed.current().muzzle, Muzzle::Brake);
+        assert_ne!(ed.net_delta(), StatDelta::ZERO, "sim slots move the net delta");
     }
 
     #[test]
@@ -220,11 +324,19 @@ mod tests {
         assert_eq!(ed.current().barrel, Barrel::Heavy);
         assert!(ed.apply_input(2, true), "index 2 = Magazine");
         assert_eq!(ed.current().magazine, Magazine::Extended);
-        // Out of range: no-op, nothing changes.
+        assert!(ed.apply_input(3, true), "index 3 = Stock");
+        assert_eq!(ed.current().stock, Stock::Agile);
+        assert!(ed.apply_input(4, true), "index 4 = Muzzle");
+        assert_eq!(ed.current().muzzle, Muzzle::Brake);
+        assert!(ed.apply_input(5, true), "index 5 = Grip (cosmetic)");
+        assert_eq!(ed.grip(), gonedark_core::gunsmith::Grip::Vertical);
+        // Out of range: no-op, nothing changes. (Six rows now, so 6 is the first invalid index.)
         let before = ed.current();
-        assert!(!ed.apply_input(3, true));
+        let grip_before = ed.grip();
+        assert!(!ed.apply_input(6, true));
         assert!(!ed.apply_input(99, false));
         assert_eq!(ed.current(), before);
+        assert_eq!(ed.grip(), grip_before);
     }
 
     #[test]
@@ -233,6 +345,7 @@ mod tests {
             optic: Optic::CloseQuarters,
             barrel: Barrel::Light,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         });
         assert_ne!(ed.current(), Loadout::STANDARD);
         ed.reset();
@@ -245,6 +358,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         });
         let d = ed.net_delta();
         // The summed trades: +range/+cooldown (Marksman), +damage/-reserve (Heavy),
@@ -267,12 +381,14 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         })
         .net_delta();
         let runner = LoadoutEditor::with_loadout(Loadout {
             optic: Optic::CloseQuarters,
             barrel: Barrel::Light,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         })
         .net_delta();
         assert!(!sniper.strictly_dominates(&runner));

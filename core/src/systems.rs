@@ -45,6 +45,30 @@ pub const CROUCH_MOVE_SPEED: Fixed = Fixed::from_ratio(1, 16);
 /// Squared arrival epsilon: snap to the target when closer than this (1/256 units²).
 pub const ARRIVE_EPS_SQ: Fixed = Fixed::from_ratio(1, 256);
 
+/// Floor for a locomotion speed after a **Stock** `move_speed_delta` offset (gunsmith breadth,
+/// CP-1 / D85). `1/64` — a crawl a heavy stock can slow you to but never below (so an extreme
+/// negative offset can't zero or reverse movement). Both [`MOVE_SPEED`] (`1/8 = 8/64`) and
+/// [`CROUCH_MOVE_SPEED`] (`1/16 = 4/64`) sit comfortably above it, so a **zero** delta never
+/// touches the floor — the fast path stays exact. Exact ratio keeps it float-free (invariant #1).
+pub const MIN_MOVE_SPEED: Fixed = Fixed::from_ratio(1, 64);
+
+/// Apply a **Stock** `move_speed_delta` (gunsmith breadth, CP-1 / D85) to a base locomotion speed,
+/// floored at [`MIN_MOVE_SPEED`]. This is the one shared seam both movers route through — the AI
+/// order mover ([`orders::order_system`](crate::orders)) and the embodied `Locomote`/crouch path in
+/// [`Sim::step`](crate::sim::Sim) — so the Stock mobility trade lands identically for player and AI.
+///
+/// **A zero delta returns `base` completely unchanged** (no arithmetic, no floor) — the zero-delta
+/// fast path, so every legacy / Standard-stock unit is bit-identical and the determinism suite is
+/// untouched. Higher delta is faster (the Stock polarity). Fixed-point only (invariant #1).
+#[inline]
+pub fn with_move_delta(base: Fixed, move_speed_delta: Fixed) -> Fixed {
+    if move_speed_delta == Fixed::ZERO {
+        base
+    } else {
+        (base + move_speed_delta).max(MIN_MOVE_SPEED)
+    }
+}
+
 /// Collision radius of a building footprint, world units (metres). The camp greybox is ~3.5 × 3.0 m
 /// (`tools/models/gen_models.py` `build_camp_hq`); `7/4 = 1.75 m` is half its long side, so the
 /// circular footprint hugs the walls — you stop *at* the structure, not a step short or a step
@@ -243,6 +267,29 @@ mod tests {
         let mut w = World::new();
         let e = w.spawn();
         (w, e.index as usize)
+    }
+
+    #[test]
+    fn with_move_delta_zero_is_the_exact_fast_path() {
+        // A zero Stock delta returns the base speed unchanged (bit-identical) — the property that
+        // keeps every Standard/legacy unit's movement byte-for-byte as before (D85).
+        assert_eq!(with_move_delta(MOVE_SPEED, Fixed::ZERO), MOVE_SPEED);
+        assert_eq!(with_move_delta(CROUCH_MOVE_SPEED, Fixed::ZERO), CROUCH_MOVE_SPEED);
+    }
+
+    #[test]
+    fn with_move_delta_offsets_and_floors() {
+        // A positive delta speeds up; a negative delta slows down; an extreme negative delta is
+        // clamped to MIN_MOVE_SPEED (never zero or reversed). Higher delta = faster (Stock polarity).
+        let up = with_move_delta(MOVE_SPEED, Fixed::from_ratio(1, 32));
+        let down = with_move_delta(MOVE_SPEED, Fixed::from_ratio(-1, 32));
+        assert_eq!(up, MOVE_SPEED + Fixed::from_ratio(1, 32));
+        assert_eq!(down, MOVE_SPEED - Fixed::from_ratio(1, 32));
+        assert!(up > MOVE_SPEED && down < MOVE_SPEED);
+        // Way past the floor: clamps to MIN_MOVE_SPEED, stays strictly positive.
+        let floored = with_move_delta(MOVE_SPEED, Fixed::from_int(-100));
+        assert_eq!(floored, MIN_MOVE_SPEED);
+        assert!(floored > Fixed::ZERO);
     }
 
     #[test]

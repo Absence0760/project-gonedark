@@ -57,16 +57,18 @@ fn nearest_friendly_building(world: &World, from: Vec2, faction: Faction) -> Vec
     }
 }
 
-/// The move speed for a unit this tick, derived from its suppression (`combat`):
-/// pinned (zero) at/above [`combat::SUPPRESSION_PIN`], half base speed while any suppression
-/// lingers, full [`systems::MOVE_SPEED`] when clean.
-fn move_speed(suppression: Fixed) -> Fixed {
+/// The move speed for a unit this tick, given its **base** speed (the Stock-adjusted
+/// [`systems::MOVE_SPEED`], see [`step`]) and its suppression (`combat`): pinned (zero) at/above
+/// [`combat::SUPPRESSION_PIN`], half base speed while any suppression lingers, full base speed when
+/// clean. With the default `base == MOVE_SPEED` this is bit-identical to the pre-D85 curve (the
+/// half step `base / 2` equals the old `MOVE_SPEED / 2`).
+fn move_speed(base: Fixed, suppression: Fixed) -> Fixed {
     if suppression >= combat::SUPPRESSION_PIN {
         Fixed::ZERO
     } else if suppression > Fixed::ZERO {
-        systems::MOVE_SPEED / Fixed::from_int(2)
+        base / Fixed::from_int(2)
     } else {
-        systems::MOVE_SPEED
+        base
     }
 }
 
@@ -151,9 +153,13 @@ pub fn order_system(world: &mut World, terrain: &Terrain) {
     }
 }
 
-/// Step unit `i` toward `target`, honouring suppression. An unsuppressed unit takes the exact
-/// Phase 1 base-speed path ([`systems::step_toward`]) so determinism is preserved; otherwise
-/// the suppression-derived speed (half, or zero/pinned) is used.
+/// Step unit `i` toward `target`, honouring suppression **and** the unit's Stock `move_speed_delta`
+/// (gunsmith breadth, CP-1 / D85). The base speed is [`systems::with_move_delta`] applied to
+/// [`systems::MOVE_SPEED`]; a **zero** delta returns exactly `MOVE_SPEED`, so an unsuppressed
+/// Standard/legacy unit takes the exact Phase 1 base-speed path
+/// ([`systems::step_toward_speed`] with `MOVE_SPEED` is [`systems::step_toward`], bit-for-bit) and
+/// determinism is preserved. A suppressed unit uses the suppression-derived fraction of that base
+/// (half, or zero/pinned).
 #[inline]
 fn step(
     world: &mut World,
@@ -162,10 +168,11 @@ fn step(
     target: Vec2,
     suppression: Fixed,
 ) -> bool {
+    let base = systems::with_move_delta(systems::MOVE_SPEED, world.weapon[i].move_speed_delta);
     if suppression == Fixed::ZERO {
-        systems::step_toward(world, cache, i, target)
+        systems::step_toward_speed(world, cache, i, target, base)
     } else {
-        systems::step_toward_speed(world, cache, i, target, move_speed(suppression))
+        systems::step_toward_speed(world, cache, i, target, move_speed(base, suppression))
     }
 }
 
@@ -356,6 +363,51 @@ mod tests {
         assert!(
             w.pos[si].x > Fixed::ZERO,
             "half-suppressed unit must still move"
+        );
+    }
+
+    #[test]
+    fn stock_move_speed_delta_speeds_up_the_ai_mover() {
+        // Stock mechanic #1 (D85): a positive move_speed_delta on the weapon speeds the AI order
+        // mover; a Standard (zero) unit keeps the exact base speed. Two clean, unsuppressed units
+        // ordered to the same far target — the +delta one must outrun the Standard one.
+        let mut w = World::new();
+        let fast = w.spawn();
+        let base = w.spawn();
+        let fi = fast.index as usize;
+        let bi = base.index as usize;
+        let target = Vec2::new(Fixed::from_int(50), Fixed::ZERO);
+        w.order[fi] = Order::MoveTo(target);
+        w.order[bi] = Order::MoveTo(target);
+        w.weapon[fi].move_speed_delta = Fixed::from_ratio(1, 32); // faster stock
+        // base unit keeps move_speed_delta == 0 (Weapon::default)
+        run(&mut w, 5);
+        assert!(
+            w.pos[fi].x > w.pos[bi].x,
+            "the +move_speed_delta unit ({:?}) must outrun the Standard one ({:?})",
+            w.pos[fi].x,
+            w.pos[bi].x
+        );
+        // The Standard unit advanced at exactly the base MOVE_SPEED (the fast path is unchanged):
+        // 5 clean ticks toward +X cover 5·MOVE_SPEED.
+        assert_eq!(w.pos[bi].x, systems::MOVE_SPEED * Fixed::from_int(5));
+    }
+
+    #[test]
+    fn negative_stock_move_speed_delta_slows_the_ai_mover() {
+        // The opposed trade: a negative move_speed_delta (the Agile/Marksman other pole) slows the
+        // mover below base, but the shared floor keeps it moving (never stalled).
+        let mut w = World::new();
+        let slow = w.spawn();
+        let si = slow.index as usize;
+        let target = Vec2::new(Fixed::from_int(50), Fixed::ZERO);
+        w.order[si] = Order::MoveTo(target);
+        w.weapon[si].move_speed_delta = Fixed::from_ratio(-1, 32);
+        run(&mut w, 5);
+        assert!(w.pos[si].x > Fixed::ZERO, "a slowed unit still advances");
+        assert!(
+            w.pos[si].x < systems::MOVE_SPEED * Fixed::from_int(5),
+            "slower than the base-speed unit"
         );
     }
 

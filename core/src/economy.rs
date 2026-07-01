@@ -337,6 +337,12 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Loads AP by default (P6, D55): inert for a hitscan unit (`muzzle_vel == 0` never
                 // reads `shell`); the field just rides along, byte-folded as a zero tag.
                 shell: ShellKind::Ap,
+                // Gunsmith Stock/Muzzle sim slots (D85): zero on a base unit — a fitted loadout
+                // sets these at match start via `gunsmith::Loadout::apply_to_weapon`.
+                move_speed_delta: Fixed::ZERO,
+                cone_cos_delta: Fixed::ZERO,
+                supp_out_delta: Fixed::ZERO,
+                falloff_delta: Fixed::ZERO,
             },
         ),
         UnitKind::Heavy => (
@@ -367,6 +373,12 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Loads AP by default (P6, D55): inert for a hitscan unit (`muzzle_vel == 0` never
                 // reads `shell`); the field just rides along, byte-folded as a zero tag.
                 shell: ShellKind::Ap,
+                // Gunsmith Stock/Muzzle sim slots (D85): zero on a base unit — a fitted loadout
+                // sets these at match start via `gunsmith::Loadout::apply_to_weapon`.
+                move_speed_delta: Fixed::ZERO,
+                cone_cos_delta: Fixed::ZERO,
+                supp_out_delta: Fixed::ZERO,
+                falloff_delta: Fixed::ZERO,
             },
         ),
         // A produced armoured vehicle — the full War-Thunder-capable tank of plan P9 (D65 archetype +
@@ -411,6 +423,12 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Loads AP by default (P6, D55): solid shot — full pen, full point damage, no splash.
                 // The embodied player can `SelectShell` HE/APHE; AI tanks fire the loaded AP.
                 shell: ShellKind::Ap,
+                // Gunsmith Stock/Muzzle sim slots (D85): zero on a base unit — a fitted loadout
+                // sets these at match start via `gunsmith::Loadout::apply_to_weapon`.
+                move_speed_delta: Fixed::ZERO,
+                cone_cos_delta: Fixed::ZERO,
+                supp_out_delta: Fixed::ZERO,
+                falloff_delta: Fixed::ZERO,
             },
         ),
         // A support unit (D65): NO offensive weapon (range 0 ⇒ combat never acquires a target for
@@ -438,6 +456,12 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 // Loads AP by default (P6, D55): inert for a hitscan unit (`muzzle_vel == 0` never
                 // reads `shell`); the field just rides along, byte-folded as a zero tag.
                 shell: ShellKind::Ap,
+                // Gunsmith Stock/Muzzle sim slots (D85): zero on a base unit — a fitted loadout
+                // sets these at match start via `gunsmith::Loadout::apply_to_weapon`.
+                move_speed_delta: Fixed::ZERO,
+                cone_cos_delta: Fixed::ZERO,
+                supp_out_delta: Fixed::ZERO,
+                falloff_delta: Fixed::ZERO,
             },
         ),
         // Dedicated anti-tank infantry (D73): a fragile, slow-firing bazooka/AT team whose gun
@@ -472,6 +496,12 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
                 dispersion: Fixed::ZERO,
                 // Loads AP by default (P6, D55): inert for a hitscan unit; rides along as a zero tag.
                 shell: ShellKind::Ap,
+                // Gunsmith Stock/Muzzle sim slots (D85): zero on a base unit — a fitted loadout
+                // sets these at match start via `gunsmith::Loadout::apply_to_weapon`.
+                move_speed_delta: Fixed::ZERO,
+                cone_cos_delta: Fixed::ZERO,
+                supp_out_delta: Fixed::ZERO,
+                falloff_delta: Fixed::ZERO,
             },
         ),
     }

@@ -112,6 +112,11 @@ fn duel_gun() -> Weapon {
         // Loads AP by default (P6, D55) — solid-shot, the facet bounce/pen the duel demonstrates. A
         // harness/sandbox can `SelectShell` HE/APHE to exercise splash without touching the seeder.
         shell: ShellKind::Ap,
+        // Gunsmith Stock/Muzzle sim slots (D85): zero on the base duel gun.
+        move_speed_delta: Fixed::ZERO,
+        cone_cos_delta: Fixed::ZERO,
+        supp_out_delta: Fixed::ZERO,
+        falloff_delta: Fixed::ZERO,
     }
 }
 
@@ -1398,8 +1403,12 @@ mod tests {
         // D55 P5+P6: re-pinned after the Weapon fold grew a `dispersion` word + a loaded-shell tag and
         // the projectile fold grew a shell tag + splash pair per slot. The duel tank fires from a
         // standstill (dispersion stays 0, AP is the default shell), so the shells fly identically;
-        // only the raw stream value shifted by the appended fields, by design.)
-        assert_eq!(sum, 0xad57_73c4_5e4d_08d7);
+        // only the raw stream value shifted by the appended fields, by design.
+        // D85 (gunsmith breadth): re-pinned after the Weapon fold grew four Stock/Muzzle delta words
+        // (move_speed/cone/supp/falloff) per slot. The duel gun carries no loadout (all four are 0),
+        // so the fight is byte-for-byte identical; only the raw stream value shifted by the appended
+        // zero words, by design.)
+        assert_eq!(sum, 0x8c7b_8654_7b5d_1857);
         // And it is reproducible run-to-run on this arch.
         assert_eq!(run_ballistic_duel(130), sum);
     }
@@ -1632,6 +1641,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let mut sim = fresh();
         let m = seed_hold_mission_with_loadout(&mut sim, loadout);
@@ -1771,7 +1781,7 @@ mod tests {
         for &optic in &Optic::ALL {
             for &barrel in &Barrel::ALL {
                 for &magazine in &Magazine::ALL {
-                    v.push(Loadout { optic, barrel, magazine });
+                    v.push(Loadout { optic, barrel, magazine, ..Loadout::STANDARD });
                 }
             }
         }
@@ -1861,6 +1871,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let mut sim = fresh();
         let m = seed_seize_mission_with_loadout(&mut sim, loadout);
@@ -1913,6 +1924,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         };
         let a = seize_checksum_stream(loadout, 400);
         let b = seize_checksum_stream(loadout, 400);
@@ -1934,11 +1946,13 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let runner = Loadout {
             optic: Optic::CloseQuarters,
             barrel: Barrel::Light,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         };
         let a = seize_checksum_stream(marksman, 400);
         let b = seize_checksum_stream(runner, 400);
@@ -2058,6 +2072,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let mut sim = fresh();
         let s = seed_skirmish_with_loadout(&mut sim, loadout);
@@ -2089,6 +2104,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         };
         let a = skirmish_checksum_stream(loadout, 400);
         let b = skirmish_checksum_stream(loadout, 400);
@@ -2110,11 +2126,13 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let runner = Loadout {
             optic: Optic::CloseQuarters,
             barrel: Barrel::Light,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         };
         // The two builds must actually field different weapons, or the streams trivially agree.
         assert_ne!(

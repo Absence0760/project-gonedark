@@ -484,6 +484,37 @@ pub struct Weapon {
     /// is behaviourally unchanged. It is per-tank sim state, so it **folds** into the checksum
     /// (appended after `penetration`); a hitscan weapon's inert `Ap` adds one zero byte per slot.
     pub shell: ShellKind,
+    /// **Stock** gunsmith move-speed offset (gunsmith breadth, CP-1 / D85). Added to the unit's
+    /// base locomotion speed at **every** mover — the AI order mover
+    /// ([`orders::order_system`](crate::orders)) and the embodied `Locomote`/crouch path — via the
+    /// shared [`systems::with_move_delta`](crate::systems::with_move_delta), floored at
+    /// [`systems::MIN_MOVE_SPEED`](crate::systems::MIN_MOVE_SPEED). `0` (the default for every
+    /// legacy / Standard-stock weapon) returns the base speed **unchanged** — the zero-delta fast
+    /// path — so a Standard unit stays bit-identical. Higher is faster (the Stock polarity).
+    /// `Fixed`, no float (invariant #1).
+    pub move_speed_delta: Fixed,
+    /// **Stock** gunsmith aim-cone offset (gunsmith breadth, CP-1 / D85). Added to the embodied
+    /// hitscan half-cone **cosine** in [`combat::resolve_fire`](crate::combat::resolve_fire)
+    /// (higher cosine ⇒ **tighter** cone), clamped to `[0, 1]`. Embodied-only by nature — the AI
+    /// `can_engage` path has no aim cone. `0` (the default) leaves the cone exactly as today (the
+    /// zero-delta fast path). Higher is tighter/steadier (the Stock polarity). `Fixed`, no float
+    /// (invariant #1).
+    pub cone_cos_delta: Fixed,
+    /// **Muzzle** gunsmith suppression-out offset (gunsmith breadth, CP-1 / D85). Added to the
+    /// per-direct-hit suppression this weapon deals at **both** hit sites (AI
+    /// [`combat_system`](crate::combat::combat_system) engage pass **and** embodied
+    /// [`resolve_fire`](crate::combat::resolve_fire)), floored at zero. `0` (the default) deals
+    /// exactly [`combat::SUPPRESSION_PER_HIT`](crate::combat::SUPPRESSION_PER_HIT) — the zero-delta
+    /// fast path. Higher is more suppression (the Muzzle polarity). `Fixed`, no float (invariant #1).
+    pub supp_out_delta: Fixed,
+    /// **Muzzle** gunsmith downrange-falloff amount (gunsmith breadth, CP-1 / D85). Drives a
+    /// **sqrt-free**, `dist_sq`-bucketed damage multiplier beyond half weapon range in
+    /// [`combat::falloff_multiplier`](crate::combat::falloff_multiplier): within `range/2`, full
+    /// damage; beyond it, `ONE − falloff_delta` (floored at zero). `0` (the default) yields a
+    /// multiplier of **exactly [`Fixed::ONE`] at every range**, so it is byte-neutral for every
+    /// existing weapon. **Lower** is better downrange retention (the Muzzle polarity, mirroring
+    /// `cooldown`/`reload`). `Fixed`, no float (invariant #1).
+    pub falloff_delta: Fixed,
 }
 
 /// Directional armour, in the same `Fixed` units a [`Weapon::penetration`] is measured in (tank

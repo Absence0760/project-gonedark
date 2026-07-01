@@ -670,6 +670,7 @@ mod tests {
             penetration: Fixed::ZERO,
             dispersion: Fixed::ZERO,
             shell: ShellKind::Ap,
+            ..Weapon::default()
         };
         let mut pool = Vec::new();
         let mut rng = Rng::new(1);
@@ -709,6 +710,7 @@ mod tests {
             penetration: Fixed::ZERO,
             dispersion: Fixed::ZERO,
             shell: ShellKind::Ap,
+            ..Weapon::default()
         };
         let mut pool = Vec::new();
         let mut rng = Rng::new(1);
@@ -756,6 +758,7 @@ mod tests {
                 penetration: Fixed::ZERO,
                 dispersion: Fixed::ZERO,
                 shell: ShellKind::Ap,
+                ..Weapon::default()
             };
             // Fill the pool to the hard cap.
             let mut pool: Vec<Projectile> = (0..MAX_PROJECTILES)
@@ -800,6 +803,7 @@ mod tests {
             penetration: fx(40),
             dispersion: Fixed::ZERO,
             shell: ShellKind::He,
+            ..Weapon::default()
         };
         world.weapon[i] = base;
         let east = Vec2::new(Fixed::ONE, Fixed::ZERO);

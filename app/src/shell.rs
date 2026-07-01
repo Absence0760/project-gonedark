@@ -15,7 +15,7 @@ use gonedark_core::campaign::{
     Campaign, Difficulty, MissionSelectEntry, NodeId, NodeProgress,
 };
 use gonedark_core::components::Army;
-use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
+use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Muzzle, Optic, Stock};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
 use gonedark_pal_desktop::DesktopRenderSurface;
@@ -195,6 +195,10 @@ pub fn slot_trade_hint(slot: LoadoutSlot) -> &'static str {
         LoadoutSlot::Optic => "range <-> fire-rate",
         LoadoutSlot::Barrel => "damage <-> reserve",
         LoadoutSlot::Magazine => "capacity <-> handling",
+        LoadoutSlot::Stock => "mobility <-> steadiness",
+        LoadoutSlot::Muzzle => "suppression <-> downrange retention",
+        // Grip is cosmetic/feel-only (D85): no sim trade, just recoil/hipfire feel.
+        LoadoutSlot::Grip => "grip feel (cosmetic)",
     }
 }
 
@@ -767,6 +771,16 @@ pub fn decode_shell_prefs(
             .unwrap_or_default(),
         magazine: Magazine::ALL
             .get(parse_or::<usize>(map.get("magazine"), 0))
+            .copied()
+            .unwrap_or_default(),
+        // Gunsmith breadth (D85): decode the two new sim slots the same way. A missing key defaults
+        // to Standard (a pre-D85 save has no stock/muzzle key), so old saves round-trip unchanged.
+        stock: Stock::ALL
+            .get(parse_or::<usize>(map.get("stock"), 0))
+            .copied()
+            .unwrap_or_default(),
+        muzzle: Muzzle::ALL
+            .get(parse_or::<usize>(map.get("muzzle"), 0))
             .copied()
             .unwrap_or_default(),
     });
@@ -2739,6 +2753,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         });
         // A non-default army pick (FR, not the US default) so the round-trip proves the field carries.
         let army = ArmySelectState {

@@ -21,17 +21,32 @@ A **Call of Duty: Mobile gunsmith** in shape — attachment slots on the embodie
 ([D51](decisions.md)) — but **every attachment is a trade, never an upgrade.**
 
 ```
-   ┌─────────────── RIFLE · loadout ───────────────┐
-   │ Barrel    [ Long ]  +range          −ADS speed │
-   │ Optic     [ 2× ]    +precision      −hipfire   │
-   │ Grip      [ Vert ]  +recoil ctrl    −handling  │
-   │ Mag       [ Ext ]   +ammo           −reload spd │
-   │ Stock     [ Light ] +move-while-aim −stability  │
-   └────────────────────────────────────────────────┘
-     net power across any full build ≈ constant — you
-     pick a SHAPE (sniper / brawler / runner), not a TIER
+   ┌──────────────────── RIFLE · loadout ────────────────────┐
+   │ Optic     [ Marksman ] +range        −fire-rate          │
+   │ Barrel    [ Heavy ]    +damage       −reserve            │
+   │ Magazine  [ Ext ]      +capacity     −handling (reload)  │
+   │ Stock     [ Agile ]    +mobility     −steadiness (cone)  │  ← D85
+   │ Muzzle    [ Brake ]    +suppression  −downrange retention│  ← D85
+   │ Grip      [ Vert ]     feel only — COSMETIC, no sim effect│  ← D85
+   └──────────────────────────────────────────────────────────┘
+     net power across any full build ≈ constant — you pick a
+     SHAPE (sniper / brawler / runner), not a TIER
 ```
 
+- **Six rows, five functional + Grip.** The gunsmith is the six categories a CoD-Mobile player
+  expects — **Optic / Barrel / Magazine / Stock / Muzzle** are **sim** sidegrade slots (each a
+  fixed-point trade on its own disjoint stat-axis pair), and **Grip is cosmetic / feel-only**
+  ([D85](decisions.md)). Grip's real identity is recoil / hipfire *feel*, which is
+  presentation-only (invariant #4 — the sim models no recoil), so forcing a sim axis onto it
+  would invent a fake mechanic: the player still sees the row and tunes the feel, but it never
+  reaches the weapon, the checksum fold, or the fairness proof.
+- **The five sim slots' axis pairs (all disjoint — the proof's premise):** Optic = range ↔
+  fire-rate; Barrel = damage ↔ reserve; Magazine = capacity ↔ handling; **Stock = mobility ↔
+  steadiness** (`move_speed_delta ↔ cone_cos_delta` — a faster carrier vs a tighter embodied aim
+  cone); **Muzzle = blast ↔ downrange retention** (`supp_out_delta ↔ falloff_delta` — more
+  suppression per hit vs more damage retained past half range, a sqrt-free `dist_sq`-bucketed
+  falloff). Because the pairs are disjoint, the exhaustive no-strictly-dominant-build proof grows
+  to `3⁵ = 243` builds (per army too) and still holds ([D85](decisions.md)).
 - **Sidegrade, by design rule.** Each attachment spends one stat to buy another. There is
   **no strictly-dominant build** — the same anti-degeneracy discipline the balance-metrics
   harness already enforces on units ([D30](decisions.md): a strictly-dominated Heavy was a
@@ -53,7 +68,12 @@ fixed-point treatment:
   command layer before the dive, never mutated live.
 - Because the resulting weapon stats live in the weapon component, they are **folded into the
   per-tick checksum** automatically (`Sim::fold`, [D28](decisions.md)) — a loadout desync
-  would be caught by the cross-arch matrix (invariant #7) like any other sim divergence.
+  would be caught by the cross-arch matrix (invariant #7) like any other sim divergence. The
+  four [D85](decisions.md) Stock/Muzzle deltas (`move_speed_delta`, `cone_cos_delta`,
+  `supp_out_delta`, `falloff_delta`) are new fixed-point `Weapon` fields **appended to the fold
+  after `shell`**, zero on every legacy/Standard weapon; each use-site preserves a zero-delta fast
+  path so a Standard build stays bit-identical (the golden checksum streams only shift by the
+  appended zero words, exactly like the D55/D67 fold-growth precedent).
 - **No floats, ever** (invariant #1): the attachment table is integer Q16.16; range, ADS
   time, recoil, reload, and handling are all fixed-point quantities the combat system
   ([`core/src/combat.rs`](../core/src/combat.rs)) already speaks.

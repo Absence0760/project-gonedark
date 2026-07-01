@@ -278,7 +278,10 @@ mod tests {
             // tag and the projectile fold grew a shell tag + splash pair. The duel tank fires from a
             // standstill (dispersion stays 0, AP default → identical shells); only the raw stream
             // value shifted by the appended fields, by design.
-            Some(0xa305_29bf_ef6d_5432),
+            // D85 (gunsmith breadth): re-pinned after the Weapon fold grew four Stock/Muzzle delta
+            // words per slot (all zero here — the duel gun carries no loadout), so the fight is
+            // byte-identical and only the raw stream value shifted, by design.
+            Some(0x4209_3fde_b61c_0eb2),
         );
     }
 

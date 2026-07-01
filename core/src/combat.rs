@@ -68,6 +68,48 @@ pub const SUPPRESSION_RADIUS: Fixed = Fixed::from_int(4);
 /// ~3 s fight, not a blowout). (combat-rebalance-plan WS-B, D70; measured against `--metrics`.)
 pub const SUPPRESSION_SPLASH_PER_HIT: Fixed = Fixed::from_ratio(1, 16);
 
+/// The suppression a **direct hit** deals given the shooter's **Muzzle** `supp_out_delta` (gunsmith
+/// breadth, CP-1 / D85). Base [`SUPPRESSION_PER_HIT`] offset by the delta, floored at zero. A
+/// **zero** delta returns exactly [`SUPPRESSION_PER_HIT`] (the zero-delta fast path — every legacy /
+/// Standard-muzzle weapon suppresses byte-for-byte as before). Higher delta = more suppression (the
+/// Muzzle polarity). Fixed-point only (invariant #1). The **area** splash keeps its own fixed
+/// [`SUPPRESSION_SPLASH_PER_HIT`] — the muzzle tunes only the direct-hit share.
+#[inline]
+pub fn suppression_per_hit(supp_out_delta: Fixed) -> Fixed {
+    if supp_out_delta == Fixed::ZERO {
+        SUPPRESSION_PER_HIT
+    } else {
+        (SUPPRESSION_PER_HIT + supp_out_delta).max(Fixed::ZERO)
+    }
+}
+
+/// The downrange damage multiplier for a shot travelling `dist_sq` (squared distance) against a
+/// weapon of `range`, given the shooter's **Muzzle** `falloff_delta` (gunsmith breadth, CP-1 / D85).
+///
+/// **Sqrt-free and `dist_sq`-bucketed** (invariant #1): within half range (`dist_sq ≤ (range/2)²`)
+/// the shot does full damage; beyond it, the multiplier is `ONE − falloff_delta`, floored at zero so
+/// damage never goes negative. A negative `falloff_delta` (better retention) yields a multiplier
+/// **above** `ONE` at long range; a positive one bleeds damage off downrange.
+///
+/// The load-bearing byte-neutral property: a **zero** `falloff_delta` returns **exactly
+/// [`Fixed::ONE`] at every range** with no bucket work — so every legacy / Standard-muzzle weapon
+/// deals identical damage and the checksum only moves where a real Muzzle sidegrade is fitted.
+#[inline]
+pub fn falloff_multiplier(falloff_delta: Fixed, dist_sq: Fixed, range: Fixed) -> Fixed {
+    if falloff_delta == Fixed::ZERO {
+        return Fixed::ONE;
+    }
+    // "beyond half range": compare squared distances so no sqrt enters. half = range/2 ⇒
+    // half_sq = range²/4. Exact in Fixed (the /2 and the square are the sim's own ops).
+    let half = range * Fixed::from_ratio(1, 2);
+    let half_sq = half * half;
+    if dist_sq <= half_sq {
+        Fixed::ONE
+    } else {
+        (Fixed::ONE - falloff_delta).max(Fixed::ZERO)
+    }
+}
+
 /// Is `(attacker, defender)` a hostile pair? Combat engages only across distinct factions and
 /// never involves `Neutral` on either side (invariant #3 keeps it literal — no friendly fire,
 /// no neutral aggression).
@@ -319,12 +361,20 @@ pub fn combat_system(
             world.weapon[i].penetration,
             world.armor[target_idx],
         );
-        let damage = world.weapon[i].damage * mult * facing;
+        // Muzzle downrange falloff (D85): sqrt-free, dist_sq-bucketed. A Standard-muzzle weapon
+        // (falloff_delta == 0) returns ONE at every range, so this multiplies damage by exactly one
+        // and the existing balance is byte-neutral.
+        let dist_sq = (world.pos[target_idx] - world.pos[i]).len_sq();
+        let falloff =
+            falloff_multiplier(world.weapon[i].falloff_delta, dist_sq, world.weapon[i].range);
+        let damage = world.weapon[i].damage * mult * facing * falloff;
 
         world.health[target_idx].cur -= damage;
         world.last_attacker[target_idx] = Some(shooter);
+        // Muzzle suppression-out (D85): a Standard-muzzle weapon deals exactly SUPPRESSION_PER_HIT.
+        let supp_add = suppression_per_hit(world.weapon[i].supp_out_delta);
         world.suppression[target_idx] =
-            (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
+            (world.suppression[target_idx] + supp_add).min(SUPPRESSION_MAX);
         // Area (fire-and-maneuver) suppression (WS-B, D70): the same shot pins the hostiles near the
         // impact, not just the body it hit. Reuse the per-tick spatial index (the candidates are a
         // superset; `splash_suppress` owns the precise radius/hostility/kind filter). Index-ordered,
@@ -561,10 +611,19 @@ pub fn resolve_fire(
         base_range
     };
     let range_sq = range * range;
-    let cos_half = if crouched {
+    let cos_half_base = if crouched {
         FIRE_CONE_COS_HALF_CROUCHED
     } else {
         FIRE_CONE_COS_HALF
+    };
+    // Stock aim-cone offset (D85, embodied-only): a higher cosine is a tighter cone. A Standard
+    // stock (cone_cos_delta == 0) keeps the exact base cosine (the fast path); otherwise offset and
+    // clamp to a valid cosine in [0, 1]. The cone test squares this, so only cos² ever compares.
+    let cone_delta = world.weapon[shooter_idx].cone_cos_delta;
+    let cos_half = if cone_delta == Fixed::ZERO {
+        cos_half_base
+    } else {
+        (cos_half_base + cone_delta).max(Fixed::ZERO).min(Fixed::ONE)
     };
     let cos_half_sq = cos_half * cos_half;
 
@@ -627,7 +686,7 @@ pub fn resolve_fire(
     // the round is still spent and the gun still cracks. This is the fix for "firing at air is free"
     // — previously the function returned here on a miss, so the magazine never drained and a Reload
     // was a perpetual no-op (`ammo == mag_size`).
-    if let Some((target_idx, _)) = best {
+    if let Some((target_idx, dist_sq)) = best {
         if let Some(target) = world.entity(target_idx) {
             let mult = terrain.cover_at(world.pos[target_idx]).damage_multiplier();
             // All-unit armour facing (D55 P4): shot direction is the aim. Unarmoured targets return
@@ -638,12 +697,23 @@ pub fn resolve_fire(
                 world.weapon[shooter_idx].penetration,
                 world.armor[target_idx],
             );
-            let damage = world.weapon[shooter_idx].damage * mult * facing;
+            // Muzzle downrange falloff (D85): same sqrt-free, dist_sq-bucketed multiplier the AI
+            // engage pass uses. `dist_sq` is the already-computed squared distance to the target;
+            // the falloff half-point uses the weapon's own `range` (stance-independent, matching the
+            // AI site). A Standard-muzzle weapon returns ONE, so embodied fire is byte-neutral.
+            let falloff = falloff_multiplier(
+                world.weapon[shooter_idx].falloff_delta,
+                dist_sq,
+                world.weapon[shooter_idx].range,
+            );
+            let damage = world.weapon[shooter_idx].damage * mult * facing * falloff;
 
             world.health[target_idx].cur -= damage;
             world.last_attacker[target_idx] = Some(shooter);
+            // Muzzle suppression-out (D85): a Standard-muzzle weapon deals exactly SUPPRESSION_PER_HIT.
+            let supp_add = suppression_per_hit(world.weapon[shooter_idx].supp_out_delta);
             world.suppression[target_idx] =
-                (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
+                (world.suppression[target_idx] + supp_add).min(SUPPRESSION_MAX);
             // Area (fire-and-maneuver) suppression (WS-B, D70), same as the auto-resolver's engage
             // pass: the shot also pins hostiles near the impact. No per-tick spatial index on this
             // single-shot path, so scan index-ordered (mirrors the 0..n targeting scan above);
@@ -741,6 +811,10 @@ mod tests {
             penetration: Fixed::ZERO,
             dispersion: Fixed::ZERO,
             shell: ShellKind::Ap,
+            move_speed_delta: Fixed::ZERO,
+            cone_cos_delta: Fixed::ZERO,
+            supp_out_delta: Fixed::ZERO,
+            falloff_delta: Fixed::ZERO,
         }
     }
 
@@ -764,6 +838,10 @@ mod tests {
             penetration: Fixed::ZERO,
             dispersion: Fixed::ZERO,
             shell: ShellKind::Ap,
+            move_speed_delta: Fixed::ZERO,
+            cone_cos_delta: Fixed::ZERO,
+            supp_out_delta: Fixed::ZERO,
+            falloff_delta: Fixed::ZERO,
         }
     }
 
@@ -2302,6 +2380,7 @@ mod tests {
             // so the launch is dead-on along the bearing and draws no RNG (invariant #3 + #7).
             dispersion: Fixed::ZERO,
             shell: ShellKind::Ap,
+            ..Weapon::default()
         }
     }
 
@@ -2476,5 +2555,159 @@ mod tests {
             assert_eq!(w1.health[i].cur, w2.health[i].cur, "health slot {i} must match");
         }
         assert_eq!(p1, p2, "the in-flight projectile pools must be bit-identical");
+    }
+
+    // ---- gunsmith breadth (CP-1, D85): per-mechanic tests for the Stock/Muzzle sim slots --------
+
+    #[test]
+    fn stock_cone_cos_delta_tightens_the_embodied_aim_cone() {
+        // Stock mechanic (aim cone): a positive cone_cos_delta tightens the embodied hitscan cone,
+        // so an off-axis target a Standard stock WOULD clip becomes a miss. Target at (4, 2) off a
+        // +X aim: inside the ~30° standard cone, outside a tightened one. Embodied-only path.
+        let terrain = Terrain::open();
+        let dir = aim_pos_x();
+
+        // Standard stock → the off-axis target is inside the cone → hit.
+        let mut w1 = World::new();
+        let s1 = spawn_unit(&mut w1, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        w1.input_source[s1.index as usize] = InputSource::Embodied;
+        let e1 = spawn_unit(&mut w1, 4, 2, Faction::Enemy, 100, Weapon::default());
+        let mut ev = Vec::new();
+        fire(&mut w1, &terrain, s1, dir, &mut ev);
+        assert!(
+            w1.health[e1.index as usize].cur < fx(100),
+            "the standard cone clips the off-axis target"
+        );
+
+        // Tighter stock (+cone_cos) → the same target now falls outside the cone → miss.
+        let mut w2 = World::new();
+        let mut gun = rifle(10, 25, 0);
+        gun.cone_cos_delta = Fixed::from_ratio(1, 16);
+        let s2 = spawn_unit(&mut w2, 0, 0, Faction::Player, 100, gun);
+        w2.input_source[s2.index as usize] = InputSource::Embodied;
+        let e2 = spawn_unit(&mut w2, 4, 2, Faction::Enemy, 100, Weapon::default());
+        let mut ev2 = Vec::new();
+        fire(&mut w2, &terrain, s2, dir, &mut ev2);
+        assert_eq!(
+            w2.health[e2.index as usize].cur,
+            fx(100),
+            "a tighter cone misses the same off-axis target"
+        );
+    }
+
+    #[test]
+    fn muzzle_supp_out_delta_increases_suppression_dealt() {
+        // Muzzle mechanic (suppression-out): a +supp_out_delta weapon deals strictly more suppression
+        // on a direct hit than a Standard muzzle (which deals exactly SUPPRESSION_PER_HIT). AI path.
+        let terrain = Terrain::open();
+
+        let mut w1 = World::new();
+        let s1 = spawn_unit(&mut w1, 0, 0, Faction::Player, 100, rifle(10, 5, 10));
+        w1.stance[s1.index as usize] = Stance::FireAtWill;
+        let d1 = spawn_unit(&mut w1, 3, 0, Faction::Enemy, 1000, Weapon::default());
+        w1.stance[d1.index as usize] = Stance::HoldFire;
+        let mut ev = Vec::new();
+        run(&mut w1, &terrain, &mut ev);
+        let base_supp = w1.suppression[d1.index as usize];
+        assert_eq!(
+            base_supp, SUPPRESSION_PER_HIT,
+            "a standard muzzle deals exactly the base per-hit suppression"
+        );
+
+        let mut w2 = World::new();
+        let mut gun = rifle(10, 5, 10);
+        gun.supp_out_delta = Fixed::from_ratio(1, 32);
+        let s2 = spawn_unit(&mut w2, 0, 0, Faction::Player, 100, gun);
+        w2.stance[s2.index as usize] = Stance::FireAtWill;
+        let d2 = spawn_unit(&mut w2, 3, 0, Faction::Enemy, 1000, Weapon::default());
+        w2.stance[d2.index as usize] = Stance::HoldFire;
+        let mut ev2 = Vec::new();
+        run(&mut w2, &terrain, &mut ev2);
+        assert_eq!(
+            w2.suppression[d2.index as usize],
+            SUPPRESSION_PER_HIT + Fixed::from_ratio(1, 32),
+            "a +supp_out muzzle adds its delta on top of the base per-hit suppression"
+        );
+        assert!(w2.suppression[d2.index as usize] > base_supp);
+    }
+
+    #[test]
+    fn muzzle_falloff_delta_cuts_damage_beyond_half_range_only() {
+        // Muzzle mechanic (falloff): with range 10 the half-range point is 5. Beyond it, a +falloff
+        // muzzle bleeds damage; within it, full damage. A Standard muzzle is full at any range. AI path.
+        let terrain = Terrain::open();
+
+        // Standard muzzle: full damage even downrange (distance 8, beyond half range).
+        let mut w1 = World::new();
+        let s1 = spawn_unit(&mut w1, 0, 0, Faction::Player, 100, rifle(10, 40, 10));
+        w1.stance[s1.index as usize] = Stance::FireAtWill;
+        let far1 = spawn_unit(&mut w1, 8, 0, Faction::Enemy, 1000, Weapon::default());
+        w1.stance[far1.index as usize] = Stance::HoldFire;
+        let mut ev = Vec::new();
+        run(&mut w1, &terrain, &mut ev);
+        assert_eq!(
+            w1.health[far1.index as usize].cur,
+            fx(1000) - fx(40),
+            "a standard muzzle deals full damage downrange"
+        );
+
+        // +falloff muzzle (1/4): beyond half range, damage × (1 − 1/4) = 3/4.
+        let mut w2 = World::new();
+        let mut gun = rifle(10, 40, 10);
+        gun.falloff_delta = Fixed::from_ratio(1, 4);
+        let s2 = spawn_unit(&mut w2, 0, 0, Faction::Player, 100, gun);
+        w2.stance[s2.index as usize] = Stance::FireAtWill;
+        let far2 = spawn_unit(&mut w2, 8, 0, Faction::Enemy, 1000, Weapon::default());
+        w2.stance[far2.index as usize] = Stance::HoldFire;
+        let mut ev2 = Vec::new();
+        run(&mut w2, &terrain, &mut ev2);
+        let dealt = fx(1000) - w2.health[far2.index as usize].cur;
+        assert_eq!(
+            dealt,
+            fx(40) * Fixed::from_ratio(3, 4),
+            "beyond half range the +falloff muzzle deals 3/4 damage"
+        );
+
+        // The same +falloff muzzle vs a target WITHIN half range (distance 3 < 5): full damage.
+        let mut w3 = World::new();
+        let mut gun3 = rifle(10, 40, 10);
+        gun3.falloff_delta = Fixed::from_ratio(1, 4);
+        let s3 = spawn_unit(&mut w3, 0, 0, Faction::Player, 100, gun3);
+        w3.stance[s3.index as usize] = Stance::FireAtWill;
+        let near3 = spawn_unit(&mut w3, 3, 0, Faction::Enemy, 1000, Weapon::default());
+        w3.stance[near3.index as usize] = Stance::HoldFire;
+        let mut ev3 = Vec::new();
+        run(&mut w3, &terrain, &mut ev3);
+        assert_eq!(
+            w3.health[near3.index as usize].cur,
+            fx(1000) - fx(40),
+            "within half range even a +falloff muzzle deals full damage"
+        );
+    }
+
+    #[test]
+    fn falloff_multiplier_zero_delta_is_one_at_every_range() {
+        // The byte-neutral property: a zero falloff_delta returns exactly ONE regardless of distance,
+        // so a Standard-muzzle weapon's damage is unchanged (and the checksum unmoved).
+        for d in [0i32, 1, 4, 25, 100, 10_000] {
+            let dist_sq = fx(d);
+            assert_eq!(
+                falloff_multiplier(Fixed::ZERO, dist_sq, fx(10)),
+                Fixed::ONE,
+                "zero falloff must be a no-op at dist_sq {d}"
+            );
+        }
+    }
+
+    #[test]
+    fn suppression_per_hit_zero_delta_is_the_base() {
+        // Zero supp_out_delta returns exactly SUPPRESSION_PER_HIT (the fast path); a negative delta
+        // floors at zero rather than going negative.
+        assert_eq!(suppression_per_hit(Fixed::ZERO), SUPPRESSION_PER_HIT);
+        assert_eq!(suppression_per_hit(Fixed::from_int(-100)), Fixed::ZERO);
+        assert!(
+            suppression_per_hit(Fixed::from_ratio(1, 32)) > SUPPRESSION_PER_HIT,
+            "a positive delta suppresses more"
+        );
     }
 }

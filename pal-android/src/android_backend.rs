@@ -216,6 +216,9 @@ fn android_main(app: AndroidApp) {
                                     optic: Optic::ALL[launch.optic as usize],
                                     barrel: Barrel::ALL[launch.barrel as usize],
                                     magazine: Magazine::ALL[launch.magazine as usize],
+                                    // Gunsmith breadth (D85): the JNI launch payload does not yet
+                                    // carry Stock/Muzzle, so default them to Standard for now.
+                                    ..Loadout::STANDARD
                                 };
                                 let mut new_game = Game::new_scene_with_loadout(
                                     new_rhi.device(),

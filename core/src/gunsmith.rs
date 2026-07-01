@@ -56,6 +56,19 @@ pub struct StatDelta {
     pub reload_ticks: i32,
     /// Carried reserve rounds. Higher is better.
     pub reserve: i32,
+    // ---- Gunsmith breadth (CP-1, D85): two new disjoint axis pairs ----------------------------
+    /// **Stock** locomotion-speed offset ([`Weapon::move_speed_delta`](crate::components::Weapon)).
+    /// Higher is better (more mobile).
+    pub move_speed_delta: Fixed,
+    /// **Stock** aim-cone-cosine offset ([`Weapon::cone_cos_delta`](crate::components::Weapon)).
+    /// Higher is better (tighter/steadier cone).
+    pub cone_cos_delta: Fixed,
+    /// **Muzzle** suppression-out offset ([`Weapon::supp_out_delta`](crate::components::Weapon)).
+    /// Higher is better (more suppression dealt).
+    pub supp_out_delta: Fixed,
+    /// **Muzzle** downrange-falloff amount ([`Weapon::falloff_delta`](crate::components::Weapon)).
+    /// **Lower** is better (more damage retained downrange — mirrors `cooldown`/`reload` polarity).
+    pub falloff_delta: Fixed,
 }
 
 impl StatDelta {
@@ -67,6 +80,10 @@ impl StatDelta {
         mag_size: 0,
         reload_ticks: 0,
         reserve: 0,
+        move_speed_delta: Fixed::ZERO,
+        cone_cos_delta: Fixed::ZERO,
+        supp_out_delta: Fixed::ZERO,
+        falloff_delta: Fixed::ZERO,
     };
 
     /// Sum two deltas axis-by-axis. Integer axes saturate (they never realistically come near the
@@ -82,6 +99,10 @@ impl StatDelta {
             mag_size: self.mag_size.saturating_add(o.mag_size),
             reload_ticks: self.reload_ticks.saturating_add(o.reload_ticks),
             reserve: self.reserve.saturating_add(o.reserve),
+            move_speed_delta: self.move_speed_delta.wrapping_add(o.move_speed_delta),
+            cone_cos_delta: self.cone_cos_delta.wrapping_add(o.cone_cos_delta),
+            supp_out_delta: self.supp_out_delta.wrapping_add(o.supp_out_delta),
+            falloff_delta: self.falloff_delta.wrapping_add(o.falloff_delta),
         }
     }
 
@@ -94,6 +115,10 @@ impl StatDelta {
             && self.mag_size >= other.mag_size
             && self.reload_ticks <= other.reload_ticks // lower = better
             && self.reserve >= other.reserve
+            && self.move_speed_delta >= other.move_speed_delta
+            && self.cone_cos_delta >= other.cone_cos_delta
+            && self.supp_out_delta >= other.supp_out_delta
+            && self.falloff_delta <= other.falloff_delta // lower = better
     }
 
     /// Is `self` **strictly better** than `other` on at least one tracked axis (polarity-aware)?
@@ -105,6 +130,10 @@ impl StatDelta {
             || self.mag_size > other.mag_size
             || self.reload_ticks < other.reload_ticks // lower = better
             || self.reserve > other.reserve
+            || self.move_speed_delta > other.move_speed_delta
+            || self.cone_cos_delta > other.cone_cos_delta
+            || self.supp_out_delta > other.supp_out_delta
+            || self.falloff_delta < other.falloff_delta // lower = better
     }
 
     /// Does `self` **strictly dominate** `other` — at least as good on every tracked axis and
@@ -120,6 +149,12 @@ impl StatDelta {
 /// attachment table stays float-free and readable.
 const fn fx(n: i32) -> Fixed {
     Fixed::from_int(n)
+}
+
+/// Const negation of a [`Fixed`] (the `Neg` impl is not `const`). Used so the opposed pole of each
+/// new-axis trade is defined as the exact negative of its step, keeping the pair symmetric.
+const fn negf(x: Fixed) -> Fixed {
+    Fixed::from_bits(-x.to_bits())
 }
 
 /// Build a macro-free pair of slot enums would be noisy; instead each slot is its own enum with a
@@ -192,8 +227,9 @@ macro_rules! slot_enum {
     };
 }
 
-/// Build a [`StatDelta`] with all six axes explicit (kept out of FRU `..` so the slot tables are
-/// const-evaluable on every toolchain). Order: range, damage, cooldown, mag, reload, reserve.
+/// Build a [`StatDelta`] on the **original six** axes (Optic/Barrel/Magazine), with the D85
+/// Stock/Muzzle axes left at zero (kept out of FRU `..` so the slot tables are const-evaluable on
+/// every toolchain). Order: range, damage, cooldown, mag, reload, reserve.
 const fn delta(
     range: Fixed,
     damage: Fixed,
@@ -209,8 +245,65 @@ const fn delta(
         mag_size,
         reload_ticks,
         reserve,
+        move_speed_delta: Fixed::ZERO,
+        cone_cos_delta: Fixed::ZERO,
+        supp_out_delta: Fixed::ZERO,
+        falloff_delta: Fixed::ZERO,
     }
 }
+
+/// Build a **Stock** [`StatDelta`] — touches only its unique axis pair
+/// (`move_speed_delta ↔ cone_cos_delta`), every other axis zero. Keeps the slot tables
+/// const-evaluable and the disjointness structural (CP-1, D85).
+const fn stock_delta(move_speed_delta: Fixed, cone_cos_delta: Fixed) -> StatDelta {
+    StatDelta {
+        range: Fixed::ZERO,
+        damage: Fixed::ZERO,
+        cooldown_ticks: 0,
+        mag_size: 0,
+        reload_ticks: 0,
+        reserve: 0,
+        move_speed_delta,
+        cone_cos_delta,
+        supp_out_delta: Fixed::ZERO,
+        falloff_delta: Fixed::ZERO,
+    }
+}
+
+/// Build a **Muzzle** [`StatDelta`] — touches only its unique axis pair
+/// (`supp_out_delta ↔ falloff_delta`), every other axis zero (CP-1, D85).
+const fn muzzle_delta(supp_out_delta: Fixed, falloff_delta: Fixed) -> StatDelta {
+    StatDelta {
+        range: Fixed::ZERO,
+        damage: Fixed::ZERO,
+        cooldown_ticks: 0,
+        mag_size: 0,
+        reload_ticks: 0,
+        reserve: 0,
+        move_speed_delta: Fixed::ZERO,
+        cone_cos_delta: Fixed::ZERO,
+        supp_out_delta,
+        falloff_delta,
+    }
+}
+
+// ---- Gunsmith breadth (CP-1, D85): baseline trade magnitudes for the two new slots -------------
+//
+// The [`Army::Neutral`] pool reproduces these byte-for-byte (as the existing slots do); `Us`/`Fr`
+// scale them per faction below. All fixed-point (invariant #1). Sized so a fitted weapon stays
+// well-formed at every use-site: `MOVE_SPEED` (1/8) ± STOCK_MOVE_STEP stays above
+// `systems::MIN_MOVE_SPEED`; `FIRE_CONE_COS_HALF` (~0.866) ± STOCK_CONE_STEP stays inside (0, 1);
+// `SUPPRESSION_PER_HIT` (1/8) ± MUZZLE_SUPP_STEP stays positive; the falloff is a downrange
+// multiplier offset, floored at zero at the use-site.
+
+/// Neutral **Stock** move-speed trade step (1/32 = 25% of `MOVE_SPEED`).
+const STOCK_MOVE_STEP: Fixed = Fixed::from_ratio(1, 32);
+/// Neutral **Stock** aim-cone-cosine trade step (1/32).
+const STOCK_CONE_STEP: Fixed = Fixed::from_ratio(1, 32);
+/// Neutral **Muzzle** suppression-out trade step (1/32 = 25% of `SUPPRESSION_PER_HIT`).
+const MUZZLE_SUPP_STEP: Fixed = Fixed::from_ratio(1, 32);
+/// Neutral **Muzzle** downrange-falloff trade step (1/8 ⇒ ±12.5% damage beyond half range).
+const MUZZLE_FALLOFF_STEP: Fixed = Fixed::from_ratio(1, 8);
 
 slot_enum! {
     /// **Optic** — trades **range ↔ fire-rate** (its unique axis pair). A `Marksman` glass reaches
@@ -252,6 +345,94 @@ slot_enum! {
         Quickdraw => delta(Fixed::ZERO, Fixed::ZERO, 0, -10, -30, 0)
     }
     labels { "Standard", "Extended", "Quickdraw" }
+}
+
+slot_enum! {
+    /// **Stock** — trades **mobility ↔ steadiness** (its unique axis pair
+    /// `move_speed_delta ↔ cone_cos_delta`, gunsmith breadth CP-1 / D85). An `Agile` stock walks
+    /// faster but its wider hip-fire cone is less precise; a `Marksman` stock trades foot speed for
+    /// a tighter, steadier aim cone. `move_speed_delta` offsets the carrier's speed at every mover
+    /// (AI + embodied); `cone_cos_delta` tightens the embodied hitscan cone (embodied-only — the AI
+    /// has no cone).
+    Stock {
+        Standard,
+        // Agile: +move (faster), −cone_cos (wider/less precise cone).
+        Agile => stock_delta(STOCK_MOVE_STEP, negf(STOCK_CONE_STEP)),
+        // Marksman: −move (slower), +cone_cos (tighter/steadier cone).
+        Marksman => stock_delta(negf(STOCK_MOVE_STEP), STOCK_CONE_STEP)
+    }
+    labels { "Standard", "Agile", "Marksman" }
+}
+
+slot_enum! {
+    /// **Muzzle** — trades **blast/suppression ↔ downrange retention** (its unique axis pair
+    /// `supp_out_delta ↔ falloff_delta`, gunsmith breadth CP-1 / D85). A `Brake` muzzle pins harder
+    /// (more suppression per hit) but its blast bleeds more damage downrange (higher falloff); a
+    /// `Suppressor` deals less suppression but retains (even boosts) damage at range (lower falloff).
+    /// `supp_out_delta` offsets per-hit suppression at both hit sites; `falloff_delta` drives the
+    /// sqrt-free downrange damage multiplier beyond half range.
+    Muzzle {
+        Standard,
+        // Brake: +supp (more suppression), +falloff (worse downrange retention).
+        Brake => muzzle_delta(MUZZLE_SUPP_STEP, MUZZLE_FALLOFF_STEP),
+        // Suppressor: −supp (less suppression), −falloff (better downrange retention).
+        Suppressor => muzzle_delta(negf(MUZZLE_SUPP_STEP), negf(MUZZLE_FALLOFF_STEP))
+    }
+    labels { "Standard", "Brake", "Suppressor" }
+}
+
+/// **Grip** — the sixth gunsmith row, and the one that is **cosmetic / feel-only, NOT a sim slot**
+/// (gunsmith breadth CP-1 / D85). Grip's real identity is recoil / hipfire *feel*, which is
+/// presentation-only (invariant #4 — the sim models no recoil); forcing a sim axis onto it would
+/// invent a fake mechanic. So `Grip` carries **no [`StatDelta`]** and is **not** part of
+/// [`Loadout`] — it never reaches the weapon, `Sim::fold`, or the fairness proof. It lives purely on
+/// the loadout **UI** (`engine::loadout_ui`), where the player still sees six rows: five functional
+/// (Optic / Barrel / Magazine / Stock / Muzzle) plus Grip for feel. It keeps the same `ALL` /
+/// `label` / `next` / `prev` cycling shape as the sim slots so the UI treats every row uniformly.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Grip {
+    /// The neutral grip.
+    #[default]
+    Standard,
+    /// A vertical grip — steadier hipfire feel (cosmetic).
+    Vertical,
+    /// An angled grip — snappier aim-down feel (cosmetic).
+    Angled,
+}
+
+impl Grip {
+    /// Every grip option, in the fixed order the UI cycles through.
+    pub const ALL: [Grip; 3] = [Grip::Standard, Grip::Vertical, Grip::Angled];
+
+    /// A short human label for the loadout UI.
+    #[inline]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Grip::Standard => "Standard",
+            Grip::Vertical => "Vertical",
+            Grip::Angled => "Angled",
+        }
+    }
+
+    /// The next option, wrapping (UI "cycle forward").
+    #[inline]
+    pub const fn next(self) -> Self {
+        match self {
+            Grip::Standard => Grip::Vertical,
+            Grip::Vertical => Grip::Angled,
+            Grip::Angled => Grip::Standard,
+        }
+    }
+
+    /// The previous option, wrapping (UI "cycle back").
+    #[inline]
+    pub const fn prev(self) -> Self {
+        match self {
+            Grip::Standard => Grip::Angled,
+            Grip::Vertical => Grip::Standard,
+            Grip::Angled => Grip::Vertical,
+        }
+    }
 }
 
 // ---- Per-faction gunsmith pools (factions WS-E, layers on D60 / D68 / D71) ----------------------
@@ -304,6 +485,14 @@ pub struct GunsmithPool {
     pub extended: StatDelta,
     /// [`Magazine::Quickdraw`] — -capacity ↔ faster reload.
     pub quickdraw: StatDelta,
+    /// [`Stock::Agile`] — +move ↔ wider cone (gunsmith breadth CP-1 / D85).
+    pub agile: StatDelta,
+    /// [`Stock::Marksman`] — -move ↔ tighter cone.
+    pub stock_marksman: StatDelta,
+    /// [`Muzzle::Brake`] — +suppression ↔ worse downrange retention.
+    pub brake: StatDelta,
+    /// [`Muzzle::Suppressor`] — -suppression ↔ better downrange retention.
+    pub suppressor: StatDelta,
 }
 
 /// The gunsmith pool an [`Army`] draws from. The tag → pool mapping is the WS-E content table.
@@ -329,8 +518,14 @@ pub const fn pool_for(army: Army) -> GunsmithPool {
             light: Barrel::Light.delta(),
             extended: Magazine::Extended.delta(),
             quickdraw: Magazine::Quickdraw.delta(),
+            // The baseline pool IS the Stock/Muzzle slot enums' own deltas (byte-for-byte).
+            agile: Stock::Agile.delta(),
+            stock_marksman: Stock::Marksman.delta(),
+            brake: Muzzle::Brake.delta(),
+            suppressor: Muzzle::Suppressor.delta(),
         },
-        // US — heavier/deeper trades. (range±3, cooldown±7; damage±8, reserve±80; mag±14, reload±40.)
+        // US — heavier/deeper trades. (range±3, cooldown±7; damage±8, reserve±80; mag±14, reload±40;
+        // move±3/64, cone±3/64; supp±3/64, falloff±3/16.)
         Army::Us => GunsmithPool {
             marksman: delta(fx(3), Fixed::ZERO, 7, 0, 0, 0),
             close_quarters: delta(fx(-3), Fixed::ZERO, -7, 0, 0, 0),
@@ -338,8 +533,13 @@ pub const fn pool_for(army: Army) -> GunsmithPool {
             light: delta(Fixed::ZERO, fx(-8), 0, 0, 0, 80),
             extended: delta(Fixed::ZERO, Fixed::ZERO, 0, 14, 40, 0),
             quickdraw: delta(Fixed::ZERO, Fixed::ZERO, 0, -14, -40, 0),
+            agile: stock_delta(Fixed::from_ratio(3, 64), Fixed::from_ratio(-3, 64)),
+            stock_marksman: stock_delta(Fixed::from_ratio(-3, 64), Fixed::from_ratio(3, 64)),
+            brake: muzzle_delta(Fixed::from_ratio(3, 64), Fixed::from_ratio(3, 16)),
+            suppressor: muzzle_delta(Fixed::from_ratio(-3, 64), Fixed::from_ratio(-3, 16)),
         },
-        // FR — lighter/snappier trades. (range±2, cooldown±4; damage±5, reserve±40; mag±8, reload±20.)
+        // FR — lighter/snappier trades. (range±2, cooldown±4; damage±5, reserve±40; mag±8, reload±20;
+        // move±1/64, cone±1/64; supp±1/64, falloff±1/16.)
         Army::Fr => GunsmithPool {
             marksman: delta(fx(2), Fixed::ZERO, 4, 0, 0, 0),
             close_quarters: delta(fx(-2), Fixed::ZERO, -4, 0, 0, 0),
@@ -347,6 +547,10 @@ pub const fn pool_for(army: Army) -> GunsmithPool {
             light: delta(Fixed::ZERO, fx(-5), 0, 0, 0, 40),
             extended: delta(Fixed::ZERO, Fixed::ZERO, 0, 8, 20, 0),
             quickdraw: delta(Fixed::ZERO, Fixed::ZERO, 0, -8, -20, 0),
+            agile: stock_delta(Fixed::from_ratio(1, 64), Fixed::from_ratio(-1, 64)),
+            stock_marksman: stock_delta(Fixed::from_ratio(-1, 64), Fixed::from_ratio(1, 64)),
+            brake: muzzle_delta(Fixed::from_ratio(1, 64), Fixed::from_ratio(1, 16)),
+            suppressor: muzzle_delta(Fixed::from_ratio(-1, 64), Fixed::from_ratio(-1, 16)),
         },
     }
 }
@@ -381,6 +585,28 @@ const fn magazine_delta_in(m: Magazine, pool: &GunsmithPool) -> StatDelta {
     }
 }
 
+/// The [`StatDelta`] a [`Stock`] selection contributes **within a pool** (CP-1, D85). `Standard` is
+/// the no-op.
+#[inline]
+const fn stock_delta_in(s: Stock, pool: &GunsmithPool) -> StatDelta {
+    match s {
+        Stock::Standard => StatDelta::ZERO,
+        Stock::Agile => pool.agile,
+        Stock::Marksman => pool.stock_marksman,
+    }
+}
+
+/// The [`StatDelta`] a [`Muzzle`] selection contributes **within a pool** (CP-1, D85). `Standard` is
+/// the no-op.
+#[inline]
+const fn muzzle_delta_in(m: Muzzle, pool: &GunsmithPool) -> StatDelta {
+    match m {
+        Muzzle::Standard => StatDelta::ZERO,
+        Muzzle::Brake => pool.brake,
+        Muzzle::Suppressor => pool.suppressor,
+    }
+}
+
 /// Range can never be driven to or below zero by a loadout (that would *disarm* the weapon, which
 /// is a different thing — a Medic — not a sidegrade). The floor keeps every applied weapon armed.
 const MIN_RANGE: Fixed = Fixed::ONE;
@@ -395,6 +621,12 @@ pub struct Loadout {
     pub optic: Optic,
     pub barrel: Barrel,
     pub magazine: Magazine,
+    /// Stock sim slot (mobility ↔ steadiness), gunsmith breadth CP-1 / D85.
+    pub stock: Stock,
+    /// Muzzle sim slot (suppression ↔ downrange retention), gunsmith breadth CP-1 / D85.
+    pub muzzle: Muzzle,
+    // NOTE: `Grip` is deliberately NOT here — it is cosmetic/feel-only (D85), never a sim slot, so
+    // it never reaches the weapon, the fold, or the fairness proof. It lives only on the UI editor.
 }
 
 impl Loadout {
@@ -404,6 +636,8 @@ impl Loadout {
         optic: Optic::Standard,
         barrel: Barrel::Standard,
         magazine: Magazine::Standard,
+        stock: Stock::Standard,
+        muzzle: Muzzle::Standard,
     };
 
     /// The summed [`StatDelta`] this loadout applies **in the baseline ([`Army::Neutral`]) pool** —
@@ -428,12 +662,16 @@ impl Loadout {
         optic_delta_in(self.optic, &pool)
             .add(barrel_delta_in(self.barrel, &pool))
             .add(magazine_delta_in(self.magazine, &pool))
+            .add(stock_delta_in(self.stock, &pool))
+            .add(muzzle_delta_in(self.muzzle, &pool))
     }
 
     /// Apply this loadout to a weapon **at match start** (deterministic match-setup input). The
     /// modified fields (`range`, `damage`, `cooldown_ticks`, `mag_size`, `ammo`, `reload_ticks`,
-    /// `reserve`, `reserve_max`) are all already in `Sim::fold`, so the change rides the per-tick
-    /// checksum with no new fold surface (invariant #7).
+    /// `reserve`, `reserve_max`, and the D85 Stock/Muzzle deltas `move_speed_delta`,
+    /// `cone_cos_delta`, `supp_out_delta`, `falloff_delta`) are all in `Sim::fold`, so the change
+    /// rides the per-tick checksum (invariant #7) — the four new deltas were appended to the weapon
+    /// fold after `shell`.
     ///
     /// Guards that keep it well-formed and scoped:
     /// - A **disarmed** weapon (`range <= 0`, e.g. the Medic) carries no loadout and is returned
@@ -468,6 +706,18 @@ impl Loadout {
         w.range = (w.range.wrapping_add(d.range)).max(MIN_RANGE);
         w.damage = (w.damage.wrapping_add(d.damage)).max(MIN_DAMAGE);
         w.cooldown_ticks = apply_count(w.cooldown_ticks, d.cooldown_ticks, 0);
+
+        // Gunsmith breadth (CP-1, D85): the four new-axis deltas ride directly on the weapon
+        // (their gameplay base lives in the sim constants — `MOVE_SPEED`, `FIRE_CONE_COS_HALF`,
+        // `SUPPRESSION_PER_HIT`, and the falloff multiplier — which each use-site offsets by these).
+        // A magazine-independent trade, so it applies to every armed weapon; a Standard stock/muzzle
+        // contributes zero here, leaving the weapon byte-identical (the fast path). Use-site floors
+        // (`systems::MIN_MOVE_SPEED`, the cone clamp, the suppression/falloff floors) keep an extreme
+        // stack well-formed, so no floor is needed at apply time.
+        w.move_speed_delta = w.move_speed_delta.wrapping_add(d.move_speed_delta);
+        w.cone_cos_delta = w.cone_cos_delta.wrapping_add(d.cone_cos_delta);
+        w.supp_out_delta = w.supp_out_delta.wrapping_add(d.supp_out_delta);
+        w.falloff_delta = w.falloff_delta.wrapping_add(d.falloff_delta);
 
         // Magazine/handling/reserve only mean anything for a magazine weapon; a magazine-less
         // weapon (mag_size == 0 ⇒ infinite ammo, no reload) stays magazine-less.
@@ -511,21 +761,33 @@ mod tests {
     use crate::ecs::Entity;
     use crate::sim::Sim;
 
-    /// Every loadout in the full build space (3 slots × 3 options = 27).
+    /// Every loadout in the full build space — **5 sim slots × 3 options = 3⁵ = 243** builds
+    /// (D85 added Stock + Muzzle; Grip is cosmetic-only and not a build axis).
     fn all_loadouts() -> Vec<Loadout> {
         let mut v = Vec::new();
         for &optic in &Optic::ALL {
             for &barrel in &Barrel::ALL {
                 for &magazine in &Magazine::ALL {
-                    v.push(Loadout {
-                        optic,
-                        barrel,
-                        magazine,
-                    });
+                    for &stock in &Stock::ALL {
+                        for &muzzle in &Muzzle::ALL {
+                            v.push(Loadout {
+                                optic,
+                                barrel,
+                                magazine,
+                                stock,
+                                muzzle,
+                            });
+                        }
+                    }
                 }
             }
         }
         v
+    }
+
+    #[test]
+    fn build_space_is_243() {
+        assert_eq!(all_loadouts().len(), 243, "5 sim slots × 3 options = 3^5");
     }
 
     /// THE fairness invariant (the WS-C / D60 / D30 anti-degeneracy rule): no attachment
@@ -577,29 +839,65 @@ mod tests {
         for m in Magazine::ALL {
             check(m.delta(), m.label());
         }
+        for s in Stock::ALL {
+            check(s.delta(), s.label());
+        }
+        for m in Muzzle::ALL {
+            check(m.delta(), m.label());
+        }
     }
 
     /// The slot axis pairs are disjoint — the load-bearing premise of the no-domination proof. Each
     /// slot touches exactly its two named axes and nothing else, and no two slots share an axis.
     #[test]
     fn slot_axis_pairs_are_disjoint() {
+        // The four D85 new axes are zero for every ORIGINAL slot (Optic/Barrel/Magazine), and the
+        // three original stat groups are zero for the two new slots — so all five pairs stay disjoint.
+        let new_axes_zero = |d: &StatDelta| {
+            assert_eq!(
+                (
+                    d.move_speed_delta,
+                    d.cone_cos_delta,
+                    d.supp_out_delta,
+                    d.falloff_delta
+                ),
+                (Fixed::ZERO, Fixed::ZERO, Fixed::ZERO, Fixed::ZERO)
+            );
+        };
         // Optic touches only {range, cooldown_ticks}.
         for o in Optic::ALL {
             let d = o.delta();
             assert_eq!(d.damage, Fixed::ZERO);
             assert_eq!((d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0));
+            new_axes_zero(&d);
         }
         // Barrel touches only {damage, reserve}.
         for b in Barrel::ALL {
             let d = b.delta();
             assert_eq!(d.range, Fixed::ZERO);
             assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks), (0, 0, 0));
+            new_axes_zero(&d);
         }
         // Magazine touches only {mag_size, reload_ticks}.
         for m in Magazine::ALL {
             let d = m.delta();
             assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
             assert_eq!((d.cooldown_ticks, d.reserve), (0, 0));
+            new_axes_zero(&d);
+        }
+        // Stock touches only {move_speed_delta, cone_cos_delta}.
+        for s in Stock::ALL {
+            let d = s.delta();
+            assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
+            assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
+            assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+        }
+        // Muzzle touches only {supp_out_delta, falloff_delta}.
+        for m in Muzzle::ALL {
+            let d = m.delta();
+            assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
+            assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
+            assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
         }
     }
 
@@ -619,6 +917,25 @@ mod tests {
         for m in Magazine::ALL {
             assert_eq!(m.next().prev(), m);
         }
+        assert_eq!(Stock::Standard.next(), Stock::Agile);
+        assert_eq!(Stock::Agile.next(), Stock::Marksman);
+        assert_eq!(Stock::Marksman.next(), Stock::Standard);
+        for s in Stock::ALL {
+            assert_eq!(s.next().prev(), s);
+            assert_eq!(s.prev().next(), s);
+        }
+        assert_eq!(Muzzle::Standard.next(), Muzzle::Brake);
+        assert_eq!(Muzzle::Brake.next(), Muzzle::Suppressor);
+        assert_eq!(Muzzle::Suppressor.next(), Muzzle::Standard);
+        for m in Muzzle::ALL {
+            assert_eq!(m.next().prev(), m);
+            assert_eq!(m.prev().next(), m);
+        }
+        // Grip is cosmetic but cycles the same way (UI uniformity).
+        assert_eq!(Grip::Standard.next(), Grip::Vertical);
+        for g in Grip::ALL {
+            assert_eq!(g.next().prev(), g);
+        }
     }
 
     /// Applying a loadout to the real Rifleman weapon moves exactly the intended fields, by the
@@ -631,6 +948,7 @@ mod tests {
             optic: Optic::Marksman,       // range +2, cooldown +5
             barrel: Barrel::Heavy,        // damage +6, reserve -60
             magazine: Magazine::Extended, // mag +10, reload +30
+            ..Loadout::STANDARD
         };
         let mut w = base;
         lo.apply_to_weapon(&mut w);
@@ -659,6 +977,7 @@ mod tests {
             optic: Optic::CloseQuarters,
             barrel: Barrel::Light,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         };
         let mut w = base;
         lo.apply_to_weapon(&mut w);
@@ -681,6 +1000,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         }
         .apply_to_weapon(&mut w);
         assert_eq!(w, base, "a disarmed weapon carries no loadout");
@@ -701,6 +1021,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Standard,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         }
         .apply_to_weapon(&mut w);
         assert_eq!(w.range, fx(12), "range still moves");
@@ -750,6 +1071,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         };
         let (mut a, _) = fight_with_loadout(0xA11CE, loadout);
         let (mut b, _) = fight_with_loadout(0xA11CE, loadout);
@@ -776,11 +1098,13 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let runner = Loadout {
             optic: Optic::CloseQuarters,
             barrel: Barrel::Light,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         };
         let (mut a, _) = fight_with_loadout(0xBEEF, marksman);
         let (mut b, _) = fight_with_loadout(0xBEEF, runner);
@@ -907,6 +1231,10 @@ mod tests {
                 ("light", pool.light),
                 ("extended", pool.extended),
                 ("quickdraw", pool.quickdraw),
+                ("agile", pool.agile),
+                ("stock_marksman", pool.stock_marksman),
+                ("brake", pool.brake),
+                ("suppressor", pool.suppressor),
             ];
             for (name, d) in opts {
                 assert!(
@@ -941,6 +1269,20 @@ mod tests {
             for d in [pool.extended, pool.quickdraw] {
                 assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
                 assert_eq!((d.cooldown_ticks, d.reserve), (0, 0));
+                assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+            }
+            // Stock touches only {move_speed_delta, cone_cos_delta} in every pool.
+            for d in [pool.agile, pool.stock_marksman] {
+                assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
+                assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+            }
+            // Muzzle touches only {supp_out_delta, falloff_delta} in every pool.
+            for d in [pool.brake, pool.suppressor] {
+                assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
+                assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
             }
         }
     }
@@ -957,6 +1299,10 @@ mod tests {
         assert_eq!(pool.light, Barrel::Light.delta());
         assert_eq!(pool.extended, Magazine::Extended.delta());
         assert_eq!(pool.quickdraw, Magazine::Quickdraw.delta());
+        assert_eq!(pool.agile, Stock::Agile.delta());
+        assert_eq!(pool.stock_marksman, Stock::Marksman.delta());
+        assert_eq!(pool.brake, Muzzle::Brake.delta());
+        assert_eq!(pool.suppressor, Muzzle::Suppressor.delta());
         for l in all_loadouts() {
             assert_eq!(
                 l.total_delta(),
@@ -1012,6 +1358,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Quickdraw,
+            ..Loadout::STANDARD
         };
         for army in ARMIES {
             let mut a = fight_with_army_loadout(0xA11CE, army, loadout);
@@ -1040,6 +1387,7 @@ mod tests {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
+            ..Loadout::STANDARD
         };
         let mut us = fight_with_army_loadout(0xBEEF, Army::Us, loadout);
         let mut fr = fight_with_army_loadout(0xBEEF, Army::Fr, loadout);
@@ -1068,6 +1416,7 @@ mod tests {
             optic: Optic::Marksman,       // US: range +3, cooldown +7
             barrel: Barrel::Heavy,        // US: damage +8, reserve -80
             magazine: Magazine::Extended, // US: mag +14, reload +40
+            ..Loadout::STANDARD
         };
         let mut w = base;
         lo.apply_to_weapon_for(Army::Us, &mut w);
@@ -1081,5 +1430,102 @@ mod tests {
         let mut wn = base;
         lo.apply_to_weapon(&mut wn);
         assert_ne!(w, wn, "US pool must differ from the Neutral baseline apply");
+    }
+
+    // ---- gunsmith breadth (CP-1, D85): Stock + Muzzle apply / byte-neutral / checksum ----------
+
+    /// Applying a Stock + Muzzle loadout moves exactly the four new weapon delta fields by the
+    /// Neutral pool's magnitudes, and touches none of the original six stat fields (disjoint).
+    #[test]
+    fn apply_stock_and_muzzle_move_the_new_weapon_fields() {
+        let (_, base) = unit_stats(UnitKind::Rifleman);
+        let lo = Loadout {
+            stock: Stock::Agile,     // +move, −cone
+            muzzle: Muzzle::Brake,   // +supp, +falloff
+            ..Loadout::STANDARD
+        };
+        let mut w = base;
+        lo.apply_to_weapon(&mut w);
+        // New fields moved by the Neutral steps.
+        assert_eq!(w.move_speed_delta, STOCK_MOVE_STEP);
+        assert_eq!(w.cone_cos_delta, negf(STOCK_CONE_STEP));
+        assert_eq!(w.supp_out_delta, MUZZLE_SUPP_STEP);
+        assert_eq!(w.falloff_delta, MUZZLE_FALLOFF_STEP);
+        // Original six stat fields are untouched (Optic/Barrel/Magazine all Standard).
+        assert_eq!(w.range, base.range);
+        assert_eq!(w.damage, base.damage);
+        assert_eq!(w.cooldown_ticks, base.cooldown_ticks);
+        assert_eq!(w.mag_size, base.mag_size);
+        assert_eq!(w.reload_ticks, base.reload_ticks);
+        assert_eq!(w.reserve, base.reserve);
+    }
+
+    /// The opposed poles land the other way (Marksman/Suppressor), confirming polarity.
+    #[test]
+    fn apply_opposed_stock_and_muzzle_poles() {
+        let (_, base) = unit_stats(UnitKind::Rifleman);
+        let lo = Loadout {
+            stock: Stock::Marksman,      // −move, +cone
+            muzzle: Muzzle::Suppressor,  // −supp, −falloff
+            ..Loadout::STANDARD
+        };
+        let mut w = base;
+        lo.apply_to_weapon(&mut w);
+        assert_eq!(w.move_speed_delta, negf(STOCK_MOVE_STEP));
+        assert_eq!(w.cone_cos_delta, STOCK_CONE_STEP);
+        assert_eq!(w.supp_out_delta, negf(MUZZLE_SUPP_STEP));
+        assert_eq!(w.falloff_delta, negf(MUZZLE_FALLOFF_STEP));
+    }
+
+    /// **Byte-neutral / golden-checksum-unmoved.** A freshly spawned Rifleman weapon has all four
+    /// new delta fields at zero, and applying the all-`Standard` loadout (including Standard Stock +
+    /// Muzzle) leaves them zero — so a Standard build folds byte-for-byte as it did before D85, and
+    /// the standard-loadout-vs-no-loadout checksum stream stays identical (see also
+    /// `standard_loadout_matches_no_loadout_stream`, which drives a full sim).
+    #[test]
+    fn standard_stock_muzzle_are_byte_neutral_on_the_new_fields() {
+        let (_, base) = unit_stats(UnitKind::Rifleman);
+        assert_eq!(base.move_speed_delta, Fixed::ZERO, "fresh weapon: zero move delta");
+        assert_eq!(base.cone_cos_delta, Fixed::ZERO);
+        assert_eq!(base.supp_out_delta, Fixed::ZERO);
+        assert_eq!(base.falloff_delta, Fixed::ZERO);
+        let mut w = base;
+        Loadout::STANDARD.apply_to_weapon(&mut w);
+        assert_eq!(w, base, "the all-Standard loadout moves no field, including the D85 ones");
+    }
+
+    /// **2-peer checksum agreement with Stock/Muzzle selections (invariant #7).** Two peers running
+    /// the SAME non-Standard Stock+Muzzle loadout step bit-identically every tick — the four new
+    /// deltas ride the weapon fold, so a stock/muzzle choice is folded from tick 0.
+    #[test]
+    fn same_stock_muzzle_two_peers_stay_bit_identical() {
+        let loadout = Loadout {
+            stock: Stock::Agile,
+            muzzle: Muzzle::Brake,
+            ..Loadout::STANDARD
+        };
+        let (mut a, _) = fight_with_loadout(0x57_0C6, loadout);
+        let (mut b, _) = fight_with_loadout(0x57_0C6, loadout);
+        assert_eq!(a.checksum(), b.checksum(), "tick 0 (pre-step) must already agree");
+        for t in 0..180u32 {
+            a.step(&[]);
+            b.step(&[]);
+            assert_eq!(a.checksum(), b.checksum(), "peers diverged at tick {t}");
+        }
+    }
+
+    /// Two peers with DIFFERENT Muzzle selections diverge in the checksum — the new deltas are real
+    /// folded sim state, so a stock/muzzle desync would be caught by the arch matrix like any other.
+    #[test]
+    fn different_muzzle_diverges_in_the_checksum() {
+        let brake = Loadout { muzzle: Muzzle::Brake, ..Loadout::STANDARD };
+        let suppressor = Loadout { muzzle: Muzzle::Suppressor, ..Loadout::STANDARD };
+        let (a, _) = fight_with_loadout(0xF00D, brake);
+        let (b, _) = fight_with_loadout(0xF00D, suppressor);
+        assert_ne!(
+            a.checksum(),
+            b.checksum(),
+            "different muzzle selections must fold to different checksums"
+        );
     }
 }

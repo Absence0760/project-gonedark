@@ -574,6 +574,15 @@ impl Sim {
             // pen/damage/splash). `Ap` (tag 0) for every existing weapon, so it appends one zero byte
             // per slot. APPENDED after `penetration` (keep this last among the weapon fields).
             sink.write_u8(shell_tag(w.shell));
+            // Gunsmith Stock+Muzzle sim slots (CP-1, D85): four fixed-point sidegrade deltas carried
+            // on the weapon (Stock move-speed/aim-cone, Muzzle suppression-out/falloff). All zero for
+            // every legacy / Standard weapon, so they append four zero words per slot (byte-neutral
+            // gameplay); a stock/muzzle selection folds here so a peer that chose differently diverges
+            // and the arch matrix catches it (invariant #7). APPENDED after `shell`.
+            sink.write_i32(w.move_speed_delta.to_bits());
+            sink.write_i32(w.cone_cos_delta.to_bits());
+            sink.write_i32(w.supp_out_delta.to_bits());
+            sink.write_i32(w.falloff_delta.to_bits());
             sink.write_i32(self.world.suppression[i].to_bits());
             match self.world.last_attacker[i] {
                 Some(e) => {
@@ -785,6 +794,12 @@ impl Sim {
                 dispersion: Fixed::from_bits(r.read_i32()?),
                 // Tank embodiment P6 (D55): mirror fold()'s loaded-shell tag (after `penetration`).
                 shell: read_shell(&mut r)?,
+                // Gunsmith Stock+Muzzle sim slots (CP-1, D85): mirror fold()'s four delta words, in
+                // the same order (after `shell`).
+                move_speed_delta: Fixed::from_bits(r.read_i32()?),
+                cone_cos_delta: Fixed::from_bits(r.read_i32()?),
+                supp_out_delta: Fixed::from_bits(r.read_i32()?),
+                falloff_delta: Fixed::from_bits(r.read_i32()?),
             });
             suppression.push(Fixed::from_bits(r.read_i32()?));
             last_attacker.push(read_opt_entity(&mut r)?);

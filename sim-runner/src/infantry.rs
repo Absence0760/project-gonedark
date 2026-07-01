@@ -517,7 +517,9 @@ mod tests {
             // loaded-shell tag (this scene has no ballistic tank — every `muzzle_vel == 0` — so both
             // stay at their zero defaults); only the raw stream value shifted by the appended
             // per-slot bytes, by design.
-            Some(0xf5d9_57d8_7c6f_7fd0),
+            // D85 (gunsmith breadth): re-pinned after the Weapon fold grew four Stock/Muzzle delta
+            // words per slot (all zero in this loadout-free scene); only the raw stream value shifted.
+            Some(0xeaea_32f9_18e4_4190),
         );
     }
 
