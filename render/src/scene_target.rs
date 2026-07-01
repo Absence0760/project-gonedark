@@ -59,7 +59,10 @@ pub struct SceneTarget {
     format: wgpu::TextureFormat,
     /// Linear sampler used by the blit so a sub-native scene upscales smoothly.
     sampler: wgpu::Sampler,
-    /// Bind-group layout (intermediate texture + sampler) the present pipeline reads.
+    /// The WS-E present uniform (the "going dark" amount). Created once; written each
+    /// [`present`](Self::present) and read by `present.wgsl`'s dark branch.
+    present_uniform_buf: wgpu::Buffer,
+    /// Bind-group layout (intermediate texture + sampler + present uniform) the present pipeline reads.
     bind_group_layout: wgpu::BindGroupLayout,
     /// The fullscreen upscale-blit pipeline (samples the intermediate, writes the swapchain).
     present_pipeline: wgpu::RenderPipeline,
@@ -98,6 +101,13 @@ impl SceneTarget {
             ..Default::default()
         });
 
+        let present_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gonedark.scene_present_uniform"),
+            size: std::mem::size_of::<crate::present::PresentUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("gonedark.scene_present_layout"),
@@ -116,6 +126,17 @@ impl SceneTarget {
                         binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // binding 2: the WS-E "going dark" present uniform.
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
                         count: None,
                     },
                 ],
@@ -159,6 +180,7 @@ impl SceneTarget {
         SceneTarget {
             format: surface_format,
             sampler,
+            present_uniform_buf,
             bind_group_layout,
             present_pipeline,
             texture: None,
@@ -211,6 +233,10 @@ impl SceneTarget {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&self.sampler),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.present_uniform_buf.as_entire_binding(),
+                    },
                 ],
             });
             self.texture = Some(texture);
@@ -245,15 +271,25 @@ impl SceneTarget {
     /// (identity at scale 1.0). The host calls this once, AFTER every scene pass and BEFORE any chrome
     /// pass (so the native-resolution HUD/overlay/text LOADs on top of the upscaled scene). A no-op if
     /// no intermediate is allocated yet (defensive — `ensure` always runs first in practice).
+    ///
+    /// `dark` is the WS-E "world goes dark" amount ([`crate::present::dark_amount`]): `0` in command
+    /// view, `1` while embodied. It drives the present shader's embodied dark intensification (a
+    /// tunnel vignette + shadow crush) — presentation only, invariant #1/#4/#6.
     pub fn present(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         swapchain_view: &wgpu::TextureView,
+        dark: f32,
     ) {
         let Some(bind_group) = self.bind_group.as_ref() else {
             return;
         };
+        queue.write_buffer(
+            &self.present_uniform_buf,
+            0,
+            bytemuck::bytes_of(&crate::present::PresentUniform::new(dark)),
+        );
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("gonedark.scene_present_encoder"),
         });

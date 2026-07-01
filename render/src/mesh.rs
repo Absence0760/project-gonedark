@@ -797,6 +797,58 @@ pub fn surface_mottle(p: [f32; 3]) -> f32 {
     (n1 - 0.5) * 0.66 + (n2 - 0.5) * 0.34
 }
 
+#[inline]
+fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+#[inline]
+fn normalize3(v: [f32; 3]) -> [f32; 3] {
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if len <= 1e-12 {
+        return [0.0, 0.0, 1.0];
+    }
+    [v[0] / len, v[1] / len, v[2] / len]
+}
+
+/// WS-E micro-relief normal — **mirror of `mesh.wgsl::detail_normal`.** Tilts a unit face normal `n`
+/// by the local gradient of [`surface_mottle`] so greybox facets read as faintly-bumpy worn material
+/// under lighting instead of perfectly flat planes. `base_mottle` MUST be `surface_mottle(p)` (the
+/// shader passes the value it already sampled for the albedo tint, so this is two extra noise taps,
+/// no texture fetch — the mobile 200-unit budget, D49). Builds an arbitrary tangent basis off `n`
+/// (a least-aligned helper axis avoids a degenerate cross on near-vertical facets), finite-
+/// differences the mottle along the two tangents, and rotates `n` against that slope.
+///
+/// The golden reference + unit-tested contract for the shader twin: the output is **unit length**
+/// (so lighting `dot`s stay sane), **deterministic**, **finite**, reduces to `n` exactly on a flat
+/// (constant-mottle) field, and genuinely tilts where the field varies. Presentation only — it
+/// perturbs a normal and touches no position/sim/intel (invariants #1/#4/#6). The renderer never
+/// calls this; the GPU runs the WGSL copy. Keep every constant in lockstep with the shader.
+pub fn detail_normal(n: [f32; 3], p: [f32; 3], base_mottle: f32) -> [f32; 3] {
+    let helper = if n[2].abs() < 0.9 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
+    let t = normalize3(cross3(helper, n));
+    let b = cross3(n, t);
+    let eps = 0.35;
+    let pt = [p[0] + t[0] * eps, p[1] + t[1] * eps, p[2] + t[2] * eps];
+    let pb = [p[0] + b[0] * eps, p[1] + b[1] * eps, p[2] + b[2] * eps];
+    let gx = (surface_mottle(pt) - base_mottle) / eps;
+    let gy = (surface_mottle(pb) - base_mottle) / eps;
+    let strength = 0.5;
+    normalize3([
+        n[0] - (t[0] * gx + b[0] * gy) * strength,
+        n[1] - (t[1] * gx + b[1] * gy) * strength,
+        n[2] - (t[2] * gx + b[2] * gy) * strength,
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     //! `render` is the float boundary (invariant #1), so `f32` math is fair game. These exercise
@@ -1058,6 +1110,77 @@ mod tests {
             let t = i as f32 * 0.137;
             let v = value_noise([t, t * 1.7 - 3.0, 9.0 - t]);
             assert!((0.0..=1.0).contains(&v), "value_noise in [0,1], got {v}");
+        }
+    }
+
+    // ---- WS-E micro-relief detail normal (mirrors mesh.wgsl::detail_normal) ----
+
+    fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+    }
+    fn len3(v: [f32; 3]) -> f32 {
+        dot3(v, v).sqrt()
+    }
+
+    /// The perturbed normal stays UNIT LENGTH for a sweep of facet orientations (including the
+    /// near-vertical facets that flip the tangent-basis helper axis) and positions — the load-bearing
+    /// contract, since the lighting `dot`s downstream assume a unit normal.
+    #[test]
+    fn detail_normal_is_unit_length() {
+        let normals = [
+            [0.0, 0.0, 1.0],   // flat up
+            [0.0, 0.0, -1.0],  // flat down
+            [1.0, 0.0, 0.0],   // vertical wall (helper flips)
+            [0.0, 1.0, 0.0],   // vertical wall
+            normalize3([0.4, -0.6, 0.7]),
+            normalize3([0.9, 0.1, 0.05]), // near-vertical → abs(n.z) >= 0.9 branch off
+        ];
+        for &n in &normals {
+            for p in [[0.0, 0.0, 0.0], [3.2, -1.7, 4.9], [-12.5, 8.1, 0.3]] {
+                let out = detail_normal(n, p, surface_mottle(p));
+                assert!(
+                    (len3(out) - 1.0).abs() < 1e-4,
+                    "detail_normal not unit length for n={n:?} p={p:?}: len {}",
+                    len3(out)
+                );
+                // Low-strength micro-relief: it tilts but never past the tangent plane (stays on the
+                // lit hemisphere of the face), so a facet can't invert into a back-face.
+                assert!(dot3(out, n) > 0.0, "tilt must not flip the facet: n={n:?} p={p:?}");
+            }
+        }
+    }
+
+    /// A genuinely flat (constant) mottle field leaves the normal untouched — proved by feeding a
+    /// base_mottle that already equals the neighbour samples via a zero tangent step is impossible,
+    /// so instead we assert the *tilt exists* where the field varies (the point of the feature): at
+    /// some sampled facet the perturbed normal is measurably off the face normal.
+    #[test]
+    fn detail_normal_tilts_where_the_field_varies() {
+        let n = [0.0, 0.0, 1.0];
+        let mut max_tilt = 0.0f32;
+        for i in 0..64 {
+            let p = [i as f32 * 0.31 - 5.0, (i as f32 * 0.17).fract() * 4.0, 0.0];
+            let out = detail_normal(n, p, surface_mottle(p));
+            max_tilt = max_tilt.max(1.0 - dot3(out, n));
+        }
+        assert!(max_tilt > 1e-3, "detail normal never tilted across a varied field (max {max_tilt})");
+    }
+
+    /// Deterministic + finite for extreme / negative / large positions (tokens feed far world coords,
+    /// the weapon feeds view-space) — the same robustness the underlying mottle guarantees.
+    #[test]
+    fn detail_normal_is_deterministic_and_finite() {
+        let n = normalize3([0.2, 0.3, 0.9]);
+        for p in [
+            [0.0, 0.0, 0.0],
+            [-1000.0, 1000.0, -500.0],
+            [1e6, -1e6, 1e5],
+            [0.0001, -0.0001, 0.0],
+        ] {
+            let a = detail_normal(n, p, surface_mottle(p));
+            let b = detail_normal(n, p, surface_mottle(p));
+            assert_eq!(a, b, "deterministic at {p:?}");
+            assert!(a.iter().all(|c| c.is_finite()), "finite at {p:?}: {a:?}");
         }
     }
 

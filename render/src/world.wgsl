@@ -29,6 +29,11 @@ var<uniform> world: World;
 var ground_tex: texture_2d<f32>;
 @group(0) @binding(2)
 var ground_samp: sampler;
+// WS-E: a second, HIGH-FREQUENCY seamless heightfield (tools/textures/gen_textures.py `detail`),
+// finite-differenced at a tight world scale for crisp near-field micro-relief the smooth `ground`
+// field can't carry. Shares `ground_samp` (Repeat/Linear). Render-only, no intel (invariant #6).
+@group(0) @binding(3)
+var detail_tex: texture_2d<f32>;
 
 // ---- sky / ground -----------------------------------------------------------------------------
 
@@ -116,7 +121,28 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
         let hD = textureSampleLevel(ground_tex, ground_samp, (p - vec2<f32>(0.0, eps)) / scl, 0.0).r;
         let hU = textureSampleLevel(ground_tex, ground_samp, (p + vec2<f32>(0.0, eps)) / scl, 0.0).r;
         let amp = 2.3 * relief; // height amplitude → relief strength
-        let n = normalize(vec3<f32>(-(hR - hL) * amp, -(hU - hD) * amp, 1.0));
+        let n_meso = normalize(vec3<f32>(-(hR - hL) * amp, -(hU - hD) * amp, 1.0));
+
+        // WS-E near-field crunch: finite-difference the HIGH-FREQUENCY `detail` heightfield at a
+        // tight world scale and tilt the normal by its gradient, adding sharp micro-facets underfoot.
+        // Its own faster distance fade (`near`) — fine gradients alias into shimmer sooner than the
+        // meso relief — and it perturbs ONLY the normal (never the albedo split or any position), so
+        // it stays inside the fog/intel boundary (invariant #6). Reuses `ground_samp`.
+        let crunch_fade = 1.0 - clamp(dist / 16.0, 0.0, 1.0);
+        let d_eps = 0.05;
+        let d_scl = 1.15;
+        let dL = textureSampleLevel(detail_tex, ground_samp, (p - vec2<f32>(d_eps, 0.0)) / d_scl, 0.0).r;
+        let dR = textureSampleLevel(detail_tex, ground_samp, (p + vec2<f32>(d_eps, 0.0)) / d_scl, 0.0).r;
+        let dD = textureSampleLevel(detail_tex, ground_samp, (p - vec2<f32>(0.0, d_eps)) / d_scl, 0.0).r;
+        let dU = textureSampleLevel(detail_tex, ground_samp, (p + vec2<f32>(0.0, d_eps)) / d_scl, 0.0).r;
+        let d_amp = 1.7 * crunch_fade;
+        // Blend the detail gradient into the meso normal's tangent plane, then re-normalize so the
+        // combined surface stays unit-length. `near` gates it to the foreground.
+        let n = normalize(vec3<f32>(
+            n_meso.x - (dR - dL) * d_amp,
+            n_meso.y - (dU - dD) * d_amp,
+            n_meso.z,
+        ));
 
         // Lighting: a dim directional KEY (mostly from above so the floor stays lit) plus a high
         // AMBIENT term. Ambient is kept high on purpose — the embodied floor must ALWAYS read and

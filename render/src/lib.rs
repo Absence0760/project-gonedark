@@ -44,6 +44,9 @@ use wgpu::util::DeviceExt;
 /// The canonical visual theme — palette, type scale, spacing. The single source of truth for the
 /// renderer's colour language (replaces the scattered per-module colour consts).
 pub mod theme;
+/// The full-screen present grade (WS-E). Owns `PresentUniform` + `going_dark_grade`: the cinematic
+/// tonemap applied over the scene as it upscales, plus the embodied "world goes dark" intensification.
+pub mod present;
 /// Fog-of-war application (worker 1). Owns `visible_instances`: the visibility → drawn-instances
 /// filter the unit pass runs each frame.
 mod fog;
@@ -989,6 +992,11 @@ pub struct Renderer {
     /// from THIS palette, so the corner counts stay consistent with the colours actually drawn. Pure
     /// presentation state — never a sim read (invariant #1/#4/#6).
     palette: theme::Palette,
+    /// The WS-E "world goes dark" amount for the present grade, stashed by [`Renderer::render`] from
+    /// its `world_dark` flag and consumed by [`Renderer::present_scene`] (which the host calls right
+    /// after `render` each frame). `0.0` in command view, `1.0` while embodied — it drives the present
+    /// shader's embodied dark intensification. Pure presentation (invariant #1/#4/#6).
+    scene_dark: f32,
 }
 
 impl Renderer {
@@ -1159,6 +1167,7 @@ impl Renderer {
             readout_tally: readout::Tally::default(),
             chrome_aspect: 1.0,
             palette: theme::Palette::DEFAULT,
+            scene_dark: 0.0,
         }
     }
 
@@ -1219,7 +1228,8 @@ impl Renderer {
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
     ) {
-        self.scene_target.present(device, queue, view);
+        // The WS-E dark amount was stashed by the immediately-preceding `render` call this frame.
+        self.scene_target.present(device, queue, view, self.scene_dark);
     }
 
     /// Build render instances by interpolating between the previous and current sim snapshots
@@ -1286,6 +1296,11 @@ impl Renderer {
         // visible set — no new sim read (invariant #4). While embodied this is the avatar-only set, but
         // `readout_labels` withholds the readout over the dark frame anyway (invariant #6).
         self.readout_tally = readout::tally(&draw_set, &self.palette);
+
+        // Stash the WS-E present-grade dark amount for `present_scene` (called right after this by the
+        // host): embodied → deepen the frame into visceral tunnel vision (invariant #6). Presentation
+        // only — never a sim read (invariant #1/#4).
+        self.scene_dark = present::dark_amount(world_dark);
 
         if world_dark {
             // Embodied: LOAD the avatar over the first-person world the host already drew. No grid,
