@@ -69,21 +69,44 @@ since none of this touches `core` — the determinism matrix trivially unaffecte
 
 ### WS-A — Embodied game-feel pass *(CP-2, launch-critical)*
 
+> **Status: CODE SLICE LANDED.** The full presentation-only gunplay-feel pass is in (commits
+> `2c6498f` + `bb2a993`, 2026-06-30): the recoil view-kick + crosshair bloom, responsive infantry
+> ADS (FOV + look-sensitivity ramp), the shaped muzzle flash + bullet-impact burst, and audio-coupled
+> firing. All host/render-side, stepped from wall-clock `dt` or the existing presentation clocks;
+> nothing writes sim state and `core/` is untouched (invariant #4), so it adds **zero** checksum
+> surface. The written **good-enough floor** ships as [`embodied-feel-floor.md`](../embodied-feel-floor.md)
+> — the CP-2 acceptance checklist + shipped tunables. **Owed:** the *human* half of the gate — a
+> playtest against that checklist (carried honestly, not faked; the pixel half is green).
+
 The focused gunplay pass so a shooter player doesn't bounce in ten seconds. Hit feedback already
 landed (TF-4: hitmarker + hit SFX off the avatar-source `SimEvent::Damaged` stream); this is the rest.
 
-- **Recoil / kick readability** — a presentation-only view-kick + crosshair bloom on fire, decaying
-  per frame (render/host state, never sim). Read off the existing fire cadence; no new sim signal.
-- **Responsive ADS** — a snappy aim-down-sight transition (FOV + sensitivity ramp) on the existing
-  zoom button (wave-2 W6). Tune the curve; verify it reads on a phone-sized viewport.
-- **Muzzle / impact VFX** — promote the debug muzzle flash to a real shaped flash + a brief impact
-  spark/dust at the hit point (derived from the avatar's own `SimEvent::Damaged`, invariant-#6-safe).
-- **Audio-coupled firing** — fire/impact cues fire in lockstep with the visual (hand-off to CP-6 for
-  the actual sound identity; this WS owns only the *coupling timing*).
-- **Written "good-enough floor"** + a playtest against it (the CP-2 acceptance gate).
+- ✅ **Recoil / kick readability** — a presentation-only view-kick + crosshair bloom on fire, decaying
+  per frame off the wall-clock `dt` (render/host state, never sim). Read off the existing fire cadence;
+  no new sim signal. Pure seam: `engine::recoil` (`add_recoil`/`decay_recoil`/`view_pitch_kick`/
+  `crosshair_bloom`). The kick is an upward camera-**pitch** punch only (cosmetic — the sim aim is
+  2-D yaw, so the bullet never moves); the horizontal half of recoil is carried by the crosshair
+  bloom, not a reticle-desyncing camera-yaw offset.
+- ✅ **Responsive ADS** — a snappy aim-down-sight transition (FOV + sensitivity ramp) on the existing
+  zoom button, un-gated from tank-only to any embodied unit. Infantry get a gentle iron-sight
+  (`ADS_FOV_DEG = 42°`, ~1.7×); the tank keeps its sniper gun-sight (`SCOPED_FOV_DEG = 20°`, ~3.3×)
+  + scope chrome. Look sensitivity ramps `1.0 → 1/magnification` (`ads_look_scale`), floored at
+  `ADS_SENS_FLOOR = 0.45` so it never feels glued on a phone-sized viewport. Pure seam: `engine::scope`.
+- ✅ **Muzzle / impact VFX** — promoted the debug muzzle flash to a real shaped additive flash
+  (`render::world`, hot core + star) + a brief impact spark/dust burst (`render::impact`, new pass) at
+  the projected hit point — derived from the avatar's **own** connecting shot (invariant-#6-safe,
+  exactly the TF-4 precedent).
+- ✅ **Audio-coupled firing** — a host-clock `WeaponFire` crack on every trigger pull (decoupled from
+  the connecting-shot `Gunfire` so a *missed* shot still cracks) + an `Impact` thud coupled to the
+  impact VFX, in lockstep with the visual. Placeholder synth only — sound *identity* is CP-6's job;
+  this WS owns only the *coupling timing* (`pal::SoundId::{WeaponFire,Impact}`, `pal::mix`,
+  `engine::audio` cue ids).
+- ✅ **Written "good-enough floor"** — [`embodied-feel-floor.md`](../embodied-feel-floor.md) (the CP-2
+  acceptance checklist + shipped tunables to playtest against). **Owed:** the playtest sign-off itself.
 - **Files:** `engine` (view-kick/ADS/feedback seams as pure testable fns, like `fire`/`avatar_landed_hit`), `render` (flash/impact/crosshair passes), `pal` audio cue timing.
-- **Acceptance:** a `viz-runner` scene pixel-asserts the kick/flash on a firing frame; the feel-floor
-  doc + a playtest sign-off (the human-feel half, carried honestly, not faked).
+- **Acceptance:** ✅ a `viz-runner` scene pixel-asserts the kick/flash/hitmarker on a firing frame
+  (`embodied_kill`, `combat_muzzle` — GPU-verified green); ✅ the feel-floor doc; **owed:** a playtest
+  sign-off (the human-feel half, carried honestly, not faked).
 
 ### WS-B — Animation floor *(CP-3, conceded tier — "not jarring", not UE5 parity)*
 
