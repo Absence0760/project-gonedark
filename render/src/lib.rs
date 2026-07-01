@@ -424,6 +424,73 @@ fn token_part_matrix(
     }
 }
 
+/// Whether a token [`mesh::ModelKind`] is drawn by the **runtime skeletal player** ([`skel`], CP-3/WS-B)
+/// rather than as a single static mesh with the procedural [`anim`] pose. Only the generic infantry
+/// token ([`mesh::ModelKind::Trooper`]) is rig-driven: the authored `trooper_rig.skel` is a generic
+/// rig, so its runtime skinning **supersedes** the procedural [`token_part_matrix`] stand-in for that
+/// token. The faction silhouettes ([`TrooperUs`](mesh::ModelKind::TrooperUs)/[`TrooperFr`](mesh::ModelKind::TrooperFr))
+/// keep the procedural [`anim`] pose (a per-faction rig is future work), and every vehicle/structure
+/// stays on the plain [`mesh::model_matrix`] — so this stays additive and merge-safe. Pure + tested.
+pub(crate) fn is_rig_driven(kind: mesh::ModelKind) -> bool {
+    matches!(kind, mesh::ModelKind::Trooper)
+}
+
+/// The per-rig-part [`mesh::MeshInstance`]s for one generic-infantry token under runtime skeletal
+/// playback (CP-3/WS-B) — one instance per rig part, in [`skel::SkeletonCpu::parts`] order (aligned
+/// with [`skel::TrooperRig::part_mesh`]), so the caller draws each part's accumulated instances
+/// against `rig.part_mesh(i)` through the shared [`mesh::MeshPipeline`] (no new pipeline/shader/attr).
+/// `place` is the token's world placement ([`mesh::model_matrix`] at its `(pos, scale, yaw)`); the rig
+/// supersedes the procedural pose, so `place` is the *plain* model matrix, not [`anim::pose_matrix`].
+/// The clip is the one [`anim::select_clip`] baked into `inst.anim_clip`; the playback clock is
+/// `inst.anim_phase` (in cycles ≈ seconds at the locked 60 Hz — see [`anim::unit_phase`] — which is
+/// exactly the seconds timeline [`skel::Clip::sample`] wants). Pure + GPU-free (the rig CPU data is
+/// pure float presentation), so the skinning wiring is unit-tested off-GPU. Presentation only:
+/// touches no `core`/sim state and adds no checksum surface (invariants #1/#4).
+fn trooper_rig_instances(
+    rig: &skel::SkeletonCpu,
+    inst: &UnitInstance,
+    place: [[f32; 4]; 4],
+    color: [f32; 4],
+) -> Vec<mesh::MeshInstance> {
+    let clip = anim::AnimClip::from_u32(inst.anim_clip);
+    rig.part_instances(place, color, clip, inst.anim_phase)
+}
+
+/// Build the runtime skeletal-playback batches for a set of [`UnitInstance`]s (CP-3/WS-B): returns one
+/// `Vec<MeshInstance>` per rig part (indexed like [`skel::TrooperRig::part_mesh`]), accumulating every
+/// rig-driven token's per-part instance so the caller emits one instanced [`mesh::MeshBatch`] per part.
+/// Drops the possessed avatar's own body ([`FLAG_EMBODIED`] — you don't render yourself in first
+/// person) and any non-mesh/ring instance (via [`token_meshes`]), mirroring [`unit_draw_plan`]; only
+/// [`is_rig_driven`] kinds (the generic [`mesh::ModelKind::Trooper`]) are collected here — faction
+/// silhouettes stay on the procedural floor in [`unit_draw_plan`]. Each token grounds at `z = 0` at its
+/// world `(x, y)` and is oriented by its [`hull_yaw`](UnitInstance::hull_yaw). Pure + GPU-free → unit-tested.
+fn trooper_rig_plan(
+    rig: &skel::SkeletonCpu,
+    instances: &[UnitInstance],
+) -> Vec<Vec<mesh::MeshInstance>> {
+    let mut buckets: Vec<Vec<mesh::MeshInstance>> =
+        (0..rig.parts.len()).map(|_| Vec::new()).collect();
+    for inst in instances
+        .iter()
+        .filter(|inst| inst.flags & FLAG_EMBODIED == 0)
+    {
+        let color = [inst.r, inst.g, inst.b, 0.0]; // faction tint; a=0 → no muzzle flash
+        for (kind, scale, yaw) in token_meshes(inst) {
+            if !is_rig_driven(kind) {
+                continue;
+            }
+            let place = mesh::model_matrix([inst.x, inst.y, 0.0], scale, yaw);
+            for (i, mi) in trooper_rig_instances(rig, inst, place, color)
+                .into_iter()
+                .enumerate()
+            {
+                buckets[i].push(mi);
+            }
+        }
+    }
+    buckets
+}
+
 /// Sentinel health value meaning "draw no health bar" (control points).
 const NO_HEALTH_BAR: f32 = -1.0;
 
@@ -501,7 +568,10 @@ fn prop_draw_plan(eye: [f32; 3]) -> Vec<(mesh::ModelKind, usize, mesh::MeshInsta
 /// so distant units cost fewer triangles on the 200-unit budget. Each unit's body is oriented by its
 /// [`hull_yaw`](UnitInstance::hull_yaw); a tank also emits its turret at
 /// [`turret_yaw`](UnitInstance::turret_yaw) ([`token_meshes`], P7) — so a unit faces the way it moves
-/// and a tank's gun tracks independently. Pure + GPU-free, so it is unit-tested without a device.
+/// and a tank's gun tracks independently. The generic infantry token ([`is_rig_driven`]) is **not**
+/// emitted here — it is drawn by the runtime skeletal player ([`trooper_rig_plan`], CP-3/WS-B), which
+/// supersedes the static-mesh + procedural pose for that token; this plan carries the vehicles,
+/// structures, faction silhouettes, and props. Pure + GPU-free, so it is unit-tested without a device.
 fn unit_draw_plan(
     instances: &[UnitInstance],
     eye: [f32; 3],
@@ -516,13 +586,17 @@ fn unit_draw_plan(
             let color = [inst.r, inst.g, inst.b, 0.0]; // faction tint; a=0 → no muzzle flash
             let pos = [inst.x, inst.y, 0.0];
             // token_meshes is empty for a control-point ring (map intel), so it is skipped here.
-            token_meshes(inst).into_iter().map(move |(kind, scale, yaw)| {
-                let mesh_inst = mesh::MeshInstance {
-                    model: token_part_matrix(inst, kind, pos, scale, yaw),
-                    color,
-                };
-                (kind, lod, mesh_inst)
-            })
+            token_meshes(inst)
+                .into_iter()
+                // The generic Trooper draws via the skeletal rig (trooper_rig_plan), not here.
+                .filter(|(kind, _, _)| !is_rig_driven(*kind))
+                .map(move |(kind, scale, yaw)| {
+                    let mesh_inst = mesh::MeshInstance {
+                        model: token_part_matrix(inst, kind, pos, scale, yaw),
+                        color,
+                    };
+                    (kind, lod, mesh_inst)
+                })
         })
         .collect()
 }
@@ -966,6 +1040,11 @@ pub struct Renderer {
     /// The shared instanced, depth-tested 3D mesh pipeline (D44) — drives both the weapon viewmodel
     /// and the unit tokens.
     mesh_pipeline: mesh::MeshPipeline,
+    /// The runtime **skeletal player** for the generic infantry token (CP-3/WS-B): the cooked
+    /// `trooper_rig.skel` parsed + one GPU mesh per rigid part, drawn through [`mesh_pipeline`](Self::mesh_pipeline)
+    /// via [`trooper_rig_plan`]. Supersedes the procedural [`anim`] pose for [`mesh::ModelKind::Trooper`]
+    /// in both the command-view token pass and the embodied [`Renderer::render_world_meshes`].
+    rig: skel::TrooperRig,
     /// Depth buffer for the 3D mesh passes, lazily (re)created to match the surface size
     /// ([`Renderer::ensure_depth`]). Render-only — depth never touches the sim (invariant #1/#4).
     depth_view: wgpu::TextureView,
@@ -1131,6 +1210,9 @@ impl Renderer {
         // buffer; the depth buffer is resized to the surface on the first mesh pass (D44).
         let mesh_lib = mesh::MeshLibrary::load(device);
         let mesh_pipeline = mesh::MeshPipeline::new(device, surface_format);
+        // The runtime skeletal rig for the generic infantry token (CP-3/WS-B): parse + upload the
+        // cooked `trooper_rig.skel` once, drawn through the shared mesh pipeline (no new pipeline).
+        let rig = skel::TrooperRig::load(device);
         let depth_view = mesh::create_depth_view(device, 1, 1);
         // The dyn-res intermediate target + upscale-blit pipeline (Phase 4 WS-C). The texture is
         // allocated lazily on the first `ensure_scene_target` (sized to the dyn-res scale).
@@ -1161,6 +1243,7 @@ impl Renderer {
             icon,
             mesh_lib,
             mesh_pipeline,
+            rig,
             depth_view,
             depth_size: (1, 1),
             scene_target,
@@ -1320,6 +1403,11 @@ impl Renderer {
         self.ensure_depth(device, width, height);
         let mut buckets: Vec<Vec<mesh::MeshInstance>> =
             (0..mesh::ModelKind::ALL.len()).map(|_| Vec::new()).collect();
+        // Runtime skeletal-playback buckets, one per rig part (CP-3/WS-B): the generic infantry token
+        // draws here through the shared mesh pipeline instead of as a single static mesh + procedural
+        // pose, so troopers actually animate.
+        let mut rig_buckets: Vec<Vec<mesh::MeshInstance>> =
+            (0..self.rig.part_count()).map(|_| Vec::new()).collect();
         let mut quad_set = draw_set.clone();
         for inst in &mut quad_set {
             // Each token's body mesh(es): one per unit, two for a tank (hull + independently-yawed
@@ -1329,14 +1417,27 @@ impl Renderer {
                 continue;
             }
             inst.flags |= FLAG_MESH;
+            let color = [inst.r, inst.g, inst.b, 0.0]; // faction tint; a=0 → no flash
             for (kind, scale, yaw) in parts {
-                buckets[kind as usize].push(mesh::MeshInstance {
-                    model: token_part_matrix(inst, kind, [inst.x, inst.y, 0.0], scale, yaw),
-                    color: [inst.r, inst.g, inst.b, 0.0], // faction tint; a=0 → no flash
-                });
+                if is_rig_driven(kind) {
+                    // Skeletal playback supersedes the procedural pose for the generic Trooper: `place`
+                    // is the plain model matrix, the rig contributes the animated per-part bone matrices.
+                    let place = mesh::model_matrix([inst.x, inst.y, 0.0], scale, yaw);
+                    for (i, mi) in trooper_rig_instances(&self.rig.cpu, inst, place, color)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        rig_buckets[i].push(mi);
+                    }
+                } else {
+                    buckets[kind as usize].push(mesh::MeshInstance {
+                        model: token_part_matrix(inst, kind, [inst.x, inst.y, 0.0], scale, yaw),
+                        color,
+                    });
+                }
             }
         }
-        let batches: Vec<mesh::MeshBatch> = mesh::ModelKind::ALL
+        let mut batches: Vec<mesh::MeshBatch> = mesh::ModelKind::ALL
             .iter()
             .zip(buckets)
             .filter(|(_, instances)| !instances.is_empty())
@@ -1345,6 +1446,15 @@ impl Renderer {
                 instances,
             })
             .collect();
+        // Append one instanced batch per rig part (drawn against its own GPU part mesh).
+        for (i, instances) in rig_buckets.into_iter().enumerate() {
+            if !instances.is_empty() {
+                batches.push(mesh::MeshBatch {
+                    mesh: self.rig.part_mesh(i),
+                    instances,
+                });
+            }
+        }
         self.mesh_pipeline.draw(
             device,
             queue,
@@ -2083,6 +2193,19 @@ impl Renderer {
                         instances,
                     });
                 }
+            }
+        }
+        // Runtime skeletal playback for the generic infantry token (CP-3/WS-B): the avatar-visible
+        // troopers, drawn through the shared mesh pipeline via per-part bone matrices, superseding the
+        // procedural pose (`unit_draw_plan` already excludes the generic Trooper). One instanced batch
+        // per rig part. The rig is a single tier (no LOD) — cheap enough (9 boxes) for the floor.
+        let rig_buckets = trooper_rig_plan(&self.rig.cpu, &visible);
+        for (i, instances) in rig_buckets.into_iter().enumerate() {
+            if !instances.is_empty() {
+                batches.push(mesh::MeshBatch {
+                    mesh: self.rig.part_mesh(i),
+                    instances,
+                });
             }
         }
         // In-flight shell tracers (P7), drawn in the same pass so they depth-test against the world
@@ -2972,23 +3095,113 @@ mod tests {
     fn unit_draw_plan_drops_avatar_and_rings_keeps_visible_units() {
         // The fog-filtered set the embodied pass sees: the avatar's own body (FLAG_EMBODIED), a
         // control-point ring (FLAG_RING — map intel), and an in-sight enemy. Only the enemy is drawn.
-        let avatar = uinst(0.0, 0.0, FLAG_EMBODIED, mesh::ModelKind::Trooper, theme::AVATAR);
-        let ring = uinst(1.0, 0.0, FLAG_RING, mesh::ModelKind::Trooper, [0.5, 0.5, 0.6]);
-        let enemy = uinst(5.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Enemy));
+        // The enemy is a faction silhouette (TrooperFr) — the generic Trooper is rig-driven and drops
+        // out of this plan (see `unit_draw_plan_excludes_the_rig_driven_generic_trooper`).
+        let avatar = uinst(0.0, 0.0, FLAG_EMBODIED, mesh::ModelKind::TrooperFr, theme::AVATAR);
+        let ring = uinst(1.0, 0.0, FLAG_RING, mesh::ModelKind::TrooperFr, [0.5, 0.5, 0.6]);
+        let enemy = uinst(5.0, 0.0, 0, mesh::ModelKind::TrooperFr, faction_color(Faction::Enemy));
         let plan = unit_draw_plan(&[avatar, ring, enemy], [0.0, 0.0, 1.6]);
         assert_eq!(plan.len(), 1, "only the visible non-avatar, non-ring unit is drawn");
-        assert_eq!(plan[0].0, mesh::ModelKind::Trooper);
+        assert_eq!(plan[0].0, mesh::ModelKind::TrooperFr);
+    }
+
+    #[test]
+    fn unit_draw_plan_excludes_the_rig_driven_generic_trooper() {
+        // The generic Trooper is now drawn by the skeletal rig (`trooper_rig_plan`), not as a static
+        // mesh — so `unit_draw_plan` emits nothing for it, and the faction silhouette still draws.
+        let generic = uinst(5.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Enemy));
+        assert!(
+            unit_draw_plan(&[generic], [0.0, 0.0, 1.6]).is_empty(),
+            "the generic Trooper draws via the rig, not the static-mesh plan"
+        );
+        let faction = uinst(5.0, 0.0, 0, mesh::ModelKind::TrooperUs, faction_color(Faction::Enemy));
+        let plan = unit_draw_plan(&[faction], [0.0, 0.0, 1.6]);
+        assert_eq!(plan.len(), 1, "faction silhouettes still draw as a static mesh");
+        assert_eq!(plan[0].0, mesh::ModelKind::TrooperUs);
     }
 
     #[test]
     fn unit_draw_plan_picks_lod_by_eye_distance() {
         // Near unit keeps full detail; a distant one drops to the coarsest tier (200-unit budget).
-        let near = uinst(2.0, 0.0, 0, mesh::ModelKind::Trooper, [0.0, 0.0, 0.0]);
-        let far = uinst(40.0, 0.0, 0, mesh::ModelKind::Trooper, [0.0, 0.0, 0.0]);
+        // Faction silhouettes (not the rig-driven generic Trooper) exercise the static-mesh LOD path.
+        let near = uinst(2.0, 0.0, 0, mesh::ModelKind::TrooperFr, [0.0, 0.0, 0.0]);
+        let far = uinst(40.0, 0.0, 0, mesh::ModelKind::TrooperFr, [0.0, 0.0, 0.0]);
         let plan = unit_draw_plan(&[near, far], [0.0, 0.0, 0.0]);
         assert_eq!(plan.len(), 2);
         assert_eq!(plan[0].1, 0, "the near unit keeps LOD0");
         assert_eq!(plan[1].1, 2, "the distant unit drops to LOD2");
+    }
+
+    // ---- runtime skeletal playback wiring (CP-3/WS-B) ----
+
+    /// Only the generic infantry token is rig-driven; faction silhouettes and everything else are not.
+    #[test]
+    fn is_rig_driven_only_the_generic_trooper() {
+        assert!(is_rig_driven(mesh::ModelKind::Trooper));
+        assert!(!is_rig_driven(mesh::ModelKind::TrooperUs));
+        assert!(!is_rig_driven(mesh::ModelKind::TrooperFr));
+        assert!(!is_rig_driven(mesh::ModelKind::Tank));
+        assert!(!is_rig_driven(mesh::ModelKind::CampHq));
+    }
+
+    /// The runtime rig instancing places one instance per rig part at the token, carrying its tint,
+    /// and (unlike a static mesh) actually differs between clips — the skeletal player is live.
+    #[test]
+    fn trooper_rig_instances_places_parts_and_animates_by_clip() {
+        let rig = skel::SkeletonCpu::parse(include_bytes!(
+            "../../assets/models/rigs/trooper_rig.skel"
+        ))
+        .expect("committed rig parses");
+
+        let color = faction_color(Faction::Enemy);
+        let tint = [color[0], color[1], color[2], 0.0];
+        let place = mesh::model_matrix([7.0, -3.0, 0.0], TOKEN_SCALE, 0.4);
+
+        let mut walking = uinst(7.0, -3.0, 0, mesh::ModelKind::Trooper, color);
+        walking.anim_clip = anim::AnimClip::Walk.as_u32();
+        walking.anim_phase = 0.3;
+        let walk = trooper_rig_instances(&rig, &walking, place, tint);
+        assert_eq!(walk.len(), rig.parts.len(), "one instance per rig part");
+        for it in &walk {
+            assert_eq!(it.color, tint, "faction tint on every part");
+            // Each part sits within a couple of metres of the token's world centre.
+            let d = ((it.model[3][0] - 7.0).powi(2) + (it.model[3][1] + 3.0).powi(2)).sqrt();
+            assert!(d < 2.5, "part near the token centre, got {d}");
+        }
+
+        // A firing trooper poses differently from a walking one — the clip actually drives the skin.
+        let mut firing = walking;
+        firing.anim_clip = anim::AnimClip::Fire.as_u32();
+        let fire = trooper_rig_instances(&rig, &firing, place, tint);
+        let differ = walk
+            .iter()
+            .zip(fire.iter())
+            .any(|(a, b)| a.model != b.model);
+        assert!(differ, "different clips skin to different poses");
+    }
+
+    /// The embodied rig plan drops the avatar's own body + rings, collects the generic Trooper across
+    /// every part bucket, and never collects a faction silhouette (which stays on the procedural floor).
+    #[test]
+    fn trooper_rig_plan_collects_generic_troopers_and_drops_avatar() {
+        let rig = skel::SkeletonCpu::parse(include_bytes!(
+            "../../assets/models/rigs/trooper_rig.skel"
+        ))
+        .expect("committed rig parses");
+
+        let avatar = uinst(0.0, 0.0, FLAG_EMBODIED, mesh::ModelKind::Trooper, theme::AVATAR);
+        let ring = uinst(1.0, 0.0, FLAG_RING, mesh::ModelKind::Trooper, [0.5, 0.5, 0.6]);
+        let ally = uinst(4.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Player));
+        let enemy = uinst(6.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Enemy));
+        let faction = uinst(8.0, 0.0, 0, mesh::ModelKind::TrooperUs, faction_color(Faction::Enemy));
+
+        let buckets = trooper_rig_plan(&rig, &[avatar, ring, ally, enemy, faction]);
+        assert_eq!(buckets.len(), rig.parts.len(), "one bucket per rig part");
+        // Two rig-driven troopers (ally + enemy) → two instances in every part bucket; the avatar,
+        // ring, and faction silhouette are all excluded.
+        for (i, b) in buckets.iter().enumerate() {
+            assert_eq!(b.len(), 2, "part {i} carries the two rig-driven troopers");
+        }
     }
 
     #[test]
