@@ -122,17 +122,18 @@ pub fn resolve_title_action(action: TitleAction) -> HostTransition {
 
 // ---- The gunsmith / loadout screen — pure seam (unit-tested) -------------------------------------
 
-/// An action the pre-match gunsmith / loadout screen can emit in a frame.
+/// An action the gunsmith / loadout screen can emit in a frame. **D81: the gunsmith is
+/// customization-only** — reached from Settings, it edits the persisted loadout and never starts a
+/// match (the mode/mission-select screens are the deploy gates). So it has no Deploy: only edits
+/// (`Cycle`/`Reset`) and DONE ([`LoadoutAction::Done`], which returns to Settings).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoadoutAction {
     /// Cycle the slot at on-screen index `slot_index` forward (`true`) or back (`false`) — an edit.
     Cycle { slot_index: usize, forward: bool },
     /// Reset every slot to the neutral all-`Standard` baseline.
     Reset,
-    /// Deploy with the current loadout — leave the gunsmith and enter the match.
-    Deploy,
-    /// Abandon the gunsmith and return to the title screen (no match started).
-    Back,
+    /// Finish customizing — leave the gunsmith and return to Settings (the edits persist).
+    Done,
 }
 
 /// The screen-level outcome of a [`LoadoutAction`] once applied to the editor — what the host run
@@ -141,18 +142,16 @@ pub enum LoadoutAction {
 pub enum LoadoutStep {
     /// Stay on the gunsmith (an edit was applied, or nothing happened this frame).
     Stay,
-    /// Enter the match, fielding the editor's current loadout.
-    Deploy,
-    /// Return to the title screen without starting a match.
-    Back,
+    /// Finished customizing — return to Settings (the gunsmith's entry point, D81).
+    Done,
 }
 
 /// Apply a [`LoadoutAction`] to the player's [`LoadoutEditor`] and report the resulting screen step.
-/// Edits (`Cycle`/`Reset`) mutate the editor and keep us on the gunsmith; `Deploy`/`Back` are screen
-/// transitions the run loop acts on. Pure (no egui/window) — the gunsmith's testable decision seam,
-/// mirroring [`resolve_title_action`]. The actual loadout *model* (validation + the sidegrade-fairness
-/// proof) lives in `core::gunsmith` and is consumed through the editor read-only; this never touches
-/// the sim.
+/// Edits (`Cycle`/`Reset`) mutate the editor and keep us on the gunsmith; `Done` is the screen
+/// transition the run loop acts on (back to Settings — the gunsmith is customization-only under D81).
+/// Pure (no egui/window) — the gunsmith's testable decision seam, mirroring [`resolve_title_action`].
+/// The actual loadout *model* (validation + the sidegrade-fairness proof) lives in `core::gunsmith`
+/// and is consumed through the editor read-only; this never touches the sim.
 pub fn apply_loadout_action(action: LoadoutAction, editor: &mut LoadoutEditor) -> LoadoutStep {
     match action {
         LoadoutAction::Cycle {
@@ -167,8 +166,7 @@ pub fn apply_loadout_action(action: LoadoutAction, editor: &mut LoadoutEditor) -
             editor.reset();
             LoadoutStep::Stay
         }
-        LoadoutAction::Deploy => LoadoutStep::Deploy,
-        LoadoutAction::Back => LoadoutStep::Back,
+        LoadoutAction::Done => LoadoutStep::Done,
     }
 }
 
@@ -329,6 +327,9 @@ pub enum SettingsAction {
     ToggleFullscreen,
     /// Restore the shipped defaults.
     ResetDefaults,
+    /// Open the gunsmith / loadout customization screen (D81: the gunsmith lives under Settings now,
+    /// as customization-only — not a play gate).
+    OpenLoadout,
     /// Open the About / controls-reference screen.
     About,
     /// Return to the title screen.
@@ -342,6 +343,8 @@ pub enum SettingsStep {
     Stay,
     /// Toggle fullscreen and stay (the host flips the window mode).
     ToggleFullscreen,
+    /// Leave for the gunsmith / loadout customization screen (D81).
+    OpenLoadout,
     /// Leave for the About screen.
     About,
     /// Return to the title screen.
@@ -358,6 +361,7 @@ pub fn apply_settings_action(action: SettingsAction, state: &mut SettingsState) 
             SettingsStep::Stay
         }
         SettingsAction::ToggleFullscreen => SettingsStep::ToggleFullscreen,
+        SettingsAction::OpenLoadout => SettingsStep::OpenLoadout,
         SettingsAction::About => SettingsStep::About,
         SettingsAction::Back => SettingsStep::Back,
     }
@@ -1257,7 +1261,8 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
 /// Reads the current selection from `editor` (host-side pre-match state — never the sim) and returns
 /// the action whose control was used this frame. Layout: a centered column of the three attachment
 /// slots — each a `<` / `>` cycler over its current option plus the slot's trade-axis hint — the
-/// sidegrade explainer, then DEPLOY / RESET / BACK. All the decision logic is in the pure seam
+/// sidegrade explainer, then DONE / RESET (D81: customization-only, no Deploy). All the decision
+/// logic is in the pure seam
 /// ([`apply_loadout_action`], [`slot_trade_hint`], and the `core::gunsmith`-backed editor); this fn
 /// is just the egui glue.
 fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction> {
@@ -1342,16 +1347,14 @@ fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction
             });
 
             ui.add_space(22.0);
-            if menu_button(ui, "DEPLOY", Emphasis::Primary) {
-                action = Some(LoadoutAction::Deploy);
+            // D81: customization-only — DONE returns to Settings (the entry point), RESET clears to
+            // baseline. There is no Deploy here: the mode/mission-select screens start matches.
+            if menu_button(ui, "DONE", Emphasis::Primary) {
+                action = Some(LoadoutAction::Done);
             }
             ui.add_space(10.0);
             if menu_button(ui, "RESET", Emphasis::Secondary) {
                 action = Some(LoadoutAction::Reset);
-            }
-            ui.add_space(10.0);
-            if menu_button(ui, "BACK", Emphasis::Tertiary) {
-                action = Some(LoadoutAction::Back);
             }
         });
     });
@@ -1459,6 +1462,13 @@ fn settings_ui(
         // Defensive re-clamp after the slider writes (sliders already bound, but a future edit path
         // might not).
         state.clamp();
+
+        // The gunsmith lives here now (D81): customization-only, reached from Settings, not a play
+        // gate. Its edits persist for the next match.
+        section_label(ui, "LOADOUT");
+        if menu_button(ui, "GUNSMITH", Emphasis::Secondary) {
+            action = Some(SettingsAction::OpenLoadout);
+        }
 
         ui.add_space(18.0);
         if menu_button(ui, "BACK", Emphasis::Primary) {
@@ -1986,7 +1996,9 @@ mod tests {
     }
 
     #[test]
-    fn deploy_and_back_are_screen_transitions_that_leave_the_editor_alone() {
+    fn done_is_a_screen_transition_that_leaves_the_editor_alone() {
+        // D81: the gunsmith is customization-only — DONE returns to Settings carrying the edited
+        // (persisted) loadout unchanged; there is no Deploy here.
         let mut ed = LoadoutEditor::new();
         apply_loadout_action(
             LoadoutAction::Cycle {
@@ -1996,11 +2008,8 @@ mod tests {
             &mut ed,
         );
         let chosen = ed.current();
-        // Deploy/Back report a screen step but never mutate the chosen loadout.
-        assert_eq!(apply_loadout_action(LoadoutAction::Deploy, &mut ed), LoadoutStep::Deploy);
-        assert_eq!(ed.current(), chosen, "Deploy carries the chosen loadout unchanged");
-        assert_eq!(apply_loadout_action(LoadoutAction::Back, &mut ed), LoadoutStep::Back);
-        assert_eq!(ed.current(), chosen, "Back doesn't alter the editor either");
+        assert_eq!(apply_loadout_action(LoadoutAction::Done, &mut ed), LoadoutStep::Done);
+        assert_eq!(ed.current(), chosen, "Done doesn't alter the editor");
     }
 
     // ---- The shell theme (pure egui::Style data — no GPU/window, so it IS testable) --------------
@@ -2123,6 +2132,11 @@ mod tests {
         assert_eq!(
             apply_settings_action(SettingsAction::ToggleFullscreen, &mut s),
             SettingsStep::ToggleFullscreen
+        );
+        assert_eq!(
+            apply_settings_action(SettingsAction::OpenLoadout, &mut s),
+            SettingsStep::OpenLoadout,
+            "the gunsmith is reached from Settings (D81)"
         );
         assert_eq!(
             apply_settings_action(SettingsAction::About, &mut s),
