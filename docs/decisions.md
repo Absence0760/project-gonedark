@@ -3817,9 +3817,9 @@ resolving [Q21](open-questions.md#q21--replay-tier-to-commander-tier) with **opt
 - A pure mapping seam (`core::campaign::Difficulty → (mission_tuning::Difficulty, ScenarioModifiers)`)
   is the single bridge between the two enums; `engine::mission_registry` consumes it at
   `LaunchedMission` launch, applying the commander tier via `Game::set_commander_difficulty` and the
-  modifiers via `ScenarioModifiers::apply_to_sim` + the scenario seeder's force/time consumption. The
-  `Regular` tier reproduces the mission's shipped baseline (neutral modifiers, `Veteran` commander) so
-  the default fight stays bit-identical; the other three tiers deviate deliberately.
+  reinforcement cadence via `ScenarioModifiers::apply_to_sim`. The `Regular` tier reproduces the
+  mission's shipped baseline (neutral modifiers, `Veteran` commander) so the default fight stays
+  bit-identical; the other three tiers deviate deliberately.
 
 **Why.** This is the project's *already-locked* difficulty philosophy applied verbatim:
 [D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness) says difficulty **reshapes the
@@ -3847,6 +3847,19 @@ exactly the neutral baseline (byte-identical seed). The `default`/`stress` check
 untouched (those scenes never launch a mission); mission-scene tests pin: `Regular` == bare-seed
 baseline byte-for-byte, four distinct monotonic profiles, and same-tier peer parity + cross-tier
 divergence. Magnitudes are situation dials, tunable in playtest.
+
+**Live vs declared (honest scope).** Of the four `ScenarioModifiers` levers the profiles carry, only
+**two currently reach the fight**: the commander aggression band and the reinforcement cadence
+(`reinforcement_period` → `apply_to_sim` → the enemy purse's accrual, folded into the checksum
+transitively via `resources`). This alone makes all four tiers distinct in-fight and passes the
+cross-tier divergence test. The remaining three levers — `force_scale_pct`, `fog` (`TellMode`),
+`time_limit_ticks` — are **declared per-tier but not yet consumed** (no seeder/host reads them today —
+the same posture the *authored* briefing modifiers always had). This is a functional no-op, identical
+on both platforms, so it is not a desync risk (confirmed by a determinism audit). **Owed follow-up:**
+thread `force_scale_pct` into the `core::scenario` seize seeder (it must be applied *at* spawn, before
+tick 0) and route `fog` into the detection `TellMode` (the checksum-excluded going-dark tell, D33) so
+the harder tiers deliver the *fuller* situation the profiles advertise — especially fog, which is the
+invariant-#6 intel lever.
 
 **Cross-link:** [`plans/pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-B/WS-E,
 [D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness),
