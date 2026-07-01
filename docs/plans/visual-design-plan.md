@@ -153,6 +153,14 @@ Coherent locomotion / fire / death animation on the greybox so the eye-level vie
 
 ### WS-C — Command-layer readability & glanceability *(CP-9, launch-important)*
 
+> **Status: LANDED.** A glanceability pass unified the command-HUD state/colour language on the
+> `render::theme` source of truth (panel/objective/readout/command-bar/radial all read the shared
+> palette + type scale — no ad-hoc `[f32;3]` literals), completed the build/train/upgrade + unit-kind
+> iconography vocabulary, and added the pure `engine::panel_summary` seam (`composition_rows` rolls a
+> big mixed selection to `+N more` so it can't run off a phone screen; `hp_line_style` tints a wounded
+> group). Presentation-only (invariants #3/#6 held); render + engine tests green dev+release; command
+> view verified at phone aspect via `viz-runner`.
+
 The RTS half must parse **at a glance on a small screen** and **teach itself fast**. This is
 information architecture, paired with — and broader than — the icon/type/colour layer WS-0 delivered.
 
@@ -169,6 +177,15 @@ information architecture, paired with — and broader than — the icon/type/col
 
 ### WS-D — Accessibility cues *(load-bearing, invariant #6 — not optional polish)*
 
+> **Status: LANDED.** Building on the earlier colourblind-ramp + shape-glyph slices: the new
+> `engine::alert_cues` seam turns the live `AlertChannel` into non-visual equivalents of the
+> directional flash — a bearing-panned `AudioCue` per fresh alert (constant gain, bearing-only, never
+> muffled) and a coarse `HapticPulse` (desktop computes + exposes it; Android vibrator wiring
+> deferred). A persisted `AlertCueMode` (Off/Audio/Haptic/AudioHaptic) in the Settings shell selects
+> the mode. Fairness held in the seam (bearing + kind only, deduped on the sim tick — an *alert*, not
+> *intel*); engine + app tests green dev+release; the alert reads under the CVD cue mode in
+> `viz-runner`.
+
 The going-dark alert is a directional **flash + audio**; a colorblind or hard-of-hearing player needs
 an equivalent or the core mechanic is unfair to them.
 
@@ -183,6 +200,15 @@ an equivalent or the core mechanic is unfair to them.
 
 ### WS-E — World & embodied visual depth *(finish the static look)*
 
+> **Status: LANDED.** The embodied "world goes dark" moment now deepens into visceral tunnel vision
+> (edge vignette + shadow-weighted desaturation/ink-cool via a new `render::present` seam + `present.wgsl`
+> dark branch) — fairness held (lit centre stays readable, ink-cool is subtractive so it can't fabricate
+> player-blue intel, HUD draws after present at native res; command view byte-identical at `dark=0`). A
+> new ImageMagick `detail` heightfield adds near-field ground micro-relief + a procedural mesh
+> micro-normal, and the app shell now derives its palette from `render::theme` (one source of truth,
+> closing the D75 drift hazard). Presentation-only; render + app tests green dev+release; embodied-dark
+> verified in `viz-runner` (0 player-blue px — the map stays dark).
+
 The remaining environment polish the foundation wave set up but didn't exhaust.
 
 - Fog / tonemap tuning for the embodied "world goes dark" moment (the visceral, fair blindness of
@@ -195,13 +221,16 @@ The remaining environment polish the foundation wave set up but didn't exhaust.
 
 ### WS-F — Mesh fidelity pass *(model-quality lift across the roster)*
 
-> **Status: tiers 1–2 landed.** Tier 1 (hero weapon viewmodels — `weapon_rifle{,_us,_fr}`) shipped
+> **Status: tiers 1–3 landed.** Tier 1 (hero weapon viewmodels — `weapon_rifle{,_us,_fr}`) shipped
 > the `boolean_cut()`/`picatinny_slots()` levers (milled rails, mag wells, skeletonized stocks). Tier
 > 2 (embodied tanks) then tightened the hulls + neutral turret: bevel `0.05 → 0.018`, a boolean sloped
 > turret cheek, and a shared `running_gear()` helper — `tank`/`tank_us`/`tank_fr`/`tank_turret`
-> (LOD0 ≤ ~1.3k tris, monotone chains, `.mesh` cooks deterministic). **Owed:** tier 3 (structures —
-> `camp_hq`/`turret`/`barricade`), tier 4 (scenery), and the US/FR turret variants (left at the tier-1
-> baseline this pass).
+> (LOD0 ≤ ~1.3k tris, monotone chains, `.mesh` cooks deterministic). **Tier 3 (structures —
+> `camp_hq`/`turret`/`barricade`) landed:** a foundation plinth + boolean-cut window/door recesses on
+> `camp_hq`, a milled vision slit + cut muzzle-brake ports on `turret`, and overlapped/packed sandbag
+> courses on `barricade`, bevels tightened to kill the melty read (all LOD0 ≤ ~1k tris, monotone,
+> `.mesh` bit-identical, golden mesh tests green dev+release). **Owed:** tier 4 (scenery) and the
+> US/FR turret variants (left at the tier-1 baseline).
 
 The trooper reskin (`d7cced1`) proved the method: box-stacking hit a hard ceiling on the *human* (a
 golf-ball icosphere head on a slab torso, no readable arms), and the fix was a **technique change** —

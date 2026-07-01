@@ -3912,7 +3912,8 @@ death linger. Both are honestly disclosed in `render::anim`'s module doc.
 
 ## D85 — Gunsmith breadth (CP-1): Stock + Muzzle become sim sidegrade slots; Grip is cosmetic-only
 
-**Status: decided; implementation pending (Stock first).** Resolves the design fork in extending the
+**Status: decided + IMPLEMENTED (Stock + Muzzle sim slots + Grip cosmetic landed; fold byte-neutral,
+243-build fairness proof + 2-peer checksum agreement green, D69/D70 RPS re-validated).** Resolves the design fork in extending the
 [D60](#d60--gunsmith-is-horizontal-fixed-point-sidegrades-checksum-folded) gunsmith from its 3
 sim slots (Optic / Barrel / Magazine) to the six categories a CoD-Mobile player expects (optics,
 barrel, **stock**, mag, **grip**, **muzzle**) — **horizontal only** (sidegrades, never vertical

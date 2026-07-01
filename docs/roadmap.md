@@ -441,9 +441,12 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   ([D74](decisions.md): the `render::theme` palette/type/space source-of-truth + an anti-aliased font
   atlas; plus dimensional greybox lighting + a cinematic present grade, rounded-card panel chrome,
   ground detail textures, art-directed chamfered meshes, Inkscape-baked command-bar HUD icons, a
-  live-backdrop landing screen, and a scripted launcher icon). Remaining game-feel/readability work is
-  sequenced in the **[visual-design plan](plans/visual-design-plan.md)** (CP-2 / CP-3 / CP-9 +
-  accessibility cues).
+  live-backdrop landing screen, and a scripted launcher icon). **Second wave landed:** WS-C
+  (command-HUD glanceability — unified state/colour language on `render::theme` + the
+  `engine::panel_summary` seam), WS-D (accessibility — audio/haptic equivalents of the directional
+  flash + a persisted `AlertCueMode`), and WS-E (embodied-dark tunnel-vision tonemap + detail maps +
+  shell-palette unification). Remaining game-feel work (CP-2 human-feel playtest, CP-3 runtime
+  skeletal playback) is sequenced in the **[visual-design plan](plans/visual-design-plan.md)**.
 - [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface).
   **Now scoped as the CoD-Mobile/MLBB HUD layout editor** — per-layer drag/resize/opacity presets,
   presentation/input-only, invariant-#6-bounded ([D61](decisions.md); PvE pillar WS-D)
@@ -454,8 +457,10 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   post-match summary surface + its DISMISS button → leave-match → return-to-title transition
   ([D52](decisions.md)); pause overlay (Esc on desktop ([D53](decisions.md)), back-gesture on
   Android ([D54](decisions.md))) + in-match surrender are now wired ([phase-4-plan WS-B](plans/phase-4-plan.md)).
-- [ ] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
-  cue for the directional-flash + audio alert channel)
+- [~] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
+  cue for the directional-flash + audio alert channel). **Accessibility cue landed** (WS-D: a
+  persisted `AlertCueMode` selecting audio/haptic equivalents of the flash + the existing colourblind
+  ramps/shape glyphs); graphics tiers, the rebind editor, and music-volume wiring still owed.
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions.
   **Hit feedback (the embodied "I hit him" cue) is tracked as TF-4** under *Test & feedback
   hardening* above ([`test-harness-plan.md`](plans/test-harness-plan.md) WS-4)
@@ -484,13 +489,14 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   sandbag berms, turrets) drawn in the embodied view, LOD-by-distance ([D50](decisions.md)) —
   and the embodied view now also draws the **fog-filtered, avatar-visible sim units** themselves
   (line-of-sight enemies/allies), not just static props ([D52](decisions.md))
-- [ ] **Mesh fidelity pass across the roster** — lift the remaining greybox models to the
+- [~] **Mesh fidelity pass across the roster** — lift the remaining greybox models to the
   trooper's bar, ranked by how close the player gets: weapon viewmodels → tanks → structures →
   scenery. Per-*subject* technique (box-stacking stays right for the mechanical/architectural
   models — the lever is booleans + tuned bevels, not skinning) driven by a tight render→verify
   loop. The **trooper reskin** (an organic body via skeleton + Blender Skin modifier, commit
-  `d7cced1`) is the landed pilot that proved the method. *Scoped as **WS-F** of the
-  [visual-design plan](plans/visual-design-plan.md).*
+  `d7cced1`) is the landed pilot that proved the method. **Tiers 1–3 landed** (weapon viewmodels,
+  tanks, and structures — `camp_hq`/`turret`/`barricade`); tier 4 (scenery) + the US/FR turret
+  variants remain. *Scoped as **WS-F** of the [visual-design plan](plans/visual-design-plan.md).*
 
 ### Release readiness — the store-facing layer
 
@@ -543,14 +549,18 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 > `core::shell` army-select seam, and per-faction gunsmith pools) — the **one remaining item** is the
 > native army-select *screen*, blocked on the same D32 native-shell gap as the rest of the app shell.
 
-- [ ] **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
+- [x] **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
   ([D60](decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,
   barrel, stock, mag, grip, muzzle) — **horizontal only** (sidegrades, fixed-point,
   checksum-folded; never vertical power). *Builds on PvE WS-C.* **Design + fork resolved
   ([D85](decisions.md)):** Stock + Muzzle become sim slots (two new disjoint fixed-point axis pairs —
-  move-speed↔aim-cone, suppression↔falloff), Grip is cosmetic-only (recoil is presentation, #4). The
-  ready-to-execute spec (files + full determinism/fairness test plan, slice Stock first) lives in D85;
-  implementation is the remaining `/safe-edit`-class sim slice.
+  move-speed↔aim-cone, suppression↔falloff), Grip is cosmetic-only (recoil is presentation, #4).
+  **Landed ([D85](decisions.md) implemented):** the four new zero-default `Fixed` axes fold after
+  `shell` (byte-neutral fast path preserved), `GunsmithPool`/`pool_for` + `loadout_ui` gained all six
+  rows, and the fairness proof generalized to the full `3⁵ = 243`-build space per army — 2-peer
+  checksum agreement + the D69/D70 Rifleman↔Heavy RPS re-validated green. All six categories now
+  exist as sidegrades (Grip cosmetic-only). *Remaining: apply the chosen loadout at live match start
+  (PvE WS-C).*
 - [ ] **CP-2 — Embodied game-feel bar (launch-critical).** A focused gunplay pass so a Delta
   Force player doesn't bounce in ten seconds: hit feedback (impact/hitmarker/damage-direction),
   recoil/kick readability, responsive ADS, audio-coupled firing. **Presentation/feel only — never
