@@ -476,6 +476,16 @@ pub struct ControlRow {
     pub action: &'static str,
 }
 
+/// The one-paragraph "what is this game" pitch shown atop the About / field-manual screen — the
+/// canonical blurb, kept **verbatim** in step with Android's `FIELD_MANUAL_BLURB`
+/// (`FieldManual.kt`) so both shells read identically (A2 parity). Android's fuller three-sentence
+/// copy is the source of truth; this must match it byte-for-byte. Pure `&'static str`, so it's
+/// unit-tested (non-empty, ASCII — never a tofu glyph in egui's default font).
+pub const FIELD_MANUAL_BLURB: &str =
+    "Command and grow your camps from above, then possess a single soldier and fight it in first \
+     person while the strategic map goes dark. One commander does both jobs; the tension is your \
+     divided attention. Stay embodied too long and the map you left behind moves without you.";
+
 /// The desktop controls reference shown on the About screen — the **real** default keymap (kept in
 /// sync with `pal-desktop`'s `DesktopInput` doc + `app`'s host keys). Static data, so it's unit-tested
 /// for shape (every group present, no empty cells). ASCII only — never a tofu glyph.
@@ -1475,14 +1485,7 @@ fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
     over_backdrop_screen(ui, 0.06, |ui| {
         ui.set_min_width(460.0);
         screen_banner(ui, "FIELD MANUAL", 120.0);
-        ui.label(
-            RichText::new(
-                "Command and grow your camps from above -- then possess a single soldier and \
-                 fight it in first person, while the strategic map goes dark.",
-            )
-            .color(ASH)
-            .size(TYPE_BODY),
-        );
+        ui.label(RichText::new(FIELD_MANUAL_BLURB).color(ASH).size(TYPE_BODY));
         ui.add_space(14.0);
 
         // The keymap, grouped by layer. A bounded ScrollArea keeps the card sane on a short window.
@@ -2080,6 +2083,23 @@ mod tests {
     }
 
     // ---- The About controls reference ------------------------------------------------------------
+
+    #[test]
+    fn field_manual_blurb_is_the_canonical_three_sentence_copy() {
+        // A2 parity: the desktop blurb converges on Android's fuller `FIELD_MANUAL_BLURB` verbatim.
+        // Guard the exact canonical string so a future one-side edit re-opens the drift the sync
+        // closed, and keep it ASCII (default-font, no tofu).
+        assert_eq!(
+            FIELD_MANUAL_BLURB,
+            "Command and grow your camps from above, then possess a single soldier and fight it in \
+             first person while the strategic map goes dark. One commander does both jobs; the \
+             tension is your divided attention. Stay embodied too long and the map you left behind \
+             moves without you."
+        );
+        assert!(FIELD_MANUAL_BLURB.is_ascii(), "the blurb must render in egui's default font");
+        // Three sentences (the "richer" copy the sync adopted), not the old one-liner.
+        assert_eq!(FIELD_MANUAL_BLURB.matches(". ").count() + 1, 3);
+    }
 
     #[test]
     fn controls_reference_is_well_formed_and_covers_every_layer() {
