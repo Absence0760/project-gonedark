@@ -64,13 +64,31 @@ def reset_scene():
                 block.remove(item)
 
 
-def make_material(name, rgba):
+# Maps a rounded albedo RGB → its team-tint mask. The `.glb` exporter drops Base-Color *alpha* for
+# opaque materials (so the mask can't ride the LOD gltfpack round-trip in the alpha channel), but it
+# round-trips the RGB *factor* exactly. So we key the mask off the albedo RGB and reconstruct it in
+# `export_mesh` for every tier — LOD0 and the re-imported LODs alike. Palette colours are distinct.
+MASK_BY_RGB = {}
+
+
+def _rgb_key(rgb):
+    return (round(rgb[0], 3), round(rgb[1], 3), round(rgb[2], 3))
+
+
+def make_material(name, rgba, mask=1.0):
+    """A greybox material. `rgba` is the part albedo; `mask` is the team-tint fraction in [0,1] the
+    runtime shader blends the per-instance team colour over this part (see `export_mesh` + the
+    `.mesh` format doc in `render/src/mesh.rs`): 1.0 = fully team-coloured (buildings/vehicles),
+    ~0.5 = a team-hued uniform, 0.0 = keeps its own colour (skin, rifle, boots). The mask is keyed
+    off the albedo RGB (see `MASK_BY_RGB`) so it survives the LOD glTF round-trip."""
     m = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     if getattr(m, "node_tree", None) is None:  # 5.x materials already node-backed
         m.use_nodes = True
     bsdf = m.node_tree.nodes.get("Principled BSDF")
-    bsdf.inputs["Base Color"].default_value = rgba
+    bsdf.inputs["Base Color"].default_value = (rgba[0], rgba[1], rgba[2], 1.0)
     bsdf.inputs["Roughness"].default_value = 0.85
+    m.diffuse_color = (rgba[0], rgba[1], rgba[2], 1.0)  # viewport-only; export reads the BSDF node
+    MASK_BY_RGB[_rgb_key(rgba)] = float(mask)
     return m
 
 
@@ -152,24 +170,32 @@ def chamfer(obj, width, segments=1, angle_deg=40.0):
     return obj
 
 
-def weld(name, parts, material, bevel=0.0):
-    """Apply each part's transform, join into one mesh, assign a single material. `bevel` (metres)
-    applies an angle-limited `chamfer` to the welded result — soft silhouette edges per model."""
-    for o in parts:
+def weld(name, parts, material=None, bevel=0.0):
+    """Apply each part's transform, assign its material, then join into one mesh. `parts` is a list
+    of either a bare object (uses the default `material`) or an `(object, material)` tuple — so a
+    model can carry MULTIPLE materials (fatigues / helmet / skin / rifle…), which `export_mesh`
+    bakes into per-vertex colours. Joining merges the parts' material slots and remaps each face's
+    `material_index`, so per-part colour survives the weld. `bevel` (metres) applies an
+    angle-limited `chamfer` to the welded result — soft silhouette edges per model."""
+    objs = []
+    for p in parts:
+        o, m = p if isinstance(p, tuple) else (p, material)
+        o.data.materials.clear()
+        o.data.materials.append(m)
+        objs.append(o)
+    for o in objs:
         bpy.ops.object.select_all(action="DESELECT")
         o.select_set(True)
         bpy.context.view_layer.objects.active = o
         bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     bpy.ops.object.select_all(action="DESELECT")
-    for o in parts:
+    for o in objs:
         o.select_set(True)
-    bpy.context.view_layer.objects.active = parts[0]
-    if len(parts) > 1:  # join() warns "No mesh data to join" on a single object
+    bpy.context.view_layer.objects.active = objs[0]
+    if len(objs) > 1:  # join() warns "No mesh data to join" on a single object
         bpy.ops.object.join()
     obj = bpy.context.active_object
     obj.name = name
-    obj.data.materials.clear()
-    obj.data.materials.append(material)
     chamfer(obj, bevel)
     return obj
 
@@ -190,18 +216,20 @@ def export_glb(obj, filename):
 # (decisions.md D44). One vertex per triangle corner (no dedup) so each face carries its own
 # flat normal — exactly the faceted greybox look we want, and the simplest possible parser.
 #
-#   magic   : 4 bytes  b"GDM1"
+#   magic   : 4 bytes  b"GDM2"
 #   v_count : u32       number of vertices  (== 3 * triangle count)
 #   i_count : u32       number of indices   (sequential 0..v_count for the soup)
-#   verts   : v_count × [px,py,pz, nx,ny,nz]  f32  (24 bytes each)
+#   verts   : v_count × [px,py,pz, nx,ny,nz, cr,cg,cb, cm]  f32  (40 bytes each)
 #   indices : i_count × u32
 #
-# Coords are Z-up world metres with the base at z≈0 — matching the game's ground plane
-# (`render/shader.wgsl` puts world XY on z=0, Z up). NOTE: the `.glb` exporter rewrites to
-# glTF's +Y-up convention; the `.mesh` deliberately keeps Blender/​game Z-up. They describe the
-# same geometry in each format's native up-axis. Keep this layout in lockstep with the parser
-# in `render/src/mesh.rs` (`parse_mesh`) and its golden test.
-MESH_MAGIC = b"GDM1"
+# `cr,cg,cb` is the face's material albedo and `cm` its team-tint mask [0,1] (read from the part's
+# material — `diffuse_color` + the `team_mask` custom prop). Coords are Z-up world metres with the
+# base at z≈0 — matching the game's ground plane (`render/shader.wgsl` puts world XY on z=0, Z up).
+# NOTE: the `.glb` exporter rewrites to glTF's +Y-up convention; the `.mesh` deliberately keeps
+# Blender/​game Z-up. They describe the same geometry in each format's native up-axis. Keep this
+# layout in lockstep with the parser in `render/src/mesh.rs` and its golden test. GDM2 added the
+# per-vertex colour to GDM1 (position+normal only).
+MESH_MAGIC = b"GDM2"
 
 
 def export_mesh(obj, filename):
@@ -209,7 +237,21 @@ def export_mesh(obj, filename):
 
     mesh = obj.data
     mesh.calc_loop_triangles()
-    verts = []  # flat f32 list: px,py,pz,nx,ny,nz per corner
+    # Per-material-slot (albedo rgb, team-mask), indexed by a face's `material_index`. Read straight
+    # from the Principled BSDF Base Color (rgb = albedo, alpha = mask) — the one encoding that
+    # survives both the LOD0 cook and the gltfpack→re-import LOD round-trip. Missing/degenerate slots
+    # fall back to a neutral fully-team-tinted grey (matches the old flat look).
+    def slot_color(m):
+        bsdf = m.node_tree.nodes.get("Principled BSDF") if (m and m.node_tree) else None
+        if bsdf is None:
+            return (0.5, 0.5, 0.5, 1.0)
+        bc = bsdf.inputs["Base Color"].default_value
+        mask = MASK_BY_RGB.get(_rgb_key(bc), 1.0)  # RGB survives glTF; reconstruct the mask from it
+        return (bc[0], bc[1], bc[2], mask)
+
+    slot_colors = [slot_color(m) for m in mesh.materials] or [(0.5, 0.5, 0.5, 1.0)]
+
+    verts = []  # flat f32 list: px,py,pz,nx,ny,nz,cr,cg,cb,cm per corner
     for tri in mesh.loop_triangles:
         # Flat shading: compute each triangle's own geometric normal from its vertices (the
         # CCW cross product) and share it across all three corners, so edges read as crisp
@@ -219,10 +261,11 @@ def export_mesh(obj, filename):
         co = [mesh.vertices[vi].co for vi in tri.vertices]
         n = (co[1] - co[0]).cross(co[2] - co[0])
         n = n.normalized() if n.length > 1e-9 else Vector((0.0, 0.0, 1.0))
+        col = slot_colors[tri.material_index if tri.material_index < len(slot_colors) else 0]
         for c in co:
-            verts.extend((c.x, c.y, c.z, n.x, n.y, n.z))
+            verts.extend((c.x, c.y, c.z, n.x, n.y, n.z, col[0], col[1], col[2], col[3]))
     v_count = len(mesh.loop_triangles) * 3
-    assert v_count * 6 == len(verts), "expected 6 floats per vertex"
+    assert v_count * 10 == len(verts), "expected 10 floats per vertex"
 
     path = os.path.join(OUT_DIR, filename)
     with open(path, "wb") as f:
@@ -308,10 +351,12 @@ def import_glb(filename):
 # Conventions: Z-up, feet/base at z≈0, sizes roughly in metres. Each builder returns a
 # single welded object; `description` feeds the manifest + the two-view filter (§4) notes.
 #
-# Base colours are the single source of truth for each model's greybox tint. The `.mesh` is
-# geometry-only (no colour), so the render crate mirrors these in `mesh.rs`'s `ModelKind` base
-# colours — they are echoed into the manifest here so that mirror is auditable. A unit token's
-# faction colour can still override its model tint at draw time (player blue / enemy red).
+# Each model's representative/dominant greybox tint, mirrored in `mesh.rs`'s `ModelKind::base_color`
+# and echoed into the manifest so that mirror is auditable. Since GDM2 the `.mesh` also carries a
+# per-VERTEX material colour + team-tint mask (troopers set several via `infantry_palette`; simpler
+# models are a single material = this colour at mask 1.0), so a soldier renders as a coloured
+# soldier and the per-instance faction colour tints only the masked parts + the silhouette rim
+# (player blue / enemy red) rather than flooding the whole body.
 COLORS = {
     "trooper": (0.30, 0.34, 0.18),     # olive infantry
     "tank": (0.18, 0.22, 0.14),        # dark green armour (hull)
@@ -377,53 +422,72 @@ def rgba(name):
     return (r, g, b, 1.0)
 
 
+def infantry_palette(prefix, fatigue, helmet):
+    """The per-part material set every trooper is built from, so a soldier renders as a *coloured*
+    soldier — olive/green fatigues that take a team tint, a darker helmet, tan skin, a near-black
+    rifle, dark boots — instead of one flat team-coloured blob. Only the uniform + helmet carry a
+    team-tint mask; skin/rifle/boots keep their own colour and the silhouette rim carries the team
+    read (see `render/src/mesh.wgsl`). `fatigue`/`helmet` vary per army; the rest are shared."""
+    return {
+        "fatigue": make_material(prefix + "_fatigue", fatigue, mask=0.55),
+        "helmet": make_material(prefix + "_helmet", helmet, mask=0.42),
+        "skin": make_material(prefix + "_skin", (0.60, 0.45, 0.33), mask=0.0),
+        "gun": make_material(prefix + "_gun", (0.08, 0.08, 0.09), mask=0.0),
+        "boots": make_material(prefix + "_boots", (0.11, 0.10, 0.08), mask=0.0),
+        "web": make_material(prefix + "_web", (0.19, 0.20, 0.14), mask=0.12),
+        "pack": make_material(prefix + "_pack", (0.24, 0.26, 0.16), mask=0.30),
+    }
+
+
 def build_trooper():
-    mat = make_material("trooper", rgba("trooper"))  # olive
     # A Vietnam-era US infantryman greybox (direct art direction). The read is the *silhouette*: an
     # M1 "steel pot" helmet (a rounded dome with a subtle all-around flared rim — NOT a wide flat
     # sombrero brim, which was the old failure), a lean jungle-fatigue torso carrying M1956 web gear
     # (two front suspender straps + a pistol belt with ammo pouches) instead of a bulky modern plate
     # carrier, a tropical rucksack with a bedroll, an M16 held across the chest at patrol-ready, and
     # two clearly-separated legs bloused into jungle boots. Proportioned to read as a soldier, not a
-    # coat-rack: narrow waist → modest shoulder yoke, a real neck, limbs that taper.
+    # coat-rack: narrow waist → modest shoulder yoke, a real neck, limbs that taper. Per-part
+    # materials (olive fatigues / dark helmet / tan skin / near-black rifle / dark boots) so it reads
+    # as a coloured soldier, not a flat team blob — only the uniform + helmet carry a team tint.
+    P = infantry_palette("gd", (0.30, 0.34, 0.20), (0.20, 0.23, 0.15))
     parts = [
         # Torso: lean fatigue shirt from a narrow waist up to a modest shoulder yoke.
-        box((0.30, 0.22, 0.24), (0, 0, 0.86)),                 # hips / waist (narrow)
-        box((0.40, 0.26, 0.50), (0, -0.01, 1.26)),             # fatigue shirt (torso)
-        box((0.50, 0.28, 0.15), (0, -0.01, 1.52)),             # shoulder yoke (the soldier read)
+        (box((0.30, 0.22, 0.24), (0, 0, 0.86)), P["fatigue"]),                 # hips / waist (narrow)
+        (box((0.40, 0.26, 0.50), (0, -0.01, 1.26)), P["fatigue"]),            # fatigue shirt (torso)
+        (box((0.50, 0.28, 0.15), (0, -0.01, 1.52)), P["fatigue"]),            # shoulder yoke
         # M1956 web gear: two front suspender straps + a pistol belt with ammo pouches.
-        box((0.05, 0.05, 0.42), (0.11, 0.135, 1.30)),          # suspender strap R
-        box((0.05, 0.05, 0.42), (-0.11, 0.135, 1.30)),         # suspender strap L
-        box((0.42, 0.28, 0.09), (0, 0, 1.00)),                 # pistol belt
-        box((0.12, 0.11, 0.13), (0.15, 0.15, 1.00)),           # ammo pouch R
-        box((0.12, 0.11, 0.13), (-0.15, 0.15, 1.00)),          # ammo pouch L
+        (box((0.05, 0.05, 0.42), (0.11, 0.135, 1.30)), P["web"]),             # suspender strap R
+        (box((0.05, 0.05, 0.42), (-0.11, 0.135, 1.30)), P["web"]),            # suspender strap L
+        (box((0.42, 0.28, 0.09), (0, 0, 1.00)), P["web"]),                    # pistol belt
+        (box((0.12, 0.11, 0.13), (0.15, 0.15, 1.00)), P["web"]),              # ammo pouch R
+        (box((0.12, 0.11, 0.13), (-0.15, 0.15, 1.00)), P["web"]),             # ammo pouch L
         # Tropical rucksack + a horizontal bedroll lashed across its top.
-        box((0.30, 0.20, 0.44), (0, -0.22, 1.28)),             # rucksack
-        cyl(0.06, 0.30, (0, -0.24, 1.52), rot=(0, math.radians(90), 0), verts=8),  # bedroll (across the top)
+        (box((0.30, 0.20, 0.44), (0, -0.22, 1.28)), P["pack"]),               # rucksack
+        (cyl(0.06, 0.30, (0, -0.24, 1.52), rot=(0, math.radians(90), 0), verts=8), P["pack"]),  # bedroll
         # Head + M1 steel pot: the dome is pulled DOWN over the head (envelops the crown, not perched
         # on top like a hat) with only a slim rolled lip — a pot, not a sombrero.
-        cyl(0.075, 0.13, (0, 0, 1.585), verts=8),              # neck
-        icosphere(0.13, (0, 0, 1.70), subdivisions=1),         # head (jaw/face below the pot)
-        icosphere(0.175, (0, 0, 1.74), subdivisions=2),        # M1 helmet dome (low, enveloping)
-        cyl(0.17, 0.04, (0, 0, 1.65), verts=16),               # M1 rolled rim (subtle lip, not a brim)
+        (cyl(0.075, 0.13, (0, 0, 1.585), verts=8), P["skin"]),                # neck
+        (icosphere(0.13, (0, 0, 1.70), subdivisions=1), P["skin"]),           # head (jaw/face below the pot)
+        (icosphere(0.175, (0, 0, 1.74), subdivisions=2), P["helmet"]),        # M1 helmet dome (low, enveloping)
+        (cyl(0.17, 0.04, (0, 0, 1.65), verts=16), P["helmet"]),               # M1 rolled rim (subtle lip)
         # Legs: clearly separated (a real gap between them), bloused into jungle boots.
-        cyl(0.10, 0.86, (0.16, 0, 0.47), verts=10),            # leg R (tapered limb)
-        cyl(0.10, 0.86, (-0.16, 0, 0.47), verts=10),           # leg L
-        box((0.15, 0.26, 0.11), (0.16, 0.06, 0.03)),           # jungle boot R (toe forward, +Y)
-        box((0.15, 0.26, 0.11), (-0.16, 0.06, 0.03)),          # jungle boot L
+        (cyl(0.10, 0.86, (0.16, 0, 0.47), verts=10), P["fatigue"]),           # leg R (tapered limb)
+        (cyl(0.10, 0.86, (-0.16, 0, 0.47), verts=10), P["fatigue"]),          # leg L
+        (box((0.15, 0.26, 0.11), (0.16, 0.06, 0.03)), P["boots"]),            # jungle boot R (toe forward, +Y)
+        (box((0.15, 0.26, 0.11), (-0.16, 0.06, 0.03)), P["boots"]),           # jungle boot L
         # Arms cradle the rifle at mid-chest: elbows tucked (not flared), forearms level and forward
         # so both hands rest on the receiver.
-        cyl(0.075, 0.30, (0.25, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(7)), verts=10),   # upper arm R
-        cyl(0.075, 0.30, (-0.25, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(-7)), verts=10),  # upper arm L
-        cyl(0.06, 0.30, (0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10),   # forearm R (level → grip)
-        cyl(0.06, 0.30, (-0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10),  # forearm L (level → handguard)
+        (cyl(0.075, 0.30, (0.25, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(7)), verts=10), P["fatigue"]),   # upper arm R
+        (cyl(0.075, 0.30, (-0.25, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(-7)), verts=10), P["fatigue"]),  # upper arm L
+        (cyl(0.06, 0.30, (0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10), P["fatigue"]),   # forearm R (level → grip)
+        (cyl(0.06, 0.30, (-0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10), P["fatigue"]),  # forearm L (level → handguard)
         # M16 carried level across the chest (barrel to the figure's left): a clear horizontal bar,
         # legible from the front AND the top-down command view — carry handle proud, magazine hanging.
-        box((0.60, 0.065, 0.065), (0.0, 0.31, 1.13), rot=(0, 0, math.radians(7))),   # receiver/barrel (X-long)
-        box((0.14, 0.06, 0.045), (0.04, 0.31, 1.18), rot=(0, 0, math.radians(7))),   # carry handle (proud on top)
-        box((0.05, 0.07, 0.16), (-0.08, 0.34, 1.03), rot=(0, 0, math.radians(7))),   # magazine (hangs down-forward)
+        (box((0.60, 0.065, 0.065), (0.0, 0.31, 1.13), rot=(0, 0, math.radians(7))), P["gun"]),   # receiver/barrel
+        (box((0.14, 0.06, 0.045), (0.04, 0.31, 1.18), rot=(0, 0, math.radians(7))), P["gun"]),   # carry handle
+        (box((0.05, 0.07, 0.16), (-0.08, 0.34, 1.03), rot=(0, 0, math.radians(7))), P["gun"]),   # magazine
     ]
-    return weld("trooper", parts, mat, bevel=0.02)
+    return weld("trooper", parts, bevel=0.02)
 
 
 def build_tank():
@@ -657,74 +721,76 @@ def build_trooper_us():
     # rim), M1956 web gear (suspenders + a pistol belt with ammo pouches + a frag grenade), a tropical
     # rucksack, an M16 at patrol-ready, jungle boots — but a touch bulkier through the chest/shoulders
     # so the American reads a shade heavier than the Neutral kin (the US silhouette tell). Olive.
-    mat = make_material("trooper_us", rgba("trooper_us"))
+    P = infantry_palette("us", (0.31, 0.35, 0.20), (0.20, 0.23, 0.15))
     parts = [
-        box((0.32, 0.24, 0.24), (0, 0, 0.86)),                 # hips / waist
-        box((0.44, 0.28, 0.52), (0, -0.01, 1.26)),             # fatigue shirt (bulkier)
-        box((0.54, 0.30, 0.16), (0, -0.01, 1.52)),             # shoulder yoke (broad — US bulk)
-        box((0.05, 0.05, 0.44), (0.12, 0.145, 1.30)),          # suspender strap R
-        box((0.05, 0.05, 0.44), (-0.12, 0.145, 1.30)),         # suspender strap L
-        box((0.45, 0.30, 0.10), (0, 0, 1.00)),                 # pistol belt
-        box((0.13, 0.12, 0.14), (0.16, 0.16, 1.00)),           # ammo pouch R
-        box((0.13, 0.12, 0.14), (-0.16, 0.16, 1.00)),          # ammo pouch L
-        box((0.08, 0.08, 0.11), (0.19, 0.18, 1.05)),           # frag grenade on the belt (US tell)
-        box((0.32, 0.22, 0.46), (0, -0.23, 1.28)),             # tropical rucksack
-        cyl(0.065, 0.32, (0, -0.25, 1.53), rot=(0, math.radians(90), 0), verts=8),  # bedroll (across the top)
+        (box((0.32, 0.24, 0.24), (0, 0, 0.86)), P["fatigue"]),                # hips / waist
+        (box((0.44, 0.28, 0.52), (0, -0.01, 1.26)), P["fatigue"]),           # fatigue shirt (bulkier)
+        (box((0.54, 0.30, 0.16), (0, -0.01, 1.52)), P["fatigue"]),           # shoulder yoke (broad — US bulk)
+        (box((0.05, 0.05, 0.44), (0.12, 0.145, 1.30)), P["web"]),            # suspender strap R
+        (box((0.05, 0.05, 0.44), (-0.12, 0.145, 1.30)), P["web"]),           # suspender strap L
+        (box((0.45, 0.30, 0.10), (0, 0, 1.00)), P["web"]),                   # pistol belt
+        (box((0.13, 0.12, 0.14), (0.16, 0.16, 1.00)), P["web"]),             # ammo pouch R
+        (box((0.13, 0.12, 0.14), (-0.16, 0.16, 1.00)), P["web"]),            # ammo pouch L
+        (box((0.08, 0.08, 0.11), (0.19, 0.18, 1.05)), P["gun"]),             # frag grenade on the belt (US tell)
+        (box((0.32, 0.22, 0.46), (0, -0.23, 1.28)), P["pack"]),              # tropical rucksack
+        (cyl(0.065, 0.32, (0, -0.25, 1.53), rot=(0, math.radians(90), 0), verts=8), P["pack"]),  # bedroll
         # Head + M1 steel pot: the dome is pulled DOWN over the head (envelops the crown, not perched
         # on top like a hat), with only a slim rolled lip — a pot, not a sombrero.
-        cyl(0.08, 0.14, (0, 0, 1.585), verts=8),               # neck
-        icosphere(0.135, (0, 0, 1.70), subdivisions=1),        # head (jaw/face below the pot)
-        icosphere(0.185, (0, 0, 1.74), subdivisions=2),        # M1 helmet dome (low, enveloping)
-        cyl(0.178, 0.04, (0, 0, 1.65), verts=16),              # M1 rolled rim (subtle lip, not a brim)
-        cyl(0.11, 0.88, (0.17, 0, 0.48), verts=10),            # leg R (tapered limb)
-        cyl(0.11, 0.88, (-0.17, 0, 0.48), verts=10),           # leg L
-        box((0.16, 0.27, 0.11), (0.17, 0.06, 0.03)),           # jungle boot R (toe forward, +Y)
-        box((0.16, 0.27, 0.11), (-0.17, 0.06, 0.03)),          # jungle boot L
+        (cyl(0.08, 0.14, (0, 0, 1.585), verts=8), P["skin"]),                # neck
+        (icosphere(0.135, (0, 0, 1.70), subdivisions=1), P["skin"]),         # head (jaw/face below the pot)
+        (icosphere(0.185, (0, 0, 1.74), subdivisions=2), P["helmet"]),       # M1 helmet dome (low, enveloping)
+        (cyl(0.178, 0.04, (0, 0, 1.65), verts=16), P["helmet"]),             # M1 rolled rim (subtle lip)
+        (cyl(0.11, 0.88, (0.17, 0, 0.48), verts=10), P["fatigue"]),          # leg R (tapered limb)
+        (cyl(0.11, 0.88, (-0.17, 0, 0.48), verts=10), P["fatigue"]),         # leg L
+        (box((0.16, 0.27, 0.11), (0.17, 0.06, 0.03)), P["boots"]),           # jungle boot R (toe forward, +Y)
+        (box((0.16, 0.27, 0.11), (-0.17, 0.06, 0.03)), P["boots"]),          # jungle boot L
         # Arms cradle the rifle at mid-chest: upper arms hang from the shoulders with the elbows
         # TUCKED (not flared), forearms held level and forward so both hands rest on the receiver.
-        cyl(0.075, 0.30, (0.255, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(7)), verts=10),   # upper arm R
-        cyl(0.075, 0.30, (-0.255, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(-7)), verts=10),  # upper arm L
-        cyl(0.062, 0.30, (0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10),   # forearm R (level → grip)
-        cyl(0.062, 0.30, (-0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10),  # forearm L (level → handguard)
+        (cyl(0.075, 0.30, (0.255, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(7)), verts=10), P["fatigue"]),   # upper arm R
+        (cyl(0.075, 0.30, (-0.255, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(-7)), verts=10), P["fatigue"]),  # upper arm L
+        (cyl(0.062, 0.30, (0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10), P["fatigue"]),   # forearm R (level → grip)
+        (cyl(0.062, 0.30, (-0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10), P["fatigue"]),  # forearm L (level → handguard)
         # M16 carried level across the chest (barrel to the figure's left): a clear horizontal bar —
         # legible from the front AND the top-down command view — the A1 carry handle proud on top and
         # the curved magazine hanging forward-down. Sits at the hands' height so the cradle reads clean.
-        box((0.62, 0.07, 0.07), (0.0, 0.31, 1.13), rot=(0, 0, math.radians(7))),    # receiver/barrel (X-long)
-        box((0.15, 0.06, 0.045), (0.04, 0.31, 1.18), rot=(0, 0, math.radians(7))),  # carry handle (proud on top)
-        box((0.05, 0.07, 0.16), (-0.08, 0.34, 1.03), rot=(0, 0, math.radians(7))),  # magazine (hangs down-forward)
+        (box((0.62, 0.07, 0.07), (0.0, 0.31, 1.13), rot=(0, 0, math.radians(7))), P["gun"]),    # receiver/barrel
+        (box((0.15, 0.06, 0.045), (0.04, 0.31, 1.18), rot=(0, 0, math.radians(7))), P["gun"]),  # carry handle
+        (box((0.05, 0.07, 0.16), (-0.08, 0.34, 1.03), rot=(0, 0, math.radians(7))), P["gun"]),  # magazine
     ]
-    return weld("trooper_us", parts, mat, bevel=0.02)
+    return weld("trooper_us", parts, bevel=0.02)
 
 
 def build_trooper_fr():
     # French infantry (FELIN): SPECTRA helmet (flatter, brimmed), slimmer profile, French green.
     # Same proportioned skeleton as the base trooper, but narrower through the chest/shoulders and a
     # flat brimmed helmet instead of a rounded dome — the French silhouette tell.
-    mat = make_material("trooper_fr", rgba("trooper_fr"))
+    # Per-part materials with a French-green fatigue so the OPFOR also reads as a coloured soldier,
+    # not a flat red blob — same palette scheme as the US kin, only the uniform/helmet hue differs.
+    P = infantry_palette("fr", (0.27, 0.31, 0.20), (0.18, 0.21, 0.15))
     parts = [
-        box((0.32, 0.23, 0.26), (0, 0, 0.82)),                 # hips / waist (narrow)
-        box((0.40, 0.26, 0.32), (0, 0, 1.08)),                 # midriff
-        box((0.44, 0.29, 0.40), (0, -0.01, 1.40)),             # chest (slimmer carrier)
-        box((0.54, 0.29, 0.13), (0, -0.01, 1.58)),             # shoulder yoke (narrower — FR slim)
-        box((0.30, 0.14, 0.34), (0, 0.19, 1.40)),              # front plate slab (slimmer)
-        box((0.28, 0.19, 0.42), (0, -0.19, 1.30)),             # backpack
-        cyl(0.07, 0.12, (0, 0, 1.66), verts=8),                # neck
-        icosphere(0.14, (0, 0, 1.75), subdivisions=1),         # head (faceted — deterministic, no UV-sphere wobble)
-        cyl(0.185, 0.13, (0, 0, 1.80), verts=10),              # flatter SPECTRA helmet dome
-        box((0.40, 0.20, 0.05), (0.0, 0.11, 1.77)),            # brim accent (forward — the FR tell)
-        cyl(0.10, 0.84, (0.12, 0, 0.48), verts=10),            # leg R (single tapered limb)
-        cyl(0.10, 0.84, (-0.12, 0, 0.48), verts=10),           # leg L
-        box((0.16, 0.20, 0.10), (0.12, 0.05, 0.02)),           # boot R
-        box((0.16, 0.20, 0.10), (-0.12, 0.05, 0.02)),          # boot L
-        cyl(0.07, 0.34, (0.27, -0.02, 1.36), rot=(0, math.radians(10), 0), verts=10),   # upper arm R
-        cyl(0.07, 0.34, (-0.27, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10),  # upper arm L
-        cyl(0.06, 0.36, (0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),    # forearm R
-        cyl(0.06, 0.36, (-0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm L
+        (box((0.32, 0.23, 0.26), (0, 0, 0.82)), P["fatigue"]),                # hips / waist (narrow)
+        (box((0.40, 0.26, 0.32), (0, 0, 1.08)), P["fatigue"]),               # midriff
+        (box((0.44, 0.29, 0.40), (0, -0.01, 1.40)), P["fatigue"]),           # chest (slimmer carrier)
+        (box((0.54, 0.29, 0.13), (0, -0.01, 1.58)), P["fatigue"]),           # shoulder yoke (narrower — FR slim)
+        (box((0.30, 0.14, 0.34), (0, 0.19, 1.40)), P["web"]),                # front plate slab (slimmer)
+        (box((0.28, 0.19, 0.42), (0, -0.19, 1.30)), P["pack"]),              # backpack
+        (cyl(0.07, 0.12, (0, 0, 1.66), verts=8), P["skin"]),                 # neck
+        (icosphere(0.14, (0, 0, 1.75), subdivisions=1), P["skin"]),          # head (faceted)
+        (cyl(0.185, 0.13, (0, 0, 1.80), verts=10), P["helmet"]),             # flatter SPECTRA helmet dome
+        (box((0.40, 0.20, 0.05), (0.0, 0.11, 1.77)), P["helmet"]),           # brim accent (forward — the FR tell)
+        (cyl(0.10, 0.84, (0.12, 0, 0.48), verts=10), P["fatigue"]),          # leg R (single tapered limb)
+        (cyl(0.10, 0.84, (-0.12, 0, 0.48), verts=10), P["fatigue"]),         # leg L
+        (box((0.16, 0.20, 0.10), (0.12, 0.05, 0.02)), P["boots"]),           # boot R
+        (box((0.16, 0.20, 0.10), (-0.12, 0.05, 0.02)), P["boots"]),          # boot L
+        (cyl(0.07, 0.34, (0.27, -0.02, 1.36), rot=(0, math.radians(10), 0), verts=10), P["fatigue"]),   # upper arm R
+        (cyl(0.07, 0.34, (-0.27, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10), P["fatigue"]),  # upper arm L
+        (cyl(0.06, 0.36, (0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10), P["fatigue"]),    # forearm R
+        (cyl(0.06, 0.36, (-0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10), P["fatigue"]),   # forearm L
         # Carried FAMAS held forward across the hands — reads "armed rifleman" at command-view distance.
-        box((0.065, 0.48, 0.075), (0.02, 0.29, 1.11), rot=(math.radians(-7), 0, math.radians(9))),  # rifle body (+Y forward)
-        box((0.05, 0.06, 0.15), (0.05, 0.19, 1.02), rot=(math.radians(-7), 0, math.radians(9))),    # magazine
+        (box((0.065, 0.48, 0.075), (0.02, 0.29, 1.11), rot=(math.radians(-7), 0, math.radians(9))), P["gun"]),  # rifle body (+Y forward)
+        (box((0.05, 0.06, 0.15), (0.05, 0.19, 1.02), rot=(math.radians(-7), 0, math.radians(9))), P["gun"]),    # magazine
     ]
-    return weld("trooper_fr", parts, mat, bevel=0.02)
+    return weld("trooper_fr", parts, bevel=0.02)
 
 
 def build_tank_us():

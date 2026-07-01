@@ -26,8 +26,9 @@ var<uniform> g: Globals;
 struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) world_normal: vec3<f32>,
-    @location(1) color: vec4<f32>, // rgb tint, a = emissive/flash
+    @location(1) color: vec4<f32>, // per-instance: rgb team tint, a = emissive/flash
     @location(2) world_pos: vec3<f32>, // model-space → world (or view, for the weapon) position
+    @location(3) albedo: vec4<f32>, // per-vertex material: rgb albedo, a = team-tint mask [0,1]
 };
 
 @vertex
@@ -35,6 +36,7 @@ fn vs_main(
     // per-vertex (mesh)
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(7) albedo: vec4<f32>, // per-part material colour + team-tint mask
     // per-instance (model matrix columns + tint)
     @location(2) m0: vec4<f32>,
     @location(3) m1: vec4<f32>,
@@ -52,6 +54,7 @@ fn vs_main(
     out.world_normal = (model * vec4<f32>(normal, 0.0)).xyz;
     out.color = color;
     out.world_pos = world.xyz;
+    out.albedo = albedo;
     return out;
 }
 
@@ -98,8 +101,18 @@ fn surface_mottle(p: vec3<f32>) -> f32 {
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let n = normalize(in.world_normal);
 
-    // --- material: the per-instance tint, enriched. ---
-    var base = in.color.rgb;
+    // --- material: per-part albedo, team colour blended in only by the per-part mask. ---
+    // `in.albedo.rgb` is the real material (olive fatigues, dark helmet, near-black rifle, tan
+    // skin…); `in.color.rgb` is the per-instance team/identity colour. We tint each part toward the
+    // team colour by its mask `in.albedo.a` — but LUMINANCE-MATCHED, so tinting swaps hue without
+    // changing how light/dark the part is. So the uniform (mask ≈ 0.55) reads team-coloured while
+    // skin/rifle/boots (mask 0) keep their own colour: a coloured soldier, not a team-coloured blob.
+    let team = in.color.rgb;
+    let mat = in.albedo.rgb;
+    let mat_lum = dot(mat, vec3<f32>(0.299, 0.587, 0.114));
+    let team_lum = max(dot(team, vec3<f32>(0.299, 0.587, 0.114)), 0.001);
+    let team_hue = team * (mat_lum / team_lum); // team colour, remapped to this part's brightness
+    var base = mix(mat, team_hue, clamp(in.albedo.a, 0.0, 1.0));
 
     // Gentle saturation lift so the muted military palette still reads friend/enemy/faction clearly
     // (luminance-preserving: we pull away from grey, we don't brighten). Bounded low to stay within
@@ -149,10 +162,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Identity-tinted rim: a thin backlight on facets turning away from the key. Picks up the
     // instance/team colour so silhouettes read friend/enemy/avatar against the dark ground. Edge-only
     // and low-intensity — it sharpens read without flood-lighting the unit (#6 stays fair).
+    // Uses the per-instance TEAM colour (not the per-part material) so the whole silhouette — even
+    // its skin/rifle/boot facets — is edged in the friend/enemy/avatar hue and reads at a glance.
     let rim_t = pow(1.0 - key, 3.0);
-    let rim_hue = normalize(base + vec3<f32>(0.0015));
-    let rim_col = mix(vec3<f32>(0.52, 0.58, 0.70), rim_hue, 0.6);
-    let rim = rim_col * (rim_t * 0.20);
+    let rim_hue = normalize(team + vec3<f32>(0.0015));
+    let rim_col = mix(vec3<f32>(0.52, 0.58, 0.70), rim_hue, 0.66);
+    let rim = rim_col * (rim_t * 0.24);
 
     // Warm muzzle-flash/emissive add, driven by the per-instance alpha (0 for ordinary tokens).
     let flash = vec3<f32>(1.0, 0.7, 0.35) * in.color.a;

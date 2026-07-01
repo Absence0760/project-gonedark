@@ -10,14 +10,20 @@
 //!
 //! ## The cooked `.mesh` format (must match `tools/models/gen_models.py::export_mesh`)
 //! Little-endian, Z-up (the game's ground-plane convention — world XY on `z = 0`, Z up), a
-//! flat-shaded triangle soup (one vertex per triangle corner, each carrying its face normal):
+//! flat-shaded triangle soup (one vertex per triangle corner, each carrying its face normal and its
+//! per-part material colour):
 //! ```text
-//!   magic   : 4 bytes  b"GDM1"
+//!   magic   : 4 bytes  b"GDM2"
 //!   v_count : u32       number of vertices  (== 3 × triangle count)
 //!   i_count : u32       number of indices
-//!   verts   : v_count × [px,py,pz, nx,ny,nz]  f32   (24 bytes each)
+//!   verts   : v_count × [px,py,pz, nx,ny,nz, cr,cg,cb, cm]  f32   (40 bytes each)
 //!   indices : i_count × u32
 //! ```
+//! `cr,cg,cb` is the part's material albedo (olive fatigues, dark helmet, near-black rifle, tan
+//! skin…); `cm` is a **team-tint mask** in `[0, 1]` — the fraction of the per-instance team colour
+//! the shader blends over that part (uniform ≈ 0.55, helmet ≈ 0.45, skin/rifle/boots = 0), so a
+//! soldier reads as a *coloured* soldier with only a team-hued uniform + silhouette rim, not a flat
+//! team-coloured blob. GDM2 replaced GDM1 (position+normal only) when per-part colour landed.
 //! This is the **float boundary** (invariant #1): every number here is already `f32`, and none of
 //! it touches `core`/the sim — meshes are render-only. The crate stays `glam`/windowing-free (D19):
 //! the host hands matrices in as plain column-major `[[f32; 4]; 4]` arrays; the small amount of
@@ -26,7 +32,11 @@
 use wgpu::util::DeviceExt;
 
 /// Magic bytes at the head of a cooked `.mesh` file.
-pub const MESH_MAGIC: [u8; 4] = *b"GDM1";
+pub const MESH_MAGIC: [u8; 4] = *b"GDM2";
+
+/// Bytes per cooked vertex: `[px,py,pz, nx,ny,nz, cr,cg,cb, cm]` = 10 × `f32`. Keep in lockstep
+/// with [`MeshVertex`], [`MeshGpu::vertex_layout`], and `gen_models.py::export_mesh`.
+const VERTEX_BYTES: usize = 40;
 
 /// Number of LOD tiers the cook pipeline emits per model: LOD0 (full) + two gltfpack-decimated
 /// tiers (`<name>.lod1.mesh` ≈ ½ tris, `<name>.lod2.mesh` ≈ ¼). See `tools/models/gen_models.py`
@@ -69,6 +79,8 @@ pub struct MeshVertex {
     pub pos: [f32; 3],
     /// Unit face normal (flat shading) for greybox facets.
     pub normal: [f32; 3],
+    /// Per-part material: `rgb` = albedo, `a` = team-tint mask in `[0, 1]` (see the format docs).
+    pub color: [f32; 4],
 }
 
 /// A parsed cooked mesh on the CPU — a flat-shaded triangle soup. Pure data, no GPU handle, so it
@@ -109,7 +121,7 @@ impl MeshCpu {
         let i_count = u32_at(8) as usize;
 
         // Exact length check in u64 so huge declared counts can't overflow into a false match.
-        let expected = 12u64 + v_count as u64 * 24 + i_count as u64 * 4;
+        let expected = 12u64 + v_count as u64 * VERTEX_BYTES as u64 + i_count as u64 * 4;
         if expected != bytes.len() as u64 {
             return Err(MeshParseError::LengthMismatch);
         }
@@ -117,14 +129,15 @@ impl MeshCpu {
         let f32_at = |o: usize| f32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
         let mut vertices = Vec::with_capacity(v_count);
         for k in 0..v_count {
-            let o = 12 + k * 24;
+            let o = 12 + k * VERTEX_BYTES;
             vertices.push(MeshVertex {
                 pos: [f32_at(o), f32_at(o + 4), f32_at(o + 8)],
                 normal: [f32_at(o + 12), f32_at(o + 16), f32_at(o + 20)],
+                color: [f32_at(o + 24), f32_at(o + 28), f32_at(o + 32), f32_at(o + 36)],
             });
         }
 
-        let ibase = 12 + v_count * 24;
+        let ibase = 12 + v_count * VERTEX_BYTES;
         let mut indices = Vec::with_capacity(i_count);
         for k in 0..i_count {
             let idx = u32_at(ibase + k * 4);
@@ -377,8 +390,10 @@ impl MeshGpu {
     /// The per-vertex buffer layout shared by every mesh pipeline: `0 => position (vec3)`,
     /// `1 => normal (vec3)`.
     pub fn vertex_layout() -> wgpu::VertexBufferLayout<'static> {
-        const ATTRS: [wgpu::VertexAttribute; 2] =
-            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+        // Location 7 for the per-vertex material colour — locations 2..=6 are the per-instance
+        // buffer (model-matrix columns + team tint), so the vertex buffer skips over them.
+        const ATTRS: [wgpu::VertexAttribute; 3] =
+            wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 7 => Float32x4];
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<MeshVertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -809,6 +824,10 @@ mod tests {
             for c in [0.0f32, 0.0, 1.0] {
                 b.extend_from_slice(&c.to_le_bytes());
             }
+            // colour (rgb albedo + team-mask)
+            for c in [0.3f32, 0.34, 0.2, 0.5] {
+                b.extend_from_slice(&c.to_le_bytes());
+            }
         }
         for k in 0..3u32 {
             b.extend_from_slice(&k.to_le_bytes());
@@ -823,6 +842,7 @@ mod tests {
         assert_eq!(m.indices, vec![0, 1, 2]);
         assert_eq!(m.vertices[1].pos, [1.0, 0.0, 0.0]);
         assert_eq!(m.vertices[0].normal, [0.0, 0.0, 1.0]);
+        assert_eq!(m.vertices[2].color, [0.3, 0.34, 0.2, 0.5]);
     }
 
     #[test]
@@ -839,8 +859,8 @@ mod tests {
     #[test]
     fn rejects_out_of_range_index() {
         let mut b = one_triangle_blob();
-        // Overwrite the last index (offset 12 + 3*24 + 2*4) with 99.
-        let o = 12 + 3 * 24 + 2 * 4;
+        // Overwrite the last index (offset 12 + 3*VERTEX_BYTES + 2*4) with 99.
+        let o = 12 + 3 * VERTEX_BYTES + 2 * 4;
         b[o..o + 4].copy_from_slice(&99u32.to_le_bytes());
         assert_eq!(MeshCpu::parse(&b), Err(MeshParseError::IndexOutOfRange));
     }
@@ -866,6 +886,12 @@ mod tests {
                 );
                 let n = (v.normal[0].powi(2) + v.normal[1].powi(2) + v.normal[2].powi(2)).sqrt();
                 assert!((n - 1.0).abs() < 1e-3, "{kind:?} normals are unit length, got {n}");
+                // Per-part colour: albedo + team-mask all in [0, 1] (the shader assumes it).
+                assert!(
+                    v.color.iter().all(|c| c.is_finite() && (0.0..=1.0).contains(c)),
+                    "{kind:?} vertex colour/mask out of [0,1]: {:?}",
+                    v.color
+                );
             }
         }
     }
