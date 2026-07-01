@@ -24,13 +24,13 @@ struct VertexOut {
 fn vs_main(
     @location(0) corner: vec2<f32>,
     @location(1) center: vec2<f32>,  // NDC center
-    @location(2) half: vec2<f32>,    // per-axis NDC half-size (so circles stay round)
+    @location(2) hext: vec2<f32>,    // per-axis NDC half-size (so circles stay round)
     @location(3) color: vec4<f32>,
     @location(4) shape: f32,
     @location(5) params: vec2<f32>,
 ) -> VertexOut {
     var out: VertexOut;
-    let ndc = vec2<f32>(center.x + corner.x * half.x, center.y + corner.y * half.y);
+    let ndc = vec2<f32>(center.x + corner.x * hext.x, center.y + corner.y * hext.y);
     out.clip_pos = vec4<f32>(ndc.x, ndc.y, 0.0, 1.0);
     out.color = color;
     out.local = corner;

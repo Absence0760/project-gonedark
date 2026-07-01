@@ -341,9 +341,9 @@ fn vs_muzzle(@builtin(vertex_index) vid: u32) -> MuzzleOut {
     // Base half-size in NDC-y, kept nearly constant (a small pop on the shot) so the expanding
     // shock ring genuinely grows in screen space as the flash fades rather than shrinking with it.
     let size_y = 0.155 * (0.85 + 0.20 * flash);
-    let half = vec2<f32>(size_y / aspect, size_y);
+    let hext = vec2<f32>(size_y / aspect, size_y);
     var out: MuzzleOut;
-    out.clip_pos = vec4<f32>(anchor.x + c.x * half.x, anchor.y + c.y * half.y, 0.0, 1.0);
+    out.clip_pos = vec4<f32>(anchor.x + c.x * hext.x, anchor.y + c.y * hext.y, 0.0, 1.0);
     out.local = c;
     return out;
 }

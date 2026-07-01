@@ -20,7 +20,7 @@ struct VertexOut {
     // Corner in units of the core half-extent (interpolated) — drives the SDF and the gradient.
     @location(1) local: vec2<f32>,
     // NDC half-extent of this quad (flat).
-    @location(2) half: vec2<f32>,
+    @location(2) hext: vec2<f32>,
     // x = corner radius (NDC-y units), y = gradient amount [0,1], z = edge softness (drop shadow).
     @location(3) params: vec3<f32>,
     // Viewport aspect (width / height) so corners stay round in pixels, not egg-shaped (flat).
@@ -34,7 +34,7 @@ struct VertexOut {
 fn vs_main(
     @location(0) corner: vec2<f32>,
     @location(1) center: vec2<f32>,
-    @location(2) half: vec2<f32>,
+    @location(2) hext: vec2<f32>,
     @location(3) color: vec3<f32>,
     @location(4) alpha: f32,
     @location(5) radius: f32,
@@ -47,7 +47,7 @@ fn vs_main(
     // nominal rect (otherwise the soft edge would be clipped at the geometry boundary). The x pad
     // is divided by aspect so the pad is the same NDC-y amount on both axes once aspect-corrected.
     let pad = vec2<f32>(softness / max(aspect, 1e-4), softness);
-    let ext_padded = half + pad;
+    let ext_padded = hext + pad;
     let ndc = vec2<f32>(
         center.x + corner.x * ext_padded.x,
         center.y + corner.y * ext_padded.y,
@@ -57,10 +57,10 @@ fn vs_main(
     // Re-express the (possibly padded) corner in units of the *core* half-extent so the SDF below
     // measures distance to the un-padded rect (|local| > 1 in the padded feather band).
     out.local = vec2<f32>(
-        corner.x * ext_padded.x / max(half.x, 1e-4),
-        corner.y * ext_padded.y / max(half.y, 1e-4),
+        corner.x * ext_padded.x / max(hext.x, 1e-4),
+        corner.y * ext_padded.y / max(hext.y, 1e-4),
     );
-    out.half = half;
+    out.hext = hext;
     out.params = vec3<f32>(radius, gradient, softness);
     out.aspect = aspect;
     return out;
@@ -82,8 +82,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
     // Work in an aspect-corrected space (scale x by aspect) so a corner radius reads as the same
     // pixel arc on both axes — round corners, never egg-shaped, on a wide window.
-    let p = vec2<f32>(in.local.x * in.half.x * aspect, in.local.y * in.half.y);
-    let ext = vec2<f32>(in.half.x * aspect, in.half.y);
+    let p = vec2<f32>(in.local.x * in.hext.x * aspect, in.local.y * in.hext.y);
+    let ext = vec2<f32>(in.hext.x * aspect, in.hext.y);
     let r = clamp(radius, 0.0, min(ext.x, ext.y));
     let dist = rounded_box_sdf(p, ext, r);
 

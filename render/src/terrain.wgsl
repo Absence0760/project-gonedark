@@ -29,12 +29,12 @@ struct VertexOut {
 fn vs_main(
     @location(0) corner: vec2<f32>,
     @location(1) center: vec2<f32>,
-    @location(2) half: vec2<f32>,
+    @location(2) hext: vec2<f32>,
     @location(3) color: vec3<f32>,
 ) -> VertexOut {
     let world = vec2<f32>(
-        center.x + corner.x * half.x,
-        center.y + corner.y * half.y,
+        center.x + corner.x * hext.x,
+        center.y + corner.y * hext.y,
     );
     var out: VertexOut;
     // The grid lives on the ground plane (z = 0), just like the units.

@@ -24,7 +24,7 @@ struct VertexOut {
 fn vs_main(
     @location(0) corner: vec2<f32>,
     @location(1) center: vec2<f32>,
-    @location(2) half: vec2<f32>,
+    @location(2) hext: vec2<f32>,
     @location(3) uv0: vec2<f32>,
     @location(4) uv_size: vec2<f32>,
     @location(5) color: vec3<f32>,
@@ -32,8 +32,8 @@ fn vs_main(
 ) -> VertexOut {
     var out: VertexOut;
     let ndc = vec2<f32>(
-        center.x + corner.x * half.x,
-        center.y + corner.y * half.y,
+        center.x + corner.x * hext.x,
+        center.y + corner.y * hext.y,
     );
     out.clip_pos = vec4<f32>(ndc.x, ndc.y, 0.0, 1.0);
     // Quad corner (-1..1) -> atlas UV. corner.x = -1 is the glyph's left (u = uv0.x); corner.y = +1
