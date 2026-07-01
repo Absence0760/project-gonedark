@@ -3864,3 +3864,48 @@ invariant-#6 intel lever.
 **Cross-link:** [`plans/pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-B/WS-E,
 [D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness),
 [D39](#d39--the-enemy-is-a-commander-level-scripted-ai-issuing-orders-via-the-lockstep-stream).
+
+## D84 — Animation floor (CP-3/WS-B) is a pure clip-selection seam + a procedural pose; rig authoring lands, skeletal playback deferred
+
+**Status: landed floor.** The first slice of the animation floor (visual-design-plan **WS-B**,
+positioning **CP-3** — the *conceded* "not jarring" tier). Two render-side seams + one authoring
+artifact, all presentation-only:
+
+- **Clip-selection seam (`render::anim::select_clip`).** A pure, total classifier mapping a small
+  presentation `AnimState { speed, firing, alive }` → `AnimClip ∈ {Idle, Walk, Fire, Death}`, with a
+  fixed priority order: `Death` ▶ `Fire` ▶ `Walk` ▶ `Idle`. Read off the interpolated render snapshot
+  at `interpolate_instances` (speed = magnitude of the pre-existing `UnitSnapshot::vel`; firing =
+  `UnitSnapshot::firing`) — **no new sim surface**. This is the load-bearing piece: the eventual
+  skeletal player slots in *behind* this same enum.
+- **Procedural pose (`render::anim::anim_pose` + `pose_matrix`).** Until a real skeletal/rigid-part
+  runtime exists, playback is a cheap per-instance pose — a vertical bob (idle breathing / walk
+  stride), a forward lean, a recoil pitch, a death topple — folded into the token model matrix and
+  **gated to infantry** (`is_infantry`). `pose_matrix(_, _, _, AnimPose::REST)` is byte-identical to
+  `mesh::model_matrix`, so vehicles/structures and units at rest render exactly as before. Two new
+  **trailing CPU-side** `UnitInstance` fields (`anim_clip`, `anim_phase`) carry it, off the GPU quad
+  instance layout (same pattern as `model`/`hull_yaw`/`kind`).
+- **Rig authoring (`tools/models/gen_trooper_rig.py`, `pnpm assets:rig`).** A Blender generator that
+  rigs the greybox trooper as **rigid box parts on a 7-bone hierarchy** (each part bound 1.0 to one
+  bone — no soft vertex weights) and bakes four clips (idle/walk/fire/death) to
+  `assets/models/rigs/trooper_rig.glb` with real glTF animation channels + a provenance manifest
+  (`source`/`license`/`sha256`), script-not-binary per [D41](#d41--ai-generated-placeholder-models-for-all-render-content-skip-commissioned-art-for-now)/[D46](#d46--the-headless-asset-tooling-toolbox-one-scriptable-cli-per-content-lane). Deterministic (bit-identical regen).
+
+**Why.** WS-B is the conceded animation tier — the bar is *"not jarring,"* not UE5 parity. Splitting
+it into (1) a pure clip **seam**, (2) a procedural **stand-in**, and (3) glTF **authoring** lets the
+floor ship value now (units visibly bob/lean/recoil in both the command and embodied viz scenes)
+while keeping the expensive part — a runtime skeletal/rigid-part loader that consumes the authored
+`.glb` — as a clean follow-up *behind the already-stable `AnimClip` interface*. It respects every
+invariant: it lives entirely on the render/float side (invariant #1/#4), reads a presentation copy of
+unit state and never writes back to the sim, adds no checksum surface (the `default`/`stress` streams
+stay bit-identical), and adds **no** render crate dependency (still `wgpu`+`bytemuck`).
+
+**Owed follow-up.** (1) A runtime skeletal/rigid-part player that consumes `trooper_rig.glb` and
+drives the bones from the `AnimClip` (replacing the procedural pose). (2) `AnimClip::Death` is
+selectable + tested but not *driven* at runtime today — dead units are dropped from the snapshot
+(`core::snapshot::Snapshot::capture`), so a visible death topple needs cross-tick unit identity + a
+death linger. Both are honestly disclosed in `render::anim`'s module doc.
+
+**Cross-link:** [`plans/visual-design-plan.md`](plans/visual-design-plan.md) WS-B,
+[D41](#d41--ai-generated-placeholder-models-for-all-render-content-skip-commissioned-art-for-now),
+[D46](#d46--the-headless-asset-tooling-toolbox-one-scriptable-cli-per-content-lane),
+[D74](#d74--visual-design-foundation-a-central-theme--an-anti-aliased-font-atlas-replaces-the-5×7-bitmap).

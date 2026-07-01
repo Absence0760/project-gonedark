@@ -126,6 +126,12 @@ pub mod icon;
 /// transform math the 3D mesh passes (weapon viewmodel + command-view unit tokens) build on.
 pub mod mesh;
 
+/// Presentation-only unit animation floor (CP-3 / WS-B): the pure clip-selection seam
+/// ([`anim::select_clip`]) + a procedural per-instance pose ([`anim::anim_pose`] / [`anim::pose_matrix`])
+/// that makes greybox troopers read as *not jarring* until real skeletal playback lands. Render/float
+/// side only (invariant #4) — no `core`/sim type, no checksum surface.
+pub mod anim;
+
 /// Embodied first-person world (W5). Owns `WorldRenderer`: the sky/ground + weapon-viewmodel passes
 /// that replace the bare near-black embodied void with a real first-person space while keeping the
 /// strategic map dark (invariant #6 — it draws ONLY the camera-derived environment + a screen-space
@@ -329,6 +335,26 @@ fn token_meshes(inst: &UnitInstance) -> Vec<(mesh::ModelKind, f32, f32)> {
     parts
 }
 
+/// Build one token part's model matrix, folding in the animation-floor pose (CP-3/WS-B) for infantry
+/// and leaving everything else byte-identical to before. Infantry troopers ([`anim::is_infantry`])
+/// get their selected clip's procedural [`anim::pose_matrix`] (bob / lean / recoil); vehicles,
+/// structures, and scenery keep the plain [`mesh::model_matrix`] — a bob on a tank reads as a bug.
+/// Pure + GPU-free, so both the command-view and embodied draw paths share it and it is unit-tested.
+fn token_part_matrix(
+    inst: &UnitInstance,
+    kind: mesh::ModelKind,
+    pos: [f32; 3],
+    scale: f32,
+    yaw: f32,
+) -> [[f32; 4]; 4] {
+    if anim::is_infantry(kind) {
+        let clip = anim::AnimClip::from_u32(inst.anim_clip);
+        anim::pose_matrix(pos, scale, yaw, anim::anim_pose(clip, inst.anim_phase))
+    } else {
+        mesh::model_matrix(pos, scale, yaw)
+    }
+}
+
 /// Sentinel health value meaning "draw no health bar" (control points).
 const NO_HEALTH_BAR: f32 = -1.0;
 
@@ -423,7 +449,7 @@ fn unit_draw_plan(
             // token_meshes is empty for a control-point ring (map intel), so it is skipped here.
             token_meshes(inst).into_iter().map(move |(kind, scale, yaw)| {
                 let mesh_inst = mesh::MeshInstance {
-                    model: mesh::model_matrix(pos, scale, yaw),
+                    model: token_part_matrix(inst, kind, pos, scale, yaw),
                     color,
                 };
                 (kind, lod, mesh_inst)
@@ -547,6 +573,21 @@ pub fn interpolate_instances(
             b.unit_kind as u32
         };
 
+        // Animation floor (CP-3/WS-B): classify the clip from this unit's presentation state — its
+        // ground speed this tick, whether it is firing, whether it is alive — all render-snapshot
+        // reads, never sim writes (invariant #4). `speed` is the magnitude of the snapshot velocity
+        // at the float boundary. A present unit is alive by construction (dead units are dropped from
+        // the snapshot); the `alive` input keeps the Death branch honest for the follow-up that adds
+        // a death linger. The phase is the sim clock, staggered per unit so a rank desyncs.
+        let (vx, vy) = (fixed_to_f32(b.vel.x), fixed_to_f32(b.vel.y));
+        let anim_state = anim::AnimState {
+            speed: (vx * vx + vy * vy).sqrt(),
+            firing: b.firing,
+            alive: health > 0.0,
+        };
+        let anim_clip = anim::select_clip(&anim_state).as_u32();
+        let anim_phase = anim::unit_phase(curr.tick, alpha, b.entity_index);
+
         out.push(UnitInstance {
             x: ax + (bx - ax) * alpha,
             y: ay + (by - ay) * alpha,
@@ -560,6 +601,8 @@ pub fn interpolate_instances(
             hull_yaw,
             turret_yaw,
             kind,
+            anim_clip,
+            anim_phase,
         });
     }
 
@@ -580,6 +623,8 @@ pub fn interpolate_instances(
             hull_yaw: 0.0,    // unused for rings (no mesh)
             turret_yaw: 0.0,
             kind: NO_TOKEN_ICON, // a control point is map intel, not a unit — no kind glyph
+            anim_clip: 0,        // unused for rings (no mesh to pose)
+            anim_phase: 0.0,
         });
     }
 
@@ -708,6 +753,16 @@ pub struct UnitInstance {
     /// drawn over the token; a trailing CPU-side field like [`model`](Self::model), so the GPU quad
     /// pipeline (instance locations 1..=5) never reads it and no shader/vertex-layout changes.
     pub kind: u32,
+    /// The animation clip this unit plays ([`anim::AnimClip`] `as u32`, CP-3/WS-B), classified from
+    /// its presentation state (speed / firing / alive) by [`anim::select_clip`] at
+    /// [`interpolate_instances`]. A trailing CPU-side field like [`model`](Self::model)/[`kind`](Self::kind)
+    /// — the mesh pass reads it (via [`anim::anim_pose`]) to pose the infantry token; the GPU quad
+    /// pipeline never touches it.
+    pub anim_clip: u32,
+    /// The unit's continuous animation phase in cycles ([`anim::unit_phase`]) — the timeline
+    /// [`anim::anim_pose`] samples so the procedural bob/lean/recoil animates over time. Staggered per
+    /// unit so a rank doesn't move in lockstep. CPU-side presentation only, like [`anim_clip`](Self::anim_clip).
+    pub anim_phase: f32,
 }
 
 /// A unit-quad corner in local space. Two triangles cover `[-1, 1]^2` (the shader scales by
@@ -1146,7 +1201,7 @@ impl Renderer {
             inst.flags |= FLAG_MESH;
             for (kind, scale, yaw) in parts {
                 buckets[kind as usize].push(mesh::MeshInstance {
-                    model: mesh::model_matrix([inst.x, inst.y, 0.0], scale, yaw),
+                    model: token_part_matrix(inst, kind, [inst.x, inst.y, 0.0], scale, yaw),
                     color: [inst.r, inst.g, inst.b, 0.0], // faction tint; a=0 → no flash
                 });
             }
@@ -2006,6 +2061,67 @@ mod tests {
         }
     }
 
+    // ---- animation floor wiring (CP-3/WS-B): interpolate_instances → clip; token_part_matrix pose ----
+
+    /// A still, alive, non-firing unit interpolates to the Idle clip.
+    #[test]
+    fn interpolate_classifies_still_unit_as_idle() {
+        let s = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, false)]);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        assert_eq!(out[0].anim_clip, anim::AnimClip::Idle.as_u32());
+    }
+
+    /// A unit with non-trivial snapshot velocity interpolates to the Walk clip.
+    #[test]
+    fn interpolate_classifies_moving_unit_as_walk() {
+        let mut u = unit(Fixed::ZERO, Fixed::ZERO, false);
+        u.vel = Vec2::new(Fixed::ONE, Fixed::ZERO); // 1 unit/tick ≫ WALK_SPEED_THRESHOLD
+        let s = snapshot(0, vec![u]);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        assert_eq!(out[0].anim_clip, anim::AnimClip::Walk.as_u32());
+    }
+
+    /// A firing unit interpolates to the Fire clip even while moving (fire overrides walk).
+    #[test]
+    fn interpolate_classifies_firing_unit_as_fire() {
+        let mut u = unit(Fixed::ZERO, Fixed::ZERO, false);
+        u.vel = Vec2::new(Fixed::ONE, Fixed::ZERO);
+        u.firing = true;
+        let s = snapshot(0, vec![u]);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        assert_eq!(out[0].anim_clip, anim::AnimClip::Fire.as_u32());
+    }
+
+    /// `token_part_matrix` folds the animation pose into an INFANTRY token (so it visibly animates),
+    /// but leaves a vehicle/structure token byte-identical to the plain `model_matrix`.
+    #[test]
+    fn token_part_matrix_poses_infantry_only() {
+        // A walking trooper with a mid-stride phase — its matrix must differ from the static one.
+        let mut trooper = uinst(3.0, 4.0, 0, mesh::ModelKind::Trooper, theme::PLAYER);
+        trooper.anim_clip = anim::AnimClip::Walk.as_u32();
+        trooper.anim_phase = 0.3;
+        let posed = token_part_matrix(&trooper, mesh::ModelKind::Trooper, [3.0, 4.0, 0.0], TOKEN_SCALE, 0.0);
+        let plain = mesh::model_matrix([3.0, 4.0, 0.0], TOKEN_SCALE, 0.0);
+        assert_ne!(posed, plain, "a walking trooper token animates");
+
+        // A tank with the very same clip/phase must NOT animate — a bob on armour reads as a bug.
+        let mut tank = uinst(3.0, 4.0, 0, mesh::ModelKind::Tank, theme::PLAYER);
+        tank.anim_clip = anim::AnimClip::Walk.as_u32();
+        tank.anim_phase = 0.3;
+        let tank_m = token_part_matrix(&tank, mesh::ModelKind::Tank, [3.0, 4.0, 0.0], TOKEN_SCALE, 0.0);
+        assert_eq!(tank_m, plain, "vehicles keep the plain model_matrix");
+    }
+
+    /// An idle trooper at phase 0 renders byte-identical to the static matrix (the floor is inert at
+    /// rest — no idle jitter from a cold start).
+    #[test]
+    fn token_part_matrix_idle_phase_zero_is_static() {
+        let trooper = uinst(1.0, 2.0, 0, mesh::ModelKind::Trooper, theme::PLAYER); // anim_clip=Idle, phase=0 via Default
+        let posed = token_part_matrix(&trooper, mesh::ModelKind::Trooper, [1.0, 2.0, 0.0], TOKEN_SCALE, 0.5);
+        let plain = mesh::model_matrix([1.0, 2.0, 0.0], TOKEN_SCALE, 0.5);
+        assert_eq!(posed, plain, "idle trooper at phase 0 is inert");
+    }
+
     // ---- fixed_to_f32 ----
 
     #[test]
@@ -2354,6 +2470,24 @@ mod tests {
         assert!(manifest.contains("\"sha256\""));
     }
 
+    /// CP-3/WS-B: the animation-rig artifact carries the four clips with the script-not-binary
+    /// provenance record (source / license / sha256) — same discipline as the model manifest (D41).
+    /// Reads the committed `assets/models/rigs/manifest.json`.
+    #[test]
+    fn trooper_rig_manifest_has_the_four_clips_and_provenance() {
+        let manifest = include_str!("../../assets/models/rigs/manifest.json");
+        assert!(manifest.contains("\"name\": \"trooper_rig\""));
+        for clip in ["idle", "walk", "fire", "death"] {
+            assert!(
+                manifest.contains(&format!("\"name\": \"{clip}\"")),
+                "rig manifest is missing the `{clip}` clip"
+            );
+        }
+        assert!(manifest.contains("\"license\": \"CC0-1.0\""));
+        assert!(manifest.contains("tools/models/gen_trooper_rig.py"));
+        assert!(manifest.contains("\"sha256\""));
+    }
+
     #[test]
     fn token_meshes_decodes_parts_scale_yaw_and_skips_rings() {
         // A Rifleman token (model = Trooper) → one infantry mesh at true scale, yawed by hull.
@@ -2508,6 +2642,7 @@ mod tests {
             hull_yaw: 0.0,
             turret_yaw: 0.0,
             kind,
+            ..Default::default()
         }
     }
 
@@ -2606,6 +2741,7 @@ mod tests {
             hull_yaw: 0.0,
             turret_yaw: 0.0,
             kind: NO_TOKEN_ICON,
+            ..Default::default()
         }
     }
 

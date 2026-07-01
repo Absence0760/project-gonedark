@@ -160,7 +160,7 @@ match. **Lag** = an incumbent is materially better and we must close or consciou
 | Strategic/command depth | ⏳ systems-complete | Company of Heroes | **PAR-ish** | **CP-9** command-layer readability pass |
 | Gunsmith / loadout | ⏳ designed (WS-C) | CoD Mobile | **LAG** | **CP-1** gunsmith to mobile-expected depth |
 | Raw FPS gunfeel / gunplay | ⏳ hitscan + tank | Delta Force / CoD | **LAG** | **CP-2** embodied game-feel bar |
-| Animation / character fidelity | ⏳ greybox | Delta Force (UE5) | **LAG (conceded tier)** | **CP-3** "not jarring" floor, not parity |
+| Animation / character fidelity | ⏳ floor slice landed (WS-B/D84) | Delta Force (UE5) | **LAG (conceded tier)** | **CP-3** "not jarring" floor, not parity |
 | Mobile control feel / HUD | ⏳ editor designed (WS-D) | CoD Mobile | **PAR (closing)** | **CP-4** HUD editor + touch polish |
 | Cross-platform progression | ⏳ persist exists | Warzone (CoD wallet) | **LAG** | **CP-5** unified entitlement layer |
 | Audio fidelity (a primary system, #6) | ⏳ procedural placeholders | Delta Force | **LAG** | **CP-6** audio identity pass |
@@ -194,7 +194,9 @@ the reason to choose us.** None reopens an invariant.
 - **CP-3 — Animation/fidelity floor (conceded tier).** *Not* UE5 parity — a "not jarring" floor:
   coherent locomotion/fire/death anims on the greybox so the eye-level view reads as a place, via the
   scripted asset pipeline ([`content-pipeline.md`](../content-pipeline.md), D41/D46). Explicitly a
-  conceded tier; we compete on the hybrid, not the polygon count.
+  conceded tier; we compete on the hybrid, not the polygon count. *WS-B floor slice landed
+  ([D84](../decisions.md)): clip-selection seam + procedural pose (troopers animate) + rig authoring;
+  runtime skeletal playback + WS-F mesh fidelity still owed.*
 - **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (WS-D, [D61](../decisions.md))
   and a touch-target/rebind pass so controls feel CoD-Mobile-class. Closes the one PAR row we can
   actually win.

@@ -87,18 +87,35 @@ landed (TF-4: hitmarker + hit SFX off the avatar-source `SimEvent::Damaged` stre
 
 ### WS-B — Animation floor *(CP-3, conceded tier — "not jarring", not UE5 parity)*
 
+> **Status: FLOOR SLICE LANDED ([D84](../decisions.md)).** The clip-selection seam, the procedural
+> playback stand-in, and the rig authoring are in; the *runtime skeletal player* is the owed
+> follow-up. What landed: `render::anim::select_clip` (the pure `AnimState → AnimClip ∈
+> {Idle,Walk,Fire,Death}` seam, priority `Death▶Fire▶Walk▶Idle`), driven from the render snapshot's
+> existing `vel`/`firing` (no new sim authority); a subtle **procedural** per-instance pose
+> (`anim_pose`/`pose_matrix` — bob / lean / recoil / topple, infantry-gated, `REST`-identical to
+> `mesh::model_matrix`) wired into **both** the command and embodied token draw paths so troopers
+> visibly animate now; and `tools/models/gen_trooper_rig.py` (`pnpm assets:rig`), a rigid-part
+> Blender rig baking the four clips to `assets/models/rigs/trooper_rig.glb` with real glTF animation
+> channels + a provenance manifest (script-not-binary, deterministic). All presentation-only
+> (invariant #1/#4), no new render dep, `default`/`stress` checksum streams bit-identical.
+
 Coherent locomotion / fire / death animation on the greybox so the eye-level view reads as a *place*.
 
-- Rig + a small clip set (idle / walk / fire / death) on the trooper greybox via Blender, exported in
-  the glTF cook → LOD chain ([D49](../decisions.md)); script-not-binary.
-- Drive clip selection from sim-derived state (moving vs idle vs firing vs dead) on the render side —
-  a presentation read of existing component state, no new sim authority.
+- ✅ Rig + a small clip set (idle / walk / fire / death) on the trooper greybox via Blender, exported
+  with glTF animation channels; script-not-binary ([D84](../decisions.md)). *(Cook through gltfpack →
+  LOD chain ([D49](../decisions.md)) rides with the eventual skeletal-loader follow-up — the rig glb
+  is authored + committed but not runtime-consumed yet.)*
+- ✅ Drive clip selection from sim-derived state (moving vs idle vs firing vs dead) on the render side
+  — a presentation read of existing component state, no new sim authority (`render::anim::select_clip`).
 - **Explicitly bounded:** this is the *floor*, not photoreal fidelity (consciously conceded per
   [`positioning.md`](../positioning/positioning.md)). Stop at "not jarring."
-- **Files:** `tools/models/`, the cook/LOD path, `render` (skeletal/clip playback), `engine` (the
-  pure "which clip for this unit's state" selector).
-- **Acceptance:** the embodied + command viz scenes show units that animate coherently; manifest
-  entries for the new clips; a unit test on the clip-selection seam.
+- **Files:** `tools/models/gen_trooper_rig.py`, `assets/models/rigs/`, `render::anim` (clip seam +
+  procedural pose), `render/src/lib.rs` (token draw wiring). *(cook/LOD path + a runtime skeletal
+  player = the owed follow-up.)*
+- **Acceptance:** ✅ the embodied + command viz scenes show units that animate coherently (procedural
+  pose, GPU-verified via `pnpm desktop:viz`); ✅ manifest entries for the new clips; ✅ a unit test on
+  the clip-selection seam. **Owed:** runtime skeletal playback consuming the authored `.glb`, and a
+  driven death topple (dead units are dropped from the snapshot today — see [D84](../decisions.md)).
 
 ### WS-C — Command-layer readability & glanceability *(CP-9, launch-important)*
 

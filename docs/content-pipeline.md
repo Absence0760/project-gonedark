@@ -159,7 +159,7 @@ needs an asset; script the generator and commit the *script* + a manifest entry
 
 | Tool | Lane | Used for |
 |---|---|---|
-| **Blender** (`bpy`) | 3D author | procedural/greybox meshes, geometry-nodes terrain, rig/anim, glTF export (`tools/models/gen_models.py`, D41) |
+| **Blender** (`bpy`) | 3D author | procedural/greybox meshes, geometry-nodes terrain, rig/anim, glTF export (`tools/models/gen_models.py`, D41; rig + clip authoring `tools/models/gen_trooper_rig.py`, CP-3/WS-B) |
 | **gltfpack** | 3D cook | glTF mesh/texture compression (meshopt/Draco) for the mobile / 200-unit budget; **drives the greybox LOD chain** (`-si … -sa`, gen_models.py §2) |
 | **SoX** | audio | SFX synthesis + processing |
 | **Csound** | audio | deterministic, **seed-scripted** SFX — regenerable + git-diffable, the audio analogue of D41 (audio is a primary system, invariant #6) |
