@@ -489,6 +489,13 @@ pub const FIELD_MANUAL_BLURB: &str =
 /// The desktop controls reference shown on the About screen — the **real** default keymap (kept in
 /// sync with `pal-desktop`'s `DesktopInput` doc + `app`'s host keys). Static data, so it's unit-tested
 /// for shape (every group present, no empty cells). ASCII only — never a tofu glyph.
+///
+/// The list is **prefixed by a non-keybinding "GOING DARK" concept section** (A1 parity with
+/// Android's `fieldManualSections`): those rows reuse the `ControlRow` shape with the concept name in
+/// the `keys` column and its one-line framing in `action`, so the grouped `about_ui` renderer draws
+/// them ahead of the COMMAND/EMBODIED/GLOBAL keymap groups with no special case. Content is Android's
+/// verbatim, with its "Going dark" em-dash rendered as ASCII `--` (the file's default-font/no-tofu
+/// rule is the one deviation).
 pub fn controls_reference() -> &'static [ControlRow] {
     const fn row(group: &'static str, keys: &'static str, action: &'static str) -> ControlRow {
         ControlRow {
@@ -499,6 +506,13 @@ pub fn controls_reference() -> &'static [ControlRow] {
     }
     // A `static` (not a returned temporary) so the slice is genuinely `'static`.
     static ROWS: &[ControlRow] = &[
+        // The "GOING DARK" concept block — the game's framing ahead of the keymap (mirrors Android's
+        // `fieldManualSections` leading section). Not keybindings: the `keys` cell is the concept
+        // name, `action` its one-line explanation.
+        row("GOING DARK", "Embodiment", "Possess one unit and fight it in first person"),
+        row("GOING DARK", "Going dark", "Embodying blacks out the strategic map -- alerts, not intel"),
+        row("GOING DARK", "Surface", "Eject back to command; death also ejects you (no respawn)"),
+        row("GOING DARK", "Stay fair", "While dark you get a directional flash + audio, never a map reveal"),
         // Command layer (RTS) — pal-desktop keymap (D42 classic-RTS split).
         row("COMMAND", "Left-click", "Select / band-select"),
         row("COMMAND", "Right-click", "Move or attack-move the selection"),
@@ -2117,6 +2131,33 @@ mod tests {
                 "the {layer} layer must have at least one binding"
             );
         }
+    }
+
+    #[test]
+    fn controls_reference_leads_with_the_going_dark_concept_section() {
+        // A1 parity: the field manual prepends a GOING DARK concept block (mirrors Android's
+        // `fieldManualSections`) ahead of the keymap groups, so the first rows are that section.
+        let rows = controls_reference();
+        assert_eq!(rows[0].group, "GOING DARK", "the concept section must lead the manual");
+        // The four concept rows, in order and verbatim (em-dash rendered ASCII per the no-tofu rule).
+        let concept: Vec<(&str, &str)> = rows
+            .iter()
+            .filter(|r| r.group == "GOING DARK")
+            .map(|r| (r.keys, r.action))
+            .collect();
+        assert_eq!(
+            concept,
+            vec![
+                ("Embodiment", "Possess one unit and fight it in first person"),
+                ("Going dark", "Embodying blacks out the strategic map -- alerts, not intel"),
+                ("Surface", "Eject back to command; death also ejects you (no respawn)"),
+                ("Stay fair", "While dark you get a directional flash + audio, never a map reveal"),
+            ]
+        );
+        // The concept block sits entirely before the first keymap group (no interleaving).
+        let last_concept = rows.iter().rposition(|r| r.group == "GOING DARK").unwrap();
+        let first_keymap = rows.iter().position(|r| r.group != "GOING DARK").unwrap();
+        assert!(last_concept < first_keymap, "the concept section is not interleaved with the keymap");
     }
 
     // ---- The Operations-hub mission-select + briefing pure seams ---------------------------------
