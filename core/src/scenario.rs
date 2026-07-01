@@ -459,7 +459,27 @@ fn build_skirmish_terrain(sim: &mut Sim) {
 /// Pure, deterministic, fixed-point (invariant #1): spawn order is fixed (posts, then both bases,
 /// then both troops) and every value is integer / `Fixed`, so two seeds of a fresh `Sim` are
 /// bit-identical — the property the single-sourced `app`/harness correspondence rests on.
+///
+/// This is the all-`Standard` loadout entry point ([`Loadout::STANDARD`] is a proven no-op on the
+/// weapon, so the seeded world is byte-identical to the pre-gunsmith skirmish). To field the
+/// player's chosen gunsmith loadout at match start, call [`seed_skirmish_with_loadout`].
 pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
+    seed_skirmish_with_loadout(sim, Loadout::STANDARD)
+}
+
+/// Seed the two-base skirmish, applying the player's chosen gunsmith [`Loadout`] to the Player's
+/// single starting troop's weapon **at match start** — the WS-C live-spawn wiring (D60,
+/// `customization.md` §1), mirroring [`seed_seize_mission_with_loadout`]. The loadout is
+/// **deterministic match-setup input**: applied once, here, on top of the per-army base weapon (the
+/// Player fields [`Army::Us`], so the deltas are drawn from the US gunsmith pool via
+/// [`Loadout::apply_to_weapon_for`]). The modified weapon fields are already hashed by `Sim::fold`,
+/// so the loadout rides the per-tick checksum with **no new fold surface** — two peers that pick the
+/// same loadout fold bit-identically, and a loadout desync would be caught by the cross-arch matrix
+/// like any other sim divergence (invariant #7). The chosen build is a fair sidegrade by
+/// construction (no strictly-dominant build — proven in [`crate::gunsmith`]).
+///
+/// [`seed_skirmish`] is the `Loadout::STANDARD` (no-op) shim over this.
+pub fn seed_skirmish_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> Skirmish {
     // Slow the income drip to the skirmish's pace (scenario-local; the D30 constants are untouched).
     // Base income now reads as ~1 Rifleman / 30 s, and capturing posts is how you speed it up.
     sim.set_income_period(SKIRMISH_INCOME_PERIOD);
@@ -533,6 +553,17 @@ pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
         troop_hp,
         Angle(ANGLE_FULL / 2), // −X, toward the player
     );
+
+    // Apply the player's chosen gunsmith loadout to the Player's starting troop's weapon — the WS-C
+    // live-spawn step, mirroring the *Seize* mission. Match-setup input applied once on top of the
+    // per-army base weapon (drawn from the Player's army gunsmith pool); `Loadout::STANDARD` is a
+    // no-op, so an opted-out player keeps the byte-identical baseline weapon. The modified fields are
+    // all already in `Sim::fold`, so this rides the per-tick checksum with no new fold surface
+    // (invariant #7). It touches only the weapon component — spawn order is unchanged — and the Enemy
+    // troop is untouched (this is the *player's* gunsmith).
+    let player_army = sim.army_of(Faction::Player);
+    player_loadout
+        .apply_to_weapon_for(player_army, &mut sim.world.weapon[player_troop.index as usize]);
 
     // Lay the static, fair cover map. It spawns nothing, so entity/spawn order — and thus the
     // per-tick checksum stream — is untouched; terrain is not in the checksum (invariant #7).
@@ -1625,6 +1656,167 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- Skirmish live-spawn gunsmith wiring (WS-C, D60) — the two-base equivalent of the *Seize*
+    //     loadout tests above: the skirmish's single Player troop fields the chosen build at match
+    //     start, folded into the same per-tick checksum with no new fold surface. ------------------
+
+    /// The skirmish's Player troop's weapon after the scene is live-seeded with `loadout`.
+    fn skirmish_player_weapon(loadout: Loadout) -> Weapon {
+        let mut sim = fresh();
+        let s = seed_skirmish_with_loadout(&mut sim, loadout);
+        sim.world.weapon[s.player_troop.index as usize]
+    }
+
+    /// Drive the skirmish seeded with `loadout` through a scripted assault (the Player troop attack-
+    /// moves onto the enemy base while the enemy commander plays on its cadence) and return the per-
+    /// tick checksum stream (pre-step first, then one entry per stepped tick). Deterministic by
+    /// construction — the lockstep building block the agreement/divergence tests replay. The loadout
+    /// lives in the weapon component, so it is folded from the pre-step checksum onward.
+    fn skirmish_checksum_stream(loadout: Loadout, ticks: u64) -> Vec<u64> {
+        use crate::commander::{commander_orders, CommanderConfig, COMMANDER_PERIOD};
+        use crate::rng::Rng;
+
+        let mut sim = fresh();
+        let s = seed_skirmish_with_loadout(&mut sim, loadout);
+        let enemy_base_pos = sim.world.pos[s.enemy_base.index as usize];
+        let mut enemy_rng = Rng::new(0xD0E1 ^ Faction::Enemy.index() as u64);
+
+        let mut stream = Vec::with_capacity(ticks as usize + 1);
+        // Pre-step: the loadout already lives in the weapon fold, so peers must agree (or diverge)
+        // here before a single system runs.
+        stream.push(sim.checksum());
+
+        // Open by attack-moving the Player's troop onto the enemy base (FireAtWill fires en route).
+        sim.step(&[Command::AttackMove { entity: s.player_troop, target: enemy_base_pos }]);
+        stream.push(sim.checksum());
+
+        for _ in 1..ticks {
+            let cmds = if sim.tick_count().is_multiple_of(COMMANDER_PERIOD) {
+                commander_orders(
+                    &sim.world,
+                    &sim.territory,
+                    &sim.resources,
+                    &mut enemy_rng,
+                    &CommanderConfig::default(),
+                    &[],
+                    Faction::Enemy,
+                    sim.tick_count(),
+                )
+            } else {
+                Vec::new()
+            };
+            sim.step(&cmds);
+            stream.push(sim.checksum());
+        }
+        stream
+    }
+
+    /// `Loadout::STANDARD` is a true no-op on the skirmish live-spawn path: the scene seeded with the
+    /// Standard loadout is byte-identical to the plain `seed_skirmish` (same handles, same checksum,
+    /// same player weapon) — so an opted-out player's match is unchanged and existing goldens hold.
+    #[test]
+    fn skirmish_standard_loadout_is_byte_identical_to_the_plain_seeder() {
+        let mut plain = fresh();
+        let mut std = fresh();
+        let m_plain = seed_skirmish(&mut plain);
+        let m_std = seed_skirmish_with_loadout(&mut std, Loadout::STANDARD);
+        assert_eq!(m_plain, m_std, "the Standard loadout seeds the identical handles");
+        assert_eq!(
+            plain.checksum(),
+            std.checksum(),
+            "the Standard loadout leaves the seeded world byte-identical"
+        );
+        assert_eq!(
+            plain.world.weapon[m_plain.player_troop.index as usize],
+            std.world.weapon[m_std.player_troop.index as usize],
+            "the Standard-seeded player weapon equals the plain-seeded one byte-for-byte"
+        );
+    }
+
+    /// The live-spawn application: the skirmish's Player troop fields the player-army (US) base
+    /// Rifleman with the chosen loadout applied — exactly `Loadout::apply_to_weapon_for(Army::Us, …)`
+    /// — a non-Standard loadout moves it off the bare US baseline, and the enemy (FR) troop is
+    /// untouched by the *player's* gunsmith.
+    #[test]
+    fn skirmish_applies_the_chosen_loadout_to_the_player_troop() {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let loadout = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        };
+        let mut sim = fresh();
+        let s = seed_skirmish_with_loadout(&mut sim, loadout);
+
+        let mut expected = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        loadout.apply_to_weapon_for(Army::Us, &mut expected);
+        assert_eq!(
+            sim.world.weapon[s.player_troop.index as usize], expected,
+            "the US player troop fields the US-pool weapon with the loadout applied"
+        );
+        // The non-Standard loadout actually moved the weapon off the bare US baseline.
+        let bare_us = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        assert_ne!(expected, bare_us, "the loadout is a real change off the baseline");
+        // The enemy (FR) troop is unaffected — this is the player's gunsmith, not the enemy's.
+        let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
+        assert_eq!(
+            sim.world.weapon[s.enemy_troop.index as usize], fr_rifle,
+            "the enemy troop is untouched by the player loadout"
+        );
+    }
+
+    /// **Checksum agreement (invariant #7).** Two peers seeding the SAME loadout and replaying the
+    /// SAME scripted skirmish produce the identical per-tick checksum stream — the loadout rides the
+    /// existing weapon fold, adding no desync surface.
+    #[test]
+    fn same_loadout_skirmish_two_peers_agree_every_tick() {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let loadout = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Quickdraw,
+        };
+        let a = skirmish_checksum_stream(loadout, 400);
+        let b = skirmish_checksum_stream(loadout, 400);
+        assert_eq!(
+            a, b,
+            "two peers with the same loadout produce the identical per-tick checksum stream"
+        );
+    }
+
+    /// **Honest divergence.** Two peers seeding DIFFERENT loadouts (same scene, same scripted input)
+    /// diverge — from the pre-step checksum (the weapon component differs) and on through the fight.
+    /// Paired with the same-loadout control above, this proves the divergence is caused by the
+    /// loadout, not by nondeterminism — so a real loadout desync would surface on the cross-arch
+    /// matrix, never drift silently.
+    #[test]
+    fn different_loadout_skirmish_diverges_only_as_expected_sim_state() {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let marksman = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        };
+        let runner = Loadout {
+            optic: Optic::CloseQuarters,
+            barrel: Barrel::Light,
+            magazine: Magazine::Quickdraw,
+        };
+        // The two builds must actually field different weapons, or the streams trivially agree.
+        assert_ne!(
+            skirmish_player_weapon(marksman),
+            skirmish_player_weapon(runner),
+            "the two builds must seed different player weapons"
+        );
+        let a = skirmish_checksum_stream(marksman, 400);
+        let b = skirmish_checksum_stream(runner, 400);
+        assert_ne!(
+            a[0], b[0],
+            "different loadouts fold to a different pre-step checksum (the weapon stats differ)"
+        );
+        assert_ne!(a, b, "different loadouts produce a different sim trajectory");
     }
 
     /// Drive the US-vs-FR *Seize* mission to a result and return `(final_checksum, enemy_cleared)`:

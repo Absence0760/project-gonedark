@@ -1613,7 +1613,11 @@ impl Scene {
 /// producing player + enemy camp, two neutral control points. GPU-free (mutates only the `Sim`), so
 /// it is host-tested directly — the renderer-bearing `Game::new_scene` stays the thin glue. Starts
 /// in the command view (`start_embodied == false`).
-fn seed_default_scene(sim: &mut Sim) -> (Entity, bool) {
+///
+/// The demo is embodiable (the first player unit is the avatar), so it honors the player's pre-match
+/// gunsmith `player_loadout` — applied to the whole player squad at match start (WS-C, D60), exactly
+/// like the skirmish and the PvE mission. `Loadout::STANDARD` is a no-op (byte-identical demo).
+fn seed_default_scene(sim: &mut Sim, player_loadout: Loadout) -> (Entity, bool) {
     sim.resources = Resources::new(500);
 
     // Two neutral control points to fight over.
@@ -1630,6 +1634,17 @@ fn seed_default_scene(sim: &mut Sim) -> (Entity, bool) {
     let player = spawn_unit(sim, -7, -2, Faction::Player, Stance::FireAtWill);
     let ally_a = spawn_unit(sim, -9, 4, Faction::Player, Stance::FireAtWill);
     let ally_b = spawn_unit(sim, -9, -7, Faction::Player, Stance::FireAtWill);
+
+    // Field the player's chosen gunsmith loadout on the whole player squad at match start (WS-C,
+    // D60) — before the opening `sim.step` below, so it is folded from tick 0 like the skirmish and
+    // the PvE mission. Match-setup input applied on top of each unit's base weapon (this scene never
+    // calls `set_army`, so the pool is `Army::Neutral` — the shared baseline `spawn_unit` seeds);
+    // `Loadout::STANDARD` is a no-op. It touches only the weapon component (no spawn), so entity
+    // order and the per-tick checksum stream are unchanged (invariant #7).
+    let player_army = sim.army_of(Faction::Player);
+    for &p in &[player, ally_a, ally_b] {
+        player_loadout.apply_to_weapon_for(player_army, &mut sim.world.weapon[p.index as usize]);
+    }
 
     // Enemy squad (right). They start IDLE (Stance::FireAtWill) — the enemy commander (W3)
     // takes over from the first commander tick and drives them: capture points, press the
@@ -1681,13 +1696,18 @@ fn seed_default_scene(sim: &mut Sim) -> (Entity, bool) {
 }
 
 /// Seed the **playable two-base skirmish** and return `(player, start_embodied)`. Seeds the shared
-/// `core::scenario::seed_skirmish` scene (two operational bases, one troop each, three neutral posts)
-/// and hands back the Player's starting troop as the embodiable/selectable `player`. Booted in the
-/// command view (`start_embodied == false`): unlike the debug sandboxes you start commanding, not
-/// possessing. No scripted opening order — the enemy is the commander's from its first plan, and the
-/// match-end is the host's existing win-condition evaluator. GPU-free, so it is host-tested directly.
-fn seed_skirmish_scene(sim: &mut Sim) -> (Entity, bool) {
-    let s = gonedark_core::scenario::seed_skirmish(sim);
+/// `core::scenario::seed_skirmish_with_loadout` scene (two operational bases, one troop each, three
+/// neutral posts) and hands back the Player's starting troop as the embodiable/selectable `player`.
+/// Booted in the command view (`start_embodied == false`): unlike the debug sandboxes you start
+/// commanding, not possessing. No scripted opening order — the enemy is the commander's from its
+/// first plan, and the match-end is the host's existing win-condition evaluator. GPU-free, so it is
+/// host-tested directly.
+///
+/// The player's pre-match gunsmith `player_loadout` is applied to the starting troop's weapon **at
+/// match start** — the WS-C live-spawn wiring, deterministic match-setup input folded into the
+/// per-tick checksum with no new fold surface (invariant #7); `Loadout::STANDARD` is a no-op.
+fn seed_skirmish_scene(sim: &mut Sim, player_loadout: Loadout) -> (Entity, bool) {
+    let s = gonedark_core::scenario::seed_skirmish_with_loadout(sim, player_loadout);
     (s.player_troop, false)
 }
 
@@ -1989,10 +2009,12 @@ impl Game {
 
     /// Build the game into a chosen [`Scene`], fielding the player's pre-match gunsmith
     /// `player_loadout` at match start (WS-C, D60). Identical to [`Game::new_scene`] in every respect
-    /// except that the PvE mission ([`Scene::Mission1`]) applies the chosen loadout to the player's
-    /// troops as deterministic match-setup input (folded into the per-tick checksum with no new fold
-    /// surface — invariant #7). The other scenes carry no player loadout, so the argument is inert for
-    /// them. `Loadout::STANDARD` reproduces [`Game::new_scene`] exactly.
+    /// except that the embodiable match scenes ([`Scene::Mission1`], [`Scene::Skirmish`], and the
+    /// [`Scene::Default`] demo) apply the chosen loadout to the player's troop(s) as deterministic
+    /// match-setup input (folded into the per-tick checksum with no new fold surface — invariant #7).
+    /// The pure debug sandboxes ([`Scene::Duel`]/[`Scene::Infantry`]/[`Scene::MapInspect`]) carry no
+    /// player loadout, so the argument is inert for them. `Loadout::STANDARD` reproduces
+    /// [`Game::new_scene`] exactly.
     pub fn new_scene_with_loadout(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
@@ -2006,11 +2028,11 @@ impl Game {
         let (player, start_embodied, objectives) = match scene {
             Scene::Mission1 => seed_seize_mission_scene(&mut sim, player_loadout),
             Scene::Default => {
-                let (p, e) = seed_default_scene(&mut sim);
+                let (p, e) = seed_default_scene(&mut sim, player_loadout);
                 (p, e, objectives::ObjectiveSet::default())
             }
             Scene::Skirmish => {
-                let (p, e) = seed_skirmish_scene(&mut sim);
+                let (p, e) = seed_skirmish_scene(&mut sim, player_loadout);
                 (p, e, objectives::ObjectiveSet::default())
             }
             Scene::Duel => {
@@ -4134,7 +4156,7 @@ mod tests {
     #[test]
     fn skirmish_scene_boots_in_command_view_with_one_player_troop() {
         let mut sim = Sim::new(DEFAULT_SEED);
-        let (player, start_embodied) = seed_skirmish_scene(&mut sim);
+        let (player, start_embodied) = seed_skirmish_scene(&mut sim, Loadout::STANDARD);
         assert!(!start_embodied, "the skirmish boots commanding, not possessing");
 
         // The handed-back `player` is a live Player Rifleman, order-driven (not embodied).
@@ -4193,6 +4215,43 @@ mod tests {
         };
         let mut sim = Sim::new(DEFAULT_SEED);
         let (player, _e, _o) = seed_seize_mission_scene(&mut sim, chosen);
+        assert_ne!(
+            sim.world.weapon[player.index as usize],
+            std_sim.world.weapon[std_player.index as usize],
+            "a non-Standard loadout must move the live-spawned weapon off the baseline",
+        );
+    }
+
+    /// WS-C live-spawn wiring for the two-base skirmish: the Skirmish scene seam applies the player's
+    /// chosen gunsmith loadout to the starting troop at match start. `Loadout::STANDARD` leaves the
+    /// weapon byte-equal to the un-loadout-ed scene; a non-Standard loadout moves it. GPU-free seam
+    /// under `Game::new_scene_with_loadout` (the checksum/fairness proofs live in `core::scenario`/
+    /// `core::gunsmith`); this pins that the seam threads the loadout through to the live spawn.
+    #[test]
+    fn skirmish_scene_applies_the_chosen_loadout_at_match_start() {
+        use gonedark_core::gunsmith::{Barrel, Magazine, Optic};
+
+        // Standard loadout → identical to the plain seeder (no-op), so the player troop's weapon is
+        // exactly the army-rostered baseline the un-wired skirmish spawned.
+        let mut std_sim = Sim::new(DEFAULT_SEED);
+        let (std_player, embodied) = seed_skirmish_scene(&mut std_sim, Loadout::STANDARD);
+        assert!(!embodied, "the skirmish boots commanding, not possessing");
+        let mut baseline_sim = Sim::new(DEFAULT_SEED);
+        let baseline = gonedark_core::scenario::seed_skirmish(&mut baseline_sim);
+        assert_eq!(
+            std_sim.world.weapon[std_player.index as usize],
+            baseline_sim.world.weapon[baseline.player_troop.index as usize],
+            "the Standard loadout is a no-op — byte-identical to the un-wired skirmish",
+        );
+
+        // A non-Standard loadout is actually applied to the live-spawned troop's weapon.
+        let chosen = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        };
+        let mut sim = Sim::new(DEFAULT_SEED);
+        let (player, _e) = seed_skirmish_scene(&mut sim, chosen);
         assert_ne!(
             sim.world.weapon[player.index as usize],
             std_sim.world.weapon[std_player.index as usize],
@@ -4323,7 +4382,7 @@ mod tests {
     #[test]
     fn default_scene_starts_in_command_view() {
         let mut sim = Sim::new(DEFAULT_SEED);
-        let (player, start_embodied) = seed_default_scene(&mut sim);
+        let (player, start_embodied) = seed_default_scene(&mut sim, Loadout::STANDARD);
         assert!(!start_embodied, "the demo skirmish starts in command view");
         assert_eq!(sim.world.faction[player.index as usize], Faction::Player);
         assert_eq!(
