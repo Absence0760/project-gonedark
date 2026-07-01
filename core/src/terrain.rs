@@ -141,6 +141,26 @@ impl Terrain {
         }
     }
 
+    /// Fill only the **perimeter** of the inclusive rectangle `[cx0..=cx1] × [cy0..=cy1]` with
+    /// `c`, leaving the interior untouched — a hollow wall ring. The corners may be given in any
+    /// order; cells outside the grid are silently skipped. The map-building primitive for a
+    /// **structure**: a `Heavy` ring is a walled compound / bunker whose inside is dead space and
+    /// whose walls break line of sight, reading as a building on the field. Carve a doorway
+    /// afterwards with [`set_cover`](Self::set_cover) (or leave a side open by shrinking the ring).
+    ///
+    /// A degenerate rectangle (a single row, column, or cell) is just that line/point — every cell
+    /// is on the perimeter, so this matches [`fill_rect`](Self::fill_rect) there.
+    pub fn fill_rect_outline(&mut self, cx0: i32, cy0: i32, cx1: i32, cy1: i32, c: Cover) {
+        let (lo_x, hi_x) = if cx0 <= cx1 { (cx0, cx1) } else { (cx1, cx0) };
+        let (lo_y, hi_y) = if cy0 <= cy1 { (cy0, cy1) } else { (cy1, cy0) };
+        // Top and bottom edges (full width), then the two side edges close the ring. Corners are
+        // written twice — a harmless idempotent overwrite — kept for one obvious span per edge.
+        self.fill_rect(lo_x, lo_y, hi_x, lo_y, c);
+        self.fill_rect(lo_x, hi_y, hi_x, hi_y, c);
+        self.fill_rect(lo_x, lo_y, lo_x, hi_y, c);
+        self.fill_rect(hi_x, lo_y, hi_x, hi_y, c);
+    }
+
     /// Map a world position to its `(cell_x, cell_y)`, clamped to the grid border — the exact
     /// mapping [`flow_field`](crate::flow_field) uses, so a unit's pathing cell == its
     /// cover/LoS cell.
@@ -524,6 +544,54 @@ mod tests {
                 c.max(0).min(GRID as i32 - 1)
             };
             assert_eq!(mine, (expect_x, expect_y));
+        }
+    }
+
+    #[test]
+    fn fill_rect_outline_walls_the_perimeter_leaving_the_interior_open() {
+        // A 5×5 Heavy ring (a walled compound): every border cell is Heavy, every interior cell is
+        // still open dead space.
+        let mut t = Terrain::open();
+        t.fill_rect_outline(40, 40, 44, 44, Cover::Heavy);
+        for cy in 40..=44 {
+            for cx in 40..=44 {
+                let on_border = cx == 40 || cx == 44 || cy == 40 || cy == 44;
+                let expected = if on_border { Cover::Heavy } else { Cover::None };
+                assert_eq!(
+                    t.cover_at_cell(cx, cy),
+                    expected,
+                    "cell ({cx},{cy}) border={on_border}",
+                );
+            }
+        }
+        // The wall ring breaks line of sight across it: a segment from outside, through the hollow
+        // interior, to the far side crosses two Heavy walls and is blocked.
+        let inside_lo = cell_center(38, 42);
+        let inside_hi = cell_center(46, 42);
+        assert!(
+            !t.line_of_sight(inside_lo, inside_hi),
+            "the compound walls block sight straight through it",
+        );
+        // Carving a doorway on the crossing row on both walls reopens exactly that lane.
+        t.set_cover(40, 42, Cover::None);
+        t.set_cover(44, 42, Cover::None);
+        assert!(
+            t.line_of_sight(inside_lo, inside_hi),
+            "a doorway carved through both walls reopens the lane",
+        );
+    }
+
+    #[test]
+    fn fill_rect_outline_degenerate_rect_is_a_solid_line() {
+        // A single-column rectangle has no interior — the outline equals the full line.
+        let mut outline = Terrain::open();
+        let mut solid = Terrain::open();
+        outline.fill_rect_outline(70, 30, 70, 36, Cover::Heavy);
+        solid.fill_rect(70, 30, 70, 36, Cover::Heavy);
+        for cy in 0..GRID as i32 {
+            for cx in 0..GRID as i32 {
+                assert_eq!(outline.cover_at_cell(cx, cy), solid.cover_at_cell(cx, cy));
+            }
         }
     }
 

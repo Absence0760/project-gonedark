@@ -344,6 +344,59 @@ pub struct Skirmish {
     pub enemy_troop: Entity,
 }
 
+/// Lay the skirmish's static cover map: a fair, four-fold-symmetric field of sandbag (`Light`) and
+/// sight-blocking wall (`Heavy`) so each of the three posts is a real fight — forward cover to
+/// advance between, corners that break line of sight, and a walled strongpoint bracketing each
+/// flank post.
+///
+/// The layout is symmetric under **both** `x → −x` (the two bases mirror) and `y → −y` (the two
+/// flank posts mirror), so neither side nor flank is favoured — the fairness invariant (#6) applied
+/// to terrain. It is pure static map data (never mutated per tick, never in the checksum), and every
+/// coordinate is an integer cell, so it is bit-identical on every build (invariant #1).
+///
+/// Movement is unaffected: the Phase-1 flow field carries no obstacle costs, so the walls shape
+/// **fire and sight**, not pathing — a unit still walks the straight route and the terrain only
+/// decides what it can shoot and be shot through on the way. The central base-to-base lane on
+/// `y = 0` out past the posts is deliberately left free of `Heavy`, so a troop stationed at the
+/// front of a base keeps a clear line straight down the middle.
+fn build_skirmish_terrain(sim: &mut Sim) {
+    let (cx, cy) = sim.terrain.cell_of(at((0, 0))); // world origin → centre cell (the pivot)
+
+    // Place a rectangle at all four reflections of a centre-relative offset box, so one call lays a
+    // fair, symmetric feature. `fill_rect` accepts corners in any order, so the reflected (negated)
+    // spans need no re-sorting. Offsets are in cells (== world units), growing outward from the
+    // centre; an axis-symmetric input simply overwrites the same cells four times (idempotent).
+    let mut sym = |dx0: i32, dy0: i32, dx1: i32, dy1: i32, cover: Cover| {
+        for &(sx, sy) in &[(1, 1), (-1, 1), (1, -1), (-1, -1)] {
+            sim.terrain
+                .fill_rect(cx + sx * dx0, cy + sy * dy0, cx + sx * dx1, cy + sy * dy1, cover);
+        }
+    };
+
+    // 1. Forward sandbag line for each side: a vertical `Light` bar on the central lane between a
+    //    base and the centre post — the covered position a push forms up on before crossing the
+    //    open ground to the crossroads. (world x ≈ ±8, y ∈ [−2, 2].)
+    sym(7, -2, 9, 2, Cover::Light);
+
+    // 2. Centre-post nests: four `Light` sandbag blocks hugging the crossroads at its diagonals,
+    //    with the axes left open — you fight *over* the post from cover, but the lanes onto it stay
+    //    clear so it never becomes an impregnable bunker. (world (±2..3, ±2..3).)
+    sym(2, 2, 3, 3, Cover::Light);
+
+    // 3. Flank dividing wall with a central doorway: a `Heavy` wall between the centre and each
+    //    flank post that breaks line of sight so a flank fight is its own space — pierced by a
+    //    one-cell doorway on the central axis, a genuine chokepoint you funnel through to swing
+    //    between the centre and a flank. (world y ≈ ±7, x ∈ [±1, ±5], open at x = 0.)
+    sym(1, 6, 5, 8, Cover::Heavy);
+
+    // 4. Flank strongpoints: a `Heavy` bunker bracketing each flank post on three sides (a back
+    //    wall plus both flanks) and **open toward the centre**, so the post is a defensible
+    //    objective you assault head-on from the contested middle, not a bare cell in the open. The
+    //    flank post cell itself stays open (the bracket sits around it, at world y ∈ [±14, ±18]).
+    sym(-3, 16, 3, 18, Cover::Heavy); // back wall, just beyond each flank post
+    sym(3, 14, 3, 16, Cover::Heavy); // side walls closing the bracket toward the post
+}
+
 /// Seed `sim` with the two-base skirmish and return the [`Skirmish`] handles: two operational base
 /// camps on opposite sides, **one starting troop each**, **three neutral posts** to capture, and the
 /// small [`SKIRMISH_START_PURSE`]. The Enemy is left for the [`commander`](crate::commander) to drive
@@ -426,6 +479,10 @@ pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
         troop_hp,
         Angle(ANGLE_FULL / 2), // −X, toward the player
     );
+
+    // Lay the static, fair cover map. It spawns nothing, so entity/spawn order — and thus the
+    // per-tick checksum stream — is untouched; terrain is not in the checksum (invariant #7).
+    build_skirmish_terrain(sim);
 
     Skirmish {
         player_base,
@@ -511,6 +568,28 @@ pub fn seed_seize_mission(sim: &mut Sim) -> SeizeMission {
 /// sidegrade by construction (no strictly-dominant build — proven in [`crate::gunsmith`]).
 ///
 /// [`seed_seize_mission`] is the `Loadout::STANDARD` (no-op) shim over this.
+/// Lay the *Seize* mission's advance cover: staggered `Light` sandbag lines strung across the
+/// no-man's-land the ten troops cross under the garrison's fire, so the assault has positions to
+/// bound between instead of one naked charge (the "cross under fire" pillar made tactical).
+///
+/// Deliberately `Light`-only and **west of the garrison** (every bar at `x ≤ 8`; the garrison starts
+/// at `x ≥ 15`): it shelters the attackers on the approach without fortifying the French defenders,
+/// so the base stays exposed enough for the fixed-force assault to break it — the "won in time"
+/// property the host-side objective rests on. No `Heavy` walls, so nothing blocks the assault's fire
+/// onto the base. Pure static integer map data (invariant #1), never in the per-tick checksum.
+fn build_seize_terrain(sim: &mut Sim) {
+    // A vertical `Light` sandbag bar centred on world `(x, 0)`, `half` cells tall each way — already
+    // symmetric across `y = 0`, so neither flank of the advance is the safer one. Three stations
+    // stagger the approach from the deploy line toward the base's open killing ground.
+    let mut bar = |x: i32, half: i32| {
+        let (cx, cy) = sim.terrain.cell_of(at((x, 0)));
+        sim.terrain.fill_rect(cx, cy - half, cx, cy + half, Cover::Light);
+    };
+    bar(-12, 3); // first bound out of the deploy line
+    bar(-2, 4); //  the midfield sandbag wall
+    bar(8, 3); //   the last cover before the base's open ground
+}
+
 pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> SeizeMission {
     // Production OFF: no purse for either side and a slow income drip, so this stays a fixed-force
     // assault rather than an economy race. The player has no camp at all (so it cannot produce); the
@@ -581,6 +660,10 @@ pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -
             Angle(ANGLE_FULL / 2), // −X, toward the player line
         ));
     }
+
+    // Lay the static advance cover across the no-man's-land. It spawns nothing (entity/spawn order
+    // and the checksum stream are untouched) and shelters only the approach, not the defenders.
+    build_seize_terrain(sim);
 
     SeizeMission {
         troops,
@@ -879,6 +962,97 @@ mod tests {
         assert_eq!(a.checksum(), b.checksum());
     }
 
+    // --- the skirmish cover map (fair, symmetric, tactical) --------------------------------------
+
+    #[test]
+    fn skirmish_terrain_is_four_fold_symmetric_and_fair() {
+        // Fairness (#6) at the terrain level: the cover map is identical under both x→−x (the two
+        // bases mirror) and y→−y (the two flank posts mirror), so no side or flank is favoured.
+        use crate::flow_field::GRID;
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        let (cx, cy) = sim.terrain.cell_of(at((0, 0)));
+        let g = GRID as i32;
+        // At least one Heavy and one Light cell exist, so the symmetry check is over a real map.
+        let mut saw_heavy = false;
+        let mut saw_light = false;
+        for y in 0..g {
+            for x in 0..g {
+                let here = sim.terrain.cover_at_cell(x, y);
+                saw_heavy |= here == Cover::Heavy;
+                saw_light |= here == Cover::Light;
+                // Reflect across the centre on each axis; every mirror must carry identical cover.
+                let (mx, my) = (2 * cx - x, 2 * cy - y);
+                assert_eq!(here, sim.terrain.cover_at_cell(mx, y), "x-mirror at ({x},{y})");
+                assert_eq!(here, sim.terrain.cover_at_cell(x, my), "y-mirror at ({x},{y})");
+                assert_eq!(here, sim.terrain.cover_at_cell(mx, my), "xy-mirror at ({x},{y})");
+            }
+        }
+        assert!(saw_heavy, "the map has sight-blocking Heavy walls");
+        assert!(saw_light, "the map has Light sandbag cover");
+    }
+
+    #[test]
+    fn skirmish_terrain_has_a_flank_doorway_and_sight_walls() {
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        let center = at((0, 0));
+        let north_flank = at((0, SKIRMISH_POST_FLANK_Y));
+        // The dividing wall breaks a sightline OFF the central axis, from the centre lane up to the
+        // flank post — you cannot freely shoot the flank fight from the middle.
+        assert!(
+            !sim.terrain.line_of_sight(at((3, 0)), north_flank),
+            "the flank dividing wall breaks sight from the centre lane to the flank post",
+        );
+        // ...but the one-cell doorway on the central axis is open: dead-centre to the flank post has
+        // LoS — the chokepoint you must funnel through to swing between centre and flank.
+        assert!(
+            sim.terrain.line_of_sight(center, north_flank),
+            "the central doorway is an open chokepoint between the centre and the flank",
+        );
+        // Symmetric to the south flank by construction.
+        assert!(sim.terrain.line_of_sight(center, at((0, -SKIRMISH_POST_FLANK_Y))));
+    }
+
+    #[test]
+    fn skirmish_terrain_keeps_the_base_lane_open_and_gives_forward_cover() {
+        let mut sim = fresh();
+        let s = seed_skirmish(&mut sim);
+        // Forward Light cover sits on the central lane for each side to advance from — and it is the
+        // sight-passing kind, not a wall.
+        assert_eq!(sim.terrain.cover_at(at((8, 0))), Cover::Light, "player-side forward cover");
+        assert_eq!(sim.terrain.cover_at(at((-8, 0))), Cover::Light, "enemy-side forward cover");
+        // The regression the embodied-fire test depends on: the central y = 0 lane carries NO
+        // sight-blocking wall, so the two front-line troops can see straight down the middle.
+        let p = sim.world.pos[s.player_troop.index as usize];
+        let e = sim.world.pos[s.enemy_troop.index as usize];
+        assert!(
+            sim.terrain.line_of_sight(p, e),
+            "the two front-line troops see each other down the open central lane",
+        );
+        // The three posts themselves stay open ground (you fight over them from cover, not from
+        // inside a wall): none of the post cells is Heavy.
+        for post in [at((0, 0)), at((0, SKIRMISH_POST_FLANK_Y)), at((0, -SKIRMISH_POST_FLANK_Y))] {
+            assert_ne!(sim.terrain.cover_at(post), Cover::Heavy, "a post is never a walled cell");
+        }
+    }
+
+    #[test]
+    fn skirmish_seeding_is_deterministic_including_terrain() {
+        // The cover map is pure integer static data, so two seeds produce byte-identical terrain
+        // across the whole grid (invariant #1) — the single-sourcing property extended to the map.
+        use crate::flow_field::GRID;
+        let mut a = fresh();
+        let mut b = fresh();
+        seed_skirmish(&mut a);
+        seed_skirmish(&mut b);
+        for cy in 0..GRID as i32 {
+            for cx in 0..GRID as i32 {
+                assert_eq!(a.terrain.cover_at_cell(cx, cy), b.terrain.cover_at_cell(cx, cy));
+            }
+        }
+    }
+
     /// End-to-end: the skirmish is a **live, evolving match**, not an inert tableau. Drive it the
     /// way the host does — the Enemy played by the scripted `commander` on its 1 s cadence, the
     /// Player sitting idle — and confirm the whole loop turns over on this scene: the enemy troop
@@ -1007,6 +1181,30 @@ mod tests {
             assert_eq!(sim.world.stance[i], Stance::FireAtWill);
         }
         assert_eq!(m.enemy_strength(), m.garrison.len() as u32 + 1, "garrison + the base camp");
+    }
+
+    #[test]
+    fn seize_terrain_covers_the_advance_but_not_the_garrison() {
+        let mut sim = fresh();
+        let m = seed_seize_mission(&mut sim);
+        // The no-man's-land carries Light advance cover the assault bounds between (the midfield
+        // sandbag wall), and it is the sight-passing kind — never a Heavy wall that would stall the
+        // assault's fire onto the base.
+        assert_eq!(sim.terrain.cover_at(at((-2, 0))), Cover::Light, "midfield sandbag cover exists");
+        // The garrison and base stay in the open: the terrain does NOT fortify the defenders, so the
+        // fixed-force assault can still break them (the won-in-time property the objective rests on).
+        for &g in &m.garrison {
+            assert_eq!(
+                sim.terrain.cover_at(sim.world.pos[g.index as usize]),
+                Cover::None,
+                "the garrison defends in the open, not from terrain cover",
+            );
+        }
+        assert_eq!(
+            sim.terrain.cover_at(sim.world.pos[m.enemy_base.index as usize]),
+            Cover::None,
+            "the objective base is not shielded by cover",
+        );
     }
 
     #[test]
