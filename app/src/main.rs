@@ -502,6 +502,10 @@ impl App {
                     self.settings.visual_sound_cues,
                     self.settings.cvd_palette,
                 );
+                // The cross-modal alert cues (WS-D): the audio-ping / haptic equivalents of the
+                // directional flash. A separate setter (its own setting) so the 3-arg
+                // `set_accessibility_prefs` signature the Android host shares stays stable.
+                game.set_alert_cue_mode(self.settings.alert_cue_mode);
                 let mut input = self.input.drain_frame();
                 let viewport = surface.size();
                 // Shell overlay buttons (pause / reconnect / post-match summary). A click while an

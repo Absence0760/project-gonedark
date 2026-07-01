@@ -18,6 +18,7 @@ use gonedark_core::components::Army;
 use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
+use gonedark_engine::AlertCueMode;
 use gonedark_pal_desktop::DesktopRenderSurface;
 use gonedark_render::theme::PaletteMode;
 use gonedark_render::title_backdrop::TitleBackdrop;
@@ -322,6 +323,12 @@ pub struct SettingsState {
     /// alone (WS-D, invariant #6 fairness). Fed to the engine via `Game::set_accessibility_prefs` →
     /// `Renderer::set_palette_mode`. Presentation only.
     pub cvd_palette: PaletteMode,
+    /// Accessibility — **Alert cues** ([`AlertCueMode`]). Selects the NON-visual equivalent(s) of the
+    /// embodied directional flash — a bearing-panned audio ping and/or a directional haptic pulse — so
+    /// a player who can't read the colour flash still gets the going-dark alert (WS-D, invariant #6).
+    /// Still an *alert, not intel* (bearing + kind only). Fed to the engine via `Game::set_alert_cue_mode`.
+    /// Presentation only.
+    pub alert_cue_mode: AlertCueMode,
 }
 
 impl Default for SettingsState {
@@ -340,6 +347,9 @@ impl Default for SettingsState {
             visual_sound_cues: false,
             // The shipped hue palette; a CVD-safe alternate is opt-in per player.
             cvd_palette: PaletteMode::Off,
+            // The base flash + positioned audio is the shipped fair channel; the audio ping / haptic
+            // pulse cross-modal equivalents are opt-in.
+            alert_cue_mode: AlertCueMode::Off,
         }
     }
 }
@@ -686,7 +696,7 @@ pub fn encode_shell_prefs(
     format!(
         "{SHELL_PREFS_VERSION}\n\
          master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nquality={}\n\
-         cvdcues={}\nsoundcues={}\ncvdpal={}\n\
+         cvdcues={}\nsoundcues={}\ncvdpal={}\nalertcue={}\n\
          callsign={}\nfaction={}\nmatches={}\nwins={}\n\
          optic={}\nbarrel={}\nmagazine={}\n\
          army={}\n",
@@ -699,6 +709,7 @@ pub fn encode_shell_prefs(
         s.colorblind_cues as u8,
         s.visual_sound_cues as u8,
         s.cvd_palette.index(),
+        s.alert_cue_mode.index(),
         callsign,
         profile.faction.index(),
         profile.matches_played,
@@ -742,6 +753,7 @@ pub fn decode_shell_prefs(
         visual_sound_cues: parse_bool(map.get("soundcues"), ds.visual_sound_cues),
         // Tolerant ordinal decode (an unknown/missing ordinal → `Off`), the `quality` pattern.
         cvd_palette: PaletteMode::from_index(parse_or::<usize>(map.get("cvdpal"), 0)),
+        alert_cue_mode: AlertCueMode::from_index(parse_or::<usize>(map.get("alertcue"), 0)),
     };
     // The clamp guards a stored-but-out-of-range numeric (e.g. a hand-edited blob) exactly as the
     // Settings sliders do.
@@ -1794,6 +1806,20 @@ fn settings_ui(
                 state.cvd_palette = state.cvd_palette.next();
             }
         });
+        // Cross-modal alert cues (WS-D): the NON-visual equivalent(s) of the directional flash — a
+        // bearing-panned audio ping and/or a directional haptic pulse — for a player who can't read
+        // the colour flash. A cycling button over the modes (a direct edit — the `cvd_palette`
+        // pattern), pushed to the engine via `Game::set_alert_cue_mode`; still an alert, not intel.
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Alert cues").color(BONE).size(TYPE_BODY));
+            ui.add_space(8.0);
+            if ui
+                .button(RichText::new(state.alert_cue_mode.label()).color(AMBER).size(TYPE_BODY))
+                .clicked()
+            {
+                state.alert_cue_mode = state.alert_cue_mode.next();
+            }
+        });
 
         section_label(ui, "VIDEO");
         // The window-mode source of truth is the host: reflect it, and emit the toggle action rather
@@ -2571,6 +2597,30 @@ mod tests {
     }
 
     #[test]
+    fn alert_cue_mode_round_trips_every_mode_and_defaults_when_missing() {
+        // Every cross-modal alert-cue mode survives an encode→decode round-trip (WS-D accessibility).
+        for &mode in &AlertCueMode::ALL {
+            let s = SettingsState {
+                alert_cue_mode: mode,
+                ..SettingsState::default()
+            };
+            let blob = encode_shell_prefs(
+                &s,
+                &ProfileState::default(),
+                &LoadoutEditor::new(),
+                &ArmySelectState::default(),
+            );
+            let (s2, _, _, _) = decode_shell_prefs(&blob);
+            assert_eq!(s2.alert_cue_mode, mode, "{mode:?} alert-cue mode survives round-trip");
+        }
+        // A blob missing the key (an older save) decodes to Off; a garbage ordinal also falls back.
+        let (s, _, _, _) = decode_shell_prefs("gonedark-shell 1\nmaster=0.5\n");
+        assert_eq!(s.alert_cue_mode, AlertCueMode::Off, "missing alertcue → Off");
+        let (s2, _, _, _) = decode_shell_prefs("alertcue=999\n");
+        assert_eq!(s2.alert_cue_mode, AlertCueMode::Off, "out-of-range alertcue → Off");
+    }
+
+    #[test]
     fn settings_clamp_rebounds_every_out_of_range_field() {
         let mut s = SettingsState {
             master_volume: 5.0,
@@ -2582,6 +2632,7 @@ mod tests {
             colorblind_cues: false,
             visual_sound_cues: false,
             cvd_palette: PaletteMode::Off,
+            alert_cue_mode: AlertCueMode::Off,
         };
         s.clamp();
         assert_eq!(s.master_volume, 1.0);
@@ -2728,6 +2779,7 @@ mod tests {
             colorblind_cues: true,
             visual_sound_cues: true,
             cvd_palette: PaletteMode::Tritanopia,
+            alert_cue_mode: AlertCueMode::AudioHaptic,
         };
         let profile = ProfileState {
             callsign: "Reaper".to_string(),
