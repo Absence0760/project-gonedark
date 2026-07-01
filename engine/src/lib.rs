@@ -2520,6 +2520,32 @@ impl Game {
         self.commander_config.difficulty
     }
 
+    /// Apply a campaign **replay tier**'s combat tuning to an already-seeded mission game (D83,
+    /// resolving Q21) — the single host-side seam both platforms call right after
+    /// [`new_scene_with_loadout`](Game::new_scene_with_loadout) boots [`Scene::Mission1`], before
+    /// tick 0. It resolves the tier through the shared `core` mapping
+    /// ([`combat_tuning`](gonedark_core::campaign::Difficulty::combat_tuning)) — never a per-platform
+    /// fork (invariant #2) — and drives the fight on both D83 axes:
+    ///
+    /// - the enemy-commander **aggression band** (the 4→3 collapse) via
+    ///   [`set_commander_difficulty`](Game::set_commander_difficulty) — a host-side planning knob,
+    ///   never sim state;
+    /// - the scenario **situation** via
+    ///   [`ScenarioModifiers::apply_to_sim`](gonedark_core::mission_tuning::ScenarioModifiers::apply_to_sim)
+    ///   — the reinforcement cadence, the one lever `core` owns. Applied **before the first tick**
+    ///   (like [`select_army`](Game::select_army)), so it is deterministic match-setup input: two
+    ///   peers at the same tier stay bit-identical (invariant #7). The neutral `Regular` tier applies
+    ///   a no-op (`None` cadence), so the shipped default fight is byte-identical.
+    ///
+    /// The force-size / time-limit / fog levers the tier also carries are **host-owned** (read off
+    /// [`Difficulty::scenario_modifiers`](gonedark_core::campaign::Difficulty::scenario_modifiers) by
+    /// the seeder/host that consumes them); they ride their existing seams and are not applied here.
+    pub fn apply_campaign_tuning(&mut self, replay_tier: gonedark_core::campaign::Difficulty) {
+        let (commander_band, modifiers) = replay_tier.combat_tuning();
+        self.commander_config.difficulty = commander_band;
+        modifiers.apply_to_sim(&mut self.sim);
+    }
+
     /// Field a [`Faction`]'s [`Army`] identity at **match setup** — the native army-select shell's
     /// pick (factions-plan WS-A/WS-D, [D68](../docs/decisions.md)). The pick is routed through the
     /// `core::shell` [`SelectArmy`](ShellIntent::SelectArmy) seam so it is the *same*

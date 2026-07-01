@@ -52,12 +52,13 @@ pub const SENS_MIN: u16 = 10;
 pub const SENS_MAX: u16 = 300;
 
 /// The campaign **replay difficulty** tier is carried as an integer rank `0..=3` (Recruit, Regular,
-/// Veteran, Elite — `core::campaign::Difficulty::tier`). This is the tier the campaign clear is
-/// recorded at on a win (mirroring the desktop host's `active_mission` tier, `app::main`), NOT the
-/// enemy-commander tier — the commander stays the mission's *authored* difficulty (resolved from the
-/// registry; the 4-tier campaign → 3-tier commander mapping is open question Q21). Out-of-range /
-/// missing values clamp to `Recruit` (`0`) so a stale or older wire string degrades to the neutral
-/// tier rather than failing.
+/// Veteran, Elite — `core::campaign::Difficulty::tier`). This is both the tier the campaign clear is
+/// recorded at on a win (mirroring the desktop host's `active_mission` tier, `app::main`) **and**
+/// (D83, resolving Q21) the tier that drives the launched fight: the android glue maps it back to
+/// `campaign::Difficulty` and applies its combat tuning through the shared `Game::apply_campaign_tuning`
+/// seam (the 4→3 enemy-commander band + the scenario situation modifiers). Out-of-range / missing
+/// values clamp to `Recruit` (`0`) so a stale or older wire string degrades to the neutral tier
+/// rather than failing.
 pub const DIFF_MAX: u8 = 3;
 
 /// The player-army wire ordinals — `1` = US, `2` = French, matching `core::components::Army::index`

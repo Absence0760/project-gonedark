@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use gonedark_core::campaign::NodeId;
+use gonedark_core::campaign::{Difficulty, NodeId};
 use gonedark_core::components::{Army, Faction};
 use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 use gonedark_engine::objectives::MissionStatus;
@@ -254,16 +254,18 @@ fn android_main(app: AndroidApp) {
                                 );
                                 // Campaign-launch path (Compose parity C4): the campaign mission scene
                                 // resolves its node through the SHARED engine registry seam — never a
-                                // forked copy (invariant #2) — and applies the mission's *authored*
-                                // enemy-commander tier, exactly as the desktop host does
-                                // (`app/src/main.rs`: `game.set_commander_difficulty(def.briefing.
-                                // difficulty)`). The commander tier is the mission's own, NOT the
-                                // player's replay `diff` (Q21: the 4→3 tier mapping is unsettled); the
-                                // `diff` tier is only remembered for the win-record below. The launch
-                                // wire now carries the selected node index (`launch.node`, the
-                                // `NodeId` ordinal the Compose mission-select picked), so a 2nd/gated
-                                // node resolves correctly — matching the desktop host, which threads its
-                                // `pending_launch` node through `resolve_node` (`app/src/main.rs`).
+                                // forked copy (invariant #2) — and applies the player's chosen replay
+                                // `diff` tier's combat tuning via the SHARED `Game::apply_campaign_tuning`
+                                // seam, exactly as the desktop host does (`app/src/main.rs`). D83
+                                // (resolves Q21): the replay tier drives BOTH axes — the 4→3
+                                // enemy-commander band AND the scenario situation modifiers — through the
+                                // one `core::campaign` mapping. The `diff` wire key (rank 0..=3) maps to
+                                // `campaign::Difficulty` via `from_tier` (the parser already clamped it,
+                                // so `from_tier` never yields `None` here — a defensive `Recruit`
+                                // fallback keeps it total). The launch wire carries the selected node
+                                // index (`launch.node`, the `NodeId` ordinal the Compose mission-select
+                                // picked), so a 2nd/gated node resolves correctly — matching the desktop
+                                // host, which threads its `pending_launch` node through `resolve_node`.
                                 // Missing/garbage decoded to `0` (the root node), so a bare Mission1
                                 // launch still targets the root.
                                 if scene == Scene::Mission1 {
@@ -272,8 +274,10 @@ fn android_main(app: AndroidApp) {
                                         gonedark_engine::mission_registry::default_campaign();
                                     let registry =
                                         gonedark_engine::mission_registry::default_registry();
-                                    if let Some(def) = registry.resolve_node(&campaign, node) {
-                                        new_game.set_commander_difficulty(def.briefing.difficulty);
+                                    if registry.resolve_node(&campaign, node).is_some() {
+                                        let tier = Difficulty::from_tier(launch.diff)
+                                            .unwrap_or(Difficulty::Recruit);
+                                        new_game.apply_campaign_tuning(tier);
                                     }
                                     campaign_launch = Some((launch.node, launch.diff));
                                     // A fresh launch: clear any stale win result from a prior match.

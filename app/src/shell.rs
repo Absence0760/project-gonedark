@@ -84,8 +84,9 @@ pub enum HostTransition {
     /// the gunsmith (the player still picks a loadout) before the match starts. The host stashes the
     /// pending launch and switches to the loadout screen; the gunsmith's **Deploy** then creates the
     /// `Game` for this node (see [`EnterMatch`](HostTransition::EnterMatch)). The `difficulty` is the
-    /// campaign-tier the **clear** is recorded against on a win — *not* the commander-AI tier (that
-    /// stays the mission's authored tier; the 4→3 mapping is open question Q21).
+    /// chosen replay tier: it drives the launched fight on both D83 axes (the 4→3 enemy-commander band
+    /// + the scenario situation modifiers, via `Game::apply_campaign_tuning`) **and** is the tier the
+    /// **clear** is recorded against on a win.
     LaunchMission { node: NodeId, difficulty: Difficulty },
     /// Lazily create `engine::Game` and switch the host to the in-match screen.
     EnterMatch,
@@ -926,8 +927,8 @@ pub enum BriefingAction {
 pub enum BriefingOutcome {
     /// Stay on the briefing (a difficulty edit, or nothing this frame).
     Stay,
-    /// Launch the mission at the selected campaign `difficulty` (recorded against the **clear** on a
-    /// win; the commander-AI tier stays the mission's authored one — Q21).
+    /// Launch the mission at the selected campaign `difficulty` — the replay tier that drives the
+    /// fight (D83: commander band + situation modifiers) and is recorded against the **clear** on a win.
     Launch { difficulty: Difficulty },
     /// Return to the mission-select hub.
     Back,
@@ -959,9 +960,9 @@ pub fn difficulty_label(d: Difficulty) -> &'static str {
 /// Apply a [`BriefingAction`], advancing the host-side `selected` replay tier in place on a cycle and
 /// reporting the resulting screen step. Pure (no egui/window) — the briefing's testable decision
 /// seam, mirroring [`apply_loadout_action`]. `Deploy` carries the *current* selection out as the
-/// launch tier (the host records it against `Campaign::clear` on a win); the enemy commander's
-/// aggression is **not** taken from here — it stays the mission's authored tier (the 4-tier campaign
-/// → 3-tier commander mapping is open question Q21).
+/// launch tier: the host applies its combat tuning (D83: the 4→3 enemy-commander band + the scenario
+/// situation modifiers, via `Game::apply_campaign_tuning`) and records it against `Campaign::clear`
+/// on a win.
 pub fn apply_briefing_action(action: BriefingAction, selected: &mut Difficulty) -> BriefingOutcome {
     match action {
         BriefingAction::CycleDifficulty => {
@@ -2156,9 +2157,9 @@ fn briefing_ui(
         ui.add_space(16.0);
 
         card_frame().show(ui, |ui| {
-            // Difficulty cycler — the replay tier the CLEAR is recorded against on a win. (The enemy
-            // commander's aggression is NOT taken from here; it stays the mission's authored tier —
-            // the 4-tier campaign → 3-tier commander mapping is open question Q21.)
+            // Difficulty cycler — the replay tier that drives the fight (D83: the 4→3 enemy-commander
+            // band + the scenario situation modifiers) and the tier the CLEAR is recorded against on a
+            // win.
             ui.horizontal(|ui| {
                 ui.add_sized(
                     [120.0, 32.0],

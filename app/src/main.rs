@@ -207,11 +207,11 @@ impl App {
 
     /// Create the `Game` and switch to the in-match screen, fielding the persisted gunsmith loadout
     /// ([`App::loadout`]). If a campaign launch was queued ([`App::pending_launch`], set by a
-    /// briefing's DEPLOY) it boots the mission scene ([`Scene::Mission1`]) and applies the mission's
-    /// authored enemy-commander tier (a host-side planning knob, never sim state); otherwise it fields
-    /// [`App::scene`] (the CLI default, or the scene a mode-select pick chose). The campaign tier the
-    /// player picked is carried in [`App::active_mission`] for clear-recording, NOT pushed into the
-    /// commander (that stays the authored tier — the 4→3 tier mapping is open question Q21).
+    /// briefing's DEPLOY) it boots the mission scene ([`Scene::Mission1`]) and applies the player's
+    /// chosen replay tier's combat tuning via the shared [`Game::apply_campaign_tuning`] seam (D83:
+    /// the 4→3 enemy-commander band + the scenario situation modifiers); otherwise it fields
+    /// [`App::scene`] (the CLI default, or the scene a mode-select pick chose). The chosen tier is
+    /// also carried in [`App::active_mission`] for clear-recording.
     ///
     /// Shared by the [`EnterMatch`](HostTransition::EnterMatch) and
     /// [`LaunchMission`](HostTransition::LaunchMission) transitions: under D81 both deploy **directly**
@@ -226,8 +226,13 @@ impl App {
         let mut game = if let Some((node, difficulty)) = self.pending_launch.take() {
             let mut game =
                 Game::new_scene_with_loadout(device, format, DEFAULT_SEED, Scene::Mission1, loadout);
-            if let Some(def) = self.registry.resolve_node(&self.campaign, node) {
-                game.set_commander_difficulty(def.briefing.difficulty);
+            // D83 (resolves Q21): the player's chosen replay tier drives the fight on both axes —
+            // the 4→3 enemy-commander band and the scenario situation modifiers — through the shared
+            // `core::campaign` mapping (never a per-platform fork, invariant #2). Applied before tick
+            // 0, so it is deterministic match-setup like `select_army`. Guarded on `resolve_node` so a
+            // (defensive) unplayable/unregistered node tunes nothing.
+            if self.registry.resolve_node(&self.campaign, node).is_some() {
+                game.apply_campaign_tuning(difficulty);
             }
             self.active_mission = Some((node, difficulty));
             game
@@ -548,10 +553,10 @@ impl App {
                 if !self.mission_recorded {
                     if let Some((node, difficulty)) = self.active_mission {
                         if game.mission_status() == MissionStatus::Won {
-                            // The campaign tier the player chose is what the clear records (the
-                            // commander-AI tier stayed the mission's authored one — Q21). A rejected
-                            // clear (shouldn't happen for a launched, playable node) is simply not
-                            // persisted.
+                            // The campaign tier the player chose is what the clear records — the same
+                            // tier that drove the fight's commander band + situation modifiers this
+                            // match (D83). A rejected clear (shouldn't happen for a launched, playable
+                            // node) is simply not persisted.
                             if self.campaign.clear(node, difficulty).is_ok() {
                                 persist_campaign(&self.campaign);
                             }

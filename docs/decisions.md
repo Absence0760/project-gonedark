@@ -3836,9 +3836,17 @@ checksum-folded (invariants #1/#7). Until this landed, replaying a node at a hig
 best-tier badge but the fight was unchanged — the progression coordinate was inert; D83 makes replay a
 real player-facing feature.
 
-**Status.** Design locked here; the mapping seam + host wiring land as the immediate follow-up
-(pure `core::campaign` mapping, threaded through `mission_registry` launch + both hosts, shipped with
-tests). Until that lands, the host still applies the mission's authored tier.
+**Status.** Design locked **and implemented**. The pure `core::campaign` mapping
+(`Difficulty::commander_tier` / `scenario_modifiers` / `combat_tuning`) is threaded through
+`engine::mission_registry::MissionDef::launch` and the shared `engine::Game::apply_campaign_tuning`
+seam, which **both** hosts call right after seeding the mission scene, before tick 0 (`app/src/main.rs`
+`enter_match`; `pal-android` `android_backend`, mapping the `diff` wire rank via `Difficulty::from_tier`).
+The four modifier profiles (easiest→hardest): force `90/100/115/130`%, reinforcement cadence
+`900 / None(=600 baseline) / 360 / 240` ticks, fog `Marked / Subtle / Subtle / Hidden`. `Regular` is
+exactly the neutral baseline (byte-identical seed). The `default`/`stress` checksum streams are
+untouched (those scenes never launch a mission); mission-scene tests pin: `Regular` == bare-seed
+baseline byte-for-byte, four distinct monotonic profiles, and same-tier peer parity + cross-tier
+divergence. Magnitudes are situation dials, tunable in playtest.
 
 **Cross-link:** [`plans/pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-B/WS-E,
 [D30](#d30--a-measured-combateconomy-balance-baseline--a-deterministic-balance-metrics-harness),
