@@ -146,6 +146,11 @@ pub mod net_tuning;
 /// out-of-match shells render. Host presentation only — maps a picked mode to a `Scene`; no sim state
 /// (invariants #1/#7). The Rust twin of Android's `GameMode.kt`.
 pub mod shell_modes;
+/// Cross-modal alert cues (WS-D accessibility, invariant #6): the pure seam turning the live alert
+/// channel into the NON-visual equivalents of the directional flash — a bearing-panned audio ping
+/// and a coarse haptic pulse — each still an *alert, not intel* (bearing + kind only). Presentation
+/// only; reads no sim state, never checksummed (invariants #1/#4/#7).
+pub mod alert_cues;
 
 pub use tuning::RenderTuning;
 pub use net_tuning::{DelayPolicy, RttDelayEstimator};
@@ -153,6 +158,9 @@ pub use net_tuning::{DelayPolicy, RttDelayEstimator};
 /// [`Game::set_accessibility_prefs`] can name it without a direct `gonedark_render` dependency (e.g.
 /// the Android PAL). It lives in `render::theme` — the palette single source of truth.
 pub use gonedark_render::theme::PaletteMode;
+/// The cross-modal alert-cue selection (WS-D), re-exported so the shell/Settings surface can name the
+/// mode + consume the haptic descriptors without reaching into the module path.
+pub use alert_cues::{AlertCueMode, HapticPulse, HapticSide};
 
 /// The seed both hosts start the sim with, so desktop and Android run the bit-identical
 /// deterministic scene (invariant #1 / #7).
@@ -1691,6 +1699,20 @@ pub struct Game {
     /// re-folded and never checksummed (invariants #1/#7). Always ingested (cheap, bounded); it only
     /// *renders* when `visual_sound_cues` is on.
     sound_echoes: Vec<SoundEcho>,
+
+    /// Accessibility — the player's **cross-modal alert cue** choice (Settings). Selects the
+    /// NON-visual equivalent(s) of the directional flash for a player who can't read the colour flash:
+    /// a bearing-panned audio ping and/or a directional haptic pulse (`alert_cues::AlertCueMode`).
+    /// PRESENTATION only, an *alert not intel* (bearing + kind, never range/map). Default `Off`.
+    alert_cue_mode: AlertCueMode,
+    /// The last sim tick the cross-modal alert cues were emitted for, so a fast render frame (many
+    /// frames per 60 Hz tick) re-pings a standing alert at most once. `u64::MAX` until the first tick.
+    alert_cue_tick: u64,
+    /// This frame's directional haptic pulses ([`HapticPulse`]) for the fresh alerts, rebuilt while
+    /// embodied when `alert_cue_mode` selects the haptic channel. PRESENTATION only — a backend with a
+    /// vibration motor drains it (via [`Game::alert_haptics`]); the desktop PAL has none yet, so it is
+    /// computed and dropped there (Android vibrator wiring deferred, like the CVD-palette parity).
+    alert_haptics: Vec<HapticPulse>,
 }
 
 /// Which world [`Game::new_scene`] seeds. The default match is the Phase 2 demo skirmish; the
@@ -2331,6 +2353,11 @@ impl Game {
             visual_sound_cues: false,
             cvd_palette: gonedark_render::theme::PaletteMode::Off,
             sound_echoes: Vec::new(),
+            // Cross-modal alert cues default OFF — the base flash + positioned audio is the shipped
+            // fair channel; the audio ping / haptic pulse are opt-in equivalents a player enables.
+            alert_cue_mode: AlertCueMode::Off,
+            alert_cue_tick: u64::MAX,
+            alert_haptics: Vec::new(),
         }
     }
 
@@ -2351,6 +2378,24 @@ impl Game {
         self.colorblind_cues = colorblind_cues;
         self.visual_sound_cues = visual_sound_cues;
         self.cvd_palette = cvd_palette;
+    }
+
+    /// Push the player's **cross-modal alert cue** choice (Settings → Accessibility, WS-D). Selects
+    /// the NON-visual equivalent(s) of the directional flash — a bearing-panned audio ping and/or a
+    /// directional haptic pulse — for a player who can't read the colour flash (invariant #6). A
+    /// separate setter from [`Self::set_accessibility_prefs`] so its 3-arg signature (shared with the
+    /// Android host) stays stable; the desktop host drives this, Android parity is deferred. Host /
+    /// presentation only — the choice never reaches the deterministic sim or the per-tick checksum.
+    pub fn set_alert_cue_mode(&mut self, mode: AlertCueMode) {
+        self.alert_cue_mode = mode;
+    }
+
+    /// This frame's directional haptic pulses for the fresh alerts (WS-D) — non-empty only while
+    /// embodied with the haptic channel selected. A PAL backend with a vibration motor drains this
+    /// each frame; the desktop backend has none, so it currently reads and drops them. Presentation
+    /// only — never sim state (invariants #1/#6).
+    pub fn alert_haptics(&self) -> &[HapticPulse] {
+        &self.alert_haptics
     }
 
     /// Toggle the debug hitbox / facet overlay (the host's **F3**). Visible only in the command
@@ -3631,13 +3676,36 @@ impl Game {
             let p = self.player_pos();
             (fixed_to_f32(p.x), fixed_to_f32(p.y))
         };
-        let cues = audio::mix_cues(
+        let mut cues = audio::mix_cues(
             &frame_events,
             self.embodied,
             listener,
             self.yaw,
             &self.sim.world,
         );
+        // Accessibility (WS-D, invariant #6): the cross-modal equivalents of the directional flash for
+        // a player who can't read the colour flash. Emitted only while embodied, and ONCE per fresh
+        // alert (deduped on the sim tick, so a fast render frame — many frames per 60 Hz tick — can't
+        // re-ping a standing alert). Bearing-panned audio ping (appended to this frame's mix) and/or a
+        // directional haptic pulse (drained by a backend with a motor). Both are *alerts, not intel*:
+        // bearing + kind only, never range/map (the `alert_cues` seam enforces the constant-gain,
+        // never-muffled fairness bound). Presentation only — reads the already-checksummed alert
+        // channel, mutates no sim state (invariants #1/#4/#7).
+        if self.embodied && self.alert_cue_mode != AlertCueMode::Off && tick != self.alert_cue_tick {
+            self.alert_cue_tick = tick;
+            cues.extend(alert_cues::alert_audio_cues(
+                &self.alerts,
+                listener,
+                self.yaw,
+                tick,
+                self.alert_cue_mode,
+            ));
+            self.alert_haptics =
+                alert_cues::alert_haptic_pulses(&self.alerts, listener, self.yaw, tick, self.alert_cue_mode);
+        } else if !self.embodied && !self.alert_haptics.is_empty() {
+            // Ejected back to command — no embodied haptics stand between matches/views.
+            self.alert_haptics.clear();
+        }
         audio.submit_mix(&cues);
 
         // 4. Build the camera for the active view (alpha computed above for the avatar lead).
