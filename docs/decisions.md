@@ -3908,4 +3908,4 @@ death linger. Both are honestly disclosed in `render::anim`'s module doc.
 **Cross-link:** [`plans/visual-design-plan.md`](plans/visual-design-plan.md) WS-B,
 [D41](#d41--ai-generated-placeholder-models-for-all-render-content-skip-commissioned-art-for-now),
 [D46](#d46--the-headless-asset-tooling-toolbox-one-scriptable-cli-per-content-lane),
-[D74](#d74--visual-design-foundation-a-central-theme--an-anti-aliased-font-atlas-replaces-the-5×7-bitmap).
+[D74](#d74--visual-design-foundation-a-central-theme--an-anti-aliased-font-atlas-replaces-the-57-bitmap).
