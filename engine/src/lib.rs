@@ -1985,6 +1985,50 @@ fn seed_map_inspect_scene(sim: &mut Sim) -> (Entity, bool) {
     (h.troops[0], false)
 }
 
+/// The **GPU-free scene-seeding dispatch** (WS-C, D60): seed `sim` for `scene` and return
+/// `(player, start_embodied, objectives)`. This is the single boot-time routing that threads the
+/// player's pre-match gunsmith `player_loadout` into each **loadout-bearing** live scene
+/// (`Mission1`/`Mission2`/`Default`/`Skirmish`) at match start — the point (and the only point) the
+/// chosen loadout reaches the deterministic sim — while the debug sandboxes (`Duel`/`Infantry`/
+/// `MapInspect`) carry no player loadout and ignore it.
+///
+/// Extracted from [`Game::new_scene_with_loadout`] so this dispatch — "does the chosen loadout
+/// actually reach the live match at boot?" — is unit-testable **without a `wgpu::Device`** (the
+/// renderer is the only GPU-bound part of boot), exactly the "extract a pure testable seam" pattern
+/// the repo uses for the other awkward-to-construct glue. `Loadout::STANDARD` is a proven no-op, so a
+/// Standard boot stays byte-identical to the un-loadout-ed seed (the checksum fast path, invariants
+/// #1/#7); a non-Standard loadout moves the spawned player weapon (see the `*_at_boot` tests).
+fn seed_scene_with_loadout(
+    sim: &mut Sim,
+    scene: Scene,
+    player_loadout: Loadout,
+) -> (Entity, bool, objectives::ObjectiveSet) {
+    match scene {
+        Scene::Mission1 => seed_seize_mission_scene(sim, player_loadout),
+        Scene::Mission2 => seed_hold_mission_scene(sim, player_loadout),
+        Scene::Default => {
+            let (p, e) = seed_default_scene(sim, player_loadout);
+            (p, e, objectives::ObjectiveSet::default())
+        }
+        Scene::Skirmish => {
+            let (p, e) = seed_skirmish_scene(sim, player_loadout);
+            (p, e, objectives::ObjectiveSet::default())
+        }
+        Scene::Duel => {
+            let (p, e) = seed_duel_scene(sim);
+            (p, e, objectives::ObjectiveSet::default())
+        }
+        Scene::Infantry => {
+            let (p, e) = seed_infantry_scene(sim);
+            (p, e, objectives::ObjectiveSet::default())
+        }
+        Scene::MapInspect => {
+            let (p, e) = seed_map_inspect_scene(sim);
+            (p, e, objectives::ObjectiveSet::default())
+        }
+    }
+}
+
 /// Faction tint for an infantry unit's debug range ring.
 fn faction_ring_color(f: Faction) -> [f32; 3] {
     match f {
@@ -2233,31 +2277,12 @@ impl Game {
     ) -> Self {
         let mut sim = Sim::new(seed);
         // Most scenes carry no objectives (empty set → no HUD, no objective win/lose); the PvE
-        // mission seeds a live `ObjectiveSet` that OBSERVES the sim (never mutates it).
-        let (player, start_embodied, objectives) = match scene {
-            Scene::Mission1 => seed_seize_mission_scene(&mut sim, player_loadout),
-            Scene::Mission2 => seed_hold_mission_scene(&mut sim, player_loadout),
-            Scene::Default => {
-                let (p, e) = seed_default_scene(&mut sim, player_loadout);
-                (p, e, objectives::ObjectiveSet::default())
-            }
-            Scene::Skirmish => {
-                let (p, e) = seed_skirmish_scene(&mut sim, player_loadout);
-                (p, e, objectives::ObjectiveSet::default())
-            }
-            Scene::Duel => {
-                let (p, e) = seed_duel_scene(&mut sim);
-                (p, e, objectives::ObjectiveSet::default())
-            }
-            Scene::Infantry => {
-                let (p, e) = seed_infantry_scene(&mut sim);
-                (p, e, objectives::ObjectiveSet::default())
-            }
-            Scene::MapInspect => {
-                let (p, e) = seed_map_inspect_scene(&mut sim);
-                (p, e, objectives::ObjectiveSet::default())
-            }
-        };
+        // mission seeds a live `ObjectiveSet` that OBSERVES the sim (never mutates it). The seeding
+        // (and the WS-C loadout threading it does) is the GPU-free `seed_scene_with_loadout` dispatch,
+        // extracted so the "does the chosen loadout reach the live match at boot?" routing is
+        // host-testable without a device; the renderer below is the only GPU-bound part of boot.
+        let (player, start_embodied, objectives) =
+            seed_scene_with_loadout(&mut sim, scene, player_loadout);
         // The debug overlay defaults on for the sandboxes (their whole point), off for a real
         // match; F3 toggles it either way.
         let debug_hitboxes = scene.debug_overlay_default();
@@ -4689,6 +4714,98 @@ mod tests {
             std_sim.world.weapon[std_player.index as usize],
             "a non-Standard loadout must move the live-spawned weapon off the baseline",
         );
+    }
+
+    /// WS-C boot **dispatch** wiring — the point the roadmap flagged ("loadout not applied at live
+    /// match start"). `seed_scene_with_loadout` is the seeding half of `Game::new_scene_with_loadout`
+    /// (extracted so the routing is testable without a `wgpu::Device` — the renderer is the only
+    /// GPU-bound part of boot), so this proves the chosen loadout actually reaches the live match
+    /// **through the real boot dispatch**, not just via the per-scene seeders. Two guarantees:
+    ///
+    /// 1. **Default path unchanged (the checksum fast path).** A `Loadout::STANDARD` boot is
+    ///    byte-identical — by *whole-sim checksum* (invariants #1/#7) — to the un-loadout-ed
+    ///    `core::scenario` seed for every loadout-bearing live scene, so fielding the default loadout
+    ///    can never perturb the deterministic sim.
+    /// 2. **A chosen loadout reaches the spawned weapon at boot.** A non-Standard loadout moves the
+    ///    dispatched scene's spawned player weapon off that baseline.
+    ///
+    /// The debug sandboxes (`Duel`/`Infantry`/`MapInspect`) carry no player loadout, so a non-Standard
+    /// loadout is inert there — the spawned weapon is byte-identical regardless.
+    #[test]
+    fn boot_dispatch_applies_the_chosen_loadout_at_live_match_start() {
+        use gonedark_core::gunsmith::{Barrel, Magazine, Optic};
+
+        let chosen = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+            ..Loadout::STANDARD
+        };
+
+        // Each loadout-bearing live scene paired with the un-loadout-ed `core::scenario` seed it must
+        // reproduce byte-for-byte under `Loadout::STANDARD` (the default-loadout fast path).
+        let baselines: [(Scene, fn(&mut Sim)); 4] = [
+            (Scene::Mission1, |s| {
+                gonedark_core::scenario::seed_seize_mission(s);
+            }),
+            (Scene::Mission2, |s| {
+                gonedark_core::scenario::seed_hold_mission(s);
+            }),
+            (Scene::Default, |s| {
+                gonedark_core::scenario::seed_skirmish(s);
+            }),
+            (Scene::Skirmish, |s| {
+                gonedark_core::scenario::seed_skirmish(s);
+            }),
+        ];
+
+        for (scene, seed_bare) in baselines {
+            // (1) STANDARD dispatch == the bare core seed, by whole-sim checksum (fast path).
+            let mut std_sim = Sim::new(DEFAULT_SEED);
+            let (std_player, _e, _o) =
+                seed_scene_with_loadout(&mut std_sim, scene, Loadout::STANDARD);
+            if !matches!(scene, Scene::Default) {
+                // The Default scene layers a demo squad the bare skirmish seeder doesn't, so only its
+                // *weapon* fast path is comparable, not the whole-world checksum; the other three seed
+                // exactly their bare `core::scenario` scene.
+                let mut bare = Sim::new(DEFAULT_SEED);
+                seed_bare(&mut bare);
+                assert_eq!(
+                    std_sim.checksum(),
+                    bare.checksum(),
+                    "{scene:?}: STANDARD boot must be byte-identical (checksum) to the bare seed",
+                );
+            } else {
+                let _ = seed_bare; // Default's bare comparison is covered by the per-scene test.
+            }
+
+            // (2) A non-Standard loadout reaches the dispatched scene's spawned player weapon.
+            let std_weapon = std_sim.world.weapon[std_player.index as usize];
+            let mut chosen_sim = Sim::new(DEFAULT_SEED);
+            let (player, _e, _o) = seed_scene_with_loadout(&mut chosen_sim, scene, chosen);
+            assert_ne!(
+                chosen_sim.world.weapon[player.index as usize], std_weapon,
+                "{scene:?}: a chosen loadout must reach the live-spawned player weapon at boot",
+            );
+        }
+
+        // Debug sandboxes ignore the loadout — same spawned weapon whether STANDARD or a real build.
+        for scene in [Scene::Duel, Scene::Infantry, Scene::MapInspect] {
+            let mut std_sim = Sim::new(DEFAULT_SEED);
+            let (std_player, _e, _o) =
+                seed_scene_with_loadout(&mut std_sim, scene, Loadout::STANDARD);
+            let mut chosen_sim = Sim::new(DEFAULT_SEED);
+            let (player, _e, _o) = seed_scene_with_loadout(&mut chosen_sim, scene, chosen);
+            assert_eq!(
+                player, std_player,
+                "{scene:?}: the sandbox yields the same player entity regardless of loadout",
+            );
+            assert_eq!(
+                chosen_sim.world.weapon[player.index as usize],
+                std_sim.world.weapon[std_player.index as usize],
+                "{scene:?}: a sandbox carries no loadout — byte-identical spawned weapon",
+            );
+        }
     }
 
     /// The infantry sandbox boots **embodied** in a Player Rifleman with the input source swapped
