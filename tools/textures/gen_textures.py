@@ -11,12 +11,19 @@ source of record; the raw textures are regenerable artifacts (sha256 pinned belo
                                     bytemuck only, the same rule as the D74 font atlas)
   * assets/textures/manifest.json — provenance (source / license / sha256 / dims / channels)
 
-Currently one texture is baked: `ground` — a **multi-octave seamless HEIGHTFIELD** sampled by the
-embodied first-person floor shader (`render/src/world.wgsl`). The shader treats the R8 value as a
-terrain *height*: it tiles the map at several world scales for albedo tonal variation, and
-reconstructs a per-pixel surface normal by finite-differencing the height so a dim key light gives
-the floor real relief instead of a flat slate. It tiles seamlessly so it can be repeated across the
-world plane without visible seams.
+Two textures are baked, both **seamless HEIGHTFIELDS** the shaders treat as terrain *height* (tile
+at several world scales for tonal variation; reconstruct a per-pixel surface normal by finite-
+differencing the height so a dim key light gives real relief instead of a flat slate):
+
+  * `ground` — the broad floor field sampled by the embodied first-person floor shader
+    (`render/src/world.wgsl`): macro swell + metre-scale relief + fine grit, deliberately smooth.
+  * `detail` — a **high-frequency near-field** field (WS-E "world & embodied visual depth"). Crisper
+    and higher-contrast than `ground`, built from only the fine + micro octaves so finite-
+    differencing it yields SHARP micro-facet normal detail the smooth (heavily blurred) `ground`
+    field cannot carry. The floor shader samples it at a tight world scale to add near-field surface
+    crunch underfoot without disturbing the broad `ground` silhouette or the fog/intel boundary.
+
+Both tile seamlessly so they repeat across the world plane without visible seams.
 
 ## The seamless trick
 
@@ -150,20 +157,108 @@ def bake_ground(png_path: Path, gray_path: Path) -> bytes:
     return raw
 
 
+def bake_detail(png_path: Path, gray_path: Path) -> bytes:
+    """Bake the seamless HIGH-FREQUENCY detail HEIGHTFIELD → PNG (inspection) + raw R8 (engine).
+
+    Unlike `bake_ground` (which is dominated by broad, heavily-blurred octaves so its finite-
+    difference normal reads as gentle terrain relief), this field keeps ONLY the fine + micro
+    octaves and firms them hard, so finite-differencing it yields crisp, small-scale micro-facet
+    normal detail — the near-field surface crunch the smooth ground field can't carry (WS-E).
+    Distinct seeds (SEED + 10..) keep it uncorrelated with `ground`, and every blur uses
+    `-virtual-pixel tile` so the result still tiles seamlessly.
+    """
+    subprocess.run(
+        [
+            "magick",
+            # fine octave — the sub-metre body of the detail (own uncorrelated seeds, SEED+10..)
+            "(",
+            "-size", f"{SIZE}x{SIZE}", "xc:",
+            "-seed", str(SEED + 10), "+noise", "Random",
+            "-colorspace", "Gray",
+            "-virtual-pixel", "tile", "-blur", "0x2.2",
+            "-auto-level",
+            ")",
+            # micro octave — the finest near-field grit, folded in heavily (fine 60 / micro 40)
+            "(",
+            "-size", f"{SIZE}x{SIZE}", "xc:",
+            "-seed", str(SEED + 11), "+noise", "Random",
+            "-colorspace", "Gray",
+            "-virtual-pixel", "tile", "-blur", "0x0.9",
+            "-auto-level",
+            ")",
+            "-define", "compose:args=60,40",
+            "-compose", "blend", "-composite",
+            # A broad, faint drift so the crunch isn't uniformly dense across the tile (fold light).
+            "(",
+            "-size", f"{SIZE}x{SIZE}", "xc:",
+            "-seed", str(SEED + 12), "+noise", "Random",
+            "-colorspace", "Gray",
+            "-virtual-pixel", "tile", "-blur", "0x14",
+            "-auto-level",
+            ")",
+            "-define", "compose:args=88,12",
+            "-compose", "blend", "-composite",
+            # Full contrast, then a STRONGER sigmoidal firm-up (5.0) than ground's gentle 2.5 — the
+            # detail field is meant to bite, giving the shader steeper micro-gradients to light.
+            "-normalize",
+            "-sigmoidal-contrast", "5.0,50%",
+            "-depth", "8",
+            str(png_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "magick", str(png_path),
+            "-colorspace", "Gray",
+            "-resize", f"{SIZE}x{SIZE}!",
+            "-depth", "8",
+            f"gray:{gray_path}",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    raw = gray_path.read_bytes()
+    expected = SIZE * SIZE
+    if len(raw) != expected:
+        raise SystemExit(f"raw detail is {len(raw)} bytes, expected {expected}")
+    return raw
+
+
+def _texture_entry(name: str, png_path: Path, raw: bytes) -> dict:
+    """One manifest provenance record for a baked <name> texture (png + raw R8)."""
+    return {
+        "name": name,
+        "size": SIZE,
+        "channels": 1,
+        "format": "R8",
+        "png_bytes": png_path.stat().st_size,
+        "png_sha256": hashlib.sha256(png_path.read_bytes()).hexdigest(),
+        "gray_bytes": len(raw),
+        "gray_sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     ground_png = OUT_DIR / "ground.png"
     ground_gray = OUT_DIR / "ground.gray"
-    raw = bake_ground(ground_png, ground_gray)
+    ground_raw = bake_ground(ground_png, ground_gray)
+
+    detail_png = OUT_DIR / "detail.png"
+    detail_gray = OUT_DIR / "detail.gray"
+    detail_raw = bake_detail(detail_png, detail_gray)
 
     manifest = {
         "note": (
             "Ground detail textures, generated by tools/textures/gen_textures.py "
-            "(decisions.md D41/D46). Seamlessly-tiling grayscale noise sampled by the render crate "
-            "(render/src/world.wgsl) to break up the flat embodied floor. Each <name>.gray is raw "
-            "R8 bytes (SIZE*SIZE) include_bytes!d straight in, so the render crate stays "
-            "wgpu+bytemuck only (no png-decode dep). Render-only; regenerate with "
+            "(decisions.md D41/D46). Seamlessly-tiling grayscale HEIGHTFIELDS sampled by the render "
+            "crate (render/src/world.wgsl) to break up the flat embodied floor: `ground` is the "
+            "broad floor field, `detail` (WS-E) a high-frequency near-field crunch layer. Each "
+            "<name>.gray is raw R8 bytes (SIZE*SIZE) include_bytes!d straight in, so the render "
+            "crate stays wgpu+bytemuck only (no png-decode dep). Render-only; regenerate with "
             "`pnpm assets:textures`."
         ),
         "source": "ImageMagick (+noise Random, wrap-blurred for seamless tiling)",
@@ -171,22 +266,16 @@ def main() -> int:
         "author": "procedurally synthesised (seed-based) via ImageMagick",
         "seed": SEED,
         "textures": [
-            {
-                "name": "ground",
-                "size": SIZE,
-                "channels": 1,
-                "format": "R8",
-                "png_bytes": ground_png.stat().st_size,
-                "png_sha256": hashlib.sha256(ground_png.read_bytes()).hexdigest(),
-                "gray_bytes": len(raw),
-                "gray_sha256": hashlib.sha256(raw).hexdigest(),
-            }
+            _texture_entry("ground", ground_png, ground_raw),
+            _texture_entry("detail", detail_png, detail_raw),
         ],
     }
     (OUT_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
-    print(f"ground {SIZE}x{SIZE} R8  {len(raw)} raw bytes")
-    print(f"gray sha256 {manifest['textures'][0]['gray_sha256']}")
+    print(f"ground {SIZE}x{SIZE} R8  {len(ground_raw)} raw bytes")
+    print(f"  gray sha256 {manifest['textures'][0]['gray_sha256']}")
+    print(f"detail {SIZE}x{SIZE} R8  {len(detail_raw)} raw bytes")
+    print(f"  gray sha256 {manifest['textures'][1]['gray_sha256']}")
     return 0
 
 
