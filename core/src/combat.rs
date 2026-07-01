@@ -613,61 +613,71 @@ pub fn resolve_fire(
         }
     }
 
-    let target_idx = match best {
-        Some((t, _)) => t,
-        None => return,
-    };
-
-    // Same writes the auto-resolver's engage pass performs: cover-mitigated damage, last-attacker,
-    // suppression, and the weapon cooldown. Reusing them keeps embodied and AI fire identical
-    // (and keeps every touched field already in the checksum fold).
+    // The shooter's entity handle — needed for BOTH the optional Damaged event (if a target is hit)
+    // and the always-emitted Fired event that commits the shot below.
     let shooter = match world.entity(shooter_idx) {
         Some(e) => e,
         None => return,
     };
-    let target = match world.entity(target_idx) {
-        Some(e) => e,
-        None => return,
-    };
 
-    let mult = terrain.cover_at(world.pos[target_idx]).damage_multiplier();
-    // All-unit armour facing (D55 P4): shot direction is the aim. Unarmoured targets return the
-    // multiplier as one, so embodied infantry fire against infantry/buildings is unchanged.
-    let facing = facing_penetration_multiplier(
-        dir,
-        world.hull_heading[target_idx],
-        world.weapon[shooter_idx].penetration,
-        world.armor[target_idx],
-    );
-    let damage = world.weapon[shooter_idx].damage * mult * facing;
+    // If a hostile is under the crosshair, apply the hit — the same writes the auto-resolver's
+    // engage pass performs (cover-mitigated damage, last-attacker, suppression), so embodied and AI
+    // fire stay identical and every touched field is already in the checksum fold. A MISS (no target,
+    // or the target vanished this tick) simply skips this block and falls through to the shot-commit:
+    // the round is still spent and the gun still cracks. This is the fix for "firing at air is free"
+    // — previously the function returned here on a miss, so the magazine never drained and a Reload
+    // was a perpetual no-op (`ammo == mag_size`).
+    if let Some((target_idx, _)) = best {
+        if let Some(target) = world.entity(target_idx) {
+            let mult = terrain.cover_at(world.pos[target_idx]).damage_multiplier();
+            // All-unit armour facing (D55 P4): shot direction is the aim. Unarmoured targets return
+            // the multiplier as one, so embodied infantry fire vs infantry/buildings is unchanged.
+            let facing = facing_penetration_multiplier(
+                dir,
+                world.hull_heading[target_idx],
+                world.weapon[shooter_idx].penetration,
+                world.armor[target_idx],
+            );
+            let damage = world.weapon[shooter_idx].damage * mult * facing;
 
-    world.health[target_idx].cur -= damage;
-    world.last_attacker[target_idx] = Some(shooter);
-    world.suppression[target_idx] =
-        (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
-    // Area (fire-and-maneuver) suppression (WS-B, D70), same as the auto-resolver's engage pass: an
-    // embodied player's shot also pins the hostiles near the impact. No per-tick spatial index is
-    // built on this single-shot path, so scan index-ordered (mirrors the 0..n targeting scan above);
-    // `splash_suppress` owns the precise radius/hostility/kind filter. Float-free, order-independent.
-    let sf = world.faction[shooter_idx];
-    let target_pos = world.pos[target_idx];
-    let n = world.capacity();
-    for j in 0..n {
-        splash_suppress(world, sf, target_idx, target_pos, j);
+            world.health[target_idx].cur -= damage;
+            world.last_attacker[target_idx] = Some(shooter);
+            world.suppression[target_idx] =
+                (world.suppression[target_idx] + SUPPRESSION_PER_HIT).min(SUPPRESSION_MAX);
+            // Area (fire-and-maneuver) suppression (WS-B, D70), same as the auto-resolver's engage
+            // pass: the shot also pins hostiles near the impact. No per-tick spatial index on this
+            // single-shot path, so scan index-ordered (mirrors the 0..n targeting scan above);
+            // `splash_suppress` owns the radius/hostility/kind filter. Float-free, order-independent.
+            let sf = world.faction[shooter_idx];
+            let target_pos = world.pos[target_idx];
+            let n = world.capacity();
+            for j in 0..n {
+                splash_suppress(world, sf, target_idx, target_pos, j);
+            }
+
+            events.push(SimEvent::Damaged {
+                entity: target,
+                faction: world.faction[target_idx],
+                source: shooter,
+                amount: damage,
+                pos: world.pos[target_idx],
+            });
+        }
     }
+
+    // Commit the shot — hit OR miss. Start the cooldown and spend one magazine round (the pre-fire
+    // gate guarantees `ammo > 0` for a magazine weapon, so this never underflows), then emit the
+    // authoritative Fired cue. A downrange miss costs exactly the same round + cooldown as a hit:
+    // this drains the magazine so a Reload is meaningful, and lets presentation pace the muzzle
+    // flash / gun-crack / recoil at the true rate of fire rather than on every held-trigger frame.
     world.weapon[shooter_idx].cooldown_left = world.weapon[shooter_idx].cooldown_ticks;
-    // Spend a round (magazine weapons only). The pre-fire gate guarantees `ammo > 0` here, so the
-    // subtraction never underflows. A miss spends nothing (we returned before this point).
     if world.weapon[shooter_idx].mag_size > 0 {
         world.weapon[shooter_idx].ammo -= 1;
     }
-
-    events.push(SimEvent::Damaged {
-        entity: target,
-        faction: world.faction[target_idx],
-        source: shooter,
-        amount: damage,
-        pos: world.pos[target_idx],
+    events.push(SimEvent::Fired {
+        entity: shooter,
+        faction: world.faction[shooter_idx],
+        pos: my_pos,
     });
 }
 
@@ -1298,6 +1308,17 @@ mod tests {
         resolve_fire(world, terrain, shooter.index as usize, dir, events);
     }
 
+    /// How many `Damaged` events the shot stream carries — a hit produces exactly one.
+    fn count_damaged(events: &[SimEvent]) -> usize {
+        events.iter().filter(|e| matches!(e, SimEvent::Damaged { .. })).count()
+    }
+
+    /// How many `Fired` events the shot stream carries — a *committed* trigger pull (hit OR miss)
+    /// produces exactly one; a dry click / hot-weapon pull produces none.
+    fn count_fired(events: &[SimEvent]) -> usize {
+        events.iter().filter(|e| matches!(e, SimEvent::Fired { .. })).count()
+    }
+
     #[test]
     fn fire_hits_target_inside_cone_in_range() {
         let mut world = World::new();
@@ -1311,23 +1332,27 @@ mod tests {
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(75), "open terrain = full damage");
         assert_eq!(world.last_attacker[enemy.index as usize], Some(shooter));
-        assert_eq!(events.len(), 1, "one Damaged event for the hit");
+        assert_eq!(count_damaged(&events), 1, "one Damaged event for the hit");
+        assert_eq!(count_fired(&events), 1, "and one Fired event committing the shot");
     }
 
     #[test]
     fn fire_misses_target_outside_the_cone() {
         let mut world = World::new();
         let terrain = Terrain::open();
-        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 0));
+        // Non-zero cooldown so we can prove a miss still spends it (a round left the barrel).
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 25, 5));
         // Aim +X, but the enemy is at +Y (90° off-axis) — well outside the ~30° half-cone.
         let enemy = spawn_unit(&mut world, 0, 5, Faction::Enemy, 100, Weapon::default());
 
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(100), "off-axis target not hit");
-        assert!(events.is_empty());
-        // A clean miss must NOT spend the weapon's cooldown — you can re-aim and fire again.
-        assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 0);
+        assert_eq!(count_damaged(&events), 0, "a miss deals no damage");
+        // …but the trigger pull still COMMITTED: a round went downrange (Fired) and the weapon is
+        // now cooling. (Previously a miss was free, so the magazine never drained — the reload bug.)
+        assert_eq!(count_fired(&events), 1, "a miss still fires a round downrange");
+        assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 5, "and the shot spends cooldown");
     }
 
     #[test]
@@ -1341,7 +1366,8 @@ mod tests {
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(100));
-        assert!(events.is_empty());
+        assert_eq!(count_damaged(&events), 0, "target behind the aim is not hit");
+        assert_eq!(count_fired(&events), 1, "but the round is still fired");
     }
 
     #[test]
@@ -1355,7 +1381,8 @@ mod tests {
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(100), "out of range = no hit");
-        assert!(events.is_empty());
+        assert_eq!(count_damaged(&events), 0);
+        assert_eq!(count_fired(&events), 1, "an out-of-range pull still fires a round");
     }
 
     #[test]
@@ -1371,7 +1398,8 @@ mod tests {
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(100), "LoS-blocked shot misses");
-        assert!(events.is_empty());
+        assert_eq!(count_damaged(&events), 0);
+        assert_eq!(count_fired(&events), 1, "a blocked shot still fires the round");
     }
 
     #[test]
@@ -1382,14 +1410,17 @@ mod tests {
         let enemy = spawn_unit(&mut world, 5, 0, Faction::Enemy, 1000, Weapon::default());
 
         let mut events = Vec::new();
-        // First shot lands and sets cooldown_left = 5.
+        // First shot lands and sets cooldown_left = 5 (Damaged + Fired).
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(990));
         assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 5);
+        assert_eq!(count_damaged(&events), 1);
+        assert_eq!(count_fired(&events), 1);
         // A second pull while hot does nothing (no damage, no event, cooldown unchanged).
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(990), "no fire while on cooldown");
-        assert_eq!(events.len(), 1);
+        assert_eq!(count_damaged(&events), 1, "the hot pull added no Damaged");
+        assert_eq!(count_fired(&events), 1, "and no Fired — a hot weapon does not commit a shot");
         assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 5);
     }
 
@@ -1464,7 +1495,8 @@ mod tests {
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[friendly.index as usize].cur, fx(100), "no friendly fire");
-        assert!(events.is_empty());
+        assert_eq!(count_damaged(&events), 0, "a friendly is never hit");
+        assert_eq!(count_fired(&events), 1, "but the round is still fired downrange");
     }
 
     #[test]
@@ -1504,7 +1536,8 @@ mod tests {
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[building.index as usize].cur, fx(50), "building takes fire");
         assert_eq!(world.last_attacker[building.index as usize], Some(shooter));
-        assert_eq!(events.len(), 1, "one Damaged event for the hit building");
+        assert_eq!(count_damaged(&events), 1, "one Damaged event for the hit building");
+        assert_eq!(count_fired(&events), 1, "and one Fired committing the shot");
 
         // Second shot drops it to zero; the death pass then despawns it (same as a unit).
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
@@ -1603,7 +1636,9 @@ mod tests {
             fx(100),
             "a FireAtWill unit never engages a friendly building"
         );
-        assert!(events.is_empty(), "no damage events against a friendly building");
+        // The embodied pull committed a Fired (a round downrange), but never a Damaged on the
+        // friendly base; the auto-combat pass emits nothing at all.
+        assert_eq!(count_damaged(&events), 0, "no damage events against a friendly building");
     }
 
     #[test]
@@ -1702,20 +1737,44 @@ mod tests {
         assert_eq!(world.weapon[shooter.index as usize].ammo, 2, "one round spent per hit");
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.weapon[shooter.index as usize].ammo, 1);
-        assert_eq!(events.len(), 2, "both shots landed while ammo remained");
+        assert_eq!(count_damaged(&events), 2, "both shots landed while ammo remained");
+        assert_eq!(count_fired(&events), 2, "and both committed a Fired");
+    }
+
+    #[test]
+    fn firing_at_air_drains_the_magazine_so_a_reload_matters() {
+        // Regression for the reload bug: firing at NOTHING used to early-return before spending the
+        // round, so the magazine never drained and `Command::Reload` was a perpetual no-op (the
+        // reload gate needs `ammo < mag_size`). A ready pull at empty air must now cost a round.
+        let mut world = World::new();
+        let terrain = Terrain::open(); // no enemy anywhere → every pull is a downrange miss
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 3, 4));
+        world.input_source[shooter.index as usize] = InputSource::Embodied;
+        let i = shooter.index as usize;
+        let mut events = Vec::new();
+
+        assert_eq!(world.weapon[i].ammo, 3);
+        fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
+        assert_eq!(world.weapon[i].ammo, 2, "a miss still spends a round from the magazine");
+        assert_eq!(count_damaged(&events), 0, "nothing was hit");
+        assert_eq!(count_fired(&events), 1, "but a round was fired downrange");
+        // Now ammo (2) < mag_size (3), so a reload is finally meaningful.
+        assert!(world.weapon[i].ammo < world.weapon[i].mag_size, "the magazine can now accept a reload");
     }
 
     #[test]
     fn empty_magazine_blocks_fire_no_damage_no_event() {
         let (mut world, terrain, shooter, enemy) = mag_scene(10, 1, 90);
         let mut events = Vec::new();
-        // First (and only) round lands.
+        // First (and only) round lands (Damaged + Fired).
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.weapon[shooter.index as usize].ammo, 0);
+        assert_eq!(count_fired(&events), 1, "the loaded round fired");
         let hp_after_first = world.health[enemy.index as usize].cur;
         // Dry click: no hit, no event, ammo stays 0 (and no cooldown was spent — cooldown is 0).
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(events.len(), 1, "the empty pull emits nothing");
+        assert_eq!(count_fired(&events), 1, "the empty pull commits nothing (still just the first)");
+        assert_eq!(count_damaged(&events), 1, "and adds no damage");
         assert_eq!(world.health[enemy.index as usize].cur, hp_after_first, "no damage on empty");
     }
 
@@ -1873,7 +1932,8 @@ mod tests {
         world.posture[shooter.index as usize] = Posture::Crouched;
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(100), "crouch demands tighter aim");
-        assert!(events.is_empty());
+        assert_eq!(count_damaged(&events), 0, "the tighter cone misses this off-axis target");
+        assert_eq!(count_fired(&events), 1, "but the round is still fired");
     }
 
     #[test]

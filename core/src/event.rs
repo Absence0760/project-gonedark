@@ -41,4 +41,15 @@ pub enum SimEvent {
     },
     /// `faction` finished producing a unit at `pos` (it now exists in the world).
     UnitProduced { faction: Faction, pos: Vec2 },
+    /// `entity` (of `faction`) fired a shot this tick from `pos` — a *committed* trigger pull: a
+    /// round was spent and the weapon began cooling, **whether or not it hit anything** (a downrange
+    /// miss still fires here). Emitted only by the embodied fire path ([`combat::resolve_fire`](crate::combat::resolve_fire)),
+    /// so it is first-person-only by construction (invariant #3). Presentation drives the muzzle
+    /// flash / gun-crack / recoil off THIS — the authoritative rate of fire — instead of the held
+    /// trigger, so a cooling-down or dry-clicked pull produces no flare.
+    Fired {
+        entity: Entity,
+        faction: Faction,
+        pos: Vec2,
+    },
 }

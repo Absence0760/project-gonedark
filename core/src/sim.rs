@@ -1672,6 +1672,78 @@ mod tests {
         (sim, tank)
     }
 
+    /// End-to-end reload path (the user's "reloading doesn't work" report): an embodied infantry
+    /// rifleman firing at EMPTY AIR must drain its magazine, so a `Command::Reload` then has rounds
+    /// to refill and completes through combat upkeep. Before the fix, air fire spent nothing (the mag
+    /// stayed full), so the reload gate `ammo < mag_size` never opened and the command was inert.
+    #[test]
+    fn embodied_rifle_drains_on_air_fire_then_reload_refills() {
+        let mut sim = Sim::new(0xF12E_0001);
+        let e = sim.world.spawn();
+        let i = e.index as usize;
+        sim.world.kind[i] = EntityKind::Unit;
+        sim.world.faction[i] = Faction::Player;
+        sim.world.input_source[i] = InputSource::Embodied;
+        sim.world.pos[i] = Vec2::ZERO;
+        sim.world.health[i] = Health::full(Fixed::from_int(100));
+        // A hitscan rifle (muzzle_vel 0) with a 3-round mag, a 4-tick reload, and reserve to draw
+        // from. Zero cooldown so each step's Fire commits immediately. No enemy exists → every shot
+        // is a downrange miss.
+        sim.world.weapon[i] = Weapon {
+            range: Fixed::from_int(10),
+            damage: Fixed::from_int(5),
+            cooldown_ticks: 0,
+            mag_size: 3,
+            ammo: 3,
+            reload_ticks: 4,
+            reload_left: 0,
+            reserve: 9,
+            reserve_max: 9,
+            ..Default::default()
+        };
+        let aim = Vec2::new(Fixed::ONE, Fixed::ZERO);
+
+        // Fire twice at nothing: the magazine drains even though nothing is hit.
+        sim.step(&[Command::Fire { entity: e, dir: aim }]);
+        sim.step(&[Command::Fire { entity: e, dir: aim }]);
+        assert_eq!(sim.world.weapon[i].ammo, 1, "air fire drains the magazine (the reload-bug fix)");
+
+        // Reloading is now meaningful: the command starts the timer (ammo 1 < mag 3). Combat upkeep
+        // runs in the same step, so it has already counted the fresh timer down once by here.
+        sim.step(&[Command::Reload { entity: e }]);
+        assert!(sim.world.weapon[i].reload_left > 0, "Reload starts because the mag isn't full");
+        // Upkeep counts the reload down and refills the magazine from reserve on completion.
+        for _ in 0..4 {
+            sim.step(&[]);
+        }
+        assert_eq!(sim.world.weapon[i].reload_left, 0, "reload completes");
+        assert_eq!(sim.world.weapon[i].ammo, 3, "magazine refilled to mag_size");
+    }
+
+    /// The reverse guard: a `Command::Reload` on a FULL magazine is a no-op (nothing to refill), so
+    /// the earlier bug's symptom — "reload does nothing" — is now correctly scoped to only that case.
+    #[test]
+    fn reload_on_a_full_magazine_is_a_noop() {
+        let mut sim = Sim::new(0xF12E_0002);
+        let e = sim.world.spawn();
+        let i = e.index as usize;
+        sim.world.kind[i] = EntityKind::Unit;
+        sim.world.faction[i] = Faction::Player;
+        sim.world.input_source[i] = InputSource::Embodied;
+        sim.world.health[i] = Health::full(Fixed::from_int(100));
+        sim.world.weapon[i] = Weapon {
+            range: Fixed::from_int(10),
+            mag_size: 3,
+            ammo: 3,
+            reload_ticks: 4,
+            reserve: 9,
+            reserve_max: 9,
+            ..Default::default()
+        };
+        sim.step(&[Command::Reload { entity: e }]);
+        assert_eq!(sim.world.weapon[i].reload_left, 0, "a full mag never starts a reload");
+    }
+
     #[test]
     fn select_shell_changes_the_loaded_shell() {
         let (mut sim, tank) = ballistic_tank_scene();
