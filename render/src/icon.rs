@@ -62,6 +62,10 @@ pub enum IconKind {
     Attack = 7,
     /// A shield — the hold-position stance.
     Hold = 8,
+    /// A medical cross — a Medic unit token (CP-9 command-view glanceability, WS-C).
+    Medic = 9,
+    /// A rocket / bazooka round — an AntiTank unit token (CP-9 command-view glanceability, WS-C).
+    AntiTank = 10,
 }
 
 impl IconKind {
@@ -90,10 +94,10 @@ pub struct IconItem {
 // `ICON_COLS` columns. These MUST match the `grid` block in `assets/icons/manifest.json`.
 
 /// Number of icons in the atlas (must match [`IconKind`]'s variant count).
-pub const ICON_COUNT: u32 = 9;
+pub const ICON_COUNT: u32 = 11;
 /// Atlas grid columns / rows.
 pub const ICON_COLS: u32 = 4;
-pub const ICON_ROWS: u32 = 3; // ceil(9 / 4)
+pub const ICON_ROWS: u32 = 3; // ceil(11 / 4)
 /// One cell's pixel size in the atlas (square).
 pub const CELL: u32 = 64;
 /// Full atlas pixel size.
@@ -546,6 +550,8 @@ mod tests {
             IconKind::Move,
             IconKind::Attack,
             IconKind::Hold,
+            IconKind::Medic,
+            IconKind::AntiTank,
         ];
         assert_eq!(all.len() as u32, ICON_COUNT);
         for (i, k) in all.iter().enumerate() {
@@ -576,6 +582,28 @@ mod tests {
         assert_ne!(a, b);
         assert_ne!(a, c);
         assert_ne!(b, c);
+    }
+
+    #[test]
+    fn new_unit_kind_icons_have_valid_distinct_cells() {
+        // CP-9 (WS-C): Medic and AntiTank must each resolve to an in-atlas cell distinct from each
+        // other and from the shared Infantry/Armor unit glyphs — so a token draws the right kind.
+        for k in [IconKind::Medic, IconKind::AntiTank] {
+            assert!(k.index() < ICON_COUNT, "{k:?} index inside the atlas");
+            let ([u0, v0], [du, dv]) = icon_uv(k.index());
+            assert!(u0 >= 0.0 && u0 + du <= 1.0 + EPS && v0 >= 0.0 && v0 + dv <= 1.0 + EPS);
+        }
+        let cells = [
+            icon_uv(IconKind::Infantry.index()).0,
+            icon_uv(IconKind::Armor.index()).0,
+            icon_uv(IconKind::Medic.index()).0,
+            icon_uv(IconKind::AntiTank.index()).0,
+        ];
+        for i in 0..cells.len() {
+            for j in (i + 1)..cells.len() {
+                assert_ne!(cells[i], cells[j], "unit-kind glyph cells must be distinct");
+            }
+        }
     }
 
     #[test]

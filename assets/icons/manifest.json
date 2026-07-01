@@ -12,9 +12,11 @@
     "objective",
     "move",
     "attack",
-    "hold"
+    "hold",
+    "medic",
+    "antitank"
   ],
-  "icon_count": 9,
+  "icon_count": 11,
   "grid": {
     "cols": 4,
     "rows": 3,
@@ -23,8 +25,8 @@
     "atlas_h": 192,
     "channels": 4
   },
-  "png_bytes": 4177,
-  "png_sha256": "8275180ba0805583f4c53ece642d754e285da4c66f048f46a47aaeca8f00d447",
+  "png_bytes": 4499,
+  "png_sha256": "88cbf521c358dbfa9a274bc9abf0a2e4ba2e39f66baa1f8191bf00f2aff52734",
   "rgba_bytes": 196608,
-  "rgba_sha256": "36c01daada84dcced441e39b96ddcf620b27e51117c220229eee84f751d22f9b"
+  "rgba_sha256": "e330dc5537adf3e4f8aa85e5b6fb34a28133d0fd4cfc486dbec9b9652430ecab"
 }

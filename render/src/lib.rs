@@ -332,6 +332,16 @@ fn token_meshes(inst: &UnitInstance) -> Vec<(mesh::ModelKind, f32, f32)> {
 /// Sentinel health value meaning "draw no health bar" (control points).
 const NO_HEALTH_BAR: f32 = -1.0;
 
+/// Sentinel [`UnitInstance::kind`] meaning "no command-view unit-kind glyph" — a building or a
+/// control-point ring (they are not producible unit archetypes, so they carry no CP-9 kind icon).
+pub const NO_TOKEN_ICON: u32 = u32::MAX;
+
+/// Height (NDC) of a command-view unit-kind glyph drawn over a token (CP-9, WS-C) — small enough to
+/// sit inside the token without swamping the field, large enough to read on a phone.
+const TOKEN_ICON_SIZE: f32 = 0.05;
+/// Opacity of a command-view unit-kind glyph.
+const TOKEN_ICON_ALPHA: f32 = 0.95;
+
 /// Static first-person world dressing (W5 follow-on): scenery + cover props placed around the
 /// battlefield so the embodied view reads as a *place*, not a bare ground/sky void. Each entry is
 /// `(kind, x, y, yaw_radians, scale)` in world metres. This is **render-only environment** — a
@@ -529,6 +539,14 @@ pub fn interpolate_instances(
         let hull_yaw = interp_angle(a.hull_heading, b.hull_heading, alpha);
         let turret_yaw = interp_angle(a.turret_yaw, b.turret_yaw, alpha);
 
+        // The command-view unit-kind glyph (CP-9): the producible archetype for a real unit, or
+        // [`NO_TOKEN_ICON`] for a building (a structure carries no unit-kind glanceability icon).
+        let kind = if b.building {
+            NO_TOKEN_ICON
+        } else {
+            b.unit_kind as u32
+        };
+
         out.push(UnitInstance {
             x: ax + (bx - ax) * alpha,
             y: ay + (by - ay) * alpha,
@@ -541,6 +559,7 @@ pub fn interpolate_instances(
             model,
             hull_yaw,
             turret_yaw,
+            kind,
         });
     }
 
@@ -560,10 +579,90 @@ pub fn interpolate_instances(
             model: 0, // unused: FLAG_RING makes `token_meshes` empty (rings stay hollow quads)
             hull_yaw: 0.0,    // unused for rings (no mesh)
             turret_yaw: 0.0,
+            kind: NO_TOKEN_ICON, // a control point is map intel, not a unit — no kind glyph
         });
     }
 
     out
+}
+
+/// Map a token's [`UnitInstance::kind`] (a [`UnitKind`] discriminant, or [`NO_TOKEN_ICON`]) to the
+/// command-view glanceability glyph ([`icon::IconKind`], CP-9 / WS-C): `Rifleman → Infantry`,
+/// `Heavy`/`Tank → Armor`, `Medic → Medic`, `AntiTank → AntiTank`. Returns `None` for a building /
+/// ring ([`NO_TOKEN_ICON`]) or any unknown discriminant, so those tokens draw no kind icon. Pure —
+/// the unit-kind → icon mapping, unit-tested off-GPU. (Presentation only: the army/kind never reach
+/// `core` and add no checksum surface.)
+fn icon_for_unit_kind(kind: u32) -> Option<icon::IconKind> {
+    use icon::IconKind as I;
+    if kind == UnitKind::Rifleman as u32 {
+        Some(I::Infantry)
+    } else if kind == UnitKind::Heavy as u32 || kind == UnitKind::Tank as u32 {
+        Some(I::Armor)
+    } else if kind == UnitKind::Medic as u32 {
+        Some(I::Medic)
+    } else if kind == UnitKind::AntiTank as u32 {
+        Some(I::AntiTank)
+    } else {
+        None
+    }
+}
+
+/// Project a world point to normalized device coordinates through a column-major `view_proj` (glam
+/// `to_cols_array_2d()` layout: `m[col][row]`), returning `None` when the point is behind the camera
+/// (clip `w <= 0`) or projects to a non-finite coordinate. Pure float math (invariant #1: floats
+/// live only in render) — the CPU projection the command-view token glyphs ([`token_icons`]) place
+/// by, so no world position ever reaches the GPU icon pass as anything but a screen-space NDC point.
+fn project_to_ndc(view_proj: &[[f32; 4]; 4], p: [f32; 3]) -> Option<[f32; 2]> {
+    let m = view_proj;
+    let [x, y, z] = p;
+    let cx = m[0][0] * x + m[1][0] * y + m[2][0] * z + m[3][0];
+    let cy = m[0][1] * x + m[1][1] * y + m[2][1] * z + m[3][1];
+    let cw = m[0][3] * x + m[1][3] * y + m[2][3] * z + m[3][3];
+    if !cw.is_finite() || cw <= 1e-6 {
+        return None; // behind (or on) the camera plane — a projection would flip/blow up
+    }
+    let ndc = [cx / cw, cy / cw];
+    if !ndc[0].is_finite() || !ndc[1].is_finite() {
+        return None;
+    }
+    Some(ndc)
+}
+
+/// Command-layer glanceability (CP-9, visual-design WS-C): a small **unit-kind glyph** centred over
+/// each command-view unit token so the player can read composition at a glance on a small screen.
+/// Each non-embodied, non-ring, non-building unit is projected to NDC on the CPU ([`project_to_ndc`])
+/// and emitted as an [`icon::IconItem`] tinted by its faction colour (the instance's own RGB), with
+/// its [`UnitKind`] mapped to an [`icon::IconKind`] ([`icon_for_unit_kind`]).
+///
+/// Fairness (invariant #6): returns an **empty vec while `world_dark`**, exactly like
+/// [`readout::readout_labels`] — a glanceability aid is strategic map intel and must never draw over
+/// the dark embodied frame. The avatar's own body ([`FLAG_EMBODIED`]) and control-point rings
+/// ([`FLAG_RING`], map intel) are dropped even in command view; buildings carry [`NO_TOKEN_ICON`] and
+/// so map to no glyph. Pure presentation + GPU-free (no sim read, no device), so it is unit-tested
+/// without a GPU — the projection math, the `world_dark` gate, and the kind → glyph mapping.
+pub fn token_icons(
+    instances: &[UnitInstance],
+    camera: &Camera,
+    world_dark: bool,
+) -> Vec<icon::IconItem> {
+    if world_dark {
+        return Vec::new(); // invariant #6: no strategic glanceability aid over the dark frame
+    }
+    instances
+        .iter()
+        .filter(|inst| inst.flags & (FLAG_EMBODIED | FLAG_RING) == 0)
+        .filter_map(|inst| {
+            let kind = icon_for_unit_kind(inst.kind)?;
+            let [x, y] = project_to_ndc(&camera.view_proj, [inst.x, inst.y, 0.0])?;
+            Some(icon::IconItem {
+                kind,
+                pos: [x, y],
+                size: TOKEN_ICON_SIZE,
+                tint: [inst.r, inst.g, inst.b],
+                alpha: TOKEN_ICON_ALPHA,
+            })
+        })
+        .collect()
 }
 
 /// Column-major 4x4 view-projection matrix, built by `app` (glam `Mat4::to_cols_array_2d()`).
@@ -603,6 +702,12 @@ pub struct UnitInstance {
     /// Only meaningful for a tank, whose turret mesh ([`mesh::ModelKind::TankTurret`]) is yawed by it
     /// independently of the hull (P7). CPU-side only — the GPU quad pipeline never reads it.
     pub turret_yaw: f32,
+    /// The command-view unit-kind of this token, as a [`UnitKind`] discriminant (`unit_kind as u32`),
+    /// or [`NO_TOKEN_ICON`] for a building or a control-point ring (which carry no kind glyph). Read
+    /// by [`token_icons`] (CP-9 command-view glanceability, WS-C) to pick the small unit-kind glyph
+    /// drawn over the token; a trailing CPU-side field like [`model`](Self::model), so the GPU quad
+    /// pipeline (instance locations 1..=5) never reads it and no shader/vertex-layout changes.
+    pub kind: u32,
 }
 
 /// A unit-quad corner in local space. Two triangles cover `[-1, 1]^2` (the shader scales by
@@ -1069,6 +1174,16 @@ impl Renderer {
 
         // 3. The 2D quad UI (LOAD), with token bodies suppressed so the meshes show through.
         self.draw_quads(device, queue, view, &quad_set, wgpu::LoadOp::Load);
+
+        // 4. Command-layer glanceability (CP-9, WS-C): a small unit-kind glyph centred over each
+        //    token so composition reads at a glance. Projected to NDC on the CPU and tinted by
+        //    faction; `token_icons` withholds them over the dark frame (invariant #6 — never reached
+        //    here, this is the command branch). The icon-pass aspect was set at the top of the frame;
+        //    flush a LOAD icon pass so the glyphs composite over the tokens.
+        for it in token_icons(&draw_set, camera, world_dark) {
+            self.icon.queue_item(it);
+        }
+        self.icon.render(device, queue, view);
 
         // The command-view readout text is NOT drawn here: it is screen-space chrome and must stay
         // crisp at any dyn-res `resolution_scale < 1.0`, so the host draws it via `render_readout`
@@ -2302,6 +2417,150 @@ mod tests {
         assert_eq!(token_meshes(&out[1])[0].0, mesh::ModelKind::Trooper);
     }
 
+    // ---- token_icons: CP-9 command-view unit-kind glyphs (WS-C) --------------------------------
+
+    /// A column-major (glam `to_cols_array_2d`) orthographic-ish camera that maps a world `(x, y, 0)`
+    /// straight to NDC `(x*scale, y*scale)` with `w = 1` — the identity projection the projection +
+    /// mapping tests place tokens through without a GPU.
+    fn ortho_camera(scale: f32) -> Camera {
+        Camera {
+            view_proj: [
+                [scale, 0.0, 0.0, 0.0], // col 0
+                [0.0, scale, 0.0, 0.0], // col 1
+                [0.0, 0.0, 1.0, 0.0],   // col 2
+                [0.0, 0.0, 0.0, 1.0],   // col 3
+            ],
+        }
+    }
+
+    /// `interpolate_instances` stashes each token's unit-kind (as a `UnitKind` discriminant) on the
+    /// CPU-only `kind` field for [`token_icons`]; a building carries the [`NO_TOKEN_ICON`] sentinel.
+    #[test]
+    fn interpolate_sets_kind_field_from_unit_kind_and_sentinels_buildings() {
+        let mut at = unit(Fixed::ZERO, Fixed::ZERO, false);
+        at.unit_kind = UnitKind::AntiTank;
+        let mut base = unit(Fixed::ONE, Fixed::ONE, false);
+        base.building = true;
+        let s = snapshot(0, vec![at, base]);
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        assert_eq!(out[0].kind, UnitKind::AntiTank as u32, "AT infantry keeps its kind");
+        assert_eq!(out[1].kind, NO_TOKEN_ICON, "a building carries no kind glyph");
+    }
+
+    /// A control-point ring is map intel, not a unit — `interpolate_instances` gives it the
+    /// [`NO_TOKEN_ICON`] sentinel so `token_icons` never draws a kind glyph over it.
+    #[test]
+    fn interpolate_gives_control_point_rings_the_no_icon_sentinel() {
+        let mut s = snapshot(0, vec![unit(Fixed::ZERO, Fixed::ZERO, false)]);
+        s.control_points = vec![ControlPointSnapshot {
+            pos: Vec2::new(Fixed::from_int(4), Fixed::from_int(2)),
+            owner: Faction::Neutral,
+            progress: Fixed::ZERO,
+        }];
+        let out = interpolate_instances(&s, &s, 0.0, &[]);
+        let ring = out.iter().find(|i| i.flags & FLAG_RING != 0).expect("a ring is appended");
+        assert_eq!(ring.kind, NO_TOKEN_ICON, "a control-point ring carries no kind glyph");
+    }
+
+    /// The unit-kind → glyph mapping (CP-9): Rifleman→Infantry, Heavy/Tank→Armor, Medic→Medic,
+    /// AntiTank→AntiTank; a building/ring sentinel and any unknown value map to no glyph.
+    #[test]
+    fn icon_for_unit_kind_maps_every_archetype() {
+        use icon::IconKind as I;
+        assert_eq!(icon_for_unit_kind(UnitKind::Rifleman as u32), Some(I::Infantry));
+        assert_eq!(icon_for_unit_kind(UnitKind::Heavy as u32), Some(I::Armor));
+        assert_eq!(icon_for_unit_kind(UnitKind::Tank as u32), Some(I::Armor));
+        assert_eq!(icon_for_unit_kind(UnitKind::Medic as u32), Some(I::Medic));
+        assert_eq!(icon_for_unit_kind(UnitKind::AntiTank as u32), Some(I::AntiTank));
+        assert_eq!(icon_for_unit_kind(NO_TOKEN_ICON), None);
+    }
+
+    /// `project_to_ndc` applies the column-major matrix, does the perspective divide, and rejects a
+    /// point behind the camera (clip `w <= 0`).
+    #[test]
+    fn project_to_ndc_divides_and_culls_behind_camera() {
+        // Identity-scale ortho: (x,y,0) → (x,y).
+        let cam = ortho_camera(1.0);
+        let ndc = project_to_ndc(&cam.view_proj, [0.4, -0.3, 0.0]).unwrap();
+        assert!((ndc[0] - 0.4).abs() < EPS && (ndc[1] - (-0.3)).abs() < EPS);
+        // A w=2 matrix halves the projected coordinate (perspective divide).
+        let half_w = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 2.]];
+        let ndc = project_to_ndc(&half_w, [1.0, 0.5, 0.0]).unwrap();
+        assert!((ndc[0] - 0.5).abs() < EPS && (ndc[1] - 0.25).abs() < EPS);
+        // A negative w-row → the point is behind the camera → culled.
+        let behind = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., -1.]];
+        assert!(project_to_ndc(&behind, [0.0, 0.0, 0.0]).is_none());
+    }
+
+    /// A token instance with a given faction colour + unit-kind, at world `(x, y)`. Mirrors the shape
+    /// `interpolate_instances` builds.
+    fn token(x: f32, y: f32, flags: u32, kind: u32, rgb: [f32; 3]) -> UnitInstance {
+        UnitInstance {
+            x,
+            y,
+            half_extent: UNIT_HALF,
+            r: rgb[0],
+            g: rgb[1],
+            b: rgb[2],
+            health: 1.0,
+            flags,
+            model: mesh::ModelKind::Trooper as u32,
+            hull_yaw: 0.0,
+            turret_yaw: 0.0,
+            kind,
+        }
+    }
+
+    /// `token_icons` emits one faction-tinted kind glyph per real unit, at the projected token
+    /// centre, mapping each `UnitKind` to its [`icon::IconKind`].
+    #[test]
+    fn token_icons_emits_kind_glyph_per_unit() {
+        let cam = ortho_camera(1.0);
+        let units = [
+            token(0.2, 0.1, 0, UnitKind::Rifleman as u32, theme::PLAYER),
+            token(-0.3, 0.4, 0, UnitKind::Tank as u32, theme::PLAYER),
+            token(0.5, -0.2, 0, UnitKind::Medic as u32, theme::ENEMY),
+            token(-0.1, -0.4, 0, UnitKind::AntiTank as u32, theme::ENEMY),
+        ];
+        let icons = token_icons(&units, &cam, false);
+        assert_eq!(icons.len(), 4, "one glyph per unit");
+        assert_eq!(icons[0].kind, icon::IconKind::Infantry);
+        assert_eq!(icons[1].kind, icon::IconKind::Armor);
+        assert_eq!(icons[2].kind, icon::IconKind::Medic);
+        assert_eq!(icons[3].kind, icon::IconKind::AntiTank);
+        // Centred on the projected token position, tinted by faction, at the fixed glyph size.
+        assert!((icons[0].pos[0] - 0.2).abs() < EPS && (icons[0].pos[1] - 0.1).abs() < EPS);
+        assert_eq!(icons[0].tint, theme::PLAYER);
+        assert_eq!(icons[2].tint, theme::ENEMY);
+        assert!((icons[0].size - TOKEN_ICON_SIZE).abs() < EPS);
+    }
+
+    /// Fairness gate (invariant #6): `token_icons` returns an EMPTY set while `world_dark`, exactly
+    /// like `readout_labels` — the glanceability aid never draws over the dark embodied frame.
+    #[test]
+    fn token_icons_are_withheld_over_the_dark_frame() {
+        let cam = ortho_camera(1.0);
+        let units = [token(0.2, 0.1, 0, UnitKind::Rifleman as u32, theme::PLAYER)];
+        assert!(token_icons(&units, &cam, true).is_empty(), "no kind glyphs when embodied");
+        assert_eq!(token_icons(&units, &cam, false).len(), 1, "but present in command view");
+    }
+
+    /// `token_icons` drops the avatar's own body (FLAG_EMBODIED), control-point rings (FLAG_RING, map
+    /// intel), and buildings (NO_TOKEN_ICON sentinel) — only real command-view units get a glyph.
+    #[test]
+    fn token_icons_skips_avatar_rings_and_buildings() {
+        let cam = ortho_camera(1.0);
+        let set = [
+            token(0.0, 0.0, FLAG_EMBODIED, UnitKind::Rifleman as u32, AVATAR_COLOR),
+            token(0.1, 0.0, FLAG_RING, NO_TOKEN_ICON, theme::NEUTRAL),
+            token(0.2, 0.0, 0, NO_TOKEN_ICON, theme::PLAYER), // a building
+            token(0.3, 0.0, 0, UnitKind::Heavy as u32, theme::PLAYER), // a real unit
+        ];
+        let icons = token_icons(&set, &cam, false);
+        assert_eq!(icons.len(), 1, "only the real unit gets a glyph");
+        assert_eq!(icons[0].kind, icon::IconKind::Armor);
+    }
+
     /// The FPS world-dressing plan covers every prop, picks coarser LODs as the eye recedes, and
     /// never indexes past the library.
     #[test]
@@ -2346,6 +2605,7 @@ mod tests {
             model: model as u32,
             hull_yaw: 0.0,
             turret_yaw: 0.0,
+            kind: NO_TOKEN_ICON,
         }
     }
 
