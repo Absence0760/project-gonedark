@@ -379,35 +379,49 @@ def rgba(name):
 
 def build_trooper():
     mat = make_material("trooper", rgba("trooper"))  # olive
-    # Boxy humanoid, proportioned to read as a soldier at eye level rather than a coat-rack: a
-    # narrow waist tapering up to a broad shoulder yoke (chest > hips), a real neck under a rounded
-    # combat helmet, a plate-carrier chest slab + backpack, and arms brought forward into a
-    # weapon-ready pose (forearms meet across the chest) so the silhouette reads "rifleman at the
-    # ready", not "arms hanging at the sides". Limbs taper (thighs > calves) and legs run full-length.
+    # A Vietnam-era US infantryman greybox (direct art direction). The read is the *silhouette*: an
+    # M1 "steel pot" helmet (a rounded dome with a subtle all-around flared rim — NOT a wide flat
+    # sombrero brim, which was the old failure), a lean jungle-fatigue torso carrying M1956 web gear
+    # (two front suspender straps + a pistol belt with ammo pouches) instead of a bulky modern plate
+    # carrier, a tropical rucksack with a bedroll, an M16 held across the chest at patrol-ready, and
+    # two clearly-separated legs bloused into jungle boots. Proportioned to read as a soldier, not a
+    # coat-rack: narrow waist → modest shoulder yoke, a real neck, limbs that taper.
     parts = [
-        box((0.34, 0.24, 0.26), (0, 0, 0.82)),                 # hips / waist (narrow)
-        box((0.42, 0.27, 0.32), (0, 0, 1.08)),                 # midriff (widening up)
-        box((0.48, 0.32, 0.40), (0, -0.01, 1.40)),             # chest (plate carrier — bulkiest)
-        box((0.58, 0.32, 0.14), (0, -0.01, 1.58)),             # shoulder yoke (broad — the soldier read)
-        box((0.36, 0.14, 0.34), (0, 0.21, 1.40)),              # front plate slab
-        box((0.30, 0.20, 0.46), (0, -0.21, 1.32)),             # backpack
-        cyl(0.075, 0.12, (0, 0, 1.66), verts=8),               # neck
-        icosphere(0.14, (0, 0, 1.76), subdivisions=1),         # head (faceted — deterministic, no UV-sphere wobble)
-        icosphere(0.175, (0, 0, 1.80), subdivisions=1),        # rounded combat helmet (faceted dome)
-        box((0.34, 0.32, 0.06), (0, 0.02, 1.82)),              # helmet brow / NVG-mount slab
-        cyl(0.105, 0.84, (0.12, 0, 0.48), verts=10),           # leg R (single tapered limb)
-        cyl(0.105, 0.84, (-0.12, 0, 0.48), verts=10),          # leg L
-        box((0.16, 0.20, 0.10), (0.12, 0.05, 0.02)),           # boot R
-        box((0.16, 0.20, 0.10), (-0.12, 0.05, 0.02)),          # boot L
-        cyl(0.075, 0.34, (0.28, -0.02, 1.36), rot=(0, math.radians(10), 0), verts=10),  # upper arm R
-        cyl(0.075, 0.34, (-0.28, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10),  # upper arm L
-        # Forearms angled forward + inward so the hands meet across the chest (weapon-ready).
-        cyl(0.06, 0.36, (0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),    # forearm R
-        cyl(0.06, 0.36, (-0.18, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm L
-        # Carried rifle held forward across the hands — a compact bar + magazine so the token reads
-        # "armed rifleman" at command-view distance (welds into the body tint; silhouette is the read).
-        box((0.065, 0.50, 0.075), (0.02, 0.30, 1.11), rot=(math.radians(-7), 0, math.radians(9))),  # rifle body (+Y forward)
-        box((0.05, 0.06, 0.15), (0.05, 0.20, 1.02), rot=(math.radians(-7), 0, math.radians(9))),    # magazine
+        # Torso: lean fatigue shirt from a narrow waist up to a modest shoulder yoke.
+        box((0.30, 0.22, 0.24), (0, 0, 0.86)),                 # hips / waist (narrow)
+        box((0.40, 0.26, 0.50), (0, -0.01, 1.26)),             # fatigue shirt (torso)
+        box((0.50, 0.28, 0.15), (0, -0.01, 1.52)),             # shoulder yoke (the soldier read)
+        # M1956 web gear: two front suspender straps + a pistol belt with ammo pouches.
+        box((0.05, 0.05, 0.42), (0.11, 0.135, 1.30)),          # suspender strap R
+        box((0.05, 0.05, 0.42), (-0.11, 0.135, 1.30)),         # suspender strap L
+        box((0.42, 0.28, 0.09), (0, 0, 1.00)),                 # pistol belt
+        box((0.12, 0.11, 0.13), (0.15, 0.15, 1.00)),           # ammo pouch R
+        box((0.12, 0.11, 0.13), (-0.15, 0.15, 1.00)),          # ammo pouch L
+        # Tropical rucksack + a horizontal bedroll lashed across its top.
+        box((0.30, 0.20, 0.44), (0, -0.22, 1.28)),             # rucksack
+        cyl(0.06, 0.30, (0, -0.24, 1.52), rot=(0, math.radians(90), 0), verts=8),  # bedroll (across the top)
+        # Head + M1 steel pot: the dome is pulled DOWN over the head (envelops the crown, not perched
+        # on top like a hat) with only a slim rolled lip — a pot, not a sombrero.
+        cyl(0.075, 0.13, (0, 0, 1.585), verts=8),              # neck
+        icosphere(0.13, (0, 0, 1.70), subdivisions=1),         # head (jaw/face below the pot)
+        icosphere(0.175, (0, 0, 1.74), subdivisions=2),        # M1 helmet dome (low, enveloping)
+        cyl(0.17, 0.04, (0, 0, 1.65), verts=16),               # M1 rolled rim (subtle lip, not a brim)
+        # Legs: clearly separated (a real gap between them), bloused into jungle boots.
+        cyl(0.10, 0.86, (0.16, 0, 0.47), verts=10),            # leg R (tapered limb)
+        cyl(0.10, 0.86, (-0.16, 0, 0.47), verts=10),           # leg L
+        box((0.15, 0.26, 0.11), (0.16, 0.06, 0.03)),           # jungle boot R (toe forward, +Y)
+        box((0.15, 0.26, 0.11), (-0.16, 0.06, 0.03)),          # jungle boot L
+        # Arms cradle the rifle at mid-chest: elbows tucked (not flared), forearms level and forward
+        # so both hands rest on the receiver.
+        cyl(0.075, 0.30, (0.25, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(7)), verts=10),   # upper arm R
+        cyl(0.075, 0.30, (-0.25, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(-7)), verts=10),  # upper arm L
+        cyl(0.06, 0.30, (0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10),   # forearm R (level → grip)
+        cyl(0.06, 0.30, (-0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10),  # forearm L (level → handguard)
+        # M16 carried level across the chest (barrel to the figure's left): a clear horizontal bar,
+        # legible from the front AND the top-down command view — carry handle proud, magazine hanging.
+        box((0.60, 0.065, 0.065), (0.0, 0.31, 1.13), rot=(0, 0, math.radians(7))),   # receiver/barrel (X-long)
+        box((0.14, 0.06, 0.045), (0.04, 0.31, 1.18), rot=(0, 0, math.radians(7))),   # carry handle (proud on top)
+        box((0.05, 0.07, 0.16), (-0.08, 0.34, 1.03), rot=(0, 0, math.radians(7))),   # magazine (hangs down-forward)
     ]
     return weld("trooper", parts, mat, bevel=0.02)
 
@@ -638,32 +652,46 @@ def build_barricade():
 
 
 def build_trooper_us():
-    # US infantry: ACH/ECH rounded helmet, plate-carrier bulked torso. Same proportioned skeleton as
-    # the base trooper (narrow waist → broad shoulder yoke, neck, weapon-ready arms), but bulkier
-    # through the chest/shoulders and a fuller rounded helmet — the US silhouette tell. Olive.
+    # US infantry — a Vietnam-era GI (direct art direction, and the M1-helmet read `model_for_unit`
+    # already promises). Same skeleton as the base trooper: M1 steel-pot helmet (dome + subtle flared
+    # rim), M1956 web gear (suspenders + a pistol belt with ammo pouches + a frag grenade), a tropical
+    # rucksack, an M16 at patrol-ready, jungle boots — but a touch bulkier through the chest/shoulders
+    # so the American reads a shade heavier than the Neutral kin (the US silhouette tell). Olive.
     mat = make_material("trooper_us", rgba("trooper_us"))
     parts = [
-        box((0.36, 0.26, 0.26), (0, 0, 0.82)),                 # hips / waist
-        box((0.44, 0.29, 0.32), (0, 0, 1.08)),                 # midriff
-        box((0.52, 0.34, 0.42), (0, -0.01, 1.40)),             # chest (plate carrier — bulkiest)
-        box((0.62, 0.34, 0.15), (0, -0.01, 1.59)),             # shoulder yoke (broadest — US bulk)
-        box((0.40, 0.16, 0.36), (0, 0.22, 1.40)),              # front plate slab
-        box((0.32, 0.22, 0.46), (0, -0.22, 1.32)),             # backpack
-        cyl(0.08, 0.12, (0, 0, 1.66), verts=8),                # neck
-        icosphere(0.145, (0, 0, 1.76), subdivisions=1),        # head (faceted — deterministic, no UV-sphere wobble)
-        icosphere(0.185, (0, 0, 1.80), subdivisions=1),        # rounded ACH/ECH combat helmet
-        box((0.40, 0.32, 0.07), (0, 0.02, 1.82)),              # helmet brow / NVG-mount slab
-        cyl(0.11, 0.84, (0.13, 0, 0.48), verts=10),            # leg R (single tapered limb)
-        cyl(0.11, 0.84, (-0.13, 0, 0.48), verts=10),           # leg L
-        box((0.17, 0.20, 0.10), (0.13, 0.05, 0.02)),           # boot R
-        box((0.17, 0.20, 0.10), (-0.13, 0.05, 0.02)),          # boot L
-        cyl(0.08, 0.34, (0.30, -0.02, 1.36), rot=(0, math.radians(10), 0), verts=10),   # upper arm R
-        cyl(0.08, 0.34, (-0.30, -0.02, 1.36), rot=(0, math.radians(-10), 0), verts=10),  # upper arm L
-        cyl(0.065, 0.36, (0.19, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),   # forearm R
-        cyl(0.065, 0.36, (-0.19, 0.16, 1.12), rot=(math.radians(58), 0, 0), verts=10),  # forearm L
-        # Carried M4 held forward across the hands — reads "armed rifleman" at command-view distance.
-        box((0.07, 0.52, 0.08), (0.02, 0.31, 1.11), rot=(math.radians(-7), 0, math.radians(9))),   # rifle body (+Y forward)
-        box((0.05, 0.06, 0.16), (0.05, 0.20, 1.01), rot=(math.radians(-7), 0, math.radians(9))),   # magazine
+        box((0.32, 0.24, 0.24), (0, 0, 0.86)),                 # hips / waist
+        box((0.44, 0.28, 0.52), (0, -0.01, 1.26)),             # fatigue shirt (bulkier)
+        box((0.54, 0.30, 0.16), (0, -0.01, 1.52)),             # shoulder yoke (broad — US bulk)
+        box((0.05, 0.05, 0.44), (0.12, 0.145, 1.30)),          # suspender strap R
+        box((0.05, 0.05, 0.44), (-0.12, 0.145, 1.30)),         # suspender strap L
+        box((0.45, 0.30, 0.10), (0, 0, 1.00)),                 # pistol belt
+        box((0.13, 0.12, 0.14), (0.16, 0.16, 1.00)),           # ammo pouch R
+        box((0.13, 0.12, 0.14), (-0.16, 0.16, 1.00)),          # ammo pouch L
+        box((0.08, 0.08, 0.11), (0.19, 0.18, 1.05)),           # frag grenade on the belt (US tell)
+        box((0.32, 0.22, 0.46), (0, -0.23, 1.28)),             # tropical rucksack
+        cyl(0.065, 0.32, (0, -0.25, 1.53), rot=(0, math.radians(90), 0), verts=8),  # bedroll (across the top)
+        # Head + M1 steel pot: the dome is pulled DOWN over the head (envelops the crown, not perched
+        # on top like a hat), with only a slim rolled lip — a pot, not a sombrero.
+        cyl(0.08, 0.14, (0, 0, 1.585), verts=8),               # neck
+        icosphere(0.135, (0, 0, 1.70), subdivisions=1),        # head (jaw/face below the pot)
+        icosphere(0.185, (0, 0, 1.74), subdivisions=2),        # M1 helmet dome (low, enveloping)
+        cyl(0.178, 0.04, (0, 0, 1.65), verts=16),              # M1 rolled rim (subtle lip, not a brim)
+        cyl(0.11, 0.88, (0.17, 0, 0.48), verts=10),            # leg R (tapered limb)
+        cyl(0.11, 0.88, (-0.17, 0, 0.48), verts=10),           # leg L
+        box((0.16, 0.27, 0.11), (0.17, 0.06, 0.03)),           # jungle boot R (toe forward, +Y)
+        box((0.16, 0.27, 0.11), (-0.17, 0.06, 0.03)),          # jungle boot L
+        # Arms cradle the rifle at mid-chest: upper arms hang from the shoulders with the elbows
+        # TUCKED (not flared), forearms held level and forward so both hands rest on the receiver.
+        cyl(0.075, 0.30, (0.255, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(7)), verts=10),   # upper arm R
+        cyl(0.075, 0.30, (-0.255, 0.03, 1.20), rot=(math.radians(16), 0, math.radians(-7)), verts=10),  # upper arm L
+        cyl(0.062, 0.30, (0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10),   # forearm R (level → grip)
+        cyl(0.062, 0.30, (-0.15, 0.18, 1.13), rot=(math.radians(90), 0, 0), verts=10),  # forearm L (level → handguard)
+        # M16 carried level across the chest (barrel to the figure's left): a clear horizontal bar —
+        # legible from the front AND the top-down command view — the A1 carry handle proud on top and
+        # the curved magazine hanging forward-down. Sits at the hands' height so the cradle reads clean.
+        box((0.62, 0.07, 0.07), (0.0, 0.31, 1.13), rot=(0, 0, math.radians(7))),    # receiver/barrel (X-long)
+        box((0.15, 0.06, 0.045), (0.04, 0.31, 1.18), rot=(0, 0, math.radians(7))),  # carry handle (proud on top)
+        box((0.05, 0.07, 0.16), (-0.08, 0.34, 1.03), rot=(0, 0, math.radians(7))),  # magazine (hangs down-forward)
     ]
     return weld("trooper_us", parts, mat, bevel=0.02)
 
