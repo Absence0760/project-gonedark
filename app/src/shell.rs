@@ -2500,17 +2500,22 @@ mod tests {
                 visual_sound_cues: snd,
                 ..SettingsState::default()
             };
-            let blob = encode_shell_prefs(&s, &ProfileState::default(), &LoadoutEditor::new());
-            let (s2, _, _) = decode_shell_prefs(&blob);
+            let blob = encode_shell_prefs(
+                &s,
+                &ProfileState::default(),
+                &LoadoutEditor::new(),
+                &ArmySelectState::default(),
+            );
+            let (s2, _, _, _) = decode_shell_prefs(&blob);
             assert_eq!(s2.colorblind_cues, cvd, "cvd toggle survives round-trip");
             assert_eq!(s2.visual_sound_cues, snd, "sound toggle survives round-trip");
         }
         // A blob missing the keys (e.g. an older save) decodes them to the OFF default, never panics.
-        let (s, _, _) = decode_shell_prefs("gonedark-shell 1\nmaster=0.5\n");
+        let (s, _, _, _) = decode_shell_prefs("gonedark-shell 1\nmaster=0.5\n");
         assert!(!s.colorblind_cues, "missing cvdcues → default off");
         assert!(!s.visual_sound_cues, "missing soundcues → default off");
         // An unparseable value also keeps the default.
-        let (s2, _, _) = decode_shell_prefs("cvdcues=maybe\nsoundcues=\n");
+        let (s2, _, _, _) = decode_shell_prefs("cvdcues=maybe\nsoundcues=\n");
         assert!(!s2.colorblind_cues && !s2.visual_sound_cues);
     }
 
