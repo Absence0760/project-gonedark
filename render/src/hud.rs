@@ -20,7 +20,9 @@ use wgpu::util::DeviceExt;
 
 /// How many ticks an alert stays on the HUD before it has fully faded out. At 60 Hz this is a
 /// ~2 s decay — long enough to read a direction, short enough that the thread stays *thin*.
-const FADE_TICKS: u64 = 120;
+/// Public so the host's presentation-side echo buffers (e.g. the accessibility visual-sound cues in
+/// `engine`) can prune on the same window the HUD fades on.
+pub const FADE_TICKS: u64 = 120;
 
 /// The lowest alpha a still-live marker holds at (just before the hard cutoff at [`FADE_TICKS`]).
 /// A linear ramp decays into <0.1 alpha that is invisible over a lit frame; flooring at a legible
@@ -56,6 +58,16 @@ const SHAPE_HITMARKER: f32 = 4.0;
 
 /// The dot glyph id (`hud.wgsl` shape 0) — reused for the hip-fire crosshair ticks (WS-A).
 const SHAPE_DOT: f32 = 0.0;
+
+/// The hollow-ring glyph id (`hud.wgsl` shape 3). Public so the host can build accessibility
+/// visual-sound-cue markers (the "distant capture" bleed echo) with the same glyph the alert HUD
+/// uses for a place you no longer hold.
+pub const SHAPE_RING: f32 = 3.0;
+
+/// The plus/cross glyph id (`hud.wgsl` shape 5) — a "reinforcement ready" mark. Public so the host
+/// can build the accessibility visual production-ready cue (the audio `ProductionReady` bell has no
+/// alert-HUD equivalent; this is its visual parity for hard-of-hearing players — invariant #6).
+pub const SHAPE_PLUS: f32 = 5.0;
 
 /// Resting half-gap (NDC-y) from screen-center to each crosshair arm tick at zero recoil — a tight,
 /// readable reticle. The recoil **bloom** ([`gonedark_engine::recoil::crosshair_bloom`]) is added to
@@ -130,11 +142,42 @@ pub fn marker_for(
     yaw: f32,
     tick: u64,
 ) -> Option<HudMarker> {
-    // Age-based fade. A future-stamped alert (tick < alert.tick) is treated as not-yet-live.
-    if tick < alert.tick {
+    place_marker(
+        (
+            crate::fixed_to_f32(alert.pos.x),
+            crate::fixed_to_f32(alert.pos.y),
+        ),
+        alert.tick,
+        avatar_world,
+        yaw,
+        tick,
+        alert_color(alert.kind),
+        shape_for(alert.kind),
+    )
+}
+
+/// Shared placement + age-fade math for one edge-ring directional marker at world point `pos_world`,
+/// stamped on `event_tick`, given the avatar pose and current `tick`, with a caller-chosen `color`
+/// and `shape` glyph. Returns `None` once faded ([`FADE_TICKS`]) or for a future-stamped event.
+///
+/// [`marker_for`] wraps this for [`Alert`]s; the host's accessibility visual-sound cues (`engine`)
+/// call it directly to place production-ready / distant-capture echoes on the SAME ring with the same
+/// bearing + fade behaviour, so the two threads read consistently. Pure float math (presentation
+/// boundary), unit-testable without a GPU. Reveals only a direction (invariant #6).
+pub fn place_marker(
+    pos_world: (f32, f32),
+    event_tick: u64,
+    avatar_world: (f32, f32),
+    yaw: f32,
+    tick: u64,
+    color: [f32; 3],
+    shape: f32,
+) -> Option<HudMarker> {
+    // Age-based fade. A future-stamped event (tick < event_tick) is treated as not-yet-live.
+    if tick < event_tick {
         return None;
     }
-    let age = tick - alert.tick;
+    let age = tick - event_tick;
     if age >= FADE_TICKS {
         return None;
     }
@@ -145,13 +188,13 @@ pub fn marker_for(
     let eased = (1.0 - t) * (1.0 - t); // ease-out: steep early read, gentle tail
     let alpha = FADE_FLOOR + (1.0 - FADE_FLOOR) * eased;
 
-    // Direction from the avatar to the alert, in world space.
+    // Direction from the avatar to the event, in world space.
     let (ax, ay) = avatar_world;
-    let dx = crate::fixed_to_f32(alert.pos.x) - ax;
-    let dy = crate::fixed_to_f32(alert.pos.y) - ay;
+    let dx = pos_world.0 - ax;
+    let dy = pos_world.1 - ay;
 
-    // World bearing of the alert, then relative to the avatar's facing. We use atan2 so a zero
-    // vector (alert on top of the avatar) still yields a stable bearing (0 → straight ahead).
+    // World bearing of the event, then relative to the avatar's facing. We use atan2 so a zero
+    // vector (event on top of the avatar) still yields a stable bearing (0 → straight ahead).
     let world_bearing = dy.atan2(dx);
     // Signed azimuth in (-π, π], 0 = dead ahead, + = to the right. atan2 grows
     // counter-clockwise, so "to the right" (clockwise from facing) is `yaw - world_bearing`.
@@ -166,7 +209,7 @@ pub fn marker_for(
     let ndc_x = RING_RADIUS * azimuth.sin();
     let ndc_y = RING_RADIUS * azimuth.cos();
 
-    let [r, g, b] = alert_color(alert.kind);
+    let [r, g, b] = color;
     Some(HudMarker {
         ndc_x,
         ndc_y,
@@ -175,8 +218,63 @@ pub fn marker_for(
         b,
         alpha,
         half_size: MARKER_HALF_SIZE,
-        shape: shape_for(alert.kind),
+        shape,
     })
+}
+
+/// A short, non-color abbreviation for an alert kind — the **colorblind (CVD) cue** (invariant #6).
+/// The shape glyph ([`shape_for`]) + luminance-spread palette ([`alert_color`]) already make the four
+/// kinds distinguishable without hue, but a hue-blind player under a same-hue frame region can still
+/// be unsure *which* kind a glyph is; a two-to-four-letter label removes all ambiguity. Kept terse so
+/// it stays legible at marker size and never crowds the thin thread back.
+pub fn alert_label(kind: AlertKind) -> &'static str {
+    match kind {
+        AlertKind::TakingFire => "FIRE",
+        AlertKind::UnitLost => "LOST",
+        AlertKind::BaseUnderAttack => "BASE",
+        AlertKind::TerritoryLost => "TERR",
+    }
+}
+
+/// NDC gap from a marker's center down to the top of its CVD text label, so the label rides just
+/// beneath the glyph without overlapping it.
+const LABEL_DROP: f32 = MARKER_HALF_SIZE + 0.012;
+
+/// One placed CVD text label: the abbrev, its top-center NDC anchor, color, and fade alpha. Built by
+/// [`alert_labels`] so the (pure) placement is testable without a `TextRenderer`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HudLabel {
+    pub text: &'static str,
+    pub ndc_x: f32,
+    pub ndc_y: f32,
+    pub color: [f32; 3],
+    pub alpha: f32,
+}
+
+/// Build the CVD text labels for every live alert — one abbrev ([`alert_label`]) placed just below
+/// its ring marker, sharing the marker's color + fade alpha. Empty when nothing is live. Pure
+/// (presentation boundary), so the placement is unit-testable; the host draws them through the shared
+/// `TextRenderer` only when the "Colorblind cues" toggle is on.
+pub fn alert_labels(
+    alerts: &AlertChannel,
+    avatar_world: (f32, f32),
+    yaw: f32,
+    tick: u64,
+) -> Vec<HudLabel> {
+    alerts
+        .recent
+        .iter()
+        .filter_map(|a| {
+            let m = marker_for(a, avatar_world, yaw, tick)?;
+            Some(HudLabel {
+                text: alert_label(a.kind),
+                ndc_x: m.ndc_x,
+                ndc_y: m.ndc_y - LABEL_DROP,
+                color: [m.r, m.g, m.b],
+                alpha: m.alpha,
+            })
+        })
+        .collect()
 }
 
 /// Build the centered hitmarker for this frame from `last_hit_tick` (the tick the embodied avatar's
@@ -435,6 +533,20 @@ impl HudRenderer {
     ) {
         let markers = crosshair_markers(bloom, aspect);
         self.draw_markers(device, queue, view, &markers);
+    }
+
+    /// Draw a caller-built set of directional `markers` as a LOAD pass over the embodied frame (same
+    /// pipeline/shader as the alert overlay). Used by the host's **accessibility visual-sound cues**
+    /// (the hard-of-hearing production-ready / distant-capture echoes it builds via [`place_marker`]),
+    /// so they composite on the same edge ring as the alert markers. No-op on an empty set.
+    pub fn render_markers(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        markers: &[HudMarker],
+    ) {
+        self.draw_markers(device, queue, view, markers);
     }
 
     /// Upload `markers` and composite them as one LOAD pass over `view` (never clears). Shared by
@@ -794,6 +906,88 @@ mod tests {
         let m = crosshair_markers(-1.0, 1.0);
         let right = m.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
         assert!((right - CROSSHAIR_GAP).abs() < 1e-6, "floors at the resting gap");
+    }
+
+    // ---- CVD text labels + place_marker (accessibility) ----
+
+    #[test]
+    fn alert_label_is_distinct_and_short_per_kind() {
+        let kinds = [
+            AlertKind::TakingFire,
+            AlertKind::UnitLost,
+            AlertKind::BaseUnderAttack,
+            AlertKind::TerritoryLost,
+        ];
+        let labels: Vec<&str> = kinds.iter().map(|&k| alert_label(k)).collect();
+        for l in &labels {
+            assert!(!l.is_empty() && l.len() <= 4, "label {l:?} stays terse");
+            assert!(
+                l.chars().all(|c| c.is_ascii_uppercase()),
+                "label {l:?} is drawable uppercase ASCII (in the font atlas)"
+            );
+        }
+        // All four abbrevs are pairwise distinct — the whole point of the CVD cue.
+        for i in 0..labels.len() {
+            for j in (i + 1)..labels.len() {
+                assert_ne!(labels[i], labels[j], "labels must be unique");
+            }
+        }
+    }
+
+    #[test]
+    fn alert_labels_track_live_markers_and_sit_below_them() {
+        // Two live alerts + one already faded → two labels, each carrying its kind's abbrev, color,
+        // and fade alpha, placed just under its ring marker.
+        let mut ch = AlertChannel::new();
+        ch.recent.push(alert(AlertKind::TakingFire, 10, 0, 0)); // dead ahead
+        ch.recent.push(alert(AlertKind::UnitLost, -10, 0, 0)); // behind
+        ch.recent.push(alert(AlertKind::BaseUnderAttack, 5, 5, 0)); // faded out below
+        let tick = 5;
+        let labels = alert_labels(&ch, (0.0, 0.0), 0.0, tick);
+        assert_eq!(labels.len(), 3, "all three are still live at tick 5");
+        // Each label sits LABEL_DROP below its marker center and mirrors its color/alpha.
+        for (a, l) in ch.recent.iter().zip(labels.iter()) {
+            let m = marker_for(a, (0.0, 0.0), 0.0, tick).unwrap();
+            assert_eq!(l.text, alert_label(a.kind));
+            assert_eq!(l.color, [m.r, m.g, m.b]);
+            assert!((l.alpha - m.alpha).abs() < 1e-6);
+            assert!((l.ndc_x - m.ndc_x).abs() < 1e-6, "label shares the marker column");
+            assert!(l.ndc_y < m.ndc_y, "label rides below the marker");
+        }
+        // A fully faded alert drops its label too.
+        let faded = alert_labels(&ch, (0.0, 0.0), 0.0, FADE_TICKS + 1);
+        assert!(faded.is_empty());
+    }
+
+    #[test]
+    fn place_marker_matches_marker_for_for_an_alert() {
+        // The shared seam must reproduce marker_for exactly for the same alert (they're one code path).
+        let a = alert(AlertKind::BaseUnderAttack, 3, -7, 2);
+        let via_alert = marker_for(&a, (1.0, 1.0), 0.4, 20).unwrap();
+        let via_place = place_marker(
+            (3.0, -7.0),
+            2,
+            (1.0, 1.0),
+            0.4,
+            20,
+            alert_color(a.kind),
+            shape_for(a.kind),
+        )
+        .unwrap();
+        assert_eq!(via_alert, via_place);
+    }
+
+    #[test]
+    fn place_marker_carries_caller_shape_and_color_and_fades() {
+        // Host echoes pick their own glyph/color (e.g. the reinforcement plus) — place_marker must
+        // honor them, fade by age, and vanish past the window / for a future stamp.
+        let color = [0.30, 0.85, 0.45];
+        let m = place_marker((10.0, 0.0), 0, (0.0, 0.0), 0.0, 0, color, SHAPE_PLUS).unwrap();
+        assert_eq!([m.r, m.g, m.b], color);
+        assert_eq!(m.shape, SHAPE_PLUS);
+        assert!((m.alpha - 1.0).abs() < 1e-4, "fresh echo is full alpha");
+        assert!(place_marker((10.0, 0.0), 0, (0.0, 0.0), 0.0, FADE_TICKS, color, SHAPE_PLUS).is_none());
+        assert!(place_marker((10.0, 0.0), 100, (0.0, 0.0), 0.0, 50, color, SHAPE_PLUS).is_none());
     }
 
     /// Validate `hud.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails

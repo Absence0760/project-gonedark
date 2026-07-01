@@ -49,7 +49,11 @@ pub mod theme;
 mod fog;
 /// Embodied directional alert HUD (worker 2). Owns `HudRenderer`: the screen-space alert overlay
 /// drawn on top of the embodied frame.
-mod hud;
+pub mod hud;
+
+/// Glyph cell height (NDC) for the embodied CVD alert labels — small enough to ride under a ring
+/// marker without crowding the thin thread back, large enough to stay legible over a lit frame.
+const ALERT_LABEL_PX: f32 = 0.045;
 /// On-screen FPS touch controls (the COD-style embodied HUD, Android only). Owns
 /// `TouchControlsRenderer`: the move stick + Fire/Crouch/Reload/Surface buttons, drawn as a LOAD
 /// pass over the dark embodied frame. Public so the host describes them via [`touch_controls::TouchControlsHud`].
@@ -1221,6 +1225,53 @@ impl Renderer {
         aspect: f32,
     ) {
         self.hud.render_crosshair(device, queue, view, bloom, aspect);
+    }
+
+    /// Draw the **colorblind (CVD) text labels** for the live alerts (accessibility, invariant #6) —
+    /// one terse abbrev (FIRE / LOST / BASE / TERR, via [`hud::alert_labels`]) just below each ring
+    /// marker, sharing its color + fade alpha. A LOAD pass through the shared [`text::TextRenderer`]
+    /// (idle in the embodied frame — the command readouts are command-view only), so it composites
+    /// over the dark frame. `aspect` keeps the glyphs square on a wide window (the chrome-text
+    /// footgun); it is set every frame. The host calls this only while embodied AND the "Colorblind
+    /// cues" toggle is on. Reveals only the same directions the alert markers already do.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_alert_labels(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        alerts: &AlertChannel,
+        avatar_world: (f32, f32),
+        yaw: f32,
+        tick: u64,
+        aspect: f32,
+    ) {
+        self.text.set_aspect(aspect);
+        for label in hud::alert_labels(alerts, avatar_world, yaw, tick) {
+            self.text.queue(
+                label.text,
+                [label.ndc_x, label.ndc_y],
+                ALERT_LABEL_PX,
+                text::Anchor::TopCenter,
+                label.color,
+                label.alpha,
+            );
+        }
+        self.text.render(device, queue, view);
+    }
+
+    /// Draw a caller-built set of directional [`hud::HudMarker`]s over the embodied frame — the host's
+    /// **accessibility visual-sound cues** (the hard-of-hearing production-ready / distant-capture
+    /// echoes it builds via [`hud::place_marker`]). Delegates to the [`hud::HudRenderer`]; a no-op on
+    /// an empty set. Same edge ring, same fade behaviour as the alert overlay (invariant #6).
+    pub fn render_hud_markers(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        markers: &[hud::HudMarker],
+    ) {
+        self.hud.render_markers(device, queue, view, markers);
     }
 
     /// Draw the **bullet-impact VFX** (WS-A) — the additive spark/dust burst at the projected hit

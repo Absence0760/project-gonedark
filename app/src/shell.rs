@@ -293,6 +293,15 @@ pub struct SettingsState {
     pub invert_look_y: bool,
     /// Render-quality preference (see [`QualityChoice`]).
     pub quality: QualityChoice,
+    /// Accessibility — **Colorblind (CVD) cues**. When on, the embodied alert HUD labels each ring
+    /// marker (FIRE/LOST/BASE/TERR) so the four alert kinds read without relying on hue (invariant #6
+    /// fairness). Fed to the engine via `Game::set_accessibility_prefs`. Presentation only.
+    pub colorblind_cues: bool,
+    /// Accessibility — **Visual sound cues**. When on, the audio-only signals the coarse 4-kind alert
+    /// HUD never draws get a visual echo (a production-ready "+" and a dimmed distant-capture ring), so
+    /// a hard-of-hearing player has parity with the primary embodied-audio channel (invariant #6).
+    /// Presentation only.
+    pub visual_sound_cues: bool,
 }
 
 impl Default for SettingsState {
@@ -304,6 +313,11 @@ impl Default for SettingsState {
             mouse_sensitivity: 1.0,
             invert_look_y: false,
             quality: QualityChoice::Auto,
+            // Accessibility cues default OFF — the base alert channel already carries shape +
+            // luminance-spread CVD redundancy and the primary audio channel, so these are opt-in
+            // intensifiers, not always-on chrome.
+            colorblind_cues: false,
+            visual_sound_cues: false,
         }
     }
 }
@@ -564,6 +578,7 @@ pub fn encode_shell_prefs(
     format!(
         "{SHELL_PREFS_VERSION}\n\
          master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nquality={}\n\
+         cvdcues={}\nsoundcues={}\n\
          callsign={}\nfaction={}\nmatches={}\nwins={}\n\
          optic={}\nbarrel={}\nmagazine={}\n",
         s.master_volume,
@@ -572,6 +587,8 @@ pub fn encode_shell_prefs(
         s.mouse_sensitivity,
         s.invert_look_y as u8,
         s.quality.index(),
+        s.colorblind_cues as u8,
+        s.visual_sound_cues as u8,
         callsign,
         profile.faction.index(),
         profile.matches_played,
@@ -606,6 +623,8 @@ pub fn decode_shell_prefs(blob: &str) -> (SettingsState, ProfileState, LoadoutEd
         mouse_sensitivity: parse_or(map.get("sens"), ds.mouse_sensitivity),
         invert_look_y: parse_bool(map.get("inverty"), ds.invert_look_y),
         quality: QualityChoice::from_index(parse_or::<usize>(map.get("quality"), 0)),
+        colorblind_cues: parse_bool(map.get("cvdcues"), ds.colorblind_cues),
+        visual_sound_cues: parse_bool(map.get("soundcues"), ds.visual_sound_cues),
     };
     // The clamp guards a stored-but-out-of-range numeric (e.g. a hand-edited blob) exactly as the
     // Settings sliders do.
@@ -1601,6 +1620,14 @@ fn settings_ui(
         );
         ui.checkbox(&mut state.invert_look_y, "Invert look Y");
 
+        // The going-dark fairness floor (invariant #6): the embodied alert channel is directional
+        // flash + positioned audio. These two opt-in cues give colorblind / hard-of-hearing players a
+        // non-color / visual equivalent so the core mechanic stays fair. Direct-mutate checkboxes (the
+        // `invert_look_y` pattern), fed to the engine each match frame via `set_accessibility_prefs`.
+        section_label(ui, "ACCESSIBILITY");
+        ui.checkbox(&mut state.colorblind_cues, "Colorblind cues");
+        ui.checkbox(&mut state.visual_sound_cues, "Visual sound cues");
+
         section_label(ui, "VIDEO");
         // The window-mode source of truth is the host: reflect it, and emit the toggle action rather
         // than editing a second copy here.
@@ -2254,6 +2281,32 @@ mod tests {
         assert!((SettingsState::SENS_MIN..=SettingsState::SENS_MAX).contains(&s.mouse_sensitivity));
         assert_eq!(s.quality, QualityChoice::Auto);
         assert!(!s.invert_look_y);
+        // Accessibility cues default OFF (opt-in intensifiers over the base fair channel).
+        assert!(!s.colorblind_cues);
+        assert!(!s.visual_sound_cues);
+    }
+
+    #[test]
+    fn accessibility_toggles_round_trip_and_default_when_missing() {
+        // Both toggles survive an encode→decode round-trip in either state.
+        for (cvd, snd) in [(true, false), (false, true), (true, true), (false, false)] {
+            let s = SettingsState {
+                colorblind_cues: cvd,
+                visual_sound_cues: snd,
+                ..SettingsState::default()
+            };
+            let blob = encode_shell_prefs(&s, &ProfileState::default(), &LoadoutEditor::new());
+            let (s2, _, _) = decode_shell_prefs(&blob);
+            assert_eq!(s2.colorblind_cues, cvd, "cvd toggle survives round-trip");
+            assert_eq!(s2.visual_sound_cues, snd, "sound toggle survives round-trip");
+        }
+        // A blob missing the keys (e.g. an older save) decodes them to the OFF default, never panics.
+        let (s, _, _) = decode_shell_prefs("gonedark-shell 1\nmaster=0.5\n");
+        assert!(!s.colorblind_cues, "missing cvdcues → default off");
+        assert!(!s.visual_sound_cues, "missing soundcues → default off");
+        // An unparseable value also keeps the default.
+        let (s2, _, _) = decode_shell_prefs("cvdcues=maybe\nsoundcues=\n");
+        assert!(!s2.colorblind_cues && !s2.visual_sound_cues);
     }
 
     #[test]
@@ -2265,6 +2318,8 @@ mod tests {
             mouse_sensitivity: 99.0,
             invert_look_y: true,
             quality: QualityChoice::High,
+            colorblind_cues: false,
+            visual_sound_cues: false,
         };
         s.clamp();
         assert_eq!(s.master_volume, 1.0);
@@ -2408,6 +2463,8 @@ mod tests {
             mouse_sensitivity: 2.4,
             invert_look_y: true,
             quality: QualityChoice::High,
+            colorblind_cues: true,
+            visual_sound_cues: true,
         };
         let profile = ProfileState {
             callsign: "Reaper".to_string(),

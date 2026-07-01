@@ -453,6 +453,14 @@ impl App {
                     .set_look_prefs(self.settings.mouse_sensitivity, self.settings.invert_look_y);
                 self.audio
                     .set_gains(self.settings.master_volume, self.settings.sfx_volume);
+                // Accessibility cues (invariant #6 fairness): the CVD alert-HUD labels + the
+                // hard-of-hearing visual sound echoes are host-side presentation chrome; push the
+                // stored toggles into the engine before it draws this embodied frame. Neither reaches
+                // the deterministic sim.
+                game.set_accessibility_prefs(
+                    self.settings.colorblind_cues,
+                    self.settings.visual_sound_cues,
+                );
                 let mut input = self.input.drain_frame();
                 let viewport = surface.size();
                 // Shell overlay buttons (pause / reconnect / post-match summary). A click while an

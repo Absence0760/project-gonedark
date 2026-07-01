@@ -10,7 +10,7 @@ struct VertexOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) local: vec2<f32>,             // the quad corner in [-1, 1] (interpolated)
-    @location(2) @interpolate(flat) shape: f32, // glyph: 0 dot, 1 chevron, 2 triangle, 3 ring, 4 hitmarker
+    @location(2) @interpolate(flat) shape: f32, // glyph: 0 dot, 1 chevron, 2 triangle, 3 ring, 4 hitmarker, 5 plus
 };
 
 // Per-vertex: a unit-quad corner in [-1, 1]^2. Per-instance: the marker center in NDC,
@@ -40,7 +40,8 @@ fn vs_main(
 // `p` in [-1, 1]^2. A square block has no directional read and aliases hard (invariant #6 wants a
 // soft directional flash), so every glyph is masked with an anti-aliased `smoothstep` edge:
 //   0 = filled dot, 1 = chevron (points up = "incoming"), 2 = triangle, 3 = hollow ring,
-//   4 = hitmarker (centered "X" — the player's own connecting shot).
+//   4 = hitmarker (centered "X" — the player's own connecting shot),
+//   5 = plus/cross ("reinforcement ready" — the accessibility visual production-ready cue).
 fn glyph_coverage(p: vec2<f32>, shape: f32) -> f32 {
     // `aa` is the half-width of the soft edge in local units (one quad ~ 2 units across).
     let aa = 0.14;
@@ -73,7 +74,7 @@ fn glyph_coverage(p: vec2<f32>, shape: f32) -> f32 {
         let outer = 1.0 - smoothstep(0.82 - aa, 0.82 + aa, r);
         let inner = smoothstep(0.5 - aa, 0.5 + aa, r);
         return outer * inner;
-    } else {
+    } else if shape < 4.5 {
         // Hitmarker (shape 4): four short diagonal ticks forming an "X" with an empty center gap —
         // the classic "I hit him" confirmation flash. Coverage near either diagonal (|x-y| or
         // |x+y|), clipped between an inner gap radius and the outer edge so it reads as four ticks,
@@ -88,6 +89,15 @@ fn glyph_coverage(p: vec2<f32>, shape: f32) -> f32 {
         let gap = smoothstep(0.30 - aa, 0.30 + aa, r);    // empty center
         let outer = 1.0 - smoothstep(0.92 - aa, 0.92 + aa, r);
         return on_diag * gap * outer;
+    } else {
+        // Plus/cross (shape 5): a horizontal + a vertical bar, clipped to the quad — reads as a
+        // "reinforcement +" mark. This is the accessibility visual production-ready cue: the audio
+        // `ProductionReady` bell has no alert-HUD equivalent, so a hard-of-hearing player would miss
+        // "your reinforcement is ready" entirely (invariant #6 fairness). A bold, unmistakable glyph.
+        let bar_h = 1.0 - smoothstep(0.22, 0.22 + aa, abs(p.y)); // horizontal bar
+        let bar_v = 1.0 - smoothstep(0.22, 0.22 + aa, abs(p.x)); // vertical bar
+        let inside = 1.0 - smoothstep(0.9 - aa, 0.9 + aa, length(p));
+        return max(bar_h, bar_v) * inside;
     }
 }
 
