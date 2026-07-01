@@ -3909,3 +3909,56 @@ death linger. Both are honestly disclosed in `render::anim`'s module doc.
 [D41](#d41--ai-generated-placeholder-models-for-all-render-content-skip-commissioned-art-for-now),
 [D46](#d46--the-headless-asset-tooling-toolbox-one-scriptable-cli-per-content-lane),
 [D74](#d74--visual-design-foundation-a-central-theme--an-anti-aliased-font-atlas-replaces-the-57-bitmap).
+
+## D85 — Gunsmith breadth (CP-1): Stock + Muzzle become sim sidegrade slots; Grip is cosmetic-only
+
+**Status: decided; implementation pending (Stock first).** Resolves the design fork in extending the
+[D60](#d60--gunsmith-is-horizontal-fixed-point-sidegrades-checksum-folded) gunsmith from its 3
+sim slots (Optic / Barrel / Magazine) to the six categories a CoD-Mobile player expects (optics,
+barrel, **stock**, mag, **grip**, **muzzle**) — **horizontal only** (sidegrades, never vertical
+power). Full implementation spec below (from a design pass over `core::gunsmith`/`combat`/`systems`).
+
+**The problem.** D60's no-strict-domination proof rests on **disjoint axis pairs**, and the 3 existing
+slots already consume all six tracked stat axes (Optic = range↔cooldown, Barrel = damage↔reserve,
+Magazine = mag_size↔reload). New slots that are *real* sim sidegrades therefore need **new disjoint
+axis pairs** — new sim-meaningful `Weapon` axes.
+
+**Decision.**
+- **Stock — sim slot.** New pair `move_speed_delta ↔ cone_cos_delta` (mobility vs. steadiness).
+  `move_speed_delta` (higher=better) offsets carrier speed in the embodied `Locomote` path **and** the
+  AI mover (`orders.rs`), *preserving the zero-delta fast path* so every Standard/legacy unit stays
+  bit-identical. `cone_cos_delta` (higher=tighter) offsets the embodied aim cone in `resolve_fire`
+  (embodied-only by nature — AI `can_engage` has no cone). Options: `Agile` (+move,−cone) / `Marksman`
+  (−move,+cone).
+- **Muzzle — sim slot.** New pair `supp_out_delta ↔ falloff_delta` (blast/suppression vs. downrange
+  retention). `supp_out_delta` (higher=better) offsets suppression-per-hit at both hit sites (AI +
+  embodied). `falloff_delta` (lower=better) applies a **sqrt-free**, `dist_sq`-bucketed damage falloff
+  beyond `range/2` (multiplier `ONE` when zero ⇒ byte-neutral). Options: `Brake` (+supp,+falloff) /
+  `Suppressor` (−supp,−falloff).
+- **Grip — cosmetic/feel-only, NOT a sim slot.** Grip's real identity is recoil/hipfire feel, which
+  is **presentation-only** (invariant #4 / CP-2 — the sim models no recoil). Forcing a sim axis would
+  invent a fake mechanic. Grip lives on the render/cosmetic surface; the player still sees six
+  gunsmith rows, five functional + Grip tuning feel.
+
+**Why this stays fair + deterministic.** The two new slots add two **disjoint** axis pairs, so D60's
+proof generalizes unchanged (any two loadouts differ in ≥1 slot contributing one strictly-good and
+one strictly-bad component no other slot can cancel); the exhaustive `no_loadout_strictly_dominates`
+test grows to `3^5 = 243` builds, per-army too. All four axes are `Fixed`, zero-default, appended to
+`Sim::fold` after `shell` (mirrored in deserialize) — byte-neutral by the
+`turret_speed`/`muzzle_vel`/`penetration` precedent, so every existing golden checksum is unmoved.
+`GunsmithPool`/`pool_for` gain the four axes for Neutral/Us/Fr.
+
+**Implementation** (files + full test plan — the ready-to-execute spec): `components.rs` (4 Weapon
+fields + fold + deserialize), `gunsmith.rs` (StatDelta axes + polarity, two `slot_enum!`s, pool +
+apply), `combat.rs`/`systems.rs`/`orders.rs` (the four mechanics, fast-path-guarded),
+`engine/loadout_ui.rs` (two UI slots), `customization.md` §1. Tests: generalize every D60 fairness
+test to 243 builds (+ per-pool), byte-neutral-default + golden-checksum-unmoved, 2-peer checksum
+agreement with stock/muzzle selections, and a per-mechanic combat test each. **Slice Stock first**
+(cheapest — no new damage curve), then Muzzle (lands falloff; re-validate the
+[D69](#d69)/[D70](#d70) Rifleman↔Heavy RPS with `sim-runner --metrics`). This is a
+sim-touching, `/safe-edit`-class change (invariant #1/#7) — implement behind the coder↔reviewer +
+determinism-auditor loop, not fire-and-forget.
+
+**Cross-link:** [D60](#d60--gunsmith-is-horizontal-fixed-point-sidegrades-checksum-folded),
+[`roadmap.md`](roadmap.md) CP-1, [`plans/pve-campaign-plan.md`](plans/pve-campaign-plan.md) WS-C,
+[`customization.md`](customization.md) §1.

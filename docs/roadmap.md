@@ -546,7 +546,11 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 - [ ] **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
   ([D60](decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,
   barrel, stock, mag, grip, muzzle) — **horizontal only** (sidegrades, fixed-point,
-  checksum-folded; never vertical power). *Builds on PvE WS-C.*
+  checksum-folded; never vertical power). *Builds on PvE WS-C.* **Design + fork resolved
+  ([D85](decisions.md)):** Stock + Muzzle become sim slots (two new disjoint fixed-point axis pairs —
+  move-speed↔aim-cone, suppression↔falloff), Grip is cosmetic-only (recoil is presentation, #4). The
+  ready-to-execute spec (files + full determinism/fairness test plan, slice Stock first) lives in D85;
+  implementation is the remaining `/safe-edit`-class sim slice.
 - [ ] **CP-2 — Embodied game-feel bar (launch-critical).** A focused gunplay pass so a Delta
   Force player doesn't bounce in ten seconds: hit feedback (impact/hitmarker/damage-direction),
   recoil/kick readability, responsive ADS, audio-coupled firing. **Presentation/feel only — never
