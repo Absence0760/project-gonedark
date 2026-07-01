@@ -15,6 +15,7 @@ use gonedark_core::campaign::{
     Campaign, Difficulty, MissionSelectEntry, NodeId, NodeProgress,
 };
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
+use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
 use gonedark_pal_desktop::DesktopRenderSurface;
 use gonedark_render::title_backdrop::TitleBackdrop;
 use winit::window::Window;
@@ -61,6 +62,11 @@ pub enum HostTransition {
     /// Switch the host to the pre-match gunsmith / loadout screen. Start now lands here first; the
     /// screen's **Deploy** is what subsequently creates the `Game` (carrying the chosen loadout).
     OpenLoadout,
+    /// Switch the host to the Pve/Pvp **mode / map select** screen (D81). Reached from the title's
+    /// PvE / PvP buttons; picking a mode deploys straight into that scene with the persisted loadout
+    /// (the gunsmith no longer gates play — it moved behind Settings). No data: the mode table is the
+    /// static [`gonedark_engine::shell_modes::SHELL_GAME_MODES`].
+    OpenModeSelect,
     /// Switch the host to the **Operations-hub mission-select** screen — the PvE campaign entry
     /// (`docs/pve-campaign.md`, D58). Reached from the title's CAMPAIGN button; the player picks a
     /// node tile there, which opens its [`OpenBriefing`](HostTransition::OpenBriefing).
@@ -98,13 +104,14 @@ pub enum HostTransition {
 /// Map a title action to the host transition it triggers (the pure run-loop decision).
 pub fn resolve_title_action(action: TitleAction) -> HostTransition {
     match action {
-        // CAMPAIGN now opens the Operations-hub mission-select (the PvE pillar, D58) — the player
-        // picks a node, reads its briefing, and launches it (still through the gunsmith). PvE/PvP
-        // keep the direct gunsmith→match flow: there is no PvP lobby or standalone-skirmish picker
-        // yet, so each still folds straight to the loadout screen (their mode divergence is future
-        // work, exactly as before).
+        // CAMPAIGN opens the Operations-hub mission-select (the PvE pillar, D58) — the player picks a
+        // node, reads its briefing, and launches it. PvE/PvP open the mode/map select (D81); the
+        // gunsmith is customization-only behind Settings, no longer a play gate.
         TitleAction::Campaign => HostTransition::OpenMissionSelect,
-        TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenLoadout,
+        // PvE/PvP open the mode/map select (D81) — the deploy gate that boots the chosen scene with
+        // the persisted loadout. The gunsmith no longer gates play (it moved behind Settings). PvE
+        // and PvP share the picker until PvP match-setup lands (Q5).
+        TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenModeSelect,
         TitleAction::Settings => HostTransition::OpenSettings,
         TitleAction::Profile => HostTransition::OpenProfile,
         // The FIELD MANUAL button opens About and returns to the title on BACK (Android parity).
@@ -553,6 +560,21 @@ pub fn controls_reference() -> &'static [ControlRow] {
     ROWS
 }
 
+// ---- The Pve/Pvp mode-select screen — pure seam (unit-tested) -----------------------------------
+
+/// An action the Pve/Pvp mode/map-select screen (D81) can emit in a frame. Picking a mode deploys
+/// straight into its scene with the persisted loadout (no gunsmith); BACK returns to the title. The
+/// mode table itself is the static [`SHELL_GAME_MODES`] (tested in `gonedark_engine::shell_modes`);
+/// the picked mode's scene resolution is [`GameMode::scene`] — both live in `engine` so the
+/// scene-token guard is unit-tested there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModeSelectAction {
+    /// Deploy the picked mode — the host resolves its [`GameMode::scene`] and boots the match.
+    Pick(GameMode),
+    /// Return to the title screen.
+    Back,
+}
+
 // ---- The Operations-hub mission-select screen — pure seam (unit-tested) -------------------------
 
 /// An action the mission-select (Operations-hub) screen can emit in a frame. The hub reads the
@@ -893,6 +915,18 @@ impl EguiShell {
         let stamp = self.stamp.clone();
         self.run_and_paint(surface, true, |ui| about_ui(ui, &stamp).then_some(()))
             .is_some()
+    }
+
+    /// Draw the Pve/Pvp **mode / map select** screen for one frame and return the
+    /// [`ModeSelectAction`] used, if any (D81). The mode table is the static [`SHELL_GAME_MODES`];
+    /// this holds no host state. Over the live 3D backdrop, same as the other out-of-match screens.
+    /// Pure presentation — the picked mode's scene resolution is the `engine`-tested
+    /// [`GameMode::scene`] seam, this is the device-gated glue.
+    pub fn draw_mode_select(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+    ) -> Option<ModeSelectAction> {
+        self.run_and_paint(surface, true, mode_select_ui)
     }
 
     /// Draw the Operations-hub **mission-select** screen for one frame and return the
@@ -1589,6 +1623,62 @@ fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Option<Mission
         .flatten()
 }
 
+/// One mode/map tile: the mode name over its one-line blurb, as a full-width button; clicking it
+/// deploys that mode. Mirrors Android's `ModeTile`. Glue (needs a live `Ui`) — the launch decision is
+/// the pure [`GameMode::scene`] seam the host resolves; this only reports the pick. ASCII only.
+fn mode_tile(ui: &mut egui::Ui, mode: &GameMode) -> Option<ModeSelectAction> {
+    use egui::{Button, RichText};
+    let label = RichText::new(mode.name.to_uppercase())
+        .color(BONE)
+        .size(TYPE_SUBHEAD)
+        .strong();
+    let mut clicked = false;
+    card_frame().show(ui, |ui| {
+        ui.set_min_width(MENU_BUTTON_W);
+        let resp = ui.add(Button::new(label).frame(false).min_size([MENU_BUTTON_W, 28.0].into()));
+        ui.label(RichText::new(mode.blurb).color(ASH).size(TYPE_CAPTION));
+        clicked = resp.clicked();
+    });
+    clicked.then_some(ModeSelectAction::Pick(*mode))
+}
+
+/// The immediate-mode Pve/Pvp mode/map-select screen (D81): the standing battle scenes as tiles in a
+/// card over the backdrop, then BACK. Reads the static [`SHELL_GAME_MODES`] (host presentation, never
+/// the sim); each pick routes through the `engine`-tested [`GameMode::scene`] seam at the host. Glue.
+fn mode_select_ui(ui: &mut egui::Ui) -> Option<ModeSelectAction> {
+    use egui::RichText;
+    let mut action = None;
+
+    over_backdrop_screen(ui, 0.08, |ui| {
+        ui.set_min_width(460.0);
+        screen_banner(ui, "SELECT MODE", 130.0);
+        ui.label(
+            RichText::new(
+                "Pick a battle to deploy into. Your loadout is set in the gunsmith, under Settings.",
+            )
+            .color(ASH)
+            .size(TYPE_BODY),
+        );
+        ui.add_space(18.0);
+
+        for (i, mode) in SHELL_GAME_MODES.iter().enumerate() {
+            if let Some(act) = mode_tile(ui, mode) {
+                action = Some(act);
+            }
+            if i + 1 < SHELL_GAME_MODES.len() {
+                ui.add_space(12.0);
+            }
+        }
+
+        ui.add_space(22.0);
+        if menu_button(ui, "BACK", Emphasis::Tertiary) {
+            action = Some(ModeSelectAction::Back);
+        }
+    });
+
+    action
+}
+
 /// The immediate-mode Operations-hub mission-select screen: the campaign's nodes as
 /// status-coded tiles in a card over the backdrop, then BACK. Reads
 /// [`Campaign::mission_select`] (host-side, never the sim); each tile's launchability + the click
@@ -1748,14 +1838,15 @@ mod tests {
     }
 
     #[test]
-    fn pve_and_pvp_still_open_the_gunsmith() {
-        // PvE/PvP keep the direct gunsmith→match flow (no lobby / skirmish picker yet) — each routes
-        // through the loadout screen first, and Deploy from there creates the `Game`.
+    fn pve_and_pvp_open_the_mode_select() {
+        // D81: PvE/PvP now open the mode/map select (the deploy gate), not the gunsmith — the
+        // gunsmith moved behind Settings as customization-only. PvE and PvP share the picker until
+        // PvP match-setup lands (Q5).
         for mode in [TitleAction::Pve, TitleAction::Pvp] {
             assert_eq!(
                 resolve_title_action(mode),
-                HostTransition::OpenLoadout,
-                "{mode:?} must open the gunsmith"
+                HostTransition::OpenModeSelect,
+                "{mode:?} must open the mode select"
             );
         }
     }

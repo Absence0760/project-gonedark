@@ -32,8 +32,8 @@ mod shell;
 use shell::{
     apply_briefing_action, apply_loadout_action, apply_profile_action, apply_settings_action,
     build_channel, build_stamp, resolve_title_action, AboutReturn, BriefingOutcome, EguiShell,
-    HostTransition, LoadoutStep, MissionSelectAction, ProfileState, ProfileStep, SettingsState,
-    SettingsStep,
+    HostTransition, LoadoutStep, MissionSelectAction, ModeSelectAction, ProfileState, ProfileStep,
+    SettingsState, SettingsStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -49,6 +49,10 @@ enum Screen {
     Settings,
     /// The out-of-match player Profile screen. State lives on [`App::profile`].
     Profile,
+    /// The Pve/Pvp **mode / map select** screen (D81). Reads the static
+    /// [`gonedark_engine::shell_modes::SHELL_GAME_MODES`]; carries no host data. Picking a mode sets
+    /// [`App::scene`] and deploys straight into the match with the persisted loadout.
+    ModeSelect,
     /// The Operations-hub **mission-select** screen (PvE campaign, D58). Reads [`App::campaign`];
     /// carries no data of its own.
     MissionSelect,
@@ -325,6 +329,27 @@ impl App {
                     }
                 }
             }
+            Screen::ModeSelect => {
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) = sh.draw_mode_select(surface) {
+                        transition = match action {
+                            // Pick a mode → resolve its scene (the engine-tested `GameMode::scene`
+                            // seam) and deploy straight in with the persisted loadout (D81 — no
+                            // gunsmith gate). An un-parseable token (forbidden by the shell_modes
+                            // test) defensively keeps the current scene.
+                            ModeSelectAction::Pick(mode) => {
+                                if let Some(scene) = mode.scene() {
+                                    self.scene = scene;
+                                }
+                                // A mode-select deploy is never a campaign launch.
+                                self.pending_launch = None;
+                                Some(HostTransition::EnterMatch)
+                            }
+                            ModeSelectAction::Back => Some(HostTransition::ExitToTitle),
+                        };
+                    }
+                }
+            }
             Screen::MissionSelect => {
                 if let Some(sh) = self.shell.as_mut() {
                     if let Some(action) = sh.draw_mission_select(surface, &self.campaign) {
@@ -458,6 +483,12 @@ impl App {
             // screen edits it in place until the player Deploys or Backs out.
             Some(HostTransition::OpenLoadout) => {
                 self.screen = Screen::Loadout;
+                self.last_frame = Instant::now();
+            }
+            // PvE/PvP → the mode/map select (D81). Picking a mode there deploys straight into the
+            // match with the persisted loadout (no gunsmith gate).
+            Some(HostTransition::OpenModeSelect) => {
+                self.screen = Screen::ModeSelect;
                 self.last_frame = Instant::now();
             }
             // CAMPAIGN → the Operations-hub mission-select (PvE pillar, D58).
@@ -608,6 +639,7 @@ impl ApplicationHandler for App {
             | Screen::Loadout
             | Screen::Settings
             | Screen::Profile
+            | Screen::ModeSelect
             | Screen::MissionSelect
             | Screen::Briefing(_)
             | Screen::About(_) => {
