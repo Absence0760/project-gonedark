@@ -132,6 +132,14 @@ pub mod mesh;
 /// side only (invariant #4) — no `core`/sim type, no checksum surface.
 pub mod anim;
 
+/// Runtime **skeletal player** for the authored trooper rig (CP-3 / WS-B — the D84 follow-up): parses
+/// the cooked `assets/models/rigs/trooper_rig.skel` (rigid-part, one matrix per bone), samples the
+/// [`anim::select_clip`]-chosen clip, and emits per-part [`mesh::MeshInstance`]s through the existing
+/// mesh pipeline (no skinning shader). Render/float side only (invariant #1/#4) — no `core`/sim type,
+/// no checksum surface. **Owed:** wiring these part-instances into the token draw pass (troopers still
+/// use the [`anim`] procedural pose until then); a driven death-topple needs cross-tick unit identity.
+pub mod skel;
+
 /// Embodied first-person world (W5). Owns `WorldRenderer`: the sky/ground + weapon-viewmodel passes
 /// that replace the bare near-black embodied void with a real first-person space while keeping the
 /// strategic map dark (invariant #6 — it draws ONLY the camera-derived environment + a screen-space

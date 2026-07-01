@@ -256,6 +256,133 @@ def glb_animation_names(path):
     return [a.get("name", "") for a in doc.get("animations", [])]
 
 
+# --- runtime cooked skeletal format (GDSK) --------------------------------------------
+# The `.glb` above is the interchange SOURCE; it is NOT what the engine loads. The render crate
+# stays wgpu+bytemuck only (no glTF reader dep, D46/D19), so — exactly like the `.mesh` cook in
+# gen_models.py — we bake a dead-simple, little-endian, Z-up cooked file the render crate
+# `include_bytes!`s and hand-parses (`render::skel`). This one adds a skeleton + baked animation.
+#
+# Because the rig is RIGID-PART (every box bound 1.0 to ONE bone), runtime "skinning" is a single
+# matrix per part — no per-vertex joints/weights, no skinning shader. Each part draws as an ordinary
+# instanced mesh at `model = place * skin[joint]`, where `skin[joint] = A_bone(t) * inverse_bind`.
+# We bake, per clip per frame, each bone's ARMATURE-SPACE pose as TRS, so the runtime composes no
+# hierarchy — it just interpolates the sampled TRS and multiplies by the per-joint inverse-bind.
+#
+#   magic       : 4 bytes  b"GDSK"
+#   version     : u32        1
+#   joint_count : u32
+#   part_count  : u32
+#   clip_count  : u32
+#   joints  : joint_count × { parent:i32 (-1 root), inv_bind: 16×f32 (column-major) }
+#   parts   : part_count  × { joint:u32, v_count:u32, i_count:u32,
+#                             verts: v_count×[px,py,pz,nx,ny,nz,cr,cg,cb,cm] f32,   # GDM2, bind space
+#                             indices: i_count×u32 }
+#   clips   : clip_count  × { name_len:u32, name:utf8, loops:u32, fps:f32, frame_count:u32,
+#                             frames: frame_count × (joint_count × {t:3f32, r:4f32(xyzw), s:3f32}) }
+SKEL_MAGIC = b"GDSK"
+SKEL_VERSION = 1
+
+# Team-tint mask per part material (mirrors gen_models.infantry_palette): the uniform takes a team
+# hue, the helmet a little, skin/rifle keep their own colour. Presentation only (see the `.mesh`
+# format doc + mesh.wgsl). Keyed by material name so the cook stays self-contained.
+MASK_BY_MATERIAL = {
+    "rig_fatigue": 0.55,
+    "rig_helmet": 0.42,
+    "rig_skin": 0.0,
+    "rig_gun": 0.0,
+}
+
+
+def part_geometry(obj):
+    """Flat-shaded GDM2 triangle soup for one rig part, in bind/armature space (Z-up world metres —
+    the armature sits at the origin, so `obj.matrix_world` places the part). Mirrors
+    gen_models.export_mesh: a per-triangle geometric normal shared across its three corners, plus the
+    part's albedo + team-tint mask. Returns (flat f32 list, vertex count)."""
+    from mathutils import Vector
+
+    mw = obj.matrix_world
+    mesh = obj.data
+    mesh.calc_loop_triangles()
+    m = mesh.materials[0] if mesh.materials else None
+    if m is not None and m.node_tree:
+        bsdf = m.node_tree.nodes.get("Principled BSDF")
+        bc = bsdf.inputs["Base Color"].default_value if bsdf else (0.5, 0.5, 0.5, 1.0)
+        col = (bc[0], bc[1], bc[2], MASK_BY_MATERIAL.get(m.name, 1.0))
+    else:
+        col = (0.5, 0.5, 0.5, 1.0)
+
+    verts = []
+    for tri in mesh.loop_triangles:
+        co = [mw @ mesh.vertices[vi].co for vi in tri.vertices]
+        n = (co[1] - co[0]).cross(co[2] - co[0])
+        n = n.normalized() if n.length > 1e-9 else Vector((0.0, 0.0, 1.0))
+        for c in co:
+            verts.extend((c.x, c.y, c.z, n.x, n.y, n.z, col[0], col[1], col[2], col[3]))
+    return verts, len(mesh.loop_triangles) * 3
+
+
+def mat_cols(M):
+    """Flatten a mathutils 4x4 into 16 COLUMN-major floats (col0.xyzw, col1.xyzw, …) — the
+    convention `render::mesh::model_matrix` / `render::skel` expect."""
+    out = []
+    for c in range(4):
+        col = M.col[c]
+        out.extend((col[0], col[1], col[2], col[3]))
+    return out
+
+
+def bake_clip(arm_obj, scene, joint_names, act, start, end, loops):
+    """Sample one clip to per-frame, per-joint ARMATURE-SPACE TRS. A looping clip drops the duplicate
+    seam frame (samples [start, end)) so the loop wraps cleanly; a one-shot keeps its final frame
+    (samples [start, end]). Rotations are stored as (x, y, z, w) quaternions."""
+    adata = arm_obj.animation_data
+    for t in adata.nla_tracks:
+        t.mute = True  # only the active action drives the pose while we sample
+    adata.action = act
+    last = (end - 1) if loops else end
+    frames = []
+    for f in range(start, last + 1):
+        scene.frame_set(f)
+        pose = []
+        for name in joint_names:
+            pb = arm_obj.pose.bones[name]
+            t, q, s = pb.matrix.decompose()  # armature space; mathutils quat is (w, x, y, z)
+            pose.append(((t.x, t.y, t.z), (q.x, q.y, q.z, q.w), (s.x, s.y, s.z)))
+        frames.append(pose)
+    return frames
+
+
+def export_skel(path, joint_names, arm_obj, parts_geo, skel_clips, fps):
+    """Write the cooked GDSK file (format doc above). Returns the byte length."""
+    bones = arm_obj.data.bones
+    name_index = {n: i for i, n in enumerate(joint_names)}
+    buf = bytearray()
+    buf += SKEL_MAGIC
+    buf += struct.pack("<IIII", SKEL_VERSION, len(joint_names), len(parts_geo), len(skel_clips))
+    for name in joint_names:
+        b = bones[name]
+        parent = name_index.get(b.parent.name, -1) if b.parent else -1
+        buf += struct.pack("<i", parent)
+        buf += struct.pack("<16f", *mat_cols(b.matrix_local.inverted()))
+    for joint_idx, verts, v_count in parts_geo:
+        buf += struct.pack("<III", joint_idx, v_count, v_count)
+        buf += struct.pack("<%df" % len(verts), *verts)
+        buf += struct.pack("<%dI" % v_count, *range(v_count))
+    for name, loops, frames in skel_clips:
+        nb = name.encode("utf-8")
+        buf += struct.pack("<I", len(nb))
+        buf += nb
+        buf += struct.pack("<IfI", 1 if loops else 0, float(fps), len(frames))
+        for pose in frames:
+            for (t, q, s) in pose:
+                buf += struct.pack(
+                    "<10f", t[0], t[1], t[2], q[0], q[1], q[2], q[3], s[0], s[1], s[2]
+                )
+    with open(path, "wb") as f:
+        f.write(buf)
+    return len(buf)
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     reset_scene()
@@ -266,7 +393,13 @@ def main():
         bind_part(part, bone, arm_obj)
 
     bpy.context.view_layer.objects.active = arm_obj
+    joint_names = [b[0] for b in BONES]
+    # Which clips loop vs play once and hold. idle/walk stride and the fire recoil PULSE loop while
+    # their state persists (a unit keeps moving / keeps firing); death topples once and holds. Drives
+    # both the baked seam handling (bake_clip) and the runtime playback mode (render::skel).
+    loop_by_clip = {"idle": True, "walk": True, "fire": True, "death": False}
     clips = []
+    authored = []  # (name, loops, keyframed-action, start, end) — the source for the GDSK bake
     for author, name in (
         (author_idle, "idle"),
         (author_walk, "walk"),
@@ -275,6 +408,7 @@ def main():
     ):
         act = new_action(arm_obj, name)
         start, end = author(arm_obj)
+        authored.append((name, loop_by_clip[name], arm_obj.animation_data.action, start, end))
         push_to_nla(arm_obj, bpy.data.actions[name], name)
         clips.append({"name": name, "frame_start": start, "frame_end": end})
     reset_pose(arm_obj)
@@ -296,15 +430,37 @@ def main():
     names = glb_animation_names(glb_path)
     assert len(names) == 4, f"expected 4 animation clips in the glb, got {names}"
 
+    # Cook the runtime GDSK file — the artifact render::skel actually loads (the `.glb` is interchange
+    # source only). Geometry is pose-independent (bind verts × object matrix), so read it at rest;
+    # the per-frame TRS bake then mutes the NLA tracks and steps each action alone.
+    bpy.context.view_layer.update()
+    name_index = {n: i for i, n in enumerate(joint_names)}
+    parts_geo = [(name_index[bone], *part_geometry(part)) for part, bone in parts]
+    scene = bpy.context.scene
+    fps = float(scene.render.fps)
+    skel_clips = [
+        (n, loops, bake_clip(arm_obj, scene, joint_names, act, s, e, loops))
+        for (n, loops, act, s, e) in authored
+    ]
+    skel_name = "trooper_rig.skel"
+    skel_path = os.path.join(OUT_DIR, skel_name)
+    skel_bytes = export_skel(skel_path, joint_names, arm_obj, parts_geo, skel_clips, fps)
+    # Enrich the clip metadata with the runtime knobs (loop mode + baked frame count).
+    for entry, (_n, loops, frames) in zip(clips, skel_clips):
+        entry["loops"] = loops
+        entry["baked_frames"] = len(frames)
+
     manifest = {
         "note": (
             "Rigged greybox trooper + animation clips (idle/walk/fire/death), generated by "
-            "tools/models/gen_trooper_rig.py (decisions.md D41). The `.glb` carries real glTF "
-            "animation channels on a rigid-part rig (each box part bound 1.0 to a single bone — no "
-            "soft vertex skinning). This is the CP-3 animation FLOOR authoring artifact; it is not "
-            "loaded at runtime yet — today's playback is the procedural pose in render::anim, driven "
-            "by the same clip-selection seam. Regenerate with `pnpm assets:rig`. License-clean by "
-            "construction (code-authored geometry + keyframes, CC0-1.0)."
+            "tools/models/gen_trooper_rig.py (decisions.md D41). The `.glb` is the interchange "
+            "SOURCE (real glTF animation channels on a rigid-part rig — each box part bound 1.0 to a "
+            "single bone, no soft vertex skinning). The cooked `.skel` (GDSK) is what the engine "
+            "actually loads at runtime (render::skel): a hand-parseable skeleton + per-frame baked "
+            "armature-space TRS the renderer plays back by drawing each part at model = place * "
+            "A_bone(t) * inverse_bind — the CP-3/WS-B animation floor. Regenerate with "
+            "`pnpm assets:rig`. License-clean by construction (code-authored geometry + keyframes, "
+            "CC0-1.0)."
         ),
         "license_default": LICENSE,
         "assets": [
@@ -312,9 +468,11 @@ def main():
                 "name": "trooper_rig",
                 "category": "rigs",
                 "file": "rigs/" + glb_name,
+                "cooked": "rigs/" + skel_name,
                 "description": (
                     "Rigid-part greybox trooper (pelvis/torso/head/helmet/arms/legs/rifle) on a "
-                    "7-bone hierarchy, carrying four clips: idle, walk, fire, death."
+                    "7-bone hierarchy, carrying four clips: idle, walk, fire, death. The cooked "
+                    "`.skel` is consumed at runtime; the `.glb` is interchange source."
                 ),
                 "source": "procedural (Blender bpy — tools/models/gen_trooper_rig.py)",
                 "generator": bpy.app.version_string,
@@ -323,6 +481,10 @@ def main():
                 "url": "",
                 "bytes": os.path.getsize(glb_path),
                 "sha256": sha256(glb_path),
+                "cooked_bytes": skel_bytes,
+                "cooked_sha256": sha256(skel_path),
+                "joints": joint_names,
+                "fps": fps,
                 "clips": clips,
                 "animation_names": names,
             }
@@ -332,6 +494,7 @@ def main():
         json.dump(manifest, f, indent=2)
         f.write("\n")
     print(f"  wrote {glb_name}  ({manifest['assets'][0]['bytes']} B, clips={names})")
+    print(f"  wrote {skel_name} ({skel_bytes} B, joints={len(joint_names)}, parts={len(parts_geo)})")
     print("  wrote manifest.json")
 
 

@@ -121,6 +121,17 @@ landed (TF-4: hitmarker + hit SFX off the avatar-source `SimEvent::Damaged` stre
 > Blender rig baking the four clips to `assets/models/rigs/trooper_rig.glb` with real glTF animation
 > channels + a provenance manifest (script-not-binary, deterministic). All presentation-only
 > (invariant #1/#4), no new render dep, `default`/`stress` checksum streams bit-identical.
+>
+> **Update — the runtime skeletal player module + cook have now landed** (`render::skel`): a
+> rigid-part player that parses a cooked, `include_bytes!`d `assets/models/rigs/trooper_rig.skel`
+> (magic `GDSK`, baked deterministically by `gen_trooper_rig.py`/`pnpm assets:rig`), samples the
+> `select_clip`-chosen clip, and emits per-part `mesh::MeshInstance`s through the **existing** mesh
+> pipeline (one matrix per bone — no skinning shader, no new render dep). 17 unit tests (parse,
+> sampling, nlerp, part-instance transforms) green dev+release; the render crate stays `wgpu`+
+> `bytemuck` only. **Still owed (the last mile):** wiring these part-instances into the token draw
+> pass (troopers keep the `anim` procedural pose until then), and a *driven* death-topple (dead units
+> are dropped from the render snapshot, so it needs cross-tick unit identity — a sim-side change,
+> deliberately out of scope).
 
 Coherent locomotion / fire / death animation on the greybox so the eye-level view reads as a *place*.
 
