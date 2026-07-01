@@ -3751,3 +3751,48 @@ shells' divergence is explicit, not silent.
 gunsmith's DEPLOY button becomes DONE (save-and-return-to-Settings). New play modes are a
 `shellGameModes` entry + a valid scene token. The desktop divergence above must be closed before the
 two shells can be called at parity again.
+
+## D82 — Shell parity is bidirectional: desktop adopts D81, both platforms converge features and persistence
+
+**Decision.** A parity pass reconciles the desktop egui shell and the Android Compose shell in **both**
+directions — neither is authoritative; each catches up to whatever the other did better.
+
+- **Desktop adopts D81 in full** (closing D81's "owed" half): PvE/PvP route through a new
+  `Screen::ModeSelect` (mirroring `shellGameModes` via a shared `engine::shell_modes` seam whose tokens
+  resolve through `Scene::parse`), the gunsmith moves behind Settings as customization-only
+  (RESET/DONE, no Deploy), and the mode-select / briefing hops become the deploy gate. Match creation
+  is refactored into one `App::enter_match()` shared by both paths; the deterministic core is
+  untouched (loadout still reaches the sim only via the scenario seeder).
+- **About/Field Manual is reachable from BOTH the title and Settings, on both platforms** — resolving
+  the prior split where desktop reached it only from Settings and Android only from the title. Desktop
+  gains a title `MANUAL` chip (with an `AboutReturn` origin so BACK returns correctly) while keeping
+  the Settings entry.
+- **Feature catch-up, Android → desktop parity:** the embodied touch HUD gains a **jump** button, a
+  **select-fire** toggle with an on-glyph SEMI/AUTO readout, and **look-sensitivity / invert-Y** now
+  actually shape the touch-look delta (`TouchControls` seam), where before they were stored-but-inert.
+- **Feature catch-up, desktop → Android parity:** Android gains a real **campaign progress model**
+  (locked/available/cleared + status pills, prerequisite-gated, mirroring `core::campaign` as a pure
+  Kotlin `CampaignProgress` seam), a briefing clear-status line, a `diff` launch-wire key that threads
+  the chosen difficulty into `mission_registry` commander-tier application, and campaign-progress
+  persistence + record-on-win (via an `Activity.setResult` code).
+- **Persistence is symmetric now:** desktop persists Settings/Profile/loadout to `shell.dat`
+  (previously in-memory only; Android already had `ShellPrefs`), and Android persists campaign progress
+  (previously desktop-only via `campaign.dat`). Each platform gained the other's disjoint persisted
+  state.
+
+**Why.** The two shells had drifted in *both* directions — treating either as canonical would have
+regressed real work on the other. The About entry-point split was an accident of independent
+development, not a considered platform difference (unlike the D78 backdrop), so converging to
+"both entry points on both" is strictly more discoverable at trivial cost. The remaining intentional
+differences are left as-is: the 2D-Compose vs 3D title backdrop ([D78](#d78--android-title-backdrop-is-compose-native-not-an-embedded-wgpu-surface)), and desktop's fullscreen toggle (mobile has no equivalent).
+
+**Method (process note).** Built by three parallel worktree-isolated workers (one per surface cluster:
+Android embodied controls, desktop shell, Android campaign) off a shared base, each shipping tests in
+its own commits, then a single integration + full-suite verification pass — the D79-style
+"self-contained seam per worker, orchestrator integrates" pattern, extended across platforms.
+
+**Owed / deferred.** The Android campaign result code assumes the single shipped node `NodeId(0)`; a
+2nd/gated campaign node needs the node index carried on the launch wire (marked in-code). Android jump
+/ fire-mode button *placement* is greybox-reasonable and unit-tested for non-overlap but not
+HUD-editor-exposed (WS-D) or device-playtested. On-device look-sensitivity shakeout still pending (no
+device on hand).
