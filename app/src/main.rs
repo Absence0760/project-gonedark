@@ -23,6 +23,7 @@ use gonedark_engine::mission_registry::{default_campaign, default_registry, Miss
 use gonedark_engine::objectives::MissionStatus;
 use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
 use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface, DesktopThermalSensor};
+use gonedark_render::tiers::QualityTier;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -31,6 +32,11 @@ use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
+
+/// The device-default render tier the Settings `Auto` quality choice resolves to on desktop. Desktop
+/// is the D22 flagship class (there is no per-device auto-detect yet), so it matches `Game::new`'s
+/// starting `QualityTier::High`. Keep the two in sync: `Auto` must reproduce the shipped default.
+const DESKTOP_DEFAULT_TIER: QualityTier = QualityTier::High;
 
 mod shell;
 use shell::{
@@ -154,6 +160,16 @@ struct App {
     /// Whether the current match's clear has already been recorded — so a win is recorded exactly
     /// once even though `mission_status()` reads `Won` every subsequent frame. Reset at match start.
     mission_recorded: bool,
+
+    /// **Dormant-but-wired** effective music-bus gain (D75 follow-up). Refreshed each match frame
+    /// from the Settings `master_volume`×`music_volume` via `gonedark_engine::music_gain` — the
+    /// music analog of the SFX `DesktopAudio::set_gains` push. It is carried to the host but has no
+    /// reader yet: there is no music *source* (every `SoundId` is SFX, the sink has no music bus),
+    /// so it is currently silent. A future music track multiplies its samples by this. Presentation
+    /// only — never a sim input (invariant #1/#4). `allow(dead_code)`: intentionally write-only
+    /// until a music sink lands.
+    #[allow(dead_code)]
+    music_gain: f32,
 }
 
 impl App {
@@ -189,6 +205,9 @@ impl App {
             pending_launch: None,
             active_mission: None,
             mission_recorded: false,
+            // Recomputed each match frame from the Settings volumes; the default mirrors
+            // SettingsState's shipped master×music until the first frame refreshes it.
+            music_gain: 0.0,
         }
     }
 
@@ -493,6 +512,24 @@ impl App {
                     .set_look_prefs(self.settings.mouse_sensitivity, self.settings.invert_look_y);
                 self.audio
                     .set_gains(self.settings.master_volume, self.settings.sfx_volume);
+                // Music volume (D75 follow-up): compose the effective music-bus gain via the engine
+                // seam and carry it to the host, exactly as `set_gains` carries master/SFX. Currently
+                // DORMANT — no music source exists to scale (every cue is SFX), so this feeds no sink
+                // yet; it is the ready hook a future music track reads. Presentation only.
+                self.music_gain = gonedark_engine::music_gain(
+                    1.0,
+                    self.settings.master_volume,
+                    self.settings.music_volume,
+                );
+                // Graphics tier (Phase 4 WS-C): the Settings quality choice drives `render::tiers`
+                // through `Game::set_tier`. `Auto` resolves to the desktop device-default tier
+                // (High — the D22 flagship class). RENDER-only (invariant #1/#4): the sim ticks the
+                // same fixed 60 Hz at every tier, so the per-tick checksum stream is byte-identical.
+                // Only switch on a real change so the running dyn-res scale isn't re-clamped every frame.
+                let want_tier = self.settings.quality.to_tier(DESKTOP_DEFAULT_TIER);
+                if game.tier() != want_tier {
+                    game.set_tier(want_tier);
+                }
                 // Accessibility cues (invariant #6 fairness): the CVD alert-HUD labels, the
                 // hard-of-hearing visual sound echoes, and the colourblind-safe faction palette (WS-D)
                 // are host-side presentation chrome; push the stored settings into the engine before it

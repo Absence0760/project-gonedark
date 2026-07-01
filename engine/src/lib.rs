@@ -153,6 +153,10 @@ pub mod shell_modes;
 pub mod alert_cues;
 
 pub use tuning::RenderTuning;
+/// The music-bus gain seam (D75 follow-up), re-exported so the desktop host can carry the Settings
+/// music-volume pref to the audio host the same way `pal::mix::scaled_gain` carries master/SFX —
+/// without reaching into the private `audio` module path. Dormant-but-wired (no music source yet).
+pub use audio::music_gain;
 pub use net_tuning::{DelayPolicy, RttDelayEstimator};
 /// The colourblind-palette accessibility mode (WS-D), re-exported so hosts that drive
 /// [`Game::set_accessibility_prefs`] can name it without a direct `gonedark_render` dependency (e.g.

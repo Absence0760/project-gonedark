@@ -37,6 +37,23 @@ pub fn impact_cue() -> u32 {
     SoundId::Impact as u32
 }
 
+/// Compose the effective linear gain for a **music** track: its own `track_gain` scaled by the
+/// player's master and music volumes (both `[0, 1]` Settings prefs). The music-bus analog of
+/// [`gonedark_pal::mix::scaled_gain`] (the SFX-bus seam) — same shape (`track * master * bus`), a
+/// different bus. Pure, so the Settings **music-volume** path is host-tested exactly like the SFX
+/// path (D75 wired master/SFX; this is the D75 follow-up for music). Inputs are range-validated at
+/// the Settings boundary (`SettingsState::clamp`); this trusts that and just multiplies.
+///
+/// **Dormant-but-wired.** There is no music *source* yet — every shipped [`SoundId`] is an SFX cue,
+/// and the desktop sink has no music bus (`gonedark_pal::mix::scaled_gain` scales all cues by
+/// master×SFX today). So nothing feeds this at runtime: the host computes it each match frame and
+/// carries it to the audio host, and a future music track will multiply its samples by this. Like
+/// every gain here it is presentation-only (invariant #4/#6) and never a sim input.
+#[inline]
+pub fn music_gain(track_gain: f32, master: f32, music: f32) -> f32 {
+    track_gain * master * music
+}
+
 /// Distance (world units) at which a cue's gain is halved. Chosen so the falloff
 /// `1 / (1 + dist/FALLOFF)` reads as "audible across a camp, faint across the map": a source on
 /// top of the listener is ~1.0, one `FALLOFF` away is 0.5, and far events tail toward 0 without
@@ -354,5 +371,32 @@ mod tests {
         // And they are distinct from the connecting-shot Gunfire / the UI HitConfirm tick.
         assert_ne!(weapon_fire_cue(), SoundId::Gunfire as u32);
         assert_ne!(impact_cue(), SoundId::HitConfirm as u32);
+    }
+
+    // --- music-volume seam (D75 follow-up, dormant-but-wired) ---------------------------------
+
+    #[test]
+    fn music_gain_composes_track_master_and_music() {
+        // The music-bus analog of pal::mix::scaled_gain: track × master × music.
+        assert!((music_gain(1.0, 1.0, 1.0) - 1.0).abs() < EPS);
+        assert!((music_gain(1.0, 0.5, 0.5) - 0.25).abs() < EPS);
+        assert!((music_gain(0.8, 0.5, 0.5) - 0.2).abs() < EPS);
+    }
+
+    #[test]
+    fn music_gain_is_zero_when_any_bus_is_muted() {
+        // Muting master OR music (OR the track itself) silences the bus — the "off" end of the
+        // Settings slider must reach true silence.
+        assert!(music_gain(1.0, 0.0, 1.0).abs() < EPS, "master mute → silent");
+        assert!(music_gain(1.0, 1.0, 0.0).abs() < EPS, "music mute → silent");
+        assert!(music_gain(0.0, 1.0, 1.0).abs() < EPS, "track mute → silent");
+    }
+
+    #[test]
+    fn music_gain_is_monotonic_in_the_music_volume_pref() {
+        // Raising the music-volume slider (master fixed) never lowers the effective gain.
+        let m = 0.8;
+        assert!(music_gain(1.0, m, 0.2) < music_gain(1.0, m, 0.6));
+        assert!(music_gain(1.0, m, 0.6) < music_gain(1.0, m, 1.0));
     }
 }

@@ -21,6 +21,7 @@ use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
 use gonedark_engine::AlertCueMode;
 use gonedark_pal_desktop::DesktopRenderSurface;
 use gonedark_render::theme::PaletteMode;
+use gonedark_render::tiers::QualityTier;
 use gonedark_render::title_backdrop::TitleBackdrop;
 use winit::window::Window;
 
@@ -285,6 +286,20 @@ impl QualityChoice {
     pub fn from_index(i: usize) -> QualityChoice {
         Self::ALL.get(i).copied().unwrap_or(QualityChoice::Auto)
     }
+
+    /// Resolve this Settings choice to a concrete render [`QualityTier`] — the seam that drives
+    /// `render::tiers` through `Game::set_tier` (D75 follow-up). `Auto` yields the caller's
+    /// `device_default` (there is no per-device auto-detect yet; desktop is the D22 flagship class,
+    /// so the host passes [`QualityTier::High`]); the explicit picks pin `Low`/`Mid`/`High`. Pure —
+    /// no GPU, no sim (a tier is a RENDER choice, invariant #1/#4), so it is host-tested.
+    pub fn to_tier(self, device_default: QualityTier) -> QualityTier {
+        match self {
+            QualityChoice::Auto => device_default,
+            QualityChoice::Low => QualityTier::Low,
+            QualityChoice::Medium => QualityTier::Mid,
+            QualityChoice::High => QualityTier::High,
+        }
+    }
 }
 
 /// Host-side player preferences edited on the Settings screen. **Presentation only** — none of these
@@ -295,9 +310,12 @@ impl QualityChoice {
 ///
 /// Wiring status: **`master_volume` + `sfx_volume`** drive the desktop audio sink (the host pushes
 /// them via `DesktopAudio::set_gains` each match frame) and **`mouse_sensitivity` + `invert_look_y`**
-/// shape the desktop look input (`DesktopInput::set_look_prefs`). **`music_volume`** is a dormant
-/// stored pref — there is no music cue to scale yet — and **`quality`** is not yet wired into
-/// `render::tiers`. Both survive across screens for the session.
+/// shape the desktop look input (`DesktopInput::set_look_prefs`). **`quality`** now drives
+/// `render::tiers`: the host resolves it via [`QualityChoice::to_tier`] and pushes it through
+/// `Game::set_tier` each match frame (D75 follow-up). **`music_volume`** is **dormant-but-wired**:
+/// the host composes its effective bus gain each frame via `gonedark_engine::music_gain` and carries
+/// it to the audio host, but there is no music *source* to scale yet (every `SoundId` is SFX), so it
+/// has no audible effect until a music track lands. All survive across screens for the session.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct SettingsState {
     /// Master output gain, `0.0..=1.0`.
@@ -2777,6 +2795,32 @@ mod tests {
         }
         // ...and wrapped back to the start.
         assert_eq!(q, QualityChoice::Auto);
+    }
+
+    #[test]
+    fn quality_to_tier_maps_explicit_picks_and_defers_auto() {
+        // The explicit picks pin a concrete render tier regardless of the device default...
+        assert_eq!(
+            QualityChoice::Low.to_tier(QualityTier::High),
+            QualityTier::Low
+        );
+        assert_eq!(
+            QualityChoice::Medium.to_tier(QualityTier::High),
+            QualityTier::Mid
+        );
+        assert_eq!(
+            QualityChoice::High.to_tier(QualityTier::Low),
+            QualityTier::High
+        );
+        // ...while Auto defers to whatever device default the host passes (so on desktop, High).
+        assert_eq!(
+            QualityChoice::Auto.to_tier(QualityTier::High),
+            QualityTier::High
+        );
+        assert_eq!(
+            QualityChoice::Auto.to_tier(QualityTier::Mid),
+            QualityTier::Mid
+        );
     }
 
     // ---- The Profile pure seam -------------------------------------------------------------------
