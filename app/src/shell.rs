@@ -14,6 +14,7 @@
 use gonedark_core::campaign::{
     Campaign, Difficulty, MissionSelectEntry, NodeId, NodeProgress,
 };
+use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
 use gonedark_pal_desktop::DesktopRenderSurface;
@@ -253,6 +254,18 @@ impl QualityChoice {
         let i = Self::ALL.iter().position(|&c| c == self).unwrap_or(0);
         Self::ALL[(i + 1) % Self::ALL.len()]
     }
+
+    /// This choice's stable index in [`Self::ALL`] — the persisted ordinal (mirrors the Android
+    /// codec storing enums by ordinal so a renamed variant can't silently invalidate a saved blob).
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&c| c == self).unwrap_or(0)
+    }
+
+    /// The choice at persisted index `i`, or the default ([`QualityChoice::Auto`]) for an
+    /// out-of-range ordinal — the tolerant decode side of [`Self::index`].
+    pub fn from_index(i: usize) -> QualityChoice {
+        Self::ALL.get(i).copied().unwrap_or(QualityChoice::Auto)
+    }
 }
 
 /// Host-side player preferences edited on the Settings screen. **Presentation only** — none of these
@@ -379,6 +392,9 @@ pub enum FactionPref {
 }
 
 impl FactionPref {
+    /// Every faction, in a fixed order (the persisted-ordinal order and the cycle order).
+    pub const ALL: [FactionPref; 2] = [FactionPref::UsArmy, FactionPref::FrenchArmy];
+
     /// The on-screen label.
     pub fn label(self) -> &'static str {
         match self {
@@ -393,6 +409,17 @@ impl FactionPref {
             FactionPref::UsArmy => FactionPref::FrenchArmy,
             FactionPref::FrenchArmy => FactionPref::UsArmy,
         }
+    }
+
+    /// This faction's stable index in [`Self::ALL`] — the persisted ordinal.
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&f| f == self).unwrap_or(0)
+    }
+
+    /// The faction at persisted index `i`, or the default ([`FactionPref::UsArmy`]) for an
+    /// out-of-range ordinal — the tolerant decode side of [`Self::index`].
+    pub fn from_index(i: usize) -> FactionPref {
+        Self::ALL.get(i).copied().unwrap_or(FactionPref::UsArmy)
     }
 }
 
@@ -489,6 +516,140 @@ pub fn apply_profile_action(action: ProfileAction, profile: &mut ProfileState) -
             profile.callsign = sanitize_callsign(&profile.callsign);
             ProfileStep::Back
         }
+    }
+}
+
+// ---- Shell-prefs persistence codec — pure seam (unit-tested) ------------------------------------
+
+/// The blob format version tag (the first line). Bumped only on an incompatible layout change; a
+/// mismatched or missing tag is tolerated — decode still reads whatever keys it recognises.
+const SHELL_PREFS_VERSION: &str = "gonedark-shell 1";
+
+/// This [`Optic`]'s stable index in [`Optic::ALL`] — the persisted ordinal (an unknown ordinal
+/// decodes to the slot's `Default`, so a reordered table can't inject an invalid selection).
+fn optic_index(o: Optic) -> usize {
+    Optic::ALL.iter().position(|&x| x == o).unwrap_or(0)
+}
+/// This [`Barrel`]'s stable index in [`Barrel::ALL`].
+fn barrel_index(b: Barrel) -> usize {
+    Barrel::ALL.iter().position(|&x| x == b).unwrap_or(0)
+}
+/// This [`Magazine`]'s stable index in [`Magazine::ALL`].
+fn magazine_index(m: Magazine) -> usize {
+    Magazine::ALL.iter().position(|&x| x == m).unwrap_or(0)
+}
+
+/// Serialize the three player-owned shell state objects — [`SettingsState`] (audio/look/video),
+/// [`ProfileState`] (callsign/faction/record), and the gunsmith [`LoadoutEditor`] — to a flat,
+/// line-based `key=value` blob for the host to persist across launches. The Rust counterpart of the
+/// Android `ShellPrefsCodec.encode` (a desktop-appropriate blob, **not** the Kotlin wire format — the
+/// format is not required to match, only the pattern). Every field is written in its canonical,
+/// already-clamped / sanitized form (settings are clamped, the callsign sanitized, enums stored by
+/// stable ordinal via [`QualityChoice::index`]/[`FactionPref::index`]), so a save→load round-trip is
+/// stable. Pure (no fs/env) — the file I/O around it is the exempt host glue (in `main.rs`).
+///
+/// **Presentation only** — none of this is sim state (invariant #1 is about the sim's fixed-point
+/// state, not host prefs), so it is never checksummed and can't desync anything.
+pub fn encode_shell_prefs(
+    settings: &SettingsState,
+    profile: &ProfileState,
+    loadout: &LoadoutEditor,
+) -> String {
+    let mut s = *settings;
+    s.clamp();
+    let l = loadout.current();
+    // Strip any newline from the free-text callsign so it can't break the line-based format (the one
+    // value that isn't a number/ordinal). `sanitize_callsign` handles trim/truncate/empty-fallback.
+    let callsign = sanitize_callsign(&profile.callsign).replace(['\n', '\r'], " ");
+    format!(
+        "{SHELL_PREFS_VERSION}\n\
+         master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nquality={}\n\
+         callsign={}\nfaction={}\nmatches={}\nwins={}\n\
+         optic={}\nbarrel={}\nmagazine={}\n",
+        s.master_volume,
+        s.sfx_volume,
+        s.music_volume,
+        s.mouse_sensitivity,
+        s.invert_look_y as u8,
+        s.quality.index(),
+        callsign,
+        profile.faction.index(),
+        profile.matches_played,
+        profile.wins,
+        optic_index(l.optic),
+        barrel_index(l.barrel),
+        magazine_index(l.magazine),
+    )
+}
+
+/// Tolerantly decode a [`encode_shell_prefs`] blob back to the three state objects. Any missing,
+/// unparseable, or out-of-range value falls back to that field's default — this **never** panics
+/// (mirroring the Android codec's forward-compat + corruption-safety contract). An empty/garbage blob
+/// therefore decodes to the shipped defaults. Settings are re-clamped and the callsign re-sanitized on
+/// the way out, so the result is always valid. Pure — unit-tested without touching the filesystem.
+pub fn decode_shell_prefs(blob: &str) -> (SettingsState, ProfileState, LoadoutEditor) {
+    use std::collections::HashMap;
+
+    // Parse `key=value` lines (split on the FIRST '=', so a value may itself contain '='). The
+    // version tag and any unrecognised line are simply ignored.
+    let map: HashMap<&str, &str> = blob
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(k, v)| (k.trim(), v.trim()))
+        .collect();
+
+    let ds = SettingsState::default();
+    let mut settings = SettingsState {
+        master_volume: parse_or(map.get("master"), ds.master_volume),
+        sfx_volume: parse_or(map.get("sfx"), ds.sfx_volume),
+        music_volume: parse_or(map.get("music"), ds.music_volume),
+        mouse_sensitivity: parse_or(map.get("sens"), ds.mouse_sensitivity),
+        invert_look_y: parse_bool(map.get("inverty"), ds.invert_look_y),
+        quality: QualityChoice::from_index(parse_or::<usize>(map.get("quality"), 0)),
+    };
+    // The clamp guards a stored-but-out-of-range numeric (e.g. a hand-edited blob) exactly as the
+    // Settings sliders do.
+    settings.clamp();
+
+    let dp = ProfileState::default();
+    let profile = ProfileState {
+        // `sanitize_callsign("")` yields the default callsign, so a missing key is handled here.
+        callsign: sanitize_callsign(map.get("callsign").copied().unwrap_or("")),
+        faction: FactionPref::from_index(parse_or::<usize>(map.get("faction"), 0)),
+        matches_played: parse_or(map.get("matches"), dp.matches_played),
+        wins: parse_or(map.get("wins"), dp.wins),
+    };
+
+    let loadout = LoadoutEditor::with_loadout(Loadout {
+        optic: Optic::ALL
+            .get(parse_or::<usize>(map.get("optic"), 0))
+            .copied()
+            .unwrap_or_default(),
+        barrel: Barrel::ALL
+            .get(parse_or::<usize>(map.get("barrel"), 0))
+            .copied()
+            .unwrap_or_default(),
+        magazine: Magazine::ALL
+            .get(parse_or::<usize>(map.get("magazine"), 0))
+            .copied()
+            .unwrap_or_default(),
+    });
+
+    (settings, profile, loadout)
+}
+
+/// Parse a stored value to `T`, falling back to `fallback` on a missing key or a parse failure. The
+/// numeric decode primitive the codec leans on (mirrors the Android codec's tolerant field reads).
+fn parse_or<T: std::str::FromStr>(value: Option<&&str>, fallback: T) -> T {
+    value.and_then(|s| s.parse::<T>().ok()).unwrap_or(fallback)
+}
+
+/// Decode a stored boolean: `"1"`/`"true"` → true, `"0"`/`"false"` → false, anything else → fallback.
+fn parse_bool(value: Option<&&str>, fallback: bool) -> bool {
+    match value.map(|s| *s) {
+        Some("1") | Some("true") => true,
+        Some("0") | Some("false") => false,
+        _ => fallback,
     }
 }
 
@@ -2232,6 +2393,102 @@ mod tests {
             ProfileStep::Back
         );
         assert_eq!(p.callsign, "Ghost");
+    }
+
+    // ---- The shell-prefs persistence codec -------------------------------------------------------
+
+    use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
+
+    /// A non-default state across all three objects, to prove the round-trip carries every field.
+    fn sample_state() -> (SettingsState, ProfileState, LoadoutEditor) {
+        let settings = SettingsState {
+            master_volume: 0.35,
+            sfx_volume: 0.5,
+            music_volume: 0.25,
+            mouse_sensitivity: 2.4,
+            invert_look_y: true,
+            quality: QualityChoice::High,
+        };
+        let profile = ProfileState {
+            callsign: "Reaper".to_string(),
+            faction: FactionPref::FrenchArmy,
+            matches_played: 12,
+            wins: 7,
+        };
+        let loadout = LoadoutEditor::with_loadout(Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+        });
+        (settings, profile, loadout)
+    }
+
+    #[test]
+    fn shell_prefs_round_trip_preserves_every_field() {
+        let (s, p, l) = sample_state();
+        let blob = encode_shell_prefs(&s, &p, &l);
+        let (s2, p2, l2) = decode_shell_prefs(&blob);
+        assert_eq!(s2, s, "settings survive the round-trip");
+        assert_eq!(p2, p, "profile survives the round-trip");
+        assert_eq!(l2.current(), l.current(), "loadout survives the round-trip");
+    }
+
+    #[test]
+    fn shell_prefs_encode_is_stable_under_re_encode() {
+        // A decode→encode of an encoded blob reproduces the same bytes (canonical, already-clamped).
+        let (s, p, l) = sample_state();
+        let blob = encode_shell_prefs(&s, &p, &l);
+        let (s2, p2, l2) = decode_shell_prefs(&blob);
+        assert_eq!(encode_shell_prefs(&s2, &p2, &l2), blob);
+    }
+
+    #[test]
+    fn empty_or_garbage_blob_decodes_to_defaults() {
+        for blob in ["", "gonedark-shell 1\n", "total nonsense\n???\n", "master\nsfx=\n"] {
+            let (s, p, l) = decode_shell_prefs(blob);
+            assert_eq!(s, SettingsState::default(), "blob {blob:?} → default settings");
+            assert_eq!(p, ProfileState::default(), "blob {blob:?} → default profile");
+            assert_eq!(
+                l.current(),
+                LoadoutEditor::new().current(),
+                "blob {blob:?} → default loadout"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_tolerates_out_of_range_and_unparseable_values() {
+        // Out-of-range numerics are clamped; out-of-range enum ordinals fall back to the default;
+        // an unparseable value keeps the field default. Never panics.
+        let blob = "master=9.9\nsfx=-3\nsens=999\ninverty=maybe\nquality=42\n\
+                    faction=99\nmatches=notanumber\noptic=7\nbarrel=-1\nmagazine=abc\n\
+                    callsign=   \n";
+        let (s, p, l) = decode_shell_prefs(blob);
+        assert_eq!(s.master_volume, 1.0, "over-range gain clamps to 1.0");
+        assert_eq!(s.sfx_volume, 0.0, "negative gain clamps to 0.0");
+        assert_eq!(s.mouse_sensitivity, SettingsState::SENS_MAX, "over-range sens clamps");
+        assert!(!s.invert_look_y, "unparseable bool keeps the default (false)");
+        assert_eq!(s.quality, QualityChoice::Auto, "out-of-range quality ordinal → default");
+        assert_eq!(p.faction, FactionPref::UsArmy, "out-of-range faction ordinal → default");
+        assert_eq!(p.matches_played, 0, "unparseable count keeps the default");
+        // A blank callsign sanitises to the default; the out-of-range loadout ordinals default.
+        assert_eq!(p.callsign, DEFAULT_CALLSIGN);
+        assert_eq!(l.current(), Loadout::STANDARD, "out-of-range slot ordinals → Standard");
+    }
+
+    #[test]
+    fn decode_sanitizes_and_strips_a_newline_injected_callsign() {
+        // A callsign carrying a newline can't corrupt the line-based blob: encode strips it, and the
+        // decoded value is the sanitized single-line name.
+        let p = ProfileState {
+            callsign: "Rea\nper".to_string(),
+            ..ProfileState::default()
+        };
+        let blob = encode_shell_prefs(&SettingsState::default(), &p, &LoadoutEditor::new());
+        assert_eq!(blob.lines().filter(|l| l.starts_with("callsign=")).count(), 1);
+        let (_, p2, _) = decode_shell_prefs(&blob);
+        assert!(!p2.callsign.contains('\n'));
+        assert_eq!(p2.callsign, "Rea per");
     }
 
     // ---- The About controls reference ------------------------------------------------------------

@@ -155,6 +155,10 @@ impl App {
         // load is all-or-nothing, never partial). Host-side meta-state only (invariants #1/#7).
         let mut campaign = default_campaign();
         load_campaign_progress(&mut campaign);
+        // Restore the player's Settings / Profile / gunsmith loadout from the last session (falls back
+        // to defaults on a fresh device or a corrupt blob). Host-side presentation state only — never
+        // sim state (invariant #1), persisted to its own blob alongside campaign progress.
+        let (settings, profile, loadout) = load_shell_prefs();
         App {
             surface: None,
             shell: None,
@@ -167,9 +171,9 @@ impl App {
             alt_held: false,
             fullscreen: false,
             scene,
-            loadout: LoadoutEditor::new(),
-            settings: SettingsState::default(),
-            profile: ProfileState::default(),
+            loadout,
+            settings,
+            profile,
             campaign,
             registry: default_registry(),
             briefing_difficulty: Difficulty::default(),
@@ -523,6 +527,19 @@ impl App {
             }
         }
 
+        // Persist the shell prefs whenever we leave a screen that edits them (Settings / Profile /
+        // the gunsmith), so an edit survives a restart — the same best-effort lifecycle `campaign.dat`
+        // rides. `self.screen` is still the screen we're leaving here (the swap happens below). This
+        // captures the final in-place-edited state (sliders / callsign / slot cyclers) on the way out.
+        if transition.is_some()
+            && matches!(
+                self.screen,
+                Screen::Settings | Screen::Profile | Screen::Loadout
+            )
+        {
+            persist_shell_prefs(&self.settings, &self.profile, &self.loadout);
+        }
+
         match transition {
             // Settings → the gunsmith (D81: customization-only, reached from Settings). The editor
             // (App::loadout) is already populated; the screen edits it in place until DONE returns to
@@ -770,6 +787,49 @@ fn load_campaign_progress(campaign: &mut Campaign) {
     if let Ok(bytes) = std::fs::read(&path) {
         let _ = campaign.apply_progress(&bytes);
     }
+}
+
+/// The shell-prefs blob filename (Settings / Profile / gunsmith loadout), a sibling of
+/// [`CAMPAIGN_PROGRESS_FILE`] under the same host data dir ([`campaign_dir`]). Separate from
+/// campaign progress so a corrupt one can't take down the other.
+const SHELL_PREFS_FILE: &str = "shell.dat";
+
+/// The full path to the shell-prefs blob, or `None` when no writable home dir is known. Reuses the
+/// pure [`campaign_dir`] seam the campaign blob uses (same env resolution), so both ride one location.
+fn shell_prefs_path() -> Option<PathBuf> {
+    let xdg = std::env::var("XDG_DATA_HOME").ok();
+    let home = std::env::var("HOME").ok();
+    campaign_dir(xdg.as_deref(), home.as_deref()).map(|d| d.join(SHELL_PREFS_FILE))
+}
+
+/// Load persisted Settings / Profile / gunsmith loadout, decoding through the pure
+/// [`shell::decode_shell_prefs`] seam. A missing file or a malformed blob falls back to the shipped
+/// defaults (decode is total — it never fails), so a fresh device or a corrupt save just starts
+/// clean. **Host-side presentation state only** — never sim state, never checksummed (invariant #1).
+/// Glue (fs); the decode logic + its tolerance are unit-tested in `shell`.
+fn load_shell_prefs() -> (SettingsState, ProfileState, LoadoutEditor) {
+    let defaults = || (SettingsState::default(), ProfileState::default(), LoadoutEditor::new());
+    let Some(path) = shell_prefs_path() else {
+        return defaults();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(blob) => shell::decode_shell_prefs(&blob),
+        Err(_) => defaults(),
+    }
+}
+
+/// Persist the current Settings / Profile / gunsmith loadout via the pure
+/// [`shell::encode_shell_prefs`] seam, creating the data dir if needed. Best-effort (a write failure
+/// is swallowed — the state is in memory regardless), and on the same lifecycle as
+/// [`persist_campaign`]. Presentation state only, never a sim/checksum surface. Glue (fs).
+fn persist_shell_prefs(settings: &SettingsState, profile: &ProfileState, loadout: &LoadoutEditor) {
+    let Some(path) = shell_prefs_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, shell::encode_shell_prefs(settings, profile, loadout));
 }
 
 fn main() {
