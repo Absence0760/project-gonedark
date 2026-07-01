@@ -60,6 +60,54 @@ pub fn luminance(c: Rgb) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 }
 
+/// Reference implementation of the full-screen **present-pass grade** in `present.wgsl`'s
+/// `fs_present`. The shader applies this once over the whole world scene (before the crisp
+/// native-resolution HUD/text chrome is drawn on top). WGSL cannot import Rust, so the grade math is
+/// duplicated in the shader — this is the off-GPU twin, kept in lockstep and unit-tested so a grade
+/// regression (out-of-range output, a lost vignette, a runaway tint) fails in CI rather than only on
+/// screen. `rgb` is the scene colour, `uv` the fullscreen `[0,1]` coordinate (v=0 at the top).
+pub fn present_grade(rgb: Rgb, uv: [f32; 2]) -> Rgb {
+    fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+        let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    }
+
+    let mut c = rgb;
+
+    // 1. Contrast S-curve (smoothstep about the mid-point), mixed in at a restrained weight.
+    let s = [
+        c[0] * c[0] * (3.0 - 2.0 * c[0]),
+        c[1] * c[1] * (3.0 - 2.0 * c[1]),
+        c[2] * c[2] * (3.0 - 2.0 * c[2]),
+    ];
+    c = mix(c, s, 0.22);
+
+    // 2. Split-tone: cool the shadows (SUBTRACTIVE — pull the warm channels down, never raise blue,
+    //    so the grade can't fabricate a "player-blue" pixel the fairness harness would read as intel),
+    //    warm the highlights toward amber.
+    let l = luminance(c);
+    let shadow_w = 1.0 - smoothstep(0.0, 0.55, l);
+    let highlight_w = smoothstep(0.5, 1.0, l);
+    let shadow_tint = [-0.018, -0.006, 0.0];
+    let highlight_tint = [0.028, 0.012, -0.014];
+    for i in 0..3 {
+        c[i] += shadow_tint[i] * shadow_w + highlight_tint[i] * highlight_w;
+    }
+
+    // 3. Desaturate the deepest shadows partially toward their own luminance ("going dark" mood).
+    let grey = luminance(c);
+    c = mix(c, [grey, grey, grey], shadow_w * 0.12);
+
+    // 4. Smooth radial vignette — darkens only toward the corners.
+    let d = [uv[0] - 0.5, uv[1] - 0.5];
+    let r = (d[0] * d[0] + d[1] * d[1]).sqrt() * 1.414_213_5;
+    let vignette = 1.0 - smoothstep(0.55, 1.15, r) * 0.34;
+    for ch in &mut c {
+        *ch = (*ch * vignette).clamp(0.0, 1.0);
+    }
+    c
+}
+
 // ---- Base ink / surface ramp (aligned to the title-shell palette) -------------------------------
 
 /// The deepest background — the clear colour behind the world and the darkest scrim. (`INK` #07090C.)
@@ -218,6 +266,52 @@ mod tests {
     #[test]
     fn rgba_appends_alpha() {
         assert_eq!(rgba(PANEL, 0.8), [PANEL[0], PANEL[1], PANEL[2], 0.8]);
+    }
+
+    /// The present grade must keep every output channel in `[0,1]` for any in-range input — a value
+    /// outside that range would clip unpredictably on the way to the swapchain. Sweep a grid of
+    /// colours across the whole frame (centre + corners).
+    #[test]
+    fn present_grade_stays_in_unit_range() {
+        let uvs = [[0.5, 0.5], [0.0, 0.0], [1.0, 1.0], [0.0, 1.0], [1.0, 0.0]];
+        for r in 0..=4 {
+            for g in 0..=4 {
+                for b in 0..=4 {
+                    let c = [r as f32 / 4.0, g as f32 / 4.0, b as f32 / 4.0];
+                    for uv in uvs {
+                        let out = present_grade(c, uv);
+                        for &ch in &out {
+                            assert!(
+                                (0.0..=1.0).contains(&ch),
+                                "graded channel {ch} out of [0,1] for {c:?} @ {uv:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The vignette must darken the corners relative to the centre for the same colour — the whole
+    /// point of the pass is a focused frame. A neutral mid-grey at the extreme corner reads dimmer
+    /// than at screen centre.
+    #[test]
+    fn present_grade_vignette_darkens_corners() {
+        let mid = [0.5, 0.5, 0.5];
+        let centre = luminance(present_grade(mid, [0.5, 0.5]));
+        let corner = luminance(present_grade(mid, [1.0, 1.0]));
+        assert!(corner < centre, "corner {corner} not darker than centre {centre}");
+    }
+
+    /// The split-tone must push the identity mid-grey warm-ward at the bright end and cool-ward at the
+    /// dark end — the cohesion lever. At screen centre (no vignette) a light grey ends up with more
+    /// red than blue; a dark grey ends up with more blue than red.
+    #[test]
+    fn present_grade_split_tone_direction() {
+        let light = present_grade([0.8, 0.8, 0.8], [0.5, 0.5]);
+        assert!(light[0] > light[2], "highlights not warmed: {light:?}");
+        let dark = present_grade([0.12, 0.12, 0.12], [0.5, 0.5]);
+        assert!(dark[2] > dark[0], "shadows not cooled: {dark:?}");
     }
 
     /// The type scale is strictly descending (heading > title > body > caption) — a guard against a

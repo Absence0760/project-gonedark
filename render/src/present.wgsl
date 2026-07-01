@@ -26,21 +26,50 @@ fn vs_present(@builtin(vertex_index) vi: u32) -> VsOut {
     return out;
 }
 
+// Rec. 709 luminance weights — the perceptual grey a colour reads as. Shared by the split-tone and
+// the shadow desaturation below; mirrored by `theme::luminance` on the Rust side.
+const LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
+
 @fragment
 fn fs_present(in: VsOut) -> @location(0) vec4<f32> {
     var c = textureSample(scene_tex, scene_samp, in.uv).rgb;
 
-    // Gentle cinematic grade applied ONCE here over the whole world scene (HUD/text chrome is drawn
-    // AFTER this pass, so it stays untouched and crisp). The scene is largely LDR, so this is a light
-    // S-curve for contrast — NOT an HDR tonemap, which would wash out already-[0,1] colours.
-    let s = c * c * (3.0 - 2.0 * c); // smoothstep S-curve (deepen shadows, firm up highlights)
-    c = mix(c, s, 0.18);
+    // Cohesive cinematic grade applied ONCE here over the whole world scene (HUD/text chrome is drawn
+    // AFTER this pass, so it stays untouched and crisp). The scene is largely LDR, so this is a shaping
+    // grade — NOT an HDR tonemap, which would wash out already-[0,1] colours. The reference math lives
+    // in `theme::present_grade` (Rust) and is unit-tested; keep the two in lockstep.
 
-    // Subtle vignette: darken toward the corners for a focused frame. uv is [0,1]; distance² from
-    // centre peaks at 0.5 in the corners, so the corner falloff is ~0.45*0.5 ≈ 0.22.
+    // 1. Contrast S-curve — deepen shadows, firm up highlights. A smoothstep about the mid-point,
+    //    mixed in at a restrained weight so detail in both tails survives.
+    let s = c * c * (3.0 - 2.0 * c);
+    c = mix(c, s, 0.22);
+
+    // 2. Split-tone for identity: cool the shadows toward the deep blue-black "ink" the palette is
+    //    built on, and lift the highlights a touch warm toward the amber signal accent. This is what
+    //    unifies the cold command view and the warmer embodied view into one graded image. Kept
+    //    subtle — and the shadow cool is SUBTRACTIVE (pull the warm channels down, never raise blue)
+    //    so the grade can't manufacture a bright blue-dominant pixel and be misread as "player-blue"
+    //    intel by the fairness harness (invariant #6). The warm highlight likewise only pulls blue
+    //    down, never up.
+    let l = dot(c, LUMA);
+    let shadow_w = 1.0 - smoothstep(0.0, 0.55, l); // strongest in the darks
+    let highlight_w = smoothstep(0.5, 1.0, l);     // strongest in the lights
+    c += vec3<f32>(-0.018, -0.006, 0.0) * shadow_w;     // cool the shadows (warm channels down)
+    c += vec3<f32>(0.028, 0.012, -0.014) * highlight_w; // warm the highlights toward amber
+
+    // 3. "Going dark" mood: gently desaturate the deepest shadows toward their own luminance, so the
+    //    darkness reads as ink rather than muddy colour. Only the darks are touched (highlights keep
+    //    full chroma), and only partially.
+    let grey = vec3<f32>(dot(c, LUMA));
+    c = mix(c, grey, shadow_w * 0.12);
+
+    // 4. Vignette: a smooth radial falloff that darkens only toward the corners, keeping the centre
+    //    fully bright so the frame focuses without crushing the edges. `r` is 0 at centre and ~1 at
+    //    the extreme corner; the smoothstep leaves the inner ~55% untouched.
     let d = in.uv - vec2<f32>(0.5, 0.5);
-    let vignette = 1.0 - dot(d, d) * 0.45;
+    let r = length(d) * 1.41421356;
+    let vignette = 1.0 - smoothstep(0.55, 1.15, r) * 0.34;
     c = c * vignette;
 
-    return vec4<f32>(c, 1.0);
+    return vec4<f32>(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }
