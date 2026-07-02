@@ -306,6 +306,33 @@ pub fn combat_system(
             None => continue,
         };
 
+        // Face what we shoot (cosmetic coherence — invariant-#3-safe). We already acquired and fire
+        // at this target; pointing the visible weapon along the SAME bearing to its CURRENT position
+        // grants no autonomy or lead (identical to the shot bearing below). Applied whether or not
+        // the cooldown lets us fire this tick, so a unit visibly tracks its target between shots, and
+        // BEFORE the ballistic/cooldown/ammo `continue`s so it happens even when we hold fire. This
+        // runs AFTER `heading_system` faced the hull along velocity, so the aim wins for an engaging
+        // unit. Fixed-point + rate-limited via the same deterministic `trig` helpers the heading
+        // system uses — no floats, index-ordered, identical on every peer (invariants #1/#7).
+        let to_target = world.pos[target_idx] - world.pos[i];
+        if to_target != Vec2::ZERO {
+            let bearing = trig::atan2(to_target.y, to_target.x);
+            if world.weapon[i].turret_speed > 0 {
+                // Turreted (tanks): the independent gun tracks the target at its slew rate; the hull
+                // stays velocity-driven (heading_system) — the classic hull/turret split preserved.
+                let step = world.weapon[i].turret_speed as i32;
+                world.turret_yaw[i] = trig::rotate_toward(world.turret_yaw[i], bearing, step);
+            } else {
+                // Infantry (no independent turret — turret_speed 0): the whole body turns to face the
+                // target, so the rifle (drawn along the body/hull) points where the trooper shoots.
+                world.hull_heading[i] = trig::rotate_toward(
+                    world.hull_heading[i],
+                    bearing,
+                    crate::systems::HULL_TURN_RATE,
+                );
+            }
+        }
+
         // Cooldown gates the rate of fire; a target may be held but not shot this tick.
         if world.weapon[i].cooldown_left != 0 {
             continue;
@@ -851,6 +878,82 @@ mod tests {
         // ballistic AI tests below pass their own pool to inspect the launched shells.
         let mut pool = Vec::new();
         combat_system(world, terrain, &mut rng, &mut pool, events);
+    }
+
+    #[test]
+    fn ai_infantry_faces_its_target_when_engaging() {
+        // A stationary rifleman starts facing +X (Angle 0); its only target sits due +Y. Because
+        // infantry have no independent turret (turret_speed 0) the rifle is drawn along the body, so
+        // combat_system must slew the shooter's HULL toward the target each tick — rate-limited by
+        // HULL_TURN_RATE, not a snap — so the trooper visibly aims where it shoots. `run` invokes only
+        // combat_system (not the mover/heading_system), so any facing change here is combat's doing.
+        // Zero-damage rifle keeps the target alive for the whole convergence.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(20, 0, 0));
+        let si = shooter.index as usize;
+        world.stance[si] = Stance::FireAtWill;
+        assert_eq!(world.hull_heading[si], Angle(0), "starts facing +X");
+        let enemy = spawn_unit(&mut world, 0, 5, Faction::Enemy, 100, Weapon::default());
+        world.stance[enemy.index as usize] = Stance::HoldFire;
+        let bearing = trig::atan2(fx(5), fx(0)); // +Y bearing (+90°)
+
+        let mut events = Vec::new();
+        run(&mut world, &terrain, &mut events);
+        // Exactly one HULL_TURN_RATE step toward the bearing — turn-then-face, not teleport.
+        assert_eq!(
+            world.hull_heading[si],
+            Angle(crate::systems::HULL_TURN_RATE),
+            "one rate-limited step toward the target on the first engaged tick"
+        );
+
+        // Keep engaging: the hull converges on the target bearing and holds there.
+        for _ in 0..300 {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert_eq!(
+            world.hull_heading[si], bearing,
+            "hull settles pointing at the target"
+        );
+        // Infantry have no independent turret, so turret_yaw is left untouched by the aim path.
+        assert_eq!(world.turret_yaw[si], Angle(0));
+    }
+
+    #[test]
+    fn ai_turret_tracks_its_target_leaving_the_hull() {
+        // A turreted unit (turret_speed > 0) points its GUN at the target while its hull is left to
+        // the mover (unchanged here). turret_yaw slews toward the +Y bearing at turret_speed; the
+        // hull heading stays put — the classic hull/turret split, so a tank doesn't slew its chassis
+        // to aim.
+        let mut world = World::new();
+        let terrain = Terrain::open();
+        let mut w = rifle(20, 0, 0);
+        w.turret_speed = 128;
+        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, w);
+        let si = shooter.index as usize;
+        world.stance[si] = Stance::FireAtWill;
+        let enemy = spawn_unit(&mut world, 0, 5, Faction::Enemy, 100, Weapon::default());
+        world.stance[enemy.index as usize] = Stance::HoldFire;
+        let bearing = trig::atan2(fx(5), fx(0));
+
+        let mut events = Vec::new();
+        run(&mut world, &terrain, &mut events);
+        assert_eq!(
+            world.turret_yaw[si],
+            Angle(128),
+            "turret takes one slew step (turret_speed) toward the target"
+        );
+        assert_eq!(
+            world.hull_heading[si],
+            Angle(0),
+            "the hull is untouched by the aim (the mover owns it)"
+        );
+
+        for _ in 0..600 {
+            run(&mut world, &terrain, &mut events);
+        }
+        assert_eq!(world.turret_yaw[si], bearing, "turret settles on the target");
+        assert_eq!(world.hull_heading[si], Angle(0), "hull never moved to aim");
     }
 
     #[test]
