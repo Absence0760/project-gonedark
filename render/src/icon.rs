@@ -104,6 +104,11 @@ pub const CELL: u32 = 64;
 pub const ATLAS_W: u32 = ICON_COLS * CELL; // 256
 pub const ATLAS_H: u32 = ICON_ROWS * CELL; // 192
 
+/// Clamp range for the physical UI scale (see [`IconRenderer::set_ui_scale`]). Matches `text`'s clamp
+/// and the touch-layout density clamp so every UI surface treats a bogus platform report the same way.
+const UI_SCALE_MIN: f32 = 0.5;
+const UI_SCALE_MAX: f32 = 3.0;
+
 /// The baked straight-alpha RGBA8 atlas (raw `ATLAS_W * ATLAS_H * 4` bytes). Raw (not PNG) so the
 /// render crate needs no image-decode dependency.
 const ATLAS_BYTES: &[u8] = include_bytes!("../../assets/icons/icons_atlas.rgba");
@@ -126,6 +131,17 @@ pub fn half_extents(size: f32, aspect: f32) -> (f32, f32) {
     // Guard a degenerate aspect (zero-height surface mid-resize) so we never divide by ~0.
     let a = if aspect.abs() < 1e-6 { 1.0 } else { aspect };
     (hh / a, hh)
+}
+
+/// [`half_extents`] after applying the physical `ui_scale` (logical-point-per-NDC correction; `1.0`
+/// = legacy). An icon sized to read at a constant *physical* size multiplies its NDC size by
+/// `ui_scale`, so a denser display draws it larger in NDC (hence the same physical size) instead of
+/// shrinking it to a bare fraction of the raw framebuffer. This is the seam
+/// [`IconRenderer::render`] applies per frame from the host-supplied scale (via
+/// [`set_ui_scale`](IconRenderer::set_ui_scale)); `half_extents` is exactly the `ui_scale == 1.0`
+/// case. Pure — no GPU. Sibling of `text::cell_size_scaled`.
+pub fn half_extents_scaled(size: f32, aspect: f32, ui_scale: f32) -> (f32, f32) {
+    half_extents(size * ui_scale, aspect)
 }
 
 /// One icon, expanded to an NDC quad + its atlas-UV rect, ready to upload. `repr(C)` + `Pod` so it
@@ -232,6 +248,10 @@ pub struct IconRenderer {
     /// Viewport aspect (width / height) used to keep icons square in pixels. Set once per frame by
     /// the host via [`set_aspect`](IconRenderer::set_aspect); defaults to `1.0` (square).
     aspect: f32,
+    /// Physical UI scale (logical-point-per-NDC correction). Set once per frame by the host via
+    /// [`set_ui_scale`](IconRenderer::set_ui_scale) so icons read at a constant *physical* size
+    /// across displays of differing density; defaults to `1.0` (legacy).
+    ui_scale: f32,
 }
 
 impl IconRenderer {
@@ -383,6 +403,7 @@ impl IconRenderer {
             atlas_uploaded: false,
             queued: Vec::new(),
             aspect: 1.0,
+            ui_scale: 1.0,
         }
     }
 
@@ -424,6 +445,21 @@ impl IconRenderer {
         }
     }
 
+    /// Set the physical UI scale (logical-point-per-NDC correction) for this frame's icon layout, so
+    /// icons read at a constant *physical* size across displays of differing density/PPI instead of a
+    /// bare fraction of the raw framebuffer. `1.0` is the legacy behaviour; the host sources it from
+    /// the platform (`winit` `Window::scale_factor()` on desktop, `densityDpi / DENSITY_DEFAULT` on
+    /// Android) and calls this once per frame, mirroring [`set_aspect`](Self::set_aspect) and the text
+    /// pass. Applied internally in [`render`](Self::render) by scaling each queued icon's NDC size
+    /// (equivalently, [`half_extents_scaled`] with this scale), so no pure layout signature changes.
+    /// Clamped to `[0.5, 3.0]`; a non-finite or non-positive value is ignored (keeps the last good
+    /// scale) so a bogus platform report never collapses the chrome.
+    pub fn set_ui_scale(&mut self, ui_scale: f32) {
+        if ui_scale.is_finite() && ui_scale > 0.0 {
+            self.ui_scale = ui_scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
+        }
+    }
+
     /// Queue an icon to draw centred at `pos` (NDC) with `size` (cell height in NDC), `tint` (RGB),
     /// and `alpha`. Accumulates until the next [`render`](IconRenderer::render), which draws them all
     /// in one LOAD pass and clears the queue. The clean API other render passes / the host call.
@@ -453,7 +489,22 @@ impl IconRenderer {
     pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
         let items = std::mem::take(&mut self.queued);
         let aspect = self.aspect;
-        let quads: Vec<IconInstance> = items.iter().filter_map(|it| expand(it, aspect)).collect();
+        let ui_scale = self.ui_scale;
+        // Apply the physical UI scale to every icon's NDC size, then expand as usual — the constant-
+        // physical-size correction (equivalent to `half_extents_scaled(size, aspect, ui_scale)`). At
+        // the default `ui_scale == 1.0` this is a no-op, so the legacy geometry is unchanged.
+        let quads: Vec<IconInstance> = items
+            .iter()
+            .filter_map(|it| {
+                expand(
+                    &IconItem {
+                        size: it.size * ui_scale,
+                        ..*it
+                    },
+                    aspect,
+                )
+            })
+            .collect();
         if quads.is_empty() {
             return;
         }
@@ -658,6 +709,25 @@ mod tests {
         let (hw, _hh) = half_extents(0.1, 0.0);
         assert!(hw.is_finite(), "zero aspect must not divide by ~0");
         assert!(hw > 0.0);
+    }
+
+    // ---- ui_scale (constant-physical-size correction) ----
+
+    #[test]
+    fn half_extents_scale_linearly_with_ui_scale() {
+        // The seam `IconRenderer::render` applies: doubling ui_scale doubles the icon in both axes.
+        let (hw1, hh1) = half_extents_scaled(0.1, 1.0, 1.0);
+        let (hw2, hh2) = half_extents_scaled(0.1, 1.0, 2.0);
+        assert!((hw2 - 2.0 * hw1).abs() < EPS, "2× ui_scale → 2× half-width");
+        assert!((hh2 - 2.0 * hh1).abs() < EPS, "2× ui_scale → 2× half-height");
+    }
+
+    #[test]
+    fn ui_scale_one_is_the_legacy_half_extents() {
+        // The default scale reproduces the pre-ui_scale geometry exactly, at any aspect.
+        for aspect in [1.0_f32, 16.0 / 9.0, 0.5] {
+            assert_eq!(half_extents_scaled(0.1, aspect, 1.0), half_extents(0.1, aspect));
+        }
     }
 
     // ---- expand ----

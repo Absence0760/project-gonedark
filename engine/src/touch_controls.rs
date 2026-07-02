@@ -73,6 +73,33 @@ const JUMP_R_FRAC: f32 = 0.072;
 /// desktop player infers it; there is no other on-screen indicator).
 const FIREMODE_R_FRAC: f32 = 0.072;
 
+/// Physical touch-target floor, in millimetres, for every round on-screen button — Android's
+/// ~9 mm / 44–48 dp tappable guidance. Once the platform supplies a display density, no button
+/// radius drops below this in *real* millimetres, so a dense phone can't shrink Fire/Surface below a
+/// reliably tappable size. (Bare fractions of the raw framebuffer, the pre-density behaviour, gave
+/// no such guarantee.)
+const MIN_TOUCH_MM: f32 = 9.0;
+/// dp per millimetre at the Android mdpi baseline: 1 in = 25.4 mm = 160 dp, so 160/25.4 ≈ 6.30 dp/mm.
+const DP_PER_MM: f32 = 160.0 / 25.4;
+/// Sane clamp for the display density (the dp scale factor `densityDpi / DENSITY_DEFAULT`, e.g. ~2.6
+/// on a Galaxy S24). Mirrors the render `text`/`icon` `ui_scale` clamp so the touch floor and the
+/// chrome scale stay in lockstep at the PAL boundary.
+const DENSITY_MIN: f32 = 0.5;
+const DENSITY_MAX: f32 = 3.0;
+
+/// Convert a physical length in millimetres to pixels at a display `density` (the dp scale factor
+/// `densityDpi / DENSITY_DEFAULT`): `px = mm · (dp/mm) · density`. Pure, host-testable. `density` is
+/// assumed already clamped by the caller ([`TouchLayout::with_density`] clamps at the boundary); a
+/// non-finite or non-positive value yields `0.0`, so a missing/bogus density simply makes the floor
+/// inert (never NaN, never negative). Floats are fine here — this is host-side input/presentation, the
+/// platform side of the PAL seam, never the sim (invariant #1).
+pub fn mm_to_px(mm: f32, density: f32) -> f32 {
+    if !density.is_finite() || density <= 0.0 {
+        return 0.0;
+    }
+    mm * DP_PER_MM * density
+}
+
 /// An axis-aligned screen rectangle in pixels (`x0,y0` top-left, inclusive lower bound).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rect {
@@ -139,18 +166,45 @@ pub struct TouchLayout {
 }
 
 impl TouchLayout {
-    /// Lay the HUD out for a `width × height` pixel viewport (a landscape phone). All positions are
-    /// fractions of the viewport so the layout scales across screen sizes/DPIs.
+    /// Lay the HUD out for a `width × height` pixel viewport (a landscape phone), **density unknown**.
+    /// All positions are fractions of the viewport; radii are bare fractions of `min(w, h)` — the
+    /// pure-fractional legacy geometry, byte-identical to before the physical touch floor. Prefer
+    /// [`with_density`](Self::with_density) whenever the platform can supply a display density, so the
+    /// round buttons get a physical-size (mm) floor and can't fall below a tappable size on a dense phone.
     pub fn new(width: u32, height: u32) -> Self {
+        Self::build(width, height, None)
+    }
+
+    /// Lay the HUD out for a `width × height` viewport at a known display `density` — the dp scale
+    /// factor `densityDpi / DENSITY_DEFAULT` on Android (or `Window::scale_factor()` on desktop). Same
+    /// fractional placement as [`new`](Self::new), but every round button radius is floored to at least
+    /// [`MIN_TOUCH_MM`] in *real* millimetres (via [`mm_to_px`]) so a dense phone can't shrink a
+    /// control — especially Fire/Surface — below the ~9 mm (44/48 dp) tappable minimum. `density` is
+    /// clamped to `[0.5, 3.0]` at this boundary. Presentation/input only, never the sim (invariant #1).
+    pub fn with_density(width: u32, height: u32, density: f32) -> Self {
+        Self::build(width, height, Some(density))
+    }
+
+    /// Shared constructor. `density = None` is the pure-fractional legacy layout ([`new`]); `Some(d)`
+    /// applies the physical touch-target floor ([`with_density`]). Factored so the two entry points can
+    /// never drift in placement — only the floor differs.
+    fn build(width: u32, height: u32, density: Option<f32>) -> Self {
         let w = width.max(1) as f32;
         let h = height.max(1) as f32;
         let m = w.min(h);
-        let br = BUTTON_R_FRAC * m;
-        let fire_r = FIRE_R_FRAC * m;
-        let surface_r = SURFACE_R_FRAC * m;
-        let aim_r = AIM_R_FRAC * m;
-        let jump_r = JUMP_R_FRAC * m;
-        let fire_mode_r = FIREMODE_R_FRAC * m;
+        // Physical touch floor in px — only when the platform supplied a density (else `0.0`, so the
+        // `.max(floor)` below is inert and `new` stays the pure-fractional legacy geometry). `.max`
+        // only ever GROWS a radius toward the physical minimum, never shrinks it.
+        let floor = match density {
+            Some(d) => mm_to_px(MIN_TOUCH_MM, d.clamp(DENSITY_MIN, DENSITY_MAX)),
+            None => 0.0,
+        };
+        let br = (BUTTON_R_FRAC * m).max(floor);
+        let fire_r = (FIRE_R_FRAC * m).max(floor);
+        let surface_r = (SURFACE_R_FRAC * m).max(floor);
+        let aim_r = (AIM_R_FRAC * m).max(floor);
+        let jump_r = (JUMP_R_FRAC * m).max(floor);
+        let fire_mode_r = (FIREMODE_R_FRAC * m).max(floor);
         TouchLayout {
             width: w,
             height: h,
@@ -522,6 +576,74 @@ mod tests {
     /// The fixed ring centre (a guaranteed neutral-origin hit).
     fn stick_center(l: &TouchLayout) -> (f32, f32) {
         (l.stick_base.cx, l.stick_base.cy)
+    }
+
+    // ---- physical touch-target floor (density-aware layout) ----
+
+    #[test]
+    fn mm_to_px_is_linear_and_safe() {
+        let a = mm_to_px(9.0, 1.0);
+        // 9 mm at density 1.0 (mdpi) ≈ 56.7 px (9 · 160/25.4).
+        assert!((a - 9.0 * (160.0 / 25.4)).abs() < 1e-3);
+        assert!((mm_to_px(9.0, 2.0) - 2.0 * a).abs() < 1e-3, "doubling density doubles px");
+        assert!((mm_to_px(18.0, 1.0) - 2.0 * a).abs() < 1e-3, "doubling mm doubles px");
+        // A missing/bogus density makes the floor inert (0 px) — never NaN or negative.
+        assert_eq!(mm_to_px(9.0, 0.0), 0.0);
+        assert_eq!(mm_to_px(9.0, -1.0), 0.0);
+        assert_eq!(mm_to_px(9.0, f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn dense_small_screen_floors_every_button_to_the_physical_minimum() {
+        // A small, very dense phone: min-dim 360 px at 3× density. The bare fractional radii fall
+        // well below the ~9 mm tappable minimum, so `with_density` must floor EVERY round button up
+        // to the physical minimum — especially Fire and Surface (the primary + eject actions).
+        let density = 3.0_f32;
+        let l = TouchLayout::with_density(720, 360, density);
+        let floor = mm_to_px(MIN_TOUCH_MM, density);
+        assert!(floor > 0.0);
+        // Precondition: at this size the bare fractions really are below the floor (else the test
+        // wouldn't be exercising the floor at all).
+        let m = 360.0_f32;
+        assert!(FIRE_R_FRAC * m < floor, "precondition: fractional Fire radius is below the floor");
+        assert!(SURFACE_R_FRAC * m < floor, "precondition: fractional Surface radius is below the floor");
+        for c in [l.fire, l.crouch, l.reload, l.surface, l.aim, l.jump, l.fire_mode] {
+            assert!(
+                c.r >= floor - 1e-3,
+                "button radius {} px must be floored to the {floor} px physical minimum",
+                c.r
+            );
+        }
+    }
+
+    #[test]
+    fn with_density_clamps_absurd_density_at_the_boundary() {
+        // Out-of-range densities clamp to [0.5, 3.0] before the floor is computed.
+        assert_eq!(
+            TouchLayout::with_density(720, 360, 100.0),
+            TouchLayout::with_density(720, 360, DENSITY_MAX),
+            "an absurdly high density clamps to the max"
+        );
+        assert_eq!(
+            TouchLayout::with_density(720, 360, 0.01),
+            TouchLayout::with_density(720, 360, DENSITY_MIN),
+            "a tiny density clamps to the min"
+        );
+    }
+
+    #[test]
+    fn new_is_unfloored_legacy_and_with_density_matches_when_the_floor_is_inert() {
+        // `new` (density unknown) applies NO physical floor — the pure-fractional legacy geometry.
+        let n = TouchLayout::new(1280, 720);
+        assert!(
+            (n.surface.r - SURFACE_R_FRAC * 720.0).abs() < 1e-3,
+            "new must not floor — bare fractional radius preserved"
+        );
+        // On a large, low-density surface the physical floor sits below every fractional radius, so
+        // `with_density` is byte-identical to `new` there (the floor bites only when it needs to).
+        let big = TouchLayout::new(3840, 2160);
+        let big_d = TouchLayout::with_density(3840, 2160, 1.0);
+        assert_eq!(big, big_d, "an inert floor leaves the fractional layout unchanged");
     }
 
     #[test]

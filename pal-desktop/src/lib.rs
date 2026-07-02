@@ -164,6 +164,16 @@ impl DesktopRenderSurface {
         &self.window
     }
 
+    /// The window's physical **UI scale** (`winit` [`Window::scale_factor`]), clamped to the range
+    /// the renderer/touch layout accept (`[0.5, 3.0]`) via [`clamp_ui_scale`]. The host threads this
+    /// into `render::Renderer` (`set_ui_scale` on the text + icon chrome passes) each frame so the
+    /// in-match HUD reads at a constant *physical* size across displays of differing density — the
+    /// same correction the egui out-of-match shell gets from `pixels_per_point` (`app/src/shell.rs`).
+    /// Host/presentation only; never a sim input (invariants #1/#2).
+    pub fn ui_scale(&self) -> f32 {
+        clamp_ui_scale(self.window.scale_factor())
+    }
+
     /// Reconfigure the swapchain on resize. Zero-area resizes are ignored (minimising a
     /// window reports a 0x0 size on some platforms; reconfiguring to it is invalid).
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -321,6 +331,19 @@ impl Default for DesktopInput {
 pub fn scale_look(raw: (f32, f32), sensitivity: f32, invert_y: bool) -> (f32, f32) {
     let y = if invert_y { -raw.1 } else { raw.1 };
     (raw.0 * sensitivity, y * sensitivity)
+}
+
+/// Clamp a raw platform scale factor (`winit` [`Window::scale_factor`], an `f64`) to the sane UI-scale
+/// range the renderer + touch layout accept (`[0.5, 3.0]`) and down-cast to `f32`. A non-finite or
+/// non-positive value falls back to `1.0` (unscaled) so a bogus platform report never collapses or
+/// explodes the chrome. Pure host-side shaping — the desktop mirror of `pal-android`'s
+/// `densityDpi / DENSITY_DEFAULT` → scale conversion, and the range the render `set_ui_scale` setters
+/// clamp to as well.
+pub fn clamp_ui_scale(raw: f64) -> f32 {
+    if !raw.is_finite() || raw <= 0.0 {
+        return 1.0;
+    }
+    (raw as f32).clamp(0.5, 3.0)
 }
 
 impl DesktopInput {
@@ -962,6 +985,31 @@ mod input_tests {
         let f = input.drain_frame();
         assert!((f.look_axis.0 - 4.0).abs() < 1e-6, "x scaled 2x: {:?}", f.look_axis);
         assert!((f.look_axis.1 - 6.0).abs() < 1e-6, "y inverted+scaled: {:?}", f.look_axis);
+    }
+}
+
+#[cfg(test)]
+mod ui_scale_tests {
+    //! `clamp_ui_scale` is the pure host-side shaping for the physical UI scale. `ui_scale()` itself
+    //! needs a real `winit` `Window` (no display in CI, exactly like `DesktopRenderSurface`'s other
+    //! methods), so only the clamp is unit-tested here — the `scale_factor()` fetch is thin glue.
+
+    use super::*;
+
+    #[test]
+    fn clamp_ui_scale_keeps_sane_range_and_falls_back() {
+        let approx = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        // In range → passed through (down-cast to f32).
+        assert!(approx(clamp_ui_scale(1.0), 1.0));
+        assert!(approx(clamp_ui_scale(2.0), 2.0));
+        // Out of range → clamped to the accepted band.
+        assert!(approx(clamp_ui_scale(10.0), 3.0), "clamps above 3.0");
+        assert!(approx(clamp_ui_scale(0.1), 0.5), "clamps below 0.5");
+        // Non-positive / non-finite → the safe 1.0 (unscaled) fallback.
+        assert!(approx(clamp_ui_scale(0.0), 1.0), "non-positive → 1.0");
+        assert!(approx(clamp_ui_scale(-2.0), 1.0), "negative → 1.0");
+        assert!(approx(clamp_ui_scale(f64::NAN), 1.0), "NaN → 1.0");
+        assert!(approx(clamp_ui_scale(f64::INFINITY), 1.0), "inf → 1.0");
     }
 }
 

@@ -169,6 +169,21 @@ fn android_main(app: AndroidApp) {
         );
     }
 
+    // Physical UI scale (Phase 4 legibility): the display density read off the live `Configuration`,
+    // so in-match chrome (HUD glyphs/icons) + touch targets render at a constant *physical* size
+    // across devices of differing PPI — the Android twin of desktop `Window::scale_factor()`. Read
+    // ONCE here (density is a display property, not a per-tick value); host/presentation only, never
+    // the sim (invariants #1/#2 — it never enters `InputFrame` or the checksum).
+    //
+    // TODO(integrator): thread `ui_scale` into the shared engine, exactly as the desktop host threads
+    //   `DesktopRenderSurface::ui_scale()`. The engine `Game` should, each frame, (a) call
+    //   `renderer.set_ui_scale(ui_scale)` on the text + icon chrome passes and (b) build the embodied
+    //   touch layout via `TouchLayout::with_density(w, h, ui_scale)` (physical-mm touch-target floor)
+    //   instead of the density-less `TouchLayout::new`. Left un-wired into `game.frame(...)` here to
+    //   respect one-workstream-per-commit + this task's file ownership (engine/lib.rs is out of scope).
+    let ui_scale = read_ui_scale(&app);
+    info!("ui_scale: display-density UI scale = {ui_scale:.3} (owed: thread into renderer + TouchLayout)");
+
     // Android drives the SAME platform-agnostic loop the desktop host does: `engine::Game`
     // owns the deterministic sim + renderer + fixed-tick + cameras. Here we only own the
     // Android surface/input/lifecycle and feed `Game::frame` an InputFrame + a wall-clock dt
@@ -623,6 +638,82 @@ fn read_launch_config(app: &AndroidApp) -> crate::launch::LaunchConfig {
         Ok(())
     });
     crate::launch::parse_launch_config(&wire)
+}
+
+/// Read the display **density** (the dp scale factor `densityDpi / DisplayMetrics.DENSITY_DEFAULT`)
+/// off the live activity's `Resources.getConfiguration().densityDpi`, over JNI. This is the physical
+/// **UI scale** the renderer's chrome passes + the embodied touch layout use so in-match HUD glyphs,
+/// icons, and touch targets read at a constant *physical* size across devices of differing PPI — the
+/// Android twin of desktop `Window::scale_factor()` (`pal-desktop::DesktopRenderSurface::ui_scale`),
+/// and the same correction the Compose out-of-match shell already gets.
+///
+/// Best-effort and **never fatal** (invariant #8), the same attach-and-call discipline as
+/// [`read_launch_config`] and the thermal reader ([`crate::thermal`]): any attach/lookup/field
+/// failure — or a non-positive/unreadable value — yields the safe default `1.0` (unscaled), and a
+/// pending JVM exception is cleared so a failed call can't detonate the next JNI op. The result is
+/// clamped to `[0.5, 3.0]`, matching the render `set_ui_scale` setters and
+/// `touch_controls::TouchLayout::with_density`.
+///
+/// Un-constructible glue off a device (no real `JNIEnv`/`Activity` on a host), so — like the other
+/// JNI readers in this module — it is exempt from host unit coverage; the trivial divide+clamp it
+/// performs mirrors the host-tested `pal-desktop::clamp_ui_scale`.
+fn read_ui_scale(app: &AndroidApp) -> f32 {
+    use jni::objects::JObject;
+    use jni::{jni_sig, jni_str, JavaVM};
+
+    // Android's `DisplayMetrics.DENSITY_DEFAULT` (the mdpi baseline): densityDpi / 160 = the dp scale.
+    const DENSITY_DEFAULT: f32 = 160.0;
+    // Match the render/touch clamp so chrome scale and the touch-target floor stay in lockstep.
+    const UI_SCALE_MIN: f32 = 0.5;
+    const UI_SCALE_MAX: f32 = 3.0;
+
+    // SAFETY: the pointers come from `android-activity`'s live `AndroidApp`, valid while the activity
+    // is running (the same handles `read_launch_config`/`finish_activity`/the thermal reader attach
+    // through).
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM) };
+    let activity_ptr = app.activity_as_ptr() as jni::sys::jobject;
+    let mut density_dpi: i32 = 0;
+    let _ = vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
+        // SAFETY: `activity_ptr` is a live local ref android-activity owns for the call's duration.
+        let activity = unsafe { JObject::from_raw(&*env, activity_ptr) };
+        // Do the reads in an inner closure so any failure can clear the pending Java exception BEFORE
+        // returning (the same load-bearing discipline as the thermal reader — a pending exception
+        // would abort the process on the next JNI op).
+        let read = (|| -> Result<i32, jni::errors::Error> {
+            // Resources res = activity.getResources();
+            let resources = env
+                .call_method(
+                    &activity,
+                    jni_str!("getResources"),
+                    jni_sig!("()Landroid/content/res/Resources;"),
+                    &[],
+                )?
+                .l()?;
+            // Configuration cfg = res.getConfiguration();
+            let config = env
+                .call_method(
+                    &resources,
+                    jni_str!("getConfiguration"),
+                    jni_sig!("()Landroid/content/res/Configuration;"),
+                    &[],
+                )?
+                .l()?;
+            // int densityDpi = cfg.densityDpi;  (public field, API 17+)
+            env.get_field(&config, jni_str!("densityDpi"), jni_sig!("I"))?
+                .i()
+        })();
+        match read {
+            Ok(v) => density_dpi = v,
+            Err(_) => env.exception_clear(),
+        }
+        Ok(())
+    });
+    // A non-positive / unreadable densityDpi (incl. Configuration.DENSITY_DPI_UNDEFINED == 0) → the
+    // safe unscaled default; otherwise the clamped dp scale.
+    if density_dpi <= 0 {
+        return 1.0;
+    }
+    (density_dpi as f32 / DENSITY_DEFAULT).clamp(UI_SCALE_MIN, UI_SCALE_MAX)
 }
 
 // ---------------------------------------------------------------------------------------

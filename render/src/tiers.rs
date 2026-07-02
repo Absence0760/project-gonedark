@@ -19,6 +19,18 @@
 //!
 //! The renderer's only coupling is that it scales its render target by the chosen factor; that
 //! wiring lives in the GPU glue (`engine`/the backends). The *decisions* are all here, pure.
+//!
+//! ## What this module is deliberately NOT: physical UI scale
+//! A [`QualityTier`] / [`TierParams`] is a **3D-cost** budget only. It must **never** carry a UI /
+//! HUD scale factor. Quality tier (a thermal/performance knob — how expensive the *scene* is to
+//! draw) and physical UI scale (a legibility knob — how large chrome/touch targets read in real
+//! millimetres across displays of differing density/PPI) are **orthogonal**: a flagship on `High`
+//! can be a physically small, very dense phone that needs *larger* UI, while a cheap `Low` tablet is
+//! big and low-density and needs *smaller*. Folding one into the other would couple two unrelated
+//! axes and mis-size the HUD. The physical UI scale is a separate scalar the host sources from the
+//! platform (`winit` `scale_factor()` / Android `densityDpi`) and threads into the *chrome* passes
+//! (`text`/`icon` `set_ui_scale`) and the touch layout (`engine::touch_controls::TouchLayout::with_density`,
+//! with a physical-mm touch-target floor) — never through here.
 
 use gonedark_pal::ThermalState;
 

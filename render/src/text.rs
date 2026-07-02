@@ -94,6 +94,12 @@ const ATLAS_BYTES: &[u8] = include_bytes!("../../assets/fonts/hud_atlas.gray");
 /// advance (less panel overflow, never more).
 const GLYPH_ASPECT: f32 = CELL_W as f32 / CELL_H as f32;
 
+/// Clamp range for the physical UI scale (see [`TextRenderer::set_ui_scale`]). Below ~0.5 chrome
+/// becomes illegible; above ~3.0 it swamps the frame. Matches `icon`'s clamp and the touch-layout
+/// density clamp so every UI surface treats a bogus platform report the same way.
+const UI_SCALE_MIN: f32 = 0.5;
+const UI_SCALE_MAX: f32 = 3.0;
+
 /// Map a character to its zero-based atlas glyph index, or `None` if it is not a drawable glyph
 /// (out of the printable ASCII range — it still advances like a space, but emits no quad). ASCII
 /// space itself maps to `None` here too: its atlas cell is blank, so skipping the quad is both
@@ -118,6 +124,17 @@ pub fn cell_size(px_size: f32, aspect: f32) -> (f32, f32) {
     // Guard a degenerate aspect (zero-height surface mid-resize) so we never divide by ~0.
     let a = if aspect.abs() < 1e-6 { 1.0 } else { aspect };
     (px_size * GLYPH_ASPECT / a, cell_h)
+}
+
+/// [`cell_size`] after applying the physical `ui_scale` (logical-point-per-NDC correction; `1.0` =
+/// legacy). Chrome sized to read at a constant *physical* size multiplies its NDC size by `ui_scale`,
+/// so a denser display (higher PPI) draws the same label larger in NDC — hence the same physical
+/// size — instead of shrinking it to a bare fraction of the raw framebuffer. This is the seam
+/// [`TextRenderer::render`] applies per frame from the host-supplied scale (via
+/// [`set_ui_scale`](TextRenderer::set_ui_scale)); `cell_size` is exactly the `ui_scale == 1.0` case.
+/// Pure — no GPU.
+pub fn cell_size_scaled(px_size: f32, aspect: f32, ui_scale: f32) -> (f32, f32) {
+    cell_size(px_size * ui_scale, aspect)
 }
 
 /// The NDC bounding-box size `(width, height)` of `text` rendered at `px_size` on a viewport of the
@@ -273,6 +290,11 @@ pub struct TextRenderer {
     /// the host via [`set_aspect`](TextRenderer::set_aspect); defaults to `1.0` (square) so a caller
     /// that never sets it gets the old square-NDC behaviour.
     aspect: f32,
+    /// Physical UI scale (logical-point-per-NDC correction). Set once per frame by the host via
+    /// [`set_ui_scale`](TextRenderer::set_ui_scale) so chrome reads at a constant *physical* size
+    /// across displays of differing density; defaults to `1.0` (legacy) so a caller that never sets
+    /// it gets the old bare-fraction behaviour.
+    ui_scale: f32,
 }
 
 impl TextRenderer {
@@ -425,6 +447,7 @@ impl TextRenderer {
             atlas_uploaded: false,
             queued: Vec::new(),
             aspect: 1.0,
+            ui_scale: 1.0,
         }
     }
 
@@ -463,6 +486,21 @@ impl TextRenderer {
     pub fn set_aspect(&mut self, aspect: f32) {
         if aspect.is_finite() && aspect.abs() > 1e-6 {
             self.aspect = aspect;
+        }
+    }
+
+    /// Set the physical UI scale (logical-point-per-NDC correction) for this frame's glyph layout, so
+    /// chrome reads at a constant *physical* size across displays of differing density/PPI instead of
+    /// a bare fraction of the raw framebuffer. `1.0` is the legacy behaviour; the host sources it from
+    /// the platform (`winit` `Window::scale_factor()` on desktop, `densityDpi / DENSITY_DEFAULT` on
+    /// Android) and calls this once per frame before queuing/flushing, mirroring
+    /// [`set_aspect`](Self::set_aspect). It is applied internally in [`render`](Self::render) by
+    /// scaling each queued label's NDC size (equivalently, [`cell_size_scaled`] with this scale), so
+    /// no pure layout signature changes. Clamped to `[0.5, 3.0]`; a non-finite or non-positive value
+    /// is ignored (keeps the last good scale) so a bogus platform report never collapses the chrome.
+    pub fn set_ui_scale(&mut self, ui_scale: f32) {
+        if ui_scale.is_finite() && ui_scale > 0.0 {
+            self.ui_scale = ui_scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX);
         }
     }
 
@@ -505,8 +543,20 @@ impl TextRenderer {
     ) {
         let items = std::mem::take(&mut self.queued);
         let aspect = self.aspect;
-        let glyphs: Vec<GlyphInstance> =
-            items.iter().flat_map(|it| layout_glyphs(it, aspect)).collect();
+        let ui_scale = self.ui_scale;
+        // Apply the physical UI scale to every label's NDC size, then lay out as usual — this is the
+        // constant-physical-size correction (equivalent to `cell_size_scaled(px, aspect, ui_scale)`).
+        // At the default `ui_scale == 1.0` this is a no-op, so the legacy geometry is unchanged.
+        let glyphs: Vec<GlyphInstance> = items
+            .iter()
+            .flat_map(|it| {
+                let scaled = TextItem {
+                    px_size: it.px_size * ui_scale,
+                    ..it.clone()
+                };
+                layout_glyphs(&scaled, aspect)
+            })
+            .collect();
         if glyphs.is_empty() {
             return;
         }
@@ -700,6 +750,44 @@ mod tests {
         let (cw, _ch) = cell_size(0.07, 0.0);
         assert!(cw.is_finite(), "zero aspect must not divide by ~0");
         assert!(cw > 0.0);
+    }
+
+    // ---- ui_scale (constant-physical-size correction) ----
+
+    #[test]
+    fn cell_size_scales_linearly_with_ui_scale() {
+        // The seam `TextRenderer::render` applies: doubling ui_scale doubles the cell in both axes
+        // (mirrors `measure_scales_linearly_with_px_size`, just via the physical-scale knob).
+        let (w1, h1) = cell_size_scaled(0.07, 1.0, 1.0);
+        let (w2, h2) = cell_size_scaled(0.07, 1.0, 2.0);
+        assert!((w2 - 2.0 * w1).abs() < EPS, "2× ui_scale → 2× cell width");
+        assert!((h2 - 2.0 * h1).abs() < EPS, "2× ui_scale → 2× cell height");
+    }
+
+    #[test]
+    fn ui_scale_one_is_the_legacy_cell_size() {
+        // The default scale must reproduce the pre-ui_scale geometry exactly, at any aspect.
+        for aspect in [1.0_f32, 16.0 / 9.0, 0.5] {
+            assert_eq!(cell_size_scaled(0.07, aspect, 1.0), cell_size(0.07, aspect));
+        }
+    }
+
+    #[test]
+    fn ui_scale_grows_every_glyph_uniformly_in_layout() {
+        // The render path pre-scales each item's px_size by ui_scale; a 2× scale doubles every
+        // glyph's half-extents while preserving the glyph count and NDC anchoring.
+        let it = item("SCORE", [0.0, 0.0], 0.05, Anchor::TopLeft);
+        let base = layout_glyphs(&it, 1.0);
+        let scaled_item = TextItem {
+            px_size: it.px_size * 2.0,
+            ..it.clone()
+        };
+        let scaled = layout_glyphs(&scaled_item, 1.0);
+        assert_eq!(base.len(), scaled.len(), "same glyphs regardless of ui_scale");
+        for (b, s) in base.iter().zip(scaled.iter()) {
+            assert!((s.hw - 2.0 * b.hw).abs() < EPS, "glyph width doubles with ui_scale");
+            assert!((s.hh - 2.0 * b.hh).abs() < EPS, "glyph height doubles with ui_scale");
+        }
     }
 
     // ---- anchoring ----
