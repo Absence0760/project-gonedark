@@ -191,12 +191,18 @@ pub enum ModelKind {
     WeaponRifleUs,
     /// French FAMAS bullpup first-person viewmodel.
     WeaponRifleFr,
+    /// US crew-served .50-cal emplacement (WS-F tier-4) — bolted housing, perforated jacket, ammo can,
+    /// squared crew shield. The per-army structure silhouette [`crate::structure_turret_for`] resolves.
+    TurretUs,
+    /// French remote weapon station (WS-F tier-4) — stabilised gun pod on a slewing mast, boxed thermal
+    /// sight, no crew shield. Deliberately contrasting silhouette vs. the US crew-served gun.
+    TurretFr,
 }
 
 impl ModelKind {
     /// Every kind, in canonical (enum-discriminant) order. Faction silhouettes (WS-C) are appended
     /// after the shared kinds so existing discriminants stay put.
-    pub const ALL: [ModelKind; 19] = [
+    pub const ALL: [ModelKind; 21] = [
         ModelKind::Trooper,
         ModelKind::Tank,
         ModelKind::TankTurret,
@@ -216,6 +222,8 @@ impl ModelKind {
         ModelKind::TankTurretFr,
         ModelKind::WeaponRifleUs,
         ModelKind::WeaponRifleFr,
+        ModelKind::TurretUs,
+        ModelKind::TurretFr,
     ];
 
     /// The cooked `.mesh` bytes for every LOD tier, embedded at build time so they ride into the
@@ -320,6 +328,16 @@ impl ModelKind {
                 include_bytes!("../../assets/models/weapons/weapon_rifle_fr.lod1.mesh"),
                 include_bytes!("../../assets/models/weapons/weapon_rifle_fr.lod2.mesh"),
             ],
+            ModelKind::TurretUs => [
+                include_bytes!("../../assets/models/structures/turret_us.mesh"),
+                include_bytes!("../../assets/models/structures/turret_us.lod1.mesh"),
+                include_bytes!("../../assets/models/structures/turret_us.lod2.mesh"),
+            ],
+            ModelKind::TurretFr => [
+                include_bytes!("../../assets/models/structures/turret_fr.mesh"),
+                include_bytes!("../../assets/models/structures/turret_fr.lod1.mesh"),
+                include_bytes!("../../assets/models/structures/turret_fr.lod2.mesh"),
+            ],
         }
     }
 
@@ -356,6 +374,8 @@ impl ModelKind {
             ModelKind::TankTurretFr => [0.22, 0.27, 0.18], // matches the FR hull
             ModelKind::WeaponRifleUs => [0.12, 0.12, 0.13],
             ModelKind::WeaponRifleFr => [0.13, 0.13, 0.12],
+            ModelKind::TurretUs => [0.30, 0.31, 0.24], // CARC grey-green (matches the US hull)
+            ModelKind::TurretFr => [0.22, 0.27, 0.18], // darker French green (matches the FR hull)
         }
     }
 }

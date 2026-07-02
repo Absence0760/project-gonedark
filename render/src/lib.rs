@@ -351,6 +351,22 @@ pub fn weapon_model_for(army: Army) -> mesh::ModelKind {
     }
 }
 
+/// The defensive-turret **emplacement** silhouette for an [`Army`] (WS-F tier-4): the US Army fields a
+/// crew-served .50-cal ([`TurretUs`](mesh::ModelKind::TurretUs)); the French Army a remote weapon
+/// station ([`TurretFr`](mesh::ModelKind::TurretFr)); [`Army::Neutral`] keeps the original shared
+/// steel emplacement ([`Turret`](mesh::ModelKind::Turret)). Pure presentation — a fortified-point
+/// silhouette, never sim state (the emplacements are fixed cosmetic environment dressing with no ECS
+/// entity behind them, so they stay fair under "world goes dark", invariant #6). Mirrors the WS-C
+/// [`weapon_model_for`] / [`model_for_unit`] faction-cosmetic pattern so a future per-faction structure
+/// system has a tested seam. Pure + testable.
+pub fn structure_turret_for(army: Army) -> mesh::ModelKind {
+    match army {
+        Army::Us => mesh::ModelKind::TurretUs,
+        Army::Fr => mesh::ModelKind::TurretFr,
+        Army::Neutral => mesh::ModelKind::Turret,
+    }
+}
+
 /// The human-readable faction name for an [`Army`] (WS-C) — for the army-select UI, the post-match
 /// shell, and embodied/command HUD labels. Presentation-only text; never sim state. (`Army::Neutral`
 /// is the non-aligned default of legacy/debug scenes, so it reads simply as "Neutral".)
@@ -531,9 +547,12 @@ const PROP_LAYOUT: &[(mesh::ModelKind, f32, f32, f32, f32)] = &[
     (mesh::ModelKind::Barricade, -4.0, -3.0, 0.0, 1.20),
     (mesh::ModelKind::Barricade, 2.0, -6.0, 1.57, 1.10),
     (mesh::ModelKind::Barricade, 12.0, -2.0, 0.5, 1.00),
-    // Defensive turret emplacements — read as fortified points.
-    (mesh::ModelKind::Turret, -14.0, 2.0, 0.6, 1.00),
-    (mesh::ModelKind::Turret, 15.0, 9.0, 3.4, 1.00),
+    // Defensive turret emplacements — read as fortified points. The two opposing armies' silhouettes
+    // (WS-F tier-4): a US crew-served .50-cal on one flank, a French remote weapon station on the
+    // other (the meshes [`structure_turret_for`] resolves). Still fixed cosmetic dressing — no sim
+    // entity, no intel, fair under "world goes dark" (invariant #6).
+    (mesh::ModelKind::TurretUs, -14.0, 2.0, 0.6, 1.00),
+    (mesh::ModelKind::TurretFr, 15.0, 9.0, 3.4, 1.00),
 ];
 
 /// Map the static [`PROP_LAYOUT`] to concrete draw items for an `eye` position: each prop's kind,
@@ -2725,6 +2744,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// WS-F tier-4: per-army defensive-turret emplacements — US crew-served, FR remote station,
+    /// Neutral shared steel — all distinct, every army resolving to a valid, drawable `ModelKind`.
+    #[test]
+    fn structure_turret_for_each_army_is_distinct_and_valid() {
+        use mesh::ModelKind as M;
+        assert_eq!(structure_turret_for(Army::Us), M::TurretUs);
+        assert_eq!(structure_turret_for(Army::Fr), M::TurretFr);
+        assert_eq!(structure_turret_for(Army::Neutral), M::Turret);
+        let all: Vec<M> = Army::ALL.iter().map(|&a| structure_turret_for(a)).collect();
+        for (i, a) in all.iter().enumerate() {
+            assert!((*a as usize) < M::ALL.len(), "resolves to a registered mesh");
+            for b in &all[i + 1..] {
+                assert_ne!(a, b, "each army's emplacement is a distinct mesh");
+            }
+        }
+    }
+
+    /// WS-F tier-4: the two fortified-point emplacements in the embodied prop layout are the two
+    /// opposing armies' silhouettes (US + FR), so the new turret meshes actually reach a draw plan.
+    #[test]
+    fn prop_layout_places_both_faction_turrets() {
+        use mesh::ModelKind as M;
+        let plan = prop_draw_plan([0.0, 0.0, 1.5]);
+        let kinds: Vec<M> = plan.iter().map(|&(k, _, _)| k).collect();
+        assert!(kinds.contains(&M::TurretUs), "US emplacement is drawn");
+        assert!(kinds.contains(&M::TurretFr), "FR emplacement is drawn");
+        assert!(
+            !kinds.contains(&M::Turret),
+            "the neutral emplacement was superseded by the faction pair"
+        );
     }
 
     /// WS-C: per-army weapon viewmodels — US M4, FR FAMAS, Neutral shared rifle — all distinct, with
