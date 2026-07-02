@@ -339,6 +339,48 @@ impl ObjectiveSet {
         )])
     }
 
+    /// The *Push* archetype ([`pve-campaign.md`](../../docs/pve-campaign.md) §3, "capture a chain of
+    /// control points down a lane, CoH-style"): one **required** [`Capture`](ObjectiveKind::Capture)
+    /// objective per control point in `points`, all pursued by `who`. The mission is WON once every
+    /// point has flipped to `who`, and FAILS the moment `who` is wiped out (the universal
+    /// owner-eliminated rule). Pure composition of the existing `Capture` evaluator — **no new sim**.
+    ///
+    /// The objective layer does not *enforce* capture order (a point can complete out of sequence);
+    /// the lane geometry in-world is what makes it a push. Enforcing a strict order host-side would
+    /// need new evaluator state for zero win/lose benefit, so the composition stays flat.
+    pub fn mission_push(who: Faction, points: &[Vec2]) -> Self {
+        let objectives = points
+            .iter()
+            .enumerate()
+            .map(|(i, &point)| {
+                Objective::capture(who, who, point, format!("Capture control point {}", i + 1))
+            })
+            .collect();
+        ObjectiveSet::new(objectives)
+    }
+
+    /// The *Assassinate* archetype ([`pve-campaign.md`](../../docs/pve-campaign.md) §3, "eliminate a
+    /// specific enemy VIP"): one **required** [`Eliminate(Entity)`](EliminateTarget::Entity)
+    /// objective, pursued by `who`, keyed to the `vip` entity. WON the tick the VIP is
+    /// [`Killed`](SimEvent::Killed); FAILS if `who` is wiped out first. Pure composition of the
+    /// existing entity-elimination evaluator — **no new sim**.
+    pub fn mission_assassinate(who: Faction, vip: Entity) -> Self {
+        ObjectiveSet::new(vec![Objective::eliminate_entity(who, vip, "Eliminate the VIP")])
+    }
+
+    /// The *Extract* archetype ([`pve-campaign.md`](../../docs/pve-campaign.md) §3): move `who`'s
+    /// `runner` within `radius` of the extraction point `dest` — one **required**
+    /// [`Reach`](ObjectiveKind::Reach) objective. WON when the runner reaches the LZ (read from the
+    /// host-supplied tracked positions); FAILS if `who` is wiped out first. Pure composition of the
+    /// existing `Reach` evaluator — **no new sim**.
+    ///
+    /// "Optionally after an objective" (§3) composes trivially by prepending any other objective to
+    /// the set (e.g. an [`mission_assassinate`](Self::mission_assassinate) objective + this Reach);
+    /// [`ObjectiveSet::new`] takes an arbitrary objective vector for exactly that.
+    pub fn mission_extract(who: Faction, runner: Entity, dest: Vec2, radius: Fixed) -> Self {
+        ObjectiveSet::new(vec![Objective::reach(who, runner, dest, radius, "Reach the extraction point")])
+    }
+
     /// Fold one tick into every active objective, returning the transitions that fired this tick (in
     /// objective order) for the host to surface (summary log / HUD flash).
     pub fn observe(&mut self, ctx: &ObserveCtx) -> Vec<ObjectiveEvent> {
@@ -733,5 +775,99 @@ mod tests {
         // survive-fail-on-owner-wipe path — the going-dark-cost teach made mechanical).
         let status = run_mission_hold(Stance::HoldFire, HOLD_TICKS);
         assert_eq!(status, MissionStatus::Lost, "a defence that won't fire is overrun before the timer");
+    }
+
+    // --- Push — capture a chain of control points down a lane (composition of Capture) ----------
+
+    /// Emit a `Captured` flip of `point` to the Player.
+    fn captured(point: Vec2) -> SimEvent {
+        SimEvent::Captured { pos: point, from: Faction::Neutral, to: Faction::Player }
+    }
+
+    #[test]
+    fn mission_push_is_won_when_every_point_in_the_lane_flips() {
+        let lane = [at(1, 0), at(2, 0), at(3, 0)];
+        let mut set = ObjectiveSet::mission_push(Faction::Player, &lane);
+        assert_eq!(set.objectives.len(), 3);
+        assert_eq!(set.status(), MissionStatus::Active);
+
+        let f = forces(alive(6, 0), alive(3, 1));
+
+        // Capturing the first two points (order need not match the lane) leaves the push active.
+        set.observe(&ObserveCtx::new(&[captured(lane[2])], &f, 10));
+        set.observe(&ObserveCtx::new(&[captured(lane[0])], &f, 20));
+        assert_eq!(set.status(), MissionStatus::Active, "one point still uncaptured");
+
+        // The last point flips → every required Capture is complete → WON.
+        set.observe(&ObserveCtx::new(&[captured(lane[1])], &f, 30));
+        assert_eq!(set.status(), MissionStatus::Won, "whole lane taken");
+    }
+
+    #[test]
+    fn mission_push_is_lost_when_the_owner_is_wiped_mid_lane() {
+        let lane = [at(1, 0), at(2, 0), at(3, 0)];
+        let mut set = ObjectiveSet::mission_push(Faction::Player, &lane);
+
+        // Take the first point, then lose the whole force → a still-Active Capture fails → LOST.
+        set.observe(&ObserveCtx::new(&[captured(lane[0])], &forces(alive(6, 0), alive(3, 1)), 10));
+        assert_eq!(set.status(), MissionStatus::Active);
+        set.observe(&ObserveCtx::new(&[], &forces(wiped(), alive(3, 1)), 20));
+        assert_eq!(set.status(), MissionStatus::Lost, "owner wiped mid-lane");
+    }
+
+    // --- Assassinate — eliminate a specific enemy VIP (composition of Eliminate(Entity)) --------
+
+    #[test]
+    fn mission_assassinate_is_won_when_the_vip_dies() {
+        let vip = ent(42);
+        let mut set = ObjectiveSet::mission_assassinate(Faction::Player, vip);
+        let f = forces(alive(4, 0), alive(3, 1));
+
+        // Some other death does not complete it.
+        let noise = [SimEvent::Killed { entity: ent(9), faction: Faction::Enemy, source: ent(1), pos: at(0, 0) }];
+        set.observe(&ObserveCtx::new(&noise, &f, 10));
+        assert_eq!(set.status(), MissionStatus::Active);
+
+        // The VIP's death wins it.
+        let kill = [SimEvent::Killed { entity: vip, faction: Faction::Enemy, source: ent(1), pos: at(5, 5) }];
+        set.observe(&ObserveCtx::new(&kill, &f, 20));
+        assert_eq!(set.status(), MissionStatus::Won, "VIP eliminated");
+    }
+
+    #[test]
+    fn mission_assassinate_is_lost_when_the_hunters_are_wiped() {
+        let vip = ent(42);
+        let mut set = ObjectiveSet::mission_assassinate(Faction::Player, vip);
+        // The hunting force is wiped before reaching the VIP → LOST (universal owner-eliminated rule).
+        set.observe(&ObserveCtx::new(&[], &forces(wiped(), alive(3, 1)), 30));
+        assert_eq!(set.status(), MissionStatus::Lost, "hunters wiped before the kill");
+    }
+
+    // --- Extract — reach an extraction point (composition of Reach) -----------------------------
+
+    #[test]
+    fn mission_extract_is_won_when_the_runner_reaches_the_lz() {
+        let runner = ent(3);
+        let lz = at(20, 0);
+        let mut set = ObjectiveSet::mission_extract(Faction::Player, runner, lz, Fixed::from_int(2));
+        let f = forces(alive(2, 0), alive(1, 0));
+
+        // Still en route → active.
+        set.observe(&ObserveCtx { events: &[], forces: &f, elapsed_ticks: 10, tracked: &[(runner, at(0, 0))] });
+        assert_eq!(set.status(), MissionStatus::Active);
+
+        // Within radius of the LZ → WON.
+        set.observe(&ObserveCtx { events: &[], forces: &f, elapsed_ticks: 20, tracked: &[(runner, at(21, 0))] });
+        assert_eq!(set.status(), MissionStatus::Won, "runner reached the LZ");
+    }
+
+    #[test]
+    fn mission_extract_is_lost_when_the_owner_is_wiped_before_the_lz() {
+        let runner = ent(3);
+        let lz = at(20, 0);
+        let mut set = ObjectiveSet::mission_extract(Faction::Player, runner, lz, Fixed::from_int(2));
+        // Owner wiped while the runner is still short of the LZ → LOST.
+        set.observe(&ObserveCtx { events: &[], forces: &forces(wiped(), alive(1, 0)), elapsed_ticks: 30, tracked: &[(runner, at(0, 0))] });
+        assert_eq!(set.status(), MissionStatus::Lost, "owner wiped before extraction");
     }
 }
