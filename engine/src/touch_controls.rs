@@ -194,9 +194,12 @@ impl TouchLayout {
         let m = w.min(h);
         // Physical touch floor in px — only when the platform supplied a density (else `0.0`, so the
         // `.max(floor)` below is inert and `new` stays the pure-fractional legacy geometry). `.max`
-        // only ever GROWS a radius toward the physical minimum, never shrinks it.
+        // only ever GROWS a radius toward the physical minimum, never shrinks it. MIN_TOUCH_MM is the
+        // minimum touch *target* size (a ~9mm / 48dp diameter, the platform guideline), so the RADIUS
+        // floor is half of it — flooring the radius at the full 9mm would force an ~18mm target, about
+        // twice the guideline and far too large.
         let floor = match density {
-            Some(d) => mm_to_px(MIN_TOUCH_MM, d.clamp(DENSITY_MIN, DENSITY_MAX)),
+            Some(d) => mm_to_px(MIN_TOUCH_MM, d.clamp(DENSITY_MIN, DENSITY_MAX)) * 0.5,
             None => 0.0,
         };
         let br = (BUTTON_R_FRAC * m).max(floor);
@@ -600,18 +603,27 @@ mod tests {
         // to the physical minimum — especially Fire and Surface (the primary + eject actions).
         let density = 3.0_f32;
         let l = TouchLayout::with_density(720, 360, density);
-        let floor = mm_to_px(MIN_TOUCH_MM, density);
-        assert!(floor > 0.0);
+        // MIN_TOUCH_MM is the min *target* size (diameter); the radius floor is half of it.
+        let radius_floor = mm_to_px(MIN_TOUCH_MM, density) * 0.5;
+        assert!(radius_floor > 0.0);
         // Precondition: at this size the bare fractions really are below the floor (else the test
         // wouldn't be exercising the floor at all).
         let m = 360.0_f32;
-        assert!(FIRE_R_FRAC * m < floor, "precondition: fractional Fire radius is below the floor");
-        assert!(SURFACE_R_FRAC * m < floor, "precondition: fractional Surface radius is below the floor");
+        assert!(
+            SURFACE_R_FRAC * m < radius_floor,
+            "precondition: fractional Surface radius is below the floor"
+        );
         for c in [l.fire, l.crouch, l.reload, l.surface, l.aim, l.jump, l.fire_mode] {
             assert!(
-                c.r >= floor - 1e-3,
-                "button radius {} px must be floored to the {floor} px physical minimum",
+                c.r >= radius_floor - 1e-3,
+                "button radius {} px must be floored to the {radius_floor} px physical minimum",
                 c.r
+            );
+            // And the resulting touch TARGET (diameter) clears the ~9 mm / 48dp guideline.
+            assert!(
+                2.0 * c.r >= mm_to_px(MIN_TOUCH_MM, density) - 1e-3,
+                "button diameter {} px must clear the {MIN_TOUCH_MM} mm target",
+                2.0 * c.r
             );
         }
     }
