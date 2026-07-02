@@ -486,11 +486,14 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 - [x] **Adopt AI-generated placeholder models** for units, structures, and the embodied
   weapon instead of commissioned art ([D41](decisions.md)) — this pulls the "AI-assisted"
   route that [`content-pipeline.md`](content-pipeline.md) §2 reserved for *hero* art forward
-  to *everything*, sitting at the greybox/low tier of the production ladder. **Done:** eleven
-  procedural greybox models, all now drawn — the trooper (also backing the D65 Medic kind), the tank
-  hull + turret ([D55](decisions.md), backing the dedicated Tank kind of [D65](decisions.md)), the
-  camp, the first-person weapon, the tracer, and the scenery/cover props (crate/tree/rock/barricade)
-  ([D50](decisions.md))
+  to *everything*, sitting at the greybox/low tier of the production ladder. **Done:** the
+  procedural greybox roster, all now drawn — the trooper, the tank hull + turret
+  ([D55](decisions.md), backing the dedicated Tank kind of [D65](decisions.md)), the camp, the
+  first-person weapon, the tracer, and the scenery/cover props (crate/tree/rock/barricade)
+  ([D50](decisions.md)) — **plus distinct Medic (med-pack + red cross) and AntiTank (shoulder
+  launcher) infantry silhouettes** so the D65/D73 support/AT kinds read on the field instead of
+  drawing as a plain rifleman (`model_for_unit` selects them by `UnitKind`, army-agnostic; per-faction
+  Medic/AT variants a follow-up)
 - [x] One source `.glb` per unit/structure run through the cook → LOD chain so it
   satisfies the two-view filter (top-down token *and* eye-level mesh — §4). **Done:** the cook
   now emits a real **3-tier gltfpack LOD chain** per model, distance-selected at runtime
