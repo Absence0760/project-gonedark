@@ -34,12 +34,15 @@
 //! matrices. No `core`/sim type is touched, nothing enters the checksum fold.
 //!
 //! ## Honest floor caveats (same as D84)
-//! `Death` is baked + selectable + tested but not *driven* at runtime: dead units are dropped from
-//! the render snapshot (`core::snapshot`), so a visible death topple needs cross-tick unit identity +
-//! a linger — still owed, and deliberately out of scope here (it would need a sim-side change).
-//! Idle / Walk / Fire play. Only the generic [`crate::mesh::ModelKind::Trooper`] is rig-driven; the
-//! faction silhouettes (`TrooperUs`/`TrooperFr`) keep the procedural [`crate::anim`] pose (a
-//! per-faction rig is future work), so this stays additive and merge-safe.
+//! `Death` is baked + selectable + tested and now driven at runtime for the generic rig-driven
+//! token too: a dead unit is still dropped from the render snapshot the instant the sim despawns it
+//! (`core::snapshot`, unchanged, invariant #4/#7), but [`crate::death_linger::DeathLinger`] freezes
+//! its last-known pose in the RENDER view for a short fade window and keeps emitting it with
+//! `AnimClip::Death` — [`Renderer::prepare`](crate::Renderer::prepare) feeds that frozen instance
+//! through the exact same `token_meshes`/`is_rig_driven` path as a live unit, so this player samples
+//! the `"death"` clip on it like any other. Only the generic [`crate::mesh::ModelKind::Trooper`] is
+//! rig-driven; the faction silhouettes (`TrooperUs`/`TrooperFr`) keep the procedural [`crate::anim`]
+//! pose (a per-faction rig is future work), so this stays additive and merge-safe.
 
 use crate::anim::AnimClip;
 use crate::mesh::{MeshCpu, MeshInstance, MeshVertex};

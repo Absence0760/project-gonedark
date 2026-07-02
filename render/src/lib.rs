@@ -135,6 +135,15 @@ pub mod icon;
 /// transform math the 3D mesh passes (weapon viewmodel + command-view unit tokens) build on.
 pub mod mesh;
 
+/// Render-side death linger (CP-3 / WS-B follow-up). Owns [`death_linger::DeathLinger`]: the
+/// frame-to-frame bookkeeping that notices a unit present-and-alive in the previous snapshot but
+/// gone from the current one, and keeps emitting a frozen [`anim::AnimClip::Death`] instance for it
+/// for a short fade window — the piece that finally *drives* the Death clip to the screen (the
+/// `anim` module's own doc admits it wasn't). Presentation-only bookkeeping (invariant #1/#4): it
+/// never touches `core`/sim state and adds no checksum surface. Public so the seam is testable and
+/// reachable from [`Renderer::prepare`].
+pub mod death_linger;
+
 /// Presentation-only unit animation floor (CP-3 / WS-B): the pure clip-selection seam
 /// ([`anim::select_clip`]) + a procedural per-instance pose ([`anim::anim_pose`] / [`anim::pose_matrix`])
 /// that makes greybox troopers read as *not jarring* until real skeletal playback lands. Render/float
@@ -759,8 +768,11 @@ pub fn interpolate_instances(
         // ground speed this tick, whether it is firing, whether it is alive — all render-snapshot
         // reads, never sim writes (invariant #4). `speed` is the magnitude of the snapshot velocity
         // at the float boundary. A present unit is alive by construction (dead units are dropped from
-        // the snapshot); the `alive` input keeps the Death branch honest for the follow-up that adds
-        // a death linger. The phase is the sim clock, staggered per unit so a rank desyncs.
+        // the snapshot the instant the sim despawns them), so `alive` is always true here — the
+        // Death branch this selects is for the *linger* case: `death_linger::DeathLinger` (called
+        // from `Renderer::prepare`) freezes a vanished unit's last pose and appends its own
+        // Death-clip instance separately, once it notices the unit missing from `curr`. The phase
+        // here is the sim clock, staggered per unit so a rank desyncs.
         let (vx, vy) = (fixed_to_f32(b.vel.x), fixed_to_f32(b.vel.y));
         let anim_state = anim::AnimState {
             speed: (vx * vx + vy * vy).sqrt(),
@@ -1015,6 +1027,11 @@ pub struct Renderer {
     /// CPU-side tracer mesh instances (in-flight shells) from the last [`Renderer::prepare`], drawn
     /// in the embodied world pass ([`Renderer::render_world_meshes`]) (tank embodiment P7).
     projectiles: Vec<mesh::MeshInstance>,
+    /// The render-side death-linger buffer (CP-3 follow-up). Frame-to-frame memory so
+    /// [`Renderer::prepare`] can notice a unit vanish between the prev/curr snapshot pair and keep
+    /// drawing its frozen [`anim::AnimClip::Death`] instance for a short fade window. Presentation
+    /// only — no `core`/sim state, no checksum surface (invariant #1/#4).
+    death_linger: death_linger::DeathLinger,
     /// The embodied directional-alert overlay (worker 2). Drawn as a second LOAD pass by
     /// [`Renderer::render_hud`] when the local player is embodied.
     hud: hud::HudRenderer,
@@ -1261,6 +1278,7 @@ impl Renderer {
             instance_cap,
             instances: Vec::new(),
             projectiles: Vec::new(),
+            death_linger: death_linger::DeathLinger::new(),
             hud,
             touch_controls,
             scope,
@@ -1373,8 +1391,18 @@ impl Renderer {
     /// by `alpha` in `[0,1]` (invariant #4). Produces CPU data only; the GPU upload happens in
     /// [`Renderer::render`]. `selected` carries the command-layer selected world indices so the
     /// renderer rims them (empty while embodied — presentation state only, never sim state).
+    ///
+    /// Also advances the [`death_linger::DeathLinger`] buffer against the same `prev`/`curr` pair
+    /// (CP-3 follow-up) and appends its frozen Death-clip instances to the drawn set, so a unit that
+    /// vanished from the snapshot this tick still plays its death animation for a short fade window.
+    /// The linger instances go through the exact same [`fog::visible_instances`] filter as every
+    /// other instance in [`Renderer::render`] — no special always-drawn exemption — so invariant #6
+    /// holds for them too.
     pub fn prepare(&mut self, prev: &Snapshot, curr: &Snapshot, alpha: f32, selected: &[u32]) {
         self.instances = interpolate_instances(prev, curr, alpha, selected, &self.palette);
+        let tick_f = curr.tick as f32 + alpha;
+        let linger_instances = self.death_linger.update(prev, curr, tick_f, &self.palette);
+        self.instances.extend(linger_instances);
         self.projectiles = interpolate_projectiles(prev, alpha);
     }
 

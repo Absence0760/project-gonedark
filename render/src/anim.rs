@@ -22,11 +22,15 @@
 //!     (`tools/models/gen_trooper_rig.py`); it is deliberately subtle and applied **only to
 //!     infantry** ([`is_infantry`]) so vehicles/structures render byte-identically to before.
 //!
-//! **Honest floor caveats.** Dead units are dropped from the render snapshot entirely
-//! (`core::snapshot::Snapshot::capture` skips `!is_index_alive`), so at runtime the [`AnimClip::Death`]
-//! branch is exercised by the selector + tests but is not *driven* to the screen — a visible death
-//! topple needs cross-tick unit identity + a linger, which is the owed follow-up alongside real
-//! skeletal skinning. The procedural pose is a placeholder for that skinning, not a substitute.
+//! **Honest floor caveats.** Dead units are still dropped from the render snapshot the instant the
+//! sim despawns them (`core::snapshot::Snapshot::capture` skips `!is_index_alive` — unchanged,
+//! invariant #4/#7 stay untouched), so [`select_clip`] alone never sees a dead unit at runtime. The
+//! owed follow-up has landed on the RENDER side only: [`crate::death_linger::DeathLinger`] notices a
+//! unit present-and-alive in the previous snapshot but gone from the current one, freezes its last
+//! pose, and keeps emitting it (with `AnimClip::Death`) through [`crate::Renderer::prepare`] for a
+//! short fade window — so the [`AnimClip::Death`] branch is now genuinely *driven* to the screen, via
+//! a render-only cross-tick memory rather than a sim-side change. The procedural pose here remains a
+//! placeholder for real skeletal skinning, not a substitute for it.
 
 use crate::mesh::ModelKind;
 
@@ -150,8 +154,9 @@ const DEATH_SINK: f32 = 0.4; // metres sunk into the ground when fallen
 const DEATH_SHRINK: f32 = 0.08; // slight collapse in scale when fallen
 
 /// Death progress in `[0, 1]` from the (unbounded, in "cycles") `phase`. Monotone and clamped so the
-/// topple never overshoots. (At runtime death is not currently driven — see the module caveat — but
-/// the curve is tested and ready for the linger the follow-up adds.)
+/// topple never overshoots. [`crate::death_linger::DeathLinger`] feeds it an unclamped
+/// elapsed-ticks ratio that can run past `1.0` once the fade window outlasts the topple — the clamp
+/// here is what holds the pose fully fallen for that remainder instead of overshooting.
 fn death_progress(phase: f32) -> f32 {
     phase.clamp(0.0, 1.0)
 }
