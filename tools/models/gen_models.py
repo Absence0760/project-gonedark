@@ -440,6 +440,8 @@ def import_glb(filename):
 # (player blue / enemy red) rather than flooding the whole body.
 COLORS = {
     "trooper": (0.30, 0.34, 0.18),     # olive infantry
+    "medic": (0.30, 0.34, 0.18),       # medic infantry — shares the trooper body's olive fatigues
+    "at_infantry": (0.30, 0.34, 0.18), # AT/bazooka team infantry — shares the trooper body's olive fatigues
     "tank": (0.18, 0.22, 0.14),        # dark green armour (hull)
     "tank_turret": (0.18, 0.22, 0.14), # dark green armour (turret — matches the hull)
     "camp_hq": (0.45, 0.40, 0.30),     # tan structure
@@ -472,6 +474,8 @@ COLORS = {
 # so a model's category here is its on-disk home everywhere. Adding a model? Give it a category.
 CATEGORY = {
     "trooper": "units",
+    "medic": "units",
+    "at_infantry": "units",
     "tank": "units",
     "tank_turret": "units",
     "camp_hq": "structures",
@@ -610,6 +614,40 @@ def build_trooper():
         (cyl(0.05, 0.26, (-0.20, 0.0, 1.44), rot=(math.radians(90), 0, 0), verts=8), P["pack"]),  # bedroll lashed across the shoulders (±Y)
     ]
     return weld("trooper", parts, bevel=0.0)
+
+
+def build_medic():
+    # The Medic (D65) — reuses the shared trooper body (`soldier_parts`, same skeleton/proportions/
+    # palette as `build_trooper`) and adds the support-role tell: a boxy medical pack on the back
+    # with a raised cross motif proud of its rear face, so the silhouette reads "support, not a
+    # shooter" at a glance instead of drawing as a plain rifleman (the glanceability gap this model
+    # fixes). No added weapon prominence — the cross carries the read.
+    P = infantry_palette("gd_medic", (0.30, 0.34, 0.20), (0.20, 0.23, 0.15))
+    cross_mat = make_material("medic_cross", (0.82, 0.10, 0.10), mask=0.0)  # red cross — no team tint
+    parts = soldier_parts(P, bulk=1.0, helmet="pot")
+    parts += [
+        (box((0.20, 0.17, 0.32), (-0.19, 0.0, 1.28)), P["pack"]),      # boxy medical pack (back, −X)
+        # Raised cross, proud of the pack's rear face — reads instantly even at the greybox tier.
+        (box((0.045, 0.10, 0.16), (-0.35, 0.0, 1.28)), cross_mat),     # cross — vertical bar
+        (box((0.045, 0.16, 0.05), (-0.35, 0.0, 1.28)), cross_mat),     # cross — horizontal bar
+    ]
+    return weld("medic", parts, bevel=0.0)
+
+
+def build_at_infantry():
+    # The AntiTank/bazooka team (D73) — reuses the shared trooper body (`soldier_parts`, same
+    # skeleton/proportions/palette as `build_trooper`) and adds the unmistakable AT tell: a long
+    # tube launcher slung over the left shoulder with a flared muzzle, past the head — so it reads
+    # instantly as "AT team, not a rifleman" (the glanceability gap this model fixes). The launcher
+    # carries the fragile/support-fire identity; the body is unchanged from the base trooper.
+    P = infantry_palette("gd_at", (0.30, 0.34, 0.20), (0.20, 0.23, 0.15))
+    parts = soldier_parts(P, bulk=1.0, helmet="pot")
+    parts += [
+        # Launcher tube over the left shoulder (−Y), canted up-and-forward, muzzle past the head.
+        (cyl(0.065, 1.30, (0.28, -0.24, 1.60), rot=(0, math.radians(80), 0), verts=10), P["gun"]),
+        (cyl(0.085, 0.18, (0.90, -0.24, 1.65), rot=(0, math.radians(80), 0), verts=10), P["gun"]),  # muzzle flare
+    ]
+    return weld("at_infantry", parts, bevel=0.0)
 
 
 def running_gear(track_y, wheel_z, wheels, track_dims, track_z, fender_dims, fender_z,
@@ -1252,6 +1290,12 @@ MODELS = [
     ("trooper", build_trooper,
      "Infantry unit — an organic skinned humanoid (skeleton + Skin modifier) in fatigues cradling an "
      "M16 under an M1 steel-pot helmet, with a rucksack + bedroll."),
+    ("medic", build_medic,
+     "Medic unit — the shared trooper body plus a boxy medical pack and a raised cross motif on its "
+     "back, reading as support rather than a shooter (D65)."),
+    ("at_infantry", build_at_infantry,
+     "AntiTank/bazooka team — the shared trooper body plus a long shoulder-launcher tube with a "
+     "flared muzzle, the AT team's readable tell (D73)."),
     ("tank", build_tank,
      "Greybox vehicle hull — chassis + tracks (turret is a separate model so it slews independently)."),
     ("tank_turret", build_tank_turret,

@@ -197,12 +197,22 @@ pub enum ModelKind {
     /// French remote weapon station (WS-F tier-4) — stabilised gun pod on a slewing mast, boxed thermal
     /// sight, no crew shield. Deliberately contrasting silhouette vs. the US crew-served gun.
     TurretFr,
+    /// Support-role infantry silhouette (D65) — the shared trooper body plus a boxy medical pack and
+    /// a raised cross motif, so a Medic reads as "support, not a shooter" instead of drawing as a
+    /// plain rifleman ([`crate::model_for_unit`] resolves the sim's Medic archetype here, army-agnostic
+    /// for now). Appended after the WS-C faction silhouettes so their existing discriminants stay put.
+    Medic,
+    /// AntiTank/bazooka team infantry silhouette (D73) — the shared trooper body plus a long
+    /// shoulder-launcher tube, so an AT team reads as "AT team, not a rifleman" instead of drawing as
+    /// a plain rifleman ([`crate::model_for_unit`] resolves the sim's AntiTank archetype here,
+    /// army-agnostic for now).
+    AntiTank,
 }
 
 impl ModelKind {
     /// Every kind, in canonical (enum-discriminant) order. Faction silhouettes (WS-C) are appended
     /// after the shared kinds so existing discriminants stay put.
-    pub const ALL: [ModelKind; 21] = [
+    pub const ALL: [ModelKind; 23] = [
         ModelKind::Trooper,
         ModelKind::Tank,
         ModelKind::TankTurret,
@@ -224,6 +234,8 @@ impl ModelKind {
         ModelKind::WeaponRifleFr,
         ModelKind::TurretUs,
         ModelKind::TurretFr,
+        ModelKind::Medic,
+        ModelKind::AntiTank,
     ];
 
     /// The cooked `.mesh` bytes for every LOD tier, embedded at build time so they ride into the
@@ -338,6 +350,17 @@ impl ModelKind {
                 include_bytes!("../../assets/models/structures/turret_fr.lod1.mesh"),
                 include_bytes!("../../assets/models/structures/turret_fr.lod2.mesh"),
             ],
+            // --- Medic / AntiTank distinct silhouettes (D65/D73) ---
+            ModelKind::Medic => [
+                include_bytes!("../../assets/models/units/medic.mesh"),
+                include_bytes!("../../assets/models/units/medic.lod1.mesh"),
+                include_bytes!("../../assets/models/units/medic.lod2.mesh"),
+            ],
+            ModelKind::AntiTank => [
+                include_bytes!("../../assets/models/units/at_infantry.mesh"),
+                include_bytes!("../../assets/models/units/at_infantry.lod1.mesh"),
+                include_bytes!("../../assets/models/units/at_infantry.lod2.mesh"),
+            ],
         }
     }
 
@@ -376,6 +399,9 @@ impl ModelKind {
             ModelKind::WeaponRifleFr => [0.13, 0.13, 0.12],
             ModelKind::TurretUs => [0.30, 0.31, 0.24], // CARC grey-green (matches the US hull)
             ModelKind::TurretFr => [0.22, 0.27, 0.18], // darker French green (matches the FR hull)
+            // Medic/AntiTank share the trooper body's olive tint (mirrors COLORS in gen_models.py).
+            ModelKind::Medic => [0.30, 0.34, 0.18],
+            ModelKind::AntiTank => [0.30, 0.34, 0.18],
         }
     }
 }

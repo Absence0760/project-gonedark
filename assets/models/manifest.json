@@ -59,6 +59,118 @@
       ]
     },
     {
+      "name": "medic",
+      "category": "units",
+      "file": "units/medic.glb",
+      "cooked": "units/medic.mesh",
+      "description": "Medic unit \u2014 the shared trooper body plus a boxy medical pack and a raised cross motif on its back, reading as support rather than a shooter (D65).",
+      "base_color": [
+        0.3,
+        0.34,
+        0.18
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 103132,
+      "sha256": "58400ec913fde0071195889ad65d0fb819c8389eb673b37714a7fcea7ce62374",
+      "cooked_bytes": 172932,
+      "cooked_sha256": "84cdb51e42a81d49b32b90981fee11e3886315b2f1d42f4f689245a2dfcb97b3",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/medic.glb",
+          "cooked": "units/medic.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 1310,
+          "bytes": 103132,
+          "sha256": "58400ec913fde0071195889ad65d0fb819c8389eb673b37714a7fcea7ce62374",
+          "cooked_bytes": 172932,
+          "cooked_sha256": "84cdb51e42a81d49b32b90981fee11e3886315b2f1d42f4f689245a2dfcb97b3"
+        },
+        {
+          "level": 1,
+          "file": "units/medic.lod1.glb",
+          "cooked": "units/medic.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 781,
+          "bytes": 19848,
+          "sha256": "2249176d2d4d50213988d1912f986d29bcd83560073df4c19f16db3a33bbded6",
+          "cooked_bytes": 103104,
+          "cooked_sha256": "3602fbef087a7cddbe65c2f780ffe38566f8ab5a4aff871af65f477abea37b39"
+        },
+        {
+          "level": 2,
+          "file": "units/medic.lod2.glb",
+          "cooked": "units/medic.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 503,
+          "bytes": 14848,
+          "sha256": "0a77404382e52acd1235ce86c6eb9ddbea51a5b4dd71318f94bf722ffb95b128",
+          "cooked_bytes": 66408,
+          "cooked_sha256": "a7bf61d7ff4876900c04c1a438c49f5fa729a845676fc50c0261a631709b6351"
+        }
+      ]
+    },
+    {
+      "name": "at_infantry",
+      "category": "units",
+      "file": "units/at_infantry.glb",
+      "cooked": "units/at_infantry.mesh",
+      "description": "AntiTank/bazooka team \u2014 the shared trooper body plus a long shoulder-launcher tube with a flared muzzle, the AT team's readable tell (D73).",
+      "base_color": [
+        0.3,
+        0.34,
+        0.18
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 103612,
+      "sha256": "d30e2efd308f81c1f22e9a79f1108f8d2e2263ead1e40667ac9f25ac9cfe6bb0",
+      "cooked_bytes": 177684,
+      "cooked_sha256": "285fd09b2f8aa3d3dc401c1197c9861846fca886ce8a6696636b0ef992b9baff",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/at_infantry.glb",
+          "cooked": "units/at_infantry.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 1346,
+          "bytes": 103612,
+          "sha256": "d30e2efd308f81c1f22e9a79f1108f8d2e2263ead1e40667ac9f25ac9cfe6bb0",
+          "cooked_bytes": 177684,
+          "cooked_sha256": "285fd09b2f8aa3d3dc401c1197c9861846fca886ce8a6696636b0ef992b9baff"
+        },
+        {
+          "level": 1,
+          "file": "units/at_infantry.lod1.glb",
+          "cooked": "units/at_infantry.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 765,
+          "bytes": 18292,
+          "sha256": "418be78050b66695998cdcd027b8579e714d0e0e54a872243fa7e42c520aeab1",
+          "cooked_bytes": 100992,
+          "cooked_sha256": "60d9d7356a0f30d58edd9fa1f83fd63a2647cd015da4369e71301f36c4488c4e"
+        },
+        {
+          "level": 2,
+          "file": "units/at_infantry.lod2.glb",
+          "cooked": "units/at_infantry.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 466,
+          "bytes": 12808,
+          "sha256": "a38ec1ff8764fa7062742c5bd59312a9ed00485bb3855fdff120e9d8ce1ab972",
+          "cooked_bytes": 61524,
+          "cooked_sha256": "497a500fa72019ff411ba493e4271ef412b11156a034954537844fadd877da44"
+        }
+      ]
+    },
+    {
       "name": "tank",
       "category": "units",
       "file": "units/tank.glb",

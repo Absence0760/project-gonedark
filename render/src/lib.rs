@@ -320,12 +320,18 @@ const CONTROL_POINT_HALF: f32 = 2.2;
 const TOKEN_SCALE: f32 = 1.0;
 
 /// The 3D token mesh for a snapshot unit, resolved from its [`Army`] identity + producible
-/// [`UnitKind`] / building flag (factions-plan WS-C, D68). Buildings are the camp structure; units
-/// map by archetype (`Heavy`/`Tank`→tank silhouette, `Rifleman`/`Medic`/`AntiTank`→infantry). The **army**
-/// selects the *silhouette*: a US-side rifleman is an M1-helmeted [`TrooperUs`](mesh::ModelKind::TrooperUs),
-/// a French tank is a Leclerc [`TankFr`](mesh::ModelKind::TankFr); [`Army::Neutral`] (legacy / debug
-/// scenes that never select an army) falls back to the original shared greybox, so a non-faction
-/// scene draws exactly as before factions existed.
+/// [`UnitKind`] / building flag (factions-plan WS-C, D68; D65/D73). Buildings are the camp
+/// structure; `Heavy`/`Tank` map to the tank chassis and `Rifleman` to the infantry trooper body
+/// (both army-specific, see below); `Medic`/`AntiTank` each get their **own distinct silhouette**
+/// ([`Medic`](mesh::ModelKind::Medic) / [`AntiTank`](mesh::ModelKind::AntiTank)) so they no longer
+/// draw as a plain rifleman — a glanceability gap this closes. The **army** selects the *silhouette*
+/// for the Rifleman/Heavy/Tank archetypes: a US-side rifleman is an M1-helmeted
+/// [`TrooperUs`](mesh::ModelKind::TrooperUs), a French tank is a Leclerc
+/// [`TankFr`](mesh::ModelKind::TankFr); [`Army::Neutral`] (legacy / debug scenes that never select an
+/// army) falls back to the original shared greybox, so a non-faction scene draws exactly as before
+/// factions existed. Medic/AntiTank are **army-agnostic for now** — the same mesh for every army; a
+/// follow-up can add per-faction variants (`medic_us`/`medic_fr` etc.) the way WS-C did for the other
+/// archetypes.
 ///
 /// This is **pure presentation** (invariant #6): the army never reaches `core` and adds no checksum
 /// surface — it only picks which committed `.mesh` the renderer draws. Pure + testable (no device).
@@ -337,9 +343,17 @@ pub(crate) fn model_for_unit(army: Army, building: bool, kind: UnitKind) -> mesh
     if building {
         return M::CampHq;
     }
+    // Medic/AntiTank each get their own distinct silhouette (D65/D73), army-agnostic for now — this
+    // used to fall through to the shared trooper body below, which made both draw as a plain
+    // rifleman on the field. Checked before the tank/trooper branch so Heavy|Tank→tank and
+    // Rifleman→trooper stay byte-identical to the prior behaviour.
+    match kind {
+        UnitKind::Medic => return M::Medic,
+        UnitKind::AntiTank => return M::AntiTank,
+        _ => {}
+    }
     // Is this archetype an infantry body or a tank chassis? (D65: the produced Tank reuses the Heavy
-    // chassis token; the Medic is infantry. D73: the AntiTank team is infantry — it falls through to
-    // the infantry silhouette here, a Rifleman-style trooper body.)
+    // chassis token.)
     let is_tank = matches!(kind, UnitKind::Heavy | UnitKind::Tank);
     match (army, is_tank) {
         (Army::Us, true) => M::TankUs,
@@ -2772,19 +2786,20 @@ mod tests {
             model_for_unit(Army::Neutral, false, UnitKind::Heavy),
             mesh::ModelKind::Tank
         );
-        // D65: the produced Tank reuses the tank mesh; the Medic is infantry (trooper mesh).
+        // D65: the produced Tank reuses the tank mesh.
         assert_eq!(
             model_for_unit(Army::Neutral, false, UnitKind::Tank),
             mesh::ModelKind::Tank
         );
+        // D65/D73: Medic/AntiTank each get their own distinct silhouette — no longer the shared
+        // trooper body — and it's army-agnostic (same mesh regardless of Army).
         assert_eq!(
             model_for_unit(Army::Neutral, false, UnitKind::Medic),
-            mesh::ModelKind::Trooper
+            mesh::ModelKind::Medic
         );
-        // D73: the AntiTank team is infantry → the shared trooper silhouette.
         assert_eq!(
             model_for_unit(Army::Neutral, false, UnitKind::AntiTank),
-            mesh::ModelKind::Trooper
+            mesh::ModelKind::AntiTank
         );
         // A building is the camp structure regardless of the (irrelevant) unit-kind tag or army.
         assert_eq!(
@@ -2799,22 +2814,25 @@ mod tests {
 
     /// WS-C: every `(Army, kind)` resolves to a faction silhouette — US → Abrams/M1 trooper, FR →
     /// Leclerc/FELIN trooper — and Neutral keeps the shared greybox. The headline cosmetic-identity
-    /// table (factions-plan WS-C, D68).
+    /// table (factions-plan WS-C, D68). Medic/AntiTank (D65/D73) get their own distinct, army-agnostic
+    /// silhouette instead — asserted separately below.
     #[test]
     fn model_for_unit_resolves_each_army_to_its_silhouette() {
         use mesh::ModelKind as M;
         // US side.
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Rifleman), M::TrooperUs);
-        assert_eq!(model_for_unit(Army::Us, false, UnitKind::Medic), M::TrooperUs);
-        assert_eq!(model_for_unit(Army::Us, false, UnitKind::AntiTank), M::TrooperUs);
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Heavy), M::TankUs);
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Tank), M::TankUs);
         // French side.
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Rifleman), M::TrooperFr);
-        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Medic), M::TrooperFr);
-        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::AntiTank), M::TrooperFr);
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Heavy), M::TankFr);
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Tank), M::TankFr);
+        // Medic/AntiTank (D65/D73): distinct from the trooper/tank silhouettes, and army-agnostic —
+        // the same mesh for every army.
+        for &army in &[Army::Us, Army::Fr, Army::Neutral] {
+            assert_eq!(model_for_unit(army, false, UnitKind::Medic), M::Medic);
+            assert_eq!(model_for_unit(army, false, UnitKind::AntiTank), M::AntiTank);
+        }
     }
 
     /// WS-C: the full `(Army, kind)` × building matrix resolves to *some* committed mesh and never
@@ -2835,6 +2853,11 @@ mod tests {
                     // Buildings are army-agnostic for now (shared camp silhouette).
                     assert_eq!(us, mesh::ModelKind::CampHq);
                     assert_eq!(fr, mesh::ModelKind::CampHq);
+                } else if matches!(kind, UnitKind::Medic | UnitKind::AntiTank) {
+                    // Medic/AntiTank are army-agnostic for now (D65/D73) — the same silhouette for
+                    // every army, unlike the faction-cosmetic archetypes below.
+                    assert_eq!(us, neutral, "{kind:?}: army-agnostic silhouette (US == Neutral)");
+                    assert_eq!(fr, neutral, "{kind:?}: army-agnostic silhouette (FR == Neutral)");
                 } else {
                     // A faction unit reads as a *different* silhouette from the shared greybox and
                     // from the other army.
