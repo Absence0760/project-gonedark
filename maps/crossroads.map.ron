@@ -1,0 +1,39 @@
+// crossroads.map.ron — a small symmetric battlefield sample for the CT-C `*.map.ron` format.
+//
+// The spatial half of a scenario, authored as data (no recompile): a terrain reference, three
+// control points to fight over (a centre crossroads + two flanks), a handful of cover props, and
+// two non-overlapping spawn zones a mission drops its opposing forces into.
+//
+// EVERY number here is an INTEGER cell (or the u16 terrain id). There is no float anywhere — the
+// `engine::map_format` loader is the airlock (invariant #1): a fractional coordinate would fail to
+// load. Cells are on the 128x128 playfield ([0, 128) per axis); (64, 64) is the centre.
+//
+// `terrain: 0` is the open playfield (core::terrain SCENE_MAP_ID) — always a valid, buildable map;
+// the props below are the cover, laid over that open ground.
+MapSpec(
+    terrain: 0,
+
+    // Three neutral posts: dead centre, plus a north and a south flank (symmetric about y = 64).
+    control_points: [
+        CellRef(x: 64, y: 64),
+        CellRef(x: 64, y: 92),
+        CellRef(x: 64, y: 36),
+    ],
+
+    // Cover strewn around the centre crossroads: a light crate nest (concealment, sight passes) and
+    // sight-blocking barricades / a boulder bracketing the post.
+    cover_props: [
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 61, y: 66)),
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 67, y: 66)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 61, y: 62)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 67, y: 62)),
+        CoverPropSpec(kind: Rock,      cell: CellRef(x: 64, y: 70)),
+        CoverPropSpec(kind: Turret,    cell: CellRef(x: 64, y: 58)),
+    ],
+
+    // Two opposing deploy zones (west vs east), well clear of each other — a mission populates them.
+    spawn_zones: [
+        SpawnZoneSpec(name: "player", min: CellRef(x: 8,   y: 60), max: CellRef(x: 14,  y: 68)),
+        SpawnZoneSpec(name: "enemy",  min: CellRef(x: 114, y: 60), max: CellRef(x: 120, y: 68)),
+    ],
+)

@@ -163,6 +163,13 @@ pub mod alert_cues;
 /// at its boundary (invariant #2). Presentation only — a keybind never reaches the sim (invariants
 /// #1/#4/#7).
 pub mod keybind;
+/// Host-side `*.map.ron` battlefield format + its float-airlock loader (content-tooling CT-C). Owns
+/// `MapSpec`: the spatial half of a scenario (terrain id, control points, cover props, spawn zones)
+/// as a designer-editable RON data file, and the validator that turns every authored **integer**
+/// cell into a `Fixed` — the one place a text number becomes a sim number, so `core` stays serde-free
+/// (invariant #2) and no float ever reaches the sim (invariant #1). `deny_unknown_fields`,
+/// range-checked, fails loud; the applied `Sim` adds no checksum surface (invariants #4/#7).
+pub mod map_format;
 
 pub use tuning::RenderTuning;
 /// The music-bus gain seam (D75 follow-up), re-exported so the desktop host can carry the Settings
