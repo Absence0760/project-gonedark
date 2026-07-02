@@ -21,6 +21,12 @@
 //! - [`Briefing`]: minimal narrative framing per campaign node ([Q16] keeps depth deferred) —
 //!   pure static text plus the tuning that node runs at. No sim state, no logic.
 //!
+//! - [`ScenarioModifiers::for_rotation`] (CP-8): the live-ops rotation bridge —
+//!   `server::liveops` ships a plain `(period, track)` pair over the wire, and this is the *one*
+//!   place that pair turns into a real [`ScenarioModifiers`]. Same bound as above: it can only
+//!   ever select among the fixed, authored presets, so a live-ops payload structurally cannot
+//!   reach a balance number or grant power.
+//!
 //! Determinism: every knob is an integer (or an [`Option<u64>`] tick count). The
 //! [`Difficulty::default()`] tier ([`Veteran`](Difficulty::Veteran)) reproduces the commander's
 //! original constants **byte-for-byte**, so adding the tier perturbs no default/golden-checksum
@@ -185,6 +191,112 @@ impl ScenarioModifiers {
         } else {
             Some(secs * TICK_HZ as u64)
         }
+    }
+}
+
+// ===========================================================================
+// CP-8 — the live-ops rotation seam
+// ===========================================================================
+//
+// `server::liveops` (server-side, no `core`/determinism concern) ships only plain scalars over
+// the wire: a rotation **period** (`u64`, "which week/cycle is active") and a rotation **track**
+// (`u32`, "which authored catalog" — the wire index a consent-gated experiment can override). It
+// never invents a `ScenarioModifiers` value itself — it can't, it doesn't depend on `core`. The
+// host (the platform-specific `app`/`engine` glue that already fetches the live-ops config) reads
+// those two plain integers off the response and calls [`ScenarioModifiers::for_rotation`] here,
+// which is the ONLY place a live-ops payload turns into scenario tuning. Because the function can
+// only ever return one of the fixed, authored [`ScenarioModifiers`] values below, it is
+// structurally impossible for a live-ops payload to reach a D30 balance constant or grant power —
+// the same bound [`ScenarioModifiers`] already enforces for authored difficulty tiers.
+
+/// One rotation's worth of pre-authored [`ScenarioModifiers`] presets — the **"standard"** track
+/// every client gets absent a personalized override. Four presets so a week's pick is never the
+/// same as its immediate neighbor by construction (`len` divides evenly into few enough weeks that
+/// authors can reason about the cycle). Every entry is a genuine situation-lever combination
+/// (force size / reinforcement cadence / fog / clock) — never a balance number; the type itself
+/// makes that impossible to violate.
+const STANDARD_ROTATION: [ScenarioModifiers; 4] = [
+    ScenarioModifiers {
+        force_scale_pct: 100,
+        reinforcement_period: None,
+        fog: TellMode::Subtle,
+        time_limit_ticks: None,
+    },
+    ScenarioModifiers {
+        force_scale_pct: 120,
+        reinforcement_period: Some(480),
+        fog: TellMode::Subtle,
+        time_limit_ticks: None,
+    },
+    ScenarioModifiers {
+        force_scale_pct: 100,
+        reinforcement_period: None,
+        fog: TellMode::Marked,
+        time_limit_ticks: Some(600 * TICK_HZ as u64),
+    },
+    ScenarioModifiers {
+        force_scale_pct: 140,
+        reinforcement_period: Some(300),
+        fog: TellMode::Hidden,
+        time_limit_ticks: None,
+    },
+];
+
+/// The **"variant A"** rotation track — a second authored catalog an analytics-derived experiment
+/// cohort can be pointed at instead of [`STANDARD_ROTATION`] (consent-gated: see
+/// `server::liveops::PersonalizedConfig::modifier_track_override`). Same length and the same
+/// "situation levers only" bound as the standard track; deliberately a *different* sequence so an
+/// A/B rotation test is actually distinguishable, never a stronger/weaker one.
+const VARIANT_A_ROTATION: [ScenarioModifiers; 4] = [
+    ScenarioModifiers {
+        force_scale_pct: 110,
+        reinforcement_period: None,
+        fog: TellMode::Subtle,
+        time_limit_ticks: None,
+    },
+    ScenarioModifiers {
+        force_scale_pct: 100,
+        reinforcement_period: None,
+        fog: TellMode::Subtle,
+        time_limit_ticks: None,
+    },
+    ScenarioModifiers {
+        force_scale_pct: 130,
+        reinforcement_period: Some(420),
+        fog: TellMode::Marked,
+        time_limit_ticks: None,
+    },
+    ScenarioModifiers {
+        force_scale_pct: 100,
+        reinforcement_period: Some(240),
+        fog: TellMode::Hidden,
+        time_limit_ticks: Some(480 * TICK_HZ as u64),
+    },
+];
+
+impl ScenarioModifiers {
+    /// The CP-8 live-ops bridge: resolve a wire-level `(period, track)` pair — exactly what
+    /// `server::liveops::LiveOpsConfig` carries — into the [`ScenarioModifiers`] to apply for that
+    /// rotation. Pure and total over all `u64`/`u32` inputs (no panics, no I/O, no clock read): the
+    /// **same** `(period, track)` always yields the **same** modifiers, on every platform, forever
+    /// (invariant #1/#7) — the live-ops server only ever *names* an index into an authored,
+    /// client-shipped catalog, it never hands the client a bespoke value.
+    ///
+    /// - `period` selects the entry by wrapping (`period % catalog.len()`), so the rotation simply
+    ///   repeats — the server can hand out an ever-increasing week counter forever without `core`
+    ///   growing a table.
+    /// - `track` selects the catalog: `1` ⇒ [`VARIANT_A_ROTATION`] (the consent-gated experiment
+    ///   catalog); anything else (including the `0` baseline and any unrecognized/future wire
+    ///   value) ⇒ [`STANDARD_ROTATION`] — an unknown track degrades to the safe public baseline,
+    ///   never to a guess (mirrors [`ConsentGate::guard`](crate)'s "absent/unknown ⇒ the safe
+    ///   default" posture).
+    pub fn for_rotation(period: u64, track: u32) -> ScenarioModifiers {
+        let catalog: &[ScenarioModifiers] = if track == 1 {
+            &VARIANT_A_ROTATION
+        } else {
+            &STANDARD_ROTATION
+        };
+        catalog[(period % catalog.len() as u64) as usize]
     }
 }
 
@@ -379,6 +491,98 @@ mod tests {
         assert_eq!(ScenarioModifiers::time_limit_from_secs(0), None);
         assert_eq!(ScenarioModifiers::time_limit_from_secs(1), Some(TICK_HZ as u64));
         assert_eq!(ScenarioModifiers::time_limit_from_secs(120), Some(120 * TICK_HZ as u64));
+    }
+
+    /// CP-8: the same `(period, track)` pair always resolves to the same modifiers — the property
+    /// the whole live-ops bridge rests on (a client that fetches the config twice, or two peers
+    /// fetching independently, must land on an identical rotation).
+    #[test]
+    fn for_rotation_is_deterministic_for_the_same_period_and_track() {
+        for track in [0u32, 1, 2, 999] {
+            for period in [0u64, 1, 3, 400, u64::MAX] {
+                assert_eq!(
+                    ScenarioModifiers::for_rotation(period, track),
+                    ScenarioModifiers::for_rotation(period, track),
+                    "period={period} track={track} must be stable"
+                );
+            }
+        }
+    }
+
+    /// The rotation wraps: a period `catalog.len()` ticks later repeats the same entry.
+    #[test]
+    fn for_rotation_wraps_around_the_catalog() {
+        assert_eq!(
+            ScenarioModifiers::for_rotation(0, 0),
+            ScenarioModifiers::for_rotation(4, 0),
+            "standard catalog has 4 entries; period 4 must repeat period 0"
+        );
+        assert_eq!(
+            ScenarioModifiers::for_rotation(1, 1),
+            ScenarioModifiers::for_rotation(5, 1),
+            "variant-A catalog has 4 entries too"
+        );
+    }
+
+    /// Track `1` selects a genuinely different catalog from track `0` — otherwise the A/B
+    /// rotation experiment would be a no-op.
+    #[test]
+    fn for_rotation_track_one_differs_from_standard() {
+        let mut any_diff = false;
+        for period in 0..4u64 {
+            if ScenarioModifiers::for_rotation(period, 0) != ScenarioModifiers::for_rotation(period, 1) {
+                any_diff = true;
+            }
+        }
+        assert!(any_diff, "variant-A track must diverge from standard somewhere in the cycle");
+    }
+
+    /// Any unrecognized track (not just `0`) safely degrades to the standard catalog — an unknown
+    /// wire value is never guessed into a new behavior, mirroring the consent gate's
+    /// absent/unknown ⇒ safe-default posture.
+    #[test]
+    fn for_rotation_unknown_track_falls_back_to_standard() {
+        for period in 0..4u64 {
+            assert_eq!(
+                ScenarioModifiers::for_rotation(period, 0),
+                ScenarioModifiers::for_rotation(period, 7),
+                "unrecognized track must degrade to the standard catalog"
+            );
+            assert_eq!(
+                ScenarioModifiers::for_rotation(period, 0),
+                ScenarioModifiers::for_rotation(period, u32::MAX),
+            );
+        }
+    }
+
+    /// The full bridge proof, mirroring `modifier_reshapes_scenario_param_deterministically_not_balance`:
+    /// resolving a live-ops `(period, track)` into modifiers, applying them, and stepping the sim
+    /// stays checksum-deterministic — and the D30 balance constants are never reachable through this
+    /// path, exactly like every other `ScenarioModifiers` entry point.
+    #[test]
+    fn for_rotation_selected_modifiers_are_checksum_deterministic_and_never_touch_balance() {
+        let costs_before = (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST);
+
+        let run = |period: u64, track: u32| -> u64 {
+            let mut sim = Sim::new(0xA11CE);
+            ScenarioModifiers::for_rotation(period, track).apply_to_sim(&mut sim);
+            for _ in 0..120 {
+                sim.step(&[]);
+            }
+            sim.checksum()
+        };
+
+        // Same (period, track) twice ⇒ identical evolved checksum.
+        assert_eq!(run(2, 0), run(2, 0));
+        assert_eq!(run(1, 1), run(1, 1));
+        // Distinct rotations (different track, same period) diverge — the lever actually bit.
+        assert_ne!(run(2, 0), run(2, 1));
+
+        assert_eq!(
+            costs_before,
+            (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST),
+            "the live-ops rotation bridge must never touch the D30 balance constants"
+        );
     }
 
     /// The example briefing is wired to a real tier + neutral modifiers (the minimal seam works).

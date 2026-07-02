@@ -9,7 +9,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use gonedark_server::http::{router, AppState, CONSENT_HEADER, TELEMETRY_BODY_LIMIT};
-use gonedark_server::liveops::LiveOpsSource;
+use gonedark_server::liveops::{LiveOpsSource, PersonalizedConfig, PublicConfig};
 use gonedark_server::telemetry::{InMemorySink, TelemetrySink};
 use tower::ServiceExt; // oneshot
 
@@ -185,6 +185,95 @@ async fn telemetry_oversize_body_rejected_before_gate() {
 
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(sink.len(), 0, "oversize body must never reach the sink");
+}
+
+/// CP-8: a served rotation period + public track baseline round-trips over the wire even without
+/// consent — the rotation *period* is public info, same footing as `maintenance`.
+#[tokio::test]
+async fn liveops_rotation_period_served_without_consent() {
+    let liveops = Arc::new(LiveOpsSource::new().with_public(PublicConfig {
+        modifier_rotation_period: Some(7),
+        modifier_track: 0,
+        ..PublicConfig::default()
+    }));
+    let app = router(AppState {
+        sink: Arc::new(InMemorySink::new()),
+        liveops,
+    });
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/liveops/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    let cfg: gonedark_server::liveops::LiveOpsConfig = serde_json::from_slice(&body).unwrap();
+    assert_eq!(cfg.public.modifier_rotation_period, Some(7));
+    assert_eq!(cfg.public.modifier_track, 0);
+    assert_eq!(cfg.personalized, None, "no consent header ⇒ no personalized config");
+    assert_eq!(cfg.effective_modifier_track(), 0, "falls back to the public track without consent");
+}
+
+/// CP-8: a consent-gated experiment track override only takes effect once analytics consent is
+/// granted — the HTTP-level instance of the same guarantee `liveops::tests` proves at the struct
+/// level.
+#[tokio::test]
+async fn liveops_track_override_requires_consent_over_http() {
+    let liveops = Arc::new(
+        LiveOpsSource::new()
+            .with_public(PublicConfig {
+                modifier_rotation_period: Some(3),
+                modifier_track: 0,
+                ..PublicConfig::default()
+            })
+            .with_personalized(PersonalizedConfig {
+                modifier_track_override: Some(1),
+                ..PersonalizedConfig::default()
+            }),
+    );
+    let app = router(AppState {
+        sink: Arc::new(InMemorySink::new()),
+        liveops,
+    });
+
+    // No consent header ⇒ effective track is the public baseline, never the override.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/liveops/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    let cfg: gonedark_server::liveops::LiveOpsConfig = serde_json::from_slice(&body).unwrap();
+    assert_eq!(cfg.effective_modifier_track(), 0);
+
+    // Consent granted ⇒ the personalized override wins.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/liveops/config")
+                .header(CONSENT_HEADER, "true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+    let cfg: gonedark_server::liveops::LiveOpsConfig = serde_json::from_slice(&body).unwrap();
+    assert_eq!(cfg.effective_modifier_track(), 1);
 }
 
 #[tokio::test]

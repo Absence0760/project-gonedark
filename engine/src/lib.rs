@@ -2824,6 +2824,29 @@ impl Game {
         modifiers.apply_to_sim(&mut self.sim);
     }
 
+    /// Apply the CP-8 **live-ops rotation** to an already-seeded mission game, before the first
+    /// tick — the client-side half of the `server::liveops` bridge. `period`/`track` are exactly
+    /// the two plain scalars a live-ops config response carries
+    /// (`server::liveops::PublicConfig::modifier_rotation_period` and
+    /// `server::liveops::LiveOpsConfig::effective_modifier_track` — already resolved through the
+    /// consent gate server-side); the host reads them off the fetched config and hands them here.
+    /// `engine` never depends on `server` (invariant #2 layering), so this only ever sees the two
+    /// plain integers, never a server type. This is the *only* place those integers become real
+    /// scenario tuning: it resolves them through
+    /// [`ScenarioModifiers::for_rotation`](gonedark_core::mission_tuning::ScenarioModifiers::for_rotation)
+    /// — the shared `core` mapping, so every platform lands on the identical rotation for the same
+    /// `(period, track)` (invariant #2) — and applies the one lever `core` owns
+    /// ([`apply_to_sim`](gonedark_core::mission_tuning::ScenarioModifiers::apply_to_sim), the
+    /// reinforcement cadence) before tick 0, exactly like [`apply_campaign_tuning`]'s scenario half.
+    /// Because the mapping can only ever select among the fixed, authored
+    /// [`ScenarioModifiers`](gonedark_core::mission_tuning::ScenarioModifiers) presets, a live-ops
+    /// payload can never reach a balance number or grant power (invariants #1/#6) — the same
+    /// structural bound [`apply_campaign_tuning`] rests on.
+    pub fn apply_live_ops_modifiers(&mut self, period: u64, track: u32) {
+        let modifiers = gonedark_core::mission_tuning::ScenarioModifiers::for_rotation(period, track);
+        modifiers.apply_to_sim(&mut self.sim);
+    }
+
     /// Field a [`Faction`]'s [`Army`] identity at **match setup** — the native army-select shell's
     /// pick (factions-plan WS-A/WS-D, [D68](../docs/decisions.md)). The pick is routed through the
     /// `core::shell` [`SelectArmy`](ShellIntent::SelectArmy) seam so it is the *same*
