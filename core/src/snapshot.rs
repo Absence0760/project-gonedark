@@ -7,7 +7,7 @@
 //! snapshot lists the territory control points. None of this is sim state — it is a copy
 //! taken for rendering, so it is not checksummed (invariant #7 covers the world itself).
 
-use crate::components::{EntityKind, Faction, InputSource, UnitKind, Vec2, Weapon};
+use crate::components::{Army, EntityKind, Faction, InputSource, UnitKind, Vec2, Weapon, FACTION_COUNT};
 use crate::ecs::World;
 use crate::fixed::Fixed;
 use crate::projectile::Projectile;
@@ -25,6 +25,13 @@ pub struct UnitSnapshot {
     pub embodied: bool,
     /// Which side it belongs to (drives the render color).
     pub faction: Faction,
+    /// The [`Army`] identity `faction` currently fields (factions-plan WS-A/WS-C, D68), resolved at
+    /// capture time via [`Sim::army_of`](crate::sim::Sim::army_of). Match-setup config, never folded
+    /// into the per-tick checksum (invariant #7) — purely a presentation copy so the renderer can
+    /// pick the faction-specific silhouette (`render::model_for_unit`) instead of the shared
+    /// [`Army::Neutral`] greybox. A scene that never selects an army still reads every unit as
+    /// `Army::Neutral`, so it stays byte-identical to before WS-C.
+    pub army: Army,
     /// Health as a Fixed fraction in `[0, 1]` (the renderer draws a bar from this).
     pub health: Fixed,
     /// True for buildings (drawn larger / distinctly), false for units.
@@ -114,18 +121,21 @@ impl Snapshot {
         territory: &Territory,
         projectiles: &[Projectile],
         tick: u64,
+        armies: &[Army; FACTION_COUNT],
     ) -> Self {
         let mut units = Vec::new();
         for i in 0..world.capacity() {
             if !world.is_index_alive(i) {
                 continue;
             }
+            let faction = world.faction[i];
             units.push(UnitSnapshot {
                 entity_index: i as u32,
                 pos: world.pos[i],
                 vel: world.vel[i],
                 embodied: world.input_source[i] == InputSource::Embodied,
-                faction: world.faction[i],
+                faction,
+                army: armies[faction.index()],
                 health: world.health[i].fraction(),
                 building: world.kind[i] == EntityKind::Building,
                 unit_kind: world.unit_kind[i],
@@ -201,5 +211,62 @@ mod tests {
         assert!(weapon_recently_fired(&gun(3, 3)));
         assert!(weapon_recently_fired(&gun(3, 1)));
         assert!(!weapon_recently_fired(&gun(3, 0)));
+    }
+
+    // ---- WS-C last mile: per-unit `army` resolved into the snapshot at capture time -------------
+
+    use crate::ecs::World;
+    use crate::territory::Territory;
+
+    /// Spawn a bare unit of `faction` and return its world index.
+    fn spawn_unit(world: &mut World, faction: Faction) -> usize {
+        let e = world.spawn();
+        let i = e.index as usize;
+        world.faction[i] = faction;
+        i
+    }
+
+    /// [`Snapshot::capture`] resolves each unit's `army` field from the caller-supplied
+    /// `armies: &[Army; FACTION_COUNT]` (the sim's `sim.army_of` table), indexed by the unit's own
+    /// `faction` — never a fixed/global army. A Player-faction unit reads whatever army Player picked;
+    /// an Enemy-faction unit reads Enemy's pick independently, even in the same capture.
+    #[test]
+    fn capture_resolves_each_units_army_from_its_own_faction() {
+        let mut world = World::new();
+        spawn_unit(&mut world, Faction::Player);
+        spawn_unit(&mut world, Faction::Enemy);
+        spawn_unit(&mut world, Faction::Neutral);
+
+        let mut armies = [Army::Neutral; FACTION_COUNT];
+        armies[Faction::Player.index()] = Army::Us;
+        armies[Faction::Enemy.index()] = Army::Fr;
+        // Faction::Neutral is left at the default Army::Neutral.
+
+        let snap = Snapshot::capture(&world, &Territory::default(), &[], 0, &armies);
+        let army_of_faction = |f: Faction| {
+            snap.units
+                .iter()
+                .find(|u| u.faction == f)
+                .expect("faction present")
+                .army
+        };
+        assert_eq!(army_of_faction(Faction::Player), Army::Us);
+        assert_eq!(army_of_faction(Faction::Enemy), Army::Fr);
+        assert_eq!(army_of_faction(Faction::Neutral), Army::Neutral);
+    }
+
+    /// A scene that never selects an army (every side `Army::Neutral`, the default `Sim::new`
+    /// config) captures every unit's `army` as `Army::Neutral` — the pre-WS-C behaviour the renderer
+    /// keeps drawing byte-identically (the render-side test `interpolate_sets_token_model_from_...`
+    /// covers the mesh-selection half of this).
+    #[test]
+    fn capture_defaults_every_unit_to_neutral_army_when_no_army_selected() {
+        let mut world = World::new();
+        spawn_unit(&mut world, Faction::Player);
+        spawn_unit(&mut world, Faction::Enemy);
+
+        let armies = [Army::Neutral; FACTION_COUNT];
+        let snap = Snapshot::capture(&world, &Territory::default(), &[], 0, &armies);
+        assert!(snap.units.iter().all(|u| u.army == Army::Neutral));
     }
 }

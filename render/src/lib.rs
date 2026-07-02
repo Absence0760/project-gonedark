@@ -736,12 +736,12 @@ pub fn interpolate_instances(
         let half_extent = if b.building { BUILDING_HALF } else { UNIT_HALF };
         let health = fixed_to_f32(b.health).clamp(0.0, 1.0);
         // Resolve the 3D token mesh from the unit's army + unit-kind / building flag (Heavy→tank,
-        // US→Abrams/M1-trooper, FR→Leclerc/FELIN-trooper — WS-C). The render snapshot does not yet
-        // carry a per-unit army, so we draw the army-agnostic [`Army::Neutral`] silhouettes here
-        // (byte-identical to pre-factions). Flipping faction silhouettes on is a one-line change at
-        // this seam once WS-A/WS-D plumbs the per-side army (`sim.army_of(b.faction)`) into the
-        // snapshot — `model_for_unit` and the faction meshes/turrets are already in place + tested.
-        let model = model_for_unit(Army::Neutral, b.building, b.unit_kind) as u32;
+        // US→Abrams/M1-trooper, FR→Leclerc/FELIN-trooper — WS-C). The render snapshot now carries
+        // each unit's [`Army`] (resolved at capture time from `sim.army_of(b.faction)`,
+        // `core::snapshot::Snapshot::capture`), so we draw the real faction silhouette here. A scene
+        // that never selects an army still snapshots every unit as `Army::Neutral`, so it keeps
+        // drawing the original shared greybox byte-identically to pre-factions.
+        let model = model_for_unit(b.army, b.building, b.unit_kind) as u32;
         // Hull + turret facing, interpolated shortest-arc across the wrap seam (P7). Read from both
         // snapshots so a slewing turret tweens smoothly between ticks (invariant #4).
         let hull_yaw = interp_angle(a.hull_heading, b.hull_heading, alpha);
@@ -2386,6 +2386,7 @@ mod tests {
             vel: Vec2::ZERO,
             embodied,
             faction: Faction::Player,
+            army: Army::Neutral,
             health: Fixed::ONE,
             building: false,
             unit_kind: UnitKind::Rifleman,
@@ -3017,6 +3018,74 @@ mod tests {
         // Both decode back through token_meshes to their body mesh.
         assert_eq!(token_meshes(&out[0])[0].0, mesh::ModelKind::Tank);
         assert_eq!(token_meshes(&out[1])[0].0, mesh::ModelKind::Trooper);
+    }
+
+    /// WS-C last mile: `interpolate_instances` resolves each unit's token mesh from the snapshot's
+    /// per-unit [`Army`] (`sim.army_of(faction)`, plumbed in at capture time) — not the hard-coded
+    /// [`Army::Neutral`] the seam used before this landed. A US-army unit draws the US silhouette, an
+    /// FR-army unit the FR silhouette, and a Neutral/unaligned unit still resolves to the original
+    /// army-agnostic greybox — byte-identical to pre-WS-C for any scene that never selects an army.
+    #[test]
+    fn interpolate_sets_token_model_from_per_unit_army() {
+        let mut us_rifle = unit(Fixed::ZERO, Fixed::ZERO, false);
+        us_rifle.army = Army::Us;
+        let mut us_tank = unit(Fixed::ONE, Fixed::ZERO, false);
+        us_tank.army = Army::Us;
+        us_tank.unit_kind = UnitKind::Heavy;
+        let mut fr_rifle = unit(Fixed::from_int(2), Fixed::ZERO, false);
+        fr_rifle.army = Army::Fr;
+        let mut fr_tank = unit(Fixed::from_int(3), Fixed::ZERO, false);
+        fr_tank.army = Army::Fr;
+        fr_tank.unit_kind = UnitKind::Heavy;
+        // Neutral (unaligned/legacy) stays on the shared greybox — the pre-WS-C default from `unit()`.
+        let neutral_rifle = unit(Fixed::from_int(4), Fixed::ZERO, false);
+
+        let s = snapshot(
+            0,
+            vec![us_rifle, us_tank, fr_rifle, fr_tank, neutral_rifle],
+        );
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
+
+        assert_eq!(out[0].model, mesh::ModelKind::TrooperUs as u32, "US rifleman");
+        assert_eq!(out[1].model, mesh::ModelKind::TankUs as u32, "US heavy → US tank");
+        assert_eq!(out[2].model, mesh::ModelKind::TrooperFr as u32, "FR rifleman");
+        assert_eq!(out[3].model, mesh::ModelKind::TankFr as u32, "FR heavy → FR tank");
+        assert_eq!(
+            out[4].model,
+            mesh::ModelKind::Trooper as u32,
+            "Neutral stays on the army-agnostic silhouette"
+        );
+    }
+
+    /// A building's token mesh stays the army-agnostic camp structure regardless of which army its
+    /// faction fields — `model_for_unit` returns `CampHq` unconditionally for `building: true`
+    /// (structures are army-agnostic for now, per its doc comment). Guards against the army plumb
+    /// accidentally changing building presentation.
+    #[test]
+    fn interpolate_building_model_is_army_agnostic() {
+        let mut us_building = unit(Fixed::ZERO, Fixed::ZERO, false);
+        us_building.army = Army::Us;
+        us_building.building = true;
+        let mut fr_building = unit(Fixed::ONE, Fixed::ZERO, false);
+        fr_building.army = Army::Fr;
+        fr_building.building = true;
+        let s = snapshot(0, vec![us_building, fr_building]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
+        assert_eq!(out[0].model, mesh::ModelKind::CampHq as u32);
+        assert_eq!(out[1].model, mesh::ModelKind::CampHq as u32);
+    }
+
+    /// An embodied avatar's token model still resolves from its `army` field exactly like a
+    /// non-embodied unit — embodiment only swaps the render color/flags (WS-D), never the mesh
+    /// selection, so the avatar-visible body (P7) keeps wearing its own faction's silhouette.
+    #[test]
+    fn interpolate_embodied_unit_model_still_resolves_from_army() {
+        let mut avatar = unit(Fixed::ZERO, Fixed::ZERO, true);
+        avatar.army = Army::Fr;
+        let s = snapshot(0, vec![avatar]);
+        let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
+        assert_eq!(out[0].flags & FLAG_EMBODIED, FLAG_EMBODIED, "still flagged embodied");
+        assert_eq!(out[0].model, mesh::ModelKind::TrooperFr as u32, "avatar keeps its FR silhouette");
     }
 
     // ---- token_icons: CP-9 command-view unit-kind glyphs (WS-C) --------------------------------

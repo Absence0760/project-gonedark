@@ -2412,6 +2412,7 @@ mod tests {
     /// seam unit-tested in `snapshot`.
     #[test]
     fn snapshot_firing_flag_lights_on_the_shot_tick_then_clears() {
+        use crate::components::{Army, FACTION_COUNT};
         use crate::snapshot::{Snapshot, MUZZLE_FLASH_TICKS};
         use crate::territory::Territory;
 
@@ -2424,8 +2425,9 @@ mod tests {
         let target = spawn_unit(&mut world, 3, 0, Faction::Enemy, 1000, Weapon::default());
         world.stance[target.index as usize] = Stance::HoldFire;
 
+        let armies = [Army::Neutral; FACTION_COUNT];
         let firing = |w: &World| {
-            Snapshot::capture(w, &Territory::default(), &[], 0)
+            Snapshot::capture(w, &Territory::default(), &[], 0, &armies)
                 .units
                 .iter()
                 .find(|u| u.entity_index == shooter.index)
@@ -2440,7 +2442,7 @@ mod tests {
         run(&mut world, &terrain, &mut events);
         assert!(firing(&world), "the unit that just fired lights the firing flag");
         // The lone non-firing target never lights.
-        let target_firing = Snapshot::capture(&world, &Territory::default(), &[], 0)
+        let target_firing = Snapshot::capture(&world, &Territory::default(), &[], 0, &armies)
             .units
             .iter()
             .find(|u| u.entity_index == target.index)

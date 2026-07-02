@@ -5194,7 +5194,7 @@ mod tests {
     /// idle unit draws no flash.
     #[test]
     fn muzzle_flash_overlay_lights_firing_units_but_not_buildings() {
-        use gonedark_core::components::{Faction, UnitKind, Vec2};
+        use gonedark_core::components::{Army, Faction, UnitKind, Vec2};
         use gonedark_core::fixed::Fixed;
         use gonedark_core::snapshot::{Snapshot, UnitSnapshot};
         use gonedark_core::trig::Angle;
@@ -5208,6 +5208,7 @@ mod tests {
             vel: Vec2::ZERO,
             embodied: false,
             faction: Faction::Player,
+            army: Army::Neutral,
             health: Fixed::ONE,
             building,
             unit_kind: UnitKind::Rifleman,
