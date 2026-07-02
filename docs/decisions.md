@@ -4193,3 +4193,32 @@ reopen it as a new question if marsh/slow-mud is ever scoped.
 data), invariants #1/#4/#6/#7, [`maps.md`](maps.md), [`architecture.md`](architecture.md),
 [Q24](open-questions.md) (closed), [Q25](open-questions.md#q25--destructible-terrain) (prop
 destruction still leans on entity props — unaffected).
+
+## D93 — Multi-peer replays merge per-peer command sets in ascending peer order, matching lockstep (PC-3)
+
+**Status: landed.** Extends the [D89](#d89) replay foundation from a single command stream to a
+**multi-peer** form for lockstep PvP matches, where each tick's inputs come from several peers. A
+`MultiReplay` keeps every peer's commands *separately* per tick (`tick → peer → commands`, both
+`BTreeMap`s) and merges them at playback into a single ordered set: **every peer's commands
+concatenated in ascending peer-id order**. That is byte-for-byte the merge
+`core::lockstep::Lockstep::try_advance` performs (it iterates its per-peer slots by index and
+`extend`s), so a recorded PvP match replays to the same sim the live lockstep loop produced. Because
+the log is keyed by peer id, the merge is **order-independent by construction**: the headline test
+rebuilds a replay from its `(tick, peer)` arrivals forward *and* fully reversed and asserts both
+identical encoded bytes and an identical per-tick checksum stream. A distinct `GDMP` magic (vs. D89's
+`GDRP`) makes a single-peer artifact fed to the multi-peer decoder — or the reverse — fail loudly at
+`BadMagic`, and a new `PeerOutOfRange` decode error mirrors `core::lockstep`'s. `pnpm
+desktop:replay:multi` runs the round-trip (2 peers, 48 commands over 300 ticks, bit-identical).
+
+**Why.** Determinism makes this near-free (a match is still just seed + ordered inputs, invariant #1);
+the only real design point is the intra-tick ordering, and matching lockstep's fixed peer order is the
+one choice that keeps a recorded PvP match faithful. Codec stays in the runner, not `core` (invariant
+#2: `core` serde-free); the ordering rule is the same stable application order `Sim::step` relies on
+(invariant #7). 10 new crate tests green dev+release; no checksum assertion weakened.
+
+**Scope / follow-up.** The *rendered* spectator view (rendering a playback) is still deferred — it is
+GPU-gated render-side work and can consume `MultiReplay::merged_for`/`arrivals` directly when built.
+
+**Cross-link:** invariants #1/#2/#7, [D89](#d89) (replay foundation), [D27](#d27) (lockstep wire
+discipline + per-peer ordering), [`positioning-pc.md`](positioning/positioning-pc.md) PC-3,
+[`roadmap.md`](roadmap.md) PC-3.

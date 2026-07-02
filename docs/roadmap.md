@@ -638,9 +638,11 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
   (invariant #1), so replay + spectator view are *cheap* and a real PC / e-sports differentiator.
   **Foundation landed ([D89](decisions.md)):** the headless `replay-runner` crate records a scenario's
   seed + per-tick `Command` log and plays it back **bit-identical** by checksum (`pnpm desktop:replay`),
-  the byte codec host-side so `core` stays serde-free. **Remaining:** multi-peer replay ordering and a
-  *rendered* spectator view (both ride this same seed+log foundation); replay cross-version
-  compatibility is [Q26](open-questions.md).
+  the byte codec host-side so `core` stays serde-free. **Multi-peer replay ordering has since landed
+  ([D93](decisions.md)):** a `MultiReplay` merges each tick's per-peer command sets in ascending
+  peer-id order — byte-for-byte the `core::lockstep` merge — proven order-independent by checksum
+  (`pnpm desktop:replay:multi`). **Remaining:** a *rendered* spectator view (GPU-gated; rides the same
+  seed+log foundation); replay cross-version compatibility is [Q26](open-questions.md).
 - [~] **PC-4 — Mods / data-driven content.** Missions/scenarios become external **RON data files**
   ([D76](decisions.md), [`content-tooling-plan.md`](plans/content-tooling-plan.md)) and maps carry
   their own content-addressed terrain ([D77](decisions.md)); exposing them as moddable content is how
