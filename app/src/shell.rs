@@ -16,6 +16,7 @@ use gonedark_core::campaign::{
 };
 use gonedark_core::components::Army;
 use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Muzzle, Optic, Stock};
+use gonedark_engine::keybind::{GameAction, KeyId, KeybindMap, RebindOutcome};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
 use gonedark_engine::AlertCueMode;
@@ -351,6 +352,12 @@ pub struct SettingsState {
     /// Still an *alert, not intel* (bearing + kind only). Fed to the engine via `Game::set_alert_cue_mode`.
     /// Presentation only.
     pub alert_cue_mode: AlertCueMode,
+    /// The desktop key-rebind map (D75 follow-up "the rebind editor"): which physical key fires each
+    /// rebindable host action (pause / fullscreen / debug overlay). The pure model lives in
+    /// `gonedark_engine::keybind` (winit-free, invariant #2); `main.rs` maps `winit::KeyCode` ↔ `KeyId`
+    /// at its boundary and routes each press through this map. Persisted by stable ordinal alongside
+    /// the other prefs. Presentation only — a keybind never reaches the sim (invariants #1/#4).
+    pub keybinds: KeybindMap,
 }
 
 impl Default for SettingsState {
@@ -372,6 +379,9 @@ impl Default for SettingsState {
             // The base flash + positioned audio is the shipped fair channel; the audio ping / haptic
             // pulse cross-modal equivalents are opt-in.
             alert_cue_mode: AlertCueMode::Off,
+            // The shipped desktop bindings (Esc pause / F11 fullscreen / F3 debug) — the historical
+            // hardcoded keys, now data the rebind editor can change.
+            keybinds: KeybindMap::default(),
         }
     }
 }
@@ -721,7 +731,7 @@ pub fn encode_shell_prefs(
          cvdcues={}\nsoundcues={}\ncvdpal={}\nalertcue={}\n\
          callsign={}\nfaction={}\nmatches={}\nwins={}\n\
          optic={}\nbarrel={}\nmagazine={}\n\
-         army={}\n",
+         army={}\nkeybinds={}\n",
         s.master_volume,
         s.sfx_volume,
         s.music_volume,
@@ -742,6 +752,9 @@ pub fn encode_shell_prefs(
         // The selected army as its stable `Army::index` ordinal (the same tag order the sim/wire
         // codecs use), tolerant-decoded back by [`decode_army`].
         army.selected.index(),
+        // The rebind map as its own compact ordinal blob (`KeybindMap::encode`), tolerant-decoded
+        // back by `KeybindMap::decode` — a missing/garbage value falls back to the shipped bindings.
+        s.keybinds.encode(),
     )
 }
 
@@ -776,6 +789,9 @@ pub fn decode_shell_prefs(
         // Tolerant ordinal decode (an unknown/missing ordinal → `Off`), the `quality` pattern.
         cvd_palette: PaletteMode::from_index(parse_or::<usize>(map.get("cvdpal"), 0)),
         alert_cue_mode: AlertCueMode::from_index(parse_or::<usize>(map.get("alertcue"), 0)),
+        // The rebind map from its compact ordinal blob. `KeybindMap::decode` is total (a missing key
+        // → `""` → the shipped default bindings; a corrupt/duplicate blob → defaults), never panics.
+        keybinds: KeybindMap::decode(map.get("keybinds").copied().unwrap_or("")),
     };
     // The clamp guards a stored-but-out-of-range numeric (e.g. a hand-edited blob) exactly as the
     // Settings sliders do.
@@ -1200,6 +1216,12 @@ pub struct EguiShell {
     /// flat-clear title without panicking the shell — the pinned `new` is infallible today, so it is
     /// always `Some`. Only the title screen uses it; the loadout screen clears its own ink panel.
     backdrop: Option<TitleBackdrop>,
+    /// Transient Settings **rebind-editor** state (D75 follow-up): the action currently capturing a
+    /// key (`Some` while the row shows "press a key…"), and the last conflict `(action, owner)` to
+    /// surface as feedback. Ephemeral UI interaction state — not a persisted pref (the map itself
+    /// lives on `SettingsState::keybinds`), so it rides the device-gated glue, not the pure model.
+    rebinding: Option<GameAction>,
+    rebind_conflict: Option<(GameAction, GameAction)>,
 }
 
 impl EguiShell {
@@ -1239,6 +1261,8 @@ impl EguiShell {
             renderer,
             stamp,
             backdrop,
+            rebinding: None,
+            rebind_conflict: None,
         }
     }
 
@@ -1281,7 +1305,16 @@ impl EguiShell {
         state: &mut SettingsState,
         fullscreen: bool,
     ) -> Option<SettingsAction> {
-        self.run_and_paint(surface, true, |ui| settings_ui(ui, state, fullscreen))
+        // Copy the transient rebind-editor state into locals so the paint closure doesn't alias the
+        // `&mut self` borrow `run_and_paint` takes (the `stamp` clone pattern), then write it back.
+        let mut rebinding = self.rebinding;
+        let mut conflict = self.rebind_conflict;
+        let action = self.run_and_paint(surface, true, |ui| {
+            settings_ui(ui, state, fullscreen, &mut rebinding, &mut conflict)
+        });
+        self.rebinding = rebinding;
+        self.rebind_conflict = conflict;
+        action
     }
 
     /// Draw the player Profile screen for one frame and return the [`ProfileAction`] used, if any.
@@ -1807,14 +1840,96 @@ fn over_backdrop_screen<T>(
     out.expect("over_backdrop_screen build ran")
 }
 
+/// Map an egui [`egui::Key`] to the engine's platform-neutral [`KeyId`], or `None` for a key the
+/// rebind vocabulary doesn't cover. This is the Settings **app boundary** for the rebind editor: the
+/// engine `keybind` seam is deliberately egui/winit-free (invariant #2), so the conversion of a real
+/// key press into a bindable id lives here (its winit twin, `keycode_to_keyid`, lives in `main.rs`).
+/// Pure (a total match over plain enums) — unit-tested below without a window.
+fn egui_key_to_keyid(key: egui::Key) -> Option<KeyId> {
+    use egui::Key;
+    Some(match key {
+        Key::F1 => KeyId::F1,
+        Key::F2 => KeyId::F2,
+        Key::F3 => KeyId::F3,
+        Key::F4 => KeyId::F4,
+        Key::F5 => KeyId::F5,
+        Key::F6 => KeyId::F6,
+        Key::F7 => KeyId::F7,
+        Key::F8 => KeyId::F8,
+        Key::F9 => KeyId::F9,
+        Key::F10 => KeyId::F10,
+        Key::F11 => KeyId::F11,
+        Key::F12 => KeyId::F12,
+        Key::A => KeyId::A,
+        Key::B => KeyId::B,
+        Key::C => KeyId::C,
+        Key::D => KeyId::D,
+        Key::E => KeyId::E,
+        Key::F => KeyId::F,
+        Key::G => KeyId::G,
+        Key::H => KeyId::H,
+        Key::I => KeyId::I,
+        Key::J => KeyId::J,
+        Key::K => KeyId::K,
+        Key::L => KeyId::L,
+        Key::M => KeyId::M,
+        Key::N => KeyId::N,
+        Key::O => KeyId::O,
+        Key::P => KeyId::P,
+        Key::Q => KeyId::Q,
+        Key::R => KeyId::R,
+        Key::S => KeyId::S,
+        Key::T => KeyId::T,
+        Key::U => KeyId::U,
+        Key::V => KeyId::V,
+        Key::W => KeyId::W,
+        Key::X => KeyId::X,
+        Key::Y => KeyId::Y,
+        Key::Z => KeyId::Z,
+        Key::Num0 => KeyId::Digit0,
+        Key::Num1 => KeyId::Digit1,
+        Key::Num2 => KeyId::Digit2,
+        Key::Num3 => KeyId::Digit3,
+        Key::Num4 => KeyId::Digit4,
+        Key::Num5 => KeyId::Digit5,
+        Key::Num6 => KeyId::Digit6,
+        Key::Num7 => KeyId::Digit7,
+        Key::Num8 => KeyId::Digit8,
+        Key::Num9 => KeyId::Digit9,
+        Key::Escape => KeyId::Escape,
+        Key::Tab => KeyId::Tab,
+        Key::Space => KeyId::Space,
+        Key::Enter => KeyId::Enter,
+        Key::Backspace => KeyId::Backspace,
+        Key::Insert => KeyId::Insert,
+        Key::Delete => KeyId::Delete,
+        Key::Home => KeyId::Home,
+        Key::End => KeyId::End,
+        Key::PageUp => KeyId::PageUp,
+        Key::PageDown => KeyId::PageDown,
+        Key::ArrowUp => KeyId::Up,
+        Key::ArrowDown => KeyId::Down,
+        Key::ArrowLeft => KeyId::Left,
+        Key::ArrowRight => KeyId::Right,
+        Key::Minus => KeyId::Minus,
+        Key::Equals => KeyId::Equals,
+        Key::Backtick => KeyId::Backquote,
+        // Everything else (punctuation, modifiers, media keys, …) is outside the bindable vocabulary.
+        _ => return None,
+    })
+}
+
 /// The immediate-mode Settings screen: audio/controls/video preferences in a centred card over the
 /// backdrop. Sliders/checkboxes edit `state` in place (then [`SettingsState::clamp`] re-bounds it);
 /// the discrete controls return a [`SettingsAction`] the pure [`apply_settings_action`] seam resolves.
-/// `fullscreen` is the host's current window mode (reflected by the video checkbox). Glue.
+/// `fullscreen` is the host's current window mode (reflected by the video checkbox). The KEY BINDINGS
+/// rows drive the rebind editor via the pure `KeybindMap` on `state.keybinds`. Glue.
 fn settings_ui(
     ui: &mut egui::Ui,
     state: &mut SettingsState,
     fullscreen: bool,
+    rebinding: &mut Option<GameAction>,
+    rebind_conflict: &mut Option<(GameAction, GameAction)>,
 ) -> Option<SettingsAction> {
     use egui::{RichText, Slider};
     let mut action = None;
@@ -1837,6 +1952,88 @@ fn settings_ui(
             .text("Look sensitivity"),
         );
         ui.checkbox(&mut state.invert_look_y, "Invert look Y");
+
+        // The key-rebind editor (D75 follow-up). One row per rebindable host action (pause /
+        // fullscreen / debug overlay — the keys `main.rs` owns): its label + a button showing the
+        // current binding. Clicking a button arms capture ("press a key…"); the next mappable key
+        // press rebinds through the pure `KeybindMap::rebind`, which rejects a key another action
+        // already owns and reports the owner for conflict feedback. Direct-mutates `state.keybinds`
+        // (like the sliders); persisted with the other prefs and read by `main.rs` each key event.
+        section_label(ui, "KEY BINDINGS");
+        for act in GameAction::ALL {
+            let capturing = *rebinding == Some(act);
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [180.0, 28.0],
+                    egui::Label::new(RichText::new(act.label()).color(BONE).size(TYPE_BODY)),
+                );
+                let btn_label = if capturing {
+                    "press a key...".to_string()
+                } else {
+                    state.keybinds.key_for(act).label().to_string()
+                };
+                // The armed row reads amber (it's the lone accent + signals "waiting for input").
+                let color = if capturing { AMBER } else { BONE };
+                if ui
+                    .add_sized(
+                        [120.0, 28.0],
+                        egui::Button::new(RichText::new(btn_label).color(color).size(TYPE_BODY)),
+                    )
+                    .clicked()
+                {
+                    // Toggle capture for this row (clicking the armed row cancels), clearing any stale
+                    // conflict notice.
+                    *rebinding = if capturing { None } else { Some(act) };
+                    *rebind_conflict = None;
+                }
+            });
+        }
+        // While a row is armed, consume the first mappable key press this frame and apply it. The
+        // egui `Key` → engine `KeyId` conversion is the app boundary (invariant #2: the engine seam
+        // is winit/egui-free); `rebind` upholds the no-shared-keys invariant.
+        if let Some(act) = *rebinding {
+            let pressed = ui.input(|i| {
+                i.events.iter().find_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        ..
+                    } => egui_key_to_keyid(*key),
+                    _ => None,
+                })
+            });
+            if let Some(key) = pressed {
+                match state.keybinds.rebind(act, key) {
+                    RebindOutcome::Conflict(owner) => *rebind_conflict = Some((act, owner)),
+                    // Bound or Unchanged: the edit took (or was a no-op) — clear any prior notice.
+                    _ => *rebind_conflict = None,
+                }
+                *rebinding = None;
+            }
+        }
+        // Conflict feedback: name the action that already owns the key the player tried to bind.
+        if let Some((act, owner)) = *rebind_conflict {
+            ui.label(
+                RichText::new(format!(
+                    "That key already runs {} -- couldn't bind it to {}. Rebind {} first.",
+                    owner.label(),
+                    act.label(),
+                    owner.label()
+                ))
+                .color(AMBER)
+                .size(TYPE_CAPTION),
+            );
+        }
+        // Reset only the bindings to the shipped defaults (a direct in-place edit — no action needed);
+        // clears any in-flight capture / conflict. The screen's RESET DEFAULTS also covers these.
+        if ui
+            .button(RichText::new("Reset bindings").color(BONE).size(TYPE_BODY))
+            .clicked()
+        {
+            state.keybinds.reset();
+            *rebinding = None;
+            *rebind_conflict = None;
+        }
 
         // The going-dark fairness floor (invariant #6): the embodied alert channel is directional
         // flash + positioned audio. These two opt-in cues give colorblind / hard-of-hearing players a
@@ -2735,6 +2932,7 @@ mod tests {
             visual_sound_cues: false,
             cvd_palette: PaletteMode::Off,
             alert_cue_mode: AlertCueMode::Off,
+            keybinds: KeybindMap::default(),
         };
         s.clamp();
         assert_eq!(s.master_volume, 1.0);
@@ -2752,9 +2950,52 @@ mod tests {
         s.master_volume = 0.0;
         s.invert_look_y = true;
         s.quality = QualityChoice::Low;
+        // A remapped binding is also restored by the whole-screen RESET DEFAULTS.
+        s.keybinds.rebind(GameAction::Pause, KeyId::P);
         let step = apply_settings_action(SettingsAction::ResetDefaults, &mut s);
         assert_eq!(step, SettingsStep::Stay);
         assert_eq!(s, SettingsState::default());
+    }
+
+    #[test]
+    fn egui_key_maps_to_keyid_at_the_boundary() {
+        // The keys the default bindings use map through, plus a representative letter/digit/nav key.
+        assert_eq!(egui_key_to_keyid(egui::Key::Escape), Some(KeyId::Escape));
+        assert_eq!(egui_key_to_keyid(egui::Key::F11), Some(KeyId::F11));
+        assert_eq!(egui_key_to_keyid(egui::Key::F3), Some(KeyId::F3));
+        assert_eq!(egui_key_to_keyid(egui::Key::P), Some(KeyId::P));
+        assert_eq!(egui_key_to_keyid(egui::Key::Num5), Some(KeyId::Digit5));
+        assert_eq!(egui_key_to_keyid(egui::Key::ArrowUp), Some(KeyId::Up));
+        assert_eq!(egui_key_to_keyid(egui::Key::Backtick), Some(KeyId::Backquote));
+        // A key outside the bindable vocabulary is rejected (so an unmappable press keeps waiting).
+        assert_eq!(egui_key_to_keyid(egui::Key::Colon), None);
+    }
+
+    #[test]
+    fn keybinds_survive_the_shell_prefs_round_trip_and_default_when_missing() {
+        // A remapped keybind survives encode→decode alongside the other prefs.
+        let mut s = SettingsState::default();
+        assert_eq!(s.keybinds.rebind(GameAction::Pause, KeyId::P), RebindOutcome::Bound);
+        assert_eq!(
+            s.keybinds.rebind(GameAction::ToggleDebugOverlay, KeyId::G),
+            RebindOutcome::Bound
+        );
+        let blob = encode_shell_prefs(
+            &s,
+            &ProfileState::default(),
+            &LoadoutEditor::new(),
+            &ArmySelectState::default(),
+        );
+        let (s2, _, _, _) = decode_shell_prefs(&blob);
+        assert_eq!(s2.keybinds, s.keybinds, "keybinds survive the round-trip");
+        assert_eq!(s2.keybinds.key_for(GameAction::Pause), KeyId::P);
+
+        // A blob missing the key (an older save) decodes to the shipped default bindings, never panics.
+        let (s3, _, _, _) = decode_shell_prefs("gonedark-shell 1\nmaster=0.5\n");
+        assert_eq!(s3.keybinds, KeybindMap::default(), "missing keybinds → defaults");
+        // A garbage value also falls back to defaults (KeybindMap::decode is total).
+        let (s4, _, _, _) = decode_shell_prefs("keybinds=wat,nope\n");
+        assert_eq!(s4.keybinds, KeybindMap::default(), "garbage keybinds → defaults");
     }
 
     #[test]
@@ -2908,6 +3149,12 @@ mod tests {
             visual_sound_cues: true,
             cvd_palette: PaletteMode::Tritanopia,
             alert_cue_mode: AlertCueMode::AudioHaptic,
+            // A remapped binding (Pause → P) so the round-trip proves keybinds are carried too.
+            keybinds: {
+                let mut k = KeybindMap::default();
+                k.rebind(GameAction::Pause, KeyId::P);
+                k
+            },
         };
         let profile = ProfileState {
             callsign: "Reaper".to_string(),

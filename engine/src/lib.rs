@@ -151,6 +151,12 @@ pub mod shell_modes;
 /// and a coarse haptic pulse — each still an *alert, not intel* (bearing + kind only). Presentation
 /// only; reads no sim state, never checksummed (invariants #1/#4/#7).
 pub mod alert_cues;
+/// The desktop key-rebind model (D75 follow-up "the rebind editor"): `GameAction` + `KeyId` +
+/// `KeybindMap`, the pure, **winit-free** rebind / conflict-detection / ordinal-persistence seam the
+/// desktop Settings rebind editor drives. The `app` layer maps `winit::KeyCode` / egui `Key` ↔ `KeyId`
+/// at its boundary (invariant #2). Presentation only — a keybind never reaches the sim (invariants
+/// #1/#4/#7).
+pub mod keybind;
 
 pub use tuning::RenderTuning;
 /// The music-bus gain seam (D75 follow-up), re-exported so the desktop host can carry the Settings
