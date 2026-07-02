@@ -4214,6 +4214,28 @@ impl Game {
                     .render_tank_hud(device, queue, view, &state, shell_label);
             }
 
+            // 8''. Player vitals (HP bar + magazine count) for INFANTRY embodiment — the complement
+            // of the tank HUD's reload ring, so an embodied rifleman can read "how am I doing" and
+            // decide whether they've stayed too long (invariant #6: the decision to surface needs
+            // legible own-state, not just death). The avatar's OWN state, so it carries no world
+            // position and never widens the fog; a read-only derivation of authoritative sim state
+            // with the `Fixed`→`f32` hop host-side (invariant #4). Gated OFF for turret units — the
+            // tank HUD already surfaces the reload ring, and its own vitals slot is future work.
+            if self.sim.world.is_alive(self.player)
+                && self.sim.world.weapon[pidx].turret_speed == 0
+            {
+                let h = self.sim.world.health[pidx];
+                let w = &self.sim.world.weapon[pidx];
+                let vitals = gonedark_render::player_hud::PlayerHudState {
+                    current_hp: fixed_to_f32(h.cur),
+                    max_hp: fixed_to_f32(h.max),
+                    ammo: w.ammo as u32,
+                    mag_size: w.mag_size as u32,
+                };
+                self.renderer
+                    .render_player_hud(device, queue, view, &vitals);
+            }
+
             // 8'''. Sniper/zoom gun-sight overlay (tank embodiment P9): while aiming down sight the
             // first-person FOV has narrowed (above), so draw the scope chrome — the vignette tunnel,
             // aperture ring, crosshair, center dot, and the magnification readout — over the dark

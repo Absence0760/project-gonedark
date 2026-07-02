@@ -252,6 +252,7 @@ const BUTTON_ROW_CY: f32 = -PANEL_HH + 0.11; // near the panel's lower edge (rai
 /// NDC y spans [-1, 1] (a 2.0-unit range) mapped to the full ~360pt short side of a mid-range
 /// landscape phone, so one NDC unit ≈ 180pt. A slot of half-height `h` is `2*h` NDC tall, i.e.
 /// `2*h*REFERENCE_VIEWPORT_H` points — the quantity the guard asserts against 44pt.
+#[cfg(test)]
 const REFERENCE_VIEWPORT_H: f32 = 180.0;
 
 fn color(role: QuadRole) -> [f32; 3] {

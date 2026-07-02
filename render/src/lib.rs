@@ -2037,6 +2037,33 @@ impl Renderer {
         self.text.render(device, queue, view);
     }
 
+    /// Draw the embodied **player-vitals** HUD — the avatar's own HP bar + magazine count in the
+    /// bottom-left — on top of the current frame. Mirrors [`render_prompt`](Self::render_prompt):
+    /// a LOAD quad pass then the shared text pass, both re-asserting `chrome_aspect`. The host builds
+    /// [`PlayerHudState`](player_hud::PlayerHudState) from the possessed unit's read-only sim state at
+    /// the float boundary (invariant #4) and calls this ONLY while embodied in an infantry unit (a
+    /// tank shows its own reload ring instead). Health/ammo is the avatar's own state, not intel, so
+    /// it carries no world position and never widens the fog (invariant #6). A no-op with no body.
+    pub fn render_player_hud(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+        state: &player_hud::PlayerHudState,
+    ) {
+        let quads = player_hud::player_hud_quads(state);
+        if quads.is_empty() {
+            return;
+        }
+        self.overlay.draw_quads(device, queue, view, &quads);
+        self.text.set_aspect(self.chrome_aspect);
+        for l in player_hud::player_hud_labels(state) {
+            self.text
+                .queue(l.text, l.pos, l.size, l.anchor, l.color, l.alpha);
+        }
+        self.text.render(device, queue, view);
+    }
+
     /// Draw the command-view **readout** — the top-left unit/enemy/point tally (and the optional,
     /// host-supplied resource/income lines) — on top of the current frame (a LOAD text pass; never
     /// clears). The tally was derived during the preceding [`Renderer::render`] from this frame's
