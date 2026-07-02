@@ -25,6 +25,7 @@ members = [
     "app",
     "sim-runner",
     "net-sim-runner",
+    "replay-runner",
     "viz-runner",
     "server",
 ]

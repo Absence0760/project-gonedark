@@ -1,0 +1,29 @@
+# Headless replay record/playback driver (roadmap PC-3 — "Replays & spectating,
+# a determinism freebie"). A match is a seed + an ordered input log (invariant #1),
+# so re-seeding and re-feeding the log reproduces the world bit-for-bit — proven by
+# the per-tick checksum stream matching between the record and playback runs.
+#
+# Depends ONLY on core — no platform, no render — so the checksum stream it emits is
+# pure sim output, exactly like sim-runner/net-sim-runner. The replay wire encoding
+# lives HERE (invariant #2: core stays serde-free / dep-free); the runner uses only
+# std (a hand-rolled little-endian codec, mirroring core::lockstep's wire codec), so
+# it pulls no external dependency at all.
+[package]
+name = "gonedark-replay-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+gonedark-core = { path = "../core" }
+
+# The record/playback logic lives in the lib so both the `main` CLI and the
+# integration test drive the identical code path.
+[lib]
+name = "gonedark_replay_runner"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gonedark-replay-runner"
+path = "src/main.rs"

@@ -1339,6 +1339,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gonedark-replay-runner"
+version = "0.0.0"
+dependencies = [
+ "gonedark-core",
+]
+
+[[package]]
 name = "gonedark-server"
 version = "0.0.0"
 dependencies = [
