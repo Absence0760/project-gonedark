@@ -19,3 +19,10 @@ gonedark-pal = { path = "../pal" }
 wgpu = "29"
 glam = "0.33"
 log = "0.4"
+# CT-B (D76): the host-side RON mission format + its float-airlock loader
+# (`engine::mission_format`). serde/RON live HERE, never in `core` (invariant #2 — `core`
+# stays serde-free); the loader is the ONE place a text number becomes a sim number, and it
+# does so through integer → `Fixed` only, so no float ever reaches the deterministic sim
+# (invariant #1). serde matches the version the `server` crate already pins.
+serde = { version = "1.0.228", features = ["derive"] }
+ron = "0.8"

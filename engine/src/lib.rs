@@ -135,6 +135,12 @@ pub mod onboarding;
 /// campaign model" half `core::campaign` documents — host-side, so it adds NO checksum surface
 /// (invariant #1/#7). Public so a host (and tests) can launch a node's mission.
 pub mod mission_registry;
+/// CT-B (D76): the host-side RON **mission format** + its float-airlock loader. Owns the
+/// `MissionSpec` schema (serde/RON live here, not in `core` — invariant #2) and the parser/validator
+/// that maps it onto the CT-A `ScenarioBuilder`, converting every integer field to `Fixed` so no
+/// float ever reaches the sim (invariant #1). A data-loaded mission rides the same checksum footing
+/// as a hand seeder; the *Seize* file proves byte-identity.
+pub mod mission_format;
 /// Render quality tuning (Phase 4 WS-C). Owns `RenderTuning`: the tier + dyn-res + thermal-backoff
 /// controller. A RENDERING choice only — never touches the sim (invariant #1/#4).
 pub mod tuning;

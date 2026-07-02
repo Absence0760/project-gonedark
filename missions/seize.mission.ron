@@ -1,0 +1,70 @@
+// missions/seize.mission.ron — CT-B ([D76]): the *Seize* mission ("10 troops, take the base")
+// re-expressed as an authored RON data file.
+//
+// This is the proof obligation of the content-tooling plan: loaded through
+// `engine::mission_format::load_mission`, this file seeds a `Sim` byte-identical to the code-built
+// `core::scenario::seed_seize_mission` — same opening checksum (the CT-A golden 0x474cdbf2ad913ecb).
+// The format is a faithful re-expression of a mission we ship, not a second code path.
+//
+// THE FLOAT AIRLOCK (invariant #1): every number below is an INTEGER. Cells are whole world units;
+// facing is whole degrees (0 = +X/east, 180 = -X/west); the loader converts each to fixed-point via
+// integer arithmetic only. There is no `f32`/`f64` anywhere from this file to the sim — a float
+// literal here would fail to parse.
+//
+// Spawn ORDER is load-bearing: the loader spawns `forces` in list order, so the ECS slot layout
+// (and thus the checksum stream) is exactly this order — the ten player troops (a 2x5 block on the
+// west), then the enemy base camp, then the four-man garrison. Matches `seed_seize_mission` exactly.
+MissionSpec(
+    // The battlefield reference (resolved by the map format, CT-C). CT-B only carries the id.
+    map: "seize_outpost",
+
+    // Production OFF: a slow income drip and (below) an empty purse keep this a fixed-force assault.
+    income_period: 600,
+    starting_purse: 0,
+
+    // The PvE matchup (factions-plan WS-A/WS-D, D68): played US-side vs the French Army as OPFOR.
+    armies: (player: Us, enemy: Fr),
+
+    // No control points — this is a fixed-force assault, not an economy match.
+    control_points: [],
+
+    forces: [
+        // Ten Player Riflemen in a 2x5 block on the west (x = -22 - col*2, rows y = -2 and y = +2),
+        // FireAtWill, facing +X (0 deg) toward the base. In column-then-row spawn order.
+        Unit(kind: Rifleman, faction: Player, cell: (-22, -2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-22,  2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-24, -2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-24,  2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-26, -2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-26,  2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-28, -2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-28,  2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-30, -2), stance: FireAtWill, facing_deg: 0),
+        Unit(kind: Rifleman, faction: Player, cell: (-30,  2), stance: FireAtWill, facing_deg: 0),
+
+        // The enemy base camp (the objective) at (24, 0) — built operational.
+        Camp(faction: Enemy, cell: (24, 0)),
+
+        // The four-man garrison, relative to the base at x=24: offsets (-5,4),(-5,-4),(-9,0),(-1,7).
+        // FireAtWill, facing -X (180 deg) toward the incoming player line.
+        Unit(kind: Rifleman, faction: Enemy, cell: (19,  4), stance: FireAtWill, facing_deg: 180),
+        Unit(kind: Rifleman, faction: Enemy, cell: (19, -4), stance: FireAtWill, facing_deg: 180),
+        Unit(kind: Rifleman, faction: Enemy, cell: (15,  0), stance: FireAtWill, facing_deg: 180),
+        Unit(kind: Rifleman, faction: Enemy, cell: (23,  7), stance: FireAtWill, facing_deg: 180),
+    ],
+
+    // One required objective: eliminate the Enemy (the camp + its garrison). It FAILS via the
+    // universal owner-eliminated rule if the Player force is wiped ("lose all ten"). The HUD goal
+    // (enemy destroyable strength = 4 garrison + 1 camp = 5) is computed from `forces` at load.
+    objectives: [
+        EliminateFaction(owner: Player, target: Enemy, label: "Take the enemy base"),
+    ],
+
+    difficulty: Recruit,
+
+    briefing: (
+        title: "Seize the Outpost",
+        situation: "Ten of yours against a dug-in garrison. Command them — or go dark and fight one yourself. Just don't stay blind too long.",
+        objective_line: "Take the enemy camp. Don't lose all ten.",
+    ),
+)
