@@ -133,10 +133,21 @@ Reads the `.covergrid` (no engine build needed) and reports:
   objectives unreachable); Heavy = impassable, 4-connected flood fill;
 - **sealed pockets** (WARN) — count of disconnected passable regions;
 - **spawn validity** (ERROR) — `--spawn cx,cy` must be passable **and** reachable;
+- **spawn connectivity** (ERROR) — flood-fill *from* each `--spawn`; every `--control cx,cy` and every
+  other spawn must be reachable (a side-specific seal the global reachability check misses), plus the
+  passable-area % each spawn actually reaches;
+- **chokepoints** (WARN) — narrowest passable corridor along the route between each spawn pair, with the
+  pinch cell; a single-cell pinch warns ("one position holds the whole map");
+- **open field** (WARN) — largest contiguous no-cover region (bbox + centroid); `>25%` of the map flags
+  a no-man's-land crossing;
+- **pvp symmetry** (ERROR, opt-in `--pvp mirror-x|mirror-y|point`) — the CT-G fairness gate: cover,
+  spawns and control points must be *exactly* symmetric under the declared transform; rejects an
+  asymmetric fixture, accepts a mirrored one;
 - **wall specks** (WARN) — isolated single-cell walls (often ingest noise);
 - **symmetry** (info) — left/right mirror mismatch, for the balance pass;
 - **structures** (info) — connected `Heavy` blobs enumerated as objects with **bbox + centroid in
   cell coordinates**, so a bug report can say *"building at (26,32)-(34,38)"*;
+- **`--self-test`** — synthetic good/bad fixtures exercise every check in-memory (no files), CI-able;
 - **PNG preview** (`--preview`) — a labelled image with coordinate gridlines every 16 cells.
 
 Exit code is non-zero on any ERROR, so `pnpm maps:lint` gates CI. Example — it catches a spawn

@@ -664,3 +664,37 @@ is exactly the kind of thing to verify in the map **debug mode** ([`maps.md`](ma
 the `MapInspect` scene + cover overlay). Relevant invariants: #1 (any mutable terrain stays
 fixed-point), #4 (render never mutates sim terrain), #7 (mutable terrain **must** be checksum-folded).
 Cross-link: [`maps.md`](maps.md), [D28](decisions.md), [D50](decisions.md), [D77](decisions.md).
+
+---
+
+## Q26 — Replay artifact compatibility: disposable within a build, or long-lived across releases? <a id="q26--replay-compatibility"></a>
+
+The replay foundation ([D89](decisions.md), the `replay-runner` crate) records a match as its RNG seed
++ the per-tick `Command` log; the artifact carries a `FORMAT_VERSION` and **rejects a mismatch**. Open:
+do we need a replay recorded on build *N* to still play back correctly on build *N+1* after the
+`Command` vocabulary or sim logic changes?
+
+| Option | For | Against |
+|---|---|---|
+| **(i) Disposable within a build** | Zero policy; the seed+log always reproduces *its own* build bit-for-bit | A replay saved by a player breaks on the next update — bad for shared/e-sports replays |
+| **(ii) Long-lived, versioned** | Replays survive releases; a real PC/e-sports asset ([PC-3](roadmap.md)) | Needs a codec-version → sim-version compatibility policy, and either frozen sim logic per replay-version or a migration path — expensive |
+
+**Current lean:** **(i) disposable** for now — the foundation's value (desync forensics, in-build QA,
+the determinism proof) needs no cross-version guarantee, and freezing sim logic to preserve old
+replays would fight active balance work. Revisit if/when a *shared* replay or spectator-download
+feature is actually scoped. Cross-link: [D89](decisions.md), invariant #1.
+
+---
+
+## Q27 — Should the `pal-desktop` gameplay keymap become rebindable too? <a id="q27--gameplay-key-rebind"></a>
+
+The key-rebind editor ([D90](decisions.md)) rebinds only the **`app`-owned host toggles**
+(pause/fullscreen/debug-overlay). The **gameplay** keys (move/fire/embody/build/train/upgrade/…) decode
+inside `pal-desktop`'s `DesktopInput`, so they stay hardcoded. Extending the rebind map to them means
+threading a `KeybindMap` from the host into the PAL input decode — a PAL-boundary change (invariant #2:
+`pal-desktop` would consume a host-owned neutral keymap rather than hardcoding `KeyCode`s).
+
+**Current lean:** **yes, once the host-key editor proves the UX** — the `engine::keybind` seam is
+already platform-neutral and would extend cleanly; the only real work is the PAL wiring + widening the
+`GameAction` vocabulary. Pairs with the [PC-2](roadmap.md) PC control/options surface. Cross-link:
+[D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.md) PC-2.

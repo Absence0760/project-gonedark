@@ -4016,3 +4016,74 @@ procedural floor) and runtime-driven death (dead units drop from the snapshot) r
 **Cross-link:** [D84](#d84--animation-floor-cp3ws-b-is-a-pure-clip-selection-seam--a-procedural-pose-rig-authoring-lands-skeletal-playback-deferred),
 [D19](#d19), [D46](#d46), invariant #4, [`roadmap.md`](roadmap.md) CP-3 / *Art & assets*,
 [`plans/visual-design-plan.md`](plans/visual-design-plan.md) WS-B.
+
+## D88 — `core::scenario::ScenarioBuilder` lands the content-tooling spine (CT-A)
+
+**Status: landed.** [D76](#d76) settled the mission/map authoring format as **external RON data behind
+a host-side loader driving a serde-free `core` builder**;
+[`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-A is the first slice of that
+build-out and is now in `core::scenario`. `ScenarioBuilder<'a>` borrows `&mut Sim` and exposes a
+serde-free, float-free, fixed-point API over the private spawn/build primitives the hand-written
+seeders already call — `set_income` / `set_army` / `set_purse` / `control_point` / `spawn(kind, pos,
+faction, stance, facing)` / `build_camp` — plus a `sim_mut()` escape hatch for mission-specific
+shaping (loadout apply, terrain, baked orders). `seed_seize_mission` **and** `seed_skirmish` were
+refactored to build *through* it (kept as the living oracle, not deleted).
+
+**Why.** The builder gives the D76 host-side RON loader a `core`-clean seam to target without dragging
+serde into `core` (invariant #2) or adding per-tick checksum surface (invariant #7). The refactor is
+pinned **byte-identical** by golden opening checksums (Seize `0x474cdbf2ad913ecb`, skirmish
+`0x3b1d9e207ce97e65`) plus a test that rebuilds Seize through the *public* builder API alone and
+matches both the seeder and the golden — so the determinism matrix covers a builder-seeded `Sim` for
+free. 557 `core` tests green dev+release; the sim-runner checksum stream is unchanged.
+
+**Note for CT-B:** the builder borrows rather than owns a `Sim` (`let mut sim = Sim::new(seed); {
+ScenarioBuilder::new(&mut sim)… }; sim`); mission-specific shaping is via `sim_mut()`, so the RON
+loader may want thin builder wrappers for the common shaping ops if the schema warrants it.
+
+**Cross-link:** [D76](#d76), [D77](#d77),
+[`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-A, invariants #1/#2/#7.
+
+## D89 — Replays are a seed + an input log, proven by checksum equality (PC-3)
+
+**Status: landed (single-client foundation).** A match is fully determined by its RNG seed and the
+per-tick ordered `Command` stream (invariant #1), so replay/spectating need store **no world state** —
+only seed + inputs. Implemented as the headless `replay-runner` crate (sibling to
+`sim-runner`/`net-sim-runner`, depending only on `gonedark-core`): **record** captures the command log
+while driving a scenario; **playback** re-seeds from `(scenario, seed)` and re-feeds only the recorded
+log; the load-bearing proof is that the playback per-tick checksum stream (`Sim::checksum`, invariant
+#7) is **bit-identical** to the record run, verified *through a serialized on-disk artifact* (`GDRP`
+magic + version + tagged commands). `pnpm desktop:replay` runs the round-trip.
+
+**Why.** Determinism already guarantees reproducibility; this cashes it in for near-zero cost and hands
+netcode/QA a replay artifact for desync forensics, plus a cheap PC/e-sports differentiator
+([`positioning-pc.md`](positioning/positioning-pc.md) PC-3). The replay byte codec lives in the runner,
+**not** `core` (invariant #2: `core` stays serde-free/dep-free); it mirrors `core::lockstep`'s wire
+discipline — raw `Fixed` bits, exhaustively-tagged enums (adding a `Command` variant is a compile
+error, not a silent drop), loud decode errors. **Scope:** single-client (one ordered command stream);
+multi-peer per-peer ordering and a *rendered* spectator view are follow-ups on this same seed+log
+foundation. 9 crate tests green dev+release. Opens [Q26](open-questions.md).
+
+**Cross-link:** invariants #1/#2/#7, [D27](#d27) (lockstep wire discipline),
+[`positioning-pc.md`](positioning/positioning-pc.md) PC-3, [`roadmap.md`](roadmap.md) PC-3.
+
+## D90 — Desktop key-rebind editor is a pure `engine::keybind` seam wired at the `app` boundary
+
+**Status: landed (host toggles).** The owed rebind half of the [D75](#d75) Settings surface: the
+rebindable host actions (Pause/Esc, Toggle-fullscreen/F11, Toggle-debug-overlay/F3) now bind through a
+`KeybindMap` in a new `engine::keybind` module — defaults, conflict-rejecting `rebind` (a shared key
+returns `RebindOutcome::Conflict(owner)` and leaves the map untouched), reset, and an
+ordinal-based `encode`/`decode` (tolerant: garbage/out-of-range/duplicate → defaults) reusing the
+`QualityChoice` persisted-ordinal pattern. The egui Settings screen gained a click-to-arm "KEY
+BINDINGS" section; `app` maps `winit::KeyCode` / egui `Key` ↔ the neutral `KeyId` at the boundary and
+resolves live keys through the map instead of hardcoded matches; the binding persists via the existing
+shell-prefs codec.
+
+**Why.** Keeping the model in `engine` holds invariant #2 (engine pulls in **no** windowing crate — the
+winit/egui↔`KeyId` mapping lives only in `app`), makes the rebind/conflict/persistence logic
+unit-testable winit-free (11 engine + relevant app tests, green dev+release), and keeps the egui
+capture flow thin over a tested type. Keybinds are presentation/input-only — never sim or checksum
+state. **Scope:** only the `app`-owned host toggles are rebindable; the `pal-desktop` gameplay keymap
+(move/fire/embody/build/train/upgrade/…) stays hardcoded because it decodes in a different crate —
+extending the map to it is a PAL-boundary change, deferred as [Q27](open-questions.md).
+
+**Cross-link:** [D75](#d75), invariant #2, [`roadmap.md`](roadmap.md) Settings / *UI-UX polish*.

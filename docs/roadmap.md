@@ -472,7 +472,11 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   persisted `AlertCueMode` selecting audio/haptic equivalents of the flash + the existing colourblind
   ramps/shape glyphs); **graphics-tier selection now drives `render::tiers` live and music volume
   drives a real looping music bus** in the shared `pal::mix` mixer (desktop cpal sink; Android oboe
-  wiring pending) ([D75](decisions.md) follow-up); the rebind editor still owed.
+  wiring pending) ([D75](decisions.md) follow-up); **the desktop key-rebind editor now landed**
+  ([D90](decisions.md)) — a pure winit-free `engine::keybind` seam (defaults / conflict-rejecting
+  rebind / ordinal persistence) with a click-to-arm egui "KEY BINDINGS" section, covering the
+  `app`-owned host toggles (pause/fullscreen/debug); rebinding the `pal-desktop` **gameplay** keymap
+  is deferred to [Q27](open-questions.md), and the *touch*-layout editor is the separate item below.
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions.
   **Hit feedback (the embodied "I hit him" cue) is tracked as TF-4** under *Test & feedback
   hardening* above ([`test-harness-plan.md`](plans/test-harness-plan.md) WS-4)
@@ -630,8 +634,13 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
   (Pairs with CP-2.)
 - [ ] **PC-2 — PC control & options surface.** Full rebinds, graphics options, ultrawide /
   high-refresh / high-DPI support — the settings depth a PC player expects.
-- [ ] **PC-3 — Replays & spectating (a determinism freebie).** A match is a seed + an input log
+- [~] **PC-3 — Replays & spectating (a determinism freebie).** A match is a seed + an input log
   (invariant #1), so replay + spectator view are *cheap* and a real PC / e-sports differentiator.
+  **Foundation landed ([D89](decisions.md)):** the headless `replay-runner` crate records a scenario's
+  seed + per-tick `Command` log and plays it back **bit-identical** by checksum (`pnpm desktop:replay`),
+  the byte codec host-side so `core` stays serde-free. **Remaining:** multi-peer replay ordering and a
+  *rendered* spectator view (both ride this same seed+log foundation); replay cross-version
+  compatibility is [Q26](open-questions.md).
 - [ ] **PC-4 — Mods / data-driven content.** Missions/scenarios become external **RON data files**
   ([D76](decisions.md), [`content-tooling-plan.md`](plans/content-tooling-plan.md)) and maps carry
   their own content-addressed terrain ([D77](decisions.md)); exposing them as moddable content is how

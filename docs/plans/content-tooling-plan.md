@@ -80,6 +80,12 @@ files (`core/scenario.rs`, `engine/mission_registry.rs`) stay small, additive, r
 
 ### CT-A — `core::scenario::ScenarioBuilder` *(the spine)*
 
+> **Status: LANDED ([D88](../decisions.md)).** `ScenarioBuilder<'a>` (`set_income`/`set_army`/
+> `set_purse`/`control_point`/`spawn`/`build_camp` + a `sim_mut()` shaping hatch) is in `core::scenario`;
+> `seed_seize_mission` **and** `seed_skirmish` build through it. Byte-identity pinned by golden opening
+> checksums (Seize `0x474cdbf2ad913ecb`, skirmish `0x3b1d9e207ce97e65`) + a public-API rebuild test;
+> 557 `core` tests green dev+release. **Next slice:** CT-B (the RON airlock) targets this seam.
+
 The serde-free, deterministic builder API over the existing private spawn/build primitives. Refactor
 `seed_seize_mission` (and ideally `seed_skirmish`) to build *through* it, proving the API expresses the
 missions we already ship before any file format rides on it.

@@ -128,10 +128,12 @@ landed (TF-4: hitmarker + hit SFX off the avatar-source `SimEvent::Damaged` stre
 > `select_clip`-chosen clip, and emits per-part `mesh::MeshInstance`s through the **existing** mesh
 > pipeline (one matrix per bone — no skinning shader, no new render dep). 17 unit tests (parse,
 > sampling, nlerp, part-instance transforms) green dev+release; the render crate stays `wgpu`+
-> `bytemuck` only. **Still owed (the last mile):** wiring these part-instances into the token draw
-> pass (troopers keep the `anim` procedural pose until then), and a *driven* death-topple (dead units
-> are dropped from the render snapshot, so it needs cross-tick unit identity — a sim-side change,
-> deliberately out of scope).
+> `bytemuck` only. **The last-mile wiring has since landed ([D87](../decisions.md)):** the generic
+> `ModelKind::Trooper` now draws through the rig's per-part instanced batches in **both** the
+> command-view token pass and the embodied world pass (procedural `anim` pose retired for the generic
+> trooper; `TrooperUs`/`TrooperFr` keep it). **Still owed:** per-faction rigs, and a *driven*
+> death-topple (dead units are dropped from the render snapshot, so it needs cross-tick unit identity —
+> a sim-side change, deliberately out of scope).
 
 Coherent locomotion / fire / death animation on the greybox so the eye-level view reads as a *place*.
 
