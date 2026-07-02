@@ -1976,7 +1976,7 @@ impl Renderer {
         // in pixels (the bar's NDC layout is filled by the engine from the same hit rects). Drawn as a
         // LOAD pass over the labels — command-view chrome only (invariant #6).
         self.icon.set_aspect(self.chrome_aspect);
-        for it in command_bar::command_bar_icons(bar) {
+        for it in command_bar::command_bar_icons(bar, &self.palette) {
             self.icon.queue_item(it);
         }
         self.icon.render(device, queue, view);
@@ -2083,7 +2083,7 @@ impl Renderer {
         economy: Option<readout::EconomyReadout>,
         world_dark: bool,
     ) {
-        let labels = readout::readout_labels(&self.readout_tally, economy, world_dark);
+        let labels = readout::readout_labels(&self.readout_tally, economy, world_dark, &self.palette);
         if labels.is_empty() {
             return;
         }
