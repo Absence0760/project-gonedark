@@ -91,6 +91,14 @@ def box(name, dims, loc, material):
 # Bone hierarchy (Z-up, feet at z≈0), each part bound rigidly to ONE bone. Head/tail place the
 # joint; the bone's Y axis runs head→tail. `parts` lists (part-name, bone) so each mesh box is
 # weighted 1.0 to that bone's vertex group.
+#
+# NOTE — orientation: the hierarchy below is authored the classic way, facing +Y. `main` then
+# rotates the whole rig −90° about Z (`reorient_to_x_forward`) so the trooper FACES +X, matching the
+# engine's `+X = forward` convention (the renderer rotates local +X onto a unit's heading; every
+# other unit — tank nose, barrel — is +X too). Rotating the armature OBJECT and baking it turns each
+# bone's LOCAL frame by exactly that −90°, so the authored clips (which key bone-local eulers) stay
+# coherent with no per-clip axis surgery: leg stride, arm counter-swing and recoil all rotate with
+# the body. Only the rifle is re-POSED (not merely rotated) to an aimed, barrel-forward grip.
 BONES = [
     # name,        head,              tail,               parent
     ("pelvis",     (0.0, 0.0, 0.92),  (0.0, 0.0, 1.10),   None),
@@ -135,9 +143,31 @@ def build_parts():
         (box("armR_m", (0.12, 0.34, 0.14), (-0.16, 0.14, 1.28), fatigue), "arm_R"),
         (box("legL_m", (0.15, 0.24, 0.90), (0.10, 0.02, 0.47), fatigue), "leg_L"),
         (box("legR_m", (0.15, 0.24, 0.90), (-0.10, 0.02, 0.47), fatigue), "leg_R"),
-        # M16 cradled across the chest, bound to the right (firing) arm so recoil reads on it.
-        (box("rifle_m", (0.60, 0.06, 0.07), (0.0, 0.34, 1.16), gun), "arm_R"),
+        # M16 held at the ready — barrel forward along +X (the body's facing after the reorient in
+        # main), tucked in front of the chest, bound to the right (firing) arm so recoil reads on it.
+        # RE-POSED (not just reoriented): the rest of the body is authored +Y-forward and rotated to
+        # +X in main, but this box is authored directly in the final +X pose and excluded from that
+        # rotation (see main) so it points forward, not laid across the chest (the old +Y-forward bug).
+        (box("rifle_m", (0.60, 0.06, 0.07), (0.16, 0.05, 1.28), gun), "arm_R"),
     ]
+
+
+def reorient_to_x_forward(objs):
+    """Rotate each object −90° about world Z (about the origin) and bake it, taking the +Y-forward
+    authoring to the engine's +X-forward convention. For the armature this rotates every bone's
+    REST frame by exactly −90°, so bone-local clip eulers keep producing the same motion relative to
+    the body (now facing +X). Baking (`transform_apply`) leaves each object's matrix at identity with
+    the rotation folded into the data — bones for the armature, verts for the meshes — so the later
+    GDSK bake (which reads `matrix_world` + `matrix_local`) sees the reoriented geometry directly."""
+    from mathutils import Matrix
+
+    R = Matrix.Rotation(math.radians(-90), 4, "Z")
+    for o in objs:
+        bpy.ops.object.select_all(action="DESELECT")
+        o.select_set(True)
+        bpy.context.view_layer.objects.active = o
+        o.matrix_world = R @ o.matrix_world
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
 
 def bind_part(part, bone, arm_obj):
@@ -389,6 +419,11 @@ def main():
 
     arm_obj = build_armature()
     parts = build_parts()
+    # Re-orient +Y-forward → +X-forward (engine convention). Rotate the armature + every body mesh,
+    # but NOT the rifle: it is already authored in the final aimed +X pose (see build_parts), so
+    # rotating it too would swing the barrel back across the chest. Do this before binding so the
+    # meshes carry no parent transform yet (a clean per-object bake about the world origin).
+    reorient_to_x_forward([arm_obj] + [p for p, _ in parts if p.name != "rifle_m"])
     for part, bone in parts:
         bind_part(part, bone, arm_obj)
 

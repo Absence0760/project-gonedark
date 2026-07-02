@@ -13,10 +13,10 @@
       "author": "Jared Howard",
       "license": "CC0-1.0",
       "url": "",
-      "bytes": 33728,
-      "sha256": "d709c10f55e811afad28e5f43abbd1620a2aa851fff3085b9f3bc7a8170622ad",
+      "bytes": 34312,
+      "sha256": "3ef73b7e88d4923f4a42fda33c673d55f654271d128ff326c8905a39f3d25a1d",
       "cooked_bytes": 44341,
-      "cooked_sha256": "9080273966ecbf81dda7286787f3d952800f839dd4cb8806d1892d7a0fbd8a33",
+      "cooked_sha256": "e1a34732c9000544d5a4d4e4f6b7ebdedfdd6c5d1cfa9050144739fb070013d2",
       "joints": [
         "pelvis",
         "spine",
