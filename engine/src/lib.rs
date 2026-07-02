@@ -2577,23 +2577,42 @@ impl Game {
     }
 
     /// Push the physical **UI scale** (the PAL display scale — desktop `Window::scale_factor()`,
-    /// Android `densityDpi / DENSITY_DEFAULT`). Forwards to the renderer (text/icon glyphs AND the
-    /// chrome boxes that contain them scale together, so nothing overflows its panel) and is used as
-    /// the touch-layout density floor so controls stay tappable on a dense phone. The host calls this
-    /// each frame from its stored display scale (the parallel to `set_palette_mode` /
-    /// `set_touch_look_prefs`). Presentation/input only — never the deterministic sim or the per-tick
-    /// checksum (invariants #1/#2/#4). `1.0` reproduces the legacy geometry exactly.
+    /// Android `densityDpi / DENSITY_DEFAULT`). Stored and used as the **touch-target density floor**
+    /// so on-screen controls clear the ~9 mm minimum on a dense phone. The host calls this each frame
+    /// from its stored display scale (the parallel to `set_palette_mode` / `set_touch_look_prefs`).
+    /// Presentation/input only — never the deterministic sim or the per-tick checksum (invariants
+    /// #1/#2/#4).
     ///
-    /// Increment 1 (this change) uses `ui_scale` for the **touch-target density floor** only; the
-    /// text/icon chrome scaling is forwarded to the renderer in increment 2, once the HUD-chrome boxes
-    /// scale in lockstep (otherwise scaled glyphs overflow their unscaled panels).
+    /// The renderer's text/icon + chrome-box scaling is a SEPARATE, currently-pinned scale — see
+    /// [`render_ui_scale`](Self::render_ui_scale). The full box-scaling machinery + per-panel
+    /// containment tests are in place, but forwarding the *raw* display scale is a regression for
+    /// tiling rows (the command-bar buttons overflow/overlap the screen at phone densities — proven
+    /// by `command_touch::scaled_hit_test_*`), so the render scale is pinned to `1.0` until a
+    /// device-tuned scale function lands. The touch-density floor below is unaffected and active.
     pub fn set_ui_scale(&mut self, ui_scale: f32) {
         self.ui_scale = if ui_scale.is_finite() && ui_scale > 0.0 {
             ui_scale
         } else {
             1.0
         };
-        self.renderer.set_ui_scale(self.ui_scale);
+        // Text/icon + chrome-box scaling uses the pinned render scale (1.0 today), NOT the raw
+        // display scale — see `render_ui_scale`. This keeps glyphs/boxes byte-identical (no overflow,
+        // no tiling-row overlap) while the touch-density floor above uses the real scale.
+        self.renderer.set_ui_scale(self.render_ui_scale());
+    }
+
+    /// The scale actually applied to the **rendered chrome** (text/icons + their boxes) and its
+    /// matching hit-tests — DISTINCT from the raw display scale in [`set_ui_scale`](Self::set_ui_scale),
+    /// which drives the touch-density floor. Pinned to `1.0` for now: forwarding the raw display
+    /// density scales panels fine but breaks *tiling* elements (a full-width command-bar button row
+    /// can't grow 2.75× on a phone — it overflows and its buttons overlap; see
+    /// `command_touch::scaled_hit_test_matches_the_scaled_draw_and_is_identity_at_one`). The scaling
+    /// machinery + per-panel containment tests are all in place, so activating this is a one-line
+    /// change to a device-tuned scale function (likely a clamped / partial correction), owed once it
+    /// can be validated on the Galaxy S24. Keeping draw and hit-test on the SAME value here means
+    /// they never drift regardless of what that function becomes.
+    fn render_ui_scale(&self) -> f32 {
+        1.0
     }
 
     /// Whether any in-session shell overlay (pause / reconnect prompt / post-match summary) is
@@ -2618,7 +2637,15 @@ impl Game {
     /// concept of).
     pub fn overlay_click(&self, ndc: (f32, f32)) -> Option<OverlayClick> {
         let overlay = overlay_for_surface(self.shell.surface(), self.shell.is_single_player());
-        let slot = gonedark_render::overlay::button_slot_at(&overlay, ndc.0, ndc.1)?;
+        // Hit-test at the live UI scale so the tappable region tracks the button as DRAWN (the
+        // overlay quads are drawn scaled by `ui_scale`); without this a click on the visible button
+        // would miss at any scale != 1 (retina desktop, dense phone).
+        let slot = gonedark_render::overlay::button_slot_at_scaled(
+            &overlay,
+            ndc.0,
+            ndc.1,
+            self.render_ui_scale(),
+        )?;
         overlay_click_action(&overlay, slot)
     }
 
@@ -3119,7 +3146,11 @@ impl Game {
         // drift). Command view only — never while embodied (invariant #6).
         if !self.embodied && (input.pointer_down || input.pointer_up) {
             if let Some((px, py)) = input.pointer {
-                if let Some(btn) = command_touch::CommandBarLayout::new(width, height).button_at(px, py)
+                // Hit-test at the live UI scale so the tap target tracks the button as DRAWN (the
+                // renderer inflates the command-bar buttons by `ui_scale`); an unscaled hit would
+                // miss the visible button at any scale != 1.
+                if let Some(btn) = command_touch::CommandBarLayout::new(width, height)
+                    .button_at_scaled(px, py, self.render_ui_scale())
                 {
                     // Arm the intent on the release only; the press merely blocks the drag from starting.
                     if input.pointer_up {

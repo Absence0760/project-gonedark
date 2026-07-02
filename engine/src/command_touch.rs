@@ -67,10 +67,6 @@ struct Rect {
 
 impl Rect {
     #[inline]
-    fn contains(&self, x: f32, y: f32) -> bool {
-        x >= self.x0 && x < self.x1 && y >= self.y0 && y < self.y1
-    }
-    #[inline]
     fn cx(&self) -> f32 {
         0.5 * (self.x0 + self.x1)
     }
@@ -133,9 +129,24 @@ impl CommandBarLayout {
     /// Which button (if any) a tap at pixel `(x, y)` lands in. The first containing rect wins; the
     /// layout never overlaps buttons, so the result is unambiguous.
     pub fn button_at(&self, x: f32, y: f32) -> Option<CommandButton> {
+        self.button_at_scaled(x, y, 1.0)
+    }
+
+    /// [`button_at`] with the physical `ui_scale` applied — the hit-test twin of the renderer's
+    /// scaled DRAW (`render::command_bar::command_bar_quads_scaled`, which inflates each button's
+    /// half-extents by `ui_scale` about its center). Scaling the hit rect the same way keeps the
+    /// tappable region on the button as drawn; without it, at `ui_scale != 1` (dense phone, retina
+    /// desktop) the caption + box draw large but the tap target stays at its 1.0 size and a tap on
+    /// the visible button misses. `ui_scale == 1.0` is byte-identical to the legacy hit-test.
+    pub fn button_at_scaled(&self, x: f32, y: f32, ui_scale: f32) -> Option<CommandButton> {
+        let s = ui_scale.max(0.0);
         self.buttons
             .iter()
-            .find(|(_, r)| r.contains(x, y))
+            .find(|(_, r)| {
+                let hw = r.hw() * s;
+                let hh = r.hh() * s;
+                (x - r.cx()).abs() <= hw && (y - r.cy()).abs() <= hh
+            })
             .map(|(k, _)| *k)
     }
 
@@ -177,6 +188,28 @@ mod tests {
                 "center of {kind:?} should hit it"
             );
         }
+    }
+
+    #[test]
+    fn scaled_hit_test_matches_the_scaled_draw_and_is_identity_at_one() {
+        // `button_at_scaled` grows the hit region about each button's center to track the renderer's
+        // scaled DRAW. NOTE: scaling a *row* of buttons about their centers makes neighbours overlap
+        // past ~1.5×, which is exactly why the raw display scale is NOT forwarded to the command bar
+        // (see `Game::render_ui_scale` — the raw density overflows tiling rows; a device-tuned scale
+        // is owed). We only assert the two safe guarantees the seam must hold: identity at 1.0, and
+        // that a button's own center keeps hitting it when the region grows.
+        let bar = CommandBarLayout::new(W, H);
+        let (kind, r) = bar.buttons[0];
+        assert_eq!(
+            bar.button_at_scaled(r.cx(), r.cy(), 1.0),
+            bar.button_at(r.cx(), r.cy()),
+            "1× is byte-identical to the legacy hit-test"
+        );
+        assert_eq!(
+            bar.button_at_scaled(r.cx(), r.cy(), 1.8),
+            Some(kind),
+            "a button's own center keeps hitting it as the region grows"
+        );
     }
 
     #[test]

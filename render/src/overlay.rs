@@ -421,9 +421,30 @@ fn push_button_row(out: &mut Vec<OverlayQuad>, choices: &[QuadRole], ui_scale: f
 /// none). The geometry mirrors [`push_button_row`] exactly, so a hit here corresponds 1:1 to a
 /// drawn button — this is the seam the native/touch layer calls to turn a tap into a slot.
 pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize> {
+    button_slot_at_scaled(overlay, ndc_x, ndc_y, 1.0)
+}
+
+/// [`button_slot_at`] with the physical `ui_scale` applied — the hit-test twin of
+/// [`push_button_row`]'s scaled DRAW. Both scale the button half-extents / gap / row-center by
+/// `ui_scale`, so the tappable region always tracks the drawn button: without this, at `ui_scale != 1`
+/// (retina desktop, dense phone) the button would draw large but hit-test at its 1.0 size, and a
+/// click on the visible button would miss. `ui_scale == 1.0` is byte-identical to the legacy hit-test
+/// (the host threads its live scale in; the no-arg [`button_slot_at`] stays for tests / 1.0 callers).
+pub fn button_slot_at_scaled(
+    overlay: &Overlay,
+    ndc_x: f32,
+    ndc_y: f32,
+    ui_scale: f32,
+) -> Option<usize> {
+    let s = ui_scale.max(0.0);
+    let button_hw = BUTTON_HW * s;
+    let button_hh = BUTTON_HH * s;
+    let button_gap = BUTTON_GAP * s;
+    let row_cy = BUTTON_ROW_CY * s;
+    let hit_pad = BUTTON_HIT_PAD * s;
     // Reject anything outside the button row's vertical band before walking the slots. The band
     // includes the full forgiveness pad (the drawn slot is short — H3/M4), so a near-miss still hits.
-    if (ndc_y - BUTTON_ROW_CY).abs() > BUTTON_HH + BUTTON_HIT_PAD {
+    if (ndc_y - row_cy).abs() > button_hh + hit_pad {
         return None;
     }
     let choices = surface_choices(overlay);
@@ -434,14 +455,14 @@ pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize
     // Horizontal forgiveness is clamped to half the inter-slot gap so two adjacent slots tile
     // exactly at their midpoint (no ambiguous overlap where a tap could match either); this also
     // fills the dead gap between them so the whole row is live.
-    let hpad = BUTTON_HIT_PAD.min(BUTTON_GAP * 0.5);
-    let total_hw = n as f32 * BUTTON_HW + (n as f32 - 1.0) * BUTTON_GAP * 0.5;
-    let mut cx = -total_hw + BUTTON_HW;
+    let hpad = hit_pad.min(button_gap * 0.5);
+    let total_hw = n as f32 * button_hw + (n as f32 - 1.0) * button_gap * 0.5;
+    let mut cx = -total_hw + button_hw;
     for slot in 0..n {
-        if (ndc_x - cx).abs() <= BUTTON_HW + hpad {
+        if (ndc_x - cx).abs() <= button_hw + hpad {
             return Some(slot);
         }
-        cx += 2.0 * BUTTON_HW + BUTTON_GAP;
+        cx += 2.0 * button_hw + button_gap;
     }
     None
 }
@@ -1058,6 +1079,31 @@ mod tests {
     use super::*;
     use gonedark_core::components::{Faction, FACTION_COUNT};
     use gonedark_core::shell::{FactionStats, MatchOutcome, MatchSummary};
+
+    /// The hit-test must track the DRAW at any `ui_scale`: the center of each scaled-drawn button
+    /// must hit-test to its own slot. Without the scaled hit-test, a click on the visible (scaled)
+    /// button would miss at `ui_scale != 1` (retina desktop, dense phone). Proves draw==hit at 2×.
+    #[test]
+    fn scaled_button_hit_test_tracks_the_scaled_draw() {
+        let overlay = Overlay::Paused { single_player: false };
+        for &ui_scale in &[1.0_f32, 2.0, 3.0] {
+            // Each drawn button quad's center (from the SCALED draw) must resolve to a slot via the
+            // SCALED hit-test — and the slots come out in left-to-right draw order.
+            let buttons: Vec<_> = overlay_quads_scaled(&overlay, ui_scale)
+                .into_iter()
+                .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
+                .collect();
+            assert!(!buttons.is_empty(), "paused draws buttons");
+            for (i, b) in buttons.iter().enumerate() {
+                let hit = button_slot_at_scaled(&overlay, b.cx, b.cy, ui_scale);
+                assert_eq!(
+                    hit,
+                    Some(i),
+                    "ui_scale {ui_scale}: drawn button {i} center must hit-test to slot {i}"
+                );
+            }
+        }
+    }
 
     fn roles(quads: &[OverlayQuad]) -> Vec<QuadRole> {
         quads.iter().map(|q| q.role).collect()
