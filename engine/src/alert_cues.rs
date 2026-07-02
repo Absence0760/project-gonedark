@@ -128,6 +128,25 @@ pub struct HapticPulse {
     pub tick: u64,
 }
 
+/// One-shot vibration duration (ms) for a directional alert pulse, **coded by side**. A single motor
+/// can't localize, so the three sides map to three distinguishable buzz *lengths* — a coarse code the
+/// player can learn (shortest = left, longest = right), the haptic analogue of the edge-ring flash's
+/// bearing. This is bearing-only, never distance (invariant #6 "alerts, not intel"): the duration
+/// encodes side, never range. PURE + host-tested; the Android [`crate`] backend calls it to drive the
+/// vibrator, desktop (no motor) never does. Feel/exact ms are owed an on-device tuning pass.
+pub fn haptic_pulse_ms(side: HapticSide) -> u64 {
+    match side {
+        HapticSide::Left => 20,
+        HapticSide::Center => 40,
+        HapticSide::Right => 60,
+    }
+}
+
+/// Very short confirmation tick (ms) for a discrete embodied touch-button edge (crouch / reload / jump
+/// / surface / fire-mode — P2-1). Short enough to read as a click, not a buzz; distinct from the longer
+/// coded [`haptic_pulse_ms`] alert pulses so button feedback never masquerades as a going-dark alert.
+pub const BUTTON_TICK_MS: u64 = 12;
+
 /// Constant gain for an alert ping: BEARING-ONLY, never distance-attenuated, so the cue reveals the
 /// same thing the edge-ring flash does (a direction) and no more — loudness must not leak range
 /// (invariant #6 "alerts, not intel"). Near full so the ping cuts through the muffled off-map bleed.
@@ -435,6 +454,18 @@ mod tests {
         let ch = channel(&[(AlertKind::UnitLost, pos(-10, 0), 0)]);
         let pulses = alert_haptic_pulses(&ch, (0.0, 0.0), 0.0, 0, AlertCueMode::Haptic);
         assert_eq!(pulses[0].side, HapticSide::Center);
+    }
+
+    #[test]
+    fn haptic_pulse_ms_codes_bearing_by_length_and_button_tick_is_shortest() {
+        // The three sides map to three DISTINCT, monotonic durations (a learnable side code), all
+        // strictly longer than the button-edge confirmation tick so the two channels never collide.
+        let l = haptic_pulse_ms(HapticSide::Left);
+        let c = haptic_pulse_ms(HapticSide::Center);
+        let r = haptic_pulse_ms(HapticSide::Right);
+        assert!(l < c && c < r, "left<center<right coded lengths: {l},{c},{r}");
+        assert!(BUTTON_TICK_MS < l, "the button tick is shorter than any alert pulse");
+        assert!(BUTTON_TICK_MS > 0, "a tick must actually buzz");
     }
 
     #[test]

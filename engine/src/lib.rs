@@ -110,6 +110,12 @@ pub mod touch_controls;
 /// per tap, that arm the same `InputFrame` command intents the desktop drives off the B/R/H/U keys
 /// (which had no touch path before). Pure geometry + hit-test (host-tested), command view only.
 pub mod command_touch;
+/// Command-view multi-touch **gesture** seam (pan / pinch-zoom / two-finger embody-tap). Owns the pure
+/// `CommandGesture` state machine: raw two-finger touches → `move_axis` (pan) / `scroll` (zoom) / a
+/// one-shot embody edge, disambiguated so a pinch or a pan can never misfire embody. The testable logic
+/// `pal-android` can't host (an Android `MotionEvent` isn't host-constructible); the backend only feeds
+/// it the down-finger set + a timestamp. Command view only — desktop uses the wheel + edge-pan.
+pub mod command_gesture;
 /// HUD layout editor (PvE-campaign plan WS-D). Owns `HudLayoutProfile`: the per-layer (command vs
 /// embodied) drag/resize/opacity editor layered over the existing touch seams, with saved presets +
 /// reset-to-default and a pure `resolve_embodied` seam (saved layout → `TouchLayout` geometry +
@@ -183,7 +189,7 @@ pub use net_tuning::{DelayPolicy, RttDelayEstimator};
 pub use gonedark_render::theme::PaletteMode;
 /// The cross-modal alert-cue selection (WS-D), re-exported so the shell/Settings surface can name the
 /// mode + consume the haptic descriptors without reaching into the module path.
-pub use alert_cues::{AlertCueMode, HapticPulse, HapticSide};
+pub use alert_cues::{haptic_pulse_ms, AlertCueMode, HapticPulse, HapticSide, BUTTON_TICK_MS};
 
 /// The seed both hosts start the sim with, so desktop and Android run the bit-identical
 /// deterministic scene (invariant #1 / #7).
@@ -1359,6 +1365,26 @@ fn zoom_half_extent(half_extent: f32, scroll: f32) -> f32 {
     scaled.clamp(CAM_HALF_EXTENT_MIN, CAM_HALF_EXTENT_MAX)
 }
 
+/// The touch slice to feed the embodied `touch_controls` seam THIS frame (the embody-transition frame
+/// guard, P1-3). On the frame embodiment flips `false → true`, the fingers that triggered the
+/// two-finger embody tap are STILL down and present in `input.touches`; feeding them to the freshly
+/// reset touch seam would let them leak straight into the first embodied frame's move / look / button
+/// intents (they may land inside the post-embody move-stick ring or on a button). Suppress them for
+/// that ONE frame by returning an empty slice; every other frame passes the live touches through.
+/// PURE → host-testable without a device (presentation/input only, never the sim — invariants #1/#2).
+#[inline]
+fn embody_frame_touches(
+    was_embodied: bool,
+    embodied: bool,
+    touches: &[gonedark_pal::TouchSample],
+) -> &[gonedark_pal::TouchSample] {
+    if embodied && !was_embodied {
+        &[]
+    } else {
+        touches
+    }
+}
+
 /// The player's **active camp** for the per-camp command panels (train + upgrade) — the lowest-index
 /// **built, operational** [`BuildingKind::Camp`] owned by `faction`, or `None` if it has none. A pure,
 /// deterministic read over the world (stable entity-index order, identical on every peer): no autonomy
@@ -1675,6 +1701,13 @@ pub struct Game {
     /// frame (e.g. desktop, or command view). Set in `frame`, read by the render step. Presentation
     /// only.
     touch_hud: Option<touch_controls::TouchHud>,
+
+    /// Whether a discrete embodied touch-button EDGE (crouch / reload / jump / surface / fire-mode)
+    /// fired this frame — the trigger for a very short confirmation vibration on a backend with a
+    /// motor (P2-1), drained by the PAL host via [`Game::touch_button_edge`]. PRESENTATION/haptic only,
+    /// exactly like [`Game::alert_haptics`]: it is derived from the on-screen HUD button edges and
+    /// never touches the sim or the checksum (invariants #1/#4). `false` on any non-touch frame.
+    touch_button_edge: bool,
 
     /// Latched `true` the first frame any touch arrives — marks this as a touch device so the
     /// embodied on-screen HUD (fixed move ring + buttons) keeps drawing between touches. Desktop
@@ -2400,6 +2433,7 @@ impl Game {
             // The shipped-default HUD layout (no overrides → resolves to the stock `TouchLayout`).
             hud_layout: hud_layout::HudLayoutProfile::default(),
             touch_hud: None,
+            touch_button_edge: false,
             seen_touch: false,
             debug_hitboxes,
             // The "gone dark" detection tell: D33 `Subtle` baseline, with its own per-client linger
@@ -2457,6 +2491,15 @@ impl Game {
     /// only — never sim state (invariants #1/#6).
     pub fn alert_haptics(&self) -> &[HapticPulse] {
         &self.alert_haptics
+    }
+
+    /// Whether a discrete embodied touch-button edge (crouch / reload / jump / surface / fire-mode)
+    /// fired this frame — the cue for a very short confirmation vibration (P2-1). A PAL backend with a
+    /// vibration motor drains this each frame (a short one-shot tick); desktop has none, so it reads
+    /// and drops it. Presentation/haptic only — never sim state (invariants #1/#4), the exact split as
+    /// [`Game::alert_haptics`]. `false` on any non-touch / command-view frame.
+    pub fn touch_button_edge(&self) -> bool {
+        self.touch_button_edge
     }
 
     /// Toggle the debug hitbox / facet overlay (the host's **F3**). Visible only in the command
@@ -2933,6 +2976,10 @@ impl Game {
         // tap / number-key / embody edges it reacts to — clearing them here so the selection + order
         // layers downstream never also handle a tap the player aimed at the picker.
         let mut input = input.clone();
+        // Embody-transition frame guard (P1-3): snapshot embodiment BEFORE the transition loop below
+        // may flip it, so the embodied touch seam can suppress the triggering two-finger-tap fingers on
+        // the single frame `embodied` goes false → true (see `embody_frame_touches`).
+        let was_embodied = self.embodied;
 
         // 0. Render quality tuning (Phase 4 WS-C): query the PAL thermal sensor and observe this
         // frame's wall-clock `dt`, easing the dynamic-resolution scale / FPS cap to hold the frame
@@ -3271,7 +3318,13 @@ impl Game {
                 // zero fingers down (empty slice → neutral intents) so the HUD keeps drawing.
                 let layout = self.hud_layout.resolve_embodied(width, height).layout;
                 let n = (input.touch_count as usize).min(input.touches.len());
-                let out = self.touch.update(&layout, &input.touches[..n]);
+                // On the embody-transition frame, feed an EMPTY slice so the fingers that triggered the
+                // two-finger embody tap don't leak into the first embodied frame's move/look/buttons
+                // (P1-3). The seam was just `reset()` above, so an empty slice yields fully neutral
+                // intents; the next frame passes the live touches through and the sticks re-capture.
+                let touches = embody_frame_touches(was_embodied, self.embodied, &input.touches[..n]);
+                let out = self.touch.update(&layout, touches);
+                self.touch_button_edge = touch_controls::has_button_edge(&out);
                 self.touch_hud = Some(out.hud);
                 (
                     out.look_delta,
@@ -3292,6 +3345,7 @@ impl Game {
                 )
             } else {
                 self.touch_hud = None;
+                self.touch_button_edge = false;
                 (
                     input.look_axis,
                     input.move_axis,
@@ -6462,6 +6516,43 @@ mod tests {
         assert_eq!(zoom_half_extent(start, 100.0), CAM_HALF_EXTENT_MIN);
         assert_eq!(zoom_half_extent(start, -100.0), CAM_HALF_EXTENT_MAX);
         assert_eq!(zoom_half_extent(start, 0.0), start, "no scroll → unchanged");
+    }
+
+    /// Embody-transition frame guard (P1-3): on the frame embodiment flips false→true, the fingers
+    /// that triggered the two-finger embody tap are suppressed (empty slice) so they can't leak into
+    /// the first embodied frame's move/look/buttons — even when they sit dead-centre in the post-embody
+    /// move-stick ring. Every other frame passes the live touches through unchanged.
+    #[test]
+    fn embody_frame_guard_suppresses_the_triggering_touches() {
+        use gonedark_pal::TouchSample;
+        let layout = touch_controls::TouchLayout::new(1280, 720);
+        // Two fingers sitting right in the move-stick ring (worst case: full deflection would result).
+        let ring = (layout.stick_base.cx, layout.stick_base.cy);
+        let touches = [
+            TouchSample { id: 1, x: ring.0, y: ring.1 },
+            TouchSample { id: 2, x: ring.0 + 6.0, y: ring.1 + 6.0 },
+        ];
+
+        // On the embody frame (was_embodied=false → embodied=true) the slice is emptied → neutral.
+        let fed = embody_frame_touches(false, true, &touches);
+        assert!(fed.is_empty(), "the embody-transition frame suppresses the triggering fingers");
+        let mut tc = touch_controls::TouchControls::new();
+        let out = tc.update(&layout, fed);
+        assert_eq!(out.move_axis, (0.0, 0.0), "no leaked stick deflection on the embody frame");
+        assert_eq!(out.look_delta, (0.0, 0.0), "no leaked look on the embody frame");
+        assert!(!out.hud.stick_active, "no stick claim on the embody frame");
+        assert!(!touch_controls::has_button_edge(&out), "no leaked button edge on the embody frame");
+
+        // A steady-state embodied frame (was_embodied=true) passes the same touches straight through,
+        // so the move stick claims and deflects normally.
+        let fed = embody_frame_touches(true, true, &touches);
+        assert_eq!(fed.len(), 2, "an already-embodied frame passes the live touches through");
+        let mut tc = touch_controls::TouchControls::new();
+        let out = tc.update(&layout, fed);
+        assert!(out.hud.stick_active, "the stick claims normally off the embody frame");
+
+        // The command view (embodied=false) is likewise untouched — the guard only fires on the flip.
+        assert_eq!(embody_frame_touches(false, false, &touches).len(), 2);
     }
 
     /// Pan is a rigid translation, so the command projection stays axis-separable at a non-zero

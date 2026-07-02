@@ -30,8 +30,11 @@ use std::time::{Duration, Instant};
 use gonedark_core::campaign::{Difficulty, NodeId};
 use gonedark_core::components::{Army, Faction};
 use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
+use gonedark_engine::command_gesture::CommandGesture;
 use gonedark_engine::objectives::MissionStatus;
-use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
+use gonedark_engine::{
+    haptic_pulse_ms, pixel_to_ndc, Game, OverlayClick, Scene, BUTTON_TICK_MS, DEFAULT_SEED,
+};
 use gonedark_pal::mix::{oneshot_sound, scaled_gain, synth_bank, voice_from_cue, Mixer};
 use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Window, MAX_TOUCHES};
 
@@ -168,6 +171,13 @@ fn android_main(app: AndroidApp) {
             thermal.power_state(),
         );
     }
+
+    // The vibration motor — the only NON-VISUAL "going dark" alert channel on the touch platform
+    // (invariant #6): the engine's directional alert-haptic pulses (`Game::alert_haptics`) and the
+    // discrete embodied button-edge ticks (`Game::touch_button_edge`) are drained into it once per
+    // frame below. Best-effort; a device with no motor / no VIBRATE permission degrades to a silent
+    // no-op (invariant #8). Built once here so the JNI path is warm before the first alert.
+    let haptics = AndroidHaptics::new(app.clone());
 
     // Physical UI scale (Phase 4 legibility): the display density read off the live `Configuration`,
     // so in-match chrome (HUD glyphs/icons) + touch targets render at a constant *physical* size
@@ -378,6 +388,20 @@ fn android_main(app: AndroidApp) {
                         &thermal,
                     );
                     rhi.present(frame);
+
+                    // Haptics drain (invariant #6 non-visual alert channel + P2-1 button ticks). Both
+                    // reads are `&self` on `game`, safe now that `game.frame` (which took `&mut self`)
+                    // has returned, and neither is ever folded into the sim/checksum (invariants #1/#4),
+                    // so they cannot desync. Each directional alert pulse buzzes for its side-coded
+                    // length (`haptic_pulse_ms`); a discrete embodied button edge fires one short
+                    // confirmation tick (`BUTTON_TICK_MS`). All best-effort — a motor-less device / no
+                    // VIBRATE permission no-ops silently.
+                    for pulse in game.alert_haptics() {
+                        haptics.pulse(haptic_pulse_ms(pulse.side));
+                    }
+                    if game.touch_button_edge() {
+                        haptics.pulse(BUTTON_TICK_MS);
+                    }
 
                     // Record-on-win (Compose parity C5): the first frame a campaign match reads
                     // `Won`, latch the packed Activity result code so the finish path reports the
@@ -806,6 +830,17 @@ pub struct AndroidInput {
     /// (invariants #1/#2).
     look_sensitivity: f32,
     invert_y: bool,
+    /// The pure command-view multi-touch gesture state machine (pan / pinch-zoom / two-finger
+    /// embody-tap). Fed the currently-down finger set + a monotonic timestamp once per [`poll`] after
+    /// the native event drain; its output is mapped straight onto `frame.move_axis` (pan) /
+    /// `frame.scroll` (zoom) / `frame.embody_pressed` (a genuine two-finger tap). The disambiguation
+    /// lives entirely in the engine seam (invariant #2 — host-tested); this backend only feeds it raw
+    /// touches. Command view only by construction (the engine ignores these fields while embodied).
+    command_gesture: CommandGesture,
+    /// Monotonic clock the gesture seam's tap-duration window is measured against (`now_ms` = ms since
+    /// this instant). A process-lifetime epoch — the seam only ever takes DIFFERENCES, so the absolute
+    /// origin is irrelevant.
+    gesture_epoch: Instant,
 }
 
 impl AndroidInput {
@@ -817,6 +852,8 @@ impl AndroidInput {
             back_pressed: false,
             look_sensitivity: 1.0,
             invert_y: false,
+            command_gesture: CommandGesture::new(),
+            gesture_epoch: Instant::now(),
         }
     }
 
@@ -869,8 +906,10 @@ impl AndroidInput {
     /// Gesture grammar (mirrors the desktop classic-RTS split via the shared intent vocabulary):
     /// one finger down/move/up drives `pointer_down` + the `pointer_up` release edge — the engine's
     /// `Selection` then resolves it to a tap-select, a band-select, or (off a unit, with a
-    /// selection) a Move/Attack via the `command_tap` mode (set in [`Self::poll`]). A two-finger tap
-    /// toggles embodiment.
+    /// selection) a Move/Attack via the `command_tap` mode (set in [`Self::poll`]). A **two-finger**
+    /// gesture is handed to the pure `CommandGesture` seam (fed from `frame.touches` in [`Self::poll`]),
+    /// which resolves it to a camera PAN (`move_axis`), a pinch ZOOM (`scroll`), or — only for a quick,
+    /// near-motionless two-finger tap — an EMBODY edge (`embody_pressed`).
     fn apply_motion(frame: &mut InputFrame, multi_touch: &mut bool, motion: &MotionEvent) {
         // Forward the full currently-down pointer set EVERY motion event: while embodied the engine's
         // `touch_controls` seam reads `frame.touches` to drive the on-screen FPS HUD (move stick +
@@ -889,13 +928,14 @@ impl AndroidInput {
         match action {
             MotionAction::Down | MotionAction::PointerDown => {
                 if pointer_count >= 2 {
-                    // TWO-FINGER TAP = EMBODY (command view only, by construction): raise ONLY
-                    // `embody_pressed`. `map_input_commands` no-ops it when already embodied
-                    // (`embody_pressed && !embodied`), so this gesture is harmless while possessed —
-                    // where two fingers now mean move+look on the twin-stick HUD. Surfacing is the
-                    // on-screen Surface BUTTON (engine `touch_controls`), NOT a gesture, so the two
-                    // never collide. Mark multi-finger + drop the single-finger down (no select/cmd).
-                    frame.embody_pressed = true;
+                    // A SECOND finger landed: this is a two-finger gesture, NOT a single-finger tap.
+                    // Hand it entirely to the pure `CommandGesture` seam (fed from `frame.touches` in
+                    // `poll` below), which disambiguates pan / pinch-zoom / a genuine two-finger
+                    // embody-tap — so the natural pinch a player reaches for no longer misfires embody
+                    // (the P0-1 bug: the old code raised `embody_pressed` on ANY 2nd finger down).
+                    // Here we only mark the gesture in flight + drop the single-finger down so the
+                    // command layer doesn't also start a band-select drag. Surfacing (while embodied)
+                    // stays the on-screen Surface BUTTON, never a gesture.
                     frame.pointer_down = false;
                     *multi_touch = true;
                 } else {
@@ -1031,6 +1071,23 @@ impl Input for AndroidInput {
                 InputStatus::Handled
             }) {}
         }
+
+        // Command-view multi-touch gesture (P0-1): feed the pure `CommandGesture` seam this frame's
+        // currently-down finger set + a monotonic timestamp, and map its output onto the command-camera
+        // intents. `move_axis` / `scroll` are per-frame deltas, so they are freshly assigned every poll
+        // (a still or absent gesture yields zero); `embody_pressed` is OR-ed in so the seam's tap can
+        // fire embody even if nothing else this poll set it. The engine consumes all three ONLY in the
+        // command view (it ignores `move_axis`/`scroll` while embodied and no-ops `embody_pressed`
+        // there), so running the seam unconditionally is safe. Fed once per poll (per frame) rather
+        // than per native event — a real two-finger tap spans many frames, so the down→up transition
+        // is always observed; the down-and-up-within-one-poll degenerate case (a >200 ms frame hitch)
+        // is device-validation-owed.
+        let n = (self.frame.touch_count as usize).min(self.frame.touches.len());
+        let now_ms = self.gesture_epoch.elapsed().as_millis() as u64;
+        let g = self.command_gesture.update(&self.frame.touches[..n], now_ms);
+        self.frame.move_axis = g.move_axis;
+        self.frame.scroll = g.scroll;
+        self.frame.embody_pressed |= g.embody;
 
         self.frame.clone()
     }
@@ -1443,6 +1500,125 @@ impl Audio for AndroidAudio {
         for c in cues {
             self.queue(c.sound, c.azimuth, c.gain, c.muffled);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Haptics — the vibration motor (the only non-visual "going dark" alert channel on touch).
+// ---------------------------------------------------------------------------------------
+
+/// The device **vibration motor**, driven over JNI — the touch platform's non-visual "going dark"
+/// alert channel (invariant #6). The engine builds the directional alert pulses in the pure, host-
+/// tested `engine::alert_cues` seam ([`Game::alert_haptics`]) and the discrete button-edge ticks in
+/// `engine::touch_controls` ([`Game::touch_button_edge`]); this thin wrapper is the only un-testable
+/// part — the actual `Vibrator.vibrate(...)` call. The main loop drains both queues once per frame
+/// and calls [`pulse`](Self::pulse) with the mapped duration (`engine::haptic_pulse_ms` /
+/// `engine::BUTTON_TICK_MS`).
+///
+/// The Android mirror of [`crate::thermal::AndroidThermalSensor`]: it holds the live [`AndroidApp`]
+/// and attaches per pulse. **Best-effort and never fatal** (invariant #8): any attach/lookup failure
+/// is swallowed and the pending JVM exception cleared, so a device without a motor (or below the API
+/// level of the call used) simply degrades to a silent no-op — the match never crashes on it. Requires
+/// the `android.permission.VIBRATE` permission (declared in the manifest); without it the call is a
+/// no-op.
+///
+/// # NOT device-verified
+/// The JNI signatures + the API-level branch (`VibratorManager` on API 31+, the deprecated top-level
+/// `Vibrator` below it, and `VibrationEffect.createOneShot` on API 26+) are written against the docs
+/// and need an on-device shakeout — actual buzz, latency, and whether the coded pulse lengths read as
+/// distinct. Flagged like the rest of this module's JNI glue.
+#[cfg(target_os = "android")]
+pub struct AndroidHaptics {
+    app: AndroidApp,
+}
+
+#[cfg(target_os = "android")]
+impl AndroidHaptics {
+    /// Build the haptics sink from the live app handle (cheap; the JNI calls happen per pulse).
+    pub fn new(app: AndroidApp) -> Self {
+        AndroidHaptics { app }
+    }
+
+    /// Fire a single one-shot vibration of `duration_ms` at the system default amplitude. A zero (or,
+    /// after the `i64` cast, non-positive) duration is a no-op. Best-effort over JNI: any failure is
+    /// swallowed and the pending JVM exception cleared so the next JNI op can't detonate the process
+    /// (the same discipline as [`crate::thermal`] / [`finish_activity`]).
+    pub fn pulse(&self, duration_ms: u64) {
+        if duration_ms == 0 {
+            return;
+        }
+        if let Err(e) = self.vibrate(duration_ms as i64) {
+            log::warn!("[haptics] vibrate failed ({e:?}); no motor / permission?");
+        }
+    }
+
+    /// The JNI body: resolve a `Vibrator` and call `vibrate(VibrationEffect.createOneShot(ms, -1))`.
+    /// `-1` is `VibrationEffect.DEFAULT_AMPLITUDE`. Isolated + `Result`-typed so the only un-testable
+    /// surface is this fetch; the durations it is handed come from host-tested engine seams.
+    fn vibrate(&self, duration_ms: i64) -> Result<(), jni::errors::Error> {
+        use jni::objects::{JObject, JValue};
+        use jni::{jni_sig, jni_str, JavaVM};
+
+        // `VibrationEffect.DEFAULT_AMPLITUDE == -1` (let the system pick the amplitude).
+        const DEFAULT_AMPLITUDE: i32 = -1;
+
+        // SAFETY: the pointers come from `android-activity`'s live `AndroidApp`, valid while the
+        // activity is running (the same handles the thermal reader / launch reader attach through).
+        let vm = unsafe { JavaVM::from_raw(self.app.vm_as_ptr() as *mut jni::sys::JavaVM) };
+        let activity_ptr = self.app.activity_as_ptr() as jni::sys::jobject;
+
+        vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
+            // SAFETY: `activity_ptr` is a live local ref android-activity owns for the call's duration.
+            let activity = unsafe { JObject::from_raw(&*env, activity_ptr) };
+
+            // Do the reads/calls in an inner closure so ANY failure clears the pending Java exception
+            // BEFORE returning — load-bearing exactly as in the thermal reader (a pending exception
+            // aborts the process on the next JNI op).
+            let call = (|| -> Result<(), jni::errors::Error> {
+                // Vibrator vib = (Vibrator) context.getSystemService("vibrator");
+                // NOTE: on API 31+ the recommended path is
+                // `((VibratorManager) getSystemService("vibrator_manager")).getDefaultVibrator()`;
+                // the top-level "vibrator" service is deprecated but still returns a working Vibrator
+                // through at least API 34, so this single path stays simplest for the Phase-1 slice.
+                // Device shakeout owed (see the struct's NOT-verified note).
+                let name = env.new_string("vibrator")?;
+                let vibrator = env
+                    .call_method(
+                        &activity,
+                        jni_str!("getSystemService"),
+                        jni_sig!("(Ljava/lang/String;)Ljava/lang/Object;"),
+                        &[(&name).into()],
+                    )?
+                    .l()?;
+
+                // VibrationEffect effect = VibrationEffect.createOneShot(duration_ms, DEFAULT_AMPLITUDE);
+                // `find_class` takes a plain `&str` class name (the canonical jni path); the returned
+                // `JClass` is the static-call target.
+                let effect_class = env.find_class("android/os/VibrationEffect")?;
+                let effect = env
+                    .call_static_method(
+                        &effect_class,
+                        jni_str!("createOneShot"),
+                        jni_sig!("(JI)Landroid/os/VibrationEffect;"),
+                        &[JValue::Long(duration_ms), JValue::Int(DEFAULT_AMPLITUDE)],
+                    )?
+                    .l()?;
+
+                // vib.vibrate(effect);
+                env.call_method(
+                    &vibrator,
+                    jni_str!("vibrate"),
+                    jni_sig!("(Landroid/os/VibrationEffect;)V"),
+                    &[(&effect).into()],
+                )?;
+                Ok(())
+            })();
+
+            if call.is_err() {
+                env.exception_clear();
+            }
+            call
+        })
     }
 }
 

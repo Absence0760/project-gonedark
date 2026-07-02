@@ -556,6 +556,16 @@ impl TouchControls {
     }
 }
 
+/// Whether this frame's [`TouchOutput`] carries any discrete embodied-button **press edge** — crouch,
+/// reload, surface, jump, or select-fire (the one-shot buttons; Fire/ADS are held levels, not edges).
+/// The cue for a very short confirmation vibration on a backend with a motor (P2-1). PURE + host-tested;
+/// presentation/haptic only, never the sim (invariant #4). The held Fire/ADS are deliberately excluded
+/// — a continuous buzz while the trigger is down would be noise, not feedback.
+#[inline]
+pub fn has_button_edge(out: &TouchOutput) -> bool {
+    out.crouch_edge || out.reload_edge || out.surface_edge || out.jump_edge || out.fire_mode_edge
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1053,6 +1063,30 @@ mod tests {
         let out = tc.update(&l, &[t(7, start.0 + 10.0, start.1 + 10.0)]);
         assert!((out.look_delta.0 - 25.0).abs() < 1e-4, "sensitivity persisted through reset");
         assert!((out.look_delta.1 - (-25.0)).abs() < 1e-4, "invert persisted through reset");
+    }
+
+    #[test]
+    fn has_button_edge_fires_only_on_the_one_shot_button_edges() {
+        let l = layout();
+        let mut tc = TouchControls::new();
+        // A held Fire is NOT an edge — no confirmation tick for the continuous trigger.
+        let (fx, fy) = center(&l.fire);
+        let out = tc.update(&l, &[t(1, fx, fy)]);
+        assert!(out.fire && !has_button_edge(&out), "held Fire is not a button edge");
+        // A crouch press IS an edge (fires the tick once).
+        let (cx, cy) = center(&l.crouch);
+        let out = tc.update(&l, &[t(2, cx, cy)]);
+        assert!(out.crouch_edge && has_button_edge(&out), "a crouch press edge fires the tick");
+        // Held across the next frame → no repeat edge → no repeat tick.
+        let out = tc.update(&l, &[t(2, cx, cy)]);
+        assert!(!has_button_edge(&out), "a held button does not re-tick");
+        // Jump + fire-mode + reload + surface edges each qualify.
+        let (jx, jy) = center(&l.jump);
+        let out = tc.update(&l, &[t(3, jx, jy)]);
+        assert!(out.jump_edge && has_button_edge(&out), "a jump edge fires the tick");
+        // No fingers at all → no edge.
+        let out = tc.update(&l, &[]);
+        assert!(!has_button_edge(&out), "an empty frame carries no button edge");
     }
 
     #[test]
