@@ -30,6 +30,10 @@ pub enum ReplayError {
     UnexpectedEof,
     /// A tag byte was outside the known range for `what` (e.g. an unknown command/order/enum tag).
     BadTag { what: &'static str, tag: u8 },
+    /// A multi-peer replay named a peer id outside the recorded session (`peer >= peer_count`) —
+    /// mirrors `core::lockstep::DecodeError::PeerOutOfRange`, so a skewed/garbage peer id is a
+    /// loud error, never a silent mis-merge.
+    PeerOutOfRange(u32),
     /// The stream parsed but left trailing bytes — a sign of codec/version skew.
     TrailingBytes,
 }
@@ -43,6 +47,7 @@ impl std::fmt::Display for ReplayError {
             }
             ReplayError::UnexpectedEof => write!(f, "replay stream ended mid-field"),
             ReplayError::BadTag { what, tag } => write!(f, "bad {what} tag {tag}"),
+            ReplayError::PeerOutOfRange(p) => write!(f, "peer id {p} outside the recorded session"),
             ReplayError::TrailingBytes => write!(f, "trailing bytes after replay body"),
         }
     }
@@ -50,10 +55,14 @@ impl std::fmt::Display for ReplayError {
 
 impl std::error::Error for ReplayError {}
 
-/// Magic prefix: "Going Dark RePlay".
+/// Magic prefix for a single-peer replay: "Going Dark RePlay".
 pub const MAGIC: [u8; 4] = *b"GDRP";
-/// Replay format version. Bump on any codec change so a mismatched build is rejected, not
-/// silently misparsed.
+/// Magic prefix for a multi-peer replay: "Going Dark Multi-Peer". A distinct magic (not just a
+/// flag byte) so a single-peer artifact fed to the multi-peer decoder — or vice-versa — fails
+/// loudly at [`BadMagic`](ReplayError::BadMagic) instead of misparsing the differently-shaped body.
+pub const MAGIC_MULTI: [u8; 4] = *b"GDMP";
+/// Replay format version, shared by both artifact formats. Bump on any codec change so a
+/// mismatched build is rejected, not silently misparsed.
 pub const FORMAT_VERSION: u16 = 1;
 
 // ---- little-endian writer helpers (over a plain Vec<u8>; no dep) ----

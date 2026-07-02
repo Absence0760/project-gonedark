@@ -18,6 +18,7 @@
     "desktop:sim:matchup": "cargo run -p gonedark-sim-runner -- 300 matchup",
     "desktop:sim:net": "cargo run -p gonedark-net-sim-runner",
     "desktop:replay": "cargo run -p gonedark-replay-runner",
+    "desktop:replay:multi": "cargo run -p gonedark-replay-runner -- --multi",
     "desktop:viz": "cargo run -p gonedark-viz-runner",
     "desktop:server": "cargo run -p gonedark-server",
 
