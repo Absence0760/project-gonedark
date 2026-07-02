@@ -184,6 +184,18 @@ pub struct Placement {
     pub opacity: f32,
 }
 
+/// The smallest scale an **embodied input control** may be edited/saved to. The generic
+/// [`Placement::clamped`] floor (0.25×) is fine for cosmetic overlays, but a touch button shrunk to
+/// a quarter size is barely tappable — and a barely-tappable control while blind is exactly the
+/// invariant-#6 "the game robbed me" failure, just self-inflicted through the editor.
+const EMBODIED_CONTROL_MIN_SCALE: f32 = 0.6;
+/// The minimum opacity the **Surface** (panic-exit) button may be edited/saved to. Every other
+/// control can be faded fully out if a player wants a minimal HUD, but the one control that returns
+/// you to command — the thing you reach for when you're losing and need to bail — must always be
+/// visible enough to locate. (Its hit target survives regardless via the scale floor above; this is
+/// the "can I *see* it" half.)
+const SURFACE_MIN_OPACITY: f32 = 0.35;
+
 impl Placement {
     /// Clamp to sane editor bounds (center on-screen, scale within a usable band, opacity `[0,1]`).
     /// Keeps a saved/edited layout from putting a control off-screen or at zero size.
@@ -194,6 +206,24 @@ impl Placement {
             scale: cl(self.scale, 0.25, 4.0),
             opacity: cl(self.opacity, 0.0, 1.0),
         }
+    }
+
+    /// [`clamped`](Self::clamped) plus stricter, element-aware floors for the **embodied input
+    /// controls**: they must stay usable no matter what a saved (or hand-edited) layout requests.
+    /// Input controls get a higher minimum scale so they stay tappable, and the **Surface** button
+    /// additionally gets a minimum opacity so the panic-exit is always locatable. Cosmetic overlays
+    /// (alerts, objective tracker) keep the looser [`clamped`](Self::clamped) bound. This closes the
+    /// self-inflicted invariant-#6 gap: a player can't accidentally save a layout that makes their
+    /// only "return to command" control tiny or invisible.
+    pub fn clamped_for(self, element: HudElement) -> Placement {
+        let mut p = self.clamped();
+        if HudElement::EMBODIED_CONTROLS.contains(&element) {
+            p.scale = p.scale.max(EMBODIED_CONTROL_MIN_SCALE);
+            if element == HudElement::Surface {
+                p.opacity = p.opacity.max(SURFACE_MIN_OPACITY);
+            }
+        }
+        p
     }
 }
 
@@ -288,7 +318,7 @@ impl HudPreset {
             HudLayer::Command => &mut self.command,
             HudLayer::Embodied => &mut self.embodied,
         };
-        target.overrides.insert(element, placement.clamped());
+        target.overrides.insert(element, placement.clamped_for(element));
         Ok(())
     }
 
@@ -587,7 +617,10 @@ pub fn resolve_embodied_layer(
     let h = height.max(1) as f32;
 
     for (element, p) in cfg.overrides() {
-        let p = p.clamped();
+        // Re-apply the element-aware floors here too: a hand-edited/corrupt config can reach this
+        // resolve path without going through `set_placement`, so the Surface-visibility / control-
+        // tappability guarantees (invariant #6) must hold at resolution, not just at edit time.
+        let p = p.clamped_for(element);
         let cx = p.center.0 * w;
         let cy = p.center.1 * h;
         match element {
@@ -812,6 +845,76 @@ mod tests {
         }
         // And the embodied layer stays empty — nothing leaked in.
         assert!(preset.embodied.is_default());
+    }
+
+    #[test]
+    fn embodied_controls_keep_a_usable_size_floor_when_edited_tiny() {
+        // A player can't save an embodied input control shrunk below the usable-scale floor — a
+        // barely-tappable touch control while blind is the invariant-#6 "the game robbed me"
+        // failure, self-inflicted. The generic clamp floor (0.25) is overridden to 0.6 for controls.
+        let mut preset = HudPreset::new("tiny");
+        let tiny = Placement {
+            center: (0.5, 0.5),
+            scale: 0.01,
+            opacity: 1.0,
+        };
+        for ctrl in HudElement::EMBODIED_CONTROLS {
+            preset.set_placement(HudLayer::Embodied, ctrl, tiny).unwrap();
+        }
+        let resolved = resolve_embodied_layer(&preset.embodied, 1280, 720);
+        // Every control's radius stays at least the floor fraction of its stock size (never the
+        // 0.01 the player asked for). We check via the stored override's clamped scale.
+        for ctrl in HudElement::EMBODIED_CONTROLS {
+            let got = preset
+                .embodied
+                .overrides()
+                .find(|(e, _)| *e == ctrl)
+                .map(|(_, p)| p.scale)
+                .expect("override stored");
+            assert!(
+                got >= EMBODIED_CONTROL_MIN_SCALE - 1e-6,
+                "{ctrl:?} scale {got} floored to {EMBODIED_CONTROL_MIN_SCALE}"
+            );
+        }
+        // And the resolved layout is a real, non-degenerate touch layout (radii > 0).
+        assert!(resolved.layout.surface.r > 0.0);
+        assert!(resolved.layout.fire.r > 0.0);
+    }
+
+    #[test]
+    fn surface_button_cannot_be_faded_invisible() {
+        // The Surface (panic-exit) button additionally floors its opacity so it's always locatable —
+        // you must be able to find your way back to command when you're losing (invariant #6).
+        let mut preset = HudPreset::new("ghost");
+        let invisible = Placement {
+            center: (0.94, 0.08),
+            scale: 1.0,
+            opacity: 0.0,
+        };
+        preset
+            .set_placement(HudLayer::Embodied, HudElement::Surface, invisible)
+            .unwrap();
+        let resolved = resolve_embodied_layer(&preset.embodied, 1280, 720);
+        assert!(
+            resolved.opacity.surface >= SURFACE_MIN_OPACITY - 1e-6,
+            "Surface opacity {} floored to {SURFACE_MIN_OPACITY}",
+            resolved.opacity.surface
+        );
+        // A non-panic control (Fire) may still be faded fully out for a minimal HUD.
+        let mut preset2 = HudPreset::new("minimal");
+        preset2
+            .set_placement(
+                HudLayer::Embodied,
+                HudElement::Fire,
+                Placement {
+                    center: (0.84, 0.74),
+                    scale: 1.0,
+                    opacity: 0.0,
+                },
+            )
+            .unwrap();
+        let r2 = resolve_embodied_layer(&preset2.embodied, 1280, 720);
+        assert_eq!(r2.opacity.fire, 0.0, "non-panic controls keep the looser bound");
     }
 
     #[test]
