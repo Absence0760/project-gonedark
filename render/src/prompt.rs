@@ -81,10 +81,10 @@ const BODY_SIZE: f32 = 0.050;
 const TITLE_BODY_GAP: f32 = 0.024;
 /// Gap between consecutive body lines.
 const LINE_GAP: f32 = 0.016;
-/// Horizontal padding between the widest line and the card edge.
-const PAD_X: f32 = 0.040;
-/// Vertical padding between the line stack and the card edge.
-const PAD_Y: f32 = 0.030;
+/// Horizontal padding between the widest line and the card edge — the shared screen-edge/margin step.
+const PAD_X: f32 = crate::theme::SPACE_MARGIN;
+/// Vertical padding between the line stack and the card edge — the shared standard-inset step.
+const PAD_Y: f32 = crate::theme::SPACE_STD;
 /// The rim quad extends this far past the card on each side to draw a thin border.
 const RIM_PAD: f32 = 0.010;
 /// Half-height of the tone accent strip across the very top of the card.
@@ -95,12 +95,18 @@ const RIM_COLOR: [f32; 3] = crate::theme::RIM;
 /// Off-white the body lines draw in, so they read over the dim card.
 const BODY_COLOR: [f32; 3] = [0.90, 0.92, 0.96];
 
-/// The accent / title color for a [`PromptTone`].
+/// The accent / title color for a [`PromptTone`]. These are a **deliberate distinct sub-palette**,
+/// NOT the raw `theme` signal accents: the teach card draws over the *dark embodied frame*, so each
+/// tone is intentionally lightened/desaturated relative to `theme::AMBER` / `STATUS_CRIT` / `PLAYER`
+/// for legibility against black (the same phone-legibility reasoning as the M6 title/body sizes).
+/// Repointing them at the raw accents would darken the copy against the dark frame, so they are kept
+/// local by design — they share the theme's *hue families* (warm caution, red danger, cool reflect)
+/// without inheriting its command-view luminance.
 fn tone_color(tone: PromptTone) -> [f32; 3] {
     match tone {
-        PromptTone::Caution => [0.96, 0.80, 0.34], // amber
-        PromptTone::Danger => [0.92, 0.46, 0.40],  // red
-        PromptTone::Reflect => [0.74, 0.83, 0.96], // cool blue
+        PromptTone::Caution => [0.96, 0.80, 0.34], // amber family, lightened for the dark frame
+        PromptTone::Danger => [0.92, 0.46, 0.40],  // red family, lightened for the dark frame
+        PromptTone::Reflect => [0.74, 0.83, 0.96], // cool-blue family, lightened for the dark frame
     }
 }
 

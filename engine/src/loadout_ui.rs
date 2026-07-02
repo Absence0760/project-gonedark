@@ -213,6 +213,23 @@ impl LoadoutEditor {
             LoadoutSlot::Grip => self.grip.label(),
         }
     }
+
+    /// The [`StatDelta`] of the option currently selected in `slot` — the per-slot trade the UI
+    /// surfaces beside the cycler so a player can read *what this option actually costs and buys*
+    /// (not just the axis pair). It changes as the slot cycles: `Standard` is [`StatDelta::ZERO`],
+    /// each trade its own signed delta. [`Grip`](LoadoutSlot::Grip) is cosmetic (D85) and carries no
+    /// sim delta, so it reports [`StatDelta::ZERO`]. Summing these across the sim slots is exactly
+    /// [`net_delta`](Self::net_delta).
+    pub fn option_delta(&self, slot: LoadoutSlot) -> StatDelta {
+        match slot {
+            LoadoutSlot::Optic => self.loadout.optic.delta(),
+            LoadoutSlot::Barrel => self.loadout.barrel.delta(),
+            LoadoutSlot::Magazine => self.loadout.magazine.delta(),
+            LoadoutSlot::Stock => self.loadout.stock.delta(),
+            LoadoutSlot::Muzzle => self.loadout.muzzle.delta(),
+            LoadoutSlot::Grip => StatDelta::ZERO,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -350,6 +367,29 @@ mod tests {
         assert_ne!(ed.current(), Loadout::STANDARD);
         ed.reset();
         assert_eq!(ed.current(), Loadout::STANDARD);
+    }
+
+    #[test]
+    fn option_delta_tracks_the_selected_option_and_sums_to_net() {
+        let mut ed = LoadoutEditor::new();
+        // At the baseline every slot's option is the ZERO no-op.
+        for slot in LoadoutSlot::ALL {
+            assert_eq!(ed.option_delta(slot), StatDelta::ZERO, "{} baseline is ZERO", slot.label());
+        }
+        // Cycling a slot changes its option delta to that option's real trade.
+        ed.cycle(LoadoutSlot::Barrel, true); // Heavy
+        assert_eq!(ed.option_delta(LoadoutSlot::Barrel), Barrel::Heavy.delta());
+        assert_ne!(ed.option_delta(LoadoutSlot::Barrel), StatDelta::ZERO, "a trade moved the delta");
+        // A cosmetic Grip pick never carries a sim delta (D85).
+        ed.cycle(LoadoutSlot::Grip, true);
+        assert_eq!(ed.option_delta(LoadoutSlot::Grip), StatDelta::ZERO, "Grip is cosmetic");
+        // The per-slot deltas sum (over the sim slots) to the build-wide net delta.
+        ed.cycle(LoadoutSlot::Optic, true); // Marksman
+        let summed = LoadoutSlot::ALL
+            .iter()
+            .filter(|s| s.is_sim())
+            .fold(StatDelta::ZERO, |acc, &s| acc.add(ed.option_delta(s)));
+        assert_eq!(summed, ed.net_delta(), "per-slot deltas sum to the net readout");
     }
 
     #[test]

@@ -15,6 +15,7 @@ use crate::command_panel::PanelLabel;
 use crate::icon::{IconItem, IconKind};
 use crate::overlay::{OverlayQuad, QuadRole};
 use crate::text::Anchor;
+use gonedark_core::components::Faction;
 
 /// Label text size in the text pass's NDC-fraction units (NOT pixels — matches `command_panel`'s
 /// ~0.04–0.05 row/title sizes). Sized so the longest label ("UPGRADE", 7 chars) still fits inside a
@@ -22,7 +23,10 @@ use crate::text::Anchor;
 /// (`half_x ≈ 0.20`, from `command_touch`'s `0.20·min(w,h)`) but the glyphs are also widest per the
 /// aspect correction. `0.044` overflowed "UPGRADE" past its button in portrait; `0.040` fits with a
 /// small margin. (See `upgrade_label_fits_its_button_in_portrait`.)
-const LABEL_SIZE: f32 = 0.040;
+// Rides the shared type scale's body step (`theme`, = 0.040) so the bar's labels read at the same
+// size as the command-panel rows (WS-C). `0.044` overflowed "UPGRADE" past its button in portrait;
+// the body step fits with a small margin (see `upgrade_label_fits_its_button_in_portrait`).
+const LABEL_SIZE: f32 = crate::theme::TYPE_BODY;
 const FILL_ALPHA: f32 = 0.82;
 const RIM_ALPHA: f32 = 0.9;
 /// Resting fill / rim colors (RGB) — the shared `theme` raised-surface + rim, so the bar wears the
@@ -120,15 +124,18 @@ pub fn command_bar_labels(view: &CommandBarView) -> Vec<PanelLabel> {
 /// covers the WHOLE unit/action command vocabulary — every unit kind (`token_icons`'
 /// `icon_for_unit_kind` and the command-panel rows use the same [`IconKind`]s) plus build/upgrade —
 /// so a button always carries the same glyph the rest of the HUD uses for that thing (WS-C: one icon
-/// language across the bar, menus, and radial). Unit-type buttons take the player-faction blue; the
-/// build + upgrade action buttons take the amber signal accent — both from `theme`. Pure + GPU-free
-/// → unit-tested.
-fn icon_for_label(label: &str) -> Option<(IconKind, [f32; 3])> {
+/// language across the bar, menus, and radial). Unit-type buttons take the **player-faction** colour
+/// resolved from the ACTIVE `palette` (`faction_color_in(Player, palette)`) so a colourblind ramp
+/// (WS-D) swaps it in lockstep with the world-unit body colours; the build + upgrade action buttons
+/// take the amber signal accent, which is NOT a faction colour and stays literal. Pure + GPU-free →
+/// unit-tested.
+fn icon_for_label(label: &str, palette: &crate::theme::Palette) -> Option<(IconKind, [f32; 3])> {
+    let player = crate::faction_color_in(Faction::Player, palette);
     match label {
-        "RIFLE" | "RIFLEMAN" | "INFANTRY" => Some((IconKind::Infantry, crate::theme::PLAYER)),
-        "HEAVY" | "TANK" | "ARMOR" => Some((IconKind::Armor, crate::theme::PLAYER)),
-        "MEDIC" => Some((IconKind::Medic, crate::theme::PLAYER)),
-        "ANTI-TANK" | "ANTITANK" | "AT" => Some((IconKind::AntiTank, crate::theme::PLAYER)),
+        "RIFLE" | "RIFLEMAN" | "INFANTRY" => Some((IconKind::Infantry, player)),
+        "HEAVY" | "TANK" | "ARMOR" => Some((IconKind::Armor, player)),
+        "MEDIC" => Some((IconKind::Medic, player)),
+        "ANTI-TANK" | "ANTITANK" | "AT" => Some((IconKind::AntiTank, player)),
         "BUILD" => Some((IconKind::Build, crate::theme::AMBER)),
         "UPGRADE" => Some((IconKind::Upgrade, crate::theme::AMBER)),
         _ => None,
@@ -139,11 +146,11 @@ fn icon_for_label(label: &str) -> Option<(IconKind, [f32; 3])> {
 /// A button whose label has no mapped icon ([`icon_for_label`]) simply contributes none. Empty view ⇒
 /// no icons. The icon center sits `ICON_CENTER_FRAC` of the half-width left of the button center; the
 /// icon pass aspect-corrects the width so it stays square in pixels. Pure + GPU-free → unit-tested.
-pub fn command_bar_icons(view: &CommandBarView) -> Vec<IconItem> {
+pub fn command_bar_icons(view: &CommandBarView, palette: &crate::theme::Palette) -> Vec<IconItem> {
     view.buttons
         .iter()
         .filter_map(|b| {
-            let (kind, tint) = icon_for_label(&b.label)?;
+            let (kind, tint) = icon_for_label(&b.label, palette)?;
             Some(IconItem {
                 kind,
                 pos: [b.ndc_x - b.half_x * ICON_CENTER_FRAC, b.ndc_y],
@@ -180,7 +187,7 @@ mod tests {
         assert!(v.is_empty());
         assert!(command_bar_quads(&v).is_empty());
         assert!(command_bar_labels(&v).is_empty());
-        assert!(command_bar_icons(&v).is_empty());
+        assert!(command_bar_icons(&v, &crate::theme::Palette::DEFAULT).is_empty());
     }
 
     #[test]
@@ -213,7 +220,7 @@ mod tests {
         let v = CommandBarView {
             buttons: vec![btn("RIFLE"), btn("HEAVY"), btn("UPGRADE")],
         };
-        let icons = command_bar_icons(&v);
+        let icons = command_bar_icons(&v, &crate::theme::Palette::DEFAULT);
         assert_eq!(icons.len(), 3, "every mapped label gets one icon");
         assert_eq!(icons[0].kind, IconKind::Infantry);
         assert_eq!(icons[1].kind, IconKind::Armor);
@@ -238,7 +245,7 @@ mod tests {
         let v = CommandBarView {
             buttons: vec![btn("RIFLE"), btn("UPGRADE")],
         };
-        let icons = command_bar_icons(&v);
+        let icons = command_bar_icons(&v, &crate::theme::Palette::DEFAULT);
         assert_eq!(
             icons[0].tint,
             crate::theme::PLAYER,
@@ -265,7 +272,7 @@ mod tests {
                 btn("UPGRADE"),
             ],
         };
-        let icons = command_bar_icons(&v);
+        let icons = command_bar_icons(&v, &crate::theme::Palette::DEFAULT);
         assert_eq!(icons.len(), 6, "every vocabulary button gets an icon");
         let kinds: Vec<IconKind> = icons.iter().map(|i| i.kind).collect();
         assert_eq!(
@@ -316,12 +323,35 @@ mod tests {
     }
 
     #[test]
+    fn unit_icon_tint_follows_the_active_colourblind_palette() {
+        // WS-D: a unit button's tint is the ACTIVE palette's player colour, so switching to a
+        // colourblind ramp swaps it in lockstep with the world units. The amber action accent is not
+        // a faction colour, so it stays put across modes.
+        let v = CommandBarView {
+            buttons: vec![btn("RIFLE"), btn("UPGRADE")],
+        };
+        let cvd = crate::theme::palette(crate::theme::PaletteMode::Deuteranopia);
+        let icons = command_bar_icons(&v, &cvd);
+        assert_eq!(
+            icons[0].tint,
+            crate::faction_color_in(Faction::Player, &cvd),
+            "unit tint tracks the active palette's player colour"
+        );
+        assert_ne!(
+            icons[0].tint,
+            crate::theme::PLAYER,
+            "the CVD ramp actually moved the player tint off the default"
+        );
+        assert_eq!(icons[1].tint, crate::theme::AMBER, "amber action accent is palette-independent");
+    }
+
+    #[test]
     fn unknown_labels_contribute_no_icon() {
         // A label outside the mapped vocabulary degrades to no icon (the bar still draws its box+label).
         let v = CommandBarView {
             buttons: vec![btn("RIFLE"), btn("MYSTERY"), btn("UPGRADE")],
         };
-        let icons = command_bar_icons(&v);
+        let icons = command_bar_icons(&v, &crate::theme::Palette::DEFAULT);
         assert_eq!(icons.len(), 2, "only the two recognised labels get icons");
         assert_eq!(icons[0].kind, IconKind::Infantry);
         assert_eq!(icons[1].kind, IconKind::Upgrade);

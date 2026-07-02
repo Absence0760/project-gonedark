@@ -15,7 +15,8 @@ use gonedark_core::campaign::{
     Campaign, Difficulty, MissionSelectEntry, NodeId, NodeProgress,
 };
 use gonedark_core::components::Army;
-use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Muzzle, Optic, Stock};
+use gonedark_core::fixed::Fixed;
+use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Muzzle, Optic, StatDelta, Stock};
 use gonedark_engine::keybind::{GameAction, KeyId, KeybindMap, RebindOutcome};
 use gonedark_engine::loadout_ui::{LoadoutEditor, LoadoutSlot};
 use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
@@ -206,6 +207,57 @@ pub fn slot_trade_hint(slot: LoadoutSlot) -> &'static str {
         LoadoutSlot::Muzzle => "suppression <-> downrange retention",
         // Grip is cosmetic/feel-only (D85): no sim trade, just recoil/hipfire feel.
         LoadoutSlot::Grip => "grip feel (cosmetic)",
+    }
+}
+
+/// Format a [`Fixed`] axis value as a signed whole-unit decimal (e.g. `+2.00`, `-0.03`) for the
+/// gunsmith readout. Scales by the type's own whole unit (`Fixed::from_int(1)`), so it is correct
+/// regardless of the fixed-point Q-format and uses integer math only. Presentation-side (app crate):
+/// floats would be fine here, but there is no need — the sim stays fixed-point (invariant #1).
+fn fixed_signed(f: Fixed) -> String {
+    let unit = Fixed::from_int(1).to_bits() as i64; // one whole unit, in bits
+    let hundredths = f.to_bits() as i64 * 100 / unit;
+    let sign = if hundredths < 0 { "-" } else { "+" };
+    let mag = hundredths.abs();
+    format!("{sign}{}.{:02}", mag / 100, mag % 100)
+}
+
+/// One integer axis token (`+10 mag`), or `None` when the axis is unchanged.
+fn axis_i(v: i32, unit: &str) -> Option<String> {
+    (v != 0).then(|| format!("{v:+} {unit}"))
+}
+
+/// One fixed-point axis token (`+2.00 rng`), or `None` when the axis is unchanged.
+fn axis_f(f: Fixed, unit: &str) -> Option<String> {
+    (f != Fixed::ZERO).then(|| format!("{} {unit}", fixed_signed(f)))
+}
+
+/// A compact, ASCII, signed readout of the REAL per-axis numbers a [`StatDelta`] moves — the
+/// gunsmith's "what does this option actually cost and buy" line. Lists only the axes an option
+/// touches (each slot's trade is disjoint, so a single option shows exactly its two poles), e.g.
+/// `+6.00 dmg  -60 res` for a Heavy barrel. Empty (all-zero, e.g. a `Standard` option or the
+/// cosmetic Grip) reads `no change`. Pure + static → unit-tested (mirrors [`slot_trade_hint`]); the
+/// numeric deltas come from `core::gunsmith`, so this is the single legible surface for them.
+pub fn stat_delta_summary(d: &StatDelta) -> String {
+    let parts: Vec<String> = [
+        axis_f(d.range, "rng"),
+        axis_f(d.damage, "dmg"),
+        axis_i(d.cooldown_ticks, "cd"),
+        axis_i(d.mag_size, "mag"),
+        axis_i(d.reload_ticks, "rld"),
+        axis_i(d.reserve, "res"),
+        axis_f(d.move_speed_delta, "spd"),
+        axis_f(d.cone_cos_delta, "aim"),
+        axis_f(d.supp_out_delta, "supp"),
+        axis_f(d.falloff_delta, "fall"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if parts.is_empty() {
+        "no change".to_string()
+    } else {
+        parts.join("  ")
     }
 }
 
@@ -1821,6 +1873,16 @@ fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction
                                 RichText::new(slot_trade_hint(slot)).color(MUTED).size(TYPE_CAPTION),
                             ),
                         );
+                        // The REAL per-option trade numbers (D60/M3): they change as the slot cycles,
+                        // so the sidegrade is legible ("+6.00 dmg  -60 res"), not just an axis pair.
+                        ui.add_sized(
+                            [200.0, 32.0],
+                            Label::new(
+                                RichText::new(stat_delta_summary(&editor.option_delta(slot)))
+                                    .color(ASH)
+                                    .size(TYPE_CAPTION),
+                            ),
+                        );
                     });
                     if i + 1 < LoadoutSlot::ALL.len() {
                         ui.add_space(8.0);
@@ -1828,7 +1890,16 @@ fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction
                 }
             });
 
-            ui.add_space(22.0);
+            ui.add_space(14.0);
+            // Build-wide net delta (the sum of the sim slots' trades). By the sidegrade rule it is
+            // never a flat upgrade over the baseline — surfacing it makes that legible at a glance.
+            ui.label(
+                RichText::new(format!("NET  {}", stat_delta_summary(&editor.net_delta())))
+                    .color(AMBER)
+                    .size(TYPE_CAPTION)
+                    .strong(),
+            );
+            ui.add_space(14.0);
             // D81: customization-only — DONE returns to Settings (the entry point), RESET clears to
             // baseline. There is no Deploy here: the mode/mission-select screens start matches.
             if menu_button(ui, "DONE", Emphasis::Primary) {
@@ -2922,6 +2993,39 @@ mod tests {
             hints.iter().all(|h| h.is_ascii()),
             "trade hints must be ASCII to render in egui's default font"
         );
+    }
+
+    #[test]
+    fn per_option_delta_text_changes_with_the_selection() {
+        // M3: the gunsmith now surfaces the REAL per-option StatDelta numbers, so the readout differs
+        // per selected option (the old static hint read identically for every option). Mirrors the
+        // slot_trade_hint tests: pure, ASCII, and asserted on the editor-backed formatter.
+        let mut ed = LoadoutEditor::new();
+        // Baseline: a Standard option moves nothing.
+        let base = stat_delta_summary(&ed.option_delta(LoadoutSlot::Barrel));
+        assert_eq!(base, "no change", "the neutral option reads as no change");
+
+        ed.cycle(LoadoutSlot::Barrel, true); // Heavy: +damage, -reserve
+        let heavy = stat_delta_summary(&ed.option_delta(LoadoutSlot::Barrel));
+        assert_ne!(heavy, base, "cycling changes the surfaced per-option delta");
+        assert!(
+            heavy.contains("dmg") && heavy.contains("res"),
+            "shows the real traded axes with numbers, got {heavy:?}"
+        );
+
+        ed.cycle(LoadoutSlot::Barrel, true); // Light: -damage, +reserve (the opposed trade)
+        let light = stat_delta_summary(&ed.option_delta(LoadoutSlot::Barrel));
+        assert_ne!(light, heavy, "each option reads distinctly");
+
+        // Cosmetic Grip carries no sim delta (D85) → always "no change".
+        ed.cycle(LoadoutSlot::Grip, true);
+        assert_eq!(stat_delta_summary(&ed.option_delta(LoadoutSlot::Grip)), "no change");
+
+        // The build-wide net readout reflects the chosen build and is nonempty once off baseline.
+        assert_ne!(stat_delta_summary(&ed.net_delta()), "no change");
+
+        // ASCII only, so it can never tofu in egui's default font (same rule as the trade hints).
+        assert!(heavy.is_ascii() && light.is_ascii());
     }
 
     // ---- The Settings pure seam ------------------------------------------------------------------

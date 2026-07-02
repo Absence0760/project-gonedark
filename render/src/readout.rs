@@ -115,17 +115,17 @@ pub struct ReadoutLabel {
 /// Label glyph height in NDC — the shared type scale's section-title step (`theme`), so the corner
 /// tally reads at the same prominence as the panel/objective titles (WS-C: one type scale).
 const LABEL_SIZE: f32 = crate::theme::TYPE_TITLE;
-/// Inset from the screen edge for the top-left readout stack, in NDC.
-const MARGIN: f32 = 0.04;
-/// Vertical step between stacked readout lines, in NDC (a touch more than the glyph height so the
-/// lines don't touch).
-const LINE_STEP: f32 = 0.075;
+/// Inset from the screen edge for the top-left readout stack — the shared screen-edge margin step.
+const MARGIN: f32 = crate::theme::SPACE_MARGIN;
+/// Vertical step between stacked readout lines — the shared stacked-line step (a touch more than the
+/// glyph height so the lines don't touch).
+const LINE_STEP: f32 = crate::theme::SPACE_LINE;
 
 // Label colors — sourced from the shared `theme` palette so each count reads in the SAME faction /
 // status language as the rest of the HUD (WS-C consistency): "mine" = player-blue, "theirs" =
-// enemy-red, control points = neutral bone, economy = the credits-gold data accent.
-const PLAYER_LABEL: [f32; 3] = crate::theme::PLAYER;
-const ENEMY_LABEL: [f32; 3] = crate::theme::ENEMY;
+// enemy-red, control points = neutral bone, economy = the credits-gold data accent. The player/enemy
+// tints are NOT baked as consts: they come from the ACTIVE faction ramp via `faction_color_in`
+// (WS-D), so a colourblind mode swaps them in lockstep with the counted world-unit colours.
 const NEUTRAL_LABEL: [f32; 3] = crate::theme::BONE;
 /// Economy lines (banked resources + income) — the palette's resource data accent so cost/income
 /// read as their own legible class, distinct from the unit counts.
@@ -185,12 +185,18 @@ pub fn readout_labels(
     t: &Tally,
     economy: Option<EconomyReadout>,
     world_dark: bool,
+    palette: &crate::theme::Palette,
 ) -> Vec<ReadoutLabel> {
     // Fairness gate (invariant #6): emit nothing while embodied. The command-layer chrome — visible
     // counts AND banked credits/income — is exactly the strategic intel "going dark" removes.
     if world_dark {
         return Vec::new();
     }
+    // WS-D: the player/enemy line tints come from the ACTIVE faction ramp (the same `palette` the
+    // renderer baked the counted unit colours with), so a colourblind mode recolours the readout in
+    // lockstep with the units it tallies.
+    let player_label = crate::faction_color_in(Faction::Player, palette);
+    let enemy_label = crate::faction_color_in(Faction::Enemy, palette);
     let top = 1.0 - MARGIN; // top edge, inset
     let left = -1.0 + MARGIN; // left edge, inset
     let mut out = Vec::with_capacity(5);
@@ -207,8 +213,8 @@ pub fn readout_labels(
         *row += 1;
     };
 
-    push(format!("UNITS: {}", t.player_units), PLAYER_LABEL, &mut row);
-    push(format!("ENEMY: {}", t.enemy_units), ENEMY_LABEL, &mut row);
+    push(format!("UNITS: {}", t.player_units), player_label, &mut row);
+    push(format!("ENEMY: {}", t.enemy_units), enemy_label, &mut row);
     push(
         format!("POINTS: {}", t.control_points),
         NEUTRAL_LABEL,
@@ -388,7 +394,7 @@ mod tests {
             enemy_units: 3,
             control_points: 2,
         };
-        let labels = readout_labels(&t, None, false);
+        let labels = readout_labels(&t, None, false, &crate::theme::Palette::DEFAULT);
         // Three lines without the economy seam.
         assert_eq!(labels.len(), 3);
         assert!(labels[0].text.contains('5'), "player count in the units line");
@@ -403,11 +409,11 @@ mod tests {
     fn economy_seam_only_appears_when_supplied() {
         let t = Tally::default();
         assert_eq!(
-            readout_labels(&t, None, false).len(),
+            readout_labels(&t, None, false, &crate::theme::Palette::DEFAULT).len(),
             3,
             "no economy lines by default"
         );
-        let with = readout_labels(&t, Some(econ(250, income_per_tick(0))), false);
+        let with = readout_labels(&t, Some(econ(250, income_per_tick(0))), false, &crate::theme::Palette::DEFAULT);
         assert_eq!(
             with.len(),
             5,
@@ -420,17 +426,17 @@ mod tests {
     #[test]
     fn resource_line_shows_the_banked_credits() {
         // The banked figure the host hands in is the exact number shown.
-        let labels = readout_labels(&Tally::default(), Some(econ(1337, income_per_tick(0))), false);
+        let labels = readout_labels(&Tally::default(), Some(econ(1337, income_per_tick(0))), false, &crate::theme::Palette::DEFAULT);
         assert!(labels[3].text.contains("1337"), "banked credits verbatim");
     }
 
     #[test]
     fn income_label_converts_per_tick_to_per_second() {
         // Base income (no points) is 1/tick -> 60/s at TICK_HZ = 60.
-        let base = readout_labels(&Tally::default(), Some(econ(0, income_per_tick(0))), false);
+        let base = readout_labels(&Tally::default(), Some(econ(0, income_per_tick(0))), false, &crate::theme::Palette::DEFAULT);
         assert!(base[4].text.contains("60/s"), "1/tick reads as 60/s, got {:?}", base[4].text);
         // Holding two points: 1 + 2*2 = 5/tick -> 300/s.
-        let held = readout_labels(&Tally::default(), Some(econ(0, income_per_tick(2))), false);
+        let held = readout_labels(&Tally::default(), Some(econ(0, income_per_tick(2))), false, &crate::theme::Palette::DEFAULT);
         assert!(held[4].text.contains("300/s"), "5/tick reads as 300/s, got {:?}", held[4].text);
     }
 
@@ -457,16 +463,16 @@ mod tests {
             control_points: 4,
         };
         assert!(
-            readout_labels(&t, Some(econ(9999, income_per_tick(4))), true).is_empty(),
+            readout_labels(&t, Some(econ(9999, income_per_tick(4))), true, &crate::theme::Palette::DEFAULT).is_empty(),
             "no labels at all over the dark embodied frame"
         );
         // And with no economy either — the count chrome is also withheld.
-        assert!(readout_labels(&t, None, true).is_empty());
+        assert!(readout_labels(&t, None, true, &crate::theme::Palette::DEFAULT).is_empty());
     }
 
     #[test]
     fn economy_lines_carry_the_credits_color() {
-        let labels = readout_labels(&Tally::default(), Some(econ(100, income_per_tick(1))), false);
+        let labels = readout_labels(&Tally::default(), Some(econ(100, income_per_tick(1))), false, &crate::theme::Palette::DEFAULT);
         // The two economy lines share the credits-gold tint, distinct from the white point line.
         assert_eq!(labels[3].color, ECON_LABEL, "RESOURCES line is credits-gold");
         assert_eq!(labels[4].color, ECON_LABEL, "INCOME line is credits-gold");
@@ -475,7 +481,7 @@ mod tests {
 
     #[test]
     fn labels_stack_down_the_top_left_corner() {
-        let labels = readout_labels(&Tally::default(), None, false);
+        let labels = readout_labels(&Tally::default(), None, false, &crate::theme::Palette::DEFAULT);
         for w in labels.windows(2) {
             // Each line is left-aligned at the same x and steps DOWN (smaller y) from the last.
             assert_eq!(w[0].pos[0], w[1].pos[0], "same left x");
@@ -495,7 +501,7 @@ mod tests {
             enemy_units: 99,
             control_points: 9,
         };
-        for l in readout_labels(&t, Some(econ(9999, income_per_tick(9))), false) {
+        for l in readout_labels(&t, Some(econ(9999, income_per_tick(9))), false, &crate::theme::Palette::DEFAULT) {
             assert!(l.pos[0] >= -1.0 && l.pos[0] <= 1.0, "x in NDC");
             assert!(l.pos[1] >= -1.0 && l.pos[1] <= 1.0, "y in NDC");
             assert!(l.px_size > 0.0 && l.alpha > 0.0);
@@ -515,8 +521,8 @@ mod tests {
             enemy_units: 4,
             control_points: 3,
         };
-        let a = readout_labels(&t, Some(econ(500, income_per_tick(3))), false);
-        let b = readout_labels(&t, Some(econ(500, income_per_tick(3))), false);
+        let a = readout_labels(&t, Some(econ(500, income_per_tick(3))), false, &crate::theme::Palette::DEFAULT);
+        let b = readout_labels(&t, Some(econ(500, income_per_tick(3))), false, &crate::theme::Palette::DEFAULT);
         assert_eq!(a, b, "layout is a pure function of the tally/economy — no hidden size input");
         for l in &a {
             // NDC chrome with NDC glyph size — nothing here scales with the target's pixel dims, so
@@ -532,7 +538,7 @@ mod tests {
     fn empty_labels_make_no_card() {
         // The dark embodied frame emits no labels (invariant #6) → no backing card either.
         assert!(readout_card(&[], 1.0).is_empty());
-        assert!(readout_card(&readout_labels(&Tally::default(), None, true), 1.0).is_empty());
+        assert!(readout_card(&readout_labels(&Tally::default(), None, true, &crate::theme::Palette::DEFAULT), 1.0).is_empty());
     }
 
     #[test]
@@ -545,6 +551,7 @@ mod tests {
             },
             Some(econ(91, income_per_tick(2))),
             false,
+            &crate::theme::Palette::DEFAULT,
         );
         let q = readout_card(&labels, 1.0);
         assert_eq!(q.len(), 2, "rim + fill");
@@ -565,7 +572,7 @@ mod tests {
     #[test]
     fn card_narrows_on_a_wide_viewport() {
         // The labels shrink horizontally on a wide window, so the card tracks them (no dead space).
-        let labels = readout_labels(&Tally::default(), Some(econ(1234, income_per_tick(2))), false);
+        let labels = readout_labels(&Tally::default(), Some(econ(1234, income_per_tick(2))), false, &crate::theme::Palette::DEFAULT);
         let sq = readout_card(&labels, 1.0);
         let wide = readout_card(&labels, 16.0 / 9.0);
         assert!(wide[1].hw < sq[1].hw, "card is narrower on a wide viewport");
@@ -575,7 +582,7 @@ mod tests {
     fn label_and_card_colors_are_sourced_from_the_shared_theme() {
         // WS-C consistency: the readout speaks the same faction/status language and wears the same
         // card chrome as the command panel + objective HUD — every colour is a `theme` const.
-        let labels = readout_labels(&Tally::default(), Some(econ(100, income_per_tick(1))), false);
+        let labels = readout_labels(&Tally::default(), Some(econ(100, income_per_tick(1))), false, &crate::theme::Palette::DEFAULT);
         assert_eq!(labels[0].color, crate::theme::PLAYER, "UNITS line is player-blue");
         assert_eq!(labels[1].color, crate::theme::ENEMY, "ENEMY line is enemy-red");
         assert_eq!(labels[2].color, crate::theme::BONE, "POINTS line is neutral bone");
@@ -588,8 +595,27 @@ mod tests {
     }
 
     #[test]
+    fn faction_labels_follow_the_active_colourblind_palette() {
+        // WS-D: the UNITS / ENEMY line tints come from the ACTIVE faction ramp, so a colourblind mode
+        // recolours the readout in lockstep with the units it counts (and `Off` is byte-identical to
+        // the shipped consts).
+        let t = Tally {
+            player_units: 2,
+            enemy_units: 1,
+            control_points: 0,
+        };
+        let cvd = crate::theme::palette(crate::theme::PaletteMode::Deuteranopia);
+        let labels = readout_labels(&t, None, false, &cvd);
+        assert_eq!(labels[0].color, crate::faction_color_in(Faction::Player, &cvd));
+        assert_eq!(labels[1].color, crate::faction_color_in(Faction::Enemy, &cvd));
+        assert_ne!(labels[0].color, crate::theme::PLAYER, "the CVD ramp moved the player tint");
+        // The POINTS line is neutral bone (not a faction colour), so it is palette-independent.
+        assert_eq!(labels[2].color, crate::theme::BONE);
+    }
+
+    #[test]
     fn each_side_label_carries_its_faction_color() {
-        let labels = readout_labels(&Tally::default(), None, false);
+        let labels = readout_labels(&Tally::default(), None, false, &crate::theme::Palette::DEFAULT);
         // The player line leans blue, the enemy line leans red (so each reads as its side).
         assert!(labels[0].color[2] > labels[0].color[0], "player label is blue-leaning");
         assert!(labels[1].color[0] > labels[1].color[2], "enemy label is red-leaning");

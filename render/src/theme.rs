@@ -384,15 +384,35 @@ pub const TYPE_TITLE: f32 = 0.055;
 pub const TYPE_BODY: f32 = 0.040;
 /// Caption / secondary detail (costs, sub-labels).
 pub const TYPE_CAPTION: f32 = 0.030;
+/// Label / micro text — the smallest step, for tight in-place labels that must sit inside a small
+/// chrome element (the radial menu's wedge captions). Below [`TYPE_CAPTION`].
+pub const TYPE_LABEL: f32 = 0.026;
 
 // ---- Spacing scale (NDC) ------------------------------------------------------------------------
+//
+// A small set of named NDC spacing steps so the HUD panels/readouts share ONE source of truth for
+// margins/gaps/row-steps instead of each module hand-rolling a literal. Each step names an exact
+// value the modules use, so pointing a module at one is a value-preserving repoint — the golden-
+// layout tests stay byte-identical. Kept fine-grained on purpose: value preservation forbids
+// collapsing two near-but-distinct hand-tuned gaps into one step.
 
 /// Tight inset — padding inside a row, gap between a glyph run and its icon.
 pub const SPACE_TIGHT: f32 = 0.015;
+/// Section gap — between a panel title and its first body row (the contextual command panel).
+pub const SPACE_SECTION: f32 = 0.028;
 /// Standard inset — a panel's inner padding, the step between stacked rows.
 pub const SPACE_STD: f32 = 0.030;
+/// Screen-edge / group margin — the corner readouts' and build palette's inset from the edge (also
+/// reused as the summary's inter-button gap, which shares this value).
+pub const SPACE_MARGIN: f32 = 0.040;
+/// Stacked-row step — the vertical step between body rows in the command + objective cards.
+pub const SPACE_ROW: f32 = 0.058;
 /// Loose inset — the gap between distinct panel groups, the screen-edge margin.
 pub const SPACE_LOOSE: f32 = 0.060;
+/// Stacked-line step — the taller step between corner-readout / build-palette lines.
+pub const SPACE_LINE: f32 = 0.075;
+/// Summary bar-row step — the vertical spacing between per-faction rows in the post-match summary.
+pub const SPACE_BAR_ROW: f32 = 0.100;
 
 #[cfg(test)]
 mod tests {
@@ -710,12 +730,24 @@ mod tests {
         assert!(TYPE_HEADING > TYPE_TITLE);
         assert!(TYPE_TITLE > TYPE_BODY);
         assert!(TYPE_BODY > TYPE_CAPTION);
+        assert!(TYPE_CAPTION > TYPE_LABEL);
     }
 
-    /// Spacing scale is strictly ascending.
+    /// Spacing scale is strictly ascending across every named step.
     #[test]
     fn spacing_scale_is_ascending() {
-        assert!(SPACE_TIGHT < SPACE_STD);
-        assert!(SPACE_STD < SPACE_LOOSE);
+        let steps = [
+            SPACE_TIGHT,   // 0.015
+            SPACE_SECTION, // 0.028
+            SPACE_STD,     // 0.030
+            SPACE_MARGIN,  // 0.040
+            SPACE_ROW,     // 0.058
+            SPACE_LOOSE,   // 0.060
+            SPACE_LINE,    // 0.075
+            SPACE_BAR_ROW, // 0.100
+        ];
+        for w in steps.windows(2) {
+            assert!(w[0] < w[1], "spacing scale not strictly ascending: {} !< {}", w[0], w[1]);
+        }
     }
 }

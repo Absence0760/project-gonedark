@@ -29,9 +29,11 @@ const PAD: f32 = 0.022;
 const TITLE_SIZE: f32 = crate::theme::TYPE_TITLE;
 /// Objective + progress row text height — the shared type scale's body step.
 const ROW_SIZE: f32 = crate::theme::TYPE_BODY;
-/// Vertical step between row tops.
-const ROW_STEP: f32 = 0.058;
-/// Gap between the title and the first row.
+/// Vertical step between row tops — the shared stacked-row spacing step (`theme`).
+const ROW_STEP: f32 = crate::theme::SPACE_ROW;
+/// Gap between the title and the first row. Kept module-local at a hair tighter than the command
+/// panel's [`crate::theme::SPACE_SECTION`] (this two-row card wants its title snugger to the body);
+/// deliberately NOT snapped to the scale so this card's golden layout stays byte-identical.
 const TITLE_GAP: f32 = 0.026;
 /// The rim quad extends this far past the panel on each side to draw a thin border.
 const RIM_PAD: f32 = 0.010;

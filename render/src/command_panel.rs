@@ -32,14 +32,14 @@ const PAD: f32 = 0.022;
 const TITLE_SIZE: f32 = crate::theme::TYPE_TITLE;
 /// Body row text height — the shared type scale's body step.
 const ROW_SIZE: f32 = crate::theme::TYPE_BODY;
-/// Vertical step between body row tops.
-const ROW_STEP: f32 = 0.058;
+/// Vertical step between body row tops — the shared stacked-row spacing step (`theme`).
+const ROW_STEP: f32 = crate::theme::SPACE_ROW;
 /// Maximum body rows the panel draws. A big mixed selection or a long production queue is capped here
 /// so the box can't grow off the bottom of a phone screen; the overflow rolls up into a trailing
 /// "+N more" row — the same cap+rollup pattern `engine::panel_summary::composition_rows` uses.
 const MAX_ROWS: usize = 5;
-/// Gap between the title and the first body row.
-const TITLE_GAP: f32 = 0.028;
+/// Gap between the title and the first body row — the shared section-gap step (`theme`).
+const TITLE_GAP: f32 = crate::theme::SPACE_SECTION;
 /// The rim quad extends this far past the panel on each side to draw a thin border.
 const RIM_PAD: f32 = 0.010;
 

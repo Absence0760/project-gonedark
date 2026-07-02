@@ -200,8 +200,9 @@ pub fn radial_quads(menu: &RadialMenu, aspect: f32) -> Vec<RadialQuad> {
 /// Glyph cell height (NDC) of a wedge label — small, to sit inside a wedge slot (and to keep the
 /// longer command names from colliding around a crowded ring). This is the *maximum* size; a menu
 /// with long labels (e.g. "Disarm retreat") shrinks uniformly so the longest one fits its wedge — see
-/// [`fitted_label_size`].
-const WEDGE_LABEL_SIZE: f32 = 0.026;
+/// [`fitted_label_size`]. Rides the shared type scale's smallest [`crate::theme::TYPE_LABEL`] step
+/// so the radial's micro-labels sit in one type language with the rest of the HUD (WS-C).
+const WEDGE_LABEL_SIZE: f32 = crate::theme::TYPE_LABEL;
 /// The fraction of a wedge's full NDC width a label may occupy — a hair of inset so glyphs don't kiss
 /// the wedge rim. The per-menu label size is scaled so the LONGEST label fits this budget.
 const WEDGE_LABEL_FIT_FRAC: f32 = 0.9;

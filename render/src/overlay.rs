@@ -217,8 +217,9 @@ const PANEL_HH: f32 = 0.32;
 /// Half-height of the accent strip across the top of a panel (reconnect cause / match outcome).
 /// Named so tuning the strip moves the summary rows that sit below it (see `SUMMARY_ROWS_TOP`).
 const ACCENT_STRIP_HH: f32 = 0.04;
-/// Gap between the bottom of the accent strip and the first summary row.
-const ROW_TOP_GAP: f32 = 0.06;
+/// Gap between the bottom of the accent strip and the first summary row — the shared loose spacing
+/// step (`theme`), the gap between distinct groups.
+const ROW_TOP_GAP: f32 = crate::theme::SPACE_LOOSE;
 /// A faint track behind each bar reads at low alpha so it never competes with the data bar.
 const BAR_TRACK_ALPHA: f32 = 0.35;
 /// The rim quad extends this far past the panel half-extent to draw a thin border.
@@ -226,7 +227,7 @@ const PANEL_RIM_PAD: f32 = 0.012;
 /// Per-faction summary bar geometry.
 const BAR_MAX_HW: f32 = 0.42; // a full bar spans most of the panel width
 const BAR_HH: f32 = 0.035;
-const BAR_GAP: f32 = 0.1; // vertical spacing between faction rows
+const BAR_GAP: f32 = crate::theme::SPACE_BAR_ROW; // vertical spacing between faction rows (shared step)
 /// Top of the first summary bar row, derived from the accent strip so the rows always clear it.
 /// The accent strip occupies `[PANEL_HH - 2*ACCENT_STRIP_HH, PANEL_HH]`; rows start a gap below.
 const SUMMARY_ROWS_TOP: f32 = PANEL_HH - 2.0 * ACCENT_STRIP_HH - ROW_TOP_GAP;
@@ -246,7 +247,7 @@ const BUTTON_HH: f32 = 0.085;
 /// horizontal component is clamped to half the inter-slot gap so two adjacent slots tile exactly
 /// without an ambiguous overlap; the vertical component is the full pad.
 const BUTTON_HIT_PAD: f32 = 0.045;
-const BUTTON_GAP: f32 = 0.04; // horizontal spacing between adjacent slots
+const BUTTON_GAP: f32 = crate::theme::SPACE_MARGIN; // horizontal spacing between adjacent slots (shared step)
 const BUTTON_ROW_CY: f32 = -PANEL_HH + 0.11; // near the panel's lower edge (raised for the taller slot)
 /// Points-per-NDC-unit on a reference landscape phone, used ONLY by the touch-minimum CI guard.
 /// NDC y spans [-1, 1] (a 2.0-unit range) mapped to the full ~360pt short side of a mid-range
@@ -568,10 +569,12 @@ pub struct TextLabel {
     pub color: [f32; 3],
 }
 
-/// Glyph cell height (NDC) of the summary's bar-row numeric labels — sized to sit within a bar row.
-const LABEL_SIZE: f32 = 0.030;
-/// Glyph cell height (NDC) of the summary outcome title (VICTORY / DEFEAT / DRAW) — the largest.
-const TITLE_SIZE: f32 = 0.055;
+/// Glyph cell height (NDC) of the summary's bar-row numeric labels — the shared type scale's caption
+/// step (`theme`), sized to sit within a bar row.
+const LABEL_SIZE: f32 = crate::theme::TYPE_CAPTION;
+/// Glyph cell height (NDC) of the summary outcome title (VICTORY / DEFEAT / DRAW) — the shared type
+/// scale's section-title step, the largest overlay label.
+const TITLE_SIZE: f32 = crate::theme::TYPE_TITLE;
 /// Glyph cell height (NDC) of a button's caption. Bumped alongside the taller `BUTTON_HH` (H3/M4)
 /// so the caption stays proportional to the larger slot.
 const BUTTON_LABEL_SIZE: f32 = 0.046;

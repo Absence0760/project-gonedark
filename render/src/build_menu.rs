@@ -60,12 +60,15 @@ pub struct BuildMenuEntry {
     pub alpha: f32,
 }
 
-/// Label glyph height in NDC (matches `readout`'s label size).
-const LABEL_SIZE: f32 = 0.05;
-/// Inset from the screen edge for the bottom-left palette stack, in NDC.
-const MARGIN: f32 = 0.04;
-/// Vertical step between stacked palette lines, in NDC (a touch more than the glyph height).
-const LINE_STEP: f32 = 0.075;
+/// Label glyph height in NDC — the shared type scale's section-title step (`theme`), matching the
+/// corner `readout`'s label size so the two command-view stacks read at the same prominence (WS-C).
+/// (Was a lone `0.05` literal that had drifted a hair below `readout`'s title size.)
+const LABEL_SIZE: f32 = crate::theme::TYPE_TITLE;
+/// Inset from the screen edge for the bottom-left palette stack — the shared screen-edge margin step.
+const MARGIN: f32 = crate::theme::SPACE_MARGIN;
+/// Vertical step between stacked palette lines — the shared stacked-line step (a touch more than the
+/// glyph height so lines don't touch).
+const LINE_STEP: f32 = crate::theme::SPACE_LINE;
 
 /// Color for an affordable entry (a readable off-white, like `readout`'s neutral label).
 const AFFORDABLE_COLOR: [f32; 3] = crate::theme::BONE;

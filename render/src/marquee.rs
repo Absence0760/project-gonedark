@@ -90,10 +90,16 @@ const FILL_ALPHA: f32 = 0.12;
 /// The border is a crisp, opaque cool line (matches the unit selection-rim read).
 const BORDER_ALPHA: f32 = 1.0;
 
+/// The band-select colours are derived from the shared **player-blue** [`crate::theme::PLAYER`]
+/// (lightened toward [`crate::theme::BONE`]) rather than hand-tuned literals, so the marquee's
+/// "matches the selection rim" read is *structural*: the box wears the same faction-identity blue the
+/// selected units' rims do (WS-C). The fill is a faint low-mix wash; the border a brighter high-mix
+/// edge. (Flagged design change — these RGBs shifted slightly off the old literals; no golden test
+/// pins the marquee's colour, only its geometry + relative alpha.)
 fn color(role: MarqueeRole) -> [f32; 3] {
     match role {
-        MarqueeRole::Fill => [0.45, 0.65, 1.0],   // faint cool wash
-        MarqueeRole::Border => [0.75, 0.88, 1.0], // bright cool edge
+        MarqueeRole::Fill => crate::theme::mix(crate::theme::PLAYER, crate::theme::BONE, 0.3),
+        MarqueeRole::Border => crate::theme::mix(crate::theme::PLAYER, crate::theme::BONE, 0.65),
     }
 }
 
@@ -391,6 +397,33 @@ mod tests {
                 "in NDC y"
             );
         }
+    }
+
+    #[test]
+    fn colors_are_derived_from_the_player_blue_selection_identity() {
+        // WS-C: the marquee wears the shared player-blue (lightened toward bone), so its "matches the
+        // selection rim" claim is structural, not a coincidence of hand-tuned literals. Both roles
+        // read cool (blue channel dominant) and the border is brighter than the fill.
+        let q = marquee_quads(&Marquee {
+            min: [-0.5, -0.3],
+            max: [0.4, 0.6],
+        });
+        let fill = q[0];
+        let border = q[1];
+        for c in [fill, border] {
+            assert!(c.b > c.r && c.b > c.g, "marquee colour reads cool (player-blue lineage)");
+        }
+        // Border is the higher mix toward bone → lighter than the fill on every channel.
+        assert!(border.r > fill.r && border.g > fill.g, "border is the brighter edge");
+        // Exact derivation: the fill/border are mixes of PLAYER toward BONE (one source of truth).
+        assert_eq!(
+            [fill.r, fill.g, fill.b],
+            crate::theme::mix(crate::theme::PLAYER, crate::theme::BONE, 0.3)
+        );
+        assert_eq!(
+            [border.r, border.g, border.b],
+            crate::theme::mix(crate::theme::PLAYER, crate::theme::BONE, 0.65)
+        );
     }
 
     #[test]
