@@ -2546,7 +2546,7 @@ impl Game {
     /// tearing the match down and returning to its out-of-match screen, which the engine has no
     /// concept of).
     pub fn overlay_click(&self, ndc: (f32, f32)) -> Option<OverlayClick> {
-        let overlay = overlay_for_surface(self.shell.surface());
+        let overlay = overlay_for_surface(self.shell.surface(), self.shell.is_single_player());
         let slot = gonedark_render::overlay::button_slot_at(&overlay, ndc.0, ndc.1)?;
         overlay_click_action(&overlay, slot)
     }
@@ -4306,7 +4306,7 @@ impl Game {
         // frame, the alert HUD, and the radial menu. It is screen-space chrome with no world
         // position, so it never widens the avatar-only fog beneath it (invariant #6). `Overlay::None`
         // is a no-op.
-        let overlay = overlay_for_surface(self.shell.surface());
+        let overlay = overlay_for_surface(self.shell.surface(), self.shell.is_single_player());
         self.renderer.render_overlay(device, queue, view, &overlay);
     }
 
@@ -4417,6 +4417,12 @@ impl Game {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayClick {
     Session(gonedark_core::shell::SessionAction),
+    /// The post-match summary's **REMATCH** (slot 0): re-seed a fresh match of the same scene with
+    /// the same loadout — a new deterministic `Sim`, not a reuse of the ended one (invariant #5: no
+    /// respawn/lives machinery at the session level). The host owns the scene-restart path.
+    Rematch,
+    /// The post-match summary's **HUB / DISMISS** (slot 1, formerly the lone button): leave the match
+    /// to the title/hub.
     Dismiss,
 }
 
@@ -4444,13 +4450,16 @@ pub fn pixel_to_ndc(px: f32, py: f32, width: u32, height: u32) -> (f32, f32) {
 fn overlay_click_action(overlay: &Overlay, slot: usize) -> Option<OverlayClick> {
     use gonedark_core::shell::SessionAction;
     match (overlay, slot) {
-        (Overlay::Paused, 0) | (Overlay::ReconnectPrompt { .. }, 0) => {
+        (Overlay::Paused { .. }, 0) | (Overlay::ReconnectPrompt { .. }, 0) => {
             Some(OverlayClick::Session(SessionAction::Resume))
         }
-        (Overlay::Paused, 1) | (Overlay::ReconnectPrompt { .. }, 1) => {
+        (Overlay::Paused { .. }, 1) | (Overlay::ReconnectPrompt { .. }, 1) => {
             Some(OverlayClick::Session(SessionAction::Surrender))
         }
-        (Overlay::Summary(_), 0) => Some(OverlayClick::Dismiss),
+        // The summary now offers two actions: REMATCH (slot 0) re-seeds the same scene, HUB (slot 1)
+        // leaves to the title. Previously the lone slot 0 was a bare Dismiss.
+        (Overlay::Summary(_), 0) => Some(OverlayClick::Rematch),
+        (Overlay::Summary(_), 1) => Some(OverlayClick::Dismiss),
         _ => None,
     }
 }
@@ -4480,10 +4489,12 @@ fn pause_toggle_action(surface: &ShellSurface) -> Option<gonedark_core::shell::S
 /// (no `Game`, no GPU) so it is unit-testable: `Playing` → nothing; `Paused` → the pause overlay;
 /// `ReconnectPrompt` → the prompt (severity from the [`LinkState`]); `Ended` → the post-match
 /// summary panel (the integer-only `MatchSummary`, full-info — shown only once the match is over).
-fn overlay_for_surface(surface: &ShellSurface) -> Overlay {
+fn overlay_for_surface(surface: &ShellSurface, single_player: bool) -> Overlay {
     match surface {
         ShellSurface::Playing => Overlay::None,
-        ShellSurface::Paused => Overlay::Paused,
+        // `single_player` drives the pause copy: a lockstep pause is a local overlay only (the
+        // shared clock keeps running), so a multiplayer player is warned rather than reassured.
+        ShellSurface::Paused => Overlay::Paused { single_player },
         ShellSurface::ReconnectPrompt(state) => Overlay::ReconnectPrompt {
             desynced: *state == LinkState::Desynced,
         },
@@ -7205,16 +7216,23 @@ mod tests {
     #[test]
     fn overlay_for_surface_maps_each_surface() {
         // Playing → no overlay.
-        assert_eq!(overlay_for_surface(&ShellSurface::Playing), Overlay::None);
-        // Paused → the pause overlay.
-        assert_eq!(overlay_for_surface(&ShellSurface::Paused), Overlay::Paused);
+        assert_eq!(overlay_for_surface(&ShellSurface::Playing, true), Overlay::None);
+        // Paused → the pause overlay, carrying the single-player flag through for the copy.
+        assert_eq!(
+            overlay_for_surface(&ShellSurface::Paused, true),
+            Overlay::Paused { single_player: true }
+        );
+        assert_eq!(
+            overlay_for_surface(&ShellSurface::Paused, false),
+            Overlay::Paused { single_player: false }
+        );
         // Reconnect prompt: stalled vs desynced map to the prompt severity.
         assert_eq!(
-            overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting)),
+            overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting), true),
             Overlay::ReconnectPrompt { desynced: false }
         );
         assert_eq!(
-            overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Desynced)),
+            overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Desynced), true),
             Overlay::ReconnectPrompt { desynced: true }
         );
     }
@@ -7265,25 +7283,25 @@ mod tests {
     #[test]
     fn overlay_for_surface_ended_carries_the_summary() {
         let summary = assemble_summary(&[], 1234, MatchOutcome::Draw, &empty_reads());
-        match overlay_for_surface(&ShellSurface::Ended(summary.clone())) {
+        match overlay_for_surface(&ShellSurface::Ended(summary.clone()), true) {
             Overlay::Summary(s) => assert_eq!(s, summary),
             other => panic!("Ended must map to Overlay::Summary, got {other:?}"),
         }
     }
 
-    /// Each surface's button slots resolve to the right host action — and the post-match summary's
-    /// lone slot resolves to `Dismiss` (the reported "dismiss button does nothing" path: the click
-    /// must produce an actionable result, not `None`).
+    /// Each surface's button slots resolve to the right host action — the post-match summary now
+    /// offers REMATCH (slot 0) and HUB/Dismiss (slot 1), and every click produces an actionable
+    /// result, never `None` (the reported "dismiss button does nothing" path).
     #[test]
     fn overlay_click_action_maps_each_slot() {
         let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
-        // Pause: slot 0 resumes, slot 1 surrenders.
+        // Pause: slot 0 resumes, slot 1 surrenders (single-player flag is irrelevant to the action).
         assert_eq!(
-            overlay_click_action(&Overlay::Paused, 0),
+            overlay_click_action(&Overlay::Paused { single_player: true }, 0),
             Some(OverlayClick::Session(SessionAction::Resume))
         );
         assert_eq!(
-            overlay_click_action(&Overlay::Paused, 1),
+            overlay_click_action(&Overlay::Paused { single_player: false }, 1),
             Some(OverlayClick::Session(SessionAction::Surrender))
         );
         // Reconnect prompt: same Resume / leave vocabulary.
@@ -7295,35 +7313,55 @@ mod tests {
             overlay_click_action(&Overlay::ReconnectPrompt { desynced: false }, 1),
             Some(OverlayClick::Session(SessionAction::Surrender))
         );
-        // Post-match summary: the single DISMISS button.
+        // Post-match summary: slot 0 REMATCH (re-seed same scene), slot 1 HUB (leave to title).
         assert_eq!(
-            overlay_click_action(&Overlay::Summary(summary), 0),
+            overlay_click_action(&Overlay::Summary(summary.clone()), 0),
+            Some(OverlayClick::Rematch)
+        );
+        assert_eq!(
+            overlay_click_action(&Overlay::Summary(summary), 1),
             Some(OverlayClick::Dismiss)
         );
         // No overlay, and out-of-range slots, resolve to nothing (never a wrong action).
         assert_eq!(overlay_click_action(&Overlay::None, 0), None);
-        assert_eq!(overlay_click_action(&Overlay::Paused, 2), None);
+        assert_eq!(
+            overlay_click_action(&Overlay::Paused { single_player: true }, 2),
+            None
+        );
     }
 
     /// `Game::overlay_click` ties the geometry seam to the action map: a click on the live overlay's
     /// drawn button center resolves; a miss does not. Exercised on the terminal post-match summary
-    /// (the reported broken path) without constructing a GPU `Game` — `overlay_click` only reads the
-    /// shell surface, so we drive the same two pure seams it composes.
+    /// without constructing a GPU `Game` — `overlay_click` only reads the shell surface, so we drive
+    /// the same two pure seams it composes. The summary now has two buttons: the primary (REMATCH,
+    /// slot 0) and the secondary (HUB/leave, slot 1).
     #[test]
-    fn overlay_click_resolves_summary_dismiss_at_button_center() {
+    fn overlay_click_resolves_summary_buttons_at_their_centers() {
         let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
-        let overlay = overlay_for_surface(&ShellSurface::Ended(summary));
-        // The drawn DISMISS button's center, taken from the renderer's own layout.
-        let button = gonedark_render::overlay::overlay_quads(&overlay)
+        let overlay = overlay_for_surface(&ShellSurface::Ended(summary), true);
+        // The primary (REMATCH) button's center, taken from the renderer's own layout.
+        let primary = gonedark_render::overlay::overlay_quads(&overlay)
             .into_iter()
             .find(|q| q.role == gonedark_render::overlay::QuadRole::ButtonPrimary)
-            .expect("summary draws a dismiss button");
-        let slot = gonedark_render::overlay::button_slot_at(&overlay, button.cx, button.cy);
-        assert_eq!(slot, Some(0), "the button center hit-tests to slot 0");
+            .expect("summary draws a primary REMATCH button");
+        let slot = gonedark_render::overlay::button_slot_at(&overlay, primary.cx, primary.cy);
+        assert_eq!(slot, Some(0), "the primary button center hit-tests to slot 0");
         assert_eq!(
             overlay_click_action(&overlay, slot.unwrap()),
+            Some(OverlayClick::Rematch),
+            "clicking the primary button resolves to a host Rematch, not a no-op"
+        );
+        // The secondary (HUB) button resolves to Dismiss (leave to title).
+        let secondary = gonedark_render::overlay::overlay_quads(&overlay)
+            .into_iter()
+            .find(|q| q.role == gonedark_render::overlay::QuadRole::Button)
+            .expect("summary draws a secondary HUB button");
+        let slot2 = gonedark_render::overlay::button_slot_at(&overlay, secondary.cx, secondary.cy);
+        assert_eq!(slot2, Some(1), "the secondary button center hit-tests to slot 1");
+        assert_eq!(
+            overlay_click_action(&overlay, slot2.unwrap()),
             Some(OverlayClick::Dismiss),
-            "clicking DISMISS resolves to a host Dismiss, not a no-op"
+            "clicking HUB resolves to a host Dismiss"
         );
         // A click far outside the panel resolves to nothing.
         assert_eq!(
@@ -7352,29 +7390,30 @@ mod tests {
 
     /// End-to-end the Android/desktop leave-to-title tap in PIXEL space (the seam the JNI
     /// `Activity.finish()` / desktop `ExitToTitle` glue depends on): a tap on the post-match summary's
-    /// DISMISS button — located from the renderer's own layout, converted back to pixels — runs
-    /// `pixel_to_ndc` then the same `button_slot_at` + `overlay_click_action` the hosts compose, and
-    /// resolves to `Dismiss`. A tap in an empty corner resolves to nothing.
+    /// secondary **HUB** button — located from the renderer's own layout, converted back to pixels —
+    /// runs `pixel_to_ndc` then the same `button_slot_at` + `overlay_click_action` the hosts compose,
+    /// and resolves to `Dismiss` (leave to title). A tap in an empty corner resolves to nothing.
     #[test]
-    fn pixel_tap_on_dismiss_resolves_to_dismiss() {
+    fn pixel_tap_on_hub_resolves_to_dismiss() {
         let (w, h) = (1280u32, 720u32);
         let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
-        let overlay = overlay_for_surface(&ShellSurface::Ended(summary));
-        // The drawn DISMISS button center in NDC, mapped back to a pixel tap.
+        let overlay = overlay_for_surface(&ShellSurface::Ended(summary), true);
+        // The drawn HUB (secondary) button center in NDC, mapped back to a pixel tap — that's the
+        // leave-to-title action now (the primary button is REMATCH).
         let button = gonedark_render::overlay::overlay_quads(&overlay)
             .into_iter()
-            .find(|q| q.role == gonedark_render::overlay::QuadRole::ButtonPrimary)
-            .expect("summary draws a dismiss button");
+            .find(|q| q.role == gonedark_render::overlay::QuadRole::Button)
+            .expect("summary draws a secondary HUB button");
         let px = (button.cx + 1.0) * 0.5 * w as f32;
         let py = (1.0 - button.cy) * 0.5 * h as f32;
         // The hosts' exact path: pixel → NDC → slot → action.
         let (nx, ny) = pixel_to_ndc(px, py, w, h);
         let slot = gonedark_render::overlay::button_slot_at(&overlay, nx, ny)
-            .expect("the dismiss button hit-tests");
+            .expect("the HUB button hit-tests");
         assert_eq!(
             overlay_click_action(&overlay, slot),
             Some(OverlayClick::Dismiss),
-            "a pixel tap on DISMISS drives the leave-to-title action"
+            "a pixel tap on HUB drives the leave-to-title action"
         );
         // A tap in the top-left pixel corner misses every button.
         let (cnx, cny) = pixel_to_ndc(0.0, 0.0, w, h);
@@ -7417,7 +7456,7 @@ mod tests {
             ShellSurface::ReconnectPrompt(LinkState::Desynced)
         );
         assert_eq!(
-            overlay_for_surface(shell.surface()),
+            overlay_for_surface(shell.surface(), shell.is_single_player()),
             Overlay::ReconnectPrompt { desynced: true },
             "a desync over a pause must read as the warning-accented prompt"
         );
@@ -7459,7 +7498,7 @@ mod tests {
                     } else if t == 110 {
                         shell.apply(SessionAction::Surrender, &summary);
                     }
-                    let _ = overlay_for_surface(shell.surface());
+                    let _ = overlay_for_surface(shell.surface(), shell.is_single_player());
                 }
                 stream.push(sim.checksum());
             }

@@ -112,6 +112,13 @@ impl InSessionShell {
         self.is_paused() && self.single_player
     }
 
+    /// Whether this is a one-peer (single-player) session. Drives the pause overlay's copy: a
+    /// multiplayer pause is a *local* overlay only — the shared clock keeps running, so the player
+    /// must be told "your match keeps running" rather than the single-player "the game is frozen".
+    pub fn is_single_player(&self) -> bool {
+        self.single_player
+    }
+
     /// Apply a host-side [`SessionAction`] (the `core::shell` seam's non-sim half — Pause / Resume
     /// / Surrender / RequestReconnect resolved from a [`ShellIntent`](gonedark_core::shell::ShellIntent)).
     /// Pure state transition; mutates only `self`, never any sim state — that is what keeps a

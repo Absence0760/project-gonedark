@@ -92,6 +92,9 @@ fn android_main(app: AndroidApp) {
     // it, so nothing is recorded — mirroring the desktop's "a loss records nothing".
     let mut campaign_launch: Option<(u32, u8)> = None;
     let mut campaign_result_code: Option<i32> = None;
+    // Set when the post-match summary's REMATCH is tapped; drained after the overlay-click block
+    // (which borrows `game`) to re-seed a fresh match of the same scene/loadout in place.
+    let mut pending_rematch = false;
 
     // The Compose shell's launch payload (scene/loadout/prefs), read once off the launching
     // `Intent` (Compose shell parity, Tier 0). Read here at startup — the engine `Game` is built
@@ -211,88 +214,14 @@ fn android_main(app: AndroidApp) {
                                 // deterministic match-setup input — closing the gunsmith→mission loop.
                                 // `Loadout::STANDARD` (all-zero indices) reproduces the pre-parity
                                 // boot byte-for-byte.
-                                let scene = Scene::parse(&launch.scene).unwrap_or(Scene::Skirmish);
-                                let loadout = Loadout {
-                                    optic: Optic::ALL[launch.optic as usize],
-                                    barrel: Barrel::ALL[launch.barrel as usize],
-                                    magazine: Magazine::ALL[launch.magazine as usize],
-                                    // Gunsmith breadth (D85): the JNI launch payload does not yet
-                                    // carry Stock/Muzzle, so default them to Standard for now.
-                                    ..Loadout::STANDARD
-                                };
-                                let mut new_game = Game::new_scene_with_loadout(
-                                    new_rhi.device(),
-                                    new_rhi.format(),
-                                    DEFAULT_SEED,
-                                    scene,
-                                    loadout,
-                                );
-                                // Field the player's picked army (Compose army-select → the `army`
-                                // wire key). Routes through the SHARED, platform-agnostic
-                                // `Game::select_army` → `core::shell` SelectArmy seam — the same
-                                // lockstep-ordered command a peer would apply, never a forked copy
-                                // (invariant #2) — exactly as the desktop host does at match start
-                                // (`app/src/main.rs`: `game.select_army(Faction::Player, ...)`). The
-                                // parser guarantees a valid combatant ordinal (1=US, 2=FR; Neutral /
-                                // out-of-range collapsed to US), so this is a deterministic match-setup
-                                // knob applied before tick 0 (checksum-neutral, WS-B). The guarded
-                                // lookup can never index past `Army::ALL`.
-                                let army = Army::ALL
-                                    .get(launch.army as usize)
-                                    .copied()
-                                    .unwrap_or(Army::Us);
-                                new_game.select_army(Faction::Player, army);
-                                // Push the player's accessibility cues (Compose Settings → the `cvd` /
-                                // `snd` wire keys) into the embodied presentation layer via the shared
-                                // `Game::set_accessibility_prefs` — the twin of the desktop host's
-                                // per-frame push (`app/src/main.rs`). Host / presentation only: it adds
-                                // the CVD text labels + visual sound echoes to the alert HUD and never
-                                // reaches the deterministic sim or the per-tick checksum (invariants
-                                // #1/#4/#6). Applied once at (re)build since the launch config is fixed
-                                // for the match's life (the surface-recreate path rebuilds the game and
-                                // re-applies from the captured config).
-                                new_game.set_accessibility_prefs(
-                                    launch.colorblind_cues,
-                                    launch.visual_sound_cues,
-                                    // WS-D colourblind-palette parity is not yet on the Compose
-                                    // launch wire; Android stays on the default hue ramp for now (the
-                                    // CVD text labels + visual sound echoes above already ship). This
-                                    // is a deferred parity item, not a fork of game logic (invariant
-                                    // #2) — the desktop host drives the palette from its Settings.
-                                    gonedark_engine::PaletteMode::Off,
-                                );
-                                // Campaign-launch path (Compose parity C4): the campaign mission scene
-                                // resolves its node through the SHARED engine registry seam — never a
-                                // forked copy (invariant #2) — and applies the player's chosen replay
-                                // `diff` tier's combat tuning via the SHARED `Game::apply_campaign_tuning`
-                                // seam, exactly as the desktop host does (`app/src/main.rs`). D83
-                                // (resolves Q21): the replay tier drives BOTH axes — the 4→3
-                                // enemy-commander band AND the scenario situation modifiers — through the
-                                // one `core::campaign` mapping. The `diff` wire key (rank 0..=3) maps to
-                                // `campaign::Difficulty` via `from_tier` (the parser already clamped it,
-                                // so `from_tier` never yields `None` here — a defensive `Recruit`
-                                // fallback keeps it total). The launch wire carries the selected node
-                                // index (`launch.node`, the `NodeId` ordinal the Compose mission-select
-                                // picked), so a 2nd/gated node resolves correctly — matching the desktop
-                                // host, which threads its `pending_launch` node through `resolve_node`.
-                                // Missing/garbage decoded to `0` (the root node), so a bare Mission1
-                                // launch still targets the root. Both campaign mission scenes take
-                                // this path — the Compose mission-select's `sceneToken` resolves
-                                // Seize → `Mission1` and the gated Hold node → `Mission2` (the WS-B
-                                // 2-node graph), so the selected node's own scene is what booted here.
-                                if matches!(scene, Scene::Mission1 | Scene::Mission2) {
-                                    let node = NodeId(launch.node);
-                                    let campaign =
-                                        gonedark_engine::mission_registry::default_campaign();
-                                    let registry =
-                                        gonedark_engine::mission_registry::default_registry();
-                                    if registry.resolve_node(&campaign, node).is_some() {
-                                        let tier = Difficulty::from_tier(launch.diff)
-                                            .unwrap_or(Difficulty::Recruit);
-                                        new_game.apply_campaign_tuning(tier);
-                                    }
-                                    campaign_launch = Some((launch.node, launch.diff));
-                                    // A fresh launch: clear any stale win result from a prior match.
+                                // Build the shared game from the live device + the Compose launch
+                                // config via the one shared builder (also used by the post-match
+                                // REMATCH, so a rematch can't drift from the first boot). `Some(node)`
+                                // marks a campaign launch for clear-recording; a fresh launch clears any
+                                // stale win result.
+                                let (new_game, cl) = build_match_game(&new_rhi, &launch);
+                                campaign_launch = cl;
+                                if cl.is_some() {
                                     campaign_result_code = None;
                                 }
                                 game = Some(new_game);
@@ -394,6 +323,15 @@ fn android_main(app: AndroidApp) {
                                 input_frame.pointer_up = false;
                                 input_frame.pointer_down = false;
                             }
+                            Some(OverlayClick::Rematch) => {
+                                // Re-seed a fresh match of the same scene/loadout. Deferred: `game`
+                                // is borrowed here; the rebuild happens after this block (it needs to
+                                // reassign the owned `game`/`campaign_*`). Mirrors the desktop
+                                // `HostTransition::Rematch`.
+                                pending_rematch = true;
+                                input_frame.pointer_up = false;
+                                input_frame.pointer_down = false;
+                            }
                             Some(OverlayClick::Dismiss) => {
                                 finish_activity(&app, campaign_result_code)
                             }
@@ -469,6 +407,22 @@ fn android_main(app: AndroidApp) {
             }
         }
 
+        // Deferred REMATCH: the post-match summary's REMATCH was tapped this frame. Rebuild a fresh
+        // match of the same scene/loadout *in place* via the shared builder (identical to the first
+        // boot), reusing the live device. Done here, after the overlay-click block released its
+        // borrow of `game`, so we can reassign the owned `game`/campaign state. Only runs while the
+        // surface (`rhi`) is up — otherwise the tap is dropped (there is no device to build against).
+        if pending_rematch {
+            pending_rematch = false;
+            if let Some(r) = rhi.as_ref() {
+                let (g, cl) = build_match_game(r, &launch);
+                campaign_launch = cl;
+                campaign_result_code = None;
+                game = Some(g);
+                last_frame = Instant::now();
+            }
+        }
+
         if window.destroy_requested {
             break 'outer;
         }
@@ -530,6 +484,67 @@ fn finish_activity(app: &AndroidApp, result_code: Option<i32>) {
 }
 
 /// Read the Compose shell's launch-config `Intent` extra ([`crate::launch::EXTRA_KEY`]) off the live
+/// Build the shared [`Game`] for a match from the live device (`rhi`) and the Compose shell's
+/// [`LaunchConfig`](crate::launch::LaunchConfig) — the scene, gunsmith loadout, army, accessibility
+/// cues, and (for a campaign node) the replay-tier tuning. Returns the game plus the
+/// `campaign_launch` marker (`Some((node, tier))` for a campaign scene, `None` otherwise) so the
+/// caller can record a clear on a win. Shared by the initial surface-creation path **and** the
+/// post-match REMATCH so the two can never drift (they used to be one inline block; a rematch that
+/// re-seeded differently would be a subtle desync from the first boot). Everything here is
+/// deterministic match-setup applied before tick 0 (checksum-neutral, invariants #1/#2/#7); the same
+/// `DEFAULT_SEED` as desktop keeps the scene bit-identical. Un-constructible glue off a device (needs
+/// a real `AndroidRhi`), so it's exempt from unit coverage — the seams it composes
+/// (`Game::new_scene_with_loadout`, `select_army`, `apply_campaign_tuning`) are host-tested in engine.
+fn build_match_game(
+    rhi: &AndroidRhi,
+    launch: &crate::launch::LaunchConfig,
+) -> (Game, Option<(u32, u8)>) {
+    // Unknown scene token → the real playable match (Skirmish), matching the desktop default boot.
+    let scene = Scene::parse(&launch.scene).unwrap_or(Scene::Skirmish);
+    // The wire's gunsmith indices (already clamped 0..=2 by the parser) index the slot enums' ALL
+    // order. `Loadout::STANDARD` (all-zero) reproduces the pre-parity boot byte-for-byte. Stock/Muzzle
+    // aren't on the launch wire yet (D85) — default them to Standard.
+    let loadout = Loadout {
+        optic: Optic::ALL[launch.optic as usize],
+        barrel: Barrel::ALL[launch.barrel as usize],
+        magazine: Magazine::ALL[launch.magazine as usize],
+        ..Loadout::STANDARD
+    };
+    let mut game =
+        Game::new_scene_with_loadout(rhi.device(), rhi.format(), DEFAULT_SEED, scene, loadout);
+    // Field the player's picked army through the SHARED `Game::select_army` → `core::shell` seam
+    // (never a per-platform fork, invariant #2). The parser guarantees a valid ordinal; the guarded
+    // lookup can never index past `Army::ALL`.
+    let army = Army::ALL
+        .get(launch.army as usize)
+        .copied()
+        .unwrap_or(Army::Us);
+    game.select_army(Faction::Player, army);
+    // Accessibility cues (CVD text labels + visual sound echoes) — host/presentation only, never the
+    // sim or checksum (invariants #1/#4/#6). WS-D palette parity isn't on the wire yet → default hue.
+    game.set_accessibility_prefs(
+        launch.colorblind_cues,
+        launch.visual_sound_cues,
+        gonedark_engine::PaletteMode::Off,
+    );
+    // Campaign-launch path (Compose parity C4): resolve the node through the SHARED registry seam and
+    // apply the chosen replay tier's combat tuning via the SHARED `apply_campaign_tuning` (D83 — both
+    // the 4→3 commander band and the situation modifiers), exactly as the desktop host does. Both
+    // campaign scenes take this path (Seize → Mission1, gated Hold → Mission2).
+    let mut campaign_launch = None;
+    if matches!(scene, Scene::Mission1 | Scene::Mission2) {
+        let node = NodeId(launch.node);
+        let campaign = gonedark_engine::mission_registry::default_campaign();
+        let registry = gonedark_engine::mission_registry::default_registry();
+        if registry.resolve_node(&campaign, node).is_some() {
+            let tier = Difficulty::from_tier(launch.diff).unwrap_or(Difficulty::Recruit);
+            game.apply_campaign_tuning(tier);
+        }
+        campaign_launch = Some((launch.node, launch.diff));
+    }
+    (game, campaign_launch)
+}
+
 /// `NativeActivity` and parse it (Compose shell parity, Tier 0). Calls `activity.getIntent()` then
 /// `intent.getStringExtra(KEY)` over JNI — the same attach-and-call discipline as
 /// [`finish_activity`]. **Best-effort and never fatal:** any attach/lookup failure, a missing

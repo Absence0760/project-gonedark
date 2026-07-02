@@ -111,9 +111,13 @@ pub enum HostTransition {
     ToggleFullscreen,
     /// Tear down and exit the app.
     Exit,
-    /// Leave the current match and return to the title screen — the post-match summary's DISMISS,
+    /// Leave the current match and return to the title screen — the post-match summary's HUB button,
     /// and any other in-match "give up the match without quitting the app" path. Drops the `Game`.
     ExitToTitle,
+    /// The post-match summary's **REMATCH**: re-seed a fresh match of the same scene/mission with the
+    /// same loadout (a new deterministic `Sim`, not a reuse of the ended one — invariant #5). Deferred
+    /// to the run-loop dispatch because it re-enters the match while the ended `Game` is still borrowed.
+    Rematch,
 }
 
 /// Map a title action to the host transition it triggers (the pure run-loop decision).

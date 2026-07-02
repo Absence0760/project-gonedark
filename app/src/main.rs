@@ -589,6 +589,9 @@ impl App {
                                 input.pointer_up = false;
                                 input.pointer_down = false;
                             }
+                            Some(OverlayClick::Rematch) => {
+                                transition = Some(HostTransition::Rematch);
+                            }
                             Some(OverlayClick::Dismiss) => {
                                 transition = Some(HostTransition::ExitToTitle);
                             }
@@ -735,6 +738,16 @@ impl App {
                 self.mission_recorded = false;
                 self.screen = Screen::Title;
                 self.last_frame = Instant::now();
+            }
+            // REMATCH from the post-match summary: re-boot a fresh match of the same scene/mission
+            // with the same loadout. `enter_match` re-consumes `pending_launch` for campaign nodes,
+            // so re-queue the just-ended node; a non-campaign match re-fields `self.scene`. This
+            // creates a brand-new deterministic `Game` (no reuse of the ended sim — invariant #5).
+            Some(HostTransition::Rematch) => {
+                if let Some(active) = self.active_mission {
+                    self.pending_launch = Some(active);
+                }
+                self.enter_match();
             }
             None => {}
         }
