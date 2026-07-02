@@ -508,9 +508,10 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   `d7cced1`) is the landed pilot that proved the method. **All tiers landed** — tiers 1–3 (weapon
   viewmodels, tanks, `camp_hq`/`turret`/`barricade`) plus **tier 4 (scenery lift — crate/tree/rock)
   and the US/FR turret emplacement variants** (`gen_models.py`, cook→LOD chain + manifest sha256,
-  golden mesh tests green). *Scoped as **WS-F** of the [visual-design plan](plans/visual-design-plan.md).
-  **Follow-up:** the new `turret_us`/`turret_fr` assets are generated + manifested but not yet
-  render-wired — they need `MeshId` variants in `render/src/mesh.rs`.*
+  golden mesh tests green). The `turret_us`/`turret_fr` assets are **now render-wired** —
+  `ModelKind::TurretUs`/`TurretFr` + the pure `structure_turret_for(army)` selector, drawn as the two
+  opposing armies' fortified-point emplacements in the embodied prop layout. *Scoped as **WS-F** of
+  the [visual-design plan](plans/visual-design-plan.md).*
 
 ### Release readiness — the store-facing layer
 
