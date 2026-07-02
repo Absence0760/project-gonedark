@@ -17,8 +17,12 @@ use crate::overlay::{OverlayQuad, QuadRole};
 use crate::text::Anchor;
 
 /// Label text size in the text pass's NDC-fraction units (NOT pixels — matches `command_panel`'s
-/// ~0.04–0.05 row/title sizes). A hair bigger than a panel row so the buttons read at a glance.
-const LABEL_SIZE: f32 = 0.044;
+/// ~0.04–0.05 row/title sizes). Sized so the longest label ("UPGRADE", 7 chars) still fits inside a
+/// button's width at the worst-case **portrait** aspect (~0.46), where the buttons are widest in NDC
+/// (`half_x ≈ 0.20`, from `command_touch`'s `0.20·min(w,h)`) but the glyphs are also widest per the
+/// aspect correction. `0.044` overflowed "UPGRADE" past its button in portrait; `0.040` fits with a
+/// small margin. (See `upgrade_label_fits_its_button_in_portrait`.)
+const LABEL_SIZE: f32 = 0.040;
 const FILL_ALPHA: f32 = 0.82;
 const RIM_ALPHA: f32 = 0.9;
 /// Resting fill / rim colors (RGB) — the shared `theme` raised-surface + rim, so the bar wears the
@@ -155,6 +159,11 @@ pub fn command_bar_icons(view: &CommandBarView) -> Vec<IconItem> {
 mod tests {
     use super::*;
 
+    /// A representative portrait phone aspect (width / height, e.g. 1080×2340 ≈ 0.46) — the
+    /// worst-case for label-vs-button fit, where glyphs are widest per the text pass's aspect
+    /// correction. Layout that stays on-screen here stays on-screen on any wider window.
+    const PORTRAIT_ASPECT: f32 = 0.46;
+
     fn btn(label: &str) -> CommandBarButton {
         CommandBarButton {
             ndc_x: 0.0,
@@ -287,6 +296,23 @@ mod tests {
         assert_eq!([rim.r, rim.g, rim.b], crate::theme::RIM, "rim is theme::RIM");
         assert_eq!([fill.r, fill.g, fill.b], crate::theme::PANEL_RAISED, "fill is theme::PANEL_RAISED");
         assert_eq!(command_bar_labels(&v)[0].color, crate::theme::BONE, "label is theme::BONE");
+    }
+
+    #[test]
+    fn upgrade_label_fits_its_button_in_portrait() {
+        // Regression (portrait overflow): the longest label ("UPGRADE") must measure no wider than
+        // its button at the worst-case portrait aspect. A command_touch button is `0.20·min(w,h)`
+        // wide → half_x ≈ 0.20 (full width 0.40 NDC) on a portrait phone. The 0.044 size overflowed;
+        // 0.040 fits. Every command-bar label ("RIFLE"/"HEAVY"/"UPGRADE") is at most 7 chars.
+        let half_x = 0.20_f32;
+        let button_w = 2.0 * half_x;
+        for label in ["RIFLE", "HEAVY", "UPGRADE"] {
+            let w = crate::text::measure(label, LABEL_SIZE, PORTRAIT_ASPECT).0;
+            assert!(
+                w <= button_w,
+                "label {label:?} measures {w} NDC, wider than its {button_w} NDC button in portrait"
+            );
+        }
     }
 
     #[test]

@@ -19,6 +19,12 @@
 
 use gonedark_render::command_bar::{CommandBarButton, CommandBarView};
 
+/// Minimum button height as a fraction of the smaller viewport dimension. `0.12·min(w,h)` clears the
+/// ~44–48 dp Android/iOS touch-target floor at common phone densities (e.g. `0.12·1080 px ≈ 130 px ≈
+/// 43 dp` at 3×, and taller on higher-density panels) — the old `0.085` landed ~30 dp on a 1080-wide
+/// phone, well under the floor and easy to fat-finger. Width stays generous (`bw`) for the label.
+const BUTTON_H_RATIO: f32 = 0.12;
+
 /// One command-view action a button arms. The engine maps each to an `InputFrame` command intent
 /// (Train\* → `train_slot`, `Upgrade` → `upgrade_pressed`); the slot integers live at that boundary,
 /// not here, so this seam stays vocabulary-agnostic.
@@ -100,7 +106,7 @@ impl CommandBarLayout {
         let h = height as f32;
         let m = w.min(h).max(1.0);
         let bw = m * 0.20; // button width (wide enough for the longest label, "UPGRADE")
-        let bh = m * 0.085; // button height
+        let bh = m * BUTTON_H_RATIO; // button height (clears the mobile touch-target floor)
         let gap = m * 0.02;
         let margin = m * 0.03;
         let y1 = (h - margin).max(bh);
@@ -237,6 +243,24 @@ mod tests {
             let px_cy = (1.0 - b.ndc_y) * 0.5 * H as f32;
             assert!((px_cx - r.cx()).abs() < 0.5, "center x round-trips");
             assert!((px_cy - r.cy()).abs() < 0.5, "center y round-trips");
+        }
+    }
+
+    #[test]
+    fn button_height_clears_the_touch_target_floor() {
+        // Regression (mobile touch floor): the button height must stay >= BUTTON_H_RATIO·min(w,h) so
+        // it clears ~44–48 dp at common phone densities — the old 0.085·min(w,h) landed ~30 dp on a
+        // 1080-wide phone, under the floor. Checked on representative portrait phones.
+        for (w, h) in [(1080u32, 2340u32), (750, 1334), (1440, 3200)] {
+            let bar = CommandBarLayout::new(w, h);
+            let m = w.min(h) as f32;
+            for (kind, r) in &bar.buttons {
+                let ratio = (r.y1 - r.y0) / m;
+                assert!(
+                    ratio >= BUTTON_H_RATIO - 1e-6,
+                    "{w}x{h}: {kind:?} height ratio {ratio} is below the {BUTTON_H_RATIO} touch floor"
+                );
+            }
         }
     }
 

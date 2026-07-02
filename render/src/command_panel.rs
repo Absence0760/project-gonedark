@@ -34,6 +34,10 @@ const TITLE_SIZE: f32 = crate::theme::TYPE_TITLE;
 const ROW_SIZE: f32 = crate::theme::TYPE_BODY;
 /// Vertical step between body row tops.
 const ROW_STEP: f32 = 0.058;
+/// Maximum body rows the panel draws. A big mixed selection or a long production queue is capped here
+/// so the box can't grow off the bottom of a phone screen; the overflow rolls up into a trailing
+/// "+N more" row — the same cap+rollup pattern `engine::panel_summary::composition_rows` uses.
+const MAX_ROWS: usize = 5;
 /// Gap between the title and the first body row.
 const TITLE_GAP: f32 = 0.028;
 /// The rim quad extends this far past the panel on each side to draw a thin border.
@@ -124,6 +128,22 @@ pub struct PanelLabel {
     pub alpha: f32,
 }
 
+/// The rows the panel actually draws: `view.lines` capped at [`MAX_ROWS`]. When the lines fit they
+/// pass through unchanged; when they overflow, the first `MAX_ROWS - 1` are kept and the remainder is
+/// rolled into a single dimmed "+N more" row (`N` = the number of hidden rows), so a big selection or
+/// a long production queue can't run the box off the bottom of a phone. Shared by [`box_geom`] and
+/// [`command_panel_labels`] so the box and its text always agree on the row set. Pure — testable.
+fn capped_lines(lines: &[PanelLine]) -> Vec<PanelLine> {
+    if lines.len() <= MAX_ROWS {
+        return lines.to_vec();
+    }
+    let shown = MAX_ROWS - 1;
+    let mut out: Vec<PanelLine> = lines[..shown].to_vec();
+    let hidden = lines.len() - shown;
+    out.push(PanelLine::new(format!("+{hidden} more"), LineStyle::Dim));
+    out
+}
+
 /// The box center + half-extents (NDC) for `view`, plus the inner-left `x` text starts from and the
 /// inner-top `y` the title starts at. Shared by [`command_panel_quads`] and [`command_panel_labels`]
 /// so the box and its text always agree.
@@ -136,15 +156,15 @@ pub struct PanelLabel {
 /// inside its box (no off-screen clipping, the bug that made the panel look broken). The right + top
 /// edges stay pinned (`RIGHT`/`TOP`), so the panel hugs the corner and grows leftward/downward.
 fn box_geom(view: &CommandPanelView, aspect: f32) -> (f32, f32, f32, f32, f32, f32) {
+    let rows = capped_lines(&view.lines);
     let widest = std::iter::once(crate::text::measure(&view.title, TITLE_SIZE, aspect).0)
         .chain(
-            view.lines
-                .iter()
+            rows.iter()
                 .map(|l| crate::text::measure(&l.text, ROW_SIZE, aspect).0),
         )
         .fold(0.0_f32, f32::max);
     let hw = ((widest + 2.0 * PAD) * 0.5).clamp(MIN_HALF_W, MAX_HALF_W);
-    let inner_h = TITLE_SIZE + TITLE_GAP + view.lines.len() as f32 * ROW_STEP;
+    let inner_h = TITLE_SIZE + TITLE_GAP + rows.len() as f32 * ROW_STEP;
     let hh = (inner_h + 2.0 * PAD) * 0.5;
     let cx = RIGHT - hw;
     let cy = TOP - hh;
@@ -196,7 +216,8 @@ pub fn command_panel_labels(view: &CommandPanelView, aspect: f32) -> Vec<PanelLa
         return Vec::new();
     }
     let (_, _, _, _, left, top_inner) = box_geom(view, aspect);
-    let mut out = Vec::with_capacity(view.lines.len() + 1);
+    let rows = capped_lines(&view.lines);
+    let mut out = Vec::with_capacity(rows.len() + 1);
     out.push(PanelLabel {
         text: view.title.clone(),
         pos: [left, top_inner],
@@ -206,7 +227,7 @@ pub fn command_panel_labels(view: &CommandPanelView, aspect: f32) -> Vec<PanelLa
         alpha: 1.0,
     });
     let rows_top = top_inner - TITLE_SIZE - TITLE_GAP;
-    for (i, line) in view.lines.iter().enumerate() {
+    for (i, line) in rows.iter().enumerate() {
         out.push(PanelLabel {
             text: line.text.clone(),
             pos: [left, rows_top - i as f32 * ROW_STEP],
@@ -222,6 +243,11 @@ pub fn command_panel_labels(view: &CommandPanelView, aspect: f32) -> Vec<PanelLa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A representative portrait phone aspect (width / height, e.g. 1080×2340 ≈ 0.46) — the
+    /// worst-case for the panel staying on-screen: glyphs are widest and the tall box has the least
+    /// vertical headroom.
+    const PORTRAIT_ASPECT: f32 = 0.46;
 
     fn view(title: &str, lines: &[(&str, LineStyle)]) -> CommandPanelView {
         CommandPanelView {
@@ -357,6 +383,64 @@ mod tests {
         // Right edge stays pinned; left edge stays on screen.
         assert!((wide[1].cx + wide[1].hw - RIGHT).abs() < 1e-6);
         assert!(wide[1].cx - wide[1].hw > -1.0);
+    }
+
+    #[test]
+    fn long_row_list_is_capped_and_stays_on_screen() {
+        // Regression: a long production queue / big selection can't grow the box off the bottom of a
+        // phone. The drawn rows cap at MAX_ROWS, the overflow rolls into a trailing "+N more", and the
+        // box's bottom edge stays on-screen (>= -1.0) even for a worst-case row count.
+        let many: Vec<(&str, LineStyle)> = (0..30)
+            .map(|_| ("2x Rifleman queued", LineStyle::Normal))
+            .collect();
+        let v = view("CAMP — QUEUE", &many);
+
+        let labels = command_panel_labels(&v, 1.0);
+        // title + at most MAX_ROWS rows.
+        assert!(labels.len() <= MAX_ROWS + 1, "rows capped at MAX_ROWS (+title)");
+        assert_eq!(labels.len(), MAX_ROWS + 1, "a 30-row list fills the cap");
+        // The last drawn row rolls up the hidden rows as "+N more" (30 lines, MAX_ROWS=5 → +26 more).
+        let hidden = 30 - (MAX_ROWS - 1);
+        assert_eq!(labels.last().unwrap().text, format!("+{hidden} more"));
+
+        // The box (rim + fill) stays fully on-screen at the bottom for the capped worst case.
+        let q = command_panel_quads(&v, 1.0);
+        for quad in &q {
+            assert!(
+                quad.cy - quad.hh >= -1.0,
+                "box bottom edge {} runs off the bottom of the screen",
+                quad.cy - quad.hh
+            );
+        }
+    }
+
+    #[test]
+    fn panel_stays_on_screen_in_portrait() {
+        // Portrait coverage (the aspect the old tests never used): a full camp panel's box must stay
+        // on-screen on all four edges and every row must fit inside the box's inner width at 0.46.
+        let v = view(
+            "CAMP — TIER 1",
+            &[
+                ("TRAIN", LineStyle::Header),
+                ("R  Rifleman  50", LineStyle::Good),
+                ("H  Heavy  120", LineStyle::Bad),
+                ("UPGRADE", LineStyle::Header),
+                ("U  Tier 2  200", LineStyle::Good),
+            ],
+        );
+        let q = command_panel_quads(&v, PORTRAIT_ASPECT);
+        let fill = &q[1];
+        for quad in &q {
+            assert!(quad.cx - quad.hw > -1.0, "left edge on-screen");
+            assert!(quad.cx + quad.hw <= 1.0 + 1e-6, "right edge on-screen");
+            assert!(quad.cy - quad.hh >= -1.0, "bottom edge on-screen");
+            assert!(quad.cy + quad.hh <= 1.0 + 1e-6, "top edge on-screen");
+        }
+        let inner_w = 2.0 * fill.hw - 2.0 * PAD;
+        for line in &v.lines {
+            let w = crate::text::measure(&line.text, ROW_SIZE, PORTRAIT_ASPECT).0;
+            assert!(w <= inner_w + 1e-6, "row {:?} fits the portrait box", line.text);
+        }
     }
 
     #[test]

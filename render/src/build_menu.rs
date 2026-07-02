@@ -72,10 +72,14 @@ const AFFORDABLE_COLOR: [f32; 3] = crate::theme::BONE;
 /// Dimmed grey for an entry the player can't currently afford (greyed out).
 const UNAFFORDABLE_COLOR: [f32; 3] = crate::theme::MUTED;
 
-/// The placeable structures, in palette/slot order. Index = the `engine::build_ui` slot. Currently
-/// just the Camp (the only [`BuildingKind`]); adding a structure here adds a palette entry, and the
-/// matching `build_ui::slot_kind` arm makes it placeable.
-const PALETTE: [(&str, BuildingKind); 1] = [("Camp", BuildingKind::Camp)];
+/// The placeable structures, in palette/slot order. Index = the `engine::build_ui` slot: 0 = Camp,
+/// 1 = Barracks (the infantry-only forward building, [D65]). This list MUST stay in lockstep with
+/// `build_ui::slot_kind` — adding a structure here adds a palette entry, and the matching
+/// `build_ui::slot_kind` arm makes it placeable.
+const PALETTE: [(&str, BuildingKind); 2] = [
+    ("Camp", BuildingKind::Camp),
+    ("Barracks", BuildingKind::Barracks),
+];
 
 /// Lay out the command-view build palette from a host-supplied current resource balance. Pure (no
 /// GPU, no sim) — the testable layout seam. One [`BuildMenuEntry`] per placeable structure, stacked
@@ -198,8 +202,12 @@ mod tests {
 
     #[test]
     fn slot_index_matches_build_ui_palette_order() {
-        // The entry index is the build_ui slot: index 0 must be the Camp (build_ui slot 0 = Camp).
+        // The entry index is the build_ui slot, and MUST match `build_ui::slot_kind`: slot 0 = Camp,
+        // slot 1 = Barracks (D65). A drift here would place the wrong structure for a tapped slot.
+        assert_eq!(PALETTE.len(), 2, "Camp + Barracks (D65) are the placeable structures");
         let entries = build_menu_entries(0);
+        assert_eq!(entries.len(), 2, "one entry per palette slot");
         assert_eq!(entries[0].kind, BuildingKind::Camp, "slot 0 is the Camp");
+        assert_eq!(entries[1].kind, BuildingKind::Barracks, "slot 1 is the Barracks");
     }
 }

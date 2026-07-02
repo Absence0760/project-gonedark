@@ -20,8 +20,11 @@ use crate::text::Anchor;
 const HEADER_Y: f32 = 0.40;
 /// NDC `y` of the first (top) row's center.
 const FIRST_ROW_Y: f32 = 0.28;
-/// NDC vertical spacing between adjacent row centers.
-const ROW_STEP: f32 = 0.10;
+/// NDC vertical spacing between adjacent row centers — this is also the hit band's full height (a tap
+/// lands on a row within ±`ROW_STEP/2` of its center). Sized so the tappable band clears the ~44 dp
+/// touch-target floor on a portrait phone: `0.13` NDC ≈ `0.13·height/2` px (e.g. ~152 px ≈ 51 dp at
+/// 3× on a 2340-tall panel). The old `0.10` gave a ~39 dp band, under the floor and easy to mis-tap.
+const ROW_STEP: f32 = 0.13;
 /// Half the horizontal extent (NDC) a tap may land from center and still hit a row.
 const HALF_WIDTH: f32 = 0.45;
 /// Text heights (NDC), in the same scale the build/train panels use (~0.05).
@@ -162,6 +165,21 @@ mod tests {
         assert_eq!(picker_row_at(3, 0.0, row_center_y(2)), Some(2));
         // A small horizontal offset within the panel still hits.
         assert_eq!(picker_row_at(3, 0.3, row_center_y(1)), Some(1));
+    }
+
+    #[test]
+    fn row_band_clears_the_touch_target_floor() {
+        // The tappable band is ROW_STEP tall in NDC; on a portrait phone the vertical axis spans the
+        // full height, so band_px = ROW_STEP · height / 2. It must clear the ~44 dp touch floor at
+        // common phone densities (the old 0.10 gave a ~39 dp band). Checked on representative panels.
+        for (height_px, density) in [(2340.0_f32, 3.0_f32), (3200.0, 3.5)] {
+            let band_px = ROW_STEP * height_px / 2.0;
+            let band_dp = band_px / density;
+            assert!(
+                band_dp >= 44.0,
+                "{height_px}px @{density}x: row band {band_dp} dp is below the 44 dp touch floor"
+            );
+        }
     }
 
     #[test]

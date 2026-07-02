@@ -10,13 +10,15 @@
 //!
 //! # Slot vocabulary
 //!
-//! `building_slot` indexes a fixed on-screen build palette. There is currently only one placeable
-//! structure ([`BuildingKind::Camp`]), so the table is short — but it is written as a single
-//! slot→kind lookup ([`slot_kind`]) so adding a building kind later is one match arm, nothing else.
+//! `building_slot` indexes a fixed on-screen build palette. It is written as a single slot→kind
+//! lookup ([`slot_kind`]) so adding a building kind later is one match arm, nothing else. The table
+//! MUST stay in lockstep with the render palette (`gonedark_render::build_menu`'s `PALETTE`), whose
+//! entry index is this same slot.
 //!
-//! | slot | structure | sim command                                   |
-//! |------|-----------|-----------------------------------------------|
-//! | 0    | Camp      | `Build { faction, kind: Camp, pos: <tap> }`   |
+//! | slot | structure | sim command                                     |
+//! |------|-----------|-------------------------------------------------|
+//! | 0    | Camp      | `Build { faction, kind: Camp, pos: <tap> }`     |
+//! | 1    | Barracks  | `Build { faction, kind: Barracks, pos: <tap> }` |
 //!
 //! Any other slot value, `building_slot == None`, or `placement_world == None` emits nothing — the
 //! palette only acts once the player has chosen a structure *and* picked where it goes. (Unlike the

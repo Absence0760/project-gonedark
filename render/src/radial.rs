@@ -198,11 +198,35 @@ pub fn radial_quads(menu: &RadialMenu, aspect: f32) -> Vec<RadialQuad> {
 }
 
 /// Glyph cell height (NDC) of a wedge label — small, to sit inside a wedge slot (and to keep the
-/// longer command names from colliding around a crowded ring).
+/// longer command names from colliding around a crowded ring). This is the *maximum* size; a menu
+/// with long labels (e.g. "Disarm retreat") shrinks uniformly so the longest one fits its wedge — see
+/// [`fitted_label_size`].
 const WEDGE_LABEL_SIZE: f32 = 0.026;
+/// The fraction of a wedge's full NDC width a label may occupy — a hair of inset so glyphs don't kiss
+/// the wedge rim. The per-menu label size is scaled so the LONGEST label fits this budget.
+const WEDGE_LABEL_FIT_FRAC: f32 = 0.9;
 /// The wedge labels draw in the shared primary bone, so the radial's action text reads in the SAME
 /// tint as the command bar / panel labels (WS-C: one type + colour language across the HUD).
 const LABEL_COLOR: [f32; 3] = crate::theme::BONE;
+
+/// The size to draw a menu's wedge labels at: [`WEDGE_LABEL_SIZE`], shrunk uniformly when the longest
+/// `texts` entry would otherwise overflow a wedge's width. A wedge is `2·WEDGE_HALF/aspect` wide in
+/// NDC and text width scales the same `1/aspect`, so the fit ratio is aspect-independent — a size that
+/// fits at one aspect fits at all (the reason the portrait overflow went uncaught: it overflowed at
+/// *every* aspect, not just wide ones). Returns [`WEDGE_LABEL_SIZE`] when everything already fits (or
+/// `texts` is empty). Pure (no GPU) — the testable sizing seam.
+fn fitted_label_size(texts: &[String], a: f32) -> f32 {
+    let budget = 2.0 * WEDGE_HALF / a * WEDGE_LABEL_FIT_FRAC;
+    let widest = texts
+        .iter()
+        .map(|t| crate::text::measure(t, WEDGE_LABEL_SIZE, a).0)
+        .fold(0.0_f32, f32::max);
+    if widest <= budget || widest <= 0.0 {
+        WEDGE_LABEL_SIZE
+    } else {
+        WEDGE_LABEL_SIZE * budget / widest
+    }
+}
 
 /// A screen-space wedge label, computed alongside [`radial_quads`] (W4). Pure data: `pos` is NDC
 /// (the wedge center), `text` is the action name. Its own type so [`radial_labels`] is a GPU-free,
@@ -245,21 +269,30 @@ pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>, aspect: f32) -> 
     };
     let (cx, cy) = (menu.center[0], menu.center[1]);
     let n = menu.slots as f32;
-    let mut out = Vec::with_capacity(menu.slots);
+    // First resolve which slots actually draw text (skipping explicit-empty names) so the label size
+    // can be shrunk to fit the LONGEST label this menu shows — a long name like "Disarm retreat"
+    // otherwise spills past its wedge at any aspect.
+    let mut entries: Vec<(usize, String)> = Vec::with_capacity(menu.slots);
     for i in 0..menu.slots {
-        let angle = FRAC_PI_2 - (i as f32) * TAU / n;
-        // Match the circular ring (x offset `/a`) so labels sit on their wedges on any window.
-        let wx = cx + (RING_RADIUS / a) * angle.cos();
-        let wy = cy + RING_RADIUS * angle.sin();
         let text = match names.and_then(|ns| ns.get(i)) {
             Some(name) if !name.is_empty() => name.to_string(),
             Some(_) => continue, // an explicit empty name → no label for this slot
             None => placeholder_slot_label(i),
         };
+        entries.push((i, text));
+    }
+    let texts: Vec<String> = entries.iter().map(|(_, t)| t.clone()).collect();
+    let size = fitted_label_size(&texts, a);
+    let mut out = Vec::with_capacity(entries.len());
+    for (i, text) in entries {
+        let angle = FRAC_PI_2 - (i as f32) * TAU / n;
+        // Match the circular ring (x offset `/a`) so labels sit on their wedges on any window.
+        let wx = cx + (RING_RADIUS / a) * angle.cos();
+        let wy = cy + RING_RADIUS * angle.sin();
         out.push(WedgeLabel {
             text,
             pos: [wx, wy],
-            size: WEDGE_LABEL_SIZE,
+            size,
             anchor: Anchor::Center,
             color: LABEL_COLOR,
         });
@@ -703,6 +736,53 @@ mod tests {
         let labels = radial_labels(&menu([0.0, 0.0], 3, None), Some(&names), 1.0);
         let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
         assert_eq!(texts, vec!["MOVE", "HOLD"], "the empty slot is skipped");
+    }
+
+    /// A representative portrait phone aspect (width / height, e.g. 1080×2340 ≈ 0.46). Long labels
+    /// that fit their wedge here fit at any aspect (the fit ratio is aspect-independent).
+    const PORTRAIT_ASPECT: f32 = 0.46;
+
+    #[test]
+    fn every_vocabulary_label_fits_its_wedge_in_portrait() {
+        // Regression (portrait wedge overflow): the real command vocabulary — long names like
+        // "Disarm retreat" / "Hold position" / "Fire at will" / "Attack-move" — must fit inside its
+        // wedge's width once the per-menu label size is shrunk to the longest label. A wedge is
+        // 2·WEDGE_HALF/aspect wide in NDC. (This overflow went uncaught because the old tests only
+        // used aspect 1.0 / 16:9 — yet it overflowed at every aspect.)
+        let vocab = [
+            "Move",
+            "Attack-move",
+            "Hold fire",
+            "Return fire",
+            "Fire at will",
+            "Hold position",
+            "Patrol",
+            "Fall back",
+            "Arm retreat",
+            "Disarm retreat",
+        ];
+        let m = menu([0.0, 0.0], vocab.len(), None);
+        let labels = radial_labels(&m, Some(&vocab), PORTRAIT_ASPECT);
+        assert_eq!(labels.len(), vocab.len(), "one label per vocabulary slot");
+        let wedge_w = 2.0 * WEDGE_HALF / PORTRAIT_ASPECT;
+        for label in &labels {
+            let w = crate::text::measure(&label.text, label.size, PORTRAIT_ASPECT).0;
+            assert!(
+                w <= wedge_w,
+                "label {:?} ({w} NDC) overflows its {wedge_w} NDC wedge in portrait",
+                label.text
+            );
+        }
+    }
+
+    #[test]
+    fn short_labels_keep_the_full_label_size() {
+        // When every label already fits (short placeholder numbers), no shrink happens — the labels
+        // stay at the full WEDGE_LABEL_SIZE so a simple menu isn't needlessly tiny.
+        let labels = radial_labels(&menu([0.0, 0.0], 4, None), None, PORTRAIT_ASPECT);
+        for label in &labels {
+            assert_eq!(label.size, WEDGE_LABEL_SIZE, "short labels are not shrunk");
+        }
     }
 
     #[test]
