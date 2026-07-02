@@ -1,0 +1,41 @@
+{
+  "name": "gen-mirror-x-1001",
+  "generator": "tools/maps/generate.py",
+  "seed": 1001,
+  "symmetry": "mirror-x",
+  "params": {
+    "density": 0.16,
+    "spawns": 2,
+    "controls": 2,
+    "grid": 128
+  },
+  "spawns": [
+    [
+      21,
+      20
+    ],
+    [
+      106,
+      20
+    ]
+  ],
+  "controls": [
+    [
+      16,
+      76
+    ],
+    [
+      111,
+      76
+    ]
+  ],
+  "cover_cells": {
+    "none": 13772,
+    "light": 1522,
+    "heavy": 1090
+  },
+  "cover_density": 0.1594,
+  "covergrid_sha256": "51b21361d9b582e3d3994f25ce72ffd0c7528c8d274b59564403a47d9d3f8f88",
+  "note": "Seed-deterministic procedural map (CT-G). Offline tooling \u2014 never touches the sim. Same seed+params \u2192 byte-identical .covergrid.",
+  "lint_cmd": "python3 tools/maps/lint.py generated/gen-mirror-x-1001 --spawn 21,20 --spawn 106,20 --control 16,76 --control 111,76 --pvp mirror-x"
+}

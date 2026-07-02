@@ -1,0 +1,37 @@
+{
+  "name": "gen-none-2024",
+  "generator": "tools/maps/generate.py",
+  "seed": 2024,
+  "symmetry": "none",
+  "params": {
+    "density": 0.18,
+    "spawns": 2,
+    "controls": 1,
+    "grid": 128
+  },
+  "spawns": [
+    [
+      16,
+      80
+    ],
+    [
+      91,
+      11
+    ]
+  ],
+  "controls": [
+    [
+      47,
+      21
+    ]
+  ],
+  "cover_cells": {
+    "none": 13449,
+    "light": 1257,
+    "heavy": 1678
+  },
+  "cover_density": 0.1791,
+  "covergrid_sha256": "cc4ca10628e852ea7473435792cf7751080e159ec71bcb880563348b1c5c3b79",
+  "note": "Seed-deterministic procedural map (CT-G). Offline tooling \u2014 never touches the sim. Same seed+params \u2192 byte-identical .covergrid.",
+  "lint_cmd": "python3 tools/maps/lint.py generated/gen-none-2024 --spawn 16,80 --spawn 91,11 --control 47,21"
+}

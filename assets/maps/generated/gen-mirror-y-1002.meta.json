@@ -1,0 +1,49 @@
+{
+  "name": "gen-mirror-y-1002",
+  "generator": "tools/maps/generate.py",
+  "seed": 1002,
+  "symmetry": "mirror-y",
+  "params": {
+    "density": 0.18,
+    "spawns": 2,
+    "controls": 4,
+    "grid": 128
+  },
+  "spawns": [
+    [
+      80,
+      45
+    ],
+    [
+      80,
+      82
+    ]
+  ],
+  "controls": [
+    [
+      24,
+      53
+    ],
+    [
+      24,
+      74
+    ],
+    [
+      82,
+      45
+    ],
+    [
+      82,
+      82
+    ]
+  ],
+  "cover_cells": {
+    "none": 13462,
+    "light": 1538,
+    "heavy": 1384
+  },
+  "cover_density": 0.1783,
+  "covergrid_sha256": "75939ce32608fa169d320066f7285eba7314b21b15cf4b7edabfe4db530a115f",
+  "note": "Seed-deterministic procedural map (CT-G). Offline tooling \u2014 never touches the sim. Same seed+params \u2192 byte-identical .covergrid.",
+  "lint_cmd": "python3 tools/maps/lint.py generated/gen-mirror-y-1002 --spawn 80,45 --spawn 80,82 --control 24,53 --control 24,74 --control 82,45 --control 82,82 --pvp mirror-y"
+}

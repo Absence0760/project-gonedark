@@ -1,0 +1,57 @@
+{
+  "name": "gen-point-1004",
+  "generator": "tools/maps/generate.py",
+  "seed": 1004,
+  "symmetry": "point",
+  "params": {
+    "density": 0.14,
+    "spawns": 4,
+    "controls": 4,
+    "grid": 128
+  },
+  "spawns": [
+    [
+      16,
+      7
+    ],
+    [
+      111,
+      120
+    ],
+    [
+      15,
+      34
+    ],
+    [
+      112,
+      93
+    ]
+  ],
+  "controls": [
+    [
+      54,
+      102
+    ],
+    [
+      73,
+      25
+    ],
+    [
+      22,
+      31
+    ],
+    [
+      105,
+      96
+    ]
+  ],
+  "cover_cells": {
+    "none": 14098,
+    "light": 1128,
+    "heavy": 1158
+  },
+  "cover_density": 0.1395,
+  "covergrid_sha256": "e2688bbb03621f445f1ca01371e50e1ccea513f2f98bba3ec61690095c6d1876",
+  "note": "Seed-deterministic procedural map (CT-G). Offline tooling \u2014 never touches the sim. Same seed+params \u2192 byte-identical .covergrid.",
+  "lint_cmd": "python3 tools/maps/lint.py generated/gen-point-1004 --spawn 16,7 --spawn 111,120 --spawn 15,34 --spawn 112,93 --control 54,102 --control 73,25 --control 22,31 --control 105,96 --pvp point"
+}

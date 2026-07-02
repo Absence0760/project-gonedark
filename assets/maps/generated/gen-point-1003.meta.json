@@ -1,0 +1,41 @@
+{
+  "name": "gen-point-1003",
+  "generator": "tools/maps/generate.py",
+  "seed": 1003,
+  "symmetry": "point",
+  "params": {
+    "density": 0.2,
+    "spawns": 2,
+    "controls": 2,
+    "grid": 128
+  },
+  "spawns": [
+    [
+      14,
+      19
+    ],
+    [
+      113,
+      108
+    ]
+  ],
+  "controls": [
+    [
+      10,
+      28
+    ],
+    [
+      117,
+      99
+    ]
+  ],
+  "cover_cells": {
+    "none": 13104,
+    "light": 1356,
+    "heavy": 1924
+  },
+  "cover_density": 0.2002,
+  "covergrid_sha256": "9760a7b305d989ddb54145539bf506865d6dca288e40f1f35cdbbccea50140f8",
+  "note": "Seed-deterministic procedural map (CT-G). Offline tooling \u2014 never touches the sim. Same seed+params \u2192 byte-identical .covergrid.",
+  "lint_cmd": "python3 tools/maps/lint.py generated/gen-point-1003 --spawn 14,19 --spawn 113,108 --control 10,28 --control 117,99 --pvp point"
+}
