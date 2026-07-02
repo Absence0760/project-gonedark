@@ -4290,3 +4290,34 @@ spectator camera is also out; the fixed command-view is deliberate (and the fair
 
 **Cross-link:** invariants #1/#4/#6/#7, [D89](#d89) (replay foundation), [D93](#d93) (multi-peer
 ordering), [`positioning-pc.md`](positioning/positioning-pc.md) PC-3, [`roadmap.md`](roadmap.md) PC-3.
+
+## D96 — Live-ops rotation bridge: server ships `(period, track)` scalars, `core` owns the modifier catalog (CP-8)
+
+**Status: landed.** `server::liveops::PublicConfig` gains `modifier_rotation_period: Option<u64>`
+(public — "this week's rotation is on," identical for everyone; `None` = no-op) and `modifier_track:
+u32` (public baseline catalog index). `PersonalizedConfig` gains a consent-gated
+`modifier_track_override: Option<u32>` (an analytics-derived A/B cohort). `LiveOpsConfig::
+effective_modifier_track()` resolves "override if present, else public baseline" — the only
+consent-aware decision, and it only ever yields a plain `u32`. The bridge into real tuning is
+`core::mission_tuning::ScenarioModifiers::for_rotation(period, track)` — a pure, total function over
+two authored `const` catalogs (`STANDARD_ROTATION` / `VARIANT_A_ROTATION`, 4 entries each), selected
+by `period % len` with an unrecognized-track → standard fallback. `engine::Game::
+apply_live_ops_modifiers(period, track)` is the thin host call site (mirrors `apply_campaign_tuning`).
+
+**Why.** CP-8 needs a sustainable post-launch modifier cadence without `server` ever depending on
+`core` (it stays IO/platform-only) or `core` ever depending on `server` (invariant #2). Making the
+wire payload two plain scalars, and making `core` the *only* place those scalars become a
+`ScenarioModifiers`, makes it **structurally impossible** — not merely disciplined — for a live-ops
+push to touch a D30 balance constant or grant power (invariants #1/#6): `for_rotation`'s return type
+can only ever be one of the hardcoded catalog entries, which reshape the *situation* (force size /
+reinforcement cadence / fog / clock), never a balance number. The existing consent gate
+(`ConsentGate::guard`, which nulls the whole `PersonalizedConfig` for a denied client) already covers
+the one thing needing gating — which track a cohort runs — so no new gating mechanism was added. The
+default scene's checksum stream is unperturbed (the additions are opt-in; `sim-runner` 300-tick
+checksum unchanged), and a proof test mirrors `modifier_reshapes_scenario_param_deterministically_not_balance`.
+
+**Scope / follow-up.** This lands the *bridge* only. Wiring `app`'s HTTP client to pull the live-ops
+config, and a server-side live-ops persistence backend, are separate larger follow-ups (not started).
+
+**Cross-link:** invariants #1/#2/#6/#7, [`roadmap.md`](roadmap.md) CP-8, `core::mission_tuning`
+(WS-E / D30 discipline), `campaign::Difficulty::scenario_modifiers` (the sibling pattern this mirrors).

@@ -594,8 +594,11 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   **WS-B landed ([D84](decisions.md) + [D87](decisions.md)):** the clip-selection seam + a procedural
   pose + rig authoring (`trooper_rig.glb`, 4 clips), and **runtime skeletal playback now drives the
   generic trooper** through the authored rigid-part rig via the existing `MeshPipeline`. **WS-F mesh
-  fidelity is also complete** (all four tiers + US/FR turret variants). Remaining CP-3 work is
-  per-faction rigs + runtime-driven death anim.
+  fidelity is also complete** (all four tiers + US/FR turret variants). **The visible death anim now
+  lands** — a presentation-only render-side death-linger (`render::death_linger`) drives
+  `AnimClip::Death` to the screen for a fade window after a unit vanishes from the snapshot, fog-gated
+  like any unit and skipping the embodied avatar (invariants #4/#5/#6); no `core`/checksum surface.
+  Remaining CP-3 work is per-faction rigs.
 - [ ] **CP-4 — Mobile HUD + touch polish.** Ship the per-layer HUD layout editor (PvE WS-D,
   [D61](decisions.md)) + a touch-target/rebind pass so controls feel CoD-Mobile-class. *Overlaps
   the touch-layout editor under UI/UX polish above.*
@@ -610,10 +613,14 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   first death as *"I stayed too long"* (#6). Built into PvE mission 1
   ([`pve-campaign.md`](pve-campaign.md) §3, WS-A). No incumbent has the twist, so we can't borrow
   this teach — we have to nail it. *Overlaps the onboarding item under UI/UX polish above.*
-- [ ] **CP-8 — Live-ops / content-cadence engine.** Wire the `server` scaffolding
+- [~] **CP-8 — Live-ops / content-cadence engine.** Wire the `server` scaffolding
   (telemetry/consent/live-ops) into the rotating scenario-parameter modifier system (PvE WS-E) for a
   sustainable post-launch cadence — **modifiers and content, never balance-number or power hacks**
-  (#1/#6).
+  (#1/#6). **Bridge landed ([D96](decisions.md)):** `server::liveops` ships `(modifier_rotation_period,
+  modifier_track)` scalars (personalized track consent-gated), and `core::mission_tuning::
+  ScenarioModifiers::for_rotation` maps them into an authored `const` modifier catalog — structurally
+  balance-unreachable, checksum-deterministic, `apply_live_ops_modifiers` the host seam. **Owed:**
+  `app` HTTP-client pull of the config + a server-side live-ops persistence backend.
 - [ ] **CP-9 — Command-layer readability + teach-fast pass.** The closing item for the PAR-ish
   *Strategic/command depth* row ([`positioning.md`](positioning/positioning.md) §6): the RTS half
   must read **at a glance on a small screen** and **teach itself fast** — a shooter-first audience
