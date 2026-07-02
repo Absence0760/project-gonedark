@@ -1,0 +1,38 @@
+// seize_outpost.map.ron — the battlefield the *Seize* mission (missions/seize.mission.ron) is
+// fought on (CT-C/CT-D). The mission's `map: "seize_outpost"` reference resolves to THIS file by
+// filename stem; a data-backed registry rejects a mission whose map does not resolve (a content
+// bug the CT-F lint catches), so the reference is a real, checked cross-file link.
+//
+// The *Seize* fight is a FIXED-FORCE ASSAULT: no control points to fight over, just the enemy camp
+// to take. So this map carries no `control_points`. The advance cover the assault bounds between is
+// laid by the mission's own scene (`build_seize_terrain`, static integer cover that never enters the
+// per-tick checksum, invariant #1/#7); this map declares the open ground it is laid over plus the
+// two opposing deploy zones for documentation and the lint.
+//
+// EVERY number here is an INTEGER cell (or the u16 terrain id) — the `engine::map_format` loader is
+// the float airlock (invariant #1). Cells are on the 128x128 playfield ([0, 128) per axis).
+// `terrain: 0` is the open playfield (core::terrain SCENE_MAP_ID) — always a valid, buildable map.
+MapSpec(
+    terrain: 0,
+
+    // A fixed-force assault — no neutral posts to contest.
+    control_points: [],
+
+    // Light sandbag cover strewn across the no-man's-land the assault crosses under fire, west of
+    // centre (the attackers' approach lane). Light only, so nothing blocks the assault's own fire.
+    cover_props: [
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 52, y: 62)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 52, y: 66)),
+        CoverPropSpec(kind: Tree,  cell: CellRef(x: 62, y: 60)),
+        CoverPropSpec(kind: Tree,  cell: CellRef(x: 62, y: 68)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 72, y: 62)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 72, y: 66)),
+    ],
+
+    // The two opposing deploy zones: the player line on the west, the garrison on the east.
+    // Non-overlapping and in-bounds (the loader enforces both).
+    spawn_zones: [
+        SpawnZoneSpec(name: "player", min: CellRef(x: 32, y: 60), max: CellRef(x: 42, y: 68)),
+        SpawnZoneSpec(name: "enemy",  min: CellRef(x: 84, y: 60), max: CellRef(x: 92, y: 68)),
+    ],
+)

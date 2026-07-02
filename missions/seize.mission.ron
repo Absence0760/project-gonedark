@@ -15,7 +15,12 @@
 // (and thus the checksum stream) is exactly this order — the ten player troops (a 2x5 block on the
 // west), then the enemy base camp, then the four-man garrison. Matches `seed_seize_mission` exactly.
 MissionSpec(
-    // The battlefield reference (resolved by the map format, CT-C). CT-B only carries the id.
+    // The mission's stable identity — the id the campaign graph names it by (CT-D). MISSION_SEIZE
+    // in `engine::mission_registry` is MissionId(1); a data-backed registry resolves this file to
+    // that node. Not a sim number — it never reaches the checksum.
+    id: 1,
+
+    // The battlefield reference (resolved by the map format, CT-C/CT-D → maps/seize_outpost.map.ron).
     map: "seize_outpost",
 
     // Production OFF: a slow income drip and (below) an empty purse keep this a fixed-force assault.
