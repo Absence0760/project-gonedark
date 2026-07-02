@@ -229,7 +229,8 @@ model.
  still pending (no iOS target at all). **Desktop Settings is now partial** — the egui Settings /
 > Profile / About screens landed with audio master/SFX volume + look sensitivity wired into the host
 > ([D75](decisions.md)); **graphics-tier selection is now live** (Settings → `render::tiers` quality
-> band) and **music volume is wired to a host seam but dormant** (no music bus exists yet);
+> band) and **music volume now drives a real music bus** (a looping bed in the shared `pal::mix`
+> mixer, desktop cpal sink; Android inherits the bed support, oboe wiring pending);
 > accessibility + the rebind editor still owed. **The Android Compose out-of-match shell has since reached parity with that desktop
 > shell** — Settings/Profile/About, the gunsmith, and the Operations-hub mission-select/briefing all
 > re-authored in Compose ([D78](decisions.md)/[D79](decisions.md)) and a parity-gap sweep closing the
@@ -469,9 +470,9 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 - [~] Settings — graphics tier, audio-mix levels, rebinds, **accessibility** (an equivalent
   cue for the directional-flash + audio alert channel). **Accessibility cue landed** (WS-D: a
   persisted `AlertCueMode` selecting audio/haptic equivalents of the flash + the existing colourblind
-  ramps/shape glyphs); **graphics-tier selection now drives `render::tiers` live and music volume is
-  wired to a host seam (dormant until a music bus exists)** ([D75](decisions.md) follow-up); the
-  rebind editor still owed.
+  ramps/shape glyphs); **graphics-tier selection now drives `render::tiers` live and music volume
+  drives a real looping music bus** in the shared `pal::mix` mixer (desktop cpal sink; Android oboe
+  wiring pending) ([D75](decisions.md) follow-up); the rebind editor still owed.
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions.
   **Hit feedback (the embodied "I hit him" cue) is tracked as TF-4** under *Test & feedback
   hardening* above ([`test-harness-plan.md`](plans/test-harness-plan.md) WS-4)
