@@ -877,6 +877,20 @@ impl ApplicationHandler for App {
                     surface.resize(size.width, size.height);
                 }
             }
+            WindowEvent::Focused(focused) => {
+                // The OS releases any cursor grab when the window loses focus (alt-tab out of a
+                // fullscreen match), but winit does not tell `sync_cursor` about it — so our
+                // `cursor_captured` flag would stay `true`, its change-guard would short-circuit,
+                // and the grab would never be re-acquired on return (mouse-look dead until
+                // restart). On focus loss, reconcile the flag to the OS's actual state (also stops
+                // `device_event` forwarding phantom motion while unfocused); on focus gain,
+                // re-run `sync_cursor` so it re-grabs immediately if we're still embodied.
+                if !focused {
+                    self.cursor_captured = false;
+                } else {
+                    self.sync_cursor();
+                }
+            }
             WindowEvent::RedrawRequested => self.render_frame(event_loop),
             _ => {}
         }
