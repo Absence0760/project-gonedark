@@ -527,25 +527,31 @@ def infantry_palette(prefix, fatigue, helmet):
 def soldier_parts(P, bulk=1.0, helmet="pot"):
     """The shared skinned-infantryman, ready for `weld`. An organic body (`skinned_body`) in fatigues,
     a skin head + hands, a helmet (`dome`), an M1956 pistol belt with ammo pouches, jungle boots, and
-    an M16 cradled level across the chest. Coordinate frame matches the old troopers so the existing
-    placement math is untouched: Z-up, feet at z≈0; rifle receiver/barrel runs along +X (barrel to the
-    figure's LEFT); boot toes point +Y. Per-part materials (`infantry_palette`) so it reads as a
-    coloured soldier — only the uniform + helmet carry a team tint.
+    an M16 held at the ready. Coordinate frame agrees with the engine's `+X = forward` convention
+    (renderer's `model_matrix` rotates local +X onto the unit's heading; the tank nose/barrel are +X
+    too): Z-up, feet at z≈0; boot toes point +X; face/pouches/rifle-muzzle front at +X; pack at −X;
+    left/right are ±Y. The rifle barrel runs along +X so it points where the trooper faces — the sim
+    now turns riflemen to FACE their target, so the gun must agree (was authored +Y-forward with the
+    rifle laid across the chest, which read as the gun sticking out sideways). Per-part materials
+    (`infantry_palette`) so it reads as a coloured soldier — only the uniform + helmet carry a team tint.
 
     `bulk` widens the shoulders/chest (US heavier, FR slimmer — the fairness-bounded WS-C silhouette
     tell). `helmet` picks the shell: "pot" = the M1 steel pot (rounded dome + subtle rolled brim),
     "spectra" = the flatter, front-brimmed French shell. Each builder appends army-specific kit
     (rucksack, grenade, bedroll) before welding."""
-    sh = 0.20 * bulk        # shoulder half-width
+    sh = 0.20 * bulk        # shoulder half-width (±Y)
     chest_r = 0.185 * bulk  # chest skin radius
     arm_r = 0.09 * bulk
+    # Body faces +X. Legs/shoulders straddle ±Y. The arms are RE-POSED into an aimed/ready grip: both
+    # hands come onto a rifle held just off the centreline in front of the chest, barrel forward (+X)
+    # — the support (left) arm reaches out to the handguard, the firing (right) arm tucks the grip in.
     joints = {
-        "pelvis": (0.0, 0.0, 0.94), "spine": (0.0, -0.01, 1.14), "chest": (0.0, -0.02, 1.37),
-        "neck": (0.0, -0.015, 1.505),
-        "shL": (sh, -0.01, 1.45), "elbL": (sh + 0.05, 0.14, 1.20), "haL": (0.10, 0.31, 1.14),
-        "shR": (-sh, -0.01, 1.45), "elbR": (-sh - 0.05, 0.14, 1.20), "haR": (-0.10, 0.31, 1.14),
-        "hipL": (0.09, 0.0, 0.90), "kneeL": (0.11, 0.01, 0.50), "ankL": (0.11, 0.0, 0.10),
-        "hipR": (-0.09, 0.0, 0.90), "kneeR": (-0.11, 0.01, 0.50), "ankR": (-0.11, 0.0, 0.10),
+        "pelvis": (0.0, 0.0, 0.94), "spine": (-0.01, 0.0, 1.14), "chest": (-0.02, 0.0, 1.37),
+        "neck": (-0.015, 0.0, 1.505),
+        "shL": (-0.01, -sh, 1.45), "elbL": (0.16, -0.12, 1.34), "haL": (0.37, 0.03, 1.29),
+        "shR": (-0.01, sh, 1.45), "elbR": (-0.05, sh, 1.25), "haR": (0.06, 0.09, 1.23),
+        "hipL": (0.0, -0.09, 0.90), "kneeL": (0.01, -0.11, 0.50), "ankL": (0.0, -0.11, 0.10),
+        "hipR": (0.0, 0.09, 0.90), "kneeR": (0.01, 0.11, 0.50), "ankR": (0.0, 0.11, 0.10),
     }
     edges = [
         ("pelvis", "spine"), ("spine", "chest"), ("chest", "neck"),
@@ -564,30 +570,31 @@ def soldier_parts(P, bulk=1.0, helmet="pot"):
     body = skinned_body(joints, edges, radii)
     parts = [
         (body, P["fatigue"]),                                                 # organic skinned body
-        (icosphere(0.108, (0, 0.01, 1.585), subdivisions=2), P["skin"]),      # head (face shows below the brim)
-        (icosphere(0.055, (0.10, 0.31, 1.14), subdivisions=1), P["skin"]),    # hand R (on the receiver)
-        (icosphere(0.055, (-0.10, 0.31, 1.14), subdivisions=1), P["skin"]),   # hand L (on the handguard)
-        (box((0.15, 0.27, 0.12), (0.11, 0.06, 0.06)), P["boots"]),            # jungle boot R (toe forward, +Y)
-        (box((0.15, 0.27, 0.12), (-0.11, 0.06, 0.06)), P["boots"]),           # jungle boot L
-        # M1956 web gear: a pistol belt hugging the waist + two compact front ammo pouches.
-        (box((0.345, 0.24, 0.085), (0, 0, 1.00)), P["web"]),                  # pistol belt
-        (box((0.10, 0.09, 0.12), (0.13, 0.135, 1.00)), P["web"]),             # ammo pouch R
-        (box((0.10, 0.09, 0.12), (-0.13, 0.135, 1.00)), P["web"]),            # ammo pouch L
-        # M16 carried level across the chest (barrel to the figure's left, +X): a clear horizontal
-        # bar, legible from the front AND the top-down command view — carry handle proud, mag hanging.
-        (box((0.60, 0.06, 0.07), (0.0, 0.34, 1.13)), P["gun"]),               # receiver/barrel
-        (box((0.14, 0.055, 0.045), (0.05, 0.34, 1.18)), P["gun"]),            # carry handle
-        (box((0.05, 0.07, 0.16), (-0.09, 0.36, 1.03)), P["gun"]),             # magazine
+        (icosphere(0.108, (0.01, 0.0, 1.585), subdivisions=2), P["skin"]),    # head (face shows below the brim, +X)
+        (icosphere(0.055, (0.37, 0.03, 1.29), subdivisions=1), P["skin"]),    # hand L (support, on the handguard)
+        (icosphere(0.055, (0.06, 0.09, 1.23), subdivisions=1), P["skin"]),    # hand R (firing, on the grip)
+        (box((0.27, 0.15, 0.12), (0.06, -0.11, 0.06)), P["boots"]),           # jungle boot R (toe forward, +X)
+        (box((0.27, 0.15, 0.12), (0.06, 0.11, 0.06)), P["boots"]),            # jungle boot L
+        # M1956 web gear: a pistol belt hugging the waist + two compact front (+X) ammo pouches.
+        (box((0.24, 0.345, 0.085), (0, 0, 1.00)), P["web"]),                  # pistol belt (wraps ±Y)
+        (box((0.09, 0.10, 0.12), (0.135, -0.13, 1.00)), P["web"]),            # ammo pouch R (front)
+        (box((0.09, 0.10, 0.12), (0.135, 0.13, 1.00)), P["web"]),             # ammo pouch L (front)
+        # M16 held at the ready: receiver/barrel along +X (points where the trooper faces), tucked in
+        # front of the chest just off centre — carry handle proud on top, mag hanging below. Legible
+        # from the front AND the top-down command view as an aimed weapon, not a bar across the chest.
+        (box((0.60, 0.06, 0.07), (0.16, 0.05, 1.30)), P["gun"]),              # receiver/barrel (+X)
+        (box((0.14, 0.055, 0.045), (0.11, 0.05, 1.36)), P["gun"]),            # carry handle (atop)
+        (box((0.05, 0.07, 0.16), (0.15, 0.05, 1.18)), P["gun"]),              # magazine (hangs below)
     ]
     if helmet == "spectra":
-        # French SPECTRA: a flatter shell with a short forward brim (the FR silhouette tell).
-        parts.append((dome(0.15, (0, -0.01, 1.60), zsquash=0.80, xyscale=(0.98, 1.02), cut=-0.030), P["helmet"]))
-        parts.append((box((0.28, 0.14, 0.045), (0, 0.13, 1.585)), P["helmet"]))     # front brim accent
+        # French SPECTRA: a flatter shell with a short forward (+X) brim (the FR silhouette tell).
+        parts.append((dome(0.15, (-0.01, 0.0, 1.60), zsquash=0.80, xyscale=(1.02, 0.98), cut=-0.030), P["helmet"]))
+        parts.append((box((0.14, 0.28, 0.045), (0.13, 0.0, 1.585)), P["helmet"]))   # front brim accent (+X)
     else:
         # M1 steel pot: a rounded dome hugging crown + sides down past the ears, with a subtle rolled
         # brim lip — the face pokes out below the front edge. NOT a floating sombrero (the old failure).
-        parts.append((dome(0.155, (0, -0.01, 1.60), zsquash=0.92, xyscale=(0.95, 1.0), cut=-0.028), P["helmet"]))
-        parts.append((cyl(0.152, 0.028, (0, -0.01, 1.575), verts=18), P["helmet"]))  # rolled brim lip
+        parts.append((dome(0.155, (-0.01, 0.0, 1.60), zsquash=0.92, xyscale=(1.0, 0.95), cut=-0.028), P["helmet"]))
+        parts.append((cyl(0.152, 0.028, (-0.01, 0.0, 1.575), verts=18), P["helmet"]))  # rolled brim lip
     return parts
 
 
@@ -599,8 +606,8 @@ def build_trooper():
     P = infantry_palette("gd", (0.30, 0.34, 0.20), (0.20, 0.23, 0.15))
     parts = soldier_parts(P, bulk=1.0, helmet="pot")
     parts += [
-        (box((0.26, 0.15, 0.34), (0, -0.185, 1.25)), P["pack"]),              # tropical rucksack (tucked to the back)
-        (cyl(0.05, 0.26, (0, -0.20, 1.44), rot=(0, math.radians(90), 0), verts=8), P["pack"]),  # bedroll lashed on top
+        (box((0.15, 0.26, 0.34), (-0.185, 0.0, 1.25)), P["pack"]),            # tropical rucksack (tucked to the back, −X)
+        (cyl(0.05, 0.26, (-0.20, 0.0, 1.44), rot=(math.radians(90), 0, 0), verts=8), P["pack"]),  # bedroll lashed across the shoulders (±Y)
     ]
     return weld("trooper", parts, bevel=0.0)
 
@@ -996,9 +1003,9 @@ def build_trooper_us():
     P = infantry_palette("us", (0.31, 0.35, 0.20), (0.20, 0.23, 0.15))
     parts = soldier_parts(P, bulk=1.12, helmet="pot")
     parts += [
-        (box((0.08, 0.08, 0.11), (0.20, 0.17, 1.03)), P["gun"]),              # frag grenade on the belt (US tell)
-        (box((0.28, 0.17, 0.38), (0, -0.20, 1.26)), P["pack"]),               # tropical rucksack (US carries more)
-        (cyl(0.055, 0.28, (0, -0.215, 1.47), rot=(0, math.radians(90), 0), verts=8), P["pack"]),  # bedroll
+        (box((0.08, 0.08, 0.11), (0.17, -0.20, 1.03)), P["gun"]),             # frag grenade on the belt (US tell)
+        (box((0.17, 0.28, 0.38), (-0.20, 0.0, 1.26)), P["pack"]),             # tropical rucksack (US carries more, −X)
+        (cyl(0.055, 0.28, (-0.215, 0.0, 1.47), rot=(math.radians(90), 0, 0), verts=8), P["pack"]),  # bedroll (±Y)
     ]
     return weld("trooper_us", parts, bevel=0.0)
 
@@ -1011,7 +1018,7 @@ def build_trooper_fr():
     P = infantry_palette("fr", (0.27, 0.31, 0.20), (0.18, 0.21, 0.15))
     parts = soldier_parts(P, bulk=0.92, helmet="spectra")
     parts += [
-        (box((0.24, 0.14, 0.34), (0, -0.175, 1.26)), P["pack"]),              # compact backpack (tucked)
+        (box((0.14, 0.24, 0.34), (-0.175, 0.0, 1.26)), P["pack"]),            # compact backpack (tucked, −X)
     ]
     return weld("trooper_fr", parts, bevel=0.0)
 
