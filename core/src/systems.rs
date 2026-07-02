@@ -16,7 +16,8 @@
 use crate::components::{EntityKind, InputSource, Vec2};
 use crate::ecs::World;
 use crate::fixed::Fixed;
-use crate::flow_field::FlowFieldCache;
+use crate::flow_field::{FlowFieldCache, CELL_SIZE, HALF_EXTENT};
+use crate::terrain::Terrain;
 use crate::trig;
 
 /// Base move speed in world units per tick (1/8). Tune via data later.
@@ -90,7 +91,7 @@ pub const UNIT_RADIUS: Fixed = Fixed::from_ratio(1, 4);
 /// fully suppressed) without completing its order — and without forcing a field build.
 pub fn step_toward_speed(
     world: &mut World,
-    cache: &mut FlowFieldCache,
+    cache: &mut FlowFieldCache<'_>,
     i: usize,
     target: Vec2,
     speed: Fixed,
@@ -115,7 +116,12 @@ pub fn step_toward_speed(
 
 /// Step a single unit toward `target` at the base [`MOVE_SPEED`].
 #[inline]
-pub fn step_toward(world: &mut World, cache: &mut FlowFieldCache, i: usize, target: Vec2) -> bool {
+pub fn step_toward(
+    world: &mut World,
+    cache: &mut FlowFieldCache<'_>,
+    i: usize,
+    target: Vec2,
+) -> bool {
     step_toward_speed(world, cache, i, target, MOVE_SPEED)
 }
 
@@ -224,6 +230,111 @@ pub fn resolve_building_collisions(world: &mut World) {
                 dir.scale(min_dist)
             };
             world.pos[e] = center + out;
+        }
+    }
+}
+
+/// World lower edge of cell `c` on one axis — mirrors the [`flow_field`](crate::flow_field) /
+/// terrain mapping: cell `c` covers world `[-HALF_EXTENT + c, -HALF_EXTENT + c + CELL_SIZE)`.
+#[inline]
+fn cell_lo(c: i32) -> Fixed {
+    (Fixed::ZERO - HALF_EXTENT) + Fixed::from_int(c)
+}
+
+/// Push any mover that ended a tick inside an `Impassable` terrain cell back out to the passable
+/// side — the terrain analogue of [`resolve_building_collisions`] (Q24). Run AFTER movement and the
+/// building push, before the snapshot, so positions are settled. Applies to the embodied avatar
+/// (which does not pathfind — its ONLY terrain collision is here) and to AI units alike (invariant
+/// #3 untouched — this is physics, not a decision).
+///
+/// Because a mover advances well under one cell per tick, it crosses at most one cell edge, so the
+/// cheapest correction is to un-cross the axis it just entered on. We pick the axis of **smallest
+/// penetration** into the solid cell (minimal translation, so a unit grazing a wall slides along it
+/// rather than being flung), place the body a [`UNIT_RADIUS`] skin outside that edge, and re-test
+/// the other axis for a corner. A mover with no velocity that is somehow inside a wall (e.g. the
+/// building push nudged it there) is ejected toward the first passable orthogonal neighbour in a
+/// fixed order — a deterministic, peer-identical fallback. All fixed-point, iterated in stable index
+/// order (invariants #1/#7). On an open field nothing blocks movement, so this is a no-op and every
+/// existing replay/checksum is byte-unchanged. Idempotent: a mover already outside is untouched.
+pub fn resolve_terrain_collisions(world: &mut World, terrain: &Terrain) {
+    let n = world.capacity();
+    let skin = UNIT_RADIUS;
+    for e in 0..n {
+        if !world.is_index_alive(e) || world.kind[e] == EntityKind::Building {
+            continue;
+        }
+        if !terrain.cover_at(world.pos[e]).blocks_movement() {
+            continue; // already on passable ground
+        }
+        let (cx, cy) = terrain.cell_of(world.pos[e]);
+        let lo_x = cell_lo(cx);
+        let lo_y = cell_lo(cy);
+        let hi_x = lo_x + CELL_SIZE;
+        let hi_y = lo_y + CELL_SIZE;
+        let v = world.vel[e];
+
+        // Penetration depth into the cell along each axis, in the direction the mover came FROM
+        // (opposite its velocity). A zero/absent component means "did not enter on this axis" — use
+        // a sentinel larger than any in-cell depth so the other axis is preferred.
+        let big = CELL_SIZE + CELL_SIZE;
+        let pen_x = if v.x > Fixed::ZERO {
+            world.pos[e].x - lo_x // entered from the west
+        } else if v.x < Fixed::ZERO {
+            hi_x - world.pos[e].x // entered from the east
+        } else {
+            big
+        };
+        let pen_y = if v.y > Fixed::ZERO {
+            world.pos[e].y - lo_y
+        } else if v.y < Fixed::ZERO {
+            hi_y - world.pos[e].y
+        } else {
+            big
+        };
+
+        // Back the body out along one axis to just outside the edge it crossed.
+        let back_out_x = |world: &mut World| {
+            world.pos[e].x = if v.x > Fixed::ZERO {
+                lo_x - skin
+            } else {
+                hi_x + skin
+            };
+        };
+        let back_out_y = |world: &mut World| {
+            world.pos[e].y = if v.y > Fixed::ZERO {
+                lo_y - skin
+            } else {
+                hi_y + skin
+            };
+        };
+
+        if pen_x == big && pen_y == big {
+            // No entry direction (stationary in a wall): eject toward the first passable orthogonal
+            // neighbour in a fixed N,E,S,W order — deterministic and peer-identical.
+            if !terrain.cover_at_cell(cx, cy + 1).blocks_movement() {
+                world.pos[e].y = hi_y + skin;
+            } else if !terrain.cover_at_cell(cx + 1, cy).blocks_movement() {
+                world.pos[e].x = hi_x + skin;
+            } else if !terrain.cover_at_cell(cx, cy - 1).blocks_movement() {
+                world.pos[e].y = lo_y - skin;
+            } else if !terrain.cover_at_cell(cx - 1, cy).blocks_movement() {
+                world.pos[e].x = lo_x - skin;
+            }
+            // else fully walled in (degenerate) — leave it; nothing to do deterministically.
+            continue;
+        }
+
+        // Resolve the smaller-penetration axis first (minimal translation); ties → X first.
+        if pen_x <= pen_y {
+            back_out_x(world);
+            if terrain.cover_at(world.pos[e]).blocks_movement() {
+                back_out_y(world); // corner: still solid, un-cross the other axis too
+            }
+        } else {
+            back_out_y(world);
+            if terrain.cover_at(world.pos[e]).blocks_movement() {
+                back_out_x(world);
+            }
         }
     }
 }
@@ -600,5 +711,66 @@ mod tests {
         resolve_building_collisions(&mut w);
         assert_eq!(w.pos[a], Vec2::new(Fixed::ZERO, Fixed::ZERO));
         assert_eq!(w.pos[b], Vec2::new(Fixed::HALF, Fixed::ZERO));
+    }
+
+    #[test]
+    fn resolve_terrain_collisions_pushes_a_mover_out_of_a_wall() {
+        // A unit that ended a tick inside an Impassable cell (walked east into it) is backed out to
+        // the west edge, keeping a UNIT_RADIUS skin; its y is unchanged so it slides along the wall.
+        use crate::terrain::{Cover, Terrain};
+        let (mut w, i) = world_with_unit();
+        let mut t = Terrain::open();
+        let (cx, cy) = t.cell_of(Vec2::new(Fixed::from_int(5), Fixed::from_int(5)));
+        t.set_cover(cx, cy, Cover::Impassable);
+        let center = Vec2::new(cell_lo(cx) + Fixed::HALF, cell_lo(cy) + Fixed::HALF);
+        w.pos[i] = center;
+        w.vel[i] = Vec2::new(MOVE_SPEED, Fixed::ZERO); // came from the west
+        assert!(
+            t.cover_at(w.pos[i]).blocks_movement(),
+            "starts inside the wall"
+        );
+        resolve_terrain_collisions(&mut w, &t);
+        assert!(
+            !t.cover_at(w.pos[i]).blocks_movement(),
+            "ejected onto passable ground"
+        );
+        assert_eq!(w.pos[i].x, cell_lo(cx) - UNIT_RADIUS);
+        assert_eq!(w.pos[i].y, center.y, "slides along the wall (y unchanged)");
+    }
+
+    #[test]
+    fn resolve_terrain_collisions_leaves_a_clear_mover_untouched() {
+        // A mover on open ground is never moved (idempotent no-op away from walls).
+        use crate::terrain::{Cover, Terrain};
+        let (mut w, i) = world_with_unit();
+        let mut t = Terrain::open();
+        let (cx, cy) = t.cell_of(Vec2::new(Fixed::from_int(5), Fixed::from_int(5)));
+        t.set_cover(cx, cy, Cover::Impassable);
+        let clear = Vec2::new(Fixed::from_int(-3), Fixed::from_int(2));
+        w.pos[i] = clear;
+        w.vel[i] = Vec2::new(MOVE_SPEED, Fixed::ZERO);
+        resolve_terrain_collisions(&mut w, &t);
+        assert_eq!(w.pos[i], clear, "a mover on open ground is not moved");
+    }
+
+    #[test]
+    fn resolve_terrain_collisions_ejects_a_stationary_mover_by_neighbour_scan() {
+        // A unit with zero velocity somehow inside a wall (e.g. the building push nudged it there) is
+        // ejected toward the first passable orthogonal neighbour in the fixed N,E,S,W order (→ N).
+        use crate::terrain::{Cover, Terrain};
+        let (mut w, i) = world_with_unit();
+        let mut t = Terrain::open();
+        let (cx, cy) = t.cell_of(Vec2::new(Fixed::from_int(5), Fixed::from_int(5)));
+        t.set_cover(cx, cy, Cover::Impassable);
+        let center = Vec2::new(cell_lo(cx) + Fixed::HALF, cell_lo(cy) + Fixed::HALF);
+        w.pos[i] = center;
+        w.vel[i] = Vec2::ZERO;
+        resolve_terrain_collisions(&mut w, &t);
+        assert!(
+            !t.cover_at(w.pos[i]).blocks_movement(),
+            "ejected out of the wall"
+        );
+        assert_eq!(w.pos[i].y, cell_lo(cy) + CELL_SIZE + UNIT_RADIUS, "pushed north");
+        assert_eq!(w.pos[i].x, center.x);
     }
 }

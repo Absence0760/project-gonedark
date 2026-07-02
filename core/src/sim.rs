@@ -285,6 +285,10 @@ impl Sim {
         // building footprint — buildings are solid (you can't walk through them). Runs after ALL
         // movement, before the cosmetic slew/combat so positions are settled for the snapshot.
         systems::resolve_building_collisions(&mut self.world);
+        // Then push movers out of any Impassable terrain cell (walls/water and the solid props the
+        // player sees — Q24). After the building push so a mover nudged off a camp into a wall is
+        // still corrected. A no-op on an open field, so obstacle-free scenes stay byte-identical.
+        systems::resolve_terrain_collisions(&mut self.world, &self.terrain);
         // Cosmetic AI hull/turret slew, AFTER movement sets this tick's velocity (D55 P2).
         systems::heading_system(&mut self.world);
         // Tank aim-bloom settle (D55 P5): every tank gun's dispersion shrinks toward zero (pinpoint)

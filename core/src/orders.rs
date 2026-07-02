@@ -81,12 +81,12 @@ fn move_speed(base: Fixed, suppression: Fixed) -> Fixed {
 /// behaviour is bit-identical to Phase 1 (same base speed via [`systems::step_toward`], same
 /// arrival epsilon), so the determinism suite is unchanged.
 pub fn order_system(world: &mut World, terrain: &Terrain) {
-    let _ = terrain;
     let n = world.capacity();
-    // One flow-field cache for the whole tick: units sharing a goal share a single build. It is
-    // local to this call (dropped at tick end), so it is not sim state and never enters the
-    // checksum; what each unit samples is bit-identical to building its own field.
-    let mut cache = FlowFieldCache::new();
+    // One flow-field cache for the whole tick, bound to the terrain so every path routes around
+    // impassable cells (Q24): units sharing a goal share a single build. It is local to this call
+    // (dropped at tick end), so it is not sim state and never enters the checksum; what each unit
+    // samples is bit-identical to building its own field.
+    let mut cache = FlowFieldCache::new(terrain);
     for i in 0..n {
         if !world.is_index_alive(i) {
             continue;

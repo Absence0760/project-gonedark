@@ -22,6 +22,7 @@
 
 use crate::components::Vec2;
 use crate::fixed::Fixed;
+use crate::terrain::Terrain;
 
 /// Cells per axis. The grid is `GRID`×`GRID` square.
 pub const GRID: usize = 128;
@@ -77,9 +78,15 @@ impl FlowField {
     /// Deterministic by construction: cells are processed in nondecreasing cost order, and
     /// within one cost bucket in first-inserted order. Insertion order is fully determined
     /// by the fixed `NEIGHBORS` scan order applied to cells already drained in that same
-    /// order — no priority-queue address/hash ordering, no float keys. With no obstacles
-    /// this fills the whole grid with a tidy distance gradient. O(N) in cell count.
-    pub fn build(goal: Vec2) -> FlowField {
+    /// order — no priority-queue address/hash ordering, no float keys. O(N) in cell count.
+    ///
+    /// **Obstacle-aware (Q24).** The expansion never relaxes *into* a cell that
+    /// [`Cover::blocks_movement`](crate::terrain::Cover::blocks_movement) (an
+    /// `Impassable` cell), so those cells stay [`UNREACHED`] and units route *around* them
+    /// instead of straight through — the Phase-2 generalisation the module doc anticipated. On
+    /// an open field (no impassable cells) this is byte-identical to the obstacle-free build, so
+    /// existing replays/checksums are unchanged.
+    pub fn build(goal: Vec2, terrain: &Terrain) -> FlowField {
         let (goal_cx, goal_cy) = world_to_cell(goal);
         let mut cost = vec![UNREACHED; GRID * GRID];
 
@@ -113,6 +120,11 @@ impl FlowField {
                     let nx = cx + dx;
                     let ny = cy + dy;
                     if !in_bounds(nx, ny) {
+                        continue;
+                    }
+                    // An impassable cell is a wall: never route a path through it (Q24). It stays
+                    // UNREACHED, so `sample` never steers a unit into it and the field bends around.
+                    if terrain.cover_at_cell(nx, ny).blocks_movement() {
                         continue;
                     }
                     let nidx = cell_index(nx, ny);
@@ -189,27 +201,34 @@ impl FlowField {
 /// is no hash-order hazard — and the value returned is independent of insertion order. The store
 /// is a flat `Vec` linear-probed because the number of distinct goals live in one tick is small
 /// (a handful), so a map's overhead/iteration-order questions buy nothing.
-#[derive(Default)]
-pub struct FlowFieldCache {
+pub struct FlowFieldCache<'t> {
     fields: Vec<(Vec2, FlowField)>,
+    /// The terrain every field in this cache is built against. Held for the cache's lifetime (one
+    /// tick), so [`get`](Self::get) needs only the goal — terrain is constant within a sim, so the
+    /// per-goal key remains complete and two units with the same goal still share one build.
+    terrain: &'t Terrain,
 }
 
-impl FlowFieldCache {
-    /// An empty cache for a fresh tick.
-    pub fn new() -> Self {
-        FlowFieldCache { fields: Vec::new() }
+impl<'t> FlowFieldCache<'t> {
+    /// An empty cache for a fresh tick, bound to the sim's `terrain` (its obstacles shape every
+    /// field built through it — Q24).
+    pub fn new(terrain: &'t Terrain) -> Self {
+        FlowFieldCache {
+            fields: Vec::new(),
+            terrain,
+        }
     }
 
     /// The field for `goal`, building and memoising it on first request this tick. The returned
-    /// reference is bit-identical to `FlowField::build(goal)` regardless of how many callers
-    /// shared it.
+    /// reference is bit-identical to `FlowField::build(goal, terrain)` regardless of how many
+    /// callers shared it.
     pub fn get(&mut self, goal: Vec2) -> &FlowField {
         // Resolve the index with no live borrow outstanding, then return — avoids the
         // conditional-return-of-borrow borrowck snag.
         let idx = match self.fields.iter().position(|(g, _)| *g == goal) {
             Some(i) => i,
             None => {
-                self.fields.push((goal, FlowField::build(goal)));
+                self.fields.push((goal, FlowField::build(goal, self.terrain)));
                 self.fields.len() - 1
             }
         };

@@ -584,6 +584,15 @@ fn build_skirmish_terrain(sim: &mut Sim) {
     //    flank post cell itself stays open (the bracket sits around it, at world y ∈ [±14, ±18]).
     sym(-3, 16, 3, 18, Cover::Heavy); // back wall, just beyond each flank post
     sym(3, 14, 3, 16, Cover::Heavy); // side walls closing the bracket toward the post
+
+    // 5. Solid props — the trees, boulders, crates, sandbag berms and turret emplacements the
+    //    renderer draws in the embodied view. They were render-only (D50) and pass-through; painting
+    //    the SAME layout as `Cover::Impassable` here makes them real obstacles the player and AI stop
+    //    at and path around (Q24). The list lives in `core::obstacles` so the sim owns it and the
+    //    renderer reads it — one source, so a prop can never again be visible-but-passable. Scattered
+    //    mid-field, clear of the bases (±30,0), spawns and the three capture posts, so it never walls
+    //    off the base-to-base lane or traps a post.
+    crate::obstacles::paint_impassable(&mut sim.terrain, &crate::obstacles::skirmish_obstacles());
 }
 
 /// Seed `sim` with the two-base skirmish and return the [`Skirmish`] handles: two operational base

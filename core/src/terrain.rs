@@ -23,34 +23,51 @@ use crate::fixed::Fixed;
 use crate::flow_field::{CELL_SIZE, GRID, HALF_EXTENT};
 
 /// Cover level at a cell. Heavier cover mitigates more incoming damage; `Heavy` additionally
-/// blocks line of sight (it is a solid wall, not just concealment).
+/// blocks line of sight (concealment you can still walk through), and `Impassable` is a solid
+/// obstacle that also **blocks movement** (Q24, resolved here — the distinct impassable tier,
+/// kept separate from the LoS-blocking `Heavy` so a tall hedge can conceal without being a wall).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Cover {
-    /// Open ground — full damage, no sight blocking.
+    /// Open ground — full damage, no sight blocking, passable.
     #[default]
     None,
-    /// Light cover (sandbags, hedges) — partial damage mitigation, sight passes.
+    /// Light cover (sandbags, hedges) — partial damage mitigation, sight passes, passable.
     Light,
-    /// Heavy cover (walls) — strong mitigation AND blocks line of sight.
+    /// Heavy cover (tall hedge, low wall you fire over) — strong mitigation AND blocks line of
+    /// sight, but still **passable** (concealment, not a solid body).
     Heavy,
+    /// Solid obstacle (wall, building, tree, rock, crate, water edge) — strong mitigation, blocks
+    /// line of sight, and **blocks movement**: a unit/avatar cannot enter this cell (Q24). This is
+    /// the tier baked maps map their `'#'` walls/water to, and the tier `obstacles` paints under a
+    /// visible prop so the player stops where they see an object.
+    Impassable,
 }
 
 impl Cover {
     /// Damage multiplier this cover applies to incoming fire, as a Fixed in `[0, 1]`.
-    /// `None` → 1 (full), `Light` → 1/2, `Heavy` → 1/4. (Tunable; worker 1 may refine.)
+    /// `None` → 1 (full), `Light` → 1/2, `Heavy`/`Impassable` → 1/4 (both are solid to fire).
     #[inline]
     pub fn damage_multiplier(self) -> Fixed {
         match self {
             Cover::None => Fixed::ONE,
             Cover::Light => Fixed::from_ratio(1, 2),
-            Cover::Heavy => Fixed::from_ratio(1, 4),
+            Cover::Heavy | Cover::Impassable => Fixed::from_ratio(1, 4),
         }
     }
 
-    /// Does this cover block line of sight?
+    /// Does this cover block line of sight? Both the LoS-blocking `Heavy` concealment and a solid
+    /// `Impassable` body do (a wall you can't see or walk through).
     #[inline]
     pub fn blocks_sight(self) -> bool {
-        matches!(self, Cover::Heavy)
+        matches!(self, Cover::Heavy | Cover::Impassable)
+    }
+
+    /// Does this cover block movement? Only `Impassable` — a unit/avatar cannot enter the cell.
+    /// The mover-collision pass ([`crate::systems::resolve_terrain_collisions`]) and the
+    /// obstacle-aware flow field ([`crate::flow_field`]) both key off this (Q24).
+    #[inline]
+    pub fn blocks_movement(self) -> bool {
+        matches!(self, Cover::Impassable)
     }
 }
 
@@ -94,9 +111,10 @@ impl Terrain {
     /// Build a `Terrain` from a baked cover grid — the text `tools/maps/bake.py` emits.
     ///
     /// The grid is one line per row, **north-first** (the file's first line is the highest `cy`,
-    /// so the raw file reads north-up like a map). Each char is one cell: `'#'` → [`Cover::Heavy`]
-    /// (buildings/walls/water — mitigation + blocks sight), `'o'` → [`Cover::Light`]
-    /// (hedges/scrub/forest), anything else → [`Cover::None`]. Lines or chars beyond the
+    /// so the raw file reads north-up like a map). Each char is one cell: `'#'` → [`Cover::Impassable`]
+    /// (buildings/walls/water — mitigation, blocks sight AND movement, matching `tools/maps/lint.py`,
+    /// which already treats `'#'` as impassable for connectivity), `'o'` → [`Cover::Light`]
+    /// (hedges/scrub/forest — passable), anything else → [`Cover::None`]. Lines or chars beyond the
     /// `GRID×GRID` playfield are ignored so a mis-sized grid can never panic the sim.
     ///
     /// Pure, integer-only, and identical on every platform, so it is safe behind
@@ -121,7 +139,7 @@ impl Terrain {
                     break;
                 }
                 let cover = match ch {
-                    '#' => Cover::Heavy,
+                    '#' => Cover::Impassable,
                     'o' => Cover::Light,
                     _ => Cover::None,
                 };
@@ -408,9 +426,16 @@ mod tests {
         assert_eq!(Cover::None.damage_multiplier(), Fixed::ONE);
         assert_eq!(Cover::Light.damage_multiplier(), Fixed::from_ratio(1, 2));
         assert_eq!(Cover::Heavy.damage_multiplier(), Fixed::from_ratio(1, 4));
+        assert_eq!(Cover::Impassable.damage_multiplier(), Fixed::from_ratio(1, 4));
         assert!(!Cover::None.blocks_sight());
         assert!(!Cover::Light.blocks_sight());
         assert!(Cover::Heavy.blocks_sight());
+        assert!(Cover::Impassable.blocks_sight());
+        // Only Impassable blocks movement (Q24): open ground and passable cover do not.
+        assert!(!Cover::None.blocks_movement());
+        assert!(!Cover::Light.blocks_movement());
+        assert!(!Cover::Heavy.blocks_movement());
+        assert!(Cover::Impassable.blocks_movement());
     }
 
     #[test]
@@ -665,17 +690,17 @@ mod tests {
         let grid = "#o.\n.o#\no.#\n";
         let t = Terrain::from_cover_grid(grid);
         let top = GRID as i32 - 1;
-        // Top file row → cy = top: '#','o','.'
-        assert_eq!(t.cover_at_cell(0, top), Cover::Heavy);
+        // Top file row → cy = top: '#','o','.' ('#' bakes to the solid Impassable tier)
+        assert_eq!(t.cover_at_cell(0, top), Cover::Impassable);
         assert_eq!(t.cover_at_cell(1, top), Cover::Light);
         assert_eq!(t.cover_at_cell(2, top), Cover::None);
         // Middle file row → cy = top-1: '.','o','#'
         assert_eq!(t.cover_at_cell(0, top - 1), Cover::None);
         assert_eq!(t.cover_at_cell(1, top - 1), Cover::Light);
-        assert_eq!(t.cover_at_cell(2, top - 1), Cover::Heavy);
+        assert_eq!(t.cover_at_cell(2, top - 1), Cover::Impassable);
         // Bottom file row → cy = top-2: 'o','.','#'
         assert_eq!(t.cover_at_cell(0, top - 2), Cover::Light);
-        assert_eq!(t.cover_at_cell(2, top - 2), Cover::Heavy);
+        assert_eq!(t.cover_at_cell(2, top - 2), Cover::Impassable);
     }
 
     #[test]
@@ -689,7 +714,10 @@ mod tests {
         }
         let t = Terrain::from_cover_grid(&grid); // must not panic
         // In-bounds corner got written; the overflow was dropped.
-        assert_eq!(t.cover_at_cell(GRID as i32 - 1, GRID as i32 - 1), Cover::Heavy);
+        assert_eq!(
+            t.cover_at_cell(GRID as i32 - 1, GRID as i32 - 1),
+            Cover::Impassable
+        );
     }
 
     #[test]
@@ -711,24 +739,24 @@ mod tests {
         // Proves the embedded covergrid is actually read (not an empty include). Regeneration-proof:
         // any real battlefield has some cover, so we only assert non-triviality, not exact cells.
         let t = build_pointe_du_hoc();
-        let mut heavy = 0usize;
+        let mut sight_blocking = 0usize;
         let mut any_cover = 0usize;
         for cy in 0..GRID as i32 {
             for cx in 0..GRID as i32 {
-                match t.cover_at_cell(cx, cy) {
-                    Cover::None => {}
-                    Cover::Heavy => {
-                        heavy += 1;
-                        any_cover += 1;
-                    }
-                    Cover::Light => {
-                        any_cover += 1;
-                    }
+                let c = t.cover_at_cell(cx, cy);
+                if c != Cover::None {
+                    any_cover += 1;
+                }
+                if c.blocks_sight() {
+                    sight_blocking += 1;
                 }
             }
         }
         assert!(any_cover > 0, "baked map must have cover (covergrid was read)");
-        assert!(heavy > 0, "baked map must have at least one sight-blocking cell");
+        assert!(
+            sight_blocking > 0,
+            "baked map must have at least one sight-blocking cell"
+        );
     }
 
     #[test]

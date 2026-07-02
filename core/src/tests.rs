@@ -73,8 +73,9 @@ fn flow_field_is_deterministic() {
     // Building the same field twice must yield bit-identical sampled directions at every
     // probe point — the whole point of a fixed-point, fixed-iteration-order field.
     let goal = Vec2::new(Fixed::from_int(12), Fixed::from_int(-7));
-    let a = FlowField::build(goal);
-    let b = FlowField::build(goal);
+    let terrain = crate::terrain::Terrain::open();
+    let a = FlowField::build(goal, &terrain);
+    let b = FlowField::build(goal, &terrain);
     let probes = [
         Vec2::ZERO,
         Vec2::new(Fixed::from_int(-30), Fixed::from_int(20)),
@@ -106,9 +107,10 @@ fn flow_field_cache_matches_fresh_build() {
         Vec2::new(Fixed::from_int(-50), Fixed::from_int(-50)),
         Vec2::new(Fixed::from_int(9000), Fixed::from_int(-9000)),
     ];
-    let mut cache = FlowFieldCache::new();
+    let terrain = crate::terrain::Terrain::open();
+    let mut cache = FlowFieldCache::new(&terrain);
     for g in goals {
-        let fresh = FlowField::build(g);
+        let fresh = FlowField::build(g, &terrain);
         let cached = cache.get(g);
         for p in probes {
             assert_eq!(
@@ -127,7 +129,7 @@ fn flow_field_cache_matches_fresh_build() {
     // Hit path: a repeated request for an already-built goal must return a field that still
     // samples bit-identically to a fresh build (this is what units sharing a goal rely on).
     let g = goals[0];
-    let fresh = FlowField::build(g);
+    let fresh = FlowField::build(g, &terrain);
     let cached = cache.get(g);
     for p in probes {
         assert_eq!(
@@ -147,7 +149,8 @@ fn flow_field_cache_matches_fresh_build() {
 fn flow_field_cache_dedups_shared_goals() {
     // Repeated requests for the same goal build once; distinct goals each build. This is the
     // dedup that turns ~200 per-unit builds into a handful for a shared objective.
-    let mut cache = FlowFieldCache::new();
+    let terrain = crate::terrain::Terrain::open();
+    let mut cache = FlowFieldCache::new(&terrain);
     let g1 = Vec2::new(Fixed::from_int(40), Fixed::ZERO);
     let g2 = Vec2::new(Fixed::from_int(-40), Fixed::ZERO);
     let _ = cache.get(g1).cost_at(Vec2::ZERO);
@@ -166,7 +169,8 @@ fn flow_field_points_toward_goal() {
     // From the lower-left, the downhill direction must have a positive component toward a
     // goal that sits up and to the right. Open field ⇒ the field points at the goal.
     let goal = Vec2::new(Fixed::from_int(20), Fixed::from_int(15));
-    let field = FlowField::build(goal);
+    let terrain = crate::terrain::Terrain::open();
+    let field = FlowField::build(goal, &terrain);
     let from = Vec2::new(Fixed::from_int(-20), Fixed::from_int(-15));
     let dir = field.sample(from);
     assert!(
@@ -182,6 +186,37 @@ fn flow_field_points_toward_goal() {
     // same cell — so the residual direction is tiny (well under one step).
     let at_goal = field.sample(goal);
     assert!(at_goal.len_sq() <= Fixed::ONE);
+}
+
+#[test]
+fn flow_field_routes_around_an_impassable_wall() {
+    // Obstacle-aware pathing (Q24): a wall between a unit and its goal is never routed *through* —
+    // its cells stay UNREACHED (cost u32::MAX) — while a cell reachable by going around the wall's
+    // end keeps a finite cost. On an open field this whole mechanism is a no-op.
+    use crate::terrain::{Cover, Terrain};
+    let mut terrain = Terrain::open();
+    // A vertical wall at x-cell 64, spanning cy 40..=80 (a gap remains above/below to route around).
+    let wall_x = 64;
+    for cy in 40..=80 {
+        terrain.set_cover(wall_x, cy, Cover::Impassable);
+    }
+    // Goal on the east side, a probe start on the west side, both on the wall's middle row.
+    let goal = Vec2::new(Fixed::from_int(10), Fixed::ZERO); // east of the wall
+    let field = FlowField::build(goal, &terrain);
+
+    // A wall cell is never reached (would be finite if the field routed straight through it).
+    let wall_probe = Vec2::new(Fixed::ZERO, Fixed::ZERO); // world x 0 → cell 64 (the wall)
+    assert_eq!(
+        field.cost_at(wall_probe),
+        u32::MAX,
+        "the wall cell must stay UNREACHED — never a path through it"
+    );
+    // A cell on the far (west) side is still reachable — the field bends around the wall's ends.
+    let west = Vec2::new(Fixed::from_int(-10), Fixed::ZERO);
+    assert!(
+        field.cost_at(west) < u32::MAX,
+        "the west side must still be reachable around the wall"
+    );
 }
 
 #[test]
