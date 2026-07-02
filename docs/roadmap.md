@@ -641,10 +641,13 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
   the byte codec host-side so `core` stays serde-free. **Remaining:** multi-peer replay ordering and a
   *rendered* spectator view (both ride this same seed+log foundation); replay cross-version
   compatibility is [Q26](open-questions.md).
-- [ ] **PC-4 — Mods / data-driven content.** Missions/scenarios become external **RON data files**
+- [~] **PC-4 — Mods / data-driven content.** Missions/scenarios become external **RON data files**
   ([D76](decisions.md), [`content-tooling-plan.md`](plans/content-tooling-plan.md)) and maps carry
   their own content-addressed terrain ([D77](decisions.md)); exposing them as moddable content is how
-  StarCraft/Total War lasted decades — a PC-only longevity lever.
+  StarCraft/Total War lasted decades — a PC-only longevity lever. **Loader landed ([D91](decisions.md)):**
+  `engine::mission_format`/`map_format` (float-airlock RON → `MissionSpec`/`MapSpec`), the objective
+  archetype vocab, a content-lint harness, and a seed-deterministic procedural map generator. **Owed:**
+  CT-D (a content-directory registry + between-match hot-reload) to make it moddable without a recompile.
 - [ ] **PC-5 — RTS depth & mastery proof.** The closing item for the *RTS skill ceiling / mastery*
   row the PC scoreboard concedes as LAG "until we prove it's real" ([`positioning-pc.md`](positioning/positioning-pc.md)
   §7): the **order/stance vocabulary** + the **"when do I dare go dark" timing** must form a genuine,

@@ -4087,3 +4087,55 @@ state. **Scope:** only the `app`-owned host toggles are rebindable; the `pal-des
 extending the map to it is a PAL-boundary change, deferred as [Q27](open-questions.md).
 
 **Cross-link:** [D75](#d75), invariant #2, [`roadmap.md`](roadmap.md) Settings / *UI-UX polish*.
+
+## D91 — The content-tooling format layer lands: RON mission/map airlock, archetype vocab, content lint, procedural map generator (CT-B/C/E/F/G)
+
+**Status: landed.** Building on the [D88](#d88) `ScenarioBuilder` spine, five parallel
+[`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) workstreams landed together, turning
+mission/battlefield authoring from an engineer-recompile task toward a designer-edit-a-file task:
+
+- **CT-B — `engine::mission_format`.** A host-side `#[derive(Deserialize)]` `MissionSpec`
+  (`deny_unknown_fields`) + float-airlock loader mapping the RON schema onto the CT-A builder. Every
+  numeric field is an **integer** converted integer→`Fixed`/`Angle`; there is no `f32`/`f64` in the
+  type graph from file to sim, so a float literal cannot even deserialize (invariant #1). serde/RON
+  live in `engine`, never `core` (invariant #2). `missions/seize.mission.ron` loads a `Sim`
+  **byte-identical** to `seed_seize_mission` — opening checksum `0x474cdbf2ad913ecb` — the oracle
+  proving the format is a faithful re-expression, not a second code path. Fail-loud validation
+  (`MissionLoadError`) resolves every objective/force ref; rejection battery green.
+- **CT-C — `engine::map_format`.** The spatial half factored into a `MapSpec` (terrain map-id,
+  control points, cover props, spawn zones), same airlock discipline — all-integer, `deny_unknown_fields`,
+  range/overlap-checked, fails loud. Applies onto a `ScenarioBuilder`; the same map applied twice is
+  byte-identical. Ships `maps/crossroads.map.ron`.
+- **CT-E — objective archetype vocabulary.** `ObjectiveSet::mission_push`/`mission_assassinate`/
+  `mission_extract` as **pure composition** of the existing `Capture`/`Eliminate`/`Reach` evaluators —
+  no new `ObjectiveKind`, no new sim state, zero checksum surface (invariant #7). (Push is a flat set of
+  required Captures — lane *order* would need host-side evaluator state for no win/lose benefit, so it's
+  deliberately not enforced.)
+- **CT-F — content-lint harness** (`engine/tests/content_lint.rs`). A headless, no-GPU guard: every
+  shipped mission seeds **deterministically** (double-seed + 180-tick checksum stream identical),
+  every objective target **resolves in the seeded world**, and the campaign graph is well-formed. A
+  deliberately-broken-target fixture proves the lint has teeth. A `LintTarget` seam lets a future
+  loaded `*.mission.ron` reuse every assertion unchanged. Built against the code-built registry (the
+  RON files ride the same harness once wired).
+- **CT-G sibling — procedural map generator** (`tools/maps/generate.py`). Offline tooling only (own
+  seeded `random.Random`, never touches `core`); emits bake.py-format `.covergrid` maps with
+  mirror/rotational symmetry, verified by the existing `lint.py --pvp` (symmetric maps pass; a
+  wrong-transform map correctly ERRORs) — the fairness gate for the LEAD symmetric-PvP shape. Same seed
+  → byte-identical output. Output under `assets/maps/generated/`.
+
+**Why.** [D76](#d76) settled the format question; this cashes it in while holding every guardrail: the
+loader is the single float airlock, `core` stays serde-free, the data file never enters the checksum
+(only the seeded `Sim` does — same footing as a hand seeder, so the cross-arch matrix needs no new
+coverage), and authored/generated content is deterministic and lint-guarded. Built in five isolated
+git worktrees and integrated on `main`; the only overlap was additive `engine/Cargo.toml`
+(serde/ron) + `lib.rs` mod lines. Post-integration: **engine 437 lib + 6 content-lint tests green
+dev+release**, **core 557 green dev+release** (untouched — determinism floor intact), workspace `cargo
+check` clean, maps `lint.py --self-test` 14/14.
+
+**Remaining (per the plan):** CT-D (data-backed registry + between-match hot-reload) is the payoff slice
+still owed — it points `mission_registry` at a content directory of the CT-B/CT-C files and wires the
+CT-F lint over them; CT-G's terrain half builds against [D77](#d77) content-addressed terrain.
+
+**Cross-link:** [D76](#d76), [D77](#d77), [D88](#d88), invariants #1/#2/#7,
+[`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-B/C/E/F/G,
+[`maps.md`](maps.md) (the real-world CT-G sibling), [`roadmap.md`](roadmap.md) PC-4.

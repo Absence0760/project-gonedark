@@ -1,6 +1,9 @@
 # Content-tooling plan — authoring extensive campaigns & battlefields
 
-> **Status: PLANNED.** Resolves [Q15](../open-questions.md) → [D76](../decisions.md): missions and
+> **Status: IN PROGRESS — CT-A landed ([D88](../decisions.md)); CT-B/C/E + the CT-F scaffold + the
+> CT-G generator landed ([D91](../decisions.md)). CT-D (data-backed registry + hot-reload) is the
+> remaining payoff slice — it wires the RON files into `mission_registry` and points the CT-F lint at
+> them.** Resolves [Q15](../open-questions.md) → [D76](../decisions.md): missions and
 > battlefields become **external RON data files** behind a **host-side `engine` loader** that drives a
 > new **serde-free `ScenarioBuilder` in `core`**. This plan is the build-out of that decision — the
 > authoring infrastructure that turns mission/map creation from an engineer-recompile task into a
@@ -96,6 +99,13 @@ green **dev + release**; `determinism.yml` matrix unchanged.
 
 ### CT-B — RON mission format + host-side loader (`engine::mission_format`)
 
+> **Status: LANDED ([D91](../decisions.md)).** `engine::mission_format` owns `MissionSpec`
+> (`#[derive(Deserialize)]`, `deny_unknown_fields`) + the float-airlock loader onto the CT-A builder;
+> every numeric field is an integer → `Fixed`/`Angle` (no `f32`/`f64` in the type graph, so a float
+> literal fails to deserialize). `missions/seize.mission.ron` loads **byte-identical** to
+> `seed_seize_mission` (opening checksum `0x474cdbf2ad913ecb`); fail-loud `MissionLoadError` +
+> rejection battery green; 13 new engine tests, dev+release.
+
 The `MissionSpec` schema (`#[derive(Deserialize)]`, `deny_unknown_fields`) + the **float-airlock**
 parser/validator that maps it onto the CT-A builder. Numeric fields are integers (cells; fixed-point
 milli-units for HP/rates/distances); the loader range-validates and **fails loudly** on bad input.
@@ -112,6 +122,11 @@ float literal, an unknown field, an out-of-range cell, a dangling entity ref) ea
 clear error; no-GPU, ships in `cargo test`.
 
 ### CT-C — Battlefield/map format (`*.map.ron` → `MapSpec`)
+
+> **Status: LANDED ([D91](../decisions.md)).** `engine::map_format` owns an all-integer `MapSpec`
+> (terrain map-id, control points, cover props, spawn zones) with the same airlock discipline —
+> `deny_unknown_fields`, range/overlap-checked, fails loud. Applies onto a `ScenarioBuilder`; the same
+> map applied twice is byte-identical; `maps/crossroads.map.ron` ships; 16 new engine tests, dev+release.
 
 Factor the **spatial half** of a scenario into a reusable `MapSpec`: terrain map-id (the existing
 `persist` terrain-by-map-id, [D28](../decisions.md)), control-point positions, cover-prop placements
@@ -138,6 +153,12 @@ reload picks up an added/edited file; a malformed file is rejected without takin
 
 ### CT-E — Complete the objective archetype vocabulary in the format
 
+> **Status: LANDED ([D91](../decisions.md)).** `ObjectiveSet::mission_push`/`mission_assassinate`/
+> `mission_extract` added as **pure composition** of the existing `Capture`/`Eliminate`/`Reach`
+> evaluators — no new `ObjectiveKind`, no sim state, zero checksum surface. Each driven to a win *and*
+> a loss against synthetic `SimEvent` streams (6 new engine tests, dev+release). (Push does not enforce
+> capture *order* — lane geometry carries that, not host-side state.)
+
 The `ObjectiveKind` enum already models Capture / Eliminate / Survive / Reach / Escort
 ([D59](../decisions.md)); wire the remaining **mission archetypes** from
 [`pve-campaign.md`](../pve-campaign.md) §3 (Hold, Push, Assassinate/Extract) as authorable objective
@@ -149,6 +170,13 @@ express the full archetype list rather than just *Seize*.
 
 ### CT-F — Content-lint harness (`pnpm content:check`)
 
+> **Status: SCAFFOLD LANDED ([D91](../decisions.md)).** `engine/tests/content_lint.rs` asserts, for
+> every shipped (code-built) mission: deterministic seeding (double-seed + a 180-tick checksum stream),
+> objective targets resolve in the seeded world, and the campaign graph is well-formed — with a
+> deliberately-broken-target fixture proving the lint has teeth (6 tests, dev+release). A `LintTarget`
+> seam lets loaded `*.mission.ron`/`*.map.ron` reuse every assertion unchanged. **Owed:** point it at
+> the CT-B/CT-C RON files (rides CT-D) and add the `pnpm content:check` script wrapper.
+
 A headless, no-GPU `cargo`-test + script that loads **every** shipped `*.mission.ron`/`*.map.ron`,
 asserting: schema-valid, float-free, builds a deterministic `Sim`, all entity/map references resolve,
 objective targets exist in the seeded world. CI-able (no GPU) — the standing guard that authored
@@ -159,6 +187,13 @@ content can never silently break determinism or dangle a reference. Mirrors the
 the lint with a precise diagnostic.
 
 ### CT-G — Procedural map generator + PvP-symmetry validator
+
+> **Status: GENERATOR LANDED ([D91](../decisions.md)).** `tools/maps/generate.py` — offline tooling
+> (own seeded `random.Random`, never touches `core`) — emits bake.py-format `.covergrid` maps with
+> mirror/rotational symmetry to `assets/maps/generated/`. Verified by the existing `lint.py --pvp`
+> (symmetric maps pass; a wrong-transform map correctly ERRORs) and same-seed → byte-identical output;
+> `lint.py --self-test` 14/14. **Owed:** emit the CT-C `*.map.ron` form (currently the `.covergrid`
+> interim artifact) and the D77 content-hash terrain half once CT-D's content loader lands.
 
 The **"generate at volume"** deliverable — the script-not-binary content ethos ([D41](../decisions.md)/[D46](../decisions.md))
 applied to battlefields. A **seed-deterministic** generator emits valid `*.map.ron` files from a seed +
