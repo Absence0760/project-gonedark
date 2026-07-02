@@ -35,8 +35,10 @@ use gonedark_core::flow_field::HALF_EXTENT;
 use gonedark_core::gunsmith::Loadout;
 use gonedark_core::sim::Sim;
 
+use std::path::{Path, PathBuf};
+
 use gonedark_engine::mission_registry::{
-    default_campaign, default_registry, MissionDef, MissionRegistry,
+    default_campaign, default_registry, ContentRegistry, MissionDef, MissionRegistry,
 };
 use gonedark_engine::objectives::{
     faction_forces, EliminateTarget, Objective, ObjectiveKind, ObjectiveSet,
@@ -97,6 +99,59 @@ fn code_built_targets() -> Vec<LintTarget> {
                 // the lint checks the shipped baseline fight, not a tier-reshaped one.
                 let launched = def.launch(&mut sim, Loadout::STANDARD, ReplayTier::Regular);
                 (sim, launched.objectives)
+            }),
+        });
+    }
+    targets
+}
+
+// --- CT-D/CT-F: the SAME battery, pointed at the loaded `*.mission.ron` / `*.map.ron` files --------
+
+/// The repo's shipped content directories (`missions/` + `maps/`), resolved from the engine crate's
+/// manifest dir so the lint runs from any working directory (CI-safe).
+fn shipped_content_dirs() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("engine crate has a parent (the repo root)");
+    vec![root.join("missions"), root.join("maps")]
+}
+
+/// Load the shipped RON content, asserting it is clean (no rejected files). This is the CT-F payoff:
+/// the standing guard that every authored `*.mission.ron` / `*.map.ron` in the repo parses,
+/// validates, and cross-references — the moment a bad file lands, this fails in CI.
+fn load_shipped_content() -> ContentRegistry {
+    let scan = ContentRegistry::load_dirs(shipped_content_dirs());
+    assert!(
+        scan.errors.is_empty(),
+        "shipped content must load with zero errors, got: {:?}",
+        scan.errors,
+    );
+    scan.registry
+}
+
+/// Enumerate every shipped `*.mission.ron` as a [`LintTarget`] — the exact same shape
+/// [`code_built_targets`] yields, so every assertion below is reused verbatim over data content. This
+/// is the [`LintTarget`] seam the original harness was designed for: a data mission seeds a fresh
+/// `Sim` through the CT-B float-airlock loader and hands back its `ObjectiveSet`.
+fn data_built_targets() -> Vec<LintTarget> {
+    let reg = load_shipped_content();
+    let mut targets = Vec::new();
+    for m in reg.missions() {
+        let mission = m.clone();
+        let label = format!(
+            "{:?} \"{}\" (data: {})",
+            mission.id,
+            mission.spec.briefing.title,
+            mission.source.display(),
+        );
+        targets.push(LintTarget {
+            label,
+            seed: Box::new(move |seed| {
+                let mut sim = Sim::new(seed);
+                let loaded = mission
+                    .launch(&mut sim)
+                    .expect("a shipped data mission seeds without error");
+                (sim, loaded.objectives)
             }),
         });
     }
@@ -366,4 +421,195 @@ fn the_lint_catches_deliberately_broken_targets() {
         objective_target_resolves(&good_sim, o)
             .unwrap_or_else(|e| panic!("a shipped objective should resolve, got: {e}"));
     }
+}
+
+// --- CT-F: the lint, pointed at the shipped RON content (CT-B/CT-C files) -----------------------
+
+#[test]
+fn shipped_ron_content_loads_clean_and_is_non_empty() {
+    // The CT-F standing guard: every shipped `*.mission.ron` / `*.map.ron` parses, validates, and
+    // cross-references. Non-empty so the data battery below can't be vacuously green.
+    let reg = load_shipped_content();
+    assert!(!reg.missions().is_empty(), "the repo ships at least one authored mission");
+    assert!(!reg.maps().is_empty(), "the repo ships at least one authored battlefield");
+    assert!(!data_built_targets().is_empty(), "the data lint enumerates shipped missions");
+}
+
+#[test]
+fn every_data_mission_seeds_deterministically() {
+    for t in data_built_targets() {
+        // Invariant #7: the same authored content seeded with the same seed is bit-identical.
+        let (a, _) = (t.seed)(SEED);
+        let (b, _) = (t.seed)(SEED);
+        assert_eq!(
+            a.checksum(),
+            b.checksum(),
+            "{}: opening checksum must be deterministic across two seedings",
+            t.label
+        );
+    }
+}
+
+#[test]
+fn every_data_mission_stays_bit_identical_over_ticks() {
+    for t in data_built_targets() {
+        let stream = |seed: u64| {
+            let (mut sim, _) = (t.seed)(seed);
+            let mut cs = Vec::with_capacity(STEPS);
+            for _ in 0..STEPS {
+                sim.step(&[]);
+                cs.push(sim.checksum());
+            }
+            cs
+        };
+        assert_eq!(
+            stream(SEED),
+            stream(SEED),
+            "{}: per-tick checksum stream must be identical peer-to-peer",
+            t.label
+        );
+    }
+}
+
+#[test]
+fn every_data_objective_target_resolves_in_the_seeded_world() {
+    let mut objectives = 0usize;
+    for t in data_built_targets() {
+        let (sim, objs) = (t.seed)(SEED);
+        assert!(!objs.is_empty(), "{}: an authored mission must carry at least one objective", t.label);
+        for o in &objs.objectives {
+            objectives += 1;
+            if let Err(e) = objective_target_resolves(&sim, o) {
+                panic!("{}: objective {:?} — {}", t.label, o.kind, e);
+            }
+        }
+    }
+    assert!(objectives >= 1, "at least one authored objective was linted");
+}
+
+#[test]
+fn every_shipped_map_loads_validates_and_applies() {
+    use gonedark_core::scenario::ScenarioBuilder;
+    let reg = load_shipped_content();
+    for (id, map) in reg.maps() {
+        // `load_dirs` already parsed+validated; re-validate defensively, then prove it applies to a
+        // real `Sim` (the referenced terrain rebuilds; control points/cover land) without panicking.
+        map.validate()
+            .unwrap_or_else(|e| panic!("shipped map {id:?} must validate: {e}"));
+        let mut sim = Sim::new(SEED);
+        let mut b = ScenarioBuilder::new(&mut sim);
+        map.apply(&mut b);
+        assert_eq!(
+            sim.territory.points.len(),
+            map.control_points.len(),
+            "map {id:?}: every authored control point lands in the seeded world",
+        );
+    }
+}
+
+// --- CT-F teeth: a deliberately-broken authored file fails the lint with a precise diagnostic ----
+
+/// A dependency-free unique scratch dir, removed on drop (no tempfile crate in the tree).
+struct TempDir(PathBuf);
+impl TempDir {
+    fn new() -> TempDir {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("gonedark-ctf-lint-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        TempDir(dir)
+    }
+    fn write(&self, name: &str, contents: &str) {
+        std::fs::write(self.0.join(name), contents).unwrap();
+    }
+}
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn the_content_lint_rejects_a_deliberately_broken_ron_fixture() {
+    let dir = TempDir::new();
+    // A valid map so a good mission alongside the broken one can still load (proving fail-soft).
+    dir.write("arena.map.ron", "MapSpec(terrain: 0)");
+    dir.write(
+        "good.mission.ron",
+        r#"MissionSpec(
+    id: 10,
+    map: "arena",
+    income_period: 300,
+    starting_purse: 0,
+    armies: (player: Us, enemy: Fr),
+    control_points: [],
+    forces: [
+        Unit(kind: Rifleman, faction: Player, cell: (-5, 0), stance: FireAtWill, facing_deg: 0),
+        Camp(faction: Enemy, cell: (5, 0)),
+    ],
+    objectives: [ EliminateFaction(owner: Player, target: Enemy, label: "win") ],
+    difficulty: Recruit,
+    briefing: (title: "Good", situation: "S", objective_line: "O"),
+)"#,
+    );
+    // Broken: an out-of-bounds spawn cell (well past HALF_EXTENT) — a float-free but semantically
+    // invalid mission the validator must reject LOUD, not silently clamp.
+    dir.write(
+        "broken.mission.ron",
+        r#"MissionSpec(
+    id: 11,
+    map: "arena",
+    income_period: 300,
+    starting_purse: 0,
+    armies: (player: Us, enemy: Fr),
+    control_points: [],
+    forces: [ Unit(kind: Rifleman, faction: Player, cell: (9000, 0), stance: FireAtWill, facing_deg: 0) ],
+    objectives: [ EliminateFaction(owner: Player, target: Enemy, label: "win") ],
+    difficulty: Recruit,
+    briefing: (title: "Broken", situation: "S", objective_line: "O"),
+)"#,
+    );
+
+    let scan = ContentRegistry::load_dirs(vec![dir.0.clone()]);
+    // Fail-soft: the good mission loaded; the broken one did not down the registry.
+    assert!(scan.registry.get(gonedark_core::campaign::MissionId(10)).is_some(), "good mission loads");
+    assert!(scan.registry.get(gonedark_core::campaign::MissionId(11)).is_none(), "broken mission excluded");
+    // …and it is reported with a precise, path-scoped diagnostic.
+    assert_eq!(scan.errors.len(), 1, "exactly the broken file is reported: {:?}", scan.errors);
+    let e = &scan.errors[0];
+    assert!(e.path.ends_with("broken.mission.ron"), "names the file: {}", e.path.display());
+    assert!(
+        e.message.contains("out of bounds"),
+        "diagnostic pinpoints the invalid cell: {}",
+        e.message,
+    );
+}
+
+/// The broken-fixture float airlock (invariant #1) at the content layer: a float literal in an
+/// authored mission cannot even deserialize, so it is rejected at parse time — never reaching the sim.
+#[test]
+fn the_content_lint_rejects_a_float_literal_in_authored_ron() {
+    let dir = TempDir::new();
+    dir.write("arena.map.ron", "MapSpec(terrain: 0)");
+    dir.write(
+        "floaty.mission.ron",
+        r#"MissionSpec(
+    id: 12,
+    map: "arena",
+    income_period: 300.5,
+    starting_purse: 0,
+    armies: (player: Us, enemy: Fr),
+    control_points: [],
+    forces: [ Unit(kind: Rifleman, faction: Player, cell: (-5, 0), stance: FireAtWill, facing_deg: 0) ],
+    objectives: [ EliminateFaction(owner: Player, target: Enemy, label: "win") ],
+    difficulty: Recruit,
+    briefing: (title: "Floaty", situation: "S", objective_line: "O"),
+)"#,
+    );
+    let scan = ContentRegistry::load_dirs(vec![dir.0.clone()]);
+    assert!(scan.registry.is_empty(), "a float literal must keep the mission out of the sim");
+    assert_eq!(scan.errors.len(), 1, "the float file is reported: {:?}", scan.errors);
+    assert!(scan.errors[0].path.ends_with("floaty.mission.ron"));
 }
