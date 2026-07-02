@@ -1271,6 +1271,13 @@ impl EguiShell {
         self.state.on_window_event(window, event).consumed
     }
 
+    /// Whether the Settings rebind editor is mid-capture (a row is armed, waiting for a key). The
+    /// host reads this to suppress the global F11 fullscreen hotkey during capture — otherwise
+    /// pressing F11 to *bind* it to an action would also silently flip the window into fullscreen.
+    pub fn is_capturing_rebind(&self) -> bool {
+        self.rebinding.is_some()
+    }
+
     /// Draw the title screen for one frame and return a clicked [`TitleAction`], if any. Pure
     /// presentation — it never touches sim state.
     pub fn draw_title(&mut self, surface: &mut DesktopRenderSurface) -> Option<TitleAction> {
@@ -1521,6 +1528,46 @@ enum Emphasis {
     Tertiary,
 }
 
+/// The pure state transition for a two-click confirm gate on a destructive button. Given whether
+/// the button is currently *armed* (already clicked once), a click returns `(new_armed, fired)`:
+/// the first click arms it (`(true, false)`) and relabels to a confirm prompt; a click while armed
+/// fires the action and disarms (`(false, true)`). Pure → unit-tested; the egui glue
+/// [`confirm_menu_button`] carries the transient armed bit.
+fn confirm_click(armed: bool) -> (bool, bool) {
+    if armed {
+        (false, true)
+    } else {
+        (true, false)
+    }
+}
+
+/// A destructive-action button that requires two clicks: the first arms it (relabeling to
+/// `confirm_label` in the primary/amber emphasis), the second fires. The armed bit lives in egui's
+/// transient memory keyed by `id_salt`, so no host state threading is needed and it clears itself
+/// when the screen stops drawing the button. Returns `true` only on the confirming click. Guards the
+/// three one-click-wipe actions (gunsmith RESET, Settings RESET DEFAULTS, Profile RESET RECORD) that
+/// previously destroyed state with no undo. Glue (needs a `Ui`); the decision is [`confirm_click`].
+fn confirm_menu_button(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    label: &str,
+    confirm_label: &str,
+    emphasis: Emphasis,
+) -> bool {
+    let id = ui.make_persistent_id(id_salt);
+    let armed = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+    // Armed → show the confirm prompt in amber so the escalated state is unmistakable.
+    let shown = if armed { confirm_label } else { label };
+    let shown_emphasis = if armed { Emphasis::Primary } else { emphasis };
+    let mut fired = false;
+    if menu_button(ui, shown, shown_emphasis) {
+        let (new_armed, did_fire) = confirm_click(armed);
+        ui.data_mut(|d| d.insert_temp(id, new_armed));
+        fired = did_fire;
+    }
+    fired
+}
+
 /// Draw one full-width menu button in the shell style and report whether it was clicked. Glue (it
 /// needs a live `Ui`), so it's exempt from unit tests — the click→action mapping it feeds is what the
 /// pure [`resolve_title_action`] / [`apply_loadout_action`] seams cover. Only the primary button sets
@@ -1638,7 +1685,7 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
                 }
                 // The field manual (About) — reachable straight from the title, mirroring Android's
                 // title About entry (it is also reachable from Settings).
-                if chip_button(ui, "MANUAL") {
+                if chip_button(ui, "FIELD MANUAL") {
                     action = Some(TitleAction::About);
                 }
             });
@@ -1784,7 +1831,9 @@ fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction
                 action = Some(LoadoutAction::Done);
             }
             ui.add_space(10.0);
-            if menu_button(ui, "RESET", Emphasis::Secondary) {
+            // RESET wipes every attachment back to Standard and sits right next to DONE — a real
+            // misclick target — so it takes two clicks (arm, then confirm) with no undo otherwise.
+            if confirm_menu_button(ui, "loadout.reset", "RESET", "RESET? CLICK AGAIN", Emphasis::Secondary) {
                 action = Some(LoadoutAction::Reset);
             }
         });
@@ -1830,10 +1879,20 @@ fn over_backdrop_screen<T>(
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
             let h = ui.available_height();
+            // Bound the card to the viewport and let its content scroll if it overflows — so a
+            // shrunk window (down to the min inner size) or a growing list (the campaign
+            // mission-select) can never push BACK / footer controls off-screen with no way to
+            // reach them. A ScrollArea that fits its content shows no scrollbar, so short screens
+            // look identical to before.
+            let max_card_h = (h * (1.0 - top_frac) - 24.0).max(120.0);
             ui.vertical_centered(|ui| {
                 ui.add_space(h * top_frac);
                 glass_card_frame().show(ui, |ui| {
-                    out = Some(build(ui));
+                    egui::ScrollArea::vertical()
+                        .max_height(max_card_h)
+                        .show(ui, |ui| {
+                            out = Some(build(ui));
+                        });
                 });
             });
         });
@@ -2003,12 +2062,19 @@ fn settings_ui(
                 })
             });
             if let Some(key) = pressed {
-                match state.keybinds.rebind(act, key) {
-                    RebindOutcome::Conflict(owner) => *rebind_conflict = Some((act, owner)),
-                    // Bound or Unchanged: the edit took (or was a no-op) — clear any prior notice.
-                    _ => *rebind_conflict = None,
+                if key == KeyId::Escape {
+                    // Escape is the universal "never mind" — cancel the capture instead of binding
+                    // Escape itself (which is the shipped Pause key). The row reverts unchanged.
+                    *rebinding = None;
+                    *rebind_conflict = None;
+                } else {
+                    match state.keybinds.rebind(act, key) {
+                        RebindOutcome::Conflict(owner) => *rebind_conflict = Some((act, owner)),
+                        // Bound or Unchanged: the edit took (or was a no-op) — clear any prior notice.
+                        _ => *rebind_conflict = None,
+                    }
+                    *rebinding = None;
                 }
-                *rebinding = None;
             }
         }
         // Conflict feedback: name the action that already owns the key the player tried to bind.
@@ -2102,16 +2168,28 @@ fn settings_ui(
         }
 
         ui.add_space(18.0);
-        if menu_button(ui, "BACK", Emphasis::Primary) {
-            action = Some(SettingsAction::Back);
-        }
-        ui.add_space(10.0);
-        if menu_button(ui, "CONTROLS / ABOUT", Emphasis::Secondary) {
+        // "FIELD MANUAL" everywhere (matches Android + this screen's own banner) — was "CONTROLS /
+        // ABOUT" here and "MANUAL" on the title, three names for one screen.
+        if menu_button(ui, "FIELD MANUAL", Emphasis::Secondary) {
             action = Some(SettingsAction::About);
         }
         ui.add_space(10.0);
-        if menu_button(ui, "RESET DEFAULTS", Emphasis::Tertiary) {
+        // RESET DEFAULTS wipes audio levels, sensitivity, EVERY rebound key, the accessibility/CVD
+        // picks, and the quality tier in one click — gate it behind a confirm so it can't happen by
+        // accident with no undo.
+        if confirm_menu_button(
+            ui,
+            "settings.reset",
+            "RESET DEFAULTS",
+            "RESET ALL? CLICK AGAIN",
+            Emphasis::Tertiary,
+        ) {
             action = Some(SettingsAction::ResetDefaults);
+        }
+        // BACK anchors the footer (was sandwiched mid-column, hiding the actions below it).
+        ui.add_space(18.0);
+        if menu_button(ui, "BACK", Emphasis::Primary) {
+            action = Some(SettingsAction::Back);
         }
     });
 
@@ -2175,12 +2253,19 @@ fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Option<ProfileAc
         );
 
         ui.add_space(18.0);
-        if menu_button(ui, "BACK", Emphasis::Primary) {
-            action = Some(ProfileAction::Back);
+        // RESET RECORD zeroes lifetime matches/wins with no recovery — gate it behind a confirm.
+        if confirm_menu_button(
+            ui,
+            "profile.reset",
+            "RESET RECORD",
+            "ERASE RECORD? CLICK AGAIN",
+            Emphasis::Tertiary,
+        ) {
+            action = Some(ProfileAction::ResetStats);
         }
         ui.add_space(10.0);
-        if menu_button(ui, "RESET RECORD", Emphasis::Tertiary) {
-            action = Some(ProfileAction::ResetStats);
+        if menu_button(ui, "BACK", Emphasis::Primary) {
+            action = Some(ProfileAction::Back);
         }
     });
 
@@ -2244,7 +2329,11 @@ fn army_select_ui(ui: &mut egui::Ui, state: &ArmySelectState) -> Option<ArmySele
         }
 
         ui.add_space(22.0);
-        if menu_button(ui, "CONFIRM", Emphasis::Primary) {
+        // Picking a card applies the army in place immediately (no staged draft), so this button
+        // only leaves the screen — it's a BACK, not a "commit". Labeling it CONFIRM implied a
+        // commit-vs-cancel choice that doesn't exist. (Action stays `Confirm`: a transition that
+        // leaves the already-applied selection alone.)
+        if menu_button(ui, "BACK", Emphasis::Primary) {
             action = Some(ArmySelectAction::Confirm);
         }
     });
@@ -2377,7 +2466,9 @@ fn mode_select_ui(ui: &mut egui::Ui) -> Option<ModeSelectAction> {
         }
 
         ui.add_space(22.0);
-        if menu_button(ui, "BACK", Emphasis::Tertiary) {
+        // BACK is the only exit on this screen — Secondary, not Tertiary, so it isn't the dimmest
+        // control on a screen where it's the sole way out.
+        if menu_button(ui, "BACK", Emphasis::Secondary) {
             action = Some(ModeSelectAction::Back);
         }
     });
@@ -2419,7 +2510,9 @@ fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Option<MissionSe
         });
 
         ui.add_space(20.0);
-        if menu_button(ui, "BACK", Emphasis::Tertiary) {
+        // Sole exit on this screen — Secondary, not the dimmest Tertiary. (Briefing keeps BACK
+        // Tertiary because DEPLOY is the genuine primary action there.)
+        if menu_button(ui, "BACK", Emphasis::Secondary) {
             action = Some(MissionSelectAction::Back);
         }
     });
@@ -2955,6 +3048,18 @@ mod tests {
         let step = apply_settings_action(SettingsAction::ResetDefaults, &mut s);
         assert_eq!(step, SettingsStep::Stay);
         assert_eq!(s, SettingsState::default());
+    }
+
+    #[test]
+    fn confirm_gate_requires_two_clicks_to_fire() {
+        // First click on a destructive button arms it (relabel to the confirm prompt) but does NOT
+        // fire; a click while armed fires and disarms. Guards the three one-click state wipes.
+        let (armed_after_first, fired_first) = confirm_click(false);
+        assert!(armed_after_first, "first click arms");
+        assert!(!fired_first, "first click never fires the destructive action");
+        let (armed_after_second, fired_second) = confirm_click(true);
+        assert!(!armed_after_second, "confirming click disarms");
+        assert!(fired_second, "confirming click fires");
     }
 
     #[test]

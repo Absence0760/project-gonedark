@@ -167,6 +167,11 @@ struct App {
     /// `DesktopAudio::set_gains` push — and pushed to the sink's looping music bed via
     /// `DesktopAudio::set_music_gain`. Presentation only — never a sim input (invariant #1/#4).
     music_gain: f32,
+
+    /// A [`HostTransition`] queued by a keyboard **Escape** on an out-of-match screen
+    /// ([`escape_transition`]), applied on the next `render_frame` through the same dispatch (and
+    /// prefs-persist) path as a clicked BACK. `None` most frames; taken each frame so it fires once.
+    pending_transition: Option<HostTransition>,
 }
 
 impl App {
@@ -205,6 +210,7 @@ impl App {
             // Recomputed each match frame from the Settings volumes; the default mirrors
             // SettingsState's shipped master×music until the first frame refreshes it.
             music_gain: 0.0,
+            pending_transition: None,
         }
     }
 
@@ -287,6 +293,14 @@ impl App {
     fn handle_global_keys(&mut self, event: &WindowEvent) {
         if let WindowEvent::KeyboardInput { event: key, .. } = event {
             if key.state == ElementState::Pressed && !key.repeat {
+                // Suppress the global fullscreen toggle while the Settings rebind editor is
+                // capturing a key: otherwise pressing F11 to *bind* fullscreen to an action would
+                // also flip the window into fullscreen at the same time. The rebind editor consumes
+                // the key itself; the global hotkey must stand down until capture ends.
+                let capturing = matches!(&self.shell, Some(sh) if sh.is_capturing_rebind());
+                if capturing {
+                    return;
+                }
                 if let Some(GameAction::ToggleFullscreen) = self.action_for_key(key.physical_key) {
                     self.toggle_fullscreen();
                 }
@@ -630,6 +644,13 @@ impl App {
             }
         }
 
+        // Fold in an Escape-queued back transition (set in `window_event`) if no on-screen control
+        // already produced one this frame. Taken unconditionally so a stale queue can't linger.
+        let queued = self.pending_transition.take();
+        if transition.is_none() {
+            transition = queued;
+        }
+
         // Persist the shell prefs whenever we leave a screen that edits them (Settings / Profile /
         // the gunsmith), so an edit survives a restart — the same best-effort lifecycle `campaign.dat`
         // rides. `self.screen` is still the screen we're leaving here (the swap happens below). This
@@ -732,6 +753,46 @@ fn want_cursor_capture(embodied: bool, cursor_free: bool) -> bool {
     embodied && !cursor_free
 }
 
+/// The [`HostTransition`] that pressing **Escape** on an out-of-match screen fires — the keyboard
+/// equivalent of that screen's own BACK/DONE button, so a desktop player can always back out with the
+/// key every desktop app uses for it (the Android shell relies on the system back gesture instead).
+/// `None` on the title (nowhere to back out to) and in a match (Escape is the pause toggle there,
+/// handled separately). Pure (a total match over `Screen`) → unit-tested without a window; the caller
+/// only fires it when egui did not itself consume the Escape (so it never fights a focused text field).
+/// Whether a window event is a press (not release, not autorepeat) of the Escape key. Glue (winit
+/// types), so the *decision* it feeds — [`escape_transition`] — is what carries the unit test.
+fn is_escape_press(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::KeyboardInput { event: key, .. }
+            if key.state == ElementState::Pressed
+                && !key.repeat
+                && key.physical_key == PhysicalKey::Code(KeyCode::Escape)
+    )
+}
+
+fn escape_transition(screen: &Screen) -> Option<HostTransition> {
+    match screen {
+        // The gunsmith is reached from Settings (D81) → Escape returns there, like its DONE.
+        Screen::Loadout => Some(HostTransition::OpenSettings),
+        // Top-level utility screens back out to the title.
+        Screen::Settings
+        | Screen::Profile
+        | Screen::ArmySelect
+        | Screen::ModeSelect
+        | Screen::MissionSelect => Some(HostTransition::ExitToTitle),
+        // A briefing backs out to its mission list (its own BACK target).
+        Screen::Briefing(_) => Some(HostTransition::OpenMissionSelect),
+        // About returns wherever it was opened from (title or Settings).
+        Screen::About(ret) => Some(match ret {
+            AboutReturn::Title => HostTransition::ExitToTitle,
+            AboutReturn::Settings => HostTransition::OpenSettings,
+        }),
+        // Nowhere to back out from the title; a match handles Escape as the pause toggle.
+        Screen::Title | Screen::InMatch(_) => None,
+    }
+}
+
 /// Map a winit [`KeyCode`] to the engine's platform-neutral [`KeyId`], or `None` for a key outside
 /// the rebind vocabulary. The desktop **app boundary** for the rebind editor (D75 follow-up): the
 /// engine `keybind` seam is winit-free (invariant #2), so this `winit::KeyCode` → [`KeyId`] mapping
@@ -819,7 +880,14 @@ impl ApplicationHandler for App {
             return;
         }
         let window = event_loop
-            .create_window(WindowAttributes::default().with_title("Going Dark"))
+            .create_window(
+                WindowAttributes::default()
+                    .with_title("Going Dark")
+                    // A minimum inner size so a resizable desktop window can't be shrunk below the
+                    // point where shell controls (BACK, footer buttons) fall off-screen with no way
+                    // to reach them. Comfortably below any target desktop resolution.
+                    .with_min_inner_size(winit::dpi::LogicalSize::new(960.0, 600.0)),
+            )
             .expect("create winit window");
         let window: Arc<Window> = Arc::new(window);
 
@@ -858,7 +926,14 @@ impl ApplicationHandler for App {
             | Screen::Briefing(_)
             | Screen::About(_) => {
                 if let (Some(sh), Some(surface)) = (self.shell.as_mut(), self.surface.as_ref()) {
-                    sh.on_window_event(surface.window(), &event);
+                    let consumed = sh.on_window_event(surface.window(), &event);
+                    // Keyboard Escape backs out of the current screen (the desktop equivalent of its
+                    // BACK button) — but only if egui didn't consume the key itself, so it never
+                    // fights a focused text field (e.g. the Profile callsign) that uses Escape to
+                    // blur. Queued for the next frame's dispatch so it rides the same persist path.
+                    if !consumed && is_escape_press(&event) {
+                        self.pending_transition = escape_transition(&self.screen);
+                    }
                 }
             }
             Screen::InMatch(_) => {
@@ -1085,6 +1160,55 @@ mod cursor_tests {
         // regardless of the free-cursor request.
         assert!(!want_cursor_capture(false, false));
         assert!(!want_cursor_capture(false, true));
+    }
+}
+
+#[cfg(test)]
+mod escape_nav_tests {
+    //! The Escape→back-transition mapping is the pure decision behind keyboard BACK; the winit
+    //! key-event detection (`is_escape_press`) and the queue/dispatch plumbing are glue, exercised
+    //! by running the app. `Screen::InMatch` isn't tested here (it needs a GPU-backed `Game`), but
+    //! its arm is trivially `None` — a match handles Escape as the pause toggle, not a back.
+    use super::{escape_transition, AboutReturn, HostTransition, Screen};
+    use gonedark_core::campaign::NodeId;
+
+    #[test]
+    fn escape_backs_out_of_every_out_of_match_screen() {
+        // The gunsmith is reached from Settings → Escape returns there.
+        assert_eq!(
+            escape_transition(&Screen::Loadout),
+            Some(HostTransition::OpenSettings)
+        );
+        // Top-level utility screens back out to the title.
+        for s in [
+            Screen::Settings,
+            Screen::Profile,
+            Screen::ArmySelect,
+            Screen::ModeSelect,
+            Screen::MissionSelect,
+        ] {
+            assert_eq!(escape_transition(&s), Some(HostTransition::ExitToTitle));
+        }
+        // A briefing backs out to its mission list.
+        assert_eq!(
+            escape_transition(&Screen::Briefing(NodeId(0))),
+            Some(HostTransition::OpenMissionSelect)
+        );
+        // About returns to wherever it was opened from.
+        assert_eq!(
+            escape_transition(&Screen::About(AboutReturn::Title)),
+            Some(HostTransition::ExitToTitle)
+        );
+        assert_eq!(
+            escape_transition(&Screen::About(AboutReturn::Settings)),
+            Some(HostTransition::OpenSettings)
+        );
+    }
+
+    #[test]
+    fn escape_does_nothing_on_the_title() {
+        // Nowhere to back out to from the title.
+        assert_eq!(escape_transition(&Screen::Title), None);
     }
 }
 
