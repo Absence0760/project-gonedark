@@ -254,14 +254,15 @@ pub struct WedgeLabel {
 }
 
 /// Placeholder label for wedge slot `i`: the 1-based slot number (so a 4-slot menu reads "1" "2"
-/// "3" "4"). The renderer has no real action-name strings yet — `engine::command_ui` owns the
-/// command vocabulary, and [`RadialMenu`] is a host struct this worker must not change (the host
-/// constructs it with a fixed set of fields). So labels are derived from the slot count for now.
+/// "3" "4"). `engine::command_ui` owns the real command vocabulary, and [`RadialMenu`] is a host
+/// struct this worker must not change (the host constructs it with a fixed set of fields) — so
+/// this fallback derives a label from the slot count alone, for any caller that has no name
+/// strings to hand (or a slot the vocabulary doesn't cover).
 ///
-/// **SEAM for a later host worker:** when the host can pass the action names, render them instead by
-/// calling [`RadialRenderer::render_with_labels`] with a per-slot string slice; that path bypasses
-/// these placeholders entirely. (Extending `RadialMenu` with a label list is the alternative once
-/// the host's struct-literal call site can be updated in the same change.)
+/// **The live SEAM:** the host (`engine::Game::radial_menu`, via `render::render_radial`) already
+/// calls [`RadialRenderer::render_with_labels`] with the real per-slot action names every frame;
+/// that path bypasses these placeholders entirely. This fallback is what fires when `names` is
+/// `None` — e.g. [`RadialRenderer::render`] below, kept for callers with no vocabulary to offer.
 fn placeholder_slot_label(i: usize) -> String {
     (i + 1).to_string()
 }
@@ -482,7 +483,9 @@ impl RadialRenderer {
     }
 
     /// Draw the radial menu on top of `view` (a LOAD pass — never clears), labelling each wedge with
-    /// a placeholder slot number (the host can't yet pass action names — see [`radial_labels`]).
+    /// a placeholder slot number — see [`radial_labels`]. The live host call site
+    /// (`render::render_radial`) uses [`render_with_labels`](Self::render_with_labels) with the real
+    /// vocabulary instead; this placeholder path is kept for callers with no action names to offer.
     /// No-op when the menu has no slots.
     pub fn render(
         &mut self,
@@ -496,8 +499,10 @@ impl RadialRenderer {
 
     /// Draw the radial menu with optional real per-slot action `names` (the host SEAM). When `names`
     /// is `Some`, each wedge is labelled with its name (an empty name skips that slot's label); when
-    /// `None`, placeholder slot numbers are drawn. A later host worker calls this with the live
-    /// `engine::command_ui` vocabulary; `render` (the existing host call site) uses the placeholders.
+    /// `None`, placeholder slot numbers are drawn. `render::render_radial` is the live host call
+    /// site: it calls this every frame with the live `engine::command_ui` vocabulary
+    /// (`engine::Game::radial_menu`); [`render`](Self::render) above still uses the placeholders, for
+    /// any caller with no vocabulary to offer.
     pub fn render_with_labels(
         &mut self,
         device: &wgpu::Device,
