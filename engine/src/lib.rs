@@ -3814,10 +3814,19 @@ impl Game {
         // to sim entities, so it cannot reveal enemy units/buildings/control points; the fog filter
         // stays the fairness boundary. Skipped entirely in command view (it never clears that path).
         if self.embodied {
-            // Eye = the predicted listener position (x,y) raised to EYE_HEIGHT — the same eye the
+            // Eye = the predicted listener position (x,y) raised to the eye height — the same eye the
             // embodied camera uses. The host owns glam, so the matrix inverse is computed HERE (the
-            // render crate stays glam-free, D19) and handed in as plain arrays.
-            let eye = [listener.0, listener.1, EYE_HEIGHT];
+            // render crate stays glam-free, D19) and handed in as plain arrays. The eye Z MUST include
+            // the cosmetic jump rise, because `embodied_view_proj` bakes that same rise into
+            // `view_proj` (EYE_HEIGHT + jump_height). If the eye handed to the sky/ground shader stayed
+            // at bare EYE_HEIGHT while the frustum lifted, the ray directions (from inv view-proj) and
+            // the ground-plane intersection (from eye.z) would disagree during a hop and the world
+            // would appear to drop and snap back — so mirror the rise here.
+            let eye = [
+                listener.0,
+                listener.1,
+                EYE_HEIGHT + jump::jump_height(self.jump_t),
+            ];
             let flash = gonedark_render::world::muzzle_flash_intensity(self.last_fire_tick, tick);
             let world_uniform = gonedark_render::world::WorldUniform::new(
                 view_proj.inverse().to_cols_array_2d(),
