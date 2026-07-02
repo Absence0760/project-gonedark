@@ -619,7 +619,16 @@ feature. Ties to [Q24](#q24--terrain-traversal-cost). Cross-link: [`maps.md`](ma
 
 ---
 
-## Q24 — Terrain traversal cost / true impassability: where does "you can't walk here" live? <a id="q24--terrain-traversal-cost"></a>
+## Q24 — Terrain traversal cost / true impassability: where does "you can't walk here" live? — RESOLVED ([D92](decisions.md): impassable tier; graded cost deferred) <a id="q24--terrain-traversal-cost"></a>
+
+**Resolved in [D92](decisions.md): a distinct `Cover::Impassable` tier + obstacle-aware pathing +
+a terrain-collision pass.** "You can't walk here" now lives in `core::terrain` as an `Impassable`
+cover level (blocks movement, sight, and mitigates like `Heavy`), with the flow field routing
+around impassable cells and `systems::resolve_terrain_collisions` pushing movers (incl. the embodied
+avatar) out of them. Baked-map `'#'` maps to it, aligning the engine with `tools/maps/lint.py`. This
+is the **binary** half of the question; **graded traversal cost** (marsh slows, mud drags — option
+(ii)'s per-cell cost layer) is deliberately *not* built — reopen it as a new question if slow-terrain
+is ever scoped. Original analysis kept below for history.
 
 `Cover` has only None/Light/Heavy — there is **no "impassable"**. Baked maps ([`maps.md`](maps.md))
 map water and cliff edges to `Cover::Heavy` (a wall: blocks sight, and units path around it *because*

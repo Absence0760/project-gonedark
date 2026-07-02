@@ -76,9 +76,12 @@ Four scripted stages (`pnpm assets:maps` runs ingest+bake; `pnpm maps:lint` lint
 | 3. Lint | `lint.py` | `.covergrid` → report (+ PNG preview) | Playability checks; exit non-zero on error (CI-able). See [§ Diagnostics](#diagnostics). |
 | 4. Mesh | `terrain_mesh.py` | `*.height.f32` → `*.terrain.glb` | Blender heightgrid → decimated glTF. **RENDER-ONLY** — real float elevation, never the sim. |
 
-**Feature → cover** (higher priority wins on overlap): `building`/`wall`/`water` → `Heavy`
-(mitigation **and** blocks sight); `hedge`/`scrub`/`forest` → `Light`; otherwise `None`. Water is
-`Heavy` today because `Cover` has no *impassable* level — see [Q24](open-questions.md#q24--terrain-traversal-cost).
+**Feature → cover** (higher priority wins on overlap): `building`/`wall`/`water` → `Impassable`
+(mitigation, blocks sight **and** movement); `hedge`/`scrub`/`forest` → `Light`; otherwise `None`.
+The baked `'#'` glyph now maps to the solid `Cover::Impassable` tier ([D92](decisions.md), closing
+the impassability half of [Q24](open-questions.md#q24--terrain-traversal-cost)) — so walls and water
+block movement and units path around them, matching what `lint.py` always assumed. Graded traversal
+*cost* (slow mud vs. blocked) is still deferred (Q24).
 
 ---
 
@@ -191,8 +194,10 @@ Deliberately deferred to open questions — none block a map shipping today:
 - **Sim elevation** ([Q23](open-questions.md#q23--sim-elevation)) — the sim is flat; real height
   feeds only the render mesh. A fixed-point height layer (high-ground LoS, slope cost) is a new
   decision.
-- **Impassability / traversal cost** ([Q24](open-questions.md#q24--terrain-traversal-cost)) —
-  water/cliffs are `Cover::Heavy` (a wall) until the flow field gains a per-cell entry-cost layer.
+- **Graded traversal cost** ([Q24](open-questions.md#q24--terrain-traversal-cost), *partially
+  resolved* [D92](decisions.md)) — true impassability now exists (`Cover::Impassable`: walls/water
+  block movement, the flow field routes around them). Only *graded* cost (slow mud vs. blocked)
+  remains deferred — the per-cell entry-cost layer is still future work.
 - **Destructible terrain** ([Q25](open-questions.md#q25--destructible-terrain)) — terrain is static;
   destruction is entity-prop-first, grid-mutation deferred.
 - **Live GIS fetch** — `ingest.py`'s real path is stubbed (no `osmnx`/`rasterio` on the dev box); it

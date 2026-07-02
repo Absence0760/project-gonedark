@@ -18,7 +18,7 @@ Output format (identical to bake.py):
     GRID x GRID cells, one Cover level per cell, one line per grid row, north (high cy) first:
         '.' = Cover::None    open ground
         'o' = Cover::Light   hedges / scrub
-        '#' = Cover::Heavy   buildings / walls (blocks movement AND line of sight)
+        '#' = Cover::Impassable  buildings / walls / water (blocks movement AND line of sight; D92)
     Trailing newline. (`core::terrain::apply_cover_grid` decodes it; see README.md.)
 
 PvP symmetry (the CT-G fairness gate — CLAUDE.md invariant #6, the symmetric-PvP shape):

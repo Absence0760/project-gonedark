@@ -4139,3 +4139,57 @@ CT-F lint over them; CT-G's terrain half builds against [D77](#d77) content-addr
 **Cross-link:** [D76](#d76), [D77](#d77), [D88](#d88), invariants #1/#2/#7,
 [`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-B/C/E/F/G,
 [`maps.md`](maps.md) (the real-world CT-G sibling), [`roadmap.md`](roadmap.md) PC-4.
+
+---
+
+## D92 — Impassable terrain tier + obstacle collision & pathfinding; props become sim-owned map data (closes Q24)
+
+**Status: landed** (`core` impassable tier + collision + obstacle-aware flow field + the
+`core::obstacles` layout; `render` draws props from it). Workspace suites green in both cargo
+profiles; the skirmish opening golden checksum is unchanged.
+
+**Decision.** Three long-standing gaps closed together, resolving [Q24](open-questions.md):
+
+- **`Cover::Impassable`** — a distinct tier that blocks **movement** (new), and (like `Heavy`)
+  blocks sight and mitigates fire. `Heavy` stays *passable* concealment (a tall hedge / low wall
+  you fire over), so the two are no longer conflated. Baked-map `'#'` (walls / water / buildings)
+  now maps to `Impassable` instead of `Heavy` — which *aligns the engine with `tools/maps/lint.py`*,
+  which already treated `'#'` as impassable for its connectivity flood-fill. Sight behaviour for
+  `'#'` cells is preserved (`Impassable` blocks sight too).
+- **`core::obstacles`** — the single source of truth for the skirmish's visible props (trees /
+  rocks / crates / sandbag berms / turret emplacements). It lives in `core` (static map data, like
+  terrain: never mutated per tick, never folded into the checksum), paints `Impassable` cells under
+  each prop, and is **four-fold symmetric** so — now that a prop is real collision/cover — it
+  favours no side or flank (invariant #6). The renderer *reads* this list to draw the props
+  (`core → render`); it no longer owns a private `PROP_LAYOUT`.
+- **Obstacle-aware pathing + collision.** `FlowField::build` never relaxes a path *into* an
+  impassable cell, so AI units route **around** obstacles (the Phase-2 generalisation the flow-field
+  docs always anticipated). A new `systems::resolve_terrain_collisions` pushes any mover — including
+  the embodied avatar, which doesn't pathfind — out of a solid cell (minimal-penetration axis first,
+  so a unit grazing a wall slides along it), the terrain analogue of `resolve_building_collisions`.
+
+**Why.** The player could walk through almost everything they saw: the embodied props were
+render-only with **no sim body** ([D50](#d50) shipped them as a cosmetic `PROP_LAYOUT` and flagged
+the fix — *"if props ever need to be gameplay cover they must become sim … data, never a render-side
+back-channel to the sim — invariant #4"*), and terrain cover cells never blocked movement at all.
+[Q24](open-questions.md)'s lean was an explicit per-cell **cost** layer; a binary **impassable
+tier** is the smaller honest step that fixes the actual bug (you can't enter a wall) without a new
+authored cost grid — graded traversal cost (mud/slope) remains future work if the game needs it.
+Making `core` own the obstacle layout (not a per-tick ECS entity, which would bloat the snapshot for
+static geometry) keeps props on the same footing as terrain — static map data the renderer reads —
+which satisfies D50's invariant-#4 requirement without new checksum surface. It is **byte-neutral on
+an open field** (no impassable cells ⇒ the flow field and the resolve pass are no-ops), so existing
+replays/cross-arch checksum streams are untouched; the skirmish opening golden still matches because
+terrain is not folded into the checksum. Fixed-point and index-ordered throughout (invariants #1/#7).
+
+**Consequences.** `Cover` gains a variant, so exhaustive matches (the `render::debug` cover overlay)
+gained an `Impassable` arm (a distinct hot-orange in the map debug view). `FlowField::build` /
+`FlowFieldCache::new` now take the terrain; the cache holds it so `get` is unchanged. The skirmish
+prop layout is now visibly **symmetric** (mirrored), a small cosmetic change from the old scattered
+dressing. Graded traversal **cost** (the other half of Q24's lean) is deliberately still open —
+reopen it as a new question if marsh/slow-mud is ever scoped.
+
+**Cross-link:** [D50](#d50), [D28](#d28)/[D77](#d77) (terrain as static, content-addressed map
+data), invariants #1/#4/#6/#7, [`maps.md`](maps.md), [`architecture.md`](architecture.md),
+[Q24](open-questions.md) (closed), [Q25](open-questions.md#q25--destructible-terrain) (prop
+destruction still leans on entity props — unaffected).

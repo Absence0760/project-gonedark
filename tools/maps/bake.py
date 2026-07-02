@@ -12,17 +12,17 @@ cover grid that maps exactly onto the existing `core::terrain::Terrain` model:
     128x128 cells (== core::flow_field::GRID), one Cover level per cell:
         '.' = Cover::None    open ground
         'o' = Cover::Light   hedges / scrub / forest (partial mitigation, sight passes)
-        '#' = Cover::Heavy   buildings / walls / water edge (mitigation AND blocks line of sight)
+        '#' = Cover::Impassable  buildings / walls / water edge (mitigation, blocks sight AND movement)
 
 Feature kind → cover, by priority (higher wins on overlap):
-    building, wall, water  → Heavy  (2)
-    hedge, scrub, forest   → Light  (1)
-    (nothing)              → None   (0)
+    building, wall, water  → Impassable  (2)
+    hedge, scrub, forest   → Light       (1)
+    (nothing)              → None        (0)
 
-  NOTE on water: core::terrain has only None/Light/Heavy — no "impassable". Water becomes
-  Heavy today (a wall: blocks movement paths against it and blocks sight). True impassability
-  belongs in the flow field as a raised entry cost; that is a future decision, flagged in the
-  manifest and the docs open question. Not silently deciding it here.
+  NOTE on water: as of D92, core::terrain has a real Cover::Impassable tier, and the '#' glyph
+  decodes to it (see core::terrain::apply_cover_grid) — so walls and water block movement and units
+  path around them (matching this tool's lint.py, which always treated '#' as impassable). Only
+  *graded* traversal cost (slow mud vs. blocked) is still deferred (open question Q24).
 
 Determinism guarantees (so both lockstep peers rebuild a bit-identical map — invariant #7):
   * features processed in a fixed sorted order (by id);
