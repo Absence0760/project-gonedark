@@ -1,9 +1,12 @@
 # Content-tooling plan — authoring extensive campaigns & battlefields
 
-> **Status: IN PROGRESS — CT-A landed ([D88](../decisions.md)); CT-B/C/E + the CT-F scaffold + the
-> CT-G generator landed ([D91](../decisions.md)). CT-D (data-backed registry + hot-reload) is the
-> remaining payoff slice — it wires the RON files into `mission_registry` and points the CT-F lint at
-> them.** Resolves [Q15](../open-questions.md) → [D76](../decisions.md): missions and
+> **Status: LANDED — CT-A ([D88](../decisions.md)); CT-B/C/E + the CT-F scaffold + the CT-G generator
+> ([D91](../decisions.md)); CT-D (data-backed registry + fail-soft hot-reload) + CT-F completion
+> (`pnpm content:check` over the loaded RON) ([D94](../decisions.md)). Missions/maps now author as RON
+> files with no recompile. One honest follow-up remains: a launched mission's referenced `MapSpec`
+> spatial data is validated + cross-referenced but not yet *applied to the seed* — wiring it in needs
+> an intentional re-baseline of the byte-identity oracle ([D94](../decisions.md)).** Resolves
+> [Q15](../open-questions.md) → [D76](../decisions.md): missions and
 > battlefields become **external RON data files** behind a **host-side `engine` loader** that drives a
 > new **serde-free `ScenarioBuilder` in `core`**. This plan is the build-out of that decision — the
 > authoring infrastructure that turns mission/map creation from an engineer-recompile task into a
@@ -140,6 +143,15 @@ under two different `MissionSpec`s yields two deterministic (and correctly *diff
 zones reject overlap/out-of-bounds at load.
 
 ### CT-D — Data-backed mission registry + content hot-reload
+
+> **Status: LANDED ([D94](../decisions.md)).** `engine::mission_registry::ContentRegistry` scans a
+> content dir of `*.mission.ron`/`*.map.ron`, validates each through the CT-B/C loaders, resolves
+> `map:` refs, and mirrors the code-built query surface; `default_registry()` kept as the oracle/
+> fallback. `reload()` is **fail-soft** — a bad/dangling/dup/unreadable file lands in an `errors` list
+> without downing the registry. CT-F now lints the loaded RON via the `LintTarget` seam (OOB + float
+> fixtures prove it has teeth); `pnpm content:check` runs it. 444 engine lib + 13 content_lint green
+> dev+release. **Follow-up:** a launched mission's `MapSpec` spatial data is validated but not yet
+> *applied to the seed* (would perturb the byte-identity oracle) — [D94](../decisions.md).
 
 Give `engine::mission_registry` a path that loads `MissionDef`s from a **content directory** of
 `*.mission.ron`/`*.map.ron` instead of hardcoded `MissionDef::new(...)`. The hardcoded

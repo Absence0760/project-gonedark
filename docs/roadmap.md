@@ -648,8 +648,11 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
   their own content-addressed terrain ([D77](decisions.md)); exposing them as moddable content is how
   StarCraft/Total War lasted decades — a PC-only longevity lever. **Loader landed ([D91](decisions.md)):**
   `engine::mission_format`/`map_format` (float-airlock RON → `MissionSpec`/`MapSpec`), the objective
-  archetype vocab, a content-lint harness, and a seed-deterministic procedural map generator. **Owed:**
-  CT-D (a content-directory registry + between-match hot-reload) to make it moddable without a recompile.
+  archetype vocab, a content-lint harness, and a seed-deterministic procedural map generator. **CT-D has
+  since landed ([D94](decisions.md)):** `engine::mission_registry::ContentRegistry` loads missions/maps
+  from a content directory with fail-soft between-match hot-reload, and `pnpm content:check` lints the
+  loaded RON — content authors without a recompile. **Owed:** apply a launched mission's referenced
+  `MapSpec` spatial data to the seed (deferred to preserve the byte-identity oracle — [D94](decisions.md)).
 - [ ] **PC-5 — RTS depth & mastery proof.** The closing item for the *RTS skill ceiling / mastery*
   row the PC scoreboard concedes as LAG "until we prove it's real" ([`positioning-pc.md`](positioning/positioning-pc.md)
   §7): the **order/stance vocabulary** + the **"when do I dare go dark" timing** must form a genuine,

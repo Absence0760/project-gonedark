@@ -4222,3 +4222,41 @@ GPU-gated render-side work and can consume `MultiReplay::merged_for`/`arrivals` 
 **Cross-link:** invariants #1/#2/#7, [D89](#d89) (replay foundation), [D27](#d27) (lockstep wire
 discipline + per-peer ordering), [`positioning-pc.md`](positioning/positioning-pc.md) PC-3,
 [`roadmap.md`](roadmap.md) PC-3.
+
+## D94 — Missions load from a content directory of RON files with fail-soft hot-reload (CT-D/CT-F)
+
+**Status: landed.** Completes the content-tooling payoff slice ([D91](#d91) built the RON airlock;
+this wires it into the registry). `engine::mission_registry` gains a `ContentRegistry` that scans a
+content directory of `*.mission.ron` + `*.map.ron`, parses+validates each through the already-proven
+`mission_format`/`map_format` loaders, resolves every mission's `map:` reference against the loaded
+maps, and exposes the same query surface as the code-built `MissionRegistry`. The hardcoded
+`default_registry()` is **kept untouched** as the fallback baseline and the CT-A byte-identity oracle.
+**Hot-reload** (`reload()`) re-scans between matches and is **fail-soft**: a malformed / dangling-map /
+duplicate-id / unreadable file is rejected loudly into an `errors` list without downing the registry,
+so a designer typo between matches never crashes the game (deliberately unlike `MissionRegistry::new`,
+which panics on a dup id). CT-F is finished alongside: the `content_lint` harness now runs its full
+battery (deterministic double-seed, 180-tick bit-identity, objective-target resolution) over the
+*loaded* shipped RON via the `LintTarget` seam, with an out-of-bounds and a float-literal fixture
+proving the lint has teeth; `pnpm content:check` runs it.
+
+**Why.** This turns mission/map authoring from an engineer-recompile task into a designer-edit-a-file
+task ([D76](#d76)), and the between-match reload is the primary mitigation for Rust's weak engine-code
+hot-reload ([D10](#d10)). Seeding stays on the proven `load_mission` path, so the data registry
+re-asserts the same Seize opening checksum (`0x474cdbf2ad913ecb`) — the format is a faithful
+re-expression, not a second code path. Codec/serde stay host-side in `engine` (invariant #2, `core`
+serde-free); no sim state, `SNAPSHOT_VERSION`, or `WIRE_VERSION` touched, so zero checksum surface
+(invariants #1/#7). 444 engine lib + 13 content_lint tests green dev+release.
+
+**Honest caveat — the map is validated but not yet applied to the seed.** `ContentMission::launch`
+drives `load_mission`, whose byte-identity with `seed_seize_mission` is the oracle; **applying the
+referenced `MapSpec`'s terrain/control-points/cover to the launched sim would perturb that seed** and
+was deliberately left out of scope. So today a mission's `map:` reference is loaded, range-validated,
+and cross-referenced (a dangling ref is a hard load error) and independently lint-applied to a scratch
+`Sim`, but the map's spatial data does **not** yet shape the mission the player launches. Wiring it in
+is a clean follow-up that requires intentionally **re-baselining the byte-identity oracle** — a
+decision to take explicitly, not smuggle. Flagged here rather than decided.
+
+**Cross-link:** invariants #1/#2/#7, [D91](#d91) (RON airlock CT-B/C/E/F/G), [D76](#d76) (RON data
+format), [D10](#d10) (weak Rust hot-reload → data-reload lane), [D58](#d58)–[D61](#d61) (the PvE
+campaign this feeds), [`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-D/CT-F,
+[`roadmap.md`](roadmap.md) PC-4.
