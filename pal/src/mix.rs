@@ -86,9 +86,24 @@ pub fn scaled_gain(gain: f32, master: f32, sfx: f32) -> f32 {
 /// The shared mix state read by a backend's realtime audio callback and written by the game
 /// thread. A backend wraps this in an `Arc<Mutex<_>>`; the callback `try_lock`s it (never blocks
 /// the audio thread) and pulls frames, the game thread pushes voices on `submit_mix`.
+///
+/// Beyond the one-shot SFX voices it also holds an optional **looping music bed** — the continuous
+/// bus that plays under gameplay. The bed is installed once ([`set_music`](Self::set_music)) and its
+/// bus level is driven live by the player's Settings music volume ([`set_music_gain`](Self::set_music_gain));
+/// `next_frame` mixes it in with the voices and soft-clamps the sum, so both backends
+/// (`pal-desktop` cpal, `pal-android` oboe/AAudio) get music for free through the one shared seam.
 #[derive(Default)]
 pub struct Mixer {
     voices: Vec<Voice>,
+    /// The looping music bed, if one is installed. Mono; summed into both ears at [`music_gain`].
+    music: Option<Arc<Vec<f32>>>,
+    /// Playback cursor into [`music`], wrapping at the buffer end (a seamless loop when the bed is
+    /// synthesized to a whole number of cycles — see [`synth_music`]).
+    music_pos: usize,
+    /// Music-bus gain (`master * music`, both `[0, 1]` Settings prefs), pushed each frame by the host.
+    /// Default `0.0` (silent) so a bed is inaudible until the host opts it in — music never plays
+    /// itself on a test/viz host that installs a bed but never sets a level.
+    music_gain: f32,
 }
 
 impl Mixer {
@@ -107,9 +122,10 @@ impl Mixer {
         self.voices.is_empty()
     }
 
-    /// Sum one stereo frame from all live voices, advancing + low-passing each. Finished voices
-    /// contribute nothing (pruned lazily on [`push`](Self::push)). Output is soft-clamped to
-    /// `[-1, 1]` so stacked cues never clip.
+    /// Sum one stereo frame from all live voices **plus the looping music bed**, advancing +
+    /// low-passing each voice and advancing (wrapping) the music cursor. Finished voices contribute
+    /// nothing (pruned lazily on [`push`](Self::push)). The music bed is added centred (equal to both
+    /// ears) at [`music_gain`]; output is soft-clamped to `[-1, 1]` so stacked cues + music never clip.
     pub fn next_frame(&mut self) -> (f32, f32) {
         let (mut l, mut r) = (0.0f32, 0.0f32);
         for v in &mut self.voices {
@@ -123,7 +139,37 @@ impl Mixer {
             l += v.lp_l;
             r += v.lp_r;
         }
+        // Looping music bed: centred, scaled by the bus gain, cursor wraps for a seamless loop.
+        if self.music_gain > 0.0 {
+            if let Some(bed) = &self.music {
+                if !bed.is_empty() {
+                    let s = bed[self.music_pos] * self.music_gain;
+                    self.music_pos = (self.music_pos + 1) % bed.len();
+                    l += s;
+                    r += s;
+                }
+            }
+        }
         (l.clamp(-1.0, 1.0), r.clamp(-1.0, 1.0))
+    }
+
+    /// Install (or clear, with `None`) the looping music bed, resetting the loop cursor to the start.
+    /// The bed is a mono buffer synthesized once at the device sample rate (see [`synth_music`]); the
+    /// backend calls this on stream-open. Clearing it stops the music at the next frame.
+    pub fn set_music(&mut self, bed: Option<Arc<Vec<f32>>>) {
+        self.music = bed;
+        self.music_pos = 0;
+    }
+
+    /// Set the music-bus gain (`master * music`, `[0, 1]`). The host pushes this each frame from the
+    /// Settings prefs; `0.0` mutes the bed without unloading it. Negative values are treated as `0.0`.
+    pub fn set_music_gain(&mut self, gain: f32) {
+        self.music_gain = gain.max(0.0);
+    }
+
+    /// The music-bus gain currently applied to the bed (test/diagnostic).
+    pub fn music_gain(&self) -> f32 {
+        self.music_gain
     }
 
     /// Queue a voice. At [`MAX_VOICES`] it first prunes finished voices, then (if still full)
@@ -159,6 +205,34 @@ pub fn synth_bank(sr: u32) -> HashMap<SoundId, Arc<Vec<f32>>> {
     bank.insert(SoundId::WeaponFire, Arc::new(weapon_fire(sr)));
     bank.insert(SoundId::Impact, Arc::new(impact(sr)));
     bank
+}
+
+/// Synthesize the looping **music bed** at sample rate `sr` — the ambient bus that plays under
+/// gameplay, installed once via [`Mixer::set_music`]. A calm low pad (a minor-ish drone with a slow
+/// tremolo), kept quiet (peak ≈ 0.19) so it sits *under* the SFX mix and never fights a gameplay cue
+/// for the clip headroom. This is a **procedural placeholder** — no committed audio asset, the same
+/// discipline as [`synth_bank`]; the deliberate sound identity is CP-6's job.
+///
+/// **Seamless loop:** every partial (and the tremolo) is synthesized to a *whole number of cycles*
+/// over the buffer length, so `bed[n] == bed[0]` at the wrap and the loop cursor in [`Mixer::next_frame`]
+/// never produces a discontinuity click.
+pub fn synth_music(sr: u32) -> Vec<f32> {
+    let n = secs(sr, 4.0).max(1);
+    // Nearest whole-cycle count for a target Hz over the whole buffer ⇒ the partial closes its loop
+    // exactly at the wrap. `sin(2π · cycles · i/n)` is 0 at both i=0 and i=n for integer `cycles`.
+    let cyc = |hz: f32| (hz * n as f32 / sr as f32).round().max(1.0);
+    let (root, fifth, octave) = (cyc(110.0), cyc(164.81), cyc(220.0)); // A2 minor-ish pad
+    let trem = cyc(0.5); // ~0.5 Hz amplitude sway
+    (0..n)
+        .map(|i| {
+            let ph = i as f32 / n as f32; // 0..1 across the loop
+            let wave = (2.0 * PI * root * ph).sin() * 0.6
+                + (2.0 * PI * fifth * ph).sin() * 0.3
+                + (2.0 * PI * octave * ph).sin() * 0.18;
+            let lfo = 0.75 + 0.25 * (2.0 * PI * trem * ph).sin(); // gentle tremolo, always > 0
+            wave * lfo * 0.18
+        })
+        .collect()
 }
 
 fn secs(sr: u32, s: f32) -> usize {
@@ -502,5 +576,86 @@ mod tests {
         assert_eq!(scaled_gain(1.0, 1.0, 0.0), 0.0);
         // Unity master+sfx is a pass-through.
         assert_eq!(scaled_gain(0.42, 1.0, 1.0), 0.42);
+    }
+
+    // --- music bed ----------------------------------------------------------------------------
+
+    /// A bed with a strong DC-ish offset so a single frame is unambiguously non-zero once gained.
+    fn flat_bed(v: f32, n: usize) -> Arc<Vec<f32>> {
+        Arc::new(vec![v; n])
+    }
+
+    #[test]
+    fn music_bed_is_silent_until_gain_is_set() {
+        let mut m = Mixer::new();
+        m.set_music(Some(flat_bed(0.5, 8)));
+        // No gain pushed yet (default 0.0) → the bed contributes nothing.
+        let (l, r) = m.next_frame();
+        assert_eq!((l, r), (0.0, 0.0), "installed-but-ungained bed is silent");
+    }
+
+    #[test]
+    fn music_bed_plays_centred_and_scales_with_gain() {
+        let mut m = Mixer::new();
+        m.set_music(Some(flat_bed(0.5, 8)));
+        m.set_music_gain(0.4);
+        let (l, r) = m.next_frame();
+        assert!((l - 0.2).abs() < 1e-6, "0.5 * 0.4 = 0.2, got {l}");
+        assert_eq!(l, r, "the bed is centred (equal in both ears)");
+        // A louder bus is strictly louder (up to the clamp).
+        m.set_music(Some(flat_bed(0.5, 8)));
+        m.set_music_gain(0.8);
+        let (l2, _) = m.next_frame();
+        assert!(l2 > l, "louder gain → louder music ({l2} > {l})");
+    }
+
+    #[test]
+    fn music_bed_loops_without_panic_and_wraps() {
+        let mut m = Mixer::new();
+        m.set_music(Some(flat_bed(0.3, 4)));
+        m.set_music_gain(0.5);
+        // Play well past the buffer length: the cursor must wrap, never index out of bounds.
+        let frames: Vec<f32> = (0..20).map(|_| m.next_frame().0).collect();
+        for (i, &f) in frames.iter().enumerate() {
+            assert!((f - 0.15).abs() < 1e-6, "frame {i} = {f}, expected 0.3*0.5");
+        }
+    }
+
+    #[test]
+    fn set_music_gain_clamps_negative_to_zero() {
+        let mut m = Mixer::new();
+        m.set_music(Some(flat_bed(0.5, 4)));
+        m.set_music_gain(-0.3);
+        assert_eq!(m.music_gain(), 0.0);
+        assert_eq!(m.next_frame(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn music_bed_and_voices_mix_and_soft_clamp_together() {
+        let mut m = Mixer::new();
+        m.set_music(Some(flat_bed(0.9, 8)));
+        m.set_music_gain(1.0);
+        // A loud centred voice on top of a loud bed: the sum stays within the soft clamp.
+        m.push(voice_from_cue(flat_bed(0.9, 8), 0.0, 1.0, false));
+        let (l, r) = m.next_frame();
+        assert!((-1.0..=1.0).contains(&l) && (-1.0..=1.0).contains(&r), "clamped: {l},{r}");
+        assert!(l > 0.2, "both the bed and the voice contribute ({l})");
+    }
+
+    #[test]
+    fn synth_music_is_nonempty_seamless_and_unclipped() {
+        for sr in [24_000, 48_000] {
+            let bed = synth_music(sr);
+            assert!(!bed.is_empty(), "bed empty at {sr}");
+            for &s in &bed {
+                assert!((-0.8..=0.8).contains(&s), "sample {s} too hot at {sr}");
+            }
+            // Seamless: the wrap from the last sample back to the first is an ordinary single-sample
+            // step, not a discontinuity click (all partials complete whole cycles over the length).
+            let jump = (bed[0] - bed[bed.len() - 1]).abs();
+            assert!(jump < 0.05, "loop wrap discontinuity {jump} at {sr}");
+        }
+        // Longer sample rate ⇒ more samples (a fixed-duration bed).
+        assert!(synth_music(48_000).len() > synth_music(24_000).len());
     }
 }

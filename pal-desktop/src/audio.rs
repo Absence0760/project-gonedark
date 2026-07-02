@@ -26,6 +26,9 @@ mod backend {
         /// Match the feature-on backend's API so the host can call it unconditionally — a no-op here
         /// (the silent build has nothing to scale).
         pub fn set_gains(&mut self, _master: f32, _sfx: f32) {}
+
+        /// Match the feature-on backend's music-bus API — a no-op in the silent build.
+        pub fn set_music_gain(&mut self, _gain: f32) {}
     }
 
     impl Audio for DesktopAudio {
@@ -41,7 +44,9 @@ mod backend {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{FromSample, SizedSample};
-    use gonedark_pal::mix::{oneshot_sound, scaled_gain, synth_bank, voice_from_cue, Mixer};
+    use gonedark_pal::mix::{
+        oneshot_sound, scaled_gain, synth_bank, synth_music, voice_from_cue, Mixer,
+    };
     use gonedark_pal::{Audio, AudioCue, SoundId};
 
     /// Active output: the live stream (kept alive by ownership), the shared mixer, and the
@@ -96,6 +101,17 @@ mod backend {
             self.sfx = sfx;
         }
 
+        /// Set the **music-bus** gain (`master * music`, already composed by the host via
+        /// `gonedark_engine::music_gain`). Pushed each match frame like [`set_gains`](Self::set_gains);
+        /// it drives the looping bed installed on stream-open. A no-op when no stream opened. Applied
+        /// under the mixer lock (the realtime thread `try_lock`s, so this never blocks it).
+        pub fn set_music_gain(&mut self, gain: f32) {
+            let Some(active) = &self.inner else { return };
+            if let Ok(mut mixer) = active.mixer.lock() {
+                mixer.set_music_gain(gain);
+            }
+        }
+
         /// Queue one voice for `sound`, panned by `azimuth` (0 = ahead, + = right), scaled by
         /// `gain` **and** the player's master/bus volumes, low-passed when `muffled`. The pan/gain/
         /// muffle derivation is the shared `gonedark_pal::mix::voice_from_cue`, and the volume scaling
@@ -143,6 +159,11 @@ mod backend {
 
             let mixer = Arc::new(Mutex::new(Mixer::default()));
             let bank = synth_bank(sample_rate);
+            // Install the looping music bed once; it stays muted (gain 0) until the host pushes a
+            // music-bus level via `set_music_gain`, so a host that never touches music is silent.
+            if let Ok(mut m) = mixer.lock() {
+                m.set_music(Some(Arc::new(synth_music(sample_rate))));
+            }
 
             let stream = build_stream(&device, &config, sample_format, Arc::clone(&mixer))?;
             stream.play().map_err(|e| format!("stream.play: {e}"))?;

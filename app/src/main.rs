@@ -161,14 +161,10 @@ struct App {
     /// once even though `mission_status()` reads `Won` every subsequent frame. Reset at match start.
     mission_recorded: bool,
 
-    /// **Dormant-but-wired** effective music-bus gain (D75 follow-up). Refreshed each match frame
-    /// from the Settings `master_volume`×`music_volume` via `gonedark_engine::music_gain` — the
-    /// music analog of the SFX `DesktopAudio::set_gains` push. It is carried to the host but has no
-    /// reader yet: there is no music *source* (every `SoundId` is SFX, the sink has no music bus),
-    /// so it is currently silent. A future music track multiplies its samples by this. Presentation
-    /// only — never a sim input (invariant #1/#4). `allow(dead_code)`: intentionally write-only
-    /// until a music sink lands.
-    #[allow(dead_code)]
+    /// Effective music-bus gain (D75 follow-up). Refreshed each match frame from the Settings
+    /// `master_volume`×`music_volume` via `gonedark_engine::music_gain` — the music analog of the SFX
+    /// `DesktopAudio::set_gains` push — and pushed to the sink's looping music bed via
+    /// `DesktopAudio::set_music_gain`. Presentation only — never a sim input (invariant #1/#4).
     music_gain: f32,
 }
 
@@ -513,14 +509,14 @@ impl App {
                 self.audio
                     .set_gains(self.settings.master_volume, self.settings.sfx_volume);
                 // Music volume (D75 follow-up): compose the effective music-bus gain via the engine
-                // seam and carry it to the host, exactly as `set_gains` carries master/SFX. Currently
-                // DORMANT — no music source exists to scale (every cue is SFX), so this feeds no sink
-                // yet; it is the ready hook a future music track reads. Presentation only.
+                // seam and push it to the sink's looping music bed, exactly as `set_gains` carries
+                // master/SFX. Presentation only — never the deterministic sim.
                 self.music_gain = gonedark_engine::music_gain(
                     1.0,
                     self.settings.master_volume,
                     self.settings.music_volume,
                 );
+                self.audio.set_music_gain(self.music_gain);
                 // Graphics tier (Phase 4 WS-C): the Settings quality choice drives `render::tiers`
                 // through `Game::set_tier`. `Auto` resolves to the desktop device-default tier
                 // (High — the D22 flagship class). RENDER-only (invariant #1/#4): the sim ticks the
