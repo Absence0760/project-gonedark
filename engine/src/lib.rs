@@ -1818,6 +1818,18 @@ impl Scene {
     fn debug_overlay_default(self) -> bool {
         matches!(self, Scene::Duel | Scene::Infantry | Scene::MapInspect)
     }
+
+    /// Whether the CP-7 going-dark teach (`onboarding`) runs in this scene. It teaches on every
+    /// real playable match a first-time player can land on — the [`Skirmish`](Scene::Skirmish) the
+    /// mode picker's first tile boots, plus the campaign missions — but stays a no-op for the canned
+    /// [`Default`](Scene::Default) demo and the debug sandboxes ([`Duel`](Scene::Duel)/
+    /// [`Infantry`](Scene::Infantry)/[`MapInspect`](Scene::MapInspect)), which are not first-run
+    /// entry points. Previously this was gated to `Mission1` only, so a player tapping "Skirmish"
+    /// (the picker's first tile) never saw the going-dark teach at all — the hardest-to-grasp
+    /// mechanic in the game, silently un-taught on the most-tapped entry point.
+    pub fn teaches_going_dark(self) -> bool {
+        matches!(self, Scene::Skirmish | Scene::Mission1 | Scene::Mission2)
+    }
 }
 
 /// Seed the **Phase 2 demo skirmish** and return `(player, start_embodied)`: two rifle squads, a
@@ -2352,9 +2364,10 @@ impl Game {
             match_events: Vec::new(),
             // Host-side mission objectives (PvE WS-A). Set by the mission scene; empty otherwise.
             objectives,
-            // CP-7 onboarding: the going-dark teach runs ONLY in the campaign mission; every other
-            // scene gets a disabled no-op machine (no tutorial prompts in skirmish/sandbox).
-            onboarding: onboarding::Onboarding::new(matches!(scene, Scene::Mission1)),
+            // CP-7 onboarding: the going-dark teach runs on every real playable match a first-time
+            // player can land on (Skirmish + the campaign missions); the canned demo and the debug
+            // sandboxes get a disabled no-op machine. See `Scene::teaches_going_dark`.
+            onboarding: onboarding::Onboarding::new(scene.teaches_going_dark()),
             // Render quality tuning (Phase 4 WS-C). Default to the High tier — the flagship profile
             // Phase 1 validated on (D22); a host wires its device-class tier (and the Settings
             // "graphics tiers" surface) via `set_tier`. RENDER-only state (invariant #1/#4).
@@ -4612,6 +4625,23 @@ mod tests {
         // The campaign missions are real matches → overlay off.
         assert!(!Scene::Mission1.debug_overlay_default());
         assert!(!Scene::Mission2.debug_overlay_default());
+    }
+
+    /// The going-dark teach must run on every real playable match a first-time player can land on —
+    /// including the Skirmish tile the mode picker lists first — but stay a no-op for the canned demo
+    /// and the debug sandboxes. Pure, GPU-free. Regression guard for the audit finding that the teach
+    /// was gated to `Mission1` only, silently skipping it on the most-tapped entry point.
+    #[test]
+    fn going_dark_teach_covers_every_real_match_not_the_sandboxes() {
+        // Real playable matches teach.
+        assert!(Scene::Skirmish.teaches_going_dark());
+        assert!(Scene::Mission1.teaches_going_dark());
+        assert!(Scene::Mission2.teaches_going_dark());
+        // The canned demo and debug sandboxes do not (not first-run entry points).
+        assert!(!Scene::Default.teaches_going_dark());
+        assert!(!Scene::Duel.teaches_going_dark());
+        assert!(!Scene::Infantry.teaches_going_dark());
+        assert!(!Scene::MapInspect.teaches_going_dark());
     }
 
     #[test]
