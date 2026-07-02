@@ -1274,6 +1274,7 @@ dependencies = [
  "gonedark-pal-android",
  "gonedark-pal-desktop",
  "gonedark-render",
+ "log",
  "wgpu",
  "winit",
 ]

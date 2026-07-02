@@ -1283,9 +1283,14 @@ pub struct EguiShell {
 impl EguiShell {
     /// Build the shell against the desktop surface's device/format and the window (for input/DPI).
     /// `stamp` is the already-formatted build/version line (see [`build_stamp`]).
+    /// `scene_format` is the swapchain's (sRGB) format — the target for the 3D title backdrop, which
+    /// renders into the sRGB view. `egui_format` is its linear twin (`shell_format`) — the target for
+    /// the egui renderer, which draws into the linear view. They differ so egui gets its preferred
+    /// gamma-space path while the backdrop stays gamma-correct (see `run_and_paint`).
     pub fn new(
         device: &wgpu::Device,
-        format: wgpu::TextureFormat,
+        scene_format: wgpu::TextureFormat,
+        egui_format: wgpu::TextureFormat,
         window: &Window,
         stamp: String,
     ) -> Self {
@@ -1305,11 +1310,12 @@ impl EguiShell {
             None, // system theme
             None, // max texture side
         );
-        let renderer = egui_wgpu::Renderer::new(device, format, egui_wgpu::RendererOptions::default());
+        let renderer =
+            egui_wgpu::Renderer::new(device, egui_format, egui_wgpu::RendererOptions::default());
 
-        // Build the live 3D title backdrop against the same device/format the egui pass and the
-        // engine share. Infallible per the pinned API, so always `Some` today.
-        let backdrop = Some(TitleBackdrop::new(device, format));
+        // Build the live 3D title backdrop against the swapchain's sRGB scene format (it renders into
+        // the sRGB view). Infallible per the pinned API, so always `Some` today.
+        let backdrop = Some(TitleBackdrop::new(device, scene_format));
 
         EguiShell {
             ctx,
@@ -1495,16 +1501,39 @@ impl EguiShell {
             pointer_to_ndc([p.x, p.y], size_points)
         });
 
-        // Acquire the frame (owned — the `&mut` surface borrow ends as this returns).
+        // Apply egui's texture deltas BEFORE acquiring the frame. egui emits the font-atlas upload
+        // exactly once (in `textures_delta.set`) and then clears it; the upload only needs the
+        // device/queue, not the frame. If we deferred it past `acquire()` we'd drop that one-time
+        // delta on any frame `acquire()` returns `None` (as it does while the surface settles on
+        // startup), and every later `render()` would report the atlas "Missing" — an invisible shell.
+        // Scoped so the device/queue borrows release before the `&mut` `acquire()` below.
+        {
+            let device = surface.device();
+            let queue = surface.queue();
+            for (id, delta) in &full_output.textures_delta.set {
+                self.renderer.update_texture(device, queue, *id, delta);
+            }
+        }
+
+        // Acquire the frame (owned — the `&mut` surface borrow ends as this returns). On a miss, still
+        // release the textures egui flagged for freeing so they can't leak across skipped frames.
         let Some((frame, view)) = surface.acquire() else {
+            for id in &full_output.textures_delta.free {
+                self.renderer.free_texture(id);
+            }
             return action;
         };
 
+        // A linear (non-sRGB) view of the same swapchain texture for the egui pass — egui blends in
+        // gamma space and renders invisibly into the sRGB `view` the backdrop/scene use. See
+        // `DesktopRenderSurface::shell_view`. Reads the same pixels the backdrop wrote, so `LoadOp::Load`
+        // over the backdrop still composites correctly.
+        let egui_view = surface.shell_view(&frame);
         let device = surface.device();
         let queue = surface.queue();
 
-        // Paint the 3D backdrop into the view BEFORE egui (it clears + submits its own encoder), so
-        // the egui pass below loads over it. `self.backdrop`/`self.renderer` are disjoint fields, so
+        // Paint the 3D backdrop into the (sRGB) view BEFORE egui (it clears + submits its own encoder),
+        // so the egui pass below loads over it. `self.backdrop`/`self.renderer` are disjoint fields, so
         // this split borrow is fine.
         if with_backdrop {
             if let Some(bd) = self.backdrop.as_mut() {
@@ -1512,9 +1541,6 @@ impl EguiShell {
             }
         }
 
-        for (id, delta) in &full_output.textures_delta.set {
-            self.renderer.update_texture(device, queue, *id, delta);
-        }
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [w, h],
             pixels_per_point: ppp,
@@ -1527,21 +1553,23 @@ impl EguiShell {
                 .update_buffers(device, queue, &mut encoder, &paint_jobs, &screen);
         {
             // Title: LOAD over the backdrop the pass above painted. Gunsmith: CLEAR to ink (no
-            // backdrop), preserving the original opaque look.
+            // backdrop), preserving the original opaque look. The clear targets the linear
+            // (non-sRGB) egui view, so these are gamma-space (raw-byte) values matching the INK
+            // panel colour (0x07,0x09,0x0C) — not linear values.
             let load = if with_backdrop {
                 wgpu::LoadOp::Load
             } else {
                 wgpu::LoadOp::Clear(wgpu::Color {
-                    r: 0.007,
-                    g: 0.009,
-                    b: 0.013,
+                    r: 0x07 as f64 / 255.0,
+                    g: 0x09 as f64 / 255.0,
+                    b: 0x0C as f64 / 255.0,
                     a: 1.0,
                 })
             };
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("gonedark.shell.egui_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: &egui_view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {

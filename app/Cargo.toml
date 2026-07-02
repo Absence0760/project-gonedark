@@ -29,6 +29,7 @@ gonedark-pal = { path = "../pal" }
 gonedark-core = { path = "../core" }
 winit = "0.30"
 wgpu = "29"
+log = "0.4"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 gonedark-pal-desktop = { path = "../pal-desktop" }

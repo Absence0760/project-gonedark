@@ -910,7 +910,16 @@ impl ApplicationHandler for App {
 
         let surface = DesktopRenderSurface::new(window);
         let stamp = build_stamp(build_channel(cfg!(debug_assertions)), env!("CARGO_PKG_VERSION"));
-        let shell = EguiShell::new(surface.device(), surface.format(), surface.window(), stamp);
+        // The backdrop targets the sRGB `format` (renders into the sRGB view); egui targets the
+        // linear `shell_format` (renders into the linear view) — it blends in gamma space and renders
+        // invisibly into an sRGB view (see `shell_format`).
+        let shell = EguiShell::new(
+            surface.device(),
+            surface.format(),
+            surface.shell_format(),
+            surface.window(),
+            stamp,
+        );
 
         self.surface = Some(surface);
         self.shell = Some(shell);
@@ -1136,7 +1145,21 @@ fn persist_shell_prefs(
     let _ = std::fs::write(&path, shell::encode_shell_prefs(settings, profile, loadout, army));
 }
 
+struct DiagLogger;
+impl log::Log for DiagLogger {
+    fn enabled(&self, _m: &log::Metadata) -> bool {
+        true
+    }
+    fn log(&self, r: &log::Record) {
+        eprintln!("[{}] {}: {}", r.level(), r.target(), r.args());
+    }
+    fn flush(&self) {}
+}
+
 fn main() {
+    static LOGGER: DiagLogger = DiagLogger;
+    let _ = log::set_logger(&LOGGER);
+    log::set_max_level(log::LevelFilter::Warn);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let scene = match scene_token(&args) {
         Some(tok) => Scene::parse(&tok).unwrap_or_else(|| {

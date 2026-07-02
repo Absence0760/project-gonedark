@@ -68,6 +68,9 @@ pub struct DesktopRenderSurface {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    /// The linear (non-sRGB) twin of `config.format` for the egui shell pass (see the field's
+    /// derivation in [`new`](Self::new) and [`shell_format`](Self::shell_format)).
+    shell_format: wgpu::TextureFormat,
 }
 
 impl DesktopRenderSurface {
@@ -113,6 +116,15 @@ impl DesktopRenderSurface {
             .find(wgpu::TextureFormat::is_srgb)
             .unwrap_or_else(|| caps.formats[0]);
 
+        // The linear (non-sRGB) twin of `format`, used only for the egui shell's own view of the
+        // swapchain texture (see [`shell_format`]/[`shell_view`]). egui prefers a non-sRGB target:
+        // its anti-aliasing + premultiplied-alpha blending are computed in *gamma* space, so
+        // handing it an sRGB view makes the hardware linearise its already-gamma output and the
+        // over-blend cancels to near-nothing — the shell renders invisibly. Rendering egui into a
+        // linear view of the same texture (while the 3D scene/backdrop keep the sRGB view) puts
+        // egui on its intended path without disturbing the scene's gamma-correct output.
+        let shell_format = format.remove_srgb_suffix();
+
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -123,7 +135,13 @@ impl DesktopRenderSurface {
             present_mode: wgpu::PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode: caps.alpha_modes[0],
-            view_formats: vec![],
+            // Allow a linear view of the sRGB swapchain texture for the egui shell pass. Empty when
+            // the surface is already non-sRGB (`remove_srgb_suffix` is then a no-op).
+            view_formats: if shell_format == format {
+                vec![]
+            } else {
+                vec![shell_format]
+            },
         };
         surface.configure(&device, &config);
 
@@ -135,6 +153,7 @@ impl DesktopRenderSurface {
             device,
             queue,
             config,
+            shell_format,
         }
     }
 
@@ -152,6 +171,25 @@ impl DesktopRenderSurface {
     /// pipeline's colour target matches the surface.
     pub fn format(&self) -> wgpu::TextureFormat {
         self.config.format
+    }
+
+    /// The texture format the **egui shell** renderer targets — the linear (non-sRGB) twin of
+    /// [`format`](Self::format). egui blends in gamma space and renders invisibly into an sRGB
+    /// view, so its pipeline is built for this format and it draws through [`shell_view`](Self::shell_view).
+    /// Equals [`format`](Self::format) when the swapchain is already non-sRGB.
+    pub fn shell_format(&self) -> wgpu::TextureFormat {
+        self.shell_format
+    }
+
+    /// A [`wgpu::TextureView`] over an acquired frame in the [`shell_format`](Self::shell_format)
+    /// (linear) format — the target for the egui shell pass. The linear format is registered in the
+    /// swapchain's `view_formats`, so this reinterpret is valid; the 3D scene/backdrop keep the
+    /// sRGB view from [`acquire`](Self::acquire).
+    pub fn shell_view(&self, frame: &wgpu::SurfaceTexture) -> wgpu::TextureView {
+        frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.shell_format),
+            ..Default::default()
+        })
     }
 
     /// Current swapchain size in pixels.
