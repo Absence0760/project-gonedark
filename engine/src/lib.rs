@@ -1609,6 +1609,13 @@ pub struct Game {
     /// sim input. Defaults to `Nominal` until the first frame queries the sensor.
     thermal: gonedark_pal::ThermalState,
 
+    /// Physical UI scale (the PAL display scale — desktop `Window::scale_factor()`, Android
+    /// `densityDpi / DENSITY_DEFAULT`). Pushed each frame by the host via [`Game::set_ui_scale`];
+    /// forwarded to the renderer (text/icon + chrome boxes scale together) and used as the touch-layout
+    /// density floor so controls stay tappable on a dense phone. Presentation/input only — never a sim
+    /// input (invariant #1/#4). Defaults to `1.0` (legacy geometry) until the host pushes a real value.
+    ui_scale: f32,
+
     /// The enemy commander's OWN deterministic RNG (W3). Seeded `sim_seed ^ faction-id` so it is
     /// reproducible yet decoupled from the checksummed `Sim::rng()` stream — the commander must
     /// NEVER draw from `sim.rng()` (a host-side draw would advance that stream and desync
@@ -2407,6 +2414,7 @@ impl Game {
             tuning: RenderTuning::new(gonedark_render::tiers::QualityTier::High),
             // Until the host reports through its `pal::ThermalSensor`, assume no thermal pressure.
             thermal: gonedark_pal::ThermalState::Nominal,
+            ui_scale: 1.0,
             // Enemy commander RNG: own stream seeded `sim_seed ^ faction-id` (W3) — decoupled from
             // the checksummed sim RNG so a host-side draw can never advance/desync it.
             commander_rng: Rng::new(seed ^ Faction::Enemy.index() as u64),
@@ -2566,6 +2574,25 @@ impl Game {
     /// stored Settings values; the prefs persist across embody/surface resets.
     pub fn set_touch_look_prefs(&mut self, sensitivity: f32, invert_y: bool) {
         self.touch.set_look_prefs(sensitivity, invert_y);
+    }
+
+    /// Push the physical **UI scale** (the PAL display scale — desktop `Window::scale_factor()`,
+    /// Android `densityDpi / DENSITY_DEFAULT`). Forwards to the renderer (text/icon glyphs AND the
+    /// chrome boxes that contain them scale together, so nothing overflows its panel) and is used as
+    /// the touch-layout density floor so controls stay tappable on a dense phone. The host calls this
+    /// each frame from its stored display scale (the parallel to `set_palette_mode` /
+    /// `set_touch_look_prefs`). Presentation/input only — never the deterministic sim or the per-tick
+    /// checksum (invariants #1/#2/#4). `1.0` reproduces the legacy geometry exactly.
+    ///
+    /// Increment 1 (this change) uses `ui_scale` for the **touch-target density floor** only; the
+    /// text/icon chrome scaling is forwarded to the renderer in increment 2, once the HUD-chrome boxes
+    /// scale in lockstep (otherwise scaled glyphs overflow their unscaled panels).
+    pub fn set_ui_scale(&mut self, ui_scale: f32) {
+        self.ui_scale = if ui_scale.is_finite() && ui_scale > 0.0 {
+            ui_scale
+        } else {
+            1.0
+        };
     }
 
     /// Whether any in-session shell overlay (pause / reconnect prompt / post-match summary) is
@@ -3316,7 +3343,10 @@ impl Game {
                 // draw step below re-resolves the SAME profile + viewport, so the hit shapes the
                 // input seam tests and the shapes the renderer draws can never drift. Runs even with
                 // zero fingers down (empty slice → neutral intents) so the HUD keeps drawing.
-                let layout = self.hud_layout.resolve_embodied(width, height).layout;
+                let layout = self
+                    .hud_layout
+                    .resolve_embodied_with_density(width, height, self.ui_scale)
+                    .layout;
                 let n = (input.touch_count as usize).min(input.touches.len());
                 // On the embody-transition frame, feed an EMPTY slice so the fingers that triggered the
                 // two-finger embody tap don't leak into the first embodied frame's move/look/buttons
@@ -4320,7 +4350,9 @@ impl Game {
             if let Some(hud_state) = self.touch_hud {
                 // Re-resolve the SAME HUD-editor preset the input seam used above → identical
                 // geometry + the player-set per-control opacity for the renderer (WS-D).
-                let resolved = self.hud_layout.resolve_embodied(width, height);
+                let resolved = self
+                    .hud_layout
+                    .resolve_embodied_with_density(width, height, self.ui_scale);
                 let layout = resolved.layout;
                 let crouched = self.sim.world.is_alive(self.player)
                     && self.sim.world.posture[self.player.index as usize] == Posture::Crouched;

@@ -478,6 +478,23 @@ impl HudLayoutProfile {
         resolve_embodied_layer(self.active().layer(HudLayer::Embodied), width, height)
     }
 
+    /// Like [`resolve_embodied`](Self::resolve_embodied) but applies the physical touch-target floor
+    /// for the display `density` (the PAL's `densityDpi / DENSITY_DEFAULT` scale). The live host uses
+    /// this so touch controls clear the ~9 mm minimum on a dense phone.
+    pub fn resolve_embodied_with_density(
+        &self,
+        width: u32,
+        height: u32,
+        density: f32,
+    ) -> ResolvedEmbodiedHud {
+        resolve_embodied_layer_with_density(
+            self.active().layer(HudLayer::Embodied),
+            width,
+            height,
+            density,
+        )
+    }
+
     // ---- Serialization (hand-rolled text codec; host-side, never the checksum) ----
 
     /// Serialize to the line-based config text persisted in the player profile.
@@ -611,7 +628,31 @@ pub fn resolve_embodied_layer(
     width: u32,
     height: u32,
 ) -> ResolvedEmbodiedHud {
-    let mut layout = TouchLayout::new(width, height);
+    resolve_embodied_over_base(cfg, TouchLayout::new(width, height), width, height)
+}
+
+/// Like [`resolve_embodied_layer`], but builds the base geometry with a physical touch-target floor
+/// from the display `density` ([`TouchLayout::with_density`]) so buttons stay tappable on a dense
+/// phone. This is the density-aware entry the live host uses; the density-less variant stays for the
+/// pure tests (byte-identical to the stock layout).
+pub fn resolve_embodied_layer_with_density(
+    cfg: &LayerConfig,
+    width: u32,
+    height: u32,
+    density: f32,
+) -> ResolvedEmbodiedHud {
+    resolve_embodied_over_base(cfg, TouchLayout::with_density(width, height, density), width, height)
+}
+
+/// Apply a layer's placement overrides on top of a supplied base [`TouchLayout`] — the shared body
+/// of both resolve entry points (with/without the density floor), so the override math can't drift.
+fn resolve_embodied_over_base(
+    cfg: &LayerConfig,
+    base: TouchLayout,
+    width: u32,
+    height: u32,
+) -> ResolvedEmbodiedHud {
+    let mut layout = base;
     let mut opacity = Opacity::default();
     let w = width.max(1) as f32;
     let h = height.max(1) as f32;
@@ -879,6 +920,24 @@ mod tests {
         // And the resolved layout is a real, non-degenerate touch layout (radii > 0).
         assert!(resolved.layout.surface.r > 0.0);
         assert!(resolved.layout.fire.r > 0.0);
+    }
+
+    #[test]
+    fn density_aware_resolve_floors_touch_targets_on_a_dense_screen() {
+        // The live host resolves via `resolve_embodied_with_density`, which must apply the physical
+        // mm touch-target floor — so on a small, dense phone the buttons come out LARGER than the
+        // bare-fraction (`resolve_embodied`, density-less) layout. A default profile (no overrides).
+        let profile = HudLayoutProfile::default();
+        let (w, h, density) = (720, 360, 3.0);
+        let bare = profile.resolve_embodied(w, h);
+        let floored = profile.resolve_embodied_with_density(w, h, density);
+        // Every round control is at least as large, and the small ones (Surface) strictly larger.
+        assert!(floored.layout.surface.r > bare.layout.surface.r, "dense floor grows Surface");
+        assert!(floored.layout.fire.r >= bare.layout.fire.r);
+        // Density 1.0 (a non-dense display) reproduces the bare layout — no gratuitous change.
+        let unit = profile.resolve_embodied_with_density(1280, 720, 1.0);
+        let bare_hd = profile.resolve_embodied(1280, 720);
+        assert_eq!(unit.layout.surface.r, bare_hd.layout.surface.r);
     }
 
     #[test]

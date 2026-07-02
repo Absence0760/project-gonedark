@@ -328,6 +328,11 @@ fn android_main(app: AndroidApp) {
                 // (invariants #1/#2). Cheap (two field writes); done each frame so a mid-match Settings
                 // change would take effect immediately.
                 game.set_touch_look_prefs(input.look_sensitivity(), input.invert_y());
+                // Physical UI scale from the display density (read once at startup): the HUD chrome
+                // (text/icons + their panels) and touch controls scale to a constant physical size
+                // instead of a raw-pixel fraction, so a dense phone's controls stay tappable and its
+                // text readable. Presentation/input only — never the sim (invariant #1/#2/#4).
+                game.set_ui_scale(ui_scale);
 
                 // Shell overlay buttons (pause / reconnect / post-match summary). A tap-up while an
                 // overlay is up belongs to that overlay, not the match world: hit-test it in NDC and

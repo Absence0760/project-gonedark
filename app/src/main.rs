@@ -570,6 +570,10 @@ impl App {
                 // directional flash. A separate setter (its own setting) so the 3-arg
                 // `set_accessibility_prefs` signature the Android host shares stays stable.
                 game.set_alert_cue_mode(self.settings.alert_cue_mode);
+                // Physical UI scale (D-something DPI): push the window's OS scale factor so the HUD
+                // chrome (text/icons + their panels) and touch controls read at a constant physical
+                // size instead of a raw-pixel fraction. Presentation only — never the sim.
+                game.set_ui_scale(surface.ui_scale());
                 let mut input = self.input.drain_frame();
                 let viewport = surface.size();
                 // Shell overlay buttons (pause / reconnect / post-match summary). A click while an
