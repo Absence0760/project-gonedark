@@ -187,6 +187,20 @@ pub fn readout_labels(
     world_dark: bool,
     palette: &crate::theme::Palette,
 ) -> Vec<ReadoutLabel> {
+    readout_labels_scaled(t, economy, world_dark, palette, 1.0)
+}
+
+/// [`readout_labels`] with an explicit physical `ui_scale` (DPI/point-per-NDC correction). The
+/// screen-edge margin + inter-line step scale so the stack tracks the text pass's `px * ui_scale`
+/// glyphs; the emitted `px_size` stays UNSCALED (the text pass scales it). `ui_scale == 1.0` is
+/// byte-identical to [`readout_labels`]. The renderer threads its live scale in here.
+pub fn readout_labels_scaled(
+    t: &Tally,
+    economy: Option<EconomyReadout>,
+    world_dark: bool,
+    palette: &crate::theme::Palette,
+    ui_scale: f32,
+) -> Vec<ReadoutLabel> {
     // Fairness gate (invariant #6): emit nothing while embodied. The command-layer chrome — visible
     // counts AND banked credits/income — is exactly the strategic intel "going dark" removes.
     if world_dark {
@@ -197,14 +211,14 @@ pub fn readout_labels(
     // lockstep with the units it tallies.
     let player_label = crate::faction_color_in(Faction::Player, palette);
     let enemy_label = crate::faction_color_in(Faction::Enemy, palette);
-    let top = 1.0 - MARGIN; // top edge, inset
-    let left = -1.0 + MARGIN; // left edge, inset
+    let top = 1.0 - MARGIN * ui_scale; // top edge, inset
+    let left = -1.0 + MARGIN * ui_scale; // left edge, inset
     let mut out = Vec::with_capacity(5);
     let mut row = 0;
     let mut push = |text: String, color: [f32; 3], row: &mut i32| {
         out.push(ReadoutLabel {
             text,
-            pos: [left, top - (*row as f32) * LINE_STEP],
+            pos: [left, top - (*row as f32) * LINE_STEP * ui_scale],
             px_size: LABEL_SIZE,
             anchor: Anchor::TopLeft,
             color,
@@ -258,6 +272,15 @@ const CARD_RIM_PAD: f32 = 0.008;
 /// for an empty label set (e.g. the dark embodied frame, where [`readout_labels`] emits nothing —
 /// invariant #6, so the card never paints over the dark frame either).
 pub fn readout_card(labels: &[ReadoutLabel], aspect: f32) -> Vec<OverlayQuad> {
+    readout_card_scaled(labels, aspect, 1.0)
+}
+
+/// [`readout_card`] with an explicit physical `ui_scale`. The label positions handed in already carry
+/// the scaled stack geometry (from [`readout_labels_scaled`]); this measures each line at its SCALED
+/// glyph height (`px_size * ui_scale`, what the text pass actually draws) and scales the card's own
+/// paddings so the card wraps the scaled text exactly. `ui_scale == 1.0` is byte-identical to
+/// [`readout_card`].
+pub fn readout_card_scaled(labels: &[ReadoutLabel], aspect: f32, ui_scale: f32) -> Vec<OverlayQuad> {
     let (Some(first), Some(last)) = (labels.first(), labels.last()) else {
         return Vec::new();
     };
@@ -265,12 +288,12 @@ pub fn readout_card(labels: &[ReadoutLabel], aspect: f32) -> Vec<OverlayQuad> {
     // pos is each string box's top-left). Wrap from the first line's top to the last line's bottom.
     let widest = labels
         .iter()
-        .map(|l| measure(&l.text, l.px_size, aspect).0)
+        .map(|l| measure(&l.text, l.px_size * ui_scale, aspect).0)
         .fold(0.0_f32, f32::max);
-    let left = first.pos[0] - CARD_PAD_X;
-    let right = first.pos[0] + widest + CARD_PAD_X;
-    let top = first.pos[1] + CARD_PAD_Y;
-    let bottom = (last.pos[1] - last.px_size) - CARD_PAD_Y;
+    let left = first.pos[0] - CARD_PAD_X * ui_scale;
+    let right = first.pos[0] + widest + CARD_PAD_X * ui_scale;
+    let top = first.pos[1] + CARD_PAD_Y * ui_scale;
+    let bottom = (last.pos[1] - last.px_size * ui_scale) - CARD_PAD_Y * ui_scale;
     let cx = (left + right) * 0.5;
     let cy = (top + bottom) * 0.5;
     let hw = (right - left) * 0.5;
@@ -279,8 +302,8 @@ pub fn readout_card(labels: &[ReadoutLabel], aspect: f32) -> Vec<OverlayQuad> {
         OverlayQuad {
             cx,
             cy,
-            hw: hw + CARD_RIM_PAD,
-            hh: hh + CARD_RIM_PAD,
+            hw: hw + CARD_RIM_PAD * ui_scale,
+            hh: hh + CARD_RIM_PAD * ui_scale,
             r: CARD_RIM[0],
             g: CARD_RIM[1],
             b: CARD_RIM[2],
@@ -567,6 +590,59 @@ mod tests {
         }
         // Anchored in the top-left quadrant, on screen.
         assert!(fill.cx - fill.hw > -1.0 && fill.cy + fill.hh < 1.0);
+    }
+
+    #[test]
+    fn ui_scale_grows_the_card_and_keeps_lines_contained() {
+        // DPI-scaling containment: at ui_scale = 2.0 / 3.0 the backing card's inner width grows
+        // ~proportionally AND every (scaled) readout line still fits inside it — no overflow.
+        let t = Tally {
+            player_units: 12,
+            enemy_units: 9,
+            control_points: 3,
+        };
+        let econ_v = econ(1234, income_per_tick(3));
+        let aspect = 1.0_f32;
+        let inner_w = |q: &[OverlayQuad], s: f32| 2.0 * q[1].hw - 2.0 * (CARD_PAD_X * s);
+        let base_labels = readout_labels_scaled(&t, Some(econ_v), false, &crate::theme::Palette::DEFAULT, 1.0);
+        let base_inner = inner_w(&readout_card_scaled(&base_labels, aspect, 1.0), 1.0);
+        for s in [2.0_f32, 3.0] {
+            let labels = readout_labels_scaled(&t, Some(econ_v), false, &crate::theme::Palette::DEFAULT, s);
+            let q = readout_card_scaled(&labels, aspect, s);
+            let scaled_inner = inner_w(&q, s);
+            assert!(
+                (scaled_inner - base_inner * s).abs() < 1e-5,
+                "inner width should grow ~{s}x (got {scaled_inner} vs {})",
+                base_inner * s
+            );
+            // Every line, measured at the SCALED glyph height the text pass draws, fits the card.
+            for l in &labels {
+                let w = crate::text::measure(&l.text, l.px_size * s, aspect).0;
+                assert!(
+                    w <= scaled_inner + 1e-5,
+                    "line {:?} ({w}) overflows scaled inner width {scaled_inner} at ui_scale {s}",
+                    l.text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ui_scale_one_is_byte_identical() {
+        // The identity contract the golden tests rely on.
+        let t = Tally {
+            player_units: 5,
+            enemy_units: 3,
+            control_points: 2,
+        };
+        let e = Some(econ(500, income_per_tick(3)));
+        let pal = crate::theme::Palette::DEFAULT;
+        assert_eq!(
+            readout_labels(&t, e, false, &pal),
+            readout_labels_scaled(&t, e, false, &pal, 1.0)
+        );
+        let labels = readout_labels(&t, e, false, &pal);
+        assert_eq!(readout_card(&labels, 0.7), readout_card_scaled(&labels, 0.7, 1.0));
     }
 
     #[test]

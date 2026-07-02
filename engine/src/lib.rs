@@ -2593,6 +2593,7 @@ impl Game {
         } else {
             1.0
         };
+        self.renderer.set_ui_scale(self.ui_scale);
     }
 
     /// Whether any in-session shell overlay (pause / reconnect prompt / post-match summary) is

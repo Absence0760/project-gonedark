@@ -97,8 +97,8 @@ const GLYPH_ASPECT: f32 = CELL_W as f32 / CELL_H as f32;
 /// Clamp range for the physical UI scale (see [`TextRenderer::set_ui_scale`]). Below ~0.5 chrome
 /// becomes illegible; above ~3.0 it swamps the frame. Matches `icon`'s clamp and the touch-layout
 /// density clamp so every UI surface treats a bogus platform report the same way.
-const UI_SCALE_MIN: f32 = 0.5;
-const UI_SCALE_MAX: f32 = 3.0;
+pub const UI_SCALE_MIN: f32 = 0.5;
+pub const UI_SCALE_MAX: f32 = 3.0;
 
 /// Map a character to its zero-based atlas glyph index, or `None` if it is not a drawable glyph
 /// (out of the printable ASCII range — it still advances like a space, but emits no quad). ASCII

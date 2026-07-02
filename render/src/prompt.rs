@@ -128,10 +128,11 @@ fn line_gaps(p: &Prompt) -> Vec<f32> {
 
 /// Each line's NDC width at the given viewport `aspect`, top-down (title then body). Aspect-corrected
 /// through [`measure`] so the card hugs the text on a wide window (the raw-NDC chrome footgun).
-fn line_widths(p: &Prompt, aspect: f32) -> Vec<f32> {
-    let mut w = vec![measure(&p.title, TITLE_SIZE, aspect).0];
+fn line_widths(p: &Prompt, aspect: f32, ui_scale: f32) -> Vec<f32> {
+    // Measured at the SCALED type sizes so the card hugs the text pass's `px * ui_scale` glyphs.
+    let mut w = vec![measure(&p.title, TITLE_SIZE * ui_scale, aspect).0];
     for line in &p.body {
-        w.push(measure(line, BODY_SIZE, aspect).0);
+        w.push(measure(line, BODY_SIZE * ui_scale, aspect).0);
     }
     w
 }
@@ -139,11 +140,16 @@ fn line_widths(p: &Prompt, aspect: f32) -> Vec<f32> {
 /// The card half-extent `(hw, hh)` and the NDC `top` y of the first line, for a prompt at the given
 /// `aspect`. Pure — shared by [`prompt_quads`] and [`prompt_labels`] so the card and its text always
 /// agree (the `box_geom` pattern).
-fn card_geom(p: &Prompt, aspect: f32) -> (f32, f32, f32) {
-    let total_h: f32 = line_heights(p).iter().sum::<f32>() + line_gaps(p).iter().sum::<f32>();
-    let max_w = line_widths(p, aspect).into_iter().fold(0.0_f32, f32::max);
-    let hw = max_w * 0.5 + PAD_X;
-    let hh = total_h * 0.5 + PAD_Y;
+fn card_geom(p: &Prompt, aspect: f32, ui_scale: f32) -> (f32, f32, f32) {
+    // Line heights/gaps + paddings scale with the physical `ui_scale`; the card center (CENTER_Y, the
+    // lower third) stays put. `ui_scale == 1.0` is byte-identical to the legacy geometry.
+    let total_h: f32 =
+        (line_heights(p).iter().sum::<f32>() + line_gaps(p).iter().sum::<f32>()) * ui_scale;
+    let max_w = line_widths(p, aspect, ui_scale)
+        .into_iter()
+        .fold(0.0_f32, f32::max);
+    let hw = max_w * 0.5 + PAD_X * ui_scale;
+    let hh = total_h * 0.5 + PAD_Y * ui_scale;
     let top = CENTER_Y + total_h * 0.5; // top edge of the first (TopCenter-anchored) line box
     (hw, hh, top)
 }
@@ -152,10 +158,17 @@ fn card_geom(p: &Prompt, aspect: f32) -> (f32, f32, f32) {
 /// auto-sized to the prompt's line stack. Empty/invisible prompt ⇒ no quads. Back-to-front (rim,
 /// panel, accent) so each composites over the last. Pure + GPU-free → unit-tested.
 pub fn prompt_quads(p: &Prompt, aspect: f32) -> Vec<OverlayQuad> {
+    prompt_quads_scaled(p, aspect, 1.0)
+}
+
+/// [`prompt_quads`] with an explicit physical `ui_scale` (DPI/point-per-NDC correction). The card
+/// grows in lockstep with the text pass's `px * ui_scale` glyphs; `ui_scale == 1.0` is byte-identical
+/// to [`prompt_quads`]. The renderer threads its live scale in here.
+pub fn prompt_quads_scaled(p: &Prompt, aspect: f32, ui_scale: f32) -> Vec<OverlayQuad> {
     if p.is_empty() || p.alpha <= 0.0 {
         return Vec::new();
     }
-    let (hw, hh, _) = card_geom(p, aspect);
+    let (hw, hh, _) = card_geom(p, aspect, ui_scale);
     let a = p.alpha.clamp(0.0, 1.0);
     let [tr, tg, tb] = tone_color(p.tone);
     vec![
@@ -163,8 +176,8 @@ pub fn prompt_quads(p: &Prompt, aspect: f32) -> Vec<OverlayQuad> {
         OverlayQuad {
             cx: 0.0,
             cy: CENTER_Y,
-            hw: hw + RIM_PAD,
-            hh: hh + RIM_PAD,
+            hw: hw + RIM_PAD * ui_scale,
+            hh: hh + RIM_PAD * ui_scale,
             r: RIM_COLOR[0],
             g: RIM_COLOR[1],
             b: RIM_COLOR[2],
@@ -184,9 +197,9 @@ pub fn prompt_quads(p: &Prompt, aspect: f32) -> Vec<OverlayQuad> {
         },
         OverlayQuad {
             cx: 0.0,
-            cy: CENTER_Y + hh - ACCENT_HH,
-            hw: (hw - PAD_X * 0.5).max(0.0),
-            hh: ACCENT_HH,
+            cy: CENTER_Y + hh - ACCENT_HH * ui_scale,
+            hw: (hw - PAD_X * 0.5 * ui_scale).max(0.0),
+            hh: ACCENT_HH * ui_scale,
             r: tr,
             g: tg,
             b: tb,
@@ -200,10 +213,17 @@ pub fn prompt_quads(p: &Prompt, aspect: f32) -> Vec<OverlayQuad> {
 /// top-down and horizontally centered. Empty/invisible prompt ⇒ no labels. Pure + GPU-free →
 /// unit-tested. All carry the prompt's fade `alpha`.
 pub fn prompt_labels(p: &Prompt, aspect: f32) -> Vec<PromptLabel> {
+    prompt_labels_scaled(p, aspect, 1.0)
+}
+
+/// [`prompt_labels`] with an explicit physical `ui_scale`. Label POSITIONS come from the scaled card
+/// + scaled line steps; the emitted `size` stays UNSCALED — the text pass multiplies it by `ui_scale`
+/// at draw time (no double-scaling). `ui_scale == 1.0` is byte-identical to [`prompt_labels`].
+pub fn prompt_labels_scaled(p: &Prompt, aspect: f32, ui_scale: f32) -> Vec<PromptLabel> {
     if p.is_empty() || p.alpha <= 0.0 {
         return Vec::new();
     }
-    let (_, _, top) = card_geom(p, aspect);
+    let (_, _, top) = card_geom(p, aspect, ui_scale);
     let a = p.alpha.clamp(0.0, 1.0);
     let mut out = Vec::with_capacity(1 + p.body.len());
     let mut y = top;
@@ -215,7 +235,7 @@ pub fn prompt_labels(p: &Prompt, aspect: f32) -> Vec<PromptLabel> {
         color: tone_color(p.tone),
         alpha: a,
     });
-    y -= TITLE_SIZE + TITLE_BODY_GAP;
+    y -= (TITLE_SIZE + TITLE_BODY_GAP) * ui_scale;
     for (i, line) in p.body.iter().enumerate() {
         out.push(PromptLabel {
             text: line.clone(),
@@ -225,9 +245,9 @@ pub fn prompt_labels(p: &Prompt, aspect: f32) -> Vec<PromptLabel> {
             color: BODY_COLOR,
             alpha: a,
         });
-        y -= BODY_SIZE;
+        y -= BODY_SIZE * ui_scale;
         if i + 1 < p.body.len() {
-            y -= LINE_GAP;
+            y -= LINE_GAP * ui_scale;
         }
     }
     out
@@ -372,6 +392,40 @@ mod tests {
         let bottom = panel.cy - panel.hh;
         assert!(top < -0.05, "card top clears the screen center, got {top}");
         assert!(bottom > -1.0, "card bottom stays on-screen, got {bottom}");
+    }
+
+    #[test]
+    fn ui_scale_grows_the_card_and_keeps_lines_contained() {
+        // DPI-scaling containment: at ui_scale = 2.0 / 3.0 the card's inner width grows ~proportionally
+        // AND every (scaled) line still fits inside it — no overflow of the scaled glyphs.
+        let p = prompt();
+        let aspect = 1.0_f32;
+        let inner_w = |q: &[OverlayQuad], s: f32| 2.0 * q[1].hw - 2.0 * (PAD_X * s);
+        let base_inner = inner_w(&prompt_quads_scaled(&p, aspect, 1.0), 1.0);
+        for s in [2.0_f32, 3.0] {
+            let q = prompt_quads_scaled(&p, aspect, s);
+            let scaled_inner = inner_w(&q, s);
+            assert!(
+                (scaled_inner - base_inner * s).abs() < 1e-5,
+                "inner width should grow ~{s}x (got {scaled_inner} vs {})",
+                base_inner * s
+            );
+            // The widest line (title or body) fits the scaled inner width.
+            let widest = std::iter::once(measure(&p.title, TITLE_SIZE * s, aspect).0)
+                .chain(p.body.iter().map(|l| measure(l, BODY_SIZE * s, aspect).0))
+                .fold(0.0_f32, f32::max);
+            assert!(
+                widest <= scaled_inner + 1e-5,
+                "a line ({widest}) overflows scaled inner width {scaled_inner} at ui_scale {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn ui_scale_one_is_byte_identical() {
+        // The identity contract the golden tests rely on.
+        assert_eq!(prompt_quads(&prompt(), 0.7), prompt_quads_scaled(&prompt(), 0.7, 1.0));
+        assert_eq!(prompt_labels(&prompt(), 0.7), prompt_labels_scaled(&prompt(), 0.7, 1.0));
     }
 
     #[test]

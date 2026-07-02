@@ -157,6 +157,14 @@ fn quad(cx: f32, cy: f32, hw: f32, hh: f32, alpha: f32, role: RadialRole) -> Rad
 /// anchor, the rest fan around the ring evenly. The optional `highlight` slot is drawn with the
 /// [`WedgeHighlight`](RadialRole::WedgeHighlight) role.
 pub fn radial_quads(menu: &RadialMenu, aspect: f32) -> Vec<RadialQuad> {
+    radial_quads_scaled(menu, aspect, 1.0)
+}
+
+/// [`radial_quads`] with an explicit physical `ui_scale` (DPI/point-per-NDC correction). The ring
+/// radius, wedge/hub/backdrop half-extents all scale so the ring grows in lockstep with the text
+/// pass's `px * ui_scale` wedge labels; `ui_scale == 1.0` is byte-identical to [`radial_quads`]. The
+/// menu anchor (`center`) stays put. The renderer threads its live scale in here.
+pub fn radial_quads_scaled(menu: &RadialMenu, aspect: f32, ui_scale: f32) -> Vec<RadialQuad> {
     if menu.slots == 0 {
         return Vec::new();
     }
@@ -167,32 +175,36 @@ pub fn radial_quads(menu: &RadialMenu, aspect: f32) -> Vec<RadialQuad> {
     } else {
         1.0
     };
+    let ring = RING_RADIUS * ui_scale;
+    let wedge = WEDGE_HALF * ui_scale;
+    let hub = HUB_HALF * ui_scale;
+    let backdrop = BACKDROP_HALF * ui_scale;
     let (cx, cy) = (menu.center[0], menu.center[1]);
     let mut out = Vec::with_capacity(menu.slots + 2);
     // Backdrop first (back-to-front): a dim square so the wedges read over the command frame.
     out.push(quad(
         cx,
         cy,
-        BACKDROP_HALF / a,
-        BACKDROP_HALF,
+        backdrop / a,
+        backdrop,
         BACKDROP_ALPHA,
         RadialRole::Backdrop,
     ));
     // The hub marks the anchor the menu opened at.
-    out.push(quad(cx, cy, HUB_HALF / a, HUB_HALF, 1.0, RadialRole::Hub));
+    out.push(quad(cx, cy, hub / a, hub, 1.0, RadialRole::Hub));
     // Wedges around the ring: slot 0 at the top, clockwise (NDC +y is up, so subtract the angle). The
     // x offset is `/a` so the ring is a circle in pixels, not a horizontal ellipse.
     let n = menu.slots as f32;
     for i in 0..menu.slots {
         let angle = FRAC_PI_2 - (i as f32) * TAU / n;
-        let wx = cx + (RING_RADIUS / a) * angle.cos();
-        let wy = cy + RING_RADIUS * angle.sin();
+        let wx = cx + (ring / a) * angle.cos();
+        let wy = cy + ring * angle.sin();
         let role = if menu.highlight == Some(i) {
             RadialRole::WedgeHighlight
         } else {
             RadialRole::Wedge
         };
-        out.push(quad(wx, wy, WEDGE_HALF / a, WEDGE_HALF, WEDGE_ALPHA, role));
+        out.push(quad(wx, wy, wedge / a, wedge, WEDGE_ALPHA, role));
     }
     out
 }
@@ -260,6 +272,20 @@ fn placeholder_slot_label(i: usize) -> String {
 /// empty/missing name is skipped (draws no label, but the wedge quad still shows the slot). Returns
 /// an empty vec when the menu has no slots.
 pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>, aspect: f32) -> Vec<WedgeLabel> {
+    radial_labels_scaled(menu, names, aspect, 1.0)
+}
+
+/// [`radial_labels`] with an explicit physical `ui_scale`. Label POSITIONS sit on the SCALED ring
+/// (radius `* ui_scale`) so they track the scaled wedges; the emitted `size` stays UNSCALED — the
+/// text pass multiplies it by `ui_scale` at draw time. Because both the wedge width and the label
+/// width scale by `ui_scale`, the fit ratio [`fitted_label_size`] computes is scale-independent, so
+/// it needs no `ui_scale`. `ui_scale == 1.0` is byte-identical to [`radial_labels`].
+pub fn radial_labels_scaled(
+    menu: &RadialMenu,
+    names: Option<&[&str]>,
+    aspect: f32,
+    ui_scale: f32,
+) -> Vec<WedgeLabel> {
     if menu.slots == 0 {
         return Vec::new();
     }
@@ -268,6 +294,7 @@ pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>, aspect: f32) -> 
     } else {
         1.0
     };
+    let ring = RING_RADIUS * ui_scale;
     let (cx, cy) = (menu.center[0], menu.center[1]);
     let n = menu.slots as f32;
     // First resolve which slots actually draw text (skipping explicit-empty names) so the label size
@@ -288,8 +315,8 @@ pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>, aspect: f32) -> 
     for (i, text) in entries {
         let angle = FRAC_PI_2 - (i as f32) * TAU / n;
         // Match the circular ring (x offset `/a`) so labels sit on their wedges on any window.
-        let wx = cx + (RING_RADIUS / a) * angle.cos();
-        let wy = cy + RING_RADIUS * angle.sin();
+        let wx = cx + (ring / a) * angle.cos();
+        let wy = cy + ring * angle.sin();
         out.push(WedgeLabel {
             text,
             pos: [wx, wy],
@@ -341,6 +368,10 @@ pub struct RadialRenderer {
     /// Viewport aspect (width / height) for the current frame — keeps the ring circular and the
     /// wedges square in pixels. Set via [`set_aspect`](RadialRenderer::set_aspect); defaults to `1.0`.
     aspect: f32,
+    /// Physical UI scale (DPI/point-per-NDC correction) for the current frame — grows the ring +
+    /// wedges in lockstep with the owned text pass's scaled labels. Set via
+    /// [`set_ui_scale`](RadialRenderer::set_ui_scale); defaults to `1.0` (legacy geometry).
+    ui_scale: f32,
 }
 
 impl RadialRenderer {
@@ -427,6 +458,7 @@ impl RadialRenderer {
             instance_cap,
             text,
             aspect: 1.0,
+            ui_scale: 1.0,
         }
     }
 
@@ -437,6 +469,16 @@ impl RadialRenderer {
     pub fn set_aspect(&mut self, aspect: f32) {
         self.aspect = aspect;
         self.text.set_aspect(aspect);
+    }
+
+    /// Set the physical UI scale (DPI/point-per-NDC correction) for this frame so the ring + wedges
+    /// grow in lockstep with the owned text pass's scaled wedge labels (else scaled glyphs would sit
+    /// in unscaled wedges). Forwarded to the owned text pass; the host calls it once per frame before
+    /// [`render`](RadialRenderer::render), mirroring [`set_aspect`](RadialRenderer::set_aspect).
+    /// `1.0` is the legacy geometry.
+    pub fn set_ui_scale(&mut self, ui_scale: f32) {
+        self.ui_scale = ui_scale;
+        self.text.set_ui_scale(ui_scale);
     }
 
     /// Draw the radial menu on top of `view` (a LOAD pass — never clears), labelling each wedge with
@@ -464,14 +506,14 @@ impl RadialRenderer {
         menu: &RadialMenu,
         names: Option<&[&str]>,
     ) {
-        let quads = radial_quads(menu, self.aspect);
+        let quads = radial_quads_scaled(menu, self.aspect, self.ui_scale);
         if quads.is_empty() {
             return;
         }
         let instances: Vec<RadialInstance> = quads.iter().map(|q| q.instance()).collect();
 
         // Queue the wedge labels (W4) — flushed after the wedge quads below so the glyphs sit on top.
-        for label in radial_labels(menu, names, self.aspect) {
+        for label in radial_labels_scaled(menu, names, self.aspect, self.ui_scale) {
             self.text.queue(
                 label.text,
                 label.pos,
@@ -774,6 +816,54 @@ mod tests {
                 label.text
             );
         }
+    }
+
+    #[test]
+    fn ui_scale_grows_the_ring_and_keeps_wedge_labels_contained() {
+        // DPI-scaling containment for fixed chrome: at ui_scale = 2.0 / 3.0 the wedge half-extent
+        // scales AND every (scaled) wedge label still fits its (scaled) wedge — the real command
+        // vocabulary at LABEL*s fits a 2*WEDGE_HALF*s/aspect wedge. Worst case is the portrait aspect.
+        let vocab = [
+            "Move",
+            "Attack-move",
+            "Fire at will",
+            "Hold position",
+            "Fall back",
+            "Disarm retreat",
+        ];
+        let m = menu([0.0, 0.0], vocab.len(), None);
+        for s in [2.0_f32, 3.0] {
+            // Wedge box scaled about the anchor by ~s.
+            let q = radial_quads_scaled(&m, PORTRAIT_ASPECT, s);
+            let w = wedges(&q)[0];
+            assert!(
+                (w.hw - (WEDGE_HALF * s / PORTRAIT_ASPECT)).abs() < 1e-5,
+                "wedge half-width grows ~{s}x"
+            );
+            let wedge_w = 2.0 * WEDGE_HALF * s / PORTRAIT_ASPECT;
+            let labels = radial_labels_scaled(&m, Some(&vocab), PORTRAIT_ASPECT, s);
+            for label in &labels {
+                // The text pass draws each label at `size * ui_scale`.
+                let lw = crate::text::measure(&label.text, label.size * s, PORTRAIT_ASPECT).0;
+                assert!(
+                    lw <= wedge_w + 1e-6,
+                    "label {:?} ({lw}) overflows its {wedge_w} scaled wedge at ui_scale {s}",
+                    label.text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ui_scale_one_is_byte_identical() {
+        // The identity contract the golden tests rely on.
+        let m = menu([0.1, -0.2], 5, Some(2));
+        let names = ["MOVE", "STOP", "HOLD", "PATROL", "FALL BACK"];
+        assert_eq!(radial_quads(&m, 0.7), radial_quads_scaled(&m, 0.7, 1.0));
+        assert_eq!(
+            radial_labels(&m, Some(&names), 0.7),
+            radial_labels_scaled(&m, Some(&names), 0.7, 1.0)
+        );
     }
 
     #[test]

@@ -348,57 +348,70 @@ const PANEL_SHADOW_ALPHA: f32 = 0.5;
 /// [`push_tracked_bar`] uses). The shadow + rim are opaque-chrome anchors; `alpha` applies to the
 /// panel fill. The shadow is slightly larger than the rim and dropped a touch so the card lifts off
 /// the dim frame; the rim leaves a thin readable border; the shader rounds + gradient-shades each.
-fn push_panel_with_rim(out: &mut Vec<OverlayQuad>, alpha: f32) {
+fn push_panel_with_rim(out: &mut Vec<OverlayQuad>, alpha: f32, ui_scale: f32) {
     out.push(quad(
         0.0,
-        -PANEL_SHADOW_DROP,
-        PANEL_HW + PANEL_SHADOW_PAD,
-        PANEL_HH + PANEL_SHADOW_PAD,
+        -PANEL_SHADOW_DROP * ui_scale,
+        (PANEL_HW + PANEL_SHADOW_PAD) * ui_scale,
+        (PANEL_HH + PANEL_SHADOW_PAD) * ui_scale,
         PANEL_SHADOW_ALPHA,
         QuadRole::PanelShadow,
     ));
     out.push(quad(
         0.0,
         0.0,
-        PANEL_HW + PANEL_RIM_PAD,
-        PANEL_HH + PANEL_RIM_PAD,
+        (PANEL_HW + PANEL_RIM_PAD) * ui_scale,
+        (PANEL_HH + PANEL_RIM_PAD) * ui_scale,
         1.0,
         QuadRole::PanelRim,
     ));
-    out.push(quad(0.0, 0.0, PANEL_HW, PANEL_HH, alpha, QuadRole::Panel));
+    out.push(quad(
+        0.0,
+        0.0,
+        PANEL_HW * ui_scale,
+        PANEL_HH * ui_scale,
+        alpha,
+        QuadRole::Panel,
+    ));
 }
 
 /// Emit a faint full-width track at row `cy`, then a left-anchored data bar of fraction `frac` over
 /// it (track first, so the bar reads over a shared reference length). A zero-length bar is skipped
 /// but the track is always drawn so every row shows the same baseline.
-fn push_tracked_bar(out: &mut Vec<OverlayQuad>, cy: f32, frac: f32, role: QuadRole) {
+fn push_tracked_bar(out: &mut Vec<OverlayQuad>, cy: f32, frac: f32, role: QuadRole, ui_scale: f32) {
+    let bar_max_hw = BAR_MAX_HW * ui_scale;
+    let bar_hh = BAR_HH * ui_scale;
     out.push(quad(
         0.0,
         cy,
-        BAR_MAX_HW,
-        BAR_HH,
+        bar_max_hw,
+        bar_hh,
         BAR_TRACK_ALPHA,
         QuadRole::BarTrack,
     ));
-    let hw = (BAR_MAX_HW * frac).max(0.0);
+    let hw = (bar_max_hw * frac).max(0.0);
     if hw > 0.0 {
-        out.push(quad(-BAR_MAX_HW + hw, cy, hw, BAR_HH, 1.0, role));
+        out.push(quad(-bar_max_hw + hw, cy, hw, bar_hh, 1.0, role));
     }
 }
 
 /// Lay out the surface's choice button slots in a centered row near the panel's lower edge, at
 /// deterministic NDC rects (left-to-right, in vocabulary order) the native/touch layer hit-tests.
-fn push_button_row(out: &mut Vec<OverlayQuad>, choices: &[QuadRole]) {
+fn push_button_row(out: &mut Vec<OverlayQuad>, choices: &[QuadRole], ui_scale: f32) {
     if choices.is_empty() {
         return;
     }
+    let button_hw = BUTTON_HW * ui_scale;
+    let button_hh = BUTTON_HH * ui_scale;
+    let button_gap = BUTTON_GAP * ui_scale;
+    let row_cy = BUTTON_ROW_CY * ui_scale;
     let n = choices.len() as f32;
     // Total row half-width = n slots + (n-1) gaps; center it on x=0.
-    let total_hw = n * BUTTON_HW + (n - 1.0) * BUTTON_GAP * 0.5;
-    let mut cx = -total_hw + BUTTON_HW;
+    let total_hw = n * button_hw + (n - 1.0) * button_gap * 0.5;
+    let mut cx = -total_hw + button_hw;
     for role in choices {
-        out.push(quad(cx, BUTTON_ROW_CY, BUTTON_HW, BUTTON_HH, 1.0, *role));
-        cx += 2.0 * BUTTON_HW + BUTTON_GAP;
+        out.push(quad(cx, row_cy, button_hw, button_hh, 1.0, *role));
+        cx += 2.0 * button_hw + button_gap;
     }
 }
 
@@ -437,26 +450,40 @@ pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize
 /// seam. Returns an empty vec for [`Overlay::None`]. Quads are returned back-to-front (scrim first,
 /// then panel, then accents/bars) so an alpha-blended LOAD pass composites correctly.
 pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
+    overlay_quads_scaled(overlay, 1.0)
+}
+
+/// [`overlay_quads`] with an explicit physical `ui_scale` (DPI/point-per-NDC correction). The panel
+/// half-extents, accent strips, summary bars, and button slots all scale so the modal grows in
+/// lockstep with the owned text pass's `px * ui_scale` labels; the full-screen scrim stays 1.0.
+/// `ui_scale == 1.0` is byte-identical to [`overlay_quads`] — the golden-layout guard, and the
+/// geometry the engine's (unscaled) [`button_slot_at`] hit-test seam mirrors. The renderer threads
+/// its live scale in here; the no-arg [`overlay_quads`] remains for the host hit-test call sites.
+pub fn overlay_quads_scaled(overlay: &Overlay, ui_scale: f32) -> Vec<OverlayQuad> {
+    // Screen-edge/accent geometry scaled per frame (the scrim stays full-screen).
+    let panel_hh = PANEL_HH * ui_scale;
+    let panel_hw = PANEL_HW * ui_scale;
+    let accent_hh = ACCENT_STRIP_HH * ui_scale;
     match overlay {
         Overlay::None => Vec::new(),
         Overlay::Paused { single_player } => {
             // A single dim scrim across the whole screen + a small "paused" panel (rim first).
             let mut out = vec![quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim)];
-            push_panel_with_rim(&mut out, 0.92);
+            push_panel_with_rim(&mut out, 0.92, ui_scale);
             // A lockstep (multiplayer) pause is local-overlay-only: the sim keeps running and the
             // player's base keeps taking fire. Flag it with the same accent strip the reconnect
             // prompt uses (Warning) so "Paused" never reads as "the world is safely frozen" (M1).
             if !single_player {
                 out.push(quad(
                     0.0,
-                    PANEL_HH - ACCENT_STRIP_HH,
-                    PANEL_HW,
-                    ACCENT_STRIP_HH,
+                    panel_hh - accent_hh,
+                    panel_hw,
+                    accent_hh,
                     1.0,
                     QuadRole::Warning,
                 ));
             }
-            push_button_row(&mut out, surface_choices(overlay));
+            push_button_row(&mut out, surface_choices(overlay), ui_scale);
             out
         }
         Overlay::ReconnectPrompt { desynced } => {
@@ -466,22 +493,22 @@ pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
                 QuadRole::Accent
             };
             let mut out = vec![quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim)];
-            push_panel_with_rim(&mut out, 0.92);
+            push_panel_with_rim(&mut out, 0.92, ui_scale);
             // An accent strip across the top of the panel signals the cause (blue/red).
             out.push(quad(
                 0.0,
-                PANEL_HH - ACCENT_STRIP_HH,
-                PANEL_HW,
-                ACCENT_STRIP_HH,
+                panel_hh - accent_hh,
+                panel_hw,
+                accent_hh,
                 1.0,
                 accent,
             ));
-            push_button_row(&mut out, surface_choices(overlay));
+            push_button_row(&mut out, surface_choices(overlay), ui_scale);
             out
         }
         Overlay::Summary(summary) => {
             let mut out = vec![quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim)];
-            push_panel_with_rim(&mut out, 0.95);
+            push_panel_with_rim(&mut out, 0.95, ui_scale);
             // Outcome accent strip across the top of the panel.
             let outcome_role = match summary.outcome {
                 MatchOutcome::Victory(_) => QuadRole::Win,
@@ -489,9 +516,9 @@ pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
             };
             out.push(quad(
                 0.0,
-                PANEL_HH - ACCENT_STRIP_HH,
-                PANEL_HW,
-                ACCENT_STRIP_HH,
+                panel_hh - accent_hh,
+                panel_hw,
+                accent_hh,
                 1.0,
                 outcome_role,
             ));
@@ -522,34 +549,39 @@ pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
             // Start the rows below the accent strip (derived from it) and lay them out downward.
             // Only factions that did something get a row (L4), enumerated over the *filtered* set so
             // the shown rows stack contiguously (no gap where a skipped Neutral row would have sat).
-            let top = SUMMARY_ROWS_TOP;
+            let top = SUMMARY_ROWS_TOP * ui_scale;
+            let bar_gap = BAR_GAP * ui_scale;
+            let bar_sub_gap = BAR_SUB_GAP * ui_scale;
             for (row, stats) in summary
                 .per_faction
                 .iter()
                 .filter(|s| row_is_shown(s))
                 .enumerate()
             {
-                let row_cy = top - row as f32 * BAR_GAP;
+                let row_cy = top - row as f32 * bar_gap;
                 push_tracked_bar(
                     &mut out,
                     row_cy,
                     bar_fraction(stats, max_kills),
                     QuadRole::DataBar,
+                    ui_scale,
                 );
                 push_tracked_bar(
                     &mut out,
-                    row_cy - BAR_SUB_GAP,
+                    row_cy - bar_sub_gap,
                     frac_of(stats.territory_held as i64, max_territory as i64),
                     QuadRole::TerritoryBar,
+                    ui_scale,
                 );
                 push_tracked_bar(
                     &mut out,
-                    row_cy - 2.0 * BAR_SUB_GAP,
+                    row_cy - 2.0 * bar_sub_gap,
                     frac_of(stats.resources_total, max_resources),
                     QuadRole::ResourceBar,
+                    ui_scale,
                 );
             }
-            push_button_row(&mut out, surface_choices(overlay));
+            push_button_row(&mut out, surface_choices(overlay), ui_scale);
             out
         }
     }
@@ -638,26 +670,44 @@ fn button_label(overlay: &Overlay, slot: usize) -> &'static str {
 /// (kills / territory / resources) so the bars finally carry their actual counts. Button captions
 /// are emitted for every surface that has a button row.
 pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
+    overlay_labels_scaled(overlay, 1.0)
+}
+
+/// [`overlay_labels`] with an explicit physical `ui_scale`. Every label POSITION comes from the
+/// SCALED panel/row geometry so it lands correctly inside the scaled modal; each emitted `size` stays
+/// UNSCALED — the owned text pass multiplies it by `ui_scale` at draw time (no double-scaling).
+/// `ui_scale == 1.0` is byte-identical to [`overlay_labels`].
+pub fn overlay_labels_scaled(overlay: &Overlay, ui_scale: f32) -> Vec<TextLabel> {
     let mut out: Vec<TextLabel> = Vec::new();
+
+    // Scaled geometry mirroring `overlay_quads_scaled` (positions only; sizes stay unscaled).
+    let panel_hh = PANEL_HH * ui_scale;
+    let accent_hh = ACCENT_STRIP_HH * ui_scale;
+    let bar_max_hw = BAR_MAX_HW * ui_scale;
+    let bar_gap = BAR_GAP * ui_scale;
+    let bar_sub_gap = BAR_SUB_GAP * ui_scale;
+    let button_hw = BUTTON_HW * ui_scale;
+    let button_gap = BUTTON_GAP * ui_scale;
+    let button_row_cy = BUTTON_ROW_CY * ui_scale;
 
     // Button captions, centered on each slot rect (shared by every surface with a button row).
     let choices = surface_choices(overlay);
     if !choices.is_empty() {
         let n = choices.len() as f32;
-        let mut cx = -(n * BUTTON_HW + (n - 1.0) * BUTTON_GAP * 0.5) + BUTTON_HW;
+        let mut cx = -(n * button_hw + (n - 1.0) * button_gap * 0.5) + button_hw;
         for (slot, role) in choices.iter().enumerate() {
             let caption = button_label(overlay, slot);
             if !caption.is_empty() {
                 out.push(TextLabel {
                     text: caption.to_string(),
-                    pos: [cx, BUTTON_ROW_CY],
+                    pos: [cx, button_row_cy],
                     size: BUTTON_LABEL_SIZE,
                     anchor: Anchor::Center,
                     // Role-aware ink so the amber primary slot keeps a readable caption (M3).
                     color: button_label_color(*role),
                 });
             }
-            cx += 2.0 * BUTTON_HW + BUTTON_GAP;
+            cx += 2.0 * button_hw + button_gap;
         }
     }
 
@@ -666,7 +716,7 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
     if let Overlay::Paused { single_player } = overlay {
         out.push(TextLabel {
             text: "PAUSED".to_string(),
-            pos: [0.0, PANEL_HH + 0.06],
+            pos: [0.0, panel_hh + 0.06 * ui_scale],
             size: TITLE_SIZE,
             anchor: Anchor::BottomCenter,
             color: LABEL_COLOR,
@@ -675,7 +725,7 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
             out.push(TextLabel {
                 text: "YOUR MATCH KEEPS RUNNING".to_string(),
                 // Just below the warning accent strip, mirroring the reconnect-prompt cause line.
-                pos: [0.0, PANEL_HH - 2.0 * ACCENT_STRIP_HH - 0.05],
+                pos: [0.0, panel_hh - 2.0 * accent_hh - 0.05 * ui_scale],
                 size: LABEL_SIZE,
                 anchor: Anchor::Center,
                 color: color(QuadRole::Warning),
@@ -687,7 +737,7 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
         // The outcome title, large, centered just above the panel body.
         out.push(TextLabel {
             text: outcome_title(summary.outcome).to_string(),
-            pos: [0.0, PANEL_HH + 0.06],
+            pos: [0.0, panel_hh + 0.06 * ui_scale],
             size: TITLE_SIZE,
             anchor: Anchor::BottomCenter,
             color: LABEL_COLOR,
@@ -697,7 +747,7 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
         // `overlay_quads` (same `SUMMARY_ROWS_TOP` / `BAR_GAP` geometry). The number is drawn at the
         // RIGHT end of the bar track so it never overlaps the bar fill, and the faction tag at the
         // left. These are the literal integer counts — chrome, not intel (invariant #6).
-        let top = SUMMARY_ROWS_TOP;
+        let top = SUMMARY_ROWS_TOP * ui_scale;
         // Same filter + contiguous enumeration as `overlay_quads` so labels align 1:1 with the bars
         // (L4 skips a faction that did nothing).
         for (row, stats) in summary
@@ -706,11 +756,11 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
             .filter(|s| row_is_shown(s))
             .enumerate()
         {
-            let row_cy = top - row as f32 * BAR_GAP;
+            let row_cy = top - row as f32 * bar_gap;
             // Faction tag at the far left of the row, vertically centered on the kill bar.
             out.push(TextLabel {
                 text: faction_label(stats.faction).to_string(),
-                pos: [-BAR_MAX_HW - 0.02, row_cy],
+                pos: [-bar_max_hw - 0.02 * ui_scale, row_cy],
                 size: LABEL_SIZE,
                 anchor: Anchor::Center,
                 color: LABEL_COLOR,
@@ -720,7 +770,7 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
             // previously dropped. Follows the same left-anchored, per-row pattern as the tag.
             out.push(TextLabel {
                 text: format!("{}/{}", stats.units_produced, stats.units_lost),
-                pos: [-BAR_MAX_HW - 0.02, row_cy - 2.0 * BAR_SUB_GAP],
+                pos: [-bar_max_hw - 0.02 * ui_scale, row_cy - 2.0 * bar_sub_gap],
                 size: LABEL_SIZE,
                 anchor: Anchor::Center,
                 color: crate::theme::ASH,
@@ -729,13 +779,13 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
             // stacked on the same sub-offsets the bars use.
             let nums = [
                 (row_cy, stats.units_killed as i64),
-                (row_cy - BAR_SUB_GAP, stats.territory_held as i64),
-                (row_cy - 2.0 * BAR_SUB_GAP, stats.resources_total),
+                (row_cy - bar_sub_gap, stats.territory_held as i64),
+                (row_cy - 2.0 * bar_sub_gap, stats.resources_total),
             ];
             for (cy, value) in nums {
                 out.push(TextLabel {
                     text: value.to_string(),
-                    pos: [BAR_MAX_HW + 0.03, cy],
+                    pos: [bar_max_hw + 0.03 * ui_scale, cy],
                     size: LABEL_SIZE,
                     anchor: Anchor::Center,
                     color: LABEL_COLOR,
@@ -788,6 +838,10 @@ pub struct OverlayRenderer {
     /// frame and folded into every uploaded instance so the SDF rounded corners stay round in pixels
     /// (not egg-shaped) on a wide window. Defaults to 1.0 (square — the viz viewport).
     aspect: f32,
+    /// Physical UI scale (DPI/point-per-NDC correction) for the current frame — grows the modal
+    /// panel/buttons/bars in lockstep with the owned text pass's scaled labels. Set via
+    /// [`set_ui_scale`](OverlayRenderer::set_ui_scale); defaults to `1.0` (legacy geometry).
+    ui_scale: f32,
 }
 
 impl OverlayRenderer {
@@ -879,6 +933,7 @@ impl OverlayRenderer {
             instance_cap,
             text,
             aspect: 1.0,
+            ui_scale: 1.0,
         }
     }
 
@@ -891,6 +946,16 @@ impl OverlayRenderer {
         self.text.set_aspect(aspect);
     }
 
+    /// Set the physical UI scale (DPI/point-per-NDC correction) for this frame so the modal panel +
+    /// buttons + bars grow in lockstep with the owned text pass's scaled labels (else scaled glyphs
+    /// would overflow the unscaled panel). Forwarded to the owned text pass; the host calls it once
+    /// per frame before [`render`](OverlayRenderer::render), mirroring
+    /// [`set_aspect`](OverlayRenderer::set_aspect). `1.0` is the legacy geometry.
+    pub fn set_ui_scale(&mut self, ui_scale: f32) {
+        self.ui_scale = ui_scale;
+        self.text.set_ui_scale(ui_scale);
+    }
+
     /// Draw the in-session overlay on top of `view` (a LOAD pass — never clears). Builds the quad
     /// set via [`overlay_quads`], uploads it, and records one LOAD render pass so the overlay
     /// composites over the (possibly dark) match frame. No-op for [`Overlay::None`].
@@ -901,14 +966,14 @@ impl OverlayRenderer {
         view: &wgpu::TextureView,
         overlay: &Overlay,
     ) {
-        let quads = overlay_quads(overlay);
+        let quads = overlay_quads_scaled(overlay, self.ui_scale);
         if quads.is_empty() {
             return;
         }
 
         // Queue this surface's text labels (W4): summary numbers/title + button captions. Flushed
         // after the panel quads below so the glyphs composite on top of the chrome.
-        for label in overlay_labels(overlay) {
+        for label in overlay_labels_scaled(overlay, self.ui_scale) {
             self.text.queue(
                 label.text,
                 label.pos,
@@ -1178,6 +1243,93 @@ mod tests {
         for quad in &q {
             assert!(quad.cx >= -1.5 && quad.cx <= 1.5, "cx in NDC range");
             assert!(quad.cy >= -1.5 && quad.cy <= 1.5, "cy in NDC range");
+        }
+    }
+
+    #[test]
+    fn ui_scale_grows_the_panel_and_keeps_the_title_contained() {
+        // DPI-scaling containment for the fixed modal panel: at ui_scale = 2.0 / 3.0 the panel fill's
+        // width grows ~proportionally AND the (scaled) outcome title still fits inside it.
+        let ov = Overlay::Summary(summary_with_kills(
+            5,
+            2,
+            MatchOutcome::Victory(Faction::Player),
+        ));
+        let panel_hw = |ui_scale: f32| {
+            overlay_quads_scaled(&ov, ui_scale)
+                .into_iter()
+                .find(|q| q.role == QuadRole::Panel)
+                .expect("summary draws a panel fill")
+                .hw
+        };
+        let base_hw = panel_hw(1.0);
+        for s in [2.0_f32, 3.0] {
+            let scaled_hw = panel_hw(s);
+            assert!(
+                (scaled_hw - base_hw * s).abs() < 1e-5,
+                "panel width should grow ~{s}x (got {scaled_hw} vs {})",
+                base_hw * s
+            );
+            // The scaled outcome title (drawn at TITLE_SIZE*s) fits within the scaled panel width.
+            let title_w = crate::text::measure("VICTORY", TITLE_SIZE * s, 1.0).0;
+            assert!(
+                title_w <= 2.0 * scaled_hw + 1e-5,
+                "title ({title_w}) overflows the scaled panel width {} at ui_scale {s}",
+                2.0 * scaled_hw
+            );
+        }
+    }
+
+    #[test]
+    fn ui_scale_grows_the_buttons_and_keeps_captions_contained() {
+        // DPI-scaling containment for fixed chrome (buttons): at ui_scale = 2.0 / 3.0 each button box
+        // scales AND its (scaled) caption still fits inside its width.
+        let ov = Overlay::Summary(summary_with_kills(
+            1,
+            0,
+            MatchOutcome::Victory(Faction::Player),
+        ));
+        for s in [2.0_f32, 3.0] {
+            let q = overlay_quads_scaled(&ov, s);
+            let labels = overlay_labels_scaled(&ov, s);
+            // Every button caption fits its scaled button. Match each caption to the nearest button
+            // quad by center x (they share the row cy), then check the width.
+            let buttons: Vec<&OverlayQuad> = q
+                .iter()
+                .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
+                .collect();
+            assert!(!buttons.is_empty(), "the summary has buttons");
+            for b in &buttons {
+                // The caption centered on this button (matched by x).
+                let cap = labels
+                    .iter()
+                    .filter(|l| (l.pos[0] - b.cx).abs() < 1e-4 && (l.pos[1] - b.cy).abs() < 1e-4)
+                    .min_by(|a, c| a.pos[0].partial_cmp(&c.pos[0]).unwrap());
+                if let Some(cap) = cap {
+                    // The text pass draws the caption at `size * ui_scale`.
+                    let w = crate::text::measure(&cap.text, cap.size * s, 1.0).0;
+                    assert!(
+                        w <= 2.0 * b.hw + 1e-5,
+                        "caption {:?} ({w}) overflows its {} scaled button at ui_scale {s}",
+                        cap.text,
+                        2.0 * b.hw
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ui_scale_one_is_byte_identical() {
+        // The identity contract the golden tests + the engine's unscaled `button_slot_at` rely on:
+        // the scaled entry at 1.0 reproduces the legacy no-arg fns exactly.
+        for ov in [
+            Overlay::Paused { single_player: false },
+            Overlay::ReconnectPrompt { desynced: true },
+            Overlay::Summary(summary_with_kills(4, 2, MatchOutcome::Victory(Faction::Player))),
+        ] {
+            assert_eq!(overlay_quads(&ov), overlay_quads_scaled(&ov, 1.0));
+            assert_eq!(overlay_labels(&ov), overlay_labels_scaled(&ov, 1.0));
         }
     }
 

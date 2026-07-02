@@ -1104,6 +1104,12 @@ pub struct Renderer {
     /// after `render` each frame). `0.0` in command view, `1.0` while embodied — it drives the present
     /// shader's embodied dark intensification. Pure presentation (invariant #1/#4/#6).
     scene_dark: f32,
+    /// Physical UI scale (DPI / logical-point-per-NDC correction), pushed by the host via
+    /// [`Renderer::set_ui_scale`]. Forwarded to the shared `text`/`icon` passes (and, per frame, to the
+    /// overlay/radial sub-renderers) AND threaded into every HUD-chrome layout call so each box grows
+    /// in lockstep with its scaled glyphs — nothing overflows its panel. `1.0` (default) reproduces the
+    /// legacy geometry byte-for-byte. Pure presentation — never a sim read (invariant #1/#4).
+    ui_scale: f32,
 }
 
 impl Renderer {
@@ -1279,6 +1285,7 @@ impl Renderer {
             chrome_aspect: 1.0,
             palette: theme::Palette::DEFAULT,
             scene_dark: 0.0,
+            ui_scale: 1.0,
         }
     }
 
@@ -1289,6 +1296,25 @@ impl Renderer {
     /// Presentation only — never a sim input (invariant #1/#4/#6).
     pub fn set_palette_mode(&mut self, mode: theme::PaletteMode) {
         self.palette = theme::palette(mode);
+    }
+
+    /// Set the physical UI scale (DPI / logical-point-per-NDC correction) the host sources from the
+    /// platform (`winit` `Window::scale_factor()` on desktop, `densityDpi / DENSITY_DEFAULT` on
+    /// Android). It is forwarded to the shared `text`/`icon` passes (which scale each glyph's NDC size)
+    /// and threaded into every HUD-chrome layout call (via the per-`render_*` `self.ui_scale`), so the
+    /// boxes/panels grow in lockstep with their scaled glyphs and nothing overflows. A non-finite or
+    /// non-positive value falls back to `1.0`; the stored scale is clamped to the SAME
+    /// `[UI_SCALE_MIN, UI_SCALE_MAX]` range the `text`/`icon` passes clamp to, so the chrome geometry
+    /// and the glyphs never disagree at an out-of-range input. `1.0` reproduces the legacy geometry
+    /// byte-for-byte. Presentation only — never a sim input (invariant #1/#4).
+    pub fn set_ui_scale(&mut self, ui_scale: f32) {
+        self.ui_scale = if ui_scale.is_finite() && ui_scale > 0.0 {
+            ui_scale.clamp(text::UI_SCALE_MIN, text::UI_SCALE_MAX)
+        } else {
+            1.0
+        };
+        self.text.set_ui_scale(self.ui_scale);
+        self.icon.set_ui_scale(self.ui_scale);
     }
 
     /// Ensure the mesh-pass depth buffer matches `(width, height)`, recreating it only when the
@@ -1847,6 +1873,7 @@ impl Renderer {
         overlay: &overlay::Overlay,
     ) {
         self.overlay.set_aspect(self.chrome_aspect);
+        self.overlay.set_ui_scale(self.ui_scale);
         self.overlay.render(device, queue, view, overlay);
     }
 
@@ -1868,6 +1895,7 @@ impl Renderer {
         names: &[&str],
     ) {
         self.radial.set_aspect(self.chrome_aspect);
+        self.radial.set_ui_scale(self.ui_scale);
         self.radial
             .render_with_labels(device, queue, view, menu, Some(names));
     }
@@ -1938,9 +1966,9 @@ impl Renderer {
         if panel.is_empty() {
             return;
         }
-        let quads = command_panel::command_panel_quads(panel, self.chrome_aspect);
+        let quads = command_panel::command_panel_quads_scaled(panel, self.chrome_aspect, self.ui_scale);
         self.overlay.draw_quads(device, queue, view, &quads);
-        for l in command_panel::command_panel_labels(panel, self.chrome_aspect) {
+        for l in command_panel::command_panel_labels_scaled(panel, self.chrome_aspect, self.ui_scale) {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
         }
@@ -1964,7 +1992,7 @@ impl Renderer {
         if bar.is_empty() {
             return;
         }
-        let quads = command_bar::command_bar_quads(bar);
+        let quads = command_bar::command_bar_quads_scaled(bar, self.ui_scale);
         self.overlay.draw_quads(device, queue, view, &quads);
         for l in command_bar::command_bar_labels(bar) {
             self.text
@@ -1976,7 +2004,7 @@ impl Renderer {
         // in pixels (the bar's NDC layout is filled by the engine from the same hit rects). Drawn as a
         // LOAD pass over the labels — command-view chrome only (invariant #6).
         self.icon.set_aspect(self.chrome_aspect);
-        for it in command_bar::command_bar_icons(bar, &self.palette) {
+        for it in command_bar::command_bar_icons_scaled(bar, &self.palette, self.ui_scale) {
             self.icon.queue_item(it);
         }
         self.icon.render(device, queue, view);
@@ -1999,9 +2027,9 @@ impl Renderer {
         if hud.is_empty() {
             return;
         }
-        let quads = objective_hud::objective_hud_quads(hud);
+        let quads = objective_hud::objective_hud_quads_scaled(hud, self.ui_scale);
         self.overlay.draw_quads(device, queue, view, &quads);
-        for l in objective_hud::objective_hud_labels(hud) {
+        for l in objective_hud::objective_hud_labels_scaled(hud, self.ui_scale) {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
         }
@@ -2022,7 +2050,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         prompt: &prompt::Prompt,
     ) {
-        let quads = prompt::prompt_quads(prompt, self.chrome_aspect);
+        let quads = prompt::prompt_quads_scaled(prompt, self.chrome_aspect, self.ui_scale);
         if quads.is_empty() {
             return;
         }
@@ -2030,7 +2058,7 @@ impl Renderer {
         // Re-assert the chrome aspect on the shared text pass before laying out glyphs — without it
         // the copy stretches on a wide window (the raw-NDC chrome footgun).
         self.text.set_aspect(self.chrome_aspect);
-        for l in prompt::prompt_labels(prompt, self.chrome_aspect) {
+        for l in prompt::prompt_labels_scaled(prompt, self.chrome_aspect, self.ui_scale) {
             self.text
                 .queue(l.text, l.pos, l.size, l.anchor, l.color, l.alpha);
         }
@@ -2051,13 +2079,13 @@ impl Renderer {
         view: &wgpu::TextureView,
         state: &player_hud::PlayerHudState,
     ) {
-        let quads = player_hud::player_hud_quads(state);
+        let quads = player_hud::player_hud_quads_scaled(state, self.ui_scale);
         if quads.is_empty() {
             return;
         }
         self.overlay.draw_quads(device, queue, view, &quads);
         self.text.set_aspect(self.chrome_aspect);
-        for l in player_hud::player_hud_labels(state) {
+        for l in player_hud::player_hud_labels_scaled(state, self.ui_scale) {
             self.text
                 .queue(l.text, l.pos, l.size, l.anchor, l.color, l.alpha);
         }
@@ -2083,14 +2111,20 @@ impl Renderer {
         economy: Option<readout::EconomyReadout>,
         world_dark: bool,
     ) {
-        let labels = readout::readout_labels(&self.readout_tally, economy, world_dark, &self.palette);
+        let labels = readout::readout_labels_scaled(
+            &self.readout_tally,
+            economy,
+            world_dark,
+            &self.palette,
+            self.ui_scale,
+        );
         if labels.is_empty() {
             return;
         }
         // A subtle backing card behind the corner stack so the readout reads as designed HUD chrome,
         // not bare debug text — sized to this frame's aspect-corrected label footprint, drawn through
         // the shared overlay quad pipeline BEFORE the text so the glyphs sit on top.
-        let card = readout::readout_card(&labels, self.chrome_aspect);
+        let card = readout::readout_card_scaled(&labels, self.chrome_aspect, self.ui_scale);
         if !card.is_empty() {
             self.overlay.draw_quads(device, queue, view, &card);
         }

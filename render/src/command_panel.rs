@@ -155,21 +155,27 @@ fn capped_lines(lines: &[PanelLine]) -> Vec<PanelLine> {
 /// shrinks to match instead of leaving dead right-padding — while on any window the row still fits
 /// inside its box (no off-screen clipping, the bug that made the panel look broken). The right + top
 /// edges stay pinned (`RIGHT`/`TOP`), so the panel hugs the corner and grows leftward/downward.
-fn box_geom(view: &CommandPanelView, aspect: f32) -> (f32, f32, f32, f32, f32, f32) {
+fn box_geom(view: &CommandPanelView, aspect: f32, ui_scale: f32) -> (f32, f32, f32, f32, f32, f32) {
     let rows = capped_lines(&view.lines);
-    let widest = std::iter::once(crate::text::measure(&view.title, TITLE_SIZE, aspect).0)
+    // Size the box from the SCALED type metrics: the text pass draws each glyph at `px * ui_scale`,
+    // so the box must hug the scaled footprint or the rows spill past the panel edge (the bug this
+    // fixes). `ui_scale == 1.0` is exactly the legacy geometry (byte-identical) — the golden tests.
+    let widest = std::iter::once(crate::text::measure(&view.title, TITLE_SIZE * ui_scale, aspect).0)
         .chain(
             rows.iter()
-                .map(|l| crate::text::measure(&l.text, ROW_SIZE, aspect).0),
+                .map(|l| crate::text::measure(&l.text, ROW_SIZE * ui_scale, aspect).0),
         )
         .fold(0.0_f32, f32::max);
-    let hw = ((widest + 2.0 * PAD) * 0.5).clamp(MIN_HALF_W, MAX_HALF_W);
-    let inner_h = TITLE_SIZE + TITLE_GAP + rows.len() as f32 * ROW_STEP;
-    let hh = (inner_h + 2.0 * PAD) * 0.5;
+    let pad = PAD * ui_scale;
+    // Scale the clamp bounds too, so a denser display's box can actually grow (a fixed max would
+    // re-introduce the overflow at large scales).
+    let hw = ((widest + 2.0 * pad) * 0.5).clamp(MIN_HALF_W * ui_scale, MAX_HALF_W * ui_scale);
+    let inner_h = (TITLE_SIZE + TITLE_GAP + rows.len() as f32 * ROW_STEP) * ui_scale;
+    let hh = (inner_h + 2.0 * pad) * 0.5;
     let cx = RIGHT - hw;
     let cy = TOP - hh;
-    let left = RIGHT - 2.0 * hw + PAD;
-    let top_inner = TOP - PAD;
+    let left = RIGHT - 2.0 * hw + pad;
+    let top_inner = TOP - pad;
     (cx, cy, hw, hh, left, top_inner)
 }
 
@@ -177,17 +183,29 @@ fn box_geom(view: &CommandPanelView, aspect: f32) -> (f32, f32, f32, f32, f32, f
 /// view's content at the live viewport `aspect` (width / height). Empty view ⇒ no quads. Pure +
 /// GPU-free → unit-tested.
 pub fn command_panel_quads(view: &CommandPanelView, aspect: f32) -> Vec<OverlayQuad> {
+    command_panel_quads_scaled(view, aspect, 1.0)
+}
+
+/// [`command_panel_quads`] with an explicit physical `ui_scale` (DPI/point-per-NDC correction). The
+/// box grows in lockstep with the text pass's `px * ui_scale` glyphs so a scaled panel never
+/// overflows; `ui_scale == 1.0` is byte-identical to [`command_panel_quads`]. The renderer threads
+/// its live scale in here.
+pub fn command_panel_quads_scaled(
+    view: &CommandPanelView,
+    aspect: f32,
+    ui_scale: f32,
+) -> Vec<OverlayQuad> {
     if view.is_empty() {
         return Vec::new();
     }
-    let (cx, cy, hw, hh, _, _) = box_geom(view, aspect);
+    let (cx, cy, hw, hh, _, _) = box_geom(view, aspect, ui_scale);
     vec![
         // Rim first (behind), then the panel fill on top — a crisp border.
         OverlayQuad {
             cx,
             cy,
-            hw: hw + RIM_PAD,
-            hh: hh + RIM_PAD,
+            hw: hw + RIM_PAD * ui_scale,
+            hh: hh + RIM_PAD * ui_scale,
             r: RIM_COLOR[0],
             g: RIM_COLOR[1],
             b: RIM_COLOR[2],
@@ -212,10 +230,22 @@ pub fn command_panel_quads(view: &CommandPanelView, aspect: f32) -> Vec<OverlayQ
 /// the inner top, placed against the box sized at the live viewport `aspect`. Empty view ⇒ no labels.
 /// Pure + GPU-free → unit-tested.
 pub fn command_panel_labels(view: &CommandPanelView, aspect: f32) -> Vec<PanelLabel> {
+    command_panel_labels_scaled(view, aspect, 1.0)
+}
+
+/// [`command_panel_labels`] with an explicit physical `ui_scale`. Label POSITIONS come from the
+/// scaled box + scaled gaps so they sit correctly inside the scaled panel; the emitted `px_size`
+/// stays UNSCALED — the text pass multiplies it by `ui_scale` at draw time (no double-scaling).
+/// `ui_scale == 1.0` is byte-identical to [`command_panel_labels`].
+pub fn command_panel_labels_scaled(
+    view: &CommandPanelView,
+    aspect: f32,
+    ui_scale: f32,
+) -> Vec<PanelLabel> {
     if view.is_empty() {
         return Vec::new();
     }
-    let (_, _, _, _, left, top_inner) = box_geom(view, aspect);
+    let (_, _, _, _, left, top_inner) = box_geom(view, aspect, ui_scale);
     let rows = capped_lines(&view.lines);
     let mut out = Vec::with_capacity(rows.len() + 1);
     out.push(PanelLabel {
@@ -226,11 +256,11 @@ pub fn command_panel_labels(view: &CommandPanelView, aspect: f32) -> Vec<PanelLa
         color: TITLE_COLOR,
         alpha: 1.0,
     });
-    let rows_top = top_inner - TITLE_SIZE - TITLE_GAP;
+    let rows_top = top_inner - (TITLE_SIZE + TITLE_GAP) * ui_scale;
     for (i, line) in rows.iter().enumerate() {
         out.push(PanelLabel {
             text: line.text.clone(),
-            pos: [left, rows_top - i as f32 * ROW_STEP],
+            pos: [left, rows_top - i as f32 * ROW_STEP * ui_scale],
             px_size: ROW_SIZE,
             anchor: Anchor::TopLeft,
             color: line.style.color(),
@@ -459,6 +489,51 @@ mod tests {
         assert_eq!(ls[0].color, crate::theme::BONE, "title in the primary bone");
         assert_eq!(ls[0].px_size, crate::theme::TYPE_TITLE, "title on the type scale");
         assert_eq!(ls[1].px_size, crate::theme::TYPE_BODY, "rows on the type scale");
+    }
+
+    #[test]
+    fn ui_scale_grows_the_box_and_keeps_rows_contained() {
+        // DPI-scaling containment: at ui_scale = 2.0 / 3.0 the box's inner width grows ~proportionally
+        // AND every row's SCALED footprint still fits inside it — the 1.0 containment margin is
+        // preserved, so scaled glyphs never overflow the panel (the whole point of scaling box math).
+        let v = view(
+            "SELECTED — 3",
+            &[
+                ("3X RIFLEMAN", LineStyle::Normal),
+                ("STANCE: FIRE AT WILL", LineStyle::Normal),
+                ("E  EMBODY", LineStyle::Dim),
+            ],
+        );
+        let inner_w = |q: &[OverlayQuad], s: f32| 2.0 * q[1].hw - 2.0 * (PAD * s);
+        let base = command_panel_quads_scaled(&v, 1.0, 1.0);
+        let base_inner = inner_w(&base, 1.0);
+        for s in [2.0_f32, 3.0] {
+            let q = command_panel_quads_scaled(&v, 1.0, s);
+            let scaled_inner = inner_w(&q, s);
+            // Box inner width tracks the scale (these rows don't hit the clamp).
+            assert!(
+                (scaled_inner - base_inner * s).abs() < 1e-5,
+                "inner width should grow ~{s}x (got {scaled_inner} vs {})",
+                base_inner * s
+            );
+            // Every row's scaled text width fits the scaled inner width (no overflow).
+            for line in &v.lines {
+                let w = crate::text::measure(&line.text, ROW_SIZE * s, 1.0).0;
+                assert!(
+                    w <= scaled_inner + 1e-5,
+                    "row {:?} ({w}) overflows scaled inner width {scaled_inner} at ui_scale {s}",
+                    line.text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ui_scale_one_is_byte_identical() {
+        // The identity contract the golden tests rely on: the scaled entry at 1.0 == the legacy fn.
+        let v = view("CAMP — TIER 1", &[("Resources 300", LineStyle::Normal)]);
+        assert_eq!(command_panel_quads(&v, 0.7), command_panel_quads_scaled(&v, 0.7, 1.0));
+        assert_eq!(command_panel_labels(&v, 0.7), command_panel_labels_scaled(&v, 0.7, 1.0));
     }
 
     #[test]

@@ -72,14 +72,26 @@ impl CommandBarView {
 /// The bar's background quads — a rim then a fill per button (the rim drawn first, behind), through
 /// the shared overlay quad pipeline. Empty view ⇒ no quads. Pure + GPU-free → unit-tested.
 pub fn command_bar_quads(view: &CommandBarView) -> Vec<OverlayQuad> {
+    command_bar_quads_scaled(view, 1.0)
+}
+
+/// [`command_bar_quads`] with an explicit physical `ui_scale` (DPI/point-per-NDC correction). Each
+/// button's half-extents (and rim) scale about its center so the box grows in lockstep with the text
+/// pass's `px * ui_scale` label, keeping the caption contained; `ui_scale == 1.0` is byte-identical
+/// to [`command_bar_quads`]. The engine fills the button rects from its (unscaled) pixel hit layout,
+/// so at `ui_scale != 1.0` the drawn box is a scaled overlay of the hit rect (the hit-test seam is
+/// unscaled) — a feel/hit-reconciliation follow-up, not a containment bug.
+pub fn command_bar_quads_scaled(view: &CommandBarView, ui_scale: f32) -> Vec<OverlayQuad> {
     let mut out = Vec::with_capacity(view.buttons.len() * 2);
     for b in &view.buttons {
+        let hx = b.half_x * ui_scale;
+        let hy = b.half_y * ui_scale;
         // Rim (behind), slightly larger.
         out.push(OverlayQuad {
             cx: b.ndc_x,
             cy: b.ndc_y,
-            hw: b.half_x + RIM_PAD,
-            hh: b.half_y + RIM_PAD,
+            hw: hx + RIM_PAD * ui_scale,
+            hh: hy + RIM_PAD * ui_scale,
             r: RIM[0],
             g: RIM[1],
             b: RIM[2],
@@ -90,8 +102,8 @@ pub fn command_bar_quads(view: &CommandBarView) -> Vec<OverlayQuad> {
         out.push(OverlayQuad {
             cx: b.ndc_x,
             cy: b.ndc_y,
-            hw: b.half_x,
-            hh: b.half_y,
+            hw: hx,
+            hh: hy,
             r: FILL[0],
             g: FILL[1],
             b: FILL[2],
@@ -147,13 +159,25 @@ fn icon_for_label(label: &str, palette: &crate::theme::Palette) -> Option<(IconK
 /// no icons. The icon center sits `ICON_CENTER_FRAC` of the half-width left of the button center; the
 /// icon pass aspect-corrects the width so it stays square in pixels. Pure + GPU-free → unit-tested.
 pub fn command_bar_icons(view: &CommandBarView, palette: &crate::theme::Palette) -> Vec<IconItem> {
+    command_bar_icons_scaled(view, palette, 1.0)
+}
+
+/// [`command_bar_icons`] with an explicit physical `ui_scale`. The icon sits at its fraction of the
+/// SCALED button half-width so it tracks the scaled box; the emitted `size` stays UNSCALED — the icon
+/// pass multiplies it by `ui_scale` at draw time (no double-scaling). `ui_scale == 1.0` is
+/// byte-identical to [`command_bar_icons`].
+pub fn command_bar_icons_scaled(
+    view: &CommandBarView,
+    palette: &crate::theme::Palette,
+    ui_scale: f32,
+) -> Vec<IconItem> {
     view.buttons
         .iter()
         .filter_map(|b| {
             let (kind, tint) = icon_for_label(&b.label, palette)?;
             Some(IconItem {
                 kind,
-                pos: [b.ndc_x - b.half_x * ICON_CENTER_FRAC, b.ndc_y],
+                pos: [b.ndc_x - b.half_x * ui_scale * ICON_CENTER_FRAC, b.ndc_y],
                 size: ICON_SIZE,
                 tint,
                 alpha: 1.0,
@@ -320,6 +344,48 @@ mod tests {
                 "label {label:?} measures {w} NDC, wider than its {button_w} NDC button in portrait"
             );
         }
+    }
+
+    #[test]
+    fn ui_scale_grows_the_button_and_keeps_the_label_contained() {
+        // DPI-scaling containment for fixed chrome: at ui_scale = 2.0 / 3.0 each button box scales
+        // about its center AND its (scaled) label still fits — the longest label ("UPGRADE") measured
+        // at LABEL_SIZE*s fits the scaled button width. Worst case is the portrait aspect.
+        let half_x = 0.20_f32; // a command_touch button half-width in portrait NDC
+        let v = CommandBarView {
+            buttons: vec![CommandBarButton {
+                ndc_x: 0.0,
+                ndc_y: -0.8,
+                half_x,
+                half_y: 0.05,
+                label: "UPGRADE".to_string(),
+            }],
+        };
+        for s in [2.0_f32, 3.0] {
+            let q = command_bar_quads_scaled(&v, s);
+            let fill = &q[1];
+            // The button box scaled about its center by ~s.
+            assert!((fill.hw - half_x * s).abs() < 1e-6, "button half-width grows ~{s}x");
+            let button_w = 2.0 * fill.hw;
+            for label in ["RIFLE", "HEAVY", "UPGRADE"] {
+                let w = crate::text::measure(label, LABEL_SIZE * s, PORTRAIT_ASPECT).0;
+                assert!(
+                    w <= button_w,
+                    "label {label:?} ({w}) overflows its {button_w} scaled button at ui_scale {s}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ui_scale_one_is_byte_identical() {
+        // The identity contract the golden tests rely on.
+        let v = CommandBarView {
+            buttons: vec![btn("RIFLE"), btn("UPGRADE")],
+        };
+        let pal = crate::theme::Palette::DEFAULT;
+        assert_eq!(command_bar_quads(&v), command_bar_quads_scaled(&v, 1.0));
+        assert_eq!(command_bar_icons(&v, &pal), command_bar_icons_scaled(&v, &pal, 1.0));
     }
 
     #[test]

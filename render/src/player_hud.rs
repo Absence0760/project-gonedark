@@ -133,21 +133,31 @@ pub fn ammo_label(ammo: u32, mag_size: u32) -> String {
 /// track, and a left-anchored fill sized to the current HP fraction. An empty state (no body) or a
 /// zero fill emits no fill quad. Pure + GPU-free → unit-tested.
 pub fn player_hud_quads(state: &PlayerHudState) -> Vec<OverlayQuad> {
+    player_hud_quads_scaled(state, 1.0)
+}
+
+/// [`player_hud_quads`] with an explicit physical `ui_scale` (DPI/point-per-NDC correction). The bar
+/// width/height + rim scale so the vitals bar grows in lockstep with the ammo count's scaled glyphs;
+/// `ui_scale == 1.0` is byte-identical to [`player_hud_quads`]. LEFT/BOTTOM (screen-edge anchors)
+/// stay put so the bar keeps hugging the corner. The renderer threads its live scale in here.
+pub fn player_hud_quads_scaled(state: &PlayerHudState, ui_scale: f32) -> Vec<OverlayQuad> {
     if state.is_empty() {
         return Vec::new();
     }
     let frac = health_fraction(state.current_hp, state.max_hp);
-    let hw = BAR_W * 0.5;
+    let bar_w = BAR_W * ui_scale;
+    let bar_hh = BAR_HH * ui_scale;
+    let hw = bar_w * 0.5;
     let cx = LEFT + hw;
-    let cy = BOTTOM + BAR_HH; // bottom edge sits at BOTTOM
+    let cy = BOTTOM + bar_hh; // bottom edge sits at BOTTOM
     let mut out = Vec::with_capacity(3);
 
     // Rim (behind) — a crisp border, like the objective/prompt cards.
     out.push(OverlayQuad {
         cx,
         cy,
-        hw: hw + RIM_PAD,
-        hh: BAR_HH + RIM_PAD,
+        hw: hw + RIM_PAD * ui_scale,
+        hh: bar_hh + RIM_PAD * ui_scale,
         r: crate::theme::RIM[0],
         g: crate::theme::RIM[1],
         b: crate::theme::RIM[2],
@@ -159,7 +169,7 @@ pub fn player_hud_quads(state: &PlayerHudState) -> Vec<OverlayQuad> {
         cx,
         cy,
         hw,
-        hh: BAR_HH,
+        hh: bar_hh,
         r: crate::theme::HAIRLINE[0],
         g: crate::theme::HAIRLINE[1],
         b: crate::theme::HAIRLINE[2],
@@ -168,14 +178,14 @@ pub fn player_hud_quads(state: &PlayerHudState) -> Vec<OverlayQuad> {
     });
     // Fill — left-anchored, width = frac · BAR_W, coloured by condition. Skip a zero-width fill.
     if frac > 0.0 {
-        let fill_w = BAR_W * frac;
+        let fill_w = bar_w * frac;
         let fhw = fill_w * 0.5;
         let [r, g, b] = health_color(frac);
         out.push(OverlayQuad {
             cx: LEFT + fhw, // pinned to the left edge of the track
             cy,
             hw: fhw,
-            hh: BAR_HH,
+            hh: bar_hh,
             r,
             g,
             b,
@@ -190,12 +200,19 @@ pub fn player_hud_quads(state: &PlayerHudState) -> Vec<OverlayQuad> {
 /// Left-aligned with the bar. An empty state (no body) or a magazine-less weapon (`mag_size == 0`)
 /// emits nothing. Pure + GPU-free → unit-tested.
 pub fn player_hud_labels(state: &PlayerHudState) -> Vec<PlayerHudLabel> {
+    player_hud_labels_scaled(state, 1.0)
+}
+
+/// [`player_hud_labels`] with an explicit physical `ui_scale`. The count POSITION rides above the
+/// SCALED bar with a scaled gap; the emitted `size` stays UNSCALED — the text pass multiplies it by
+/// `ui_scale` at draw time (no double-scaling). `ui_scale == 1.0` is byte-identical.
+pub fn player_hud_labels_scaled(state: &PlayerHudState, ui_scale: f32) -> Vec<PlayerHudLabel> {
     if state.is_empty() || state.mag_size == 0 {
         return Vec::new();
     }
     // The bar's top edge; the count sits a gap above it, growing down from a TopLeft anchor.
-    let bar_top = BOTTOM + 2.0 * BAR_HH;
-    let label_top = bar_top + LABEL_GAP + AMMO_SIZE;
+    let bar_top = BOTTOM + 2.0 * BAR_HH * ui_scale;
+    let label_top = bar_top + LABEL_GAP * ui_scale + AMMO_SIZE * ui_scale;
     // Warm the count when the magazine is nearly spent — a nudge on the player's own weapon.
     let low = (state.ammo as f32) <= AMMO_LOW_FRAC * state.mag_size as f32;
     let color = if low { AMMO_LOW_COLOR } else { AMMO_COLOR };
@@ -371,6 +388,18 @@ mod tests {
         assert_eq!(full, AMMO_COLOR, "a full mag reads in the neutral bone tint");
         assert_eq!(low, AMMO_LOW_COLOR, "a near-empty mag warms to the low-ammo tint");
         assert_ne!(full, low);
+    }
+
+    #[test]
+    fn ui_scale_one_is_byte_identical_and_scales_the_bar() {
+        // The identity contract the golden tests rely on, plus a check that the bar actually scales.
+        let s = state();
+        assert_eq!(player_hud_quads(&s), player_hud_quads_scaled(&s, 1.0));
+        assert_eq!(player_hud_labels(&s), player_hud_labels_scaled(&s, 1.0));
+        // At 2× the track's half-width doubles (the bar grows with the scaled ammo glyphs).
+        let base_track = player_hud_quads_scaled(&s, 1.0)[1].hw;
+        let scaled_track = player_hud_quads_scaled(&s, 2.0)[1].hw;
+        assert!((scaled_track - 2.0 * base_track).abs() < 1e-6, "track half-width doubles at 2×");
     }
 
     // ---- fairness (invariant #6): screen-space only, bottom-left, clear of centre ----

@@ -113,30 +113,43 @@ pub struct ObjectiveLabel {
 /// The box center + half-extents (NDC) for `n_rows` body rows, plus the inner-left `x` text starts
 /// from and the inner-top `y` the title starts at. Shared by [`objective_hud_quads`] and
 /// [`objective_hud_labels`] so the box and its text always agree.
-fn box_geom(n_rows: usize) -> (f32, f32, f32, f32, f32, f32) {
-    let inner_h = TITLE_SIZE + TITLE_GAP + n_rows as f32 * ROW_STEP;
-    let hh = (inner_h + 2.0 * PAD) * 0.5;
-    let cx = LEFT + HALF_W;
+fn box_geom(n_rows: usize, ui_scale: f32) -> (f32, f32, f32, f32, f32, f32) {
+    // The card + its paddings + its (fixed) half-width all scale with the physical `ui_scale`, so the
+    // box grows in lockstep with the text pass's `px * ui_scale` glyphs. `ui_scale == 1.0` is exactly
+    // the legacy geometry (byte-identical), the golden-layout guard. LEFT/TOP (screen-edge anchors)
+    // stay put so the card keeps hugging the corner.
+    let inner_h = (TITLE_SIZE + TITLE_GAP + n_rows as f32 * ROW_STEP) * ui_scale;
+    let pad = PAD * ui_scale;
+    let hh = (inner_h + 2.0 * pad) * 0.5;
+    let hw = HALF_W * ui_scale;
+    let cx = LEFT + hw;
     let cy = TOP - hh;
-    let left = LEFT + PAD;
-    let top_inner = TOP - PAD;
-    (cx, cy, HALF_W, hh, left, top_inner)
+    let left = LEFT + pad;
+    let top_inner = TOP - pad;
+    (cx, cy, hw, hh, left, top_inner)
 }
 
 /// The HUD's background + rim quads (drawn through the overlay quad pipeline), auto-sized to the
 /// view's row count. Empty view ⇒ no quads. Pure + GPU-free → unit-tested.
 pub fn objective_hud_quads(view: &ObjectiveHudView) -> Vec<OverlayQuad> {
+    objective_hud_quads_scaled(view, 1.0)
+}
+
+/// [`objective_hud_quads`] with an explicit physical `ui_scale` (DPI/point-per-NDC correction). The
+/// card grows in lockstep with the text pass's `px * ui_scale` glyphs; `ui_scale == 1.0` is
+/// byte-identical to [`objective_hud_quads`]. The renderer threads its live scale in here.
+pub fn objective_hud_quads_scaled(view: &ObjectiveHudView, ui_scale: f32) -> Vec<OverlayQuad> {
     if view.is_empty() {
         return Vec::new();
     }
-    let (cx, cy, hw, hh, _, _) = box_geom(view.n_rows());
+    let (cx, cy, hw, hh, _, _) = box_geom(view.n_rows(), ui_scale);
     vec![
         // Rim first (behind), then the panel fill on top — a crisp border.
         OverlayQuad {
             cx,
             cy,
-            hw: hw + RIM_PAD,
-            hh: hh + RIM_PAD,
+            hw: hw + RIM_PAD * ui_scale,
+            hh: hh + RIM_PAD * ui_scale,
             r: RIM_COLOR[0],
             g: RIM_COLOR[1],
             b: RIM_COLOR[2],
@@ -161,10 +174,17 @@ pub fn objective_hud_quads(view: &ObjectiveHudView) -> Vec<OverlayQuad> {
 /// progress line when a numeric `(current, goal)` is present. All left-aligned and stacked from the
 /// inner top. Empty view ⇒ no labels. Pure + GPU-free → unit-tested.
 pub fn objective_hud_labels(view: &ObjectiveHudView) -> Vec<ObjectiveLabel> {
+    objective_hud_labels_scaled(view, 1.0)
+}
+
+/// [`objective_hud_labels`] with an explicit physical `ui_scale`. Label POSITIONS come from the
+/// scaled box + scaled gaps; the emitted `px_size` stays UNSCALED — the text pass multiplies it by
+/// `ui_scale` at draw time (no double-scaling). `ui_scale == 1.0` is byte-identical.
+pub fn objective_hud_labels_scaled(view: &ObjectiveHudView, ui_scale: f32) -> Vec<ObjectiveLabel> {
     if view.is_empty() {
         return Vec::new();
     }
-    let (_, _, _, _, left, top_inner) = box_geom(view.n_rows());
+    let (_, _, _, _, left, top_inner) = box_geom(view.n_rows(), ui_scale);
     let state_color = view
         .state
         .unwrap_or(ObjectiveStateView::Active)
@@ -179,7 +199,7 @@ pub fn objective_hud_labels(view: &ObjectiveHudView) -> Vec<ObjectiveLabel> {
         color: TITLE_COLOR,
         alpha: 1.0,
     });
-    let rows_top = top_inner - TITLE_SIZE - TITLE_GAP;
+    let rows_top = top_inner - (TITLE_SIZE + TITLE_GAP) * ui_scale;
     out.push(ObjectiveLabel {
         text: view.objective.clone(),
         pos: [left, rows_top],
@@ -192,7 +212,7 @@ pub fn objective_hud_labels(view: &ObjectiveHudView) -> Vec<ObjectiveLabel> {
         if goal > 0 {
             out.push(ObjectiveLabel {
                 text: format!("{current} / {goal}"),
-                pos: [left, rows_top - ROW_STEP],
+                pos: [left, rows_top - ROW_STEP * ui_scale],
                 px_size: ROW_SIZE,
                 anchor: Anchor::TopLeft,
                 color: state_color,
@@ -276,6 +296,39 @@ mod tests {
         assert_eq!(ls[0].color, crate::theme::BONE, "title in the primary bone");
         assert_eq!(ls[0].px_size, crate::theme::TYPE_TITLE, "title on the type scale");
         assert_eq!(ls[1].px_size, crate::theme::TYPE_BODY, "rows on the type scale");
+    }
+
+    #[test]
+    fn ui_scale_grows_the_box_and_keeps_the_objective_line_contained() {
+        // DPI-scaling containment: at ui_scale = 2.0 / 3.0 the card's inner width grows ~proportionally
+        // AND the (scaled) objective line still fits inside it. The card is fixed-width (HALF_W), so a
+        // scaled glyph would overflow it unless the box scales too — this pins that it does.
+        let v = view("Take the enemy base", ObjectiveStateView::Active, Some((2, 5)));
+        let inner_w = |q: &[OverlayQuad], s: f32| 2.0 * q[1].hw - 2.0 * (PAD * s);
+        let base_inner = inner_w(&objective_hud_quads_scaled(&v, 1.0), 1.0);
+        for s in [2.0_f32, 3.0] {
+            let q = objective_hud_quads_scaled(&v, s);
+            let scaled_inner = inner_w(&q, s);
+            assert!(
+                (scaled_inner - base_inner * s).abs() < 1e-5,
+                "inner width should grow ~{s}x (got {scaled_inner} vs {})",
+                base_inner * s
+            );
+            // The objective line (the widest content) fits the scaled inner width.
+            let w = crate::text::measure(&v.objective, ROW_SIZE * s, 1.0).0;
+            assert!(
+                w <= scaled_inner + 1e-5,
+                "objective line ({w}) overflows scaled inner width {scaled_inner} at ui_scale {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn ui_scale_one_is_byte_identical() {
+        // The identity contract the golden tests rely on.
+        let v = view("Take the enemy base", ObjectiveStateView::Active, Some((0, 5)));
+        assert_eq!(objective_hud_quads(&v), objective_hud_quads_scaled(&v, 1.0));
+        assert_eq!(objective_hud_labels(&v), objective_hud_labels_scaled(&v, 1.0));
     }
 
     #[test]
