@@ -520,54 +520,57 @@ const TOKEN_ICON_SIZE: f32 = 0.05;
 /// Opacity of a command-view unit-kind glyph.
 const TOKEN_ICON_ALPHA: f32 = 0.95;
 
-/// Static first-person world dressing (W5 follow-on): scenery + cover props placed around the
-/// battlefield so the embodied view reads as a *place*, not a bare ground/sky void. Each entry is
-/// `(kind, x, y, yaw_radians, scale)` in world metres. This is **render-only environment** — a
-/// fixed cosmetic layout with no sim entity behind it, so it reveals no map intel (it is terrain,
-/// not unit/enemy positions) and stays fair under "world goes dark" (invariant #6). Drawn at the
-/// LOD [`mesh::select_lod`] picks from the eye distance, so distant scenery costs fewer triangles.
-const PROP_LAYOUT: &[(mesh::ModelKind, f32, f32, f32, f32)] = &[
-    // Tree line / scenery (soft cover) — desaturated greens, varied scale.
-    (mesh::ModelKind::Tree, -19.0, 14.0, 0.4, 1.10),
-    (mesh::ModelKind::Tree, -22.0, 6.0, 1.9, 0.95),
-    (mesh::ModelKind::Tree, 17.0, 18.0, 2.7, 1.20),
-    (mesh::ModelKind::Tree, 24.0, -9.0, 0.9, 1.00),
-    (mesh::ModelKind::Tree, -6.0, 26.0, 3.5, 1.05),
-    // Boulders (hard cover) — grey, low.
-    (mesh::ModelKind::Rock, -12.0, -8.0, 0.2, 1.30),
-    (mesh::ModelKind::Rock, 9.0, 11.0, 2.2, 0.90),
-    (mesh::ModelKind::Rock, 20.0, 4.0, 4.0, 1.10),
-    (mesh::ModelKind::Rock, -2.0, -22.0, 1.1, 1.00),
-    // Supply crates (light cover) clustered near the centre.
-    (mesh::ModelKind::Crate, 3.0, 4.0, 0.3, 1.00),
-    (mesh::ModelKind::Crate, 4.2, 4.0, 0.3, 1.00),
-    (mesh::ModelKind::Crate, 3.6, 5.1, 0.8, 1.00),
-    (mesh::ModelKind::Crate, -8.0, 7.0, 1.4, 1.00),
-    // Sandbag berms (medium cover) — defensive lines.
-    (mesh::ModelKind::Barricade, -4.0, -3.0, 0.0, 1.20),
-    (mesh::ModelKind::Barricade, 2.0, -6.0, 1.57, 1.10),
-    (mesh::ModelKind::Barricade, 12.0, -2.0, 0.5, 1.00),
-    // Defensive turret emplacements — read as fortified points. The two opposing armies' silhouettes
-    // (WS-F tier-4): a US crew-served .50-cal on one flank, a French remote weapon station on the
-    // other (the meshes [`structure_turret_for`] resolves). Still fixed cosmetic dressing — no sim
-    // entity, no intel, fair under "world goes dark" (invariant #6).
-    (mesh::ModelKind::TurretUs, -14.0, 2.0, 0.6, 1.00),
-    (mesh::ModelKind::TurretFr, 15.0, 9.0, 3.4, 1.00),
-];
+/// The greybox mesh for a sim [`Obstacle`](gonedark_core::obstacles::Obstacle) kind. The obstacle
+/// LAYOUT now lives in the sim ([`gonedark_core::obstacles`], Q24 / D50 follow-through) — it is real
+/// collision the sim paints impassable cells under — and the renderer *reads* it to draw the props
+/// (core → render, the allowed direction; never a render-side back-channel into the sim, invariant
+/// #4). This map is the render half: obstacle kind → the mesh that stands in for it.
+fn model_for_obstacle(kind: gonedark_core::obstacles::ObstacleKind) -> mesh::ModelKind {
+    use gonedark_core::obstacles::ObstacleKind as O;
+    match kind {
+        O::Tree => mesh::ModelKind::Tree,
+        O::Rock => mesh::ModelKind::Rock,
+        O::Crate => mesh::ModelKind::Crate,
+        O::Barricade => mesh::ModelKind::Barricade,
+        O::TurretUs => mesh::ModelKind::TurretUs,
+        O::TurretFr => mesh::ModelKind::TurretFr,
+    }
+}
 
-/// Map the static [`PROP_LAYOUT`] to concrete draw items for an `eye` position: each prop's kind,
-/// the LOD tier [`mesh::select_lod`] picks from its eye distance, and its world-space mesh instance
-/// (greybox base tint, no flash). Pure + GPU-free, so the LOD selection + placement is unit-tested
-/// without a device; [`Renderer::render_world_meshes`] just groups the result into batches.
+/// Cosmetic render scale for an obstacle kind (the sim footprint is separate — see
+/// [`ObstacleKind::footprint_radius`](gonedark_core::obstacles::ObstacleKind::footprint_radius)).
+fn prop_scale(kind: gonedark_core::obstacles::ObstacleKind) -> f32 {
+    use gonedark_core::obstacles::ObstacleKind as O;
+    match kind {
+        O::Tree => 1.10,
+        O::Rock => 1.10,
+        O::Crate => 1.00,
+        O::Barricade => 1.15,
+        O::TurretUs | O::TurretFr => 1.00,
+    }
+}
+
+/// Build the first-person world-dressing draw plan from the sim's static obstacle list
+/// ([`gonedark_core::obstacles::skirmish_obstacles`]): each prop's kind, the LOD tier
+/// [`mesh::select_lod`] picks from its eye distance, and its world-space mesh instance (greybox base
+/// tint, no flash). The props sit exactly where the sim painted impassable cells, so the player stops
+/// where they see an object (Q24). Cosmetic yaw varies per prop (a stable function of its index) so a
+/// mirrored layout doesn't look rubber-stamped; it never affects the sim footprint. Pure + GPU-free,
+/// so it is unit-tested without a device; [`Renderer::render_world_meshes`] groups it into batches.
 fn prop_draw_plan(eye: [f32; 3]) -> Vec<(mesh::ModelKind, usize, mesh::MeshInstance)> {
-    PROP_LAYOUT
+    gonedark_core::obstacles::skirmish_obstacles()
         .iter()
-        .map(|&(kind, x, y, yaw, scale)| {
+        .enumerate()
+        .map(|(i, o)| {
+            let x = fixed_to_f32(o.pos.x);
+            let y = fixed_to_f32(o.pos.y);
+            let kind = model_for_obstacle(o.kind);
+            let yaw = (i as f32 * 0.97) % std::f32::consts::TAU;
             let (dx, dy, dz) = (x - eye[0], y - eye[1], -eye[2]);
             let dist = (dx * dx + dy * dy + dz * dz).sqrt();
             let c = kind.base_color();
             let inst = mesh::MeshInstance {
-                model: mesh::model_matrix([x, y, 0.0], scale, yaw),
+                model: mesh::model_matrix([x, y, 0.0], prop_scale(o.kind), yaw),
                 color: [c[0], c[1], c[2], 0.0],
             };
             (kind, mesh::select_lod(dist), inst)
@@ -2164,7 +2167,8 @@ impl Renderer {
     }
 
     /// Draw the embodied first-person WORLD MESHES — the static scenery/cover props
-    /// ([`PROP_LAYOUT`]) **and** the dynamic sim units the avatar can SEE — over the embodied
+    /// ([`prop_draw_plan`], from the sim's [`gonedark_core::obstacles`] layout) **and** the dynamic
+    /// sim units the avatar can SEE — over the embodied
     /// sky/ground. Both are drawn in a SINGLE mesh pass (one shared depth clear) so they occlude each
     /// other correctly: a unit standing behind a rock is hidden by it, rather than punching through.
     ///
@@ -3097,27 +3101,20 @@ mod tests {
     /// never indexes past the library.
     #[test]
     fn prop_draw_plan_covers_layout_and_picks_lod_by_distance() {
-        // Eye on top of the crate cluster (~(3.6, 4.5)) at eye height: nearby props are LOD0,
-        // the far tree line drops to a coarser tier.
-        let plan = prop_draw_plan([3.6, 4.5, 1.5]);
-        assert_eq!(plan.len(), PROP_LAYOUT.len(), "every prop is planned");
+        // Drive the plan from the sim's obstacle list; put the eye on the first prop so it is LOD0,
+        // and a prop across the field drops to the coarsest tier.
+        let obstacles = gonedark_core::obstacles::skirmish_obstacles();
+        let first = obstacles[0].pos;
+        let eye = [fixed_to_f32(first.x), fixed_to_f32(first.y), 1.5];
+        let plan = prop_draw_plan(eye);
+        assert_eq!(plan.len(), obstacles.len(), "every prop is planned");
         for (_, lod, _) in &plan {
             assert!(*lod < mesh::LOD_COUNT, "lod is a valid library index");
         }
-        // A crate at the cluster centre is within LOD1_DISTANCE → full detail.
-        let crate_near = plan
-            .iter()
-            .find(|(k, _, _)| *k == mesh::ModelKind::Crate)
-            .unwrap();
-        assert_eq!(crate_near.1, 0, "the near crate cluster keeps LOD0");
-        // The far tree line (>22 m away) drops to the coarsest tier.
-        let far_tree = plan
-            .iter()
-            .filter(|(k, _, _)| *k == mesh::ModelKind::Tree)
-            .map(|(_, lod, _)| *lod)
-            .max()
-            .unwrap();
-        assert_eq!(far_tree, 2, "a distant tree uses LOD2");
+        let min_lod = plan.iter().map(|(_, l, _)| *l).min().unwrap();
+        let max_lod = plan.iter().map(|(_, l, _)| *l).max().unwrap();
+        assert_eq!(min_lod, 0, "the prop under the eye keeps LOD0");
+        assert_eq!(max_lod, 2, "a prop across the field drops to the coarsest LOD2");
     }
 
     // ---- unit_draw_plan: embodied first-person dynamic units ----

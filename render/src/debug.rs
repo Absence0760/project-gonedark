@@ -30,6 +30,10 @@ const GRID_HALF: f32 = (GRID / 2) as f32;
 /// Cover-overlay colors: Light cover amber, Heavy cover (walls / water) steel.
 const COLOR_COVER_LIGHT: [f32; 3] = [0.85, 0.70, 0.25];
 const COLOR_COVER_HEAVY: [f32; 3] = [0.55, 0.62, 0.75];
+/// Solid, movement-blocking cells (walls/water and the solid props — `Cover::Impassable`, Q24):
+/// a hot red-orange so a blocked cell reads distinctly from passable Heavy concealment in the map
+/// debug overlay.
+const COLOR_COVER_IMPASSABLE: [f32; 3] = [0.90, 0.35, 0.20];
 
 /// Segments approximating each unit's hit-radius ring. A multiple of 6 so the 60°/120° facet
 /// boundaries land exactly on a segment edge (no segment straddles two facets).
@@ -436,6 +440,7 @@ pub fn covergrid_lines(terrain: &Terrain) -> Vec<DebugVertex> {
                 Cover::None => continue,
                 Cover::Light => COLOR_COVER_LIGHT,
                 Cover::Heavy => COLOR_COVER_HEAVY,
+                Cover::Impassable => COLOR_COVER_IMPASSABLE,
             };
             let x0 = -GRID_HALF + cx as f32;
             let y0 = -GRID_HALF + cy as f32;
