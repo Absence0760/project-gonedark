@@ -61,6 +61,12 @@ const ALERT_LABEL_PX: f32 = 0.045;
 /// `TouchControlsRenderer`: the move stick + Fire/Crouch/Reload/Surface buttons, drawn as a LOAD
 /// pass over the dark embodied frame. Public so the host describes them via [`touch_controls::TouchControlsHud`].
 pub mod touch_controls;
+/// Embodied **player vitals** HUD (H4) — the avatar's OWN health bar + ammo count, drawn over the
+/// dark first-person frame while embodied in infantry. Pure layout of a host-supplied
+/// [`player_hud::PlayerHudState`] through the shared overlay-quad + text passes (the [`prompt`] /
+/// [`objective_hud`] pattern, no new pipeline). Health/ammo is the avatar's own state, never map
+/// intel, so it is fair over the dark frame (invariant #6). Public so the layout seams are reachable.
+pub mod player_hud;
 /// Embodied **tank** gunner-sight HUD (tank embodiment P8, D55). Owns `TankHudRenderer`: the
 /// hull-relative turret indicator, the dispersion reticle, the LEAD pip, and the reload ring, drawn
 /// as a LOAD pass over the dark embodied frame while the local player drives a tank. Public so the

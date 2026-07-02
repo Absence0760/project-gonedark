@@ -50,9 +50,17 @@ const RETICLE_GAIN: f32 = 0.55;
 /// The reload ring rides just outside the widest the reticle can bloom, so the two never overlap.
 const RELOAD_R: f32 = RETICLE_MAX_R + 0.06;
 
-/// The hull-relative turret compass strip: vertical position (NDC, near the top) and half-width the
+/// The hull-relative turret compass strip: vertical position (NDC, upper-middle) and half-width the
 /// chevron can travel across. The chevron is small and fixed-size.
-const TURRET_STRIP_Y: f32 = 0.80;
+///
+/// **M1:** the strip was at `0.80`, which put the chevron's `[0.75, 0.85]` band dead-center under the
+/// top-center alert-ring marker (the alert ring sits at [`crate::hud::RING_RADIUS`] = 0.82 with a
+/// [`crate::hud::MARKER_HALF_SIZE`] = 0.045 half-height, so its band is `[0.775, 0.865]`) — a
+/// dead-ahead alert while driving a tank collided with the turret chevron. Dropping the strip to
+/// `0.68` clears that band (chevron top `0.73 < 0.775`) while still riding above the reticle bloom
+/// ([`RETICLE_MAX_R`] = 0.34) and the reload ring ([`RELOAD_R`] = 0.40). The
+/// [`turret_chevron_clears_the_alert_ring_band`](tests) cross-check pins this.
+const TURRET_STRIP_Y: f32 = 0.68;
 const TURRET_STRIP_HALF_W: f32 = 0.55;
 const TURRET_CHEVRON_R: f32 = 0.05;
 
@@ -533,6 +541,34 @@ mod tests {
         assert!(left < 0.0, "CCW gun marks left, got {left}");
         assert!(right > 0.0, "CW gun marks right, got {right}");
         assert!((left + right).abs() < 1e-6, "symmetric about center");
+    }
+
+    #[test]
+    fn turret_chevron_clears_the_alert_ring_band() {
+        // M1 cross-check: at hull-aligned (turret == hull) the chevron sits dead-center-top — the
+        // SAME screen column as a dead-ahead alert-ring marker. Its vertical bbox must not intersect
+        // the alert ring band [RING_RADIUS - marker_half, RING_RADIUS + marker_half], or a
+        // taking-fire-ahead ping while driving a tank would collide with the turret indicator.
+        use crate::hud::{MARKER_HALF_SIZE, RING_RADIUS};
+        let inst = tank_hud_instances(&TankHudState::default()); // hull == turret == 0 → centered chevron
+        let chevron = inst
+            .iter()
+            .find(|i| i.shape == SHAPE_TURRET)
+            .expect("turret chevron is always drawn");
+        assert!(chevron.ndc_x.abs() < 1e-6, "hull-aligned chevron is dead-center (worst case)");
+        let top = chevron.ndc_y + chevron.half_y;
+        let bot = chevron.ndc_y - chevron.half_y;
+        let band_lo = RING_RADIUS - MARKER_HALF_SIZE;
+        let band_hi = RING_RADIUS + MARKER_HALF_SIZE;
+        // No overlap, and specifically the strip rides BELOW the alert band.
+        assert!(
+            bot > band_hi || top < band_lo,
+            "chevron [{bot}, {top}] must clear the alert band [{band_lo}, {band_hi}]"
+        );
+        assert!(top < band_lo, "the turret strip rides below the alert ring band");
+        // ...while still clearing the widest reticle bloom and the reload ring at screen center.
+        assert!(bot > RETICLE_MAX_R, "chevron clears the max dispersion reticle");
+        assert!(bot > RELOAD_R, "chevron clears the reload ring");
     }
 
     #[test]

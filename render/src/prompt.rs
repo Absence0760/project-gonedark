@@ -69,10 +69,14 @@ pub struct PromptLabel {
 /// Vertical center of the card — the lower third, clear of the screen center (the FPS reticle / the
 /// hitmarker) and the bottom touch-control band.
 const CENTER_Y: f32 = -0.58;
-/// Title glyph cell height.
-const TITLE_SIZE: f32 = 0.050;
-/// Body-line glyph cell height (smaller than the title).
-const BODY_SIZE: f32 = 0.036;
+/// Title glyph cell height. **M6:** bumped from `0.050` — at the old size the highest-urgency teach
+/// copy rendered ~7-9px cap-height on a ~390-430pt landscape phone, barely legible over the dark
+/// frame. These are module-local (independent of the shared `theme` type scale, which the command-
+/// view chrome uses) so the teach card can be sized for its own worst-case reading distance.
+const TITLE_SIZE: f32 = 0.072;
+/// Body-line glyph cell height (smaller than the title). **M6:** bumped from `0.036` for the same
+/// phone-legibility reason as [`TITLE_SIZE`].
+const BODY_SIZE: f32 = 0.050;
 /// Gap below the title, before the first body line (a touch more than between body lines).
 const TITLE_BODY_GAP: f32 = 0.024;
 /// Gap between consecutive body lines.
@@ -344,6 +348,24 @@ mod tests {
         let square = prompt_quads(&prompt(), 1.0)[1].hw;
         let wide = prompt_quads(&prompt(), 16.0 / 9.0)[1].hw;
         assert!(wide < square, "card is narrower on a wide screen");
+    }
+
+    #[test]
+    fn prompt_type_is_phone_legible_and_card_still_clears_center_and_bottom() {
+        // M6: the teach copy must read on a phone — a real cap-height, not the old ~7px. The title is
+        // the larger step; both clear a legibility floor.
+        assert!(TITLE_SIZE >= 0.06, "title is phone-legible, got {TITLE_SIZE}");
+        assert!(BODY_SIZE >= 0.045, "body is phone-legible, got {BODY_SIZE}");
+        assert!(TITLE_SIZE > BODY_SIZE, "title is the larger step");
+        // Even at the bumped size the card still hugs the lower third: its top edge stays clear of the
+        // screen center (the FPS reticle / hitmarker) and its bottom stays on-screen — checked on a
+        // wide phone-landscape aspect where the geometry runs through the aspect-aware `measure`.
+        let q = prompt_quads(&prompt(), 20.0 / 9.0);
+        let panel = &q[1];
+        let top = panel.cy + panel.hh;
+        let bottom = panel.cy - panel.hh;
+        assert!(top < -0.05, "card top clears the screen center, got {top}");
+        assert!(bottom > -1.0, "card bottom stays on-screen, got {bottom}");
     }
 
     #[test]

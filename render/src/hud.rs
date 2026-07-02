@@ -15,6 +15,7 @@
 //! An alert directly behind the avatar lands at bottom-center. The pure placement + fade math
 //! lives in [`marker_for`] so it is unit-testable without a GPU.
 
+use crate::text::Anchor;
 use gonedark_core::alerts::{Alert, AlertChannel, AlertKind};
 use wgpu::util::DeviceExt;
 
@@ -29,11 +30,15 @@ pub const FADE_TICKS: u64 = 120;
 /// value keeps the *whole* window readable, then the hard `None` at [`FADE_TICKS`] removes it.
 const FADE_FLOOR: f32 = 0.35;
 
-/// Half-size of a marker quad in NDC (markers are small screen-space chevrons/dots).
-const MARKER_HALF_SIZE: f32 = 0.045;
+/// Half-size of a marker quad in NDC (markers are small screen-space chevrons/dots). `pub(crate)`
+/// so the tank HUD's collision cross-check ([`crate::tank_hud`]) can size the alert-ring band it
+/// must keep its turret chevron clear of (M1).
+pub(crate) const MARKER_HALF_SIZE: f32 = 0.045;
 
-/// Radius (in NDC) of the ring the markers sit on — near, but inside, the screen edge.
-const RING_RADIUS: f32 = 0.82;
+/// Radius (in NDC) of the ring the markers sit on — near, but inside, the screen edge. `pub(crate)`
+/// so the tank HUD's collision cross-check ([`crate::tank_hud`]) can locate the top-center alert
+/// marker band its turret chevron must not overlap (M1).
+pub(crate) const RING_RADIUS: f32 = 0.82;
 
 /// Initial GPU capacity (in markers) for the instance buffer.
 const INITIAL_CAP: usize = 16;
@@ -340,6 +345,54 @@ pub fn crosshair_markers(bloom: f32, aspect: f32) -> Vec<HudMarker> {
         tick(0.0, gap),  // top arm
         tick(0.0, -gap), // bottom arm
     ]
+}
+
+// --- desktop "SURFACE" key reminder (M5) -------------------------------------------------------
+
+/// Opacity of the Surface key hint — deliberately low so it reads as a quiet reminder, never
+/// competing with the alert thread back or the reticle.
+const SURFACE_HINT_ALPHA: f32 = 0.55;
+/// Glyph cell height (NDC) of the Surface key hint — small chrome text.
+const SURFACE_HINT_SIZE: f32 = 0.038;
+/// The hint rides low, well clear of the top-center alert ring and the screen-center reticle.
+const SURFACE_HINT_Y: f32 = -0.80;
+/// A muted tint so the reminder recedes until the player needs it.
+const SURFACE_HINT_COLOR: [f32; 3] = crate::theme::ASH;
+
+/// One laid-out Surface key-reminder label for the text pass. Mirrors the label structs elsewhere
+/// (`HudLabel`, `PromptLabel`) so its placement is unit-testable without a `TextRenderer`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceHint {
+    pub text: String,
+    pub pos: [f32; 2],
+    pub size: f32,
+    pub anchor: Anchor,
+    pub color: [f32; 3],
+    pub alpha: f32,
+}
+
+/// The desktop-only "[key] SURFACE" reminder (M5): while embodied, keyboard players have no
+/// on-screen Surface button (that is a touch affordance), so a low-opacity hint tells them which
+/// key surfaces them back to command. Returns `None` on touch (the touch HUD already draws a
+/// Surface button) or for an empty `label`, so it is **gated to embodied-AND-not-touch** — the
+/// caller only invokes it while embodied, and this drops it on touch.
+///
+/// `label` is the fully-built hint string (e.g. `"[F] SURFACE"`); the host composes it from the
+/// live keybind (that lookup lives in `engine`, not here). Pure screen-space chrome with no world
+/// position (invariant #6) — it reveals nothing the avatar's own eyes don't. Pure + GPU-free →
+/// unit-tested.
+pub fn surface_reminder(label: &str, is_touch: bool) -> Option<SurfaceHint> {
+    if is_touch || label.is_empty() {
+        return None;
+    }
+    Some(SurfaceHint {
+        text: label.to_string(),
+        pos: [0.0, SURFACE_HINT_Y],
+        size: SURFACE_HINT_SIZE,
+        anchor: Anchor::TopCenter,
+        color: SURFACE_HINT_COLOR,
+        alpha: SURFACE_HINT_ALPHA,
+    })
 }
 
 /// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-marker half-size).
@@ -906,6 +959,35 @@ mod tests {
         let m = crosshair_markers(-1.0, 1.0);
         let right = m.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
         assert!((right - CROSSHAIR_GAP).abs() < 1e-6, "floors at the resting gap");
+    }
+
+    // ---- desktop SURFACE key reminder (M5) ----
+
+    #[test]
+    fn surface_reminder_is_desktop_only() {
+        // Touch has an on-screen Surface button, so the key hint is suppressed there.
+        assert!(
+            surface_reminder("[F] SURFACE", true).is_none(),
+            "touch already has a Surface button — no key hint"
+        );
+        // Nothing to say with no label.
+        assert!(surface_reminder("", false).is_none(), "empty label → no hint");
+        // Desktop (not touch) with a label gets the hint.
+        let h = surface_reminder("[F] SURFACE", false).expect("desktop shows the key hint");
+        assert_eq!(h.text, "[F] SURFACE", "carries the caller's keybind label verbatim");
+        assert_eq!(h.anchor, Anchor::TopCenter);
+    }
+
+    #[test]
+    fn surface_reminder_is_quiet_low_screen_space_chrome() {
+        let h = surface_reminder("[F] SURFACE", false).unwrap();
+        // Low opacity — a reminder, not chrome that competes with the alert thread.
+        assert!(h.alpha > 0.0 && h.alpha < 0.7, "hint is low-opacity, got {}", h.alpha);
+        // Screen-space bounded with no world position (invariant #6).
+        assert!(h.pos[0].abs() <= 1.0 && h.pos[1].abs() <= 1.0, "hint is on-screen NDC");
+        // Rides low, clear of the top-center alert ring (RING_RADIUS) and the screen-center reticle.
+        assert!(h.pos[1] < 0.0, "hint sits in the lower screen, off the alert ring");
+        assert!(h.pos[1] > -1.0 + h.size, "hint stays on-screen above the bottom edge");
     }
 
     // ---- CVD text labels + place_marker (accessibility) ----
