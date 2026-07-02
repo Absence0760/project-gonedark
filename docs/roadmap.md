@@ -641,8 +641,11 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
   the byte codec host-side so `core` stays serde-free. **Multi-peer replay ordering has since landed
   ([D93](decisions.md)):** a `MultiReplay` merges each tick's per-peer command sets in ascending
   peer-id order — byte-for-byte the `core::lockstep` merge — proven order-independent by checksum
-  (`pnpm desktop:replay:multi`). **Remaining:** a *rendered* spectator view (GPU-gated; rides the same
-  seed+log foundation); replay cross-version compatibility is [Q26](open-questions.md).
+  (`pnpm desktop:replay:multi`). **The rendered spectator view has since landed ([D95](decisions.md)):**
+  a one-tick `Game::spectate_frame` seam plays a recorded replay back through the real command-view
+  render path, pixel- and checksum-asserted in `viz-runner --spectator` (`pnpm desktop:viz:spectator`).
+  **Remaining:** *live* spectating of a running networked match (needs the Phase 3 net layer); replay
+  cross-version compatibility is [Q26](open-questions.md).
 - [~] **PC-4 — Mods / data-driven content.** Missions/scenarios become external **RON data files**
   ([D76](decisions.md), [`content-tooling-plan.md`](plans/content-tooling-plan.md)) and maps carry
   their own content-addressed terrain ([D77](decisions.md)); exposing them as moddable content is how

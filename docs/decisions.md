@@ -4260,3 +4260,33 @@ decision to take explicitly, not smuggle. Flagged here rather than decided.
 format), [D10](#d10) (weak Rust hot-reload → data-reload lane), [D58](#d58)–[D61](#d61) (the PvE
 campaign this feeds), [`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-D/CT-F,
 [`roadmap.md`](roadmap.md) PC-4.
+
+## D95 — Rendered spectator playback via a one-tick `Game::spectate_frame` seam (PC-3)
+
+**Status: landed.** Cashes the [D89](#d89)/[D93](#d93) replay determinism freebie in *visually*: a
+replay is "a seed + an ordered input log" (invariant #1), so drawing a spectate is just stepping the
+sim with that log through the real render path. New `Game::spectate_frame(merged, viewport, device,
+queue, view)` advances the sim by **exactly one tick** with an externally-supplied, already-merged
+`Command` set — e.g. `MultiReplay::merged_for` (the ascending-peer-id order [D93](#d93) fixed) — then
+draws the top-down **command view**. A `viz-runner --spectator` mode (`pnpm desktop:viz:spectator`)
+records + round-trips a `MultiReplay` (reusing `replay-runner`), renders each tick, and asserts the
+rendered per-tick checksum stream is **bit-identical to the headless replay oracle**, reproducible
+across two runs, and that frames are non-blank with both factions drawn. GPU-gated **local smoke** (the
+existing `viz-runner` discipline — never the no-GPU CI matrix); a pure `spectate_capture_ticks`
+frame-selection seam is unit-tested in `cargo test`.
+
+**Why.** `spectate_frame` differs from `frame` in exactly the two ways a faithful spectate needs:
+commands arrive **directly** (no `InputFrame`→command mapping, no lockstep gate, no host commander) so
+the sim steps byte-for-byte the way the checksum-proven `replay_runner::playback*` does (invariants
+#1/#7); and the camera is a **fixed top-down observer**, so there is no first-person avatar view and
+thus no avatar-only fog to leak — invariant #6 is sidestepped **by construction** rather than policed.
+Sim/render stay decoupled (invariant #4): the only sim mutation is the single `sim.step`; the renderer
+only reads the prev→curr snapshots. `core` untouched; no serde/floats added to the sim path. 444
+engine lib + 2 viz-runner tests green dev+release; the 6-assertion GPU smoke passes on a Metal adapter.
+
+**Scope / follow-up.** This spectates a **recorded** replay. **Live** spectating of a *running
+networked match* is deferred — it needs the Phase 3 live net layer (not landed). Free-cam / interactive
+spectator camera is also out; the fixed command-view is deliberate (and the fair one).
+
+**Cross-link:** invariants #1/#4/#6/#7, [D89](#d89) (replay foundation), [D93](#d93) (multi-peer
+ordering), [`positioning-pc.md`](positioning/positioning-pc.md) PC-3, [`roadmap.md`](roadmap.md) PC-3.
