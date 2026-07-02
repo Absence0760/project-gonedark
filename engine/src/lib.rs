@@ -3615,8 +3615,20 @@ impl Game {
         // HUD) and the positioned audio mix (worker 3). "Alerts, not intel" — observed as the
         // local Player faction (invariant #6). Both read-only over the sim.
         let tick = self.sim.tick_count();
-        self.alerts
-            .ingest(&frame_events, &self.sim.world, Faction::Player, tick);
+        // The possessed avatar (when embodied) so a hit on the player's *own* body points the
+        // "taking fire" alert at the shooter, not dead-ahead — a fairness fix (invariant #6): a
+        // marker that looks directional but isn't is worse than none. `None` in the command view.
+        let observed_avatar = self.embodied.then_some(self.player);
+        self.alerts.ingest(
+            &frame_events,
+            &self.sim.world,
+            Faction::Player,
+            observed_avatar,
+            tick,
+        );
+        // Keep the channel bounded to the live fade window — it is scanned every embodied frame,
+        // so without a prune it grows linearly for the whole match (memory + per-frame cost).
+        self.alerts.prune(tick, gonedark_render::hud::FADE_TICKS);
         // Accessibility (invariant #6 fairness): fold the audio-only signals the alert HUD misses
         // (your ProductionReady, captures you didn't lose) into the visual-sound echo buffer, faded on
         // the same window. Cheap + bounded, so it always runs; it only *renders* when the player has

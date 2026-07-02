@@ -1012,7 +1012,7 @@ mod tests {
             // Compute the full in-session view on `with` every tick.
             let vis = embodied_visibility(&with.world, &with.terrain, avatar);
             let mut alerts = AlertChannel::new();
-            alerts.ingest(with.events(), &with.world, Faction::Player, t);
+            alerts.ingest(with.events(), &with.world, Faction::Player, Some(avatar), t);
             let tells = detectable_embodiment(
                 &with.world,
                 &with.terrain,
