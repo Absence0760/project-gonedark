@@ -33,8 +33,11 @@ use wgpu::util::DeviceExt;
 pub enum Overlay {
     /// No overlay this frame (the match is playing). Draws nothing.
     None,
-    /// The pause overlay: a single dim full-screen scrim.
-    Paused,
+    /// The pause overlay: a dim full-screen scrim + a small panel. `single_player` distinguishes a
+    /// true stop (offline PvE — the sim is genuinely halted) from a **local-overlay-only** pause in
+    /// a lockstep match, where the sim keeps running and the player's base keeps taking fire. The
+    /// `false` case draws an explicit warning (M1); the host sets the flag from the session shell.
+    Paused { single_player: bool },
     /// The reconnect prompt: a centered panel. `desynced` picks the (here, color-coded via the
     /// quad's role) copy — stalled vs a confirmed divergence.
     ReconnectPrompt { desynced: bool },
@@ -230,11 +233,26 @@ const SUMMARY_ROWS_TOP: f32 = PANEL_HH - 2.0 * ACCENT_STRIP_HH - ROW_TOP_GAP;
 /// Within a faction row, the three bars (kills / territory / resources) stack at these sub-offsets
 /// so a row shows all three facts at once without overlapping the next row.
 const BAR_SUB_GAP: f32 = 0.025;
-/// Actionable-choice (button) slot geometry, laid out below the panel body.
+/// Actionable-choice (button) slot geometry, laid out below the panel body. `BUTTON_HH` was raised
+/// from 0.045 (a ~17pt-tall slot on a landscape phone — far below the 44pt/48dp touch minimum) to a
+/// value that, combined with the hit-test forgiveness pad below, clears the minimum (H3/M4). It is
+/// capped by the layout: it must still sit below a 3-faction summary's bars (see the
+/// `button_row_clears_three_faction_summary` test), so the drawn slot alone is a hair under 44pt —
+/// the `BUTTON_HIT_PAD` carries the *touch target* over the line.
 const BUTTON_HW: f32 = 0.18;
-const BUTTON_HH: f32 = 0.045;
+const BUTTON_HH: f32 = 0.085;
+/// Hit-test forgiveness (NDC): added to the slot's half-extent in [`button_slot_at`] ONLY (never to
+/// the drawn quad), so a near-miss tap still registers and the touch target clears 44pt/48dp. The
+/// horizontal component is clamped to half the inter-slot gap so two adjacent slots tile exactly
+/// without an ambiguous overlap; the vertical component is the full pad.
+const BUTTON_HIT_PAD: f32 = 0.045;
 const BUTTON_GAP: f32 = 0.04; // horizontal spacing between adjacent slots
-const BUTTON_ROW_CY: f32 = -PANEL_HH + 0.09; // near the panel's lower edge
+const BUTTON_ROW_CY: f32 = -PANEL_HH + 0.11; // near the panel's lower edge (raised for the taller slot)
+/// Points-per-NDC-unit on a reference landscape phone, used ONLY by the touch-minimum CI guard.
+/// NDC y spans [-1, 1] (a 2.0-unit range) mapped to the full ~360pt short side of a mid-range
+/// landscape phone, so one NDC unit ≈ 180pt. A slot of half-height `h` is `2*h` NDC tall, i.e.
+/// `2*h*REFERENCE_VIEWPORT_H` points — the quantity the guard asserts against 44pt.
+const REFERENCE_VIEWPORT_H: f32 = 180.0;
 
 fn color(role: QuadRole) -> [f32; 3] {
     use crate::theme;
@@ -290,6 +308,14 @@ fn frac_of(value: i64, max: i64) -> f32 {
     }
 }
 
+/// Whether a faction's summary row is worth drawing (L4): skip a row where the faction did nothing
+/// this match — no kills, no territory, no resources — so an all-zero Neutral row doesn't clutter a
+/// two-faction summary. A row that *holds territory* is always kept (that's informative even at zero
+/// kills). Integer facts only (invariant #1-safe).
+fn row_is_shown(stats: &FactionStats) -> bool {
+    stats.units_killed != 0 || stats.territory_held != 0 || stats.resources_total != 0
+}
+
 /// The actionable choices a surface offers, in vocabulary order, as the [`QuadRole`] each slot
 /// draws with ([`ButtonPrimary`](QuadRole::ButtonPrimary) is the affirmative slot). These are a
 /// fixed, deterministic per-surface vocabulary — `engine::session_shell` owns *which* actions are
@@ -299,11 +325,12 @@ fn surface_choices(overlay: &Overlay) -> &'static [QuadRole] {
     match overlay {
         Overlay::None => &[],
         // Resume (primary) + Surrender.
-        Overlay::Paused => &[QuadRole::ButtonPrimary, QuadRole::Button],
+        Overlay::Paused { .. } => &[QuadRole::ButtonPrimary, QuadRole::Button],
         // Resume (primary) + Leave.
         Overlay::ReconnectPrompt { .. } => &[QuadRole::ButtonPrimary, QuadRole::Button],
-        // A single dismiss.
-        Overlay::Summary(_) => &[QuadRole::ButtonPrimary],
+        // Rematch (primary) + return to the hub/title (secondary). Two slots (H1): the post-match
+        // summary is no longer a dead-end DISMISS — the host wires slot 0 to a rematch.
+        Overlay::Summary(_) => &[QuadRole::ButtonPrimary, QuadRole::Button],
     }
 }
 
@@ -379,8 +406,9 @@ fn push_button_row(out: &mut Vec<OverlayQuad>, choices: &[QuadRole]) {
 /// none). The geometry mirrors [`push_button_row`] exactly, so a hit here corresponds 1:1 to a
 /// drawn button — this is the seam the native/touch layer calls to turn a tap into a slot.
 pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize> {
-    // Reject anything outside the button row's vertical band before walking the slots.
-    if (ndc_y - BUTTON_ROW_CY).abs() > BUTTON_HH {
+    // Reject anything outside the button row's vertical band before walking the slots. The band
+    // includes the full forgiveness pad (the drawn slot is short — H3/M4), so a near-miss still hits.
+    if (ndc_y - BUTTON_ROW_CY).abs() > BUTTON_HH + BUTTON_HIT_PAD {
         return None;
     }
     let choices = surface_choices(overlay);
@@ -388,10 +416,14 @@ pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize
     if n == 0 {
         return None;
     }
+    // Horizontal forgiveness is clamped to half the inter-slot gap so two adjacent slots tile
+    // exactly at their midpoint (no ambiguous overlap where a tap could match either); this also
+    // fills the dead gap between them so the whole row is live.
+    let hpad = BUTTON_HIT_PAD.min(BUTTON_GAP * 0.5);
     let total_hw = n as f32 * BUTTON_HW + (n as f32 - 1.0) * BUTTON_GAP * 0.5;
     let mut cx = -total_hw + BUTTON_HW;
     for slot in 0..n {
-        if (ndc_x - cx).abs() <= BUTTON_HW {
+        if (ndc_x - cx).abs() <= BUTTON_HW + hpad {
             return Some(slot);
         }
         cx += 2.0 * BUTTON_HW + BUTTON_GAP;
@@ -405,10 +437,23 @@ pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize
 pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
     match overlay {
         Overlay::None => Vec::new(),
-        Overlay::Paused => {
+        Overlay::Paused { single_player } => {
             // A single dim scrim across the whole screen + a small "paused" panel (rim first).
             let mut out = vec![quad(0.0, 0.0, 1.0, 1.0, SCRIM_ALPHA, QuadRole::Scrim)];
             push_panel_with_rim(&mut out, 0.92);
+            // A lockstep (multiplayer) pause is local-overlay-only: the sim keeps running and the
+            // player's base keeps taking fire. Flag it with the same accent strip the reconnect
+            // prompt uses (Warning) so "Paused" never reads as "the world is safely frozen" (M1).
+            if !single_player {
+                out.push(quad(
+                    0.0,
+                    PANEL_HH - ACCENT_STRIP_HH,
+                    PANEL_HW,
+                    ACCENT_STRIP_HH,
+                    1.0,
+                    QuadRole::Warning,
+                ));
+            }
             push_button_row(&mut out, surface_choices(overlay));
             out
         }
@@ -473,8 +518,15 @@ pub fn overlay_quads(overlay: &Overlay) -> Vec<OverlayQuad> {
                 .max()
                 .unwrap_or(0);
             // Start the rows below the accent strip (derived from it) and lay them out downward.
+            // Only factions that did something get a row (L4), enumerated over the *filtered* set so
+            // the shown rows stack contiguously (no gap where a skipped Neutral row would have sat).
             let top = SUMMARY_ROWS_TOP;
-            for (row, stats) in summary.per_faction.iter().enumerate() {
+            for (row, stats) in summary
+                .per_faction
+                .iter()
+                .filter(|s| row_is_shown(s))
+                .enumerate()
+            {
                 let row_cy = top - row as f32 * BAR_GAP;
                 push_tracked_bar(
                     &mut out,
@@ -519,10 +571,23 @@ pub struct TextLabel {
 const LABEL_SIZE: f32 = 0.030;
 /// Glyph cell height (NDC) of the summary outcome title (VICTORY / DEFEAT / DRAW) — the largest.
 const TITLE_SIZE: f32 = 0.055;
-/// Glyph cell height (NDC) of a button's caption.
-const BUTTON_LABEL_SIZE: f32 = 0.034;
+/// Glyph cell height (NDC) of a button's caption. Bumped alongside the taller `BUTTON_HH` (H3/M4)
+/// so the caption stays proportional to the larger slot.
+const BUTTON_LABEL_SIZE: f32 = 0.046;
 /// Light off-white the labels draw in, so they read over the dim panels.
 const LABEL_COLOR: [f32; 3] = [0.92, 0.94, 0.98];
+
+/// The caption ink for a button slot, chosen for contrast against the slot's *fill* (M3). The
+/// primary slot is a warm amber ([`QuadRole::ButtonPrimary`] → [`theme::AMBER`]); a near-white
+/// caption over amber has poor contrast, so the most-tapped action draws dark ink ([`theme::INK`]).
+/// The secondary slot is a dark fill, so it keeps the light [`LABEL_COLOR`]. Pure fn (testable).
+fn button_label_color(role: QuadRole) -> [f32; 3] {
+    use crate::theme;
+    match role {
+        QuadRole::ButtonPrimary => theme::INK,
+        _ => LABEL_COLOR,
+    }
+}
 
 /// A short human label for a faction, used as the per-row tag in the summary (uppercase: the font
 /// is all-caps). Neutral rows are tagged too so a three-row summary stays unambiguous.
@@ -552,11 +617,13 @@ fn outcome_title(outcome: MatchOutcome) -> &'static str {
 /// localized copy — the seam is the public [`TextRenderer::queue`].
 fn button_label(overlay: &Overlay, slot: usize) -> &'static str {
     match (overlay, slot) {
-        (Overlay::Paused, 0) => "RESUME",
-        (Overlay::Paused, 1) => "QUIT",
+        (Overlay::Paused { .. }, 0) => "RESUME",
+        (Overlay::Paused { .. }, 1) => "QUIT",
         (Overlay::ReconnectPrompt { .. }, 0) => "RESUME",
         (Overlay::ReconnectPrompt { .. }, 1) => "LEAVE",
-        (Overlay::Summary(_), 0) => "DISMISS",
+        // Summary now offers a rematch (primary) beside a return to the hub (secondary) — H1.
+        (Overlay::Summary(_), 0) => "REMATCH",
+        (Overlay::Summary(_), 1) => "HUB",
         _ => "",
     }
 }
@@ -574,7 +641,7 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
     if !choices.is_empty() {
         let n = choices.len() as f32;
         let mut cx = -(n * BUTTON_HW + (n - 1.0) * BUTTON_GAP * 0.5) + BUTTON_HW;
-        for (slot, _role) in choices.iter().enumerate() {
+        for (slot, role) in choices.iter().enumerate() {
             let caption = button_label(overlay, slot);
             if !caption.is_empty() {
                 out.push(TextLabel {
@@ -582,10 +649,33 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
                     pos: [cx, BUTTON_ROW_CY],
                     size: BUTTON_LABEL_SIZE,
                     anchor: Anchor::Center,
-                    color: LABEL_COLOR,
+                    // Role-aware ink so the amber primary slot keeps a readable caption (M3).
+                    color: button_label_color(*role),
                 });
             }
             cx += 2.0 * BUTTON_HW + BUTTON_GAP;
+        }
+    }
+
+    // Paused surface: a title, plus (for a lockstep pause) an explicit "the sim is still running"
+    // warning so the player understands the pause is local-overlay-only (M1).
+    if let Overlay::Paused { single_player } = overlay {
+        out.push(TextLabel {
+            text: "PAUSED".to_string(),
+            pos: [0.0, PANEL_HH + 0.06],
+            size: TITLE_SIZE,
+            anchor: Anchor::BottomCenter,
+            color: LABEL_COLOR,
+        });
+        if !single_player {
+            out.push(TextLabel {
+                text: "YOUR MATCH KEEPS RUNNING".to_string(),
+                // Just below the warning accent strip, mirroring the reconnect-prompt cause line.
+                pos: [0.0, PANEL_HH - 2.0 * ACCENT_STRIP_HH - 0.05],
+                size: LABEL_SIZE,
+                anchor: Anchor::Center,
+                color: color(QuadRole::Warning),
+            });
         }
     }
 
@@ -604,7 +694,14 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
         // RIGHT end of the bar track so it never overlaps the bar fill, and the faction tag at the
         // left. These are the literal integer counts — chrome, not intel (invariant #6).
         let top = SUMMARY_ROWS_TOP;
-        for (row, stats) in summary.per_faction.iter().enumerate() {
+        // Same filter + contiguous enumeration as `overlay_quads` so labels align 1:1 with the bars
+        // (L4 skips a faction that did nothing).
+        for (row, stats) in summary
+            .per_faction
+            .iter()
+            .filter(|s| row_is_shown(s))
+            .enumerate()
+        {
             let row_cy = top - row as f32 * BAR_GAP;
             // Faction tag at the far left of the row, vertically centered on the kill bar.
             out.push(TextLabel {
@@ -613,6 +710,16 @@ pub fn overlay_labels(overlay: &Overlay) -> Vec<TextLabel> {
                 size: LABEL_SIZE,
                 anchor: Anchor::Center,
                 color: LABEL_COLOR,
+            });
+            // A produced / lost readout under the faction tag (M5): the '/' keeps this out of the
+            // pure-numeric right-hand readout column, and it surfaces the two stats the summary
+            // previously dropped. Follows the same left-anchored, per-row pattern as the tag.
+            out.push(TextLabel {
+                text: format!("{}/{}", stats.units_produced, stats.units_lost),
+                pos: [-BAR_MAX_HW - 0.02, row_cy - 2.0 * BAR_SUB_GAP],
+                size: LABEL_SIZE,
+                anchor: Anchor::Center,
+                color: crate::theme::ASH,
             });
             // Three numbers, each right-anchored past its bar track (kills / territory / resources),
             // stacked on the same sub-offsets the bars use.
@@ -936,7 +1043,7 @@ mod tests {
 
     #[test]
     fn paused_is_scrim_shadow_rim_panel() {
-        let q = overlay_quads(&Overlay::Paused);
+        let q = overlay_quads(&Overlay::Paused { single_player: true });
         // Scrim, then the soft drop shadow, then the panel rim, then the panel (back-to-front so
         // each composites over the last — shadow/border = outer quad first).
         assert_eq!(q[0].role, QuadRole::Scrim);
@@ -1036,7 +1143,7 @@ mod tests {
     #[test]
     fn every_drawn_surface_dims_the_frame_first() {
         for ov in [
-            Overlay::Paused,
+            Overlay::Paused { single_player: true },
             Overlay::ReconnectPrompt { desynced: false },
             Overlay::ReconnectPrompt { desynced: true },
             Overlay::Summary(summary_with_kills(
@@ -1176,12 +1283,59 @@ mod tests {
                 assert_eq!(q[i - 1].hw, BAR_MAX_HW);
             }
         }
-        // A track is drawn for every faction row's three facts even when nothing scored.
+        // A track is drawn for the three facts of every *shown* faction row. Player + Enemy scored;
+        // Neutral did nothing and is filtered out (L4), so two rows × three facts = six tracks.
+        let tracks = q.iter().filter(|q| q.role == QuadRole::BarTrack).count();
+        assert_eq!(tracks, 3 * 2, "one track per stat for the two non-neutral rows");
+    }
+
+    /// L4: an all-zero Neutral faction is dropped from the summary — a two-faction match shows two
+    /// rows, not a padded-out third. Both quads (tracks) and labels (faction tags) agree on this.
+    #[test]
+    fn neutral_row_that_did_nothing_is_filtered() {
+        let summary = summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            4,
+            2,
+            3,
+            1,
+            1000,
+            500,
+        );
+        // Neutral is untouched by the builder → all-zero → filtered.
+        let q = overlay_quads(&Overlay::Summary(summary.clone()));
+        let tracks = q.iter().filter(|q| q.role == QuadRole::BarTrack).count();
+        assert_eq!(tracks, 3 * 2, "two rows shown, not FACTION_COUNT");
+        // The faction tags confirm exactly Player + Enemy rows, no Neutral tag.
+        let labels = overlay_labels(&Overlay::Summary(summary));
+        let tags: Vec<&str> = labels
+            .iter()
+            .map(|l| l.text.as_str())
+            .filter(|t| matches!(*t, "YOU" | "FOE" | "NEU"))
+            .collect();
+        assert_eq!(tags, ["YOU", "FOE"], "only the two active rows are tagged");
+    }
+
+    /// L4 keeps a row that *holds territory* even with zero kills and zero resources — that's
+    /// informative. Here Neutral holds ground, so all three faction rows show.
+    #[test]
+    fn neutral_row_holding_territory_is_kept() {
+        let mut summary = summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            4,
+            2,
+            0,
+            0,
+            0,
+            0,
+        );
+        summary.per_faction[Faction::Neutral.index()].territory_held = 2;
+        let q = overlay_quads(&Overlay::Summary(summary));
         let tracks = q.iter().filter(|q| q.role == QuadRole::BarTrack).count();
         assert_eq!(
             tracks,
             3 * FACTION_COUNT,
-            "one track per stat per faction row"
+            "a territory-holding neutral row is retained"
         );
     }
 
@@ -1190,7 +1344,7 @@ mod tests {
     #[test]
     fn panel_rim_precedes_each_panel() {
         for ov in [
-            Overlay::Paused,
+            Overlay::Paused { single_player: true },
             Overlay::ReconnectPrompt { desynced: false },
             Overlay::Summary(summary_with_kills(
                 1,
@@ -1220,7 +1374,7 @@ mod tests {
     #[test]
     fn surfaces_lay_out_their_choice_buttons() {
         // Paused: Resume (primary) + Surrender.
-        let paused = overlay_quads(&Overlay::Paused);
+        let paused = overlay_quads(&Overlay::Paused { single_player: true });
         assert_eq!(
             paused
                 .iter()
@@ -1249,7 +1403,7 @@ mod tests {
             1
         );
 
-        // Summary: a single dismiss (primary), no secondary.
+        // Summary: Rematch (primary) + Hub (secondary) — H1 gave it a second slot.
         let summary = overlay_quads(&Overlay::Summary(summary_with_kills(
             1,
             0,
@@ -1261,15 +1415,15 @@ mod tests {
                 .filter(|q| q.role == QuadRole::ButtonPrimary)
                 .count(),
             1,
-            "summary has one dismiss"
+            "summary has one primary (Rematch)"
         );
         assert_eq!(
             summary
                 .iter()
                 .filter(|q| q.role == QuadRole::Button)
                 .count(),
-            0,
-            "summary has no secondary button"
+            1,
+            "summary has one secondary (Hub)"
         );
     }
 
@@ -1277,7 +1431,7 @@ mod tests {
     /// native/touch layer can hit-test them.
     #[test]
     fn button_slots_are_deterministic_and_disjoint() {
-        let q = overlay_quads(&Overlay::Paused);
+        let q = overlay_quads(&Overlay::Paused { single_player: true });
         let mut buttons: Vec<&OverlayQuad> = q
             .iter()
             .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
@@ -1302,12 +1456,13 @@ mod tests {
     }
 
     /// `button_slot_at` agrees 1:1 with the drawn button quads: each drawn slot center hit-tests to
-    /// its own index, the gap between two slots misses, a point above the row misses, and an overlay
-    /// with no buttons always misses.
+    /// its own index, the row band has no dead gap (the forgiveness pad tiles the slots so the
+    /// midpoint resolves to the left slot), a point above/beside the row misses, and an overlay with
+    /// no buttons always misses.
     #[test]
     fn button_slot_at_matches_drawn_quads() {
         // Two-button surface (Resume / Surrender): every drawn slot center maps to its own index.
-        let overlay = Overlay::Paused;
+        let overlay = Overlay::Paused { single_player: true };
         let mut buttons: Vec<OverlayQuad> = overlay_quads(&overlay)
             .into_iter()
             .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
@@ -1320,12 +1475,18 @@ mod tests {
                 "slot {i} center hits its own button"
             );
         }
-        // The gap between the two slots misses both.
+        // The forgiveness pad tiles the two slots at their midpoint (no dead gap): the exact
+        // midpoint resolves to the left slot (0), and a point just right of it resolves to slot 1.
         let gap_x = (buttons[0].cx + buttons[1].cx) / 2.0;
         assert_eq!(
             button_slot_at(&overlay, gap_x, BUTTON_ROW_CY),
-            None,
-            "the inter-button gap misses"
+            Some(0),
+            "the midpoint tiles to the left slot (no dead gap)"
+        );
+        assert_eq!(
+            button_slot_at(&overlay, gap_x + 0.01, BUTTON_ROW_CY),
+            Some(1),
+            "just right of the midpoint is the second slot"
         );
         // A point on a button's x but well above the row band misses.
         assert_eq!(
@@ -1333,21 +1494,48 @@ mod tests {
             None,
             "above the row band misses"
         );
+        // A point far outside the row (past the outer slot edge + pad) misses.
+        assert_eq!(
+            button_slot_at(&overlay, buttons[1].cx + BUTTON_HW + 0.2, BUTTON_ROW_CY),
+            None,
+            "beyond the right slot misses"
+        );
 
-        // Single-button surface (the post-match DISMISS): its center hits slot 0.
+        // Two-button summary (Rematch / Hub): both slot centers map to their own index.
         let summary = Overlay::Summary(summary_with_kills(
             1,
             0,
             MatchOutcome::Victory(Faction::Player),
         ));
-        assert_eq!(
-            button_slot_at(&summary, 0.0, BUTTON_ROW_CY),
-            Some(0),
-            "the lone DISMISS button hit-tests at the row center"
-        );
+        let mut sbuttons: Vec<OverlayQuad> = overlay_quads(&summary)
+            .into_iter()
+            .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
+            .collect();
+        sbuttons.sort_by(|a, b| a.cx.partial_cmp(&b.cx).unwrap());
+        assert_eq!(sbuttons.len(), 2, "summary now has two slots");
+        for (i, b) in sbuttons.iter().enumerate() {
+            assert_eq!(button_slot_at(&summary, b.cx, b.cy), Some(i));
+        }
 
         // An overlay with no choices (None) never reports a hit.
         assert_eq!(button_slot_at(&Overlay::None, 0.0, BUTTON_ROW_CY), None);
+    }
+
+    /// H3/M4: the button touch target (drawn slot + forgiveness pad) clears the 44pt/48dp platform
+    /// minimum on the reference landscape phone, so a future shrink of the geometry fails CI.
+    #[test]
+    fn button_touch_target_meets_platform_minimum() {
+        // NDC y spans 2.0 == the full viewport; a slot of half-height h is 2*h NDC tall. The touch
+        // target adds the forgiveness pad, so its point height is 2*(BUTTON_HH+BUTTON_HIT_PAD)*REF.
+        let touch_pt = 2.0 * (BUTTON_HH + BUTTON_HIT_PAD) * REFERENCE_VIEWPORT_H;
+        assert!(
+            touch_pt >= 44.0,
+            "touch target {touch_pt}pt is below the 44pt/48dp minimum"
+        );
+        // The drawn slot alone is deliberately just under 44pt (capped by the layout); the pad is
+        // what carries it over. Document that so a naive "just raise BUTTON_HH" doesn't regress it.
+        let drawn_pt = 2.0 * BUTTON_HH * REFERENCE_VIEWPORT_H;
+        assert!(drawn_pt > 0.0);
     }
 
     /// The summary bar rows start strictly below the accent strip, derived from `ACCENT_STRIP_HH`
@@ -1417,7 +1605,7 @@ mod tests {
 
     #[test]
     fn paused_labels_its_buttons() {
-        let labels = overlay_labels(&Overlay::Paused);
+        let labels = overlay_labels(&Overlay::Paused { single_player: true });
         let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
         assert!(texts.contains(&"RESUME"), "paused labels Resume");
         assert!(texts.contains(&"QUIT"), "paused labels its secondary");
@@ -1470,13 +1658,14 @@ mod tests {
         assert!(texts.contains(&"7"), "kills count labelled");
         assert!(texts.contains(&"3"), "territory count labelled");
         assert!(texts.contains(&"1234"), "resources count labelled");
-        assert!(texts.contains(&"DISMISS"), "summary dismiss button labelled");
+        assert!(texts.contains(&"REMATCH"), "summary rematch button labelled");
     }
 
     #[test]
     fn summary_labels_a_number_per_faction_stat() {
-        // Three stats (kills/territory/resources) per faction row, plus a faction tag per row, plus
-        // the title and the dismiss button. The numeric labels alone must be 3 * FACTION_COUNT.
+        // Three stats (kills/territory/resources) per *shown* faction row. Player + Enemy scored;
+        // Neutral did nothing → filtered (L4), so the pure-numeric labels are 3 * 2 (the produced/
+        // lost pair carries a '/', so it is not counted as a bare number).
         let q = overlay_labels(&Overlay::Summary(summary_full(
             MatchOutcome::Draw,
             1,
@@ -1490,11 +1679,74 @@ mod tests {
             .iter()
             .filter(|l| l.text.chars().all(|c| c.is_ascii_digit()))
             .count();
-        assert_eq!(
-            numeric,
-            3 * FACTION_COUNT,
-            "one number per stat per faction row"
+        assert_eq!(numeric, 3 * 2, "one number per stat for the two shown rows");
+    }
+
+    /// M5: the summary surfaces the produced / lost counts it previously dropped, as a `P/L` pair
+    /// per shown faction row (the '/' keeps it out of the pure-numeric readout column).
+    #[test]
+    fn summary_labels_produced_and_lost() {
+        let mut summary = summary_full(
+            MatchOutcome::Victory(Faction::Player),
+            4,
+            2,
+            0,
+            0,
+            0,
+            0,
         );
+        summary.per_faction[Faction::Player.index()].units_produced = 12;
+        summary.per_faction[Faction::Player.index()].units_lost = 8;
+        summary.per_faction[Faction::Enemy.index()].units_produced = 9;
+        summary.per_faction[Faction::Enemy.index()].units_lost = 6;
+        let labels = overlay_labels(&Overlay::Summary(summary));
+        let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
+        assert!(texts.contains(&"12/8"), "player produced/lost labelled");
+        assert!(texts.contains(&"9/6"), "enemy produced/lost labelled");
+    }
+
+    /// M3: the primary (amber) button caption draws dark ink, the secondary (dark) button draws a
+    /// light caption, and the primary caption/fill luminances differ by a clear margin.
+    #[test]
+    fn primary_button_caption_is_dark_ink_for_contrast() {
+        use crate::theme;
+        assert_eq!(button_label_color(QuadRole::ButtonPrimary), theme::INK);
+        assert_eq!(button_label_color(QuadRole::Button), LABEL_COLOR);
+        // Contrast on the most-tapped action: dark ink over amber must be a big luminance gap.
+        let ink_lum = theme::luminance(theme::INK);
+        let amber_lum = theme::luminance(theme::AMBER);
+        assert!(
+            (amber_lum - ink_lum).abs() > 0.3,
+            "amber ({amber_lum}) vs ink ({ink_lum}) caption luminance gap too small"
+        );
+        // The light caption over the dark secondary fill also stays a clear gap.
+        let light_lum = theme::luminance(LABEL_COLOR);
+        let dark_fill_lum = theme::luminance(theme::PANEL_RAISED);
+        assert!(
+            (light_lum - dark_fill_lum).abs() > 0.3,
+            "secondary caption/fill luminance gap too small"
+        );
+    }
+
+    /// M1: a lockstep (multiplayer) pause warns that the sim is still running; a single-player pause
+    /// does not (there the world really is frozen). The warning uses the same accent strip role the
+    /// reconnect prompt uses.
+    #[test]
+    fn multiplayer_pause_warns_the_match_keeps_running() {
+        let mp = Overlay::Paused { single_player: false };
+        let sp = Overlay::Paused { single_player: true };
+
+        // Quads: the multiplayer pause carries a Warning accent strip; the single-player one doesn't.
+        assert!(roles(&overlay_quads(&mp)).contains(&QuadRole::Warning));
+        assert!(!roles(&overlay_quads(&sp)).contains(&QuadRole::Warning));
+
+        // Labels: only the multiplayer pause spells out that the match is still live.
+        let mp_texts: Vec<String> = overlay_labels(&mp).into_iter().map(|l| l.text).collect();
+        assert!(mp_texts.iter().any(|t| t == "YOUR MATCH KEEPS RUNNING"));
+        assert!(mp_texts.iter().any(|t| t == "PAUSED"));
+        let sp_texts: Vec<String> = overlay_labels(&sp).into_iter().map(|l| l.text).collect();
+        assert!(!sp_texts.iter().any(|t| t == "YOUR MATCH KEEPS RUNNING"));
+        assert!(sp_texts.iter().any(|t| t == "PAUSED"));
     }
 
     /// Fairness guard (invariant #6): every label is NDC chrome, never a world position.
