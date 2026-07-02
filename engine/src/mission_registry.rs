@@ -40,6 +40,12 @@ use gonedark_core::mission_tuning::{
 };
 use gonedark_core::sim::Sim;
 
+use std::path::{Path, PathBuf};
+
+use crate::map_format::MapSpec;
+use crate::mission_format::{
+    self, load_mission, parse_mission, LoadedMission, MissionLoadError, MissionSpec,
+};
 use crate::objectives::ObjectiveSet;
 
 /// The shared identity of the WS-A *Seize* mission ("10 troops, take the base"). The single point
@@ -256,6 +262,314 @@ pub fn default_campaign() -> Campaign {
         )
         .requires([NodeId(0)]),
     ])
+}
+
+// ================= CT-D — data-backed registry + between-match content hot-reload ================
+//
+// Everything above builds the registry from **hardcoded Rust** (`default_registry`): a recompile per
+// mission, and a Rust toolchain to author one. CT-D adds the payoff path — a registry built by
+// **loading authored `*.mission.ron` / `*.map.ron` files** from a content directory, through the
+// already-landed float-airlock loaders (`mission_format` / `map_format`). `default_registry` stays as
+// the code-built fallback baseline and the CT-A oracle (it is NOT replaced): a data mission's opening
+// checksum must match its code-built equivalent's, which is exactly what the mission_format Seize
+// oracle already pins and the CT-D tests re-assert.
+//
+// **Zero new checksum surface (invariants #1/#7).** A `ContentMission` seeds a `Sim` by calling the
+// SAME `mission_format::load_mission` path the byte-identical Seize oracle proves — the RON file
+// never enters the checksum, only the seeded `Sim` does, on the exact footing of a hand-written
+// seeder. The `id`, `map` reference, and briefing text are host-side wiring/presentation, never sim
+// state.
+//
+// **Fail-soft hot-reload (the Rust weak-reload mitigation, D10).** [`ContentRegistry::load_dirs`]
+// re-scans + re-validates the content dir and returns a [`ContentScan`]: the registry of every file
+// that loaded cleanly, PLUS a list of per-file [`ContentError`]s for every file that did not. A
+// malformed / dangling / duplicate file is rejected **loudly into `errors`** without taking the whole
+// registry down — the good missions still load, so a designer's typo between matches costs one broken
+// mission, not the campaign. [`ContentRegistry::reload`] is the return-to-title entry point: it
+// re-scans the same dirs the registry was built from.
+
+/// One mission built from an authored `*.mission.ron` file (CT-D) — the data-backed analogue of the
+/// code-built [`MissionDef`]. Unlike `MissionDef` (a `fn` pointer + a `&'static` [`Briefing`], both
+/// fixed at compile time), a `ContentMission` owns its parsed [`MissionSpec`] and its resolved
+/// [`MapSpec`], so it can be re-read from disk between matches (hot-reload).
+#[derive(Clone)]
+pub struct ContentMission {
+    /// The mission identity the campaign graph names it by (from [`MissionSpec::id`]).
+    pub id: MissionId,
+    /// The file this mission was loaded from — carried for diagnostics and hot-reload.
+    pub source: PathBuf,
+    /// The parsed, validated mission spec (drives the seed via [`load_mission`]).
+    pub spec: MissionSpec,
+    /// The battlefield this mission is fought on — resolved from [`MissionSpec::map`] against the
+    /// content dir's `*.map.ron` files at load time (a dangling reference is rejected at load).
+    pub map: MapSpec,
+}
+
+impl ContentMission {
+    /// Seed `sim` with this mission by driving the CT-B float-airlock loader
+    /// ([`mission_format::load_mission`]) — the SAME code path the mission_format *Seize* oracle
+    /// proves **byte-identical** to `core::scenario::seed_seize_mission`. Returns the runnable
+    /// [`LoadedMission`] (spawned entities in authored order + the host-side objective set + briefing).
+    ///
+    /// The spec was validated at load time, so this cannot fail on shipped content; it re-runs
+    /// validation defensively (the loader does) and surfaces any error rather than seeding a
+    /// half-built world.
+    pub fn launch(&self, sim: &mut Sim) -> Result<LoadedMission, MissionLoadError> {
+        load_mission(&self.spec, sim)
+    }
+}
+
+/// Why one content file was rejected during a scan — the fail-loud-per-file diagnostic that keeps a
+/// bad file out of the registry without downing the good ones. Carries the offending path plus a
+/// human message (a parse/validation error, a dangling map reference, a duplicate id, or an I/O error).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentError {
+    /// The file (or directory, for a read error) the problem is in.
+    pub path: PathBuf,
+    /// A precise, human-readable diagnostic.
+    pub message: String,
+}
+
+impl std::fmt::Display for ContentError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.path.display(), self.message)
+    }
+}
+
+/// The result of scanning a content directory: the [`ContentRegistry`] of everything that loaded
+/// cleanly, plus every per-file [`ContentError`]. A caller shows the errors (a designer's between-match
+/// feedback) and still ships the good missions — the fail-soft contract.
+pub struct ContentScan {
+    /// The registry of missions/maps that loaded and validated cleanly.
+    pub registry: ContentRegistry,
+    /// Every file that was rejected, with why. Empty on a clean content dir (the CT-F lint pins this).
+    pub errors: Vec<ContentError>,
+}
+
+/// A `MissionId → ContentMission` registry built from authored `*.mission.ron` / `*.map.ron` files
+/// (CT-D). Same query surface as the code-built [`MissionRegistry`] ([`get`](Self::get),
+/// [`resolve_node`](Self::resolve_node), [`covers`](Self::covers)), so the campaign graph resolves a
+/// data mission exactly as it resolves a code one. Built by [`load_dirs`](Self::load_dirs) /
+/// [`load_dir`](Self::load_dir); re-scanned between matches by [`reload`](Self::reload).
+#[derive(Clone, Default)]
+pub struct ContentRegistry {
+    /// The directories this registry was scanned from — re-scanned on [`reload`](Self::reload).
+    dirs: Vec<PathBuf>,
+    /// The loaded missions, in deterministic (path-sorted) order.
+    missions: Vec<ContentMission>,
+    /// Every loaded map, keyed by filename stem (`crossroads.map.ron` → `"crossroads"`) — the id a
+    /// mission's `map` field references. Kept so the CT-F lint can check standalone maps too.
+    maps: Vec<(String, MapSpec)>,
+}
+
+/// The `"<name>"` a map file is referenced by: its filename with the `.map.ron` suffix stripped.
+fn map_id_of(path: &Path) -> String {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    name.strip_suffix(".map.ron").unwrap_or(name).to_string()
+}
+
+impl ContentRegistry {
+    /// Scan a single content directory for `*.mission.ron` + `*.map.ron`. Convenience over
+    /// [`load_dirs`](Self::load_dirs).
+    pub fn load_dir(dir: impl AsRef<Path>) -> ContentScan {
+        Self::load_dirs([dir.as_ref().to_path_buf()])
+    }
+
+    /// Scan one or more content directories (the repo keeps `missions/` and `maps/` separate), parse
+    /// + validate every `*.mission.ron` and `*.map.ron`, resolve each mission's `map` reference, and
+    /// build a registry — **fail-soft per file**: any file that fails to read, parse, validate,
+    /// resolve, or that duplicates an id is dropped into [`ContentScan::errors`] with a precise
+    /// message, and the rest still load. This is also the hot-reload entry point (call it again on
+    /// return-to-title, or via [`reload`](Self::reload)).
+    ///
+    /// Files are processed in path-sorted order so the registry (and thus any downstream seed order)
+    /// is deterministic regardless of the OS directory-iteration order.
+    pub fn load_dirs<I, P>(dirs: I) -> ContentScan
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        let dirs: Vec<PathBuf> = dirs.into_iter().map(Into::into).collect();
+        let mut errors = Vec::new();
+
+        // 1. Gather every content file, deterministically ordered.
+        let mut mission_files: Vec<PathBuf> = Vec::new();
+        let mut map_files: Vec<PathBuf> = Vec::new();
+        for dir in &dirs {
+            match std::fs::read_dir(dir) {
+                Ok(rd) => {
+                    for entry in rd.flatten() {
+                        let p = entry.path();
+                        let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+                            continue;
+                        };
+                        if name.ends_with(".mission.ron") {
+                            mission_files.push(p);
+                        } else if name.ends_with(".map.ron") {
+                            map_files.push(p);
+                        }
+                    }
+                }
+                Err(e) => errors.push(ContentError {
+                    path: dir.clone(),
+                    message: format!("cannot read content directory: {e}"),
+                }),
+            }
+        }
+        mission_files.sort();
+        map_files.sort();
+
+        // 2. Load the maps first — missions cross-reference them by filename-stem id.
+        let mut maps: Vec<(String, MapSpec)> = Vec::new();
+        for path in &map_files {
+            let id = map_id_of(path);
+            match std::fs::read_to_string(path).map_err(|e| format!("cannot read file: {e}")) {
+                Ok(text) => match MapSpec::load(&text) {
+                    Ok(spec) => {
+                        if maps.iter().any(|(k, _)| *k == id) {
+                            errors.push(ContentError {
+                                path: path.clone(),
+                                message: format!("duplicate map id {id:?} (already loaded)"),
+                            });
+                        } else {
+                            maps.push((id, spec));
+                        }
+                    }
+                    Err(e) => errors.push(ContentError {
+                        path: path.clone(),
+                        message: e.to_string(),
+                    }),
+                },
+                Err(msg) => errors.push(ContentError {
+                    path: path.clone(),
+                    message: msg,
+                }),
+            }
+        }
+
+        // 3. Load the missions, resolving each `map` reference against the loaded maps.
+        let mut missions: Vec<ContentMission> = Vec::new();
+        for path in &mission_files {
+            let built = Self::build_mission(path, &maps);
+            match built {
+                Ok(m) => {
+                    if let Some(dup) = missions.iter().find(|other| other.id == m.id) {
+                        errors.push(ContentError {
+                            path: path.clone(),
+                            message: format!(
+                                "duplicate MissionId {:?} (already loaded from {})",
+                                m.id,
+                                dup.source.display()
+                            ),
+                        });
+                    } else {
+                        missions.push(m);
+                    }
+                }
+                Err(msg) => errors.push(ContentError {
+                    path: path.clone(),
+                    message: msg,
+                }),
+            }
+        }
+
+        ContentScan {
+            registry: ContentRegistry {
+                dirs,
+                missions,
+                maps,
+            },
+            errors,
+        }
+    }
+
+    /// Parse + validate one `*.mission.ron` and resolve its map reference, or return a precise
+    /// rejection message. Never touches a `Sim` — pure load-time logic (the repo's testable-seam
+    /// convention).
+    fn build_mission(path: &Path, maps: &[(String, MapSpec)]) -> Result<ContentMission, String> {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read file: {e}"))?;
+        let spec: MissionSpec = parse_mission(&text).map_err(|e| e.to_string())?;
+        mission_format::validate(&spec).map_err(|e| e.to_string())?;
+        if spec.id == 0 {
+            return Err(
+                "mission has no `id` (or id 0, the unassigned sentinel); give it a stable, non-zero \
+                 `id:` so a campaign node can name it"
+                    .to_string(),
+            );
+        }
+        let map = maps
+            .iter()
+            .find(|(k, _)| *k == spec.map)
+            .map(|(_, m)| m.clone())
+            .ok_or_else(|| {
+                format!(
+                    "map reference {:?} resolves to no loaded *.map.ron in the content dir",
+                    spec.map
+                )
+            })?;
+        Ok(ContentMission {
+            id: MissionId(spec.id),
+            source: path.to_path_buf(),
+            spec,
+            map,
+        })
+    }
+
+    /// Re-scan + re-validate the directories this registry was built from — the **between-match
+    /// hot-reload** (call on return-to-title). Returns a fresh [`ContentScan`] so the caller can swap
+    /// in the new registry and surface any newly-introduced errors, all without a recompile.
+    pub fn reload(&self) -> ContentScan {
+        Self::load_dirs(self.dirs.clone())
+    }
+
+    /// Number of loaded missions.
+    pub fn len(&self) -> usize {
+        self.missions.len()
+    }
+
+    /// Whether no mission loaded.
+    pub fn is_empty(&self) -> bool {
+        self.missions.is_empty()
+    }
+
+    /// The content mission registered under a [`MissionId`], or `None` (a content gap — never guessed).
+    pub fn get(&self, id: MissionId) -> Option<&ContentMission> {
+        self.missions.iter().find(|m| m.id == id)
+    }
+
+    /// All loaded missions, in deterministic order.
+    pub fn missions(&self) -> &[ContentMission] {
+        &self.missions
+    }
+
+    /// All loaded maps (id + spec), for standalone-map linting.
+    pub fn maps(&self) -> &[(String, MapSpec)] {
+        &self.maps
+    }
+
+    /// A loaded map by its id (filename stem).
+    pub fn map(&self, id: &str) -> Option<&MapSpec> {
+        self.maps.iter().find(|(k, _)| k == id).map(|(_, m)| m)
+    }
+
+    /// Resolve a campaign **node** to its content mission, honouring the unlock gate — mirrors
+    /// [`MissionRegistry::resolve_node`] so a data-backed registry drops into the same shell wiring.
+    pub fn resolve_node(&self, campaign: &Campaign, node: NodeId) -> Option<&ContentMission> {
+        let n = campaign.node(node)?;
+        if !campaign.progress(node).is_playable() {
+            return None;
+        }
+        self.get(n.mission)
+    }
+
+    /// Whether every node in `campaign` resolves to a loaded mission (the authoring-consistency
+    /// guarantee) — mirrors [`MissionRegistry::covers`].
+    pub fn covers(&self, campaign: &Campaign) -> bool {
+        campaign
+            .mission_select()
+            .iter()
+            .all(|entry| self.get(entry.mission).is_some())
+    }
 }
 
 #[cfg(test)]
@@ -601,5 +915,293 @@ mod tests {
         let mut sim2 = Sim::new(0xC0FFEE);
         let _ = def.launch(&mut sim2, Loadout::STANDARD, CampaignDifficulty::Regular);
         assert_eq!(sim.checksum(), sim2.checksum());
+    }
+}
+
+// ================= CT-D — data-backed registry + hot-reload tests ================================
+
+#[cfg(test)]
+mod content_tests {
+    use super::*;
+    use gonedark_core::scenario::seed_seize_mission;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// The shipped *Seize* mission + its battlefield, compiled into the test binary so a fresh temp
+    /// content dir can be materialised with zero dependency on the repo working directory.
+    const SEIZE_MISSION: &str = include_str!("../../missions/seize.mission.ron");
+    const SEIZE_MAP: &str = include_str!("../../maps/seize_outpost.map.ron");
+
+    /// The CT-A golden opening checksum for *Seize* — the byte-identical oracle a data-loaded mission
+    /// must reproduce (also pinned in `core::scenario` and `mission_format`).
+    const SEIZE_OPENING_GOLDEN: u64 = 0x474c_dbf2_ad91_3ecb;
+
+    /// The seed the CT-A golden was captured under.
+    fn golden_seed() -> Sim {
+        Sim::new(0xD0E1)
+    }
+
+    // ---- a tiny dependency-free temp-dir helper (no tempfile crate in the tree) ------------------
+
+    /// A unique scratch directory, recursively removed on drop. Unique per (pid, process-atomic
+    /// counter, wall-clock nanos) so parallel test threads never collide.
+    struct TempContent(PathBuf);
+
+    impl TempContent {
+        fn new(tag: &str) -> TempContent {
+            static N: AtomicU64 = AtomicU64::new(0);
+            let n = N.fetch_add(1, Ordering::Relaxed);
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let dir = std::env::temp_dir().join(format!(
+                "gonedark-ctd-{tag}-{}-{n}-{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&dir).expect("create temp content dir");
+            TempContent(dir)
+        }
+
+        fn write(&self, name: &str, contents: &str) -> PathBuf {
+            let p = self.0.join(name);
+            std::fs::write(&p, contents).expect("write content file");
+            p
+        }
+
+        fn remove(&self, name: &str) {
+            let _ = std::fs::remove_file(self.0.join(name));
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempContent {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// A second, minimal-but-valid mission (id 2) on its own tiny map — used to prove reload picks up
+    /// an *added* file. Deliberately NOT a re-expression of a shipped mission: it exercises a
+    /// different force/objective shape so the format carries it independently.
+    const ARENA_MAP: &str = r#"MapSpec(terrain: 0, control_points: [CellRef(x: 64, y: 64)])"#;
+    fn arena_mission(title: &str) -> String {
+        format!(
+            r#"MissionSpec(
+    id: 2,
+    map: "arena",
+    income_period: 300,
+    starting_purse: 0,
+    armies: (player: Us, enemy: Fr),
+    control_points: [],
+    forces: [
+        Unit(kind: Rifleman, faction: Player, cell: (-5, 0), stance: FireAtWill, facing_deg: 0),
+        Camp(faction: Enemy, cell: (5, 0)),
+    ],
+    objectives: [
+        EliminateFaction(owner: Player, target: Enemy, label: "Clear the arena"),
+    ],
+    difficulty: Veteran,
+    briefing: (title: "{title}", situation: "S", objective_line: "O"),
+)"#
+        )
+    }
+
+    // ---- CT-D test 1: a data registry resolves the same node byte-identically to default_registry --
+
+    /// The load-bearing CT-D proof: a registry built from a content DIR resolves the *Seize* node to a
+    /// mission whose seeded `Sim` is **byte-identical** to (a) the code-built `default_registry`'s
+    /// Seize launch and (b) the bare `seed_seize_mission`, and matches the CT-A golden. The data path
+    /// is a faithful re-expression, not a second code path — it adds no checksum surface (#1/#7).
+    #[test]
+    fn data_registry_resolves_the_seize_node_byte_identically_to_default_registry() {
+        let dir = TempContent::new("seize");
+        dir.write("seize.mission.ron", SEIZE_MISSION);
+        dir.write("seize_outpost.map.ron", SEIZE_MAP);
+
+        let scan = ContentRegistry::load_dir(dir.path());
+        assert!(scan.errors.is_empty(), "shipped content must load clean: {:?}", scan.errors);
+        let reg = scan.registry;
+        assert_eq!(reg.len(), 1, "one authored mission (Seize)");
+
+        // Resolves under MISSION_SEIZE — the same id the code-built default_registry uses.
+        let data = reg.get(MISSION_SEIZE).expect("Seize resolves in the data registry");
+        assert_eq!(data.id, MISSION_SEIZE);
+
+        // (a) data-loaded Seize == bare seed == the CT-A golden.
+        let mut data_sim = golden_seed();
+        let loaded = data.launch(&mut data_sim).expect("data Seize seeds");
+        assert_eq!(loaded.forces.len(), 15, "ten troops + camp + four garrison");
+        let mut bare = golden_seed();
+        seed_seize_mission(&mut bare);
+        assert_eq!(data_sim.checksum(), bare.checksum(), "data Seize == bare seed");
+        assert_eq!(data_sim.checksum(), SEIZE_OPENING_GOLDEN, "data Seize == CT-A golden");
+
+        // (b) data-loaded Seize == code-built default_registry Seize launch (Regular = neutral).
+        let mut code_sim = golden_seed();
+        default_registry()
+            .get(MISSION_SEIZE)
+            .unwrap()
+            .launch(&mut code_sim, Loadout::STANDARD, ReplayTier::Regular);
+        assert_eq!(
+            data_sim.checksum(),
+            code_sim.checksum(),
+            "the data registry resolves the Seize node to the same Sim as default_registry",
+        );
+    }
+
+    // ---- CT-D test 2: reload picks up an added AND an edited file --------------------------------
+
+    #[test]
+    fn reload_picks_up_an_added_and_an_edited_file() {
+        let dir = TempContent::new("reload");
+        dir.write("seize.mission.ron", SEIZE_MISSION);
+        dir.write("seize_outpost.map.ron", SEIZE_MAP);
+
+        // Initial scan: just Seize.
+        let reg = {
+            let scan = ContentRegistry::load_dir(dir.path());
+            assert!(scan.errors.is_empty(), "{:?}", scan.errors);
+            scan.registry
+        };
+        assert_eq!(reg.len(), 1);
+        assert!(reg.get(MissionId(2)).is_none(), "arena not authored yet");
+
+        // ADD a second mission (id 2) + its map, then hot-reload the SAME dirs via `reload`.
+        dir.write("arena.map.ron", ARENA_MAP);
+        dir.write("arena.mission.ron", &arena_mission("Arena"));
+        let scan = reg.reload();
+        assert!(scan.errors.is_empty(), "the added files must load clean: {:?}", scan.errors);
+        let reg = scan.registry;
+        assert_eq!(reg.len(), 2, "reload picked up the added mission");
+        let arena = reg.get(MissionId(2)).expect("the added mission resolves after reload");
+        assert_eq!(arena.spec.briefing.title, "Arena");
+        // Seize is still present and still byte-identical after the reload.
+        let mut s = golden_seed();
+        reg.get(MISSION_SEIZE).unwrap().launch(&mut s).unwrap();
+        assert_eq!(s.checksum(), SEIZE_OPENING_GOLDEN);
+
+        // EDIT the added mission (change the briefing title) and reload again — the change is picked up.
+        dir.write("arena.mission.ron", &arena_mission("Arena Reforged"));
+        let scan = reg.reload();
+        assert!(scan.errors.is_empty(), "{:?}", scan.errors);
+        let arena = scan.registry.get(MissionId(2)).expect("still present after edit");
+        assert_eq!(
+            arena.spec.briefing.title, "Arena Reforged",
+            "reload reflected the edited briefing",
+        );
+    }
+
+    // ---- CT-D test 3: a malformed file is rejected WITHOUT downing the registry ------------------
+
+    #[test]
+    fn a_malformed_file_is_rejected_without_downing_the_registry() {
+        let dir = TempContent::new("malformed");
+        // A good, complete mission + its map.
+        dir.write("seize.mission.ron", SEIZE_MISSION);
+        dir.write("seize_outpost.map.ron", SEIZE_MAP);
+        // A malformed mission: an unknown field (`deny_unknown_fields`) — should NOT crash the scan.
+        dir.write(
+            "broken.mission.ron",
+            &SEIZE_MISSION.replace("id: 1,", "id: 7,\n    bogus_field: 3,"),
+        );
+
+        let scan = ContentRegistry::load_dir(dir.path());
+
+        // The good mission still loaded — the registry did NOT go down.
+        assert_eq!(scan.registry.len(), 1, "the good Seize mission survives a malformed sibling");
+        assert!(scan.registry.get(MISSION_SEIZE).is_some());
+        assert!(
+            scan.registry.get(MissionId(7)).is_none(),
+            "the malformed mission never entered the registry",
+        );
+
+        // The malformed file is reported with a precise, path-scoped diagnostic.
+        assert_eq!(scan.errors.len(), 1, "exactly the one broken file is reported");
+        let e = &scan.errors[0];
+        assert!(e.path.ends_with("broken.mission.ron"), "names the offending file: {}", e.path.display());
+        assert!(
+            e.message.contains("bogus_field") || e.message.to_lowercase().contains("unknown"),
+            "diagnostic names the parse failure: {}",
+            e.message,
+        );
+    }
+
+    // ---- CT-D test 4: a dangling map reference is rejected (fail-loud cross-reference) -----------
+
+    #[test]
+    fn a_dangling_map_reference_is_rejected_but_good_missions_load() {
+        let dir = TempContent::new("dangling");
+        dir.write("seize.mission.ron", SEIZE_MISSION);
+        dir.write("seize_outpost.map.ron", SEIZE_MAP);
+        // A mission whose map names a battlefield that is not present in the dir.
+        dir.write("orphan.mission.ron", &arena_mission("Orphan").replace(r#"map: "arena""#, r#"map: "nonexistent""#));
+
+        let scan = ContentRegistry::load_dir(dir.path());
+        assert_eq!(scan.registry.len(), 1, "Seize still loads; the orphan is rejected");
+        assert_eq!(scan.errors.len(), 1);
+        assert!(
+            scan.errors[0].message.contains("nonexistent")
+                && scan.errors[0].message.contains("no loaded"),
+            "diagnostic names the dangling map reference: {}",
+            scan.errors[0].message,
+        );
+    }
+
+    // ---- CT-D test 5: a duplicate MissionId is rejected without a panic --------------------------
+
+    #[test]
+    fn a_duplicate_mission_id_is_rejected_without_panicking() {
+        let dir = TempContent::new("dup");
+        dir.write("seize.mission.ron", SEIZE_MISSION);
+        dir.write("seize_outpost.map.ron", SEIZE_MAP);
+        // A second file that also claims id 1 (against its own map).
+        dir.write("clash.map.ron", ARENA_MAP);
+        dir.write(
+            "clash.mission.ron",
+            &arena_mission("Clash").replace("id: 2,", "id: 1,").replace(r#"map: "arena""#, r#"map: "clash""#),
+        );
+
+        // Must not panic (unlike MissionRegistry::new, which panics on a dup — a data scan is fail-soft).
+        let scan = ContentRegistry::load_dir(dir.path());
+        assert_eq!(scan.registry.len(), 1, "exactly one mission keeps id 1");
+        assert_eq!(scan.errors.len(), 1, "the clashing file is reported, not fatal");
+        assert!(
+            scan.errors[0].message.contains("duplicate MissionId"),
+            "diagnostic names the id clash: {}",
+            scan.errors[0].message,
+        );
+    }
+
+    // ---- CT-D test 6: an unreadable content dir is a soft error, not a crash ---------------------
+
+    #[test]
+    fn a_missing_content_dir_is_a_soft_error_not_a_crash() {
+        let missing = std::env::temp_dir().join(format!("gonedark-ctd-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&missing);
+        let scan = ContentRegistry::load_dir(&missing);
+        assert!(scan.registry.is_empty(), "no missions from a missing dir");
+        assert_eq!(scan.errors.len(), 1, "the unreadable dir is reported");
+        assert!(scan.errors[0].message.contains("cannot read content directory"));
+    }
+
+    // ---- CT-D test 7: reload re-scans the SAME dirs the registry was built from ------------------
+
+    #[test]
+    fn reload_rescans_the_original_dirs() {
+        let dir = TempContent::new("rescan");
+        dir.write("seize.mission.ron", SEIZE_MISSION);
+        dir.write("seize_outpost.map.ron", SEIZE_MAP);
+        let reg = ContentRegistry::load_dir(dir.path()).registry;
+        assert_eq!(reg.len(), 1);
+
+        // Delete the mission file, reload → the registry re-scans the same dir and now finds nothing.
+        dir.remove("seize.mission.ron");
+        let scan = reg.reload();
+        assert!(scan.registry.is_empty(), "reload reflects a removed file");
+        // The dangling map alone is not an error (an unused map is fine).
+        assert!(scan.errors.is_empty(), "an unreferenced map is not an error: {:?}", scan.errors);
     }
 }

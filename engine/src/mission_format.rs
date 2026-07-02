@@ -59,9 +59,16 @@ type Cell = (i32, i32);
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct MissionSpec {
+    /// The mission's stable identity — the `u32` a campaign node names it by, mapped to a
+    /// [`MissionId`](gonedark_core::campaign::MissionId) by the data-backed registry (CT-D). It is
+    /// **not** a sim number and never reaches the checksum; it only wires the authored campaign graph
+    /// to its content file. `#[serde(default)]` so a file that omits it still parses (as id `0`, the
+    /// unassigned sentinel) — a designer opts in by giving the mission a real, non-zero id.
+    #[serde(default)]
+    pub id: u32,
     /// The battlefield this mission is fought on — a string id resolved by the map format (CT-C).
     /// CT-B only **carries** the reference; a blank id is rejected here, but full cross-file
-    /// resolution against a map registry is CT-C/CT-F's job.
+    /// resolution against a map registry is CT-C/CT-D/CT-F's job.
     pub map: String,
     /// Income accrual period in ticks (the scenario-local economy *pace* lever). Must be `>= 1`.
     pub income_period: u32,
