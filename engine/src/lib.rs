@@ -4284,6 +4284,104 @@ impl Game {
         let overlay = overlay_for_surface(self.shell.surface());
         self.renderer.render_overlay(device, queue, view, &overlay);
     }
+
+    /// **PC-3 rendered spectator playback.** Advance the sim by exactly ONE tick with an
+    /// externally-supplied, already-merged `Command` set — a replay's ordered stream (a match is a
+    /// "seed + input log", invariant #1) — then draw the resulting snapshot through the real
+    /// command-view render path. This is the `replay-runner` determinism freebie cashed in
+    /// *visually*: the same seed + the same ordered log the headless checksum oracle proves
+    /// (`replay_runner::playback` / `playback_multi`) is what we step here, so `checksum()` after a
+    /// spectate frame is bit-identical to that oracle's per-tick stream.
+    ///
+    /// It differs from [`frame`](Self::frame) in two deliberate ways, both required for a faithful
+    /// spectate:
+    ///  - **commands come in directly** — there is no `InputFrame` → command mapping and no lockstep
+    ///    gate/accumulator; the caller hands the exact merged, peer-ordered set for the tick (e.g.
+    ///    `MultiReplay::merged_for` — the ascending-peer-id order D93 fixed). So the seam steps the
+    ///    sim byte-for-byte the way the headless oracle does, with no host-injected commander or
+    ///    input command that would perturb the checksum.
+    ///  - **it always presents the top-down COMMAND view** — a fair observer cam. A replay's
+    ///    `Embody`/`Surface` commands still flow into the *sim* (they swap that unit's input source,
+    ///    which is real sim state the checksum sees), but the spectator's camera never goes
+    ///    first-person, so there is no avatar-only fog to honour (invariant #6 is sidestepped by
+    ///    construction — the observer sees the Player faction's command-view union vision, exactly as
+    ///    the live commander would).
+    ///
+    /// Sim/render stay decoupled (invariant #4): the only sim mutation is the single `sim.step`; the
+    /// renderer only *reads* the prev→curr snapshots and never writes back. One tick per call keeps a
+    /// clean tick↔frame mapping, so captured frame *N* is sim tick *N*.
+    pub fn spectate_frame(
+        &mut self,
+        merged: &[Command],
+        viewport: (u32, u32),
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        view: &wgpu::TextureView,
+    ) {
+        let (width, height) = viewport;
+
+        // Fair observer cam: never first-person, so the strategic map never "goes dark" for the
+        // spectator (invariant #6 sidestepped — a top-down command-view spectate). Set defensively;
+        // the spectator scene never toggles these.
+        self.embodied = false;
+        self.camera = CameraMode::TopDown;
+
+        // Advance exactly one sim tick with the replay's merged set — the SAME `sim.step(merged)` the
+        // checksum-proven `replay_runner::playback*` performs (invariant #1/#7). Preserve the
+        // prev→curr snapshot pair the renderer interpolates over, mirroring `frame`'s step closure.
+        self.prev = self.curr.clone();
+        self.sim.step(merged);
+        self.curr = self.sim.snapshot();
+
+        // Command-view render path — the essential subset of `frame`'s command-view draw (no HUD /
+        // marquee / radial / debug chrome, none of which a passive spectate produces). Render at
+        // alpha = 1.0 (show `curr` exactly): one tick per frame, no sub-tick interpolation to blend.
+        let view_proj = self.command_view_proj(width, height);
+        let camera = Camera {
+            view_proj: view_proj.to_cols_array_2d(),
+        };
+        let visibility: Visibility =
+            fog::command_visibility(&self.sim.world, &self.sim.terrain, Faction::Player);
+
+        self.renderer.set_palette_mode(self.cvd_palette);
+        self.renderer.prepare(&self.prev, &self.curr, 1.0, &[]);
+
+        // Dyn-res scene target (identity blit at scale 1.0), exactly as `frame` composites: render
+        // the 3D command scene into the intermediate, then upscale-present onto the swapchain `view`.
+        let scene_scale = self.tuning.resolution_scale();
+        let (sw, sh) = self
+            .renderer
+            .ensure_scene_target(device, width, height, scene_scale);
+        let scene_view = self.renderer.scene_view();
+        self.renderer.render(
+            device,
+            queue,
+            &scene_view,
+            &camera,
+            /* world_dark = */ false,
+            &visibility,
+            sw,
+            sh,
+        );
+        self.renderer.present_scene(device, queue, view);
+
+        // Command-view economy readout (the top-left tally + resource/income lines), at native
+        // resolution over the presented scene — a pure read of the checksummed sim (folds nothing,
+        // invariants #1/#7), the same seam `frame` uses.
+        let held_points = self
+            .sim
+            .territory
+            .points
+            .iter()
+            .filter(|cp| cp.owner == Faction::Player)
+            .count() as u32;
+        let economy = gonedark_render::readout::EconomyReadout {
+            resources: self.sim.resources.get(Faction::Player).clamp(0, u32::MAX as i64) as u32,
+            income_per_tick: gonedark_render::readout::income_per_tick(held_points),
+        };
+        self.renderer
+            .render_readout(device, queue, view, Some(economy), /* world_dark = */ false);
+    }
 }
 
 /// What a click on an in-session shell-overlay button resolves to for the host. `Session` is a

@@ -20,6 +20,7 @@
     "desktop:replay": "cargo run -p gonedark-replay-runner",
     "desktop:replay:multi": "cargo run -p gonedark-replay-runner -- --multi",
     "desktop:viz": "cargo run -p gonedark-viz-runner",
+    "desktop:viz:spectator": "cargo run -p gonedark-viz-runner -- --spectator",
     "desktop:server": "cargo run -p gonedark-server",
 
     "android:devices": "scripts/android.sh devices",

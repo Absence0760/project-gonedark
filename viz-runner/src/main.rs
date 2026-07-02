@@ -519,13 +519,188 @@ fn backdrop_scene(gpu: &Gpu, failures: &mut u32) {
     );
 }
 
+/// --- PC-3 rendered spectator scene (D89/D93 replay foundation → the real render path) ----------
+/// Pick the ticks to SCREENSHOT during a spectate of `total` ticks: `samples` evenly-spaced ticks
+/// across `1..total`, always including a late one. A replay is one merged command set per tick, so
+/// the spectator renders *every* tick (cheap offscreen) but only reads pixels back on these — the
+/// coarse-sampling discipline the muzzle-flash/hitmarker scenes already use, made a pure, testable
+/// seam (frame-selection). Returns ascending, de-duplicated ticks, each in `1..total`.
+fn spectate_capture_ticks(total: u64, samples: usize) -> Vec<u64> {
+    if total <= 1 || samples == 0 {
+        return Vec::new();
+    }
+    let last = total - 1; // the final stepped tick (playback runs 1..total)
+    let n = samples.min(last as usize) as u64;
+    let mut out = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        // Spread across [1, last]: i/(n-1) of the way, so i=0 → 1 and i=n-1 → last.
+        let t = if n == 1 {
+            last
+        } else {
+            1 + (last - 1) * i / (n - 1)
+        };
+        if out.last() != Some(&t) {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// Play a recorded `MultiReplay` back through the REAL command-view render path
+/// (`Game::spectate_frame`), capturing PNG frames and asserting: (a) the rendered playback steps
+/// the sim **bit-identical** to the checksum-proven headless oracle (`round_trip_multi`), (b) a
+/// second rendered spectate of the same seed+log reproduces the identical checksum stream
+/// (determinism), and (c) the captured command-view frames are **non-blank** (a real lit field with
+/// player + enemy tokens, not a cleared buffer). Feeds the sim from the replay's **merged,
+/// ascending-peer-id** command stream (D93 `merged_for`), so the spectate is faithful to what
+/// lockstep produced.
+fn spectator_scene(gpu: &Gpu, target: &wgpu::Texture, view: &wgpu::TextureView, failures: &mut u32) {
+    use gonedark_replay_runner::{round_trip_multi, MultiReplay, Scenario};
+
+    // The replay-runner's canonical seed. `Game::new_scene(Scene::Skirmish, SEED)` seeds the sim
+    // through `seed_skirmish_with_loadout(_, STANDARD)`, a proven no-op over `core::scenario::
+    // seed_skirmish` — the SAME seeded world the replay scenario builds — so the two step from a
+    // byte-identical tick-0 state and their checksum streams line up (invariants #1/#7).
+    const SEED: u64 = 0x60ED_DA47;
+    const TICKS: u64 = 300;
+
+    println!(
+        "[spectator] play a recorded MultiReplay back through the real render path (PC-3 rendered spectate)"
+    );
+    std::fs::create_dir_all("target/viz/spectator").expect("create target/viz/spectator");
+
+    // Record + round-trip the multi-peer replay through its byte artifact (D93), yielding the
+    // decoded replay plus the record & playback checksum streams the headless oracle already proves
+    // bit-identical. We render THIS decoded replay's merged stream and cross-check against it.
+    let (rec_stream, play_stream, replay) =
+        round_trip_multi(Scenario::DEFAULT, SEED, TICKS).expect("multi-peer replay round-trip");
+
+    // One rendered spectate pass: step the sim from the replay's merged stream through the real
+    // render path, screenshotting the sampled ticks. Returns the per-tick checksum stream + the
+    // captured `(tick, rgba)` frames.
+    let run = |replay: &MultiReplay| -> (Vec<u64>, Vec<(u64, Vec<u8>)>) {
+        let mut g = Game::new_scene(&gpu.device, FORMAT, SEED, Scene::Skirmish);
+        let capture_at = spectate_capture_ticks(TICKS, 3);
+        let mut stream: Vec<u64> = Vec::with_capacity(TICKS as usize);
+        let mut frames: Vec<(u64, Vec<u8>)> = Vec::new();
+        stream.push(g.checksum()); // tick 0: the seeded state, before any step
+        for t in 1..TICKS {
+            // Feed the replay's merged, peer-ordered command set for this tick through the render path.
+            g.spectate_frame(&replay.merged_for(t), (W, H), &gpu.device, &gpu.queue, view);
+            stream.push(g.checksum());
+            if capture_at.contains(&t) {
+                frames.push((t, read_pixels(&gpu.device, &gpu.queue, target)));
+            }
+        }
+        (stream, frames)
+    };
+
+    let (rendered_stream, frames) = run(&replay);
+    // A second, independent rendered spectate of the same seed+log — for the determinism assertion.
+    let (rendered_stream_2, _) = run(&replay);
+
+    for (t, rgba) in &frames {
+        save_png(&format!("target/viz/spectator/tick_{t:03}.png"), rgba);
+    }
+
+    // (a) Faithfulness: the rendered playback's per-tick checksum stream is bit-identical to the
+    // headless oracle's — the render path steps the sim exactly the way the checksum-proven replay
+    // does (invariant #7 — the checksum assertion is the point, never weakened).
+    check(
+        failures,
+        "spectator_stream_matches_replay_oracle",
+        rendered_stream == play_stream && rendered_stream == rec_stream,
+        format!(
+            "rendered {} ticks; stream {} the replay record+playback oracle (bit-identical)",
+            rendered_stream.len(),
+            if rendered_stream == play_stream && rendered_stream == rec_stream {
+                "=="
+            } else {
+                "!="
+            }
+        ),
+    );
+    // (b) Determinism: same seed + same ordered log ⇒ identical per-tick checksums, twice.
+    check(
+        failures,
+        "spectator_playback_is_deterministic",
+        rendered_stream == rendered_stream_2,
+        format!(
+            "two rendered spectates of the same seed+log produced {} checksum streams",
+            if rendered_stream == rendered_stream_2 { "identical" } else { "DIVERGING" }
+        ),
+    );
+    // Sanity: the sim actually advanced over the replay (a frozen stream would trivially "match").
+    check(
+        failures,
+        "spectator_sim_advanced",
+        rendered_stream.first() != rendered_stream.last(),
+        format!(
+            "checksum moved over {TICKS} ticks: tick0 {:#018x} → tickN {:#018x}",
+            rendered_stream.first().copied().unwrap_or(0),
+            rendered_stream.last().copied().unwrap_or(0)
+        ),
+    );
+
+    // (c) Non-blank: the FIRST captured (earliest) command-view frame draws a real lit field with
+    // both factions' tokens (bases + starting troops on screen), not a cleared buffer — the same
+    // pixel-bucket style the `command` scene uses.
+    if let Some((t, rgba)) = frames.first() {
+        let (blue, red, dark) = (
+            count(rgba, is_player_blue),
+            count(rgba, is_enemy_red),
+            dark_fraction(rgba),
+        );
+        check(
+            failures,
+            "spectator_frame_not_blank",
+            dark < 0.5,
+            format!("tick {t}: dark fraction {dark:.3} (<0.5 — a lit command field, not a cleared buffer)"),
+        );
+        check(
+            failures,
+            "spectator_frame_draws_player_units",
+            blue > 50,
+            format!("tick {t}: {blue} player-blue px (>50 — the Player faction renders in the spectate)"),
+        );
+        check(
+            failures,
+            "spectator_frame_draws_enemy_units",
+            red > 50,
+            format!("tick {t}: {red} enemy-red px (>50 — the Enemy faction renders in the spectate)"),
+        );
+    } else {
+        check(failures, "spectator_frame_captured", false, "no spectate frame was captured".to_string());
+    }
+
+    println!(
+        "  PNGs: target/viz/spectator/tick_{{{}}}.png",
+        frames.iter().map(|(t, _)| format!("{t:03}")).collect::<Vec<_>>().join(",")
+    );
+}
+
 fn main() {
+    let spectator = std::env::args().any(|a| a == "--spectator");
     let Some(gpu) = init_gpu() else {
         println!("SKIP: no wgpu adapter available (headless/CI without a GPU) — nothing rendered.");
         return; // exit 0: a missing GPU is not a visual failure.
     };
     std::fs::create_dir_all("target/viz").expect("create target/viz");
     let (target, view) = make_target(&gpu.device);
+
+    // PC-3 rendered spectator mode (`--spectator`, `pnpm desktop:viz:spectator`): play a recorded
+    // replay back through the real render path. Runs ONLY the spectator scene, then reports.
+    if spectator {
+        let mut failures = 0u32;
+        spectator_scene(&gpu, &target, &view, &mut failures);
+        if failures == 0 {
+            println!("\nRESULT: spectator visual assertions passed ✓");
+        } else {
+            println!("\nRESULT: {failures} spectator visual assertion(s) FAILED ✗");
+            std::process::exit(1);
+        }
+        return;
+    }
     let embody = InputFrame {
         embody_pressed: true,
         ..Default::default()
@@ -1121,5 +1296,40 @@ fn main() {
     } else {
         println!("RESULT: {failures} visual assertion(s) FAILED ✗");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The frame-selection seam is the one piece of the spectator scene with real (GPU-free) logic,
+    // so it gets a real unit test (the rest is wgpu glue that can't run without an adapter).
+    #[test]
+    fn spectate_capture_ticks_are_spread_and_in_range() {
+        let ticks = spectate_capture_ticks(300, 3);
+        assert_eq!(ticks.len(), 3, "three samples requested");
+        assert_eq!(ticks.first(), Some(&1), "first sample is the opening stepped tick");
+        assert_eq!(ticks.last(), Some(&299), "last sample is the final stepped tick (total-1)");
+        // Ascending, unique, and every tick inside the played range 1..total.
+        for w in ticks.windows(2) {
+            assert!(w[0] < w[1], "ticks must be strictly ascending: {ticks:?}");
+        }
+        assert!(ticks.iter().all(|&t| (1..300).contains(&t)), "every tick in 1..total: {ticks:?}");
+    }
+
+    #[test]
+    fn spectate_capture_ticks_handles_degenerate_inputs() {
+        assert!(spectate_capture_ticks(0, 3).is_empty(), "no ticks in an empty replay");
+        assert!(spectate_capture_ticks(1, 3).is_empty(), "a seed-only replay steps nothing");
+        assert!(spectate_capture_ticks(300, 0).is_empty(), "zero samples → no captures");
+        // A single sample lands on the final stepped tick (the most-evolved frame).
+        assert_eq!(spectate_capture_ticks(50, 1), vec![49]);
+        // More samples than steps clamps to the available ticks (de-duplicated, no repeats).
+        let ticks = spectate_capture_ticks(4, 10);
+        for w in ticks.windows(2) {
+            assert!(w[0] < w[1], "clamped ticks stay strictly ascending: {ticks:?}");
+        }
+        assert!(ticks.iter().all(|&t| (1..4).contains(&t)), "clamped ticks in range: {ticks:?}");
     }
 }

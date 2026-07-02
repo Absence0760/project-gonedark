@@ -17,6 +17,10 @@ gonedark-pal = { path = "../pal" }
 # The title backdrop is a standalone render-crate component (no `engine::Game`), so the viz
 # harness drives it directly to screenshot it (the other scenes go through `Game`).
 gonedark-render = { path = "../render" }
+# PC-3 rendered spectator scene: reuse the headless replay record/order logic (Replay /
+# MultiReplay + the merged, ascending-peer-id command stream) rather than reimplementing it, and
+# cross-check the rendered playback's per-tick checksums against the replay's proven oracle.
+gonedark-replay-runner = { path = "../replay-runner" }
 wgpu = "29"
 pollster = "0.4"
 png = "0.18"

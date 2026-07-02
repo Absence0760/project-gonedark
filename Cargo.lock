@@ -1380,6 +1380,7 @@ dependencies = [
  "gonedark-engine",
  "gonedark-pal",
  "gonedark-render",
+ "gonedark-replay-runner",
  "png",
  "pollster",
  "wgpu",
