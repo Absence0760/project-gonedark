@@ -39,6 +39,136 @@ use crate::terrain::Cover;
 use crate::territory::ControlPoint;
 use crate::trig::{Angle, ANGLE_FULL};
 
+// --- The scenario builder: the content-tooling spine (CT-A) -------------------------------------
+//
+// A serde-free, deterministic, fixed-point builder over the same private spawn/build primitives the
+// hand-written seeders (`seed_seize_mission`, `seed_skirmish`, …) already call. It is the seam a
+// host-side data loader (CT-B, `engine::mission_format`) drives *after* it has turned every text
+// number into an integer/`Fixed` — so the airlock, the RON dependency, and all validation live in
+// `engine`, and `core` stays serde-free (invariant #2) and float-free (invariant #1).
+//
+// The builder is a **thin** convenience: every method is exactly the primitive the seeders open-code
+// today, so a `Sim` assembled through the builder is byte-identical to one the hand seeders produce
+// — it adds **no** per-tick checksum surface (invariant #7). `seed_seize_mission` and `seed_skirmish`
+// are refactored to build *through* it, which makes them the living oracle: the golden opening
+// checksum they pin is captured from the pre-builder implementation, so any drift the builder
+// introduced would trip it.
+//
+// It borrows the `Sim` it seeds (`&mut Sim`), matching the `seed_*(sim: &mut Sim, …)` shape, so a
+// caller that wants a fresh world writes `let mut sim = Sim::new(seed); { ScenarioBuilder::new(&mut
+// sim)… } sim`. Mission-specific shaping that is *not* a spawn/build primitive — applying a gunsmith
+// loadout to a spawned weapon, laying a static cover map, baking an opening order — is done through
+// [`ScenarioBuilder::sim_mut`], exactly as the seeders do it today.
+
+/// A typed, serde-free, fixed-point builder over `core`'s scenario spawn/build primitives — the
+/// content-tooling spine (CT-A). See the module note above. Every method mirrors what the
+/// hand-written seeders open-code, so a `Sim` built through it is byte-identical to a hand-seeded
+/// one (invariant #1/#7); it is the seam the host-side data loader drives.
+pub struct ScenarioBuilder<'a> {
+    sim: &'a mut Sim,
+}
+
+impl<'a> ScenarioBuilder<'a> {
+    /// Start seeding into `sim`. The builder mutates it in place — the shape the `seed_*` entry
+    /// points use. For a from-scratch world: `let mut sim = Sim::new(seed); ScenarioBuilder::new(&mut
+    /// sim)…`.
+    pub fn new(sim: &'a mut Sim) -> Self {
+        Self { sim }
+    }
+
+    /// Set the income accrual period (the scenario-local economy *pace* lever,
+    /// [`Sim::set_income_period`]). Never touches the D30 cost/stat constants.
+    pub fn set_income(&mut self, period: u32) -> &mut Self {
+        self.sim.set_income_period(period);
+        self
+    }
+
+    /// Select which [`Army`] a [`Faction`] fields ([`Sim::set_army`]). Match-setup identity — it
+    /// never folds into the per-tick checksum; its roster *effect* (the per-army `unit_stats_for`
+    /// a spawned unit draws) is what folds (invariant #7).
+    pub fn set_army(&mut self, faction: Faction, army: Army) -> &mut Self {
+        self.sim.set_army(faction, army);
+        self
+    }
+
+    /// Set **every** faction's starting purse to `amount` (the scenario-local economy purse lever).
+    /// Uniform across factions, exactly like the seeders' `Resources::new(purse)` reset — so it wipes
+    /// any residue left by [`build_camp`](Self::build_camp)'s temporary funding.
+    pub fn set_purse(&mut self, amount: i64) -> &mut Self {
+        self.sim.resources = economy::Resources::new(amount);
+        self
+    }
+
+    /// Add a neutral, uncaptured [`ControlPoint`] at world `pos` (a "post" to fight over). Control
+    /// points are folded state but carry no entity, so they never shift spawn order.
+    pub fn control_point(&mut self, pos: Vec2) -> &mut Self {
+        self.sim.territory.points.push(ControlPoint::neutral(pos));
+        self
+    }
+
+    /// Spawn a `kind` unit at world `pos` for `faction`, with `stance`, facing `facing` (both hull
+    /// heading and turret yaw). Health + weapon are drawn from the faction's per-[`Army`] roster
+    /// ([`economy::unit_stats_for`]) — identical to the hand seeders' `spawn_rifleman` (the shared
+    /// baseline HP the seeders pass explicitly *is* the roster HP, since the logistics tilt never
+    /// touches HP, D71). Returns the spawned [`Entity`]; spawn order is the call order, so the
+    /// checksum stream is stable.
+    pub fn spawn(
+        &mut self,
+        kind: UnitKind,
+        pos: Vec2,
+        faction: Faction,
+        stance: Stance,
+        facing: Angle,
+    ) -> Entity {
+        // Read the per-army roster before the mutable spawn borrow (mirrors `spawn_rifleman`).
+        let (health, weapon) = economy::unit_stats_for(self.sim.army_of(faction), kind);
+        let e = self.sim.world.spawn();
+        let i = e.index as usize;
+        self.sim.world.kind[i] = EntityKind::Unit;
+        self.sim.world.unit_kind[i] = kind;
+        self.sim.world.faction[i] = faction;
+        self.sim.world.pos[i] = pos;
+        self.sim.world.health[i] = health;
+        self.sim.world.weapon[i] = weapon;
+        self.sim.world.stance[i] = stance;
+        self.sim.world.hull_heading[i] = facing;
+        self.sim.world.turret_yaw[i] = facing;
+        e
+    }
+
+    /// Build an **operational** camp for `faction` at world `pos`. Routes through the canonical
+    /// [`economy::build`] path (so the camp's HP/[`Building`](crate::components::Building) fields are
+    /// exactly a produced camp's), funded from a temporary one-camp purse so the build always
+    /// succeeds regardless of the current purse, then clears `build_ticks_left` so it starts
+    /// operational (a running match, not fresh construction). The temporary funding leaves that
+    /// faction's purse at zero; set the real scenario purse afterward with
+    /// [`set_purse`](Self::set_purse) (which overwrites every faction), mirroring the seeders' temp-
+    /// purse dance. Returns the camp [`Entity`].
+    pub fn build_camp(&mut self, pos: Vec2, faction: Faction) -> Entity {
+        // Fund exactly this camp on the faction's purse (temporary; `set_purse` overwrites it).
+        self.sim.resources.amounts[faction.index()] = economy::CAMP_BUILD_COST;
+        let e = economy::build(
+            &mut self.sim.world,
+            &mut self.sim.resources,
+            faction,
+            BuildingKind::Camp,
+            pos,
+        )
+        .expect("the temporary one-camp purse covers exactly this camp");
+        self.sim.world.building[e.index as usize].build_ticks_left = 0;
+        e
+    }
+
+    /// Mutable access to the underlying [`Sim`] for the mission-specific shaping that is *not* a
+    /// spawn/build primitive — applying a gunsmith [`Loadout`] to a spawned weapon, laying a static
+    /// cover map, baking an opening [`Order`]. This is the same raw seeding the hand seeders do
+    /// (invariant #1: fixed-point only; invariant #7: no new fold surface beyond what those writes
+    /// already touch).
+    pub fn sim_mut(&mut self) -> &mut Sim {
+        self.sim
+    }
+}
+
 /// Half the gap between the two duelling tanks: each sits this far from the origin on the X axis,
 /// facing the other. `6` world units → a 12-unit no-man's-land the shells cross in a few ticks at
 /// [`DUEL_GUN_MUZZLE_VEL`], close enough to read on screen.
@@ -485,16 +615,21 @@ pub fn seed_skirmish(sim: &mut Sim) -> Skirmish {
 ///
 /// [`seed_skirmish`] is the `Loadout::STANDARD` (no-op) shim over this.
 pub fn seed_skirmish_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> Skirmish {
+    // Built through the CT-A `ScenarioBuilder` (the living oracle, like *Seize*): its methods are
+    // exact wrappers over the primitives this used to open-code, so the spawn order — player base,
+    // enemy base, player troop, enemy troop — and every byte are unchanged (invariant #1/#7).
+    let mut b = ScenarioBuilder::new(sim);
+
     // Slow the income drip to the skirmish's pace (scenario-local; the D30 constants are untouched).
     // Base income now reads as ~1 Rifleman / 30 s, and capturing posts is how you speed it up.
-    sim.set_income_period(SKIRMISH_INCOME_PERIOD);
+    b.set_income(SKIRMISH_INCOME_PERIOD);
 
     // The faction matchup (factions-plan WS-A, D68): the Player fields the US Army, the Enemy the
     // French Army. Identity only — `Army` carries no per-tick checksum surface yet (the per-army
     // roster is WS-B), so seeding it leaves this scene byte-identical; it just records *which* armies
     // this match is between, ready for WS-B/WS-C to draw rosters and silhouettes from.
-    sim.set_army(Faction::Player, Army::Us);
-    sim.set_army(Faction::Enemy, Army::Fr);
+    b.set_army(Faction::Player, Army::Us);
+    b.set_army(Faction::Enemy, Army::Fr);
 
     // Three neutral posts strung across the no-man's-land: dead centre plus the two flanks. Holding
     // one ~triples a faction's income, so taking posts is how you out-produce the enemy.
@@ -503,76 +638,54 @@ pub fn seed_skirmish_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> Ski
         Vec2::new(Fixed::ZERO, Fixed::from_int(SKIRMISH_POST_FLANK_Y)),
         Vec2::new(Fixed::ZERO, Fixed::from_int(-SKIRMISH_POST_FLANK_Y)),
     ] {
-        sim.territory.points.push(ControlPoint::neutral(post));
+        b.control_point(post);
     }
 
-    // Pre-build both bases through the canonical `economy::build` path (so each camp's HP and
-    // Building fields are exactly a produced camp's), funded from a temporary purse, then overwrite
-    // the purse with the scenario's real, small starting value. Per-faction `Resources::new` gives
-    // each side exactly one camp's worth, so both builds succeed.
+    // Pre-build both bases operational through the canonical `build_camp` path (so each camp's HP and
+    // Building fields are exactly a produced camp's), then overwrite the purse with the scenario's
+    // real, small starting value (uniform across factions, wiping each `build_camp`'s temp funding).
     let base_x = Fixed::from_int(SKIRMISH_BASE_X);
-    sim.resources = economy::Resources::new(economy::CAMP_BUILD_COST);
-    let player_base = economy::build(
-        &mut sim.world,
-        &mut sim.resources,
-        Faction::Player,
-        BuildingKind::Camp,
-        Vec2::new(-base_x, Fixed::ZERO),
-    )
-    .expect("the seed purse covers exactly one camp per faction");
-    let enemy_base = economy::build(
-        &mut sim.world,
-        &mut sim.resources,
-        Faction::Enemy,
-        BuildingKind::Camp,
-        Vec2::new(base_x, Fixed::ZERO),
-    )
-    .expect("the seed purse covers exactly one camp per faction");
-    // Both bases start operational — this is a running match, not a fresh construction.
-    sim.world.building[player_base.index as usize].build_ticks_left = 0;
-    sim.world.building[enemy_base.index as usize].build_ticks_left = 0;
+    let player_base = b.build_camp(Vec2::new(-base_x, Fixed::ZERO), Faction::Player);
+    let enemy_base = b.build_camp(Vec2::new(base_x, Fixed::ZERO), Faction::Enemy);
     // The real, deliberately small scenario purse (the scenario-local economy lever).
-    sim.resources = economy::Resources::new(SKIRMISH_START_PURSE);
+    b.set_purse(SKIRMISH_START_PURSE);
 
-    // One starting troop per base. Full produced-Rifleman HP, `FireAtWill` stance (the engagement
-    // default — it shoots any enemy that comes into weapon range + LoS but still only *moves* on an
-    // order, invariant #3: firing in place is not auto-roaming), facing the enemy across the map.
-    // The player selects/commands theirs; the commander tasks the Enemy's. (ReturnFire would deadlock
-    // the two starting troops — each would wait to be shot first, so they would just stare across the
-    // map until the player embodied one and fired.)
-    let troop_hp = economy::unit_stats(UnitKind::Rifleman).0.max;
+    // One starting troop per base. Per-army roster HP+weapon (the shared baseline HP unchanged),
+    // `FireAtWill` stance (the engagement default — it shoots any enemy that comes into weapon range
+    // + LoS but still only *moves* on an order, invariant #3: firing in place is not auto-roaming),
+    // facing the enemy across the map. The player selects/commands theirs; the commander tasks the
+    // Enemy's. (ReturnFire would deadlock the two starting troops — each would wait to be shot first,
+    // so they would just stare across the map until the player embodied one and fired.)
     let troop_x = Fixed::from_int(SKIRMISH_BASE_X - SKIRMISH_TROOP_GAP);
-    let player_troop = spawn_rifleman(
-        sim,
+    let player_troop = b.spawn(
+        UnitKind::Rifleman,
         Vec2::new(-troop_x, Fixed::ZERO),
         Faction::Player,
         Stance::FireAtWill,
-        troop_hp,
         Angle(0), // +X, toward the enemy
     );
-    let enemy_troop = spawn_rifleman(
-        sim,
+    let enemy_troop = b.spawn(
+        UnitKind::Rifleman,
         Vec2::new(troop_x, Fixed::ZERO),
         Faction::Enemy,
         Stance::FireAtWill,
-        troop_hp,
         Angle(ANGLE_FULL / 2), // −X, toward the player
     );
 
     // Apply the player's chosen gunsmith loadout to the Player's starting troop's weapon — the WS-C
-    // live-spawn step, mirroring the *Seize* mission. Match-setup input applied once on top of the
-    // per-army base weapon (drawn from the Player's army gunsmith pool); `Loadout::STANDARD` is a
-    // no-op, so an opted-out player keeps the byte-identical baseline weapon. The modified fields are
-    // all already in `Sim::fold`, so this rides the per-tick checksum with no new fold surface
-    // (invariant #7). It touches only the weapon component — spawn order is unchanged — and the Enemy
-    // troop is untouched (this is the *player's* gunsmith).
-    let player_army = sim.army_of(Faction::Player);
+    // live-spawn step, mirroring the *Seize* mission (mission-specific shaping, so through `sim_mut`).
+    // Match-setup input applied once on top of the per-army base weapon (drawn from the Player's army
+    // gunsmith pool); `Loadout::STANDARD` is a no-op, so an opted-out player keeps the byte-identical
+    // baseline weapon. The modified fields are all already in `Sim::fold`, so this rides the per-tick
+    // checksum with no new fold surface (invariant #7). It touches only the weapon component — spawn
+    // order is unchanged — and the Enemy troop is untouched (this is the *player's* gunsmith).
+    let player_army = b.sim_mut().army_of(Faction::Player);
     player_loadout
-        .apply_to_weapon_for(player_army, &mut sim.world.weapon[player_troop.index as usize]);
+        .apply_to_weapon_for(player_army, &mut b.sim_mut().world.weapon[player_troop.index as usize]);
 
     // Lay the static, fair cover map. It spawns nothing, so entity/spawn order — and thus the
     // per-tick checksum stream — is untouched; terrain is not in the checksum (invariant #7).
-    build_skirmish_terrain(sim);
+    build_skirmish_terrain(b.sim_mut());
 
     Skirmish {
         player_base,
@@ -681,79 +794,76 @@ fn build_seize_terrain(sim: &mut Sim) {
 }
 
 pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> SeizeMission {
+    // Built through the CT-A `ScenarioBuilder` (the living oracle: the golden opening checksum this
+    // pins is captured from the pre-builder implementation, so any drift would trip it). The builder
+    // methods are exact wrappers over the primitives this used to open-code, so the spawn order —
+    // ten troops, then the base, then the garrison — and every byte are unchanged (invariant #1/#7).
+    let mut b = ScenarioBuilder::new(sim);
+
     // Production OFF: no purse for either side and a slow income drip, so this stays a fixed-force
     // assault rather than an economy race. The player has no camp at all (so it cannot produce); the
     // enemy camp is the objective and, with an empty purse, its commander cannot reinforce.
-    sim.set_income_period(600);
+    b.set_income(600);
 
     // The PvE matchup (factions-plan WS-A/WS-D, D68): the campaign is played US-side, with the French
     // Army as the OPFOR — so factions debut in PvE. Identity only (no per-army stats until WS-B), so
     // this is byte-neutral; it records the matchup for WS-B/WS-C to render distinctly.
-    sim.set_army(Faction::Player, Army::Us);
-    sim.set_army(Faction::Enemy, Army::Fr);
+    b.set_army(Faction::Player, Army::Us);
+    b.set_army(Faction::Enemy, Army::Fr);
 
-    // Ten Player Riflemen in a 2x5 block on the west, full produced HP, FireAtWill (the engagement
-    // default — they shoot any enemy that comes into range as they assault, but only *move* on the
-    // host's order; invariant #3), facing the base.
-    let troop_hp = economy::unit_stats(UnitKind::Rifleman).0.max;
+    // Ten Player Riflemen in a 2x5 block on the west, US-rostered (per-army roster HP+weapon, the
+    // shared baseline HP unchanged), FireAtWill (the engagement default — they shoot any enemy that
+    // comes into range as they assault, but only *move* on the host's order; invariant #3), facing
+    // the base.
     let mut troops = Vec::with_capacity(SEIZE_TROOPS);
     for col in 0..5 {
         for &row_y in &[-2, 2] {
             let x = SEIZE_PLAYER_X - col * 2;
-            troops.push(spawn_rifleman(
-                sim,
+            troops.push(b.spawn(
+                UnitKind::Rifleman,
                 at((x, row_y)),
                 Faction::Player,
                 Stance::FireAtWill,
-                troop_hp,
                 Angle(0), // +X, toward the base
             ));
         }
     }
 
     // Apply the player's chosen gunsmith loadout to every assault troop's weapon — the WS-C
-    // live-spawn step. Match-setup input applied once on top of the per-army base weapon (drawn from
-    // the Player's army gunsmith pool); `Loadout::STANDARD` is a no-op, so an opted-out player's
-    // troops keep the byte-identical baseline weapon. The modified fields are all already in
-    // `Sim::fold`, so this folds into the per-tick checksum with no new fold surface (invariant #7).
-    let player_army = sim.army_of(Faction::Player);
+    // live-spawn step (mission-specific shaping, so through `sim_mut`). Match-setup input applied once
+    // on top of the per-army base weapon (drawn from the Player's army gunsmith pool);
+    // `Loadout::STANDARD` is a no-op, so an opted-out player's troops keep the byte-identical baseline
+    // weapon. The modified fields are all already in `Sim::fold`, so this folds into the per-tick
+    // checksum with no new fold surface (invariant #7).
+    let player_army = b.sim_mut().army_of(Faction::Player);
     for &t in &troops {
-        player_loadout.apply_to_weapon_for(player_army, &mut sim.world.weapon[t.index as usize]);
+        player_loadout
+            .apply_to_weapon_for(player_army, &mut b.sim_mut().world.weapon[t.index as usize]);
     }
 
-    // The enemy base camp (the objective). Built through the canonical `economy::build` path from a
-    // temporary one-camp purse so its HP/Building fields match a produced camp, then made operational
-    // and the purse reset to empty (production disabled).
-    sim.resources = economy::Resources::new(economy::CAMP_BUILD_COST);
-    let enemy_base = economy::build(
-        &mut sim.world,
-        &mut sim.resources,
-        Faction::Enemy,
-        BuildingKind::Camp,
-        at((SEIZE_BASE_X, 0)),
-    )
-    .expect("the temporary seed purse covers exactly one camp");
-    sim.world.building[enemy_base.index as usize].build_ticks_left = 0;
-    // Empty both purses: no production for either side (the fixed-force assault).
-    sim.resources = economy::Resources::new(0);
+    // The enemy base camp (the objective) — built operational through the canonical
+    // `build_camp` path (a produced camp's HP/Building fields), then both purses emptied so neither
+    // side produces (the fixed-force assault). `build_camp` funds itself on a temporary purse; the
+    // `set_purse(0)` below empties every faction, wiping that residue.
+    let enemy_base = b.build_camp(at((SEIZE_BASE_X, 0)), Faction::Enemy);
+    b.set_purse(0);
 
     // A small garrison defending the base — FireAtWill Riflemen (they engage the assault on sight),
     // facing the incoming player line.
     let mut garrison = Vec::with_capacity(SEIZE_GARRISON_OFFSETS.len());
     for &(dx, dy) in &SEIZE_GARRISON_OFFSETS {
-        garrison.push(spawn_rifleman(
-            sim,
+        garrison.push(b.spawn(
+            UnitKind::Rifleman,
             at((SEIZE_BASE_X + dx, dy)),
             Faction::Enemy,
             Stance::FireAtWill,
-            troop_hp,
             Angle(ANGLE_FULL / 2), // −X, toward the player line
         ));
     }
 
     // Lay the static advance cover across the no-man's-land. It spawns nothing (entity/spawn order
     // and the checksum stream are untouched) and shelters only the approach, not the defenders.
-    build_seize_terrain(sim);
+    build_seize_terrain(b.sim_mut());
 
     SeizeMission {
         troops,
@@ -1506,6 +1616,137 @@ mod tests {
         seed_seize_mission(&mut a);
         seed_seize_mission(&mut b);
         assert_eq!(a.checksum(), b.checksum());
+    }
+
+    // --- CT-A: the ScenarioBuilder spine + its byte-identical oracles ----------------------------
+    //
+    // `seed_seize_mission` and `seed_skirmish` now build *through* `ScenarioBuilder`. These pin that
+    // the refactor is byte-for-byte the pre-builder scene (golden opening checksums captured from the
+    // hand-written implementation) and that the *public* builder API alone can re-express the shipped
+    // *Seize* mission — the property CT-B's data loader leans on.
+
+    /// Golden opening checksum for *Seize*, captured from the **pre-builder** `seed_seize_mission`
+    /// implementation. Pins the CT-A builder refactor as byte-identical (invariant #1/#7): it must
+    /// never move except on an *intended* change to the Seize scene — recompute + re-pin then, exactly
+    /// like the ballistic golden; an unexpected shift is a desync, not a value to bless.
+    const SEIZE_OPENING_GOLDEN: u64 = 0x474c_dbf2_ad91_3ecb;
+    /// Golden opening checksum for the skirmish, captured from the pre-builder `seed_skirmish`. Same
+    /// contract as the Seize golden.
+    const SKIRMISH_OPENING_GOLDEN: u64 = 0x3b1d_9e20_7ce9_7e65;
+
+    #[test]
+    fn seize_opening_checksum_matches_the_pre_builder_golden() {
+        let mut sim = fresh();
+        seed_seize_mission(&mut sim);
+        assert_eq!(sim.checksum(), SEIZE_OPENING_GOLDEN);
+    }
+
+    #[test]
+    fn skirmish_opening_checksum_matches_the_pre_builder_golden() {
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        assert_eq!(sim.checksum(), SKIRMISH_OPENING_GOLDEN);
+    }
+
+    /// **The load-bearing CT-A oracle.** The *Seize* mission rebuilt purely through the public
+    /// [`ScenarioBuilder`] API — independently of `seed_seize_mission` (which now also routes through
+    /// the builder) — is byte-identical to the shipped mission: same opening checksum, and it matches
+    /// the pre-builder golden. This is the proof the whole content format leans on: the builder
+    /// faithfully re-expresses a mission we ship. A drift in any builder primitive (spawn order, the
+    /// per-army roster read, the temp-purse dance) would break it.
+    #[test]
+    fn scenario_builder_reproduces_seize_byte_identically() {
+        // The shipped mission (itself now built through the builder).
+        let mut hand = fresh();
+        seed_seize_mission(&mut hand);
+        let expect = hand.checksum();
+
+        // The same mission, hand-composed through the *public* builder API only.
+        let mut built = fresh();
+        {
+            let mut b = ScenarioBuilder::new(&mut built);
+            b.set_income(600);
+            b.set_army(Faction::Player, Army::Us);
+            b.set_army(Faction::Enemy, Army::Fr);
+
+            let mut troops = Vec::with_capacity(SEIZE_TROOPS);
+            for col in 0..5 {
+                for &row_y in &[-2, 2] {
+                    let x = SEIZE_PLAYER_X - col * 2;
+                    troops.push(b.spawn(
+                        UnitKind::Rifleman,
+                        at((x, row_y)),
+                        Faction::Player,
+                        Stance::FireAtWill,
+                        Angle(0),
+                    ));
+                }
+            }
+            // `Loadout::STANDARD` is a proven no-op; apply it to mirror the seeder step exactly.
+            let army = b.sim_mut().army_of(Faction::Player);
+            for &t in &troops {
+                Loadout::STANDARD
+                    .apply_to_weapon_for(army, &mut b.sim_mut().world.weapon[t.index as usize]);
+            }
+
+            b.build_camp(at((SEIZE_BASE_X, 0)), Faction::Enemy);
+            b.set_purse(0);
+
+            for &(dx, dy) in &SEIZE_GARRISON_OFFSETS {
+                b.spawn(
+                    UnitKind::Rifleman,
+                    at((SEIZE_BASE_X + dx, dy)),
+                    Faction::Enemy,
+                    Stance::FireAtWill,
+                    Angle(ANGLE_FULL / 2),
+                );
+            }
+
+            build_seize_terrain(b.sim_mut());
+        }
+
+        assert_eq!(built.checksum(), expect, "the builder re-expresses Seize byte-for-byte");
+        assert_eq!(built.checksum(), SEIZE_OPENING_GOLDEN, "…and matches the pre-builder golden");
+    }
+
+    /// The builder's `spawn` / `build_camp` primitives match hand seeding on a from-scratch world:
+    /// a unit spawned through the builder equals `spawn_rifleman` with the roster HP, and a built
+    /// camp starts operational. A focused equivalence check independent of any full mission.
+    #[test]
+    fn scenario_builder_primitive_spawns_match_hand_seeding() {
+        let mut viab = fresh();
+        let mut hand = fresh();
+
+        let via = {
+            let mut b = ScenarioBuilder::new(&mut viab);
+            b.set_army(Faction::Player, Army::Us);
+            let u = b.spawn(UnitKind::Rifleman, at((3, 4)), Faction::Player, Stance::FireAtWill, Angle(0));
+            let c = b.build_camp(at((7, 0)), Faction::Player);
+            (u, c)
+        };
+
+        // The hand-written equivalent: army first (so the roster read matches), then spawn_rifleman
+        // with the roster HP, then the canonical build path made operational.
+        hand.set_army(Faction::Player, Army::Us);
+        let hp = economy::unit_stats(UnitKind::Rifleman).0.max;
+        let hu = spawn_rifleman(&mut hand, at((3, 4)), Faction::Player, Stance::FireAtWill, hp, Angle(0));
+        hand.resources.amounts[Faction::Player.index()] = economy::CAMP_BUILD_COST;
+        let hc = economy::build(
+            &mut hand.world,
+            &mut hand.resources,
+            Faction::Player,
+            BuildingKind::Camp,
+            at((7, 0)),
+        )
+        .expect("temp purse covers one camp");
+        hand.world.building[hc.index as usize].build_ticks_left = 0;
+
+        assert_eq!(via.0, hu, "same spawned unit entity/order");
+        assert_eq!(via.1, hc, "same camp entity");
+        assert_eq!(viab.world.weapon[via.0.index as usize], hand.world.weapon[hu.index as usize]);
+        assert_eq!(viab.world.health[via.0.index as usize], hand.world.health[hu.index as usize]);
+        assert_eq!(viab.world.building[via.1.index as usize].build_ticks_left, 0, "camp is operational");
+        assert_eq!(viab.checksum(), hand.checksum(), "builder primitives are byte-identical to hand seeding");
     }
 
     // --- Mission 2 — "Hold the Line" (the Survive/defense archetype) ---------------------------
