@@ -53,11 +53,40 @@ pub fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
     ]
 }
 
-/// Perceptual relative luminance (Rec. 709 weights) of a colour — used by the tests to assert the
-/// text/background ramp keeps a readable lightness ordering, and available to callers that want to
-/// pick a legible label colour over a fill.
+/// Rec. 709 weighted sum of the **gamma-encoded** sRGB channels — a cheap lightness proxy for
+/// **ordering only** (which of two colours reads lighter), used by the surface→text ramp guard and
+/// to pick the vignette/split-tone direction in [`present_grade`]. This is **gamma-space ordering
+/// only, NOT a WCAG contrast metric** — it skips the mandatory sRGB linearisation, so it reads far
+/// too bright for dim colours and will silently pass unreadable text pairs. For any legibility /
+/// accessibility decision use [`contrast_ratio`], which linearises first per the WCAG spec.
 pub fn luminance(c: Rgb) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// WCAG relative luminance of an sRGB colour: linearise each channel (undo the sRGB transfer
+/// function) before applying the Rec. 709 weights. This is the step [`luminance`] omits — and the
+/// reason gamma-space weights read too bright for dim colours and silently pass unreadable pairs.
+/// No external crate: the transfer function is implemented inline with `powf` (floats are fine here
+/// — this is the render crate; invariant #1 forbids floats only in `core`/the sim, not in render).
+fn relative_luminance(c: Rgb) -> f32 {
+    fn lin(ch: f32) -> f32 {
+        if ch <= 0.040_45 {
+            ch / 12.92
+        } else {
+            ((ch + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+}
+
+/// The **WCAG 2.x contrast ratio** between two colours, `(L_lighter + 0.05) / (L_darker + 0.05)`
+/// over their [`relative_luminance`]. Ranges from `1.0` (identical) to `21.0` (black on white), and
+/// is symmetric in its arguments. Use this — not [`luminance`] — for every text-legibility check:
+/// WCAG AA wants **≥ 4.5:1** for normal text and **≥ 3:1** for large text / UI components.
+pub fn contrast_ratio(a: Rgb, b: Rgb) -> f32 {
+    let (la, lb) = (relative_luminance(a), relative_luminance(b));
+    let (lo, hi) = if la < lb { (la, lb) } else { (lb, la) };
+    (hi + 0.05) / (lo + 0.05)
 }
 
 /// Reference implementation of the full-screen **present-pass grade** in `present.wgsl`'s
@@ -129,7 +158,10 @@ pub const BONE: Rgb = [0.906, 0.925, 0.937];
 /// Secondary text — the muted "ash" for sub-labels, captions, and disabled rows. (`ASH` #8A949C.)
 pub const ASH: Rgb = [0.541, 0.580, 0.612];
 /// Dimmed/unavailable text — below [`ASH`], for unaffordable build options and inactive entries.
-pub const MUTED: Rgb = [0.38, 0.41, 0.46];
+/// Sits on [`PANEL`]/[`INK`] (the command-panel fill and the darkest scrim); lightened from the
+/// original `#616875` so it actually clears WCAG AA (≥ 4.5:1) against those surfaces — the old value
+/// managed only ~3.5:1 by the linearised metric (see `wcag_contrast_meets_aa_for_used_text_pairs`).
+pub const MUTED: Rgb = [0.46, 0.49, 0.54];
 
 // ---- Signal accent ------------------------------------------------------------------------------
 
@@ -395,9 +427,62 @@ mod tests {
                 w[1]
             );
         }
-        // Muted body text sits below secondary (ash) but is still lighter than the panel it labels.
+        // Muted body text sits below secondary (ash) but is still lighter than the panel it labels,
+        // with a comfortable gap either side so the dim/secondary tiers stay visually distinct.
         assert!(luminance(PANEL) < luminance(MUTED));
         assert!(luminance(MUTED) < luminance(ASH));
+        assert!(
+            luminance(ASH) - luminance(MUTED) > 0.05,
+            "muted collapsed into ash (gap {})",
+            luminance(ASH) - luminance(MUTED)
+        );
+    }
+
+    /// The real accessibility guard: every text/surface pair the HUD actually draws must clear WCAG
+    /// AA, measured with the *linearised* [`contrast_ratio`] (the metric [`luminance`] can't give).
+    /// [`BONE`] (primary) and [`ASH`] (secondary) clear 4.5:1 against all three surfaces; [`MUTED`]
+    /// (dimmed) clears 4.5:1 against its real backings — the [`PANEL`] command-panel fill and the
+    /// [`INK`] scrim. `MUTED` is *not* placed on [`PANEL_RAISED`] (raised rows carry active/affordable
+    /// `BONE` text), but we still assert it clears the 3:1 large-text / UI-component floor there as a
+    /// defensive check. Without the linearisation fix `MUTED` failed this at ~3.5:1.
+    #[test]
+    fn wcag_contrast_meets_aa_for_used_text_pairs() {
+        const AA_TEXT: f32 = 4.5; // normal-text floor
+        const AA_UI: f32 = 3.0; // large-text / UI-component floor
+        let surfaces = [("INK", INK), ("PANEL", PANEL), ("PANEL_RAISED", PANEL_RAISED)];
+
+        for (sn, s) in surfaces {
+            for (tn, t) in [("BONE", BONE), ("ASH", ASH)] {
+                let cr = contrast_ratio(t, s);
+                assert!(cr >= AA_TEXT, "{tn} on {sn}: {cr:.3}:1 < {AA_TEXT}:1 (WCAG AA)");
+            }
+        }
+
+        // MUTED on its actual surfaces — normal-text AA.
+        for (sn, s) in [("PANEL", PANEL), ("INK", INK)] {
+            let cr = contrast_ratio(MUTED, s);
+            assert!(cr >= AA_TEXT, "MUTED on {sn}: {cr:.3}:1 < {AA_TEXT}:1 (WCAG AA)");
+        }
+        // MUTED is not drawn on the raised surface; hold the 3:1 UI-component floor there anyway.
+        let cr_raised = contrast_ratio(MUTED, PANEL_RAISED);
+        assert!(
+            cr_raised >= AA_UI,
+            "MUTED on PANEL_RAISED: {cr_raised:.3}:1 < {AA_UI}:1 (UI-component floor)"
+        );
+    }
+
+    /// [`contrast_ratio`] sanity: black on white is the WCAG maximum ~21:1, identical colours are
+    /// 1:1, and the ratio is symmetric in its two arguments (it must not matter which is background).
+    #[test]
+    fn contrast_ratio_extremes_and_symmetry() {
+        const WHITE: Rgb = [1.0, 1.0, 1.0];
+        const BLACK: Rgb = [0.0, 0.0, 0.0];
+        let bw = contrast_ratio(WHITE, BLACK);
+        assert!((bw - 21.0).abs() < 0.05, "white/black not ~21:1: {bw}");
+        assert!((contrast_ratio(BONE, BONE) - 1.0).abs() < 1e-6, "identical not 1:1");
+        // Symmetric: swapping the pair leaves the ratio unchanged.
+        assert!((contrast_ratio(WHITE, BLACK) - contrast_ratio(BLACK, WHITE)).abs() < 1e-6);
+        assert!((contrast_ratio(MUTED, PANEL) - contrast_ratio(PANEL, MUTED)).abs() < 1e-6);
     }
 
     /// The three faction colours (and the avatar) must be mutually distinguishable — a minimum
