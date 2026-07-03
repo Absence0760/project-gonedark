@@ -171,6 +171,9 @@ objective** — none of them reopen a locked invariant or add sim/desync surface
   [`content-tooling-plan.md`](plans/content-tooling-plan.md).
 - **Narrative depth.** Light briefings now; a full authored arc is [Q16](open-questions.md),
   expandable without restructuring the hub.
-- **Not yet built.** This is the *design*; the first code slice (the objective evaluator +
-  mission 1, with tests + the determinism matrix green) is [`pve-campaign-plan.md`](plans/pve-campaign-plan.md)
-  WS-A.
+- **Build status.** This is the *design*; build sequencing and current per-workstream status live in
+  [`pve-campaign-plan.md`](plans/pve-campaign-plan.md) — WS-A (the objective evaluator + mission 1),
+  WS-D, and WS-E have landed; WS-C is live-wired on desktop; WS-B (the Operations hub) is
+  functionally complete on both platforms, with more mission content + an Android progress/unlock
+  model still to come ([D32](decisions.md)'s native-per-platform-shell approach is settled — the
+  Compose hub is the decided answer, not a pending decision).

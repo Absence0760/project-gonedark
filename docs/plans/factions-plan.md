@@ -1,19 +1,20 @@
 # Factions plan — US Army vs French Army
 
-> **Status: IN PROGRESS — full faction system landed; only the D32-blocked native army-select screen
-> remains.** Direction locked in [D68](../decisions.md); design in [`factions.md`](../factions.md); the
+> **Status: SUBSTANTIALLY COMPLETE — full faction system landed, incl. the native army-select screen
+> on both platforms.** Direction locked in [D68](../decisions.md); design in [`factions.md`](../factions.md); the
 > WS-B stat-budget fork resolved by [D71](../decisions.md) (soft asymmetry on logistics rhythm, not gun
 > stats). **WS-0 prerequisite met** ([`combat-rebalance-plan.md`](combat-rebalance-plan.md) is COMPLETE).
-> **WS-A/B/C/E built; WS-D's seam + scenario seeding built (only its native army-select screen is
-> D32-blocked):** **WS-A** (`Army` tag + persist/lockstep codecs — `Sim::army_of`,
+> **WS-A/B/C/D/E all built, incl. WS-D's native army-select screen on both platforms:** **WS-A**
+> (`Army` tag + persist/lockstep codecs — `Sim::army_of`,
 > codec round-trips), **WS-B** (per-faction rosters via `economy::unit_stats_for`, logistics-rhythm
 > tilt — [D71](../decisions.md)), **WS-C** (per-faction cosmetic identity — US/FR
 > silhouettes/viewmodels/names via `render::model_for_unit`), **WS-D** (army selection through the
 > `core::shell` seam + `core::shell::resolve_select_army`; PvE US-vs-FR OPFOR scenario seeding via
 > `core/src/scenario.rs` `set_army`/`spawn_rifleman` per-army loadout; army-tilted pre-placed starting
-> troops via `core::scenario`), **WS-E** (per-faction gunsmith pools — `gunsmith::pool_for`). **The
-> one remaining item** is WS-D's **native army-select screen** (D32-blocked — the in-engine seam is
-> built and ready, no native UI project exists yet).
+> troops via `core::scenario`), **WS-E** (per-faction gunsmith pools — `gunsmith::pool_for`). WS-D's
+> **native army-select screen** has since landed on both platforms — desktop egui (`army_select_ui`)
+> and the Android Compose `ArmySelectScreen.kt` (wired into `MainActivity`'s nav, persisted, fielded
+> at match start via `Game::select_army`) — per [D32](../decisions.md)'s settled native-shell approach.
 
 ---
 
@@ -102,10 +103,11 @@ lockstep agreement with mismatched armies. Sim-touching → full determinism + l
 **Tests:** the `(Army, kind)` → render-asset mapping (host-testable); an asset-manifest entry per new
 model (`source`/`license`/`sha256`).
 
-### WS-D — Faction selection + PvE integration — **PARTIAL (seam + scenario seeding built; native screen BLOCKED on [D32](../decisions.md))**
+### WS-D — Faction selection + PvE integration — **LANDED (seam + scenario seeding + native army-select screen on both platforms)**
 
-- **Army-select UI** in the native shell ([D32](../decisions.md)) through the `core::shell` seam; the
-  choice flows into WS-A's match setup.
+- **Army-select UI** in the native shell ([D32](../decisions.md)) through the `core::shell` seam —
+  **landed**: desktop egui `army_select_ui` + Android Compose `ArmySelectScreen.kt`; the choice
+  persists and flows into WS-A's match setup via `Game::select_army`.
 - **PvE framing** ([D58](../decisions.md)): the Operations campaign is played **US-side**, with the
   **French Army as one OPFOR** — so factions debut in PvE (no cross-play fairness pressure yet,
   [Q17](../open-questions.md)) and graduate to PvP later.

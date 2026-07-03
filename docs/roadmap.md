@@ -354,16 +354,21 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   follow-up (new sim state + a `Command` variant), not a presentation change.*
 - [x] Resource/economy readout that makes cost and income legible at a glance
   (`render::readout::EconomyReadout` — banked credits + income rate)
-- [ ] A full match a new player can complete start→finish unaided (the loop itself now
-  *closes* — D64's two-base `seed_skirmish` is a live, winnable match booted by default and proven
-  end-to-end in test; the remaining gap is unaided new-player onboarding/UX, not loop existence)
+- [~] A full match a new player can complete start→finish unaided. **The loop closes end-to-end
+  on desktop and Android** — title → CAMPAIGN → mission-select → briefing → deploy → play →
+  `evaluate_outcome` win/lose → post-match summary → node unlock/persist, with no missing
+  structural link (D64's two-base `seed_skirmish` is also a live, winnable match booted by default
+  and proven end-to-end in test). **Owed:** a novice QA playthrough confirming Mission 1 is
+  winnable-but-not-trivial for a true first-timer.
 
 ### Campaign & content — the first shippable product (PvE)
 
 > Net-new content pillar ([D58](decisions.md)–[D61](decisions.md)); design in
 > [`pve-campaign.md`](pve-campaign.md)/[`customization.md`](customization.md), build sequencing in
-> [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). WS-A, WS-D, and WS-E have landed; WS-B
-> and WS-C are partial — see the plan for per-WS status. WS-A now ships **two** missions —
+> [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). WS-A, WS-C, WS-D, and WS-E have landed;
+> WS-B is functionally complete on both platforms — remaining is more mission *content* (data)
+> plus an Android campaign progress/unlock model + threading the gated non-root Compose node
+> through the launch wire (see the plan for per-WS status). WS-A now ships **two** missions —
 > *Seize* (mission 1) and the *Hold* archetype's *Hold the Line* (mission 2,
 > `core::scenario::seed_hold_mission`) — and both are now **placed as nodes** in the shipped
 > campaign graph: a two-node chain *Seize* → *Hold* (Hold unlocks once Seize is cleared), with the
@@ -379,15 +384,23 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   scripted assault force for a fixed tick window) (code landed — `core::scenario::seed_hold_mission`,
   `ObjectiveSet::mission_hold`; directly playable via `Scene::Mission2`/`--scene hold`; now **placed
   as the second campaign node**, gated behind *Seize* — see WS-B)
-- [ ] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
-  briefing (native shell, [D32](decisions.md)) (PARTIAL — host model `core/src/campaign.rs` +
-  persistence built; the `MissionId→mission` registry has landed
-  (`engine/src/mission_registry.rs`), holding both *Seize* and *Hold*; the shipped campaign graph is
-  now the **two-node chain** *Seize* → *Hold* (`default_campaign()`), with the node→scene launch
-  mapping (`Scene::for_mission`) wired on desktop + Android and the Android `CampaignModel` mirror
-  moved in lock-step ([`compose-shell-parity.md`](plans/compose-shell-parity.md)); the egui
-  mission-select/briefing hub reaches both nodes, native (Compose) shell chrome still BLOCKED on
-  [D32](decisions.md))
+- [~] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
+  briefing (native shell, [D32](decisions.md)). **Functionally complete on both platforms:** the
+  host model `core/src/campaign.rs` + persistence, the `MissionId→mission` registry
+  (`engine/src/mission_registry.rs`, holding both *Seize* and *Hold*), the shipped **two-node
+  chain** *Seize* → *Hold* (`default_campaign()`) with the node→scene launch mapping
+  (`Scene::for_mission`) wired on desktop + Android, the egui mission-select/briefing hub (reaches
+  both nodes), and the **native** Android Compose mission-select/briefing chrome
+  (`MissionSelectScreen.kt`/`BriefingScreen.kt`, landed per
+  [`compose-shell-parity.md`](plans/compose-shell-parity.md) Tier 2) — plus the `CampaignModel`
+  mirror moved in lock-step for record-on-win + persistence parity. The graph engine already
+  supports diamonds/multi-prereq, so growing the campaign from here is **data work, not code
+  work**. *(Compose's mission-select tiles still render/launch only the root node today — threading
+  the gated second node through the launch wire is the one remaining chrome task, tracked in
+  [`compose-shell-parity.md`](plans/compose-shell-parity.md) §12.)* **Owed:** more mission content
+  (data, not engine) + an Android campaign progress/unlock model and threading the gated non-root
+  node through the Compose launch wire. *(The native-shell approach itself is settled — [D32](decisions.md)
+  resolved out-of-match chrome as native per-platform; the Compose hub is the decided answer, not interim.)*
 - [x] **Gunsmith loadout (WS-C)** — fixed-point sidegrade attachment model, checksum-folded, +
   pre-match loadout UI ([D60](decisions.md)) (sim model `core/src/gunsmith.rs` + UI seam
   `engine/src/loadout_ui.rs`; the chosen loadout **is applied at live match start** — desktop
@@ -460,9 +473,12 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 - [ ] Touch-layout / rebind editor + correct touch-target sizing (the D14 scheme's settings surface).
   **Now scoped as the CoD-Mobile/MLBB HUD layout editor** — per-layer drag/resize/opacity presets,
   presentation/input-only, invariant-#6-bounded ([D61](decisions.md); PvE pillar WS-D)
-- [ ] Onboarding / first-possession tutorial (teach the going-dark cost — invariant #6 lives here).
+- [~] Onboarding / first-possession tutorial (teach the going-dark cost — invariant #6 lives here).
   **Lives in campaign mission 1** — the *Seize* "10 troops, take the base" beat scripts the
-  overstay temptation ([`pve-campaign.md`](pve-campaign.md) §3; PvE pillar WS-A)
+  overstay temptation ([`pve-campaign.md`](pve-campaign.md) §3; PvE pillar WS-A). **Functionally
+  complete and wired end-to-end on desktop and Android** — see CP-7 below for the full landing
+  detail (`engine::onboarding` + `render::prompt`, integration-test-covered). **Owed:** the
+  playtest confirming the teach reads correctly.
 - [x] In-session shell — pause, surrender/leave, post-match summary. **Fully landed:** the
   post-match summary surface + its DISMISS button → leave-match → return-to-title transition
   ([D52](decisions.md)); pause overlay (Esc on desktop ([D53](decisions.md)), back-gesture on
@@ -569,8 +585,11 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 > [combat rebalance](plans/combat-rebalance-plan.md), [Q18](open-questions.md)) has **cleared**, and
 > **WS-A–E have all landed** (the `Army` tag + persist/lockstep codecs, per-faction rosters tilted on
 > logistics rhythm not gun stats per [D71](decisions.md), per-faction cosmetic identity, the
-> `core::shell` army-select seam, and per-faction gunsmith pools) — the **one remaining item** is the
-> native army-select *screen*, blocked on the same D32 native-shell gap as the rest of the app shell.
+> `core::shell` army-select seam, and per-faction gunsmith pools). The **native army-select screen has
+> since landed on both platforms** — desktop egui (`army_select_ui`) and the Android Compose
+> `ArmySelectScreen.kt` (wired into `MainActivity`'s nav, persisted, and fielded at match start via the
+> shared `Game::select_army` seam) — so the pillar is functionally complete ([D32](decisions.md)'s
+> native-shell approach is settled, not a blocker).
 
 - [x] **CP-1 — Gunsmith to mobile-expected depth.** Extend the WS-C sidegrade model
   ([D60](decisions.md)) to the attachment-category breadth a CoD-Mobile player expects (optics,
@@ -584,11 +603,16 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   checksum agreement + the D69/D70 Rifleman↔Heavy RPS re-validated green. All six categories now
   exist as sidegrades (Grip cosmetic-only). *The chosen loadout is now applied at live match start on
   both platforms, with the boot dispatch test-locked (PvE WS-C).*
-- [ ] **CP-2 — Embodied game-feel bar (launch-critical).** A focused gunplay pass so a Delta
+- [~] **CP-2 — Embodied game-feel bar (launch-critical).** A focused gunplay pass so a Delta
   Force player doesn't bounce in ten seconds: hit feedback (impact/hitmarker/damage-direction),
   recoil/kick readability, responsive ADS, audio-coupled firing. **Presentation/feel only — never
-  sim state (#4).** Define a written "good-enough floor" and playtest against it. *Scoped as WS-A of
-  the [visual-design plan](plans/visual-design-plan.md).*
+  sim state (#4).** **Code slice complete and wired into `Game::frame`:** recoil view-kick +
+  crosshair bloom (`engine::recoil`), responsive ADS FOV+sensitivity (`engine::scope`), muzzle/impact
+  VFX (`render::world`/`render::impact`), audio-coupled firing (`engine::audio`), and the written
+  "good-enough floor" [`embodied-feel-floor.md`](embodied-feel-floor.md) — all 8 feel-floor checklist
+  items have shipping code, invariant #4 clean (presentation-only). *Scoped as WS-A of the
+  [visual-design plan](plans/visual-design-plan.md).* **Owed:** the human playtest sign-off against
+  that floor.
 - [ ] **CP-3 — Animation/fidelity floor (conceded tier).** A "not jarring" floor — coherent
   locomotion/fire/death anims on the greybox so the eye-level view reads as a *place* — via the
   scripted pipeline ([`content-pipeline.md`](content-pipeline.md), [D41](decisions.md)/[D46](decisions.md)).
@@ -612,10 +636,17 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   ([D26](decisions.md)/[D29](decisions.md)) with a deliberate sound identity via the scripted
   Csound/SoX pipeline — **load-bearing, not polish** (audio is the going-dark alert channel, #6);
   keep the accessibility-equivalent cue.
-- [ ] **CP-7 — Onboarding that teaches the twist (launch-critical).** A new player must read their
-  first death as *"I stayed too long"* (#6). Built into PvE mission 1
+- [~] **CP-7 — Onboarding that teaches the twist (launch-critical).** A new player must read their
+  first death as *"I stayed too long"* (#6). **Functionally complete, wired end-to-end on desktop
+  AND Android:** `engine::onboarding` (a 3-beat WentDark→Lingering→StayedTooLong teach machine) is
+  instantiated scene-gated in `Game` and driven post-step in the shared `Game::frame`;
+  `render::prompt` draws the banner over both views; `Scene::Mission1` is launchable on both
+  platforms. An integration test locks the scene-gate→observe→prompt wiring, and a `viz-runner`
+  teach-banner scene verifies it renders. Built into PvE mission 1
   ([`pve-campaign.md`](pve-campaign.md) §3, WS-A). No incumbent has the twist, so we can't borrow
   this teach — we have to nail it. *Overlaps the onboarding item under UI/UX polish above.*
+  **Owed:** a playtest confirming a new player reads their first death as "I stayed too long" (code
+  + verification coverage landed).
 - [~] **CP-8 — Live-ops / content-cadence engine.** Wire the `server` scaffolding
   (telemetry/consent/live-ops) into the rotating scenario-parameter modifier system (PvE WS-E) for a
   sustainable post-launch cadence — **modifiers and content, never balance-number or power hacks**

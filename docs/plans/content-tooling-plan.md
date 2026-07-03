@@ -33,9 +33,9 @@ no authored file can leak a float into the sim (invariant #1), drag a dependency
 ## What this plan is **not**
 
 - **Not the Operations-hub menu.** Presenting the campaign (mission-select/briefing/unlock-graph UI) is
-  [`pve-campaign-plan.md`](pve-campaign-plan.md) **WS-B**, [D32](../decisions.md)-blocked on native
-  shells. This plan unblocks *authoring* content; WS-B unblocks *presenting* it. They compose but are
-  independent.
+  [`pve-campaign-plan.md`](pve-campaign-plan.md) **WS-B** (the native [D32](../decisions.md) shells for
+  it have since landed on both platforms). This plan unblocks *authoring* content; WS-B unblocks
+  *presenting* it. They compose but are independent.
 - **Not the PvP net layer.** A PvP battlefield is the *same* `MapSpec` with two human commanders instead
   of a scripted one — the content format is **mode-agnostic**. PvP's remaining gap is the live transport
   + matchmaking (Phase 3, [`phase-3-plan.md`](phase-3-plan.md)) and [Q17](../open-questions.md) input
