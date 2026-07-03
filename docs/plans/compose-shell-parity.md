@@ -13,12 +13,13 @@
 > wires are consumed end-to-end** on Android (`bec478e`/`ae32cbd`; §12 item 3, §5). The
 > [D85](../decisions.md) Stock/Muzzle gap (§12 item 5) closed 2026-07-03 on both halves — the
 > desktop persist encode and the full Android chain (Compose slots + `stk=`/`muz=` wire keys +
-> prefs keys). The [D101](../decisions.md) PvP staging door and the D98 conflict-atlas hub
-> grouping landed with same-day Compose twins (§12 items 7–8, closed 2026-07-03). What remains
-> is **blocked** (PvP queues/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2)
-> plus **one structural gap**: the desktop skirmish match-setup screen has no full Compose twin
-> yet (§12 item 6 — Android's SKIRMISH door opens the retitled battlefield picker, not the §3
-> armies+tier setup). Scope is
+> prefs keys). The 2026-07-03 desktop landings all closed with same-day Compose twins: the
+> [D101](../decisions.md) PvP staging door (§12 item 7), the D98 conflict-atlas hub grouping
+> (§12 item 8), and the full skirmish match-setup (§12 item 6 — battlefield / both armies /
+> opponent tier over the new `earmy`/`skirm` wire keys). **Every structural parity item is now
+> closed**; what remains is **blocked** on later phases (PvP queues/lobby/store/consent per
+> [`phase-4-plan.md`](phase-4-plan.md) §2) plus the shared map-library seam both shells still
+> owe ([`modes.md`](../modes.md) §3 — a D34 manifest listing, not a parity gap). Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
 
@@ -288,8 +289,7 @@ These were deliberately **not** done in the sweep — each a chunk of real work.
 re-audit** then verified items 1–3 closed in code (evidence inline below), item 4 remains a
 deliberate UX fork, item 5 is a gap the re-audit found (closed the same day, both halves), and
 items 6–8 are the 2026-07-03 desktop landings (the skirmish match-setup screen, the D101 PvP
-staging door, the D98 atlas-grouped hub) — items 7–8 closed with same-day Compose twins,
-item 6 still open:
+staging door, the D98 atlas-grouped hub) — all three closed with same-day Compose twins:
 
 1. **Campaign progress model — ✅ CLOSED (2026-07-03).** `CampaignModel.kt` carries the full
    `CampaignProgress`/`NodeProgress` (Locked/Available/Cleared) derivation, the clear gate,
@@ -368,12 +368,19 @@ item 6 still open:
    Verified: `gradlew testDebugUnitTest` green (137 JVM tests), `cargo test -p gonedark-pal-android`
    green dev+release, and the aarch64 `cargoNdkBuild` compiles (after the jni-0.22 haptics fix,
    which had broken the android-target build at HEAD).
-6. **Skirmish match-setup screen is desktop-only (2026-07-03).** The desktop SKIRMISH door now
+6. **Skirmish match-setup screen — ✅ CLOSED (2026-07-03, same day).** The desktop SKIRMISH door
    opens the full [`modes.md`](../modes.md) §3 setup surface (`app/src/shell/skirmish.rs`:
    battlefield / both armies / opponent tier, launched through `apply_campaign_tuning` +
-   `select_army` for both sides, REMATCH-aware); Android's SKIRMISH door still lands on the plain
-   mode picker. The Compose twin needs the same pure decision seams JVM-side plus wire keys for
-   the enemy army + opponent tier — the [`modes.md`](../modes.md) §5 build-order step 1 remainder.
+   `select_army` for both sides, REMATCH-aware). The Compose twin landed the same day:
+   `SkirmishSetupScreen.kt` over the pure `SkirmishSetup.kt` seam (`nextArmy`/`clampBattlefield`/
+   `reseedPlayerArmy`/`skirmishLaunchConfig`, pinned by `SkirmishSetupTest` against the desktop
+   semantics), with two new wire keys mirrored in `LaunchConfig.kt` **and** `launch.rs` in the
+   same commit: `earmy` (enemy army; `0` = keep the scenario default) and `skirm` (the
+   configured-skirmish discriminator — the glue applies the tier + enemy pick through the shared
+   seams and **never** records a campaign clear, so a skirmish win on Seize Ground stays the
+   no-stakes sandbox). The old `ModeSelectScreen.kt` is deleted, mirroring the desktop's retired
+   picker. Remaining §3 work is the shared **map-library** seam (D34 manifest listing) — both
+   shells, not a parity gap.
 7. **PvP staging door — ✅ CLOSED (2026-07-03, same day).** Desktop's PvP button now opens the
    dedicated staging screen ([D101](../decisions.md): the three queues in
    [`modes.md`](../modes.md) §5 build order, nothing joinable pre-net via the pure
