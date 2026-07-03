@@ -6,33 +6,37 @@ package com.jaredhoward.goingdark
  * chrome (D32) and exempt from tests; this seam carries the actual selection logic and is
  * JVM-unit-testable off-device — the `BuildStamp.kt` / `LaunchConfig.kt` pattern.
  *
- * **Rust mirror (D79 mirrored-constants discipline).** The three slots, their options, the option
+ * **Rust mirror (D79 mirrored-constants discipline).** The five slots, their options, the option
  * *order* (index 0/1/2 = the wire index), the labels, and the trade axes mirror `core/src/gunsmith.rs`
- * verbatim:
+ * verbatim (Stock/Muzzle are the D85 gunsmith-breadth pair):
  *
- * | Slot     | index 0    | index 1    | index 2          | trade axis              |
- * |----------|------------|------------|------------------|-------------------------|
- * | Optic    | `Standard` | `Marksman` | `Close-Quarters` | range <-> fire-rate     |
- * | Barrel   | `Standard` | `Heavy`    | `Light`          | damage <-> reserve      |
- * | Magazine | `Standard` | `Extended` | `Quickdraw`      | capacity <-> handling   |
+ * | Slot     | index 0    | index 1    | index 2          | trade axis                          |
+ * |----------|------------|------------|------------------|-------------------------------------|
+ * | Optic    | `Standard` | `Marksman` | `Close-Quarters` | range <-> fire-rate                 |
+ * | Barrel   | `Standard` | `Heavy`    | `Light`          | damage <-> reserve                  |
+ * | Magazine | `Standard` | `Extended` | `Quickdraw`      | capacity <-> handling               |
+ * | Stock    | `Standard` | `Agile`    | `Marksman`       | mobility <-> steadiness             |
+ * | Muzzle   | `Standard` | `Brake`    | `Suppressor`     | suppression <-> downrange retention |
  *
  * Each enum's `ALL` order in the Rust source IS the wire index, and those indices are exactly the
- * `opt`/`bar`/`mag` fields of [LaunchConfig] (`optic`/`barrel`/`magazine`, each `0..SLOT_MAX`). A
- * [LoadoutSelection] therefore maps one-to-one onto the three slot fields the engine reads across the
- * launch seam — so the Compose Deploy button can pack these indices straight into a [LaunchConfig].
+ * `opt`/`bar`/`mag`/`stk`/`muz` fields of [LaunchConfig], each `0..SLOT_MAX`. A [LoadoutSelection]
+ * therefore maps one-to-one onto the five slot fields the engine reads across the launch seam — so
+ * the Compose Deploy button can pack these indices straight into a [LaunchConfig].
  */
 
-/** The three gunsmith slots, in display order. Mirrors the slot enums in `core/src/gunsmith.rs`. */
+/** The five gunsmith slots, in display order. Mirrors the slot enums in `core/src/gunsmith.rs`. */
 enum class Slot {
     Optic,
     Barrel,
     Magazine,
+    Stock,
+    Muzzle,
 }
 
 /**
  * A complete pre-match weapon loadout: one option index per slot, each `0..SLOT_MAX`. The default is
- * all-`Standard` `(0, 0, 0)` — the neutral baseline a player with no unlocks fields, byte-identical to
- * the Rust `Loadout::default()` / `Loadout::STANDARD`.
+ * all-`Standard` `(0, 0, 0, 0, 0)` — the neutral baseline a player with no unlocks fields,
+ * byte-identical to the Rust `Loadout::default()` / `Loadout::STANDARD`.
  */
 data class LoadoutSelection(
     /** Optic slot index, `0..SLOT_MAX` (0 = Standard). */
@@ -41,12 +45,18 @@ data class LoadoutSelection(
     val barrel: Int = 0,
     /** Magazine slot index, `0..SLOT_MAX` (0 = Standard). */
     val magazine: Int = 0,
+    /** Stock slot index, `0..SLOT_MAX` (0 = Standard) — gunsmith breadth, D85. */
+    val stock: Int = 0,
+    /** Muzzle slot index, `0..SLOT_MAX` (0 = Standard) — gunsmith breadth, D85. */
+    val muzzle: Int = 0,
 ) {
     /** This selection's current option index for [slot]. */
     fun index(slot: Slot): Int = when (slot) {
         Slot.Optic -> optic
         Slot.Barrel -> barrel
         Slot.Magazine -> magazine
+        Slot.Stock -> stock
+        Slot.Muzzle -> muzzle
     }
 
     /** A copy of this selection with [slot] set to [index] (clamped into `0..SLOT_MAX`). */
@@ -56,6 +66,8 @@ data class LoadoutSelection(
             Slot.Optic -> copy(optic = clamped)
             Slot.Barrel -> copy(barrel = clamped)
             Slot.Magazine -> copy(magazine = clamped)
+            Slot.Stock -> copy(stock = clamped)
+            Slot.Muzzle -> copy(muzzle = clamped)
         }
     }
 
@@ -91,10 +103,12 @@ data class LoadoutSelection(
             Slot.Optic to listOf("Standard", "Marksman", "Close-Quarters"),
             Slot.Barrel to listOf("Standard", "Heavy", "Light"),
             Slot.Magazine to listOf("Standard", "Extended", "Quickdraw"),
+            Slot.Stock to listOf("Standard", "Agile", "Marksman"),
+            Slot.Muzzle to listOf("Standard", "Brake", "Suppressor"),
         )
 
         /**
-         * The neutral all-`Standard` baseline `(0, 0, 0)` — the build a player with no unlocks
+         * The neutral all-`Standard` baseline `(0, 0, 0, 0, 0)` — the build a player with no unlocks
          * fields, byte-identical to the Rust `Loadout::default()` / `Loadout::STANDARD`. The RESET
          * control returns the editor here; mirrors the desktop `LoadoutEditor::reset()`.
          */
@@ -110,6 +124,8 @@ data class LoadoutSelection(
             Slot.Optic to "range <-> fire-rate",
             Slot.Barrel to "damage <-> reserve",
             Slot.Magazine to "capacity <-> handling",
+            Slot.Stock to "mobility <-> steadiness",
+            Slot.Muzzle to "suppression <-> downrange retention",
         )
 
         /** The human label for option [index] of [slot] (index clamped into range). */

@@ -72,6 +72,8 @@ object ShellPrefsCodec {
     const val KEY_OPTIC = "loadout.optic"
     const val KEY_BARREL = "loadout.barrel"
     const val KEY_MAGAZINE = "loadout.magazine"
+    const val KEY_STOCK = "loadout.stock"
+    const val KEY_MUZZLE = "loadout.muzzle"
 
     // --- Campaign key (the cleared-set blob; see CampaignProgress.encodeCleared) ---
     const val KEY_CAMPAIGN = "campaign.cleared"
@@ -103,6 +105,8 @@ object ShellPrefsCodec {
             KEY_OPTIC to l.optic.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
             KEY_BARREL to l.barrel.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
             KEY_MAGAZINE to l.magazine.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
+            KEY_STOCK to l.stock.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
+            KEY_MUZZLE to l.muzzle.coerceIn(0, LoadoutSelection.SLOT_MAX).toString(),
             // Only the cleared set is persisted; the topology is re-supplied from campaignNodes.
             KEY_CAMPAIGN to state.campaign.encodeCleared(),
             // The army pick as its stable Army.index ordinal (the same tag order the wire/sim use).
@@ -142,6 +146,9 @@ object ShellPrefsCodec {
             optic = clampInt(map[KEY_OPTIC], 0, LoadoutSelection.SLOT_MAX, dl.optic),
             barrel = clampInt(map[KEY_BARREL], 0, LoadoutSelection.SLOT_MAX, dl.barrel),
             magazine = clampInt(map[KEY_MAGAZINE], 0, LoadoutSelection.SLOT_MAX, dl.magazine),
+            // The D85 breadth pair: a pre-D85 prefs store has no stock/muzzle key → Standard (0).
+            stock = clampInt(map[KEY_STOCK], 0, LoadoutSelection.SLOT_MAX, dl.stock),
+            muzzle = clampInt(map[KEY_MUZZLE], 0, LoadoutSelection.SLOT_MAX, dl.muzzle),
         )
 
         // The topology is re-supplied from campaignNodes; only the cleared set is decoded (tolerant).

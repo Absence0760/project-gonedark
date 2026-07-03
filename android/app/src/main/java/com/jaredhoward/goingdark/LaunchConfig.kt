@@ -10,7 +10,7 @@ package com.jaredhoward.goingdark
  * format and rules verbatim** — the [D79](../../../../../../../docs/decisions.md) mirrored-constants
  * discipline. The wire string is a versioned, tolerant `key=value;…` list:
  *
- *   `v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0`
+ *   `v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0`
  *
  * **Tolerant [decode]:** unknown keys are ignored, missing keys keep their default, and a null /
  * empty / malformed string yields a full default config — never an exception. That tolerance is the
@@ -27,6 +27,10 @@ data class LaunchConfig(
     val barrel: Int = 0,
     /** Magazine slot index, `0..SLOT_MAX`. */
     val magazine: Int = 0,
+    /** Stock slot index, `0..SLOT_MAX` (gunsmith breadth, D85). Mirrors `launch.rs`'s `stk` key. */
+    val stock: Int = 0,
+    /** Muzzle slot index, `0..SLOT_MAX` (gunsmith breadth, D85). Mirrors `launch.rs`'s `muz` key. */
+    val muzzle: Int = 0,
     /** Master volume percent, `0..GAIN_PCT_MAX`. */
     val masterPct: Int = 80,
     /** SFX volume percent, `0..GAIN_PCT_MAX`. */
@@ -73,6 +77,8 @@ data class LaunchConfig(
         append(";opt=").append(optic.coerceIn(0, SLOT_MAX))
         append(";bar=").append(barrel.coerceIn(0, SLOT_MAX))
         append(";mag=").append(magazine.coerceIn(0, SLOT_MAX))
+        append(";stk=").append(stock.coerceIn(0, SLOT_MAX))
+        append(";muz=").append(muzzle.coerceIn(0, SLOT_MAX))
         append(";vol=").append(masterPct.coerceIn(0, GAIN_PCT_MAX))
         append(";sfx=").append(sfxPct.coerceIn(0, GAIN_PCT_MAX))
         append(";sens=").append(sensX100.coerceIn(SENS_MIN, SENS_MAX))
@@ -119,6 +125,8 @@ data class LaunchConfig(
                     "opt" -> cfg.copy(optic = clampInt(value, 0, SLOT_MAX, cfg.optic))
                     "bar" -> cfg.copy(barrel = clampInt(value, 0, SLOT_MAX, cfg.barrel))
                     "mag" -> cfg.copy(magazine = clampInt(value, 0, SLOT_MAX, cfg.magazine))
+                    "stk" -> cfg.copy(stock = clampInt(value, 0, SLOT_MAX, cfg.stock))
+                    "muz" -> cfg.copy(muzzle = clampInt(value, 0, SLOT_MAX, cfg.muzzle))
                     "vol" -> cfg.copy(masterPct = clampInt(value, 0, GAIN_PCT_MAX, cfg.masterPct))
                     "sfx" -> cfg.copy(sfxPct = clampInt(value, 0, GAIN_PCT_MAX, cfg.sfxPct))
                     "sens" -> cfg.copy(sensX100 = clampInt(value, SENS_MIN, SENS_MAX, cfg.sensX100))

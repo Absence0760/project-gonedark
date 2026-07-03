@@ -23,7 +23,7 @@ class MissionLaunchTest {
         colorblindCues = true,
         visualSoundCues = true,
     )
-    private val loadout = LoadoutSelection(optic = 1, barrel = 2, magazine = 1)
+    private val loadout = LoadoutSelection(optic = 1, barrel = 2, magazine = 1, stock = 2, muzzle = 1)
 
     // ---- node → launch wire resolution ----------------------------------------------------------
 
@@ -74,6 +74,8 @@ class MissionLaunchTest {
         assertEquals(1, cfg.optic)
         assertEquals(2, cfg.barrel)
         assertEquals(1, cfg.magazine)
+        assertEquals(2, cfg.stock) // the D85 pair rides the same wire (stk=/muz=)
+        assertEquals(1, cfg.muzzle)
         assertEquals(55, cfg.masterPct)
         assertEquals(65, cfg.sfxPct)
         assertEquals(150, cfg.sensX100)

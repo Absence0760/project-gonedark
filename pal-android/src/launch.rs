@@ -21,7 +21,7 @@
 //!
 //! ## The wire format (v1) — a versioned, tolerant `key=value` string
 //!
-//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0`
+//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0`
 //!
 //! - `;`-separated `key=value` pairs.
 //! - **Tolerant decode** (the forward-compat contract): unknown keys are ignored, missing keys take
@@ -87,6 +87,11 @@ pub struct LaunchConfig {
     pub barrel: u8,
     /// Magazine slot index, `0..=`[`SLOT_MAX`].
     pub magazine: u8,
+    /// Stock slot index, `0..=`[`SLOT_MAX`] (gunsmith breadth, D85). Missing on a pre-D85 wire →
+    /// `0` (`Standard`), so an old emitter degrades to the pre-breadth loadout, never an error.
+    pub stock: u8,
+    /// Muzzle slot index, `0..=`[`SLOT_MAX`] (gunsmith breadth, D85). Same tolerance as `stock`.
+    pub muzzle: u8,
     /// Master volume percent, `0..=`[`GAIN_PCT_MAX`].
     pub master_pct: u8,
     /// SFX volume percent, `0..=`[`GAIN_PCT_MAX`].
@@ -129,6 +134,8 @@ impl Default for LaunchConfig {
             optic: 0,
             barrel: 0,
             magazine: 0,
+            stock: 0,
+            muzzle: 0,
             master_pct: 80,
             sfx_pct: 80,
             sens_x100: 100,
@@ -173,6 +180,8 @@ pub fn parse_launch_config(raw: &str) -> LaunchConfig {
             "opt" => cfg.optic = clamp_u8(value, SLOT_MAX, cfg.optic),
             "bar" => cfg.barrel = clamp_u8(value, SLOT_MAX, cfg.barrel),
             "mag" => cfg.magazine = clamp_u8(value, SLOT_MAX, cfg.magazine),
+            "stk" => cfg.stock = clamp_u8(value, SLOT_MAX, cfg.stock),
+            "muz" => cfg.muzzle = clamp_u8(value, SLOT_MAX, cfg.muzzle),
             "vol" => cfg.master_pct = clamp_u8(value, GAIN_PCT_MAX, cfg.master_pct),
             "sfx" => cfg.sfx_pct = clamp_u8(value, GAIN_PCT_MAX, cfg.sfx_pct),
             "sens" => cfg.sens_x100 = clamp_u16(value, SENS_MIN, SENS_MAX, cfg.sens_x100),
@@ -303,6 +312,7 @@ mod tests {
         let d = LaunchConfig::default();
         assert_eq!(d.scene, "skirmish");
         assert_eq!((d.optic, d.barrel, d.magazine), (0, 0, 0));
+        assert_eq!((d.stock, d.muzzle), (0, 0)); // D85 slots default to Standard
         assert_eq!((d.master_pct, d.sfx_pct), (80, 80));
         assert_eq!(d.sens_x100, 100);
         assert!(!d.invert_y);
@@ -324,10 +334,11 @@ mod tests {
     #[test]
     fn parses_a_full_v1_string() {
         let cfg = parse_launch_config(
-            "v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1;diff=2;node=3;army=2;cvd=1;snd=1",
+            "v=1;scene=mission1;opt=1;bar=2;mag=1;stk=1;muz=2;vol=50;sfx=70;sens=250;invy=1;diff=2;node=3;army=2;cvd=1;snd=1",
         );
         assert_eq!(cfg.scene, "mission1");
         assert_eq!((cfg.optic, cfg.barrel, cfg.magazine), (1, 2, 1));
+        assert_eq!((cfg.stock, cfg.muzzle), (1, 2)); // Agile stock, Suppressor muzzle
         assert_eq!((cfg.master_pct, cfg.sfx_pct), (50, 70));
         assert_eq!(cfg.sens_x100, 250);
         assert!(cfg.invert_y);
@@ -434,6 +445,23 @@ mod tests {
         assert_eq!(campaign_result_code(0, 3), 4);
         // Out-of-range tier clamps rather than overflowing into the next node's range.
         assert_eq!(campaign_result_code(0, 99), campaign_result_code(0, DIFF_MAX));
+    }
+
+    #[test]
+    fn stock_and_muzzle_round_trip_and_a_pre_d85_wire_defaults_to_standard() {
+        // Every in-range index round-trips on both new keys.
+        for i in 0u8..=SLOT_MAX {
+            assert_eq!(parse_launch_config(&format!("stk={i}")).stock, i);
+            assert_eq!(parse_launch_config(&format!("muz={i}")).muzzle, i);
+        }
+        // Back-compat: an emitter from before the D85 keys (the opt/bar/mag-only wire) still
+        // decodes, with both new slots defaulting to Standard — the tolerant-decode contract.
+        let old = parse_launch_config("v=1;scene=skirmish;opt=1;bar=2;mag=1");
+        assert_eq!((old.stock, old.muzzle), (0, 0));
+        // Out-of-range / negative / garbage degrade exactly like the other slot keys.
+        assert_eq!(parse_launch_config("stk=9").stock, SLOT_MAX);
+        assert_eq!(parse_launch_config("muz=-1").muzzle, 0);
+        assert_eq!(parse_launch_config("stk=agile").stock, 0);
     }
 
     #[test]

@@ -20,7 +20,7 @@ package com.jaredhoward.goingdark
  * Assemble the [LaunchConfig] the engine receives at Deploy: the chosen scene token, the
  * [LoadoutSelection] slot indices, the [SettingsState] audio / look / accessibility prefs, the picked
  * [army], and the campaign replay [diff] tier + [node] index folded into the wire keys
- * (`opt`/`bar`/`mag`, `vol`/`sfx`/`sens`/`invy`, `army`, `cvd`/`snd`, `diff`/`node`). Pure — kept out of
+ * (`opt`/`bar`/`mag`/`stk`/`muz`, `vol`/`sfx`/`sens`/`invy`, `army`, `cvd`/`snd`, `diff`/`node`). Pure — kept out of
  * the composable so the wiring is obvious. [diff]/[node] are the campaign replay tier + node index; both
  * are inert (`0`) for non-campaign Deploys (ModeSelect), so those keep their prior behaviour.
  */
@@ -37,6 +37,8 @@ fun launchConfigOf(
         optic = loadout.optic,
         barrel = loadout.barrel,
         magazine = loadout.magazine,
+        stock = loadout.stock,
+        muzzle = loadout.muzzle,
         masterPct = settings.masterPct,
         sfxPct = settings.sfxPct,
         sensX100 = settings.sensX100,

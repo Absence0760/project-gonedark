@@ -83,6 +83,8 @@ class ShellPrefs(context: Context) {
             ShellPrefsCodec.KEY_OPTIC,
             ShellPrefsCodec.KEY_BARREL,
             ShellPrefsCodec.KEY_MAGAZINE,
+            ShellPrefsCodec.KEY_STOCK,
+            ShellPrefsCodec.KEY_MUZZLE,
             ShellPrefsCodec.KEY_CAMPAIGN,
             ShellPrefsCodec.KEY_ARMY,
         )

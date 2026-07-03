@@ -10,12 +10,12 @@
 > root or gated — launches through the wire; §12 item 1). A 2026-07-03 re-audit closed the other
 > two structural items too: **desktop shell-pref persistence shipped** (`92f5fc3` → the
 > `app/src/shell/persist.rs` codec; §12 item 2), and the **briefing-difficulty + look-sensitivity
-> wires are consumed end-to-end** on Android (`bec478e`/`ae32cbd`; §12 item 3, §5). What remains is
-> **blocked** (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) plus **two
-> structural gaps**: the [D85](../decisions.md) Stock/Muzzle gunsmith slots are
-> desktop-only — absent from the Android gunsmith/wire/prefs (§12 item 5, the one caveat on
-> "every shipped surface" above; the desktop persist half was fixed 2026-07-03) — and the new
-> desktop skirmish match-setup screen has no Compose twin yet (§12 item 6). Scope is
+> wires are consumed end-to-end** on Android (`bec478e`/`ae32cbd`; §12 item 3, §5). The
+> [D85](../decisions.md) Stock/Muzzle gap (§12 item 5) closed 2026-07-03 on both halves — the
+> desktop persist encode and the full Android chain (Compose slots + `stk=`/`muz=` wire keys +
+> prefs keys). What remains is **blocked** (PvP/lobby/store/consent per
+> [`phase-4-plan.md`](phase-4-plan.md) §2) plus **one structural gap**: the new desktop skirmish
+> match-setup screen has no Compose twin yet (§12 item 6). Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
 
@@ -283,8 +283,8 @@ the checksum matrix is unaffected.
 
 These were deliberately **not** done in the sweep — each a chunk of real work. A **2026-07-03
 re-audit** then verified items 1–3 closed in code (evidence inline below), item 4 remains a
-deliberate UX fork, item 5 is a new gap the re-audit found, and item 6 is the desktop skirmish
-match-setup screen landing (2026-07-03) without a Compose twin:
+deliberate UX fork, item 5 is a gap the re-audit found (closed the same day, both halves), and
+item 6 is the desktop skirmish match-setup screen landing (2026-07-03) without a Compose twin:
 
 1. **Campaign progress model — ✅ CLOSED (2026-07-03).** `CampaignModel.kt` carries the full
    `CampaignProgress`/`NodeProgress` (Locked/Available/Cleared) derivation, the clear gate,
@@ -342,18 +342,27 @@ match-setup screen landing (2026-07-03) without a Compose twin:
    Android surfaces it as a "FIELD MANUAL" button on the title. A deliberate [D78](../decisions.md) UX
    choice; left as-is, noted so it isn't mistaken for a regression. (Re-verified 2026-07-03:
    `app/src/shell/settings.rs:208`, `TitleScreen.kt:142`.)
-5. **D85 gunsmith breadth is desktop-only — OPEN (found by the 2026-07-03 re-audit).**
-   [D85](../decisions.md) (2026-07-01) made **Stock + Muzzle** real sim sidegrade slots, and the
-   desktop gunsmith cycles all five (`engine/src/loadout_ui.rs:160-171`). Android never caught up:
-   `LoadoutSelection`/`GunsmithScreen` carry only optic/barrel/magazine, the launch wire has **no**
-   stock/muzzle keys (`pal-android/src/launch.rs` `opt`/`bar`/`mag` only; ditto
-   `LaunchConfig.kt` — the glue itself says so and defaults both slots to Standard,
-   `android_backend.rs:549-556`), and `ShellPrefsCodec` has no stock/muzzle keys either — zero
-   references in the Android sources. So a D85 sidegrade can't be picked, fielded, or persisted on Android — a
-   real value-level divergence in **sim-affecting** loadout slots, not chrome. (Desktop's own
-   persist encode also omitted the two slots — fixed 2026-07-03, see item 2.) Closing the Android
-   half needs the Compose slots + two new wire keys (`stk=`/`muz=`, tolerant-decoded so old
-   emitters stay valid) + the two prefs keys, each with the usual pinned tests.
+5. **D85 gunsmith breadth is desktop-only — ✅ CLOSED (2026-07-03, both halves; found OPEN by the
+   same day's re-audit).** [D85](../decisions.md) (2026-07-01) made **Stock + Muzzle** real sim
+   sidegrade slots, and the desktop gunsmith cycled all five (`engine/src/loadout_ui.rs:160-171`)
+   while Android carried only optic/barrel/magazine — a real value-level divergence in
+   **sim-affecting** loadout slots, not chrome. Now closed end-to-end:
+   - **Compose gunsmith**: `Slot.Stock`/`Slot.Muzzle` with labels + trade hints mirrored verbatim
+     from `core/src/gunsmith.rs` (`LoadoutSelection.kt`; the D79 tables/tests extended — labels,
+     hints, cycle/reset/clamp all pinned in `LoadoutSelectionTest`). `GunsmithScreen` iterates
+     `Slot.entries`, so the two rows render with no chrome change.
+   - **Launch wire**: new `stk=`/`muz=` keys on both ends (`LaunchConfig.kt` ↔
+     `pal-android/src/launch.rs`), tolerant-decoded — a pre-D85 emitter defaults both to Standard
+     (back-compat pinned on both sides); `build_match_game` now fields all five slots into the
+     `Loadout` (`android_backend.rs`), and `missionLaunchConfig`/`launchConfigOf` thread them
+     (`MissionLaunchTest` pins the fold).
+   - **Prefs**: `loadout.stock`/`loadout.muzzle` keys in `ShellPrefsCodec` **and** in
+     `ShellPrefs.ALL_KEYS` (the read-loop gate — omitting it would have silently dropped the saved
+     value); pre-D85 store decode + garbage-value degradation pinned in `ShellPrefsCodecTest`.
+   - Desktop's own persist-encode omission was fixed the same day (see item 2).
+   Verified: `gradlew testDebugUnitTest` green (137 JVM tests), `cargo test -p gonedark-pal-android`
+   green dev+release, and the aarch64 `cargoNdkBuild` compiles (after the jni-0.22 haptics fix,
+   which had broken the android-target build at HEAD).
 6. **Skirmish match-setup screen is desktop-only (2026-07-03).** The desktop SKIRMISH door now
    opens the full [`modes.md`](../modes.md) §3 setup surface (`app/src/shell/skirmish.rs`:
    battlefield / both armies / opponent tier, launched through `apply_campaign_tuning` +

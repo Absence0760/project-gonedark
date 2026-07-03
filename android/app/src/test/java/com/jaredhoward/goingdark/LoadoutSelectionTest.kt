@@ -64,12 +64,17 @@ class LoadoutSelectionTest {
 
     @Test
     fun cycle_touches_only_the_named_slot() {
-        // Cycling Optic must not move Barrel or Magazine, etc.
-        val base = LoadoutSelection(optic = 0, barrel = 1, magazine = 2)
+        // Cycling one slot must not move any of the other four.
+        val base = LoadoutSelection(optic = 0, barrel = 1, magazine = 2, stock = 1, muzzle = 2)
         val opticCycled = base.cycle(Slot.Optic, forward = true)
         assertEquals(1, opticCycled.optic)
         assertEquals(1, opticCycled.barrel)
         assertEquals(2, opticCycled.magazine)
+        assertEquals(1, opticCycled.stock)
+        assertEquals(2, opticCycled.muzzle)
+        val stockCycled = base.cycle(Slot.Stock, forward = true)
+        assertEquals(2, stockCycled.stock)
+        assertEquals(base.copy(stock = 2), stockCycled)
     }
 
     @Test
@@ -81,6 +86,11 @@ class LoadoutSelectionTest {
             (0..LoadoutSelection.SLOT_MAX).map { LoadoutSelection.label(Slot.Barrel, it) })
         assertEquals(listOf("Standard", "Extended", "Quickdraw"),
             (0..LoadoutSelection.SLOT_MAX).map { LoadoutSelection.label(Slot.Magazine, it) })
+        // The D85 breadth pair.
+        assertEquals(listOf("Standard", "Agile", "Marksman"),
+            (0..LoadoutSelection.SLOT_MAX).map { LoadoutSelection.label(Slot.Stock, it) })
+        assertEquals(listOf("Standard", "Brake", "Suppressor"),
+            (0..LoadoutSelection.SLOT_MAX).map { LoadoutSelection.label(Slot.Muzzle, it) })
     }
 
     @Test
@@ -90,12 +100,14 @@ class LoadoutSelectionTest {
         assertEquals("range <-> fire-rate", LoadoutSelection.tradeHint(Slot.Optic))
         assertEquals("damage <-> reserve", LoadoutSelection.tradeHint(Slot.Barrel))
         assertEquals("capacity <-> handling", LoadoutSelection.tradeHint(Slot.Magazine))
+        assertEquals("mobility <-> steadiness", LoadoutSelection.tradeHint(Slot.Stock))
+        assertEquals("suppression <-> downrange retention", LoadoutSelection.tradeHint(Slot.Muzzle))
     }
 
     @Test
     fun reset_returns_the_neutral_all_standard_baseline() {
         // RESET (mirrors LoadoutEditor::reset) drops every slot back to index 0 from any build.
-        val built = LoadoutSelection(optic = 1, barrel = 2, magazine = 1)
+        val built = LoadoutSelection(optic = 1, barrel = 2, magazine = 1, stock = 2, muzzle = 1)
         assertEquals(LoadoutSelection(), built.reset())
         assertEquals(LoadoutSelection.STANDARD, built.reset())
         for (slot in Slot.entries) {

@@ -19,6 +19,8 @@ class LaunchConfigTest {
         assertEquals(0, d.optic)
         assertEquals(0, d.barrel)
         assertEquals(0, d.magazine)
+        assertEquals(0, d.stock) // D85 slots default to Standard
+        assertEquals(0, d.muzzle)
         assertEquals(80, d.masterPct)
         assertEquals(80, d.sfxPct)
         assertEquals(100, d.sensX100)
@@ -42,12 +44,14 @@ class LaunchConfigTest {
     @Test
     fun decodes_a_full_v1_string() {
         val cfg = LaunchConfig.decode(
-            "v=1;scene=mission1;opt=1;bar=2;mag=1;vol=50;sfx=70;sens=250;invy=1;diff=2;node=3;army=2;cvd=1;snd=1",
+            "v=1;scene=mission1;opt=1;bar=2;mag=1;stk=1;muz=2;vol=50;sfx=70;sens=250;invy=1;diff=2;node=3;army=2;cvd=1;snd=1",
         )
         assertEquals("mission1", cfg.scene)
         assertEquals(1, cfg.optic)
         assertEquals(2, cfg.barrel)
         assertEquals(1, cfg.magazine)
+        assertEquals(1, cfg.stock) // Agile
+        assertEquals(2, cfg.muzzle) // Suppressor
         assertEquals(50, cfg.masterPct)
         assertEquals(70, cfg.sfxPct)
         assertEquals(250, cfg.sensX100)
@@ -97,6 +101,22 @@ class LaunchConfigTest {
         val g = LaunchConfig.decode("cvd=maybe;snd=")
         assertFalse(g.colorblindCues)
         assertFalse(g.visualSoundCues)
+    }
+
+    @Test
+    fun stock_and_muzzle_round_trip_and_a_pre_d85_wire_defaults_to_standard() {
+        for (i in 0..LaunchConfig.SLOT_MAX) {
+            assertEquals(i, LaunchConfig.decode("stk=$i").stock)
+            assertEquals(i, LaunchConfig.decode("muz=$i").muzzle)
+        }
+        // Back-compat: a pre-D85 emitter (opt/bar/mag only) still decodes, both slots → Standard.
+        val old = LaunchConfig.decode("v=1;scene=skirmish;opt=1;bar=2;mag=1")
+        assertEquals(0, old.stock)
+        assertEquals(0, old.muzzle)
+        // Out-of-range / negative / garbage degrade exactly like the other slot keys.
+        assertEquals(LaunchConfig.SLOT_MAX, LaunchConfig.decode("stk=9").stock)
+        assertEquals(0, LaunchConfig.decode("muz=-1").muzzle)
+        assertEquals(0, LaunchConfig.decode("stk=agile").stock)
     }
 
     @Test
@@ -180,7 +200,7 @@ class LaunchConfigTest {
     @Test
     fun encode_then_decode_round_trips() {
         val cfg = LaunchConfig(
-            scene = "mission1", optic = 2, barrel = 1, magazine = 2,
+            scene = "mission1", optic = 2, barrel = 1, magazine = 2, stock = 1, muzzle = 2,
             masterPct = 30, sfxPct = 65, sensX100 = 180, invertY = true, diff = 3,
             node = 4, army = 2, colorblindCues = true, visualSoundCues = true,
         )
@@ -192,10 +212,10 @@ class LaunchConfigTest {
         // The payload MainActivity.startMatch sends: a default-loadout Skirmish boot.
         val emitted = LaunchConfig(scene = "skirmish").encode()
         assertEquals(LaunchConfig(scene = "skirmish"), LaunchConfig.decode(emitted))
-        // And it is the documented v1 shape (now carrying the campaign `diff`/`node`, the `army` pick,
-        // and the accessibility `cvd`/`snd` cues — all at their defaults).
+        // And it is the documented v1 shape (now carrying the D85 `stk`/`muz` slots, the campaign
+        // `diff`/`node`, the `army` pick, and the accessibility `cvd`/`snd` cues — all at defaults).
         assertEquals(
-            "v=1;scene=skirmish;opt=0;bar=0;mag=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0",
+            "v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0",
             emitted,
         )
     }

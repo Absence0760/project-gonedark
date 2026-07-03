@@ -40,7 +40,9 @@ class ShellPrefsCodecTest {
                 matchesPlayed = 42,
                 wins = 17,
             ),
-            loadout = LoadoutSelection(optic = 2, barrel = 1, magazine = 2),
+            // Every slot non-default — incl. the D85 stock/muzzle pair, so the round trip proves the
+            // encoder writes them (the desktop codec's §12-item-5 encode hole, pinned against here).
+            loadout = LoadoutSelection(optic = 2, barrel = 1, magazine = 2, stock = 1, muzzle = 2),
             army = Army.Fr,
         )
         val decoded = ShellPrefsCodec.decode(ShellPrefsCodec.encode(state))
@@ -62,10 +64,36 @@ class ShellPrefsCodecTest {
     @Test
     fun customized_loadout_survives_the_round_trip() {
         val state = ShellState.defaults().copy(
-            loadout = LoadoutSelection(optic = 1, barrel = 2, magazine = 1),
+            loadout = LoadoutSelection(optic = 1, barrel = 2, magazine = 1, stock = 2, muzzle = 1),
         )
         val decoded = ShellPrefsCodec.decode(ShellPrefsCodec.encode(state))
+        assertEquals(
+            LoadoutSelection(optic = 1, barrel = 2, magazine = 1, stock = 2, muzzle = 1),
+            decoded.loadout,
+        )
+    }
+
+    @Test
+    fun a_pre_d85_prefs_store_decodes_stock_and_muzzle_to_standard() {
+        // A store written before the stock/muzzle keys existed keeps its old slots and defaults the
+        // two new ones to Standard (0) — the tolerant forward-compat contract.
+        val old = mapOf(
+            ShellPrefsCodec.KEY_OPTIC to "1",
+            ShellPrefsCodec.KEY_BARREL to "2",
+            ShellPrefsCodec.KEY_MAGAZINE to "1",
+        )
+        val decoded = ShellPrefsCodec.decode(old)
         assertEquals(LoadoutSelection(optic = 1, barrel = 2, magazine = 1), decoded.loadout)
+        assertEquals(0, decoded.loadout.stock)
+        assertEquals(0, decoded.loadout.muzzle)
+        // Garbage / out-of-range values in the new keys degrade like the old slot keys.
+        val bad = old + mapOf(
+            ShellPrefsCodec.KEY_STOCK to "9",
+            ShellPrefsCodec.KEY_MUZZLE to "brake",
+        )
+        val badDecoded = ShellPrefsCodec.decode(bad)
+        assertEquals(LoadoutSelection.SLOT_MAX, badDecoded.loadout.stock)
+        assertEquals(0, badDecoded.loadout.muzzle)
     }
 
     @Test
