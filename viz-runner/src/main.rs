@@ -298,6 +298,19 @@ fn is_faction_green(p: [u8; 4]) -> bool {
 fn is_select_rim(p: [u8; 4]) -> bool {
     p[0] > 220 && p[1] > 220 && p[2] > 220
 }
+/// The band-select marquee box edge, drawn in the theme's light-cool-blue RIM colour (sRGB
+/// ≈ (216,233,249) — G,B near-white with R held ~20 lower). Distinct from the pure-white unit
+/// selection rim (`is_select_rim`, all > 220 — R too low here) and from the muted, low-brightness
+/// field/grid underneath (G,B never both this bright). Keyed on the box's ACTUAL palette colour so
+/// the assertion survives the theme threading that repointed the box off pure white (it was the
+/// stale pure-white predicate that made the box "vanish" from the count, not the box itself).
+fn is_marquee_rim(p: [u8; 4]) -> bool {
+    p[1] > 224
+        && p[2] > 240
+        && (p[2] as i32) > (p[0] as i32) + 18
+        && (p[1] as i32) > (p[0] as i32) + 8
+        && (190..=232).contains(&p[0])
+}
 /// Radial-menu chrome (the hub + wedge slots): a mid, blue-leaning grey — brighter than the slate
 /// field and the dim backdrop, but well below the player-blue body and the white selection rim, so
 /// it reads as its own band. `B > R` and `G > R` keep warm bodies/health bars out; the upper bounds
@@ -366,6 +379,22 @@ fn count_center(rgba: &[u8], half: u32, f: impl Fn([u8; 4]) -> bool) -> usize {
     let mut n = 0;
     for y in cy.saturating_sub(half)..(cy + half).min(H) {
         for x in cx.saturating_sub(half)..(cx + half).min(W) {
+            let i = ((y * W + x) * 4) as usize;
+            if f([rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]) {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+/// Count pixels matching `f` inside an axis-aligned rect `[x0,x1) × [y0,y1)` (clamped to the
+/// frame). Localizes a color signal in space when the same color also appears in fixed screen
+/// chrome elsewhere (e.g. the marquee box's theme-RIM colour is shared by the corner-panel and
+/// command-bar rims, so the marquee count is taken over the central band only).
+fn count_rect(rgba: &[u8], x0: u32, y0: u32, x1: u32, y1: u32, f: impl Fn([u8; 4]) -> bool) -> usize {
+    let mut n = 0;
+    for y in y0..y1.min(H) {
+        for x in x0..x1.min(W) {
             let i = ((y * W + x) * 4) as usize;
             if f([rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]) {
                 n += 1;
@@ -867,13 +896,16 @@ fn main() {
 
     // --- Scenario 1d: band-select marquee ------------------------------------------------------
     // While a band-drag is IN FLIGHT (pointer held, not yet released) the selection box is drawn.
-    // The bright box edge reads as `is_select_rim`; mid-drag nothing is selected yet, so the only
-    // such pixels are the marquee itself.
+    // The box edge is the theme's light-cool-blue RIM colour (`is_marquee_rim`), counted over the
+    // central band the drag spans (150..380) so the corner-panel / command-bar rims — which share
+    // that colour but sit outside the band — don't swamp the signal. Mid-drag nothing is selected
+    // yet, so inside that band the only such pixels are the marquee box itself (the field/grid
+    // underneath never gets this bright).
     println!("[marquee] a band-drag in progress draws the selection box (command-view affordance)");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     advance(&mut g, 2, InputFrame::default(), &gpu, &view);
     let pre_drag = read_pixels(&gpu.device, &gpu.queue, &target);
-    let pre_rim = count(&pre_drag, is_select_rim); // no box, nothing selected → 0
+    let pre_rim = count_rect(&pre_drag, 150, 150, 380, 380, is_marquee_rim); // no box yet → ~0
                                                    // Press at one corner, then a second frame still HELD at the opposite corner (no pointer_up).
     let press = InputFrame {
         pointer: Some((150.0, 150.0)),
@@ -907,12 +939,12 @@ fn main() {
     );
     let drag = read_pixels(&gpu.device, &gpu.queue, &target);
     save_png("target/viz/marquee.png", &drag);
-    let drag_rim = count(&drag, is_select_rim);
+    let drag_rim = count_rect(&drag, 150, 150, 380, 380, is_marquee_rim);
     check(
         &mut failures,
         "marquee_box_drawn",
         drag_rim > pre_rim + 100,
-        format!("{drag_rim} bright box-edge px mid-drag vs {pre_rim} before (selection box drawn)"),
+        format!("{drag_rim} box-edge px mid-drag vs {pre_rim} before (selection box drawn)"),
     );
 
     // --- Scenario 2: embodied — a real first-person world, but the STRATEGIC MAP is gone --------
@@ -1066,16 +1098,23 @@ fn main() {
     );
     // The fairness guarantee holds THROUGH combat: the alert HUD is a DIRECTIONAL PING ring near the
     // screen edge (`render/src/hud.rs`), not a map reveal — it tells you a bearing, never an enemy
-    // position. The strategic map stays dark: the player's own off-screen squad + control-point
-    // intel never reappear. We count player-blue px that are NOT themselves alert markers (the teal
-    // TerritoryLost glyph reads blue-ish but is a directional ping, not ally intel) — that residual
-    // must stay near zero even while the enemy is firing AND we keep re-embodying through deaths.
+    // position. The invariant-#6 property is that the STRATEGIC MAP COLLAPSED: your own off-screen
+    // squad + the control-point rings (all map intel) VANISH, gated by the avatar-only fog mask
+    // (`render::fog::visible_instances`). It is NOT "zero blue px": an ally standing inside the
+    // avatar's own line of sight is legitimately visible — you see what your soldier sees — and
+    // since D52/WS-D that ally renders in its faction silhouette + footprint (both blue). So the
+    // signal is a large REDUCTION vs the command view, not an absolute floor: the old `< 20 px`
+    // bound predated in-view allies rendering blue and was stale (it counted legitimate
+    // line-of-sight allies as a leak). We count player-blue px that are NOT alert markers (the teal
+    // TerritoryLost glyph reads blue-ish but is a directional ping) and require them to stay under a
+    // small fraction of the command view's — a genuine non-gating regression (the whole map
+    // reappearing) blows far past this, while a handful of in-LoS allies does not.
     let hud_map_intel = count(&hud_frame, |p| is_player_blue(p) && !is_alert_marker(p));
     check(
         &mut failures,
         "embodied_combat_strategic_map_stays_dark",
-        hud_map_intel < 20 && (hud_map_intel as f32) < (blue as f32) * 0.1,
-        format!("{hud_map_intel} non-marker player-blue px during embodied combat (<20 and <10% of command's {blue} — the map stays dark; alerts are pings, not intel)"),
+        (hud_map_intel as f32) < (blue as f32) * 0.1,
+        format!("{hud_map_intel} non-marker player-blue px during embodied combat (<10% of command's {blue} — the strategic map collapsed to avatar-only sight; the residual is in-LoS allies, not map intel)"),
     );
     let _ = dark_nondark; // (the pre-/post-alert dark counts are now both ~0 with a world drawn)
 
