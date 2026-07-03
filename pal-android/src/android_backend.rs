@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 use gonedark_core::campaign::{Difficulty, NodeId};
 use gonedark_core::components::{Army, Faction};
-use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
+use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Muzzle, Optic, Stock};
 use gonedark_engine::command_gesture::CommandGesture;
 use gonedark_engine::objectives::MissionStatus;
 use gonedark_engine::{
@@ -547,13 +547,15 @@ fn build_match_game(
     // Unknown scene token → the real playable match (Skirmish), matching the desktop default boot.
     let scene = Scene::parse(&launch.scene).unwrap_or(Scene::Skirmish);
     // The wire's gunsmith indices (already clamped 0..=2 by the parser) index the slot enums' ALL
-    // order. `Loadout::STANDARD` (all-zero) reproduces the pre-parity boot byte-for-byte. Stock/Muzzle
-    // aren't on the launch wire yet (D85) — default them to Standard.
+    // order — all five slots, including the D85 Stock/Muzzle breadth pair (the `stk=`/`muz=` wire
+    // keys; a pre-D85 emitter omits them and the parser defaults both to Standard). An all-zero
+    // wire reproduces `Loadout::STANDARD` byte-for-byte.
     let loadout = Loadout {
         optic: Optic::ALL[launch.optic as usize],
         barrel: Barrel::ALL[launch.barrel as usize],
         magazine: Magazine::ALL[launch.magazine as usize],
-        ..Loadout::STANDARD
+        stock: Stock::ALL[launch.stock as usize],
+        muzzle: Muzzle::ALL[launch.muzzle as usize],
     };
     let mut game =
         Game::new_scene_with_loadout(rhi.device(), rhi.format(), DEFAULT_SEED, scene, loadout);
@@ -1598,9 +1600,10 @@ impl AndroidHaptics {
                     .l()?;
 
                 // VibrationEffect effect = VibrationEffect.createOneShot(duration_ms, DEFAULT_AMPLITUDE);
-                // `find_class` takes a plain `&str` class name (the canonical jni path); the returned
-                // `JClass` is the static-call target.
-                let effect_class = env.find_class("android/os/VibrationEffect")?;
+                // `find_class` takes the class name as a `JNIStr` (jni 0.22: `AsRef<JNIStr>`, the
+                // same rule as every other name/sig in this file); the returned `JClass` is the
+                // static-call target.
+                let effect_class = env.find_class(jni_str!("android/os/VibrationEffect"))?;
                 let effect = env
                     .call_static_method(
                         &effect_class,
