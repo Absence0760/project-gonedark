@@ -17,14 +17,15 @@ use crate::overlay::{OverlayQuad, QuadRole};
 use crate::text::Anchor;
 
 // --- box geometry (NDC, top-LEFT corner) -------------------------------------------------------
-/// Left edge of the panel (a small margin in from the screen edge).
-const LEFT: f32 = -0.97;
+/// Left edge of the panel — the shared screen-edge inset (`theme`), so the objective card, the
+/// vitals bar, and the corner readout all hang the same distance off the edge (was an ad-hoc 0.03).
+const LEFT: f32 = -1.0 + crate::theme::EDGE_INSET;
 /// Top edge of the panel.
 const TOP: f32 = 0.93;
 /// Panel half-width; the box spans `[LEFT, LEFT + 2·HALF_W]`.
 const HALF_W: f32 = 0.30;
-/// Inner padding between the box edge and its content.
-const PAD: f32 = 0.022;
+/// Inner padding between the box edge and its content — the shared panel spec (`theme`).
+const PAD: f32 = crate::theme::PANEL_PAD;
 /// Title ("OBJECTIVE") text height — the shared type scale's section-title step (`theme`).
 const TITLE_SIZE: f32 = crate::theme::TYPE_TITLE;
 /// Objective + progress row text height — the shared type scale's body step.
@@ -35,13 +36,13 @@ const ROW_STEP: f32 = crate::theme::SPACE_ROW;
 /// panel's [`crate::theme::SPACE_SECTION`] (this two-row card wants its title snugger to the body);
 /// deliberately NOT snapped to the scale so this card's golden layout stays byte-identical.
 const TITLE_GAP: f32 = 0.026;
-/// The rim quad extends this far past the panel on each side to draw a thin border.
-const RIM_PAD: f32 = 0.010;
+/// The rim quad extends this far past the panel on each side — the shared panel spec (`theme`).
+const RIM_PAD: f32 = crate::theme::PANEL_RIM_PAD;
 
 const BG_COLOR: [f32; 3] = crate::theme::PANEL;
-const BG_ALPHA: f32 = 0.84;
+const BG_ALPHA: f32 = crate::theme::PANEL_BG_ALPHA;
 const RIM_COLOR: [f32; 3] = crate::theme::RIM;
-const RIM_ALPHA: f32 = 0.92;
+const RIM_ALPHA: f32 = crate::theme::PANEL_RIM_ALPHA;
 
 /// The card title tint — the shared primary bone, matching the contextual command panel's title so
 /// the two corner cards read as one designed set (WS-C: one state language across the HUD).

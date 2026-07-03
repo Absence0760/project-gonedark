@@ -201,6 +201,40 @@ pub const DATA_TERRITORY: Rgb = [0.52, 0.82, 0.46];
 /// Resources banked.
 pub const DATA_RESOURCE: Rgb = [0.95, 0.74, 0.32];
 
+// ---- Embodied reticle / feedback chrome ----------------------------------------------------------
+
+/// The embodied aim reticle — a pale green-white that stays legible over the muted blue-grey FPS
+/// world without reading as the warm muzzle flash or the red/orange alert ring (invariant #6
+/// legibility). ONE colour for "where my gun points" across embodiments: the infantry hip-fire
+/// crosshair (`hud`) and the tank gunner's dispersion reticle (`tank_hud`) both draw it.
+pub const CROSSHAIR: Rgb = [0.86, 0.96, 0.90];
+
+/// The hitmarker "X" — crisp bright white, deliberately distinct from every other embodied-frame
+/// element: the alert palette rides the screen *edge* ring, the muzzle flash is a *warm* yellow
+/// (low blue), and the FPS world is a muted low-saturation blue-grey. A high-blue near-white pixel
+/// at screen center reads only as the hitmarker — which is exactly what the viz pixel-assert keys on.
+pub const HITMARKER: Rgb = [1.0, 1.0, 1.0];
+
+// ---- Going-dark alert palette (invariant #6) ------------------------------------------------------
+//
+// The RGB half of the embodied alert HUD's per-kind cue (`hud::alert_color`); the redundant SHAPE
+// glyph (`hud::shape_for`) is the other half. Colour is only ONE of the two cues, and the palette is
+// deliberately spaced along lightness *and* the blue-yellow axis, not just warm hue, so no pair
+// collapses to the same muddy yellow-brown under deuteranopia/protanopia. The pairwise luminance
+// spread is pinned by tests here and in `hud.rs` — retune all four together, never one alone.
+
+/// Base under attack — the hottest, most urgent ping. Aligned to [`STATUS_CRIT`] so the HUD carries
+/// ONE danger red (the old `[1.0, 0.12, 0.12]` was a third red beside [`ENEMY`] and [`STATUS_CRIT`]);
+/// the alignment keeps the documented CVD spacing — every pairwise luminance gap in the alert
+/// palette stays above the 0.05 floor (danger↔info tightens from ~0.14 to ~0.08, still clear).
+pub const ALERT_DANGER: Rgb = STATUS_CRIT;
+/// Taking fire — a high-value orange, lighter than the danger red.
+pub const ALERT_WARN: Rgb = [1.0, 0.62, 0.15];
+/// Territory lost — a darker desaturated teal, off the warm axis entirely.
+pub const ALERT_INFO: Rgb = [0.15, 0.52, 0.58];
+/// Unit lost — a pale grey; a single quiet death, the brightest step.
+pub const ALERT_NEUTRAL: Rgb = [0.88, 0.88, 0.92];
+
 // ---- Colorblind-safe palette ramps (WS-D accessibility, invariant #6) ---------------------------
 //
 // Faction identity ("mine / theirs / neutral / the one I possess") rests on hue in the default
@@ -414,6 +448,28 @@ pub const SPACE_LINE: f32 = 0.075;
 /// Summary bar-row step — the vertical spacing between per-faction rows in the post-match summary.
 pub const SPACE_BAR_ROW: f32 = 0.100;
 
+// ---- Shared panel spec (NDC) ----------------------------------------------------------------------
+//
+// The HUD cards (contextual command panel, objective card, readout tally, command-bar buttons, teach
+// prompt, embody picker) all wear the same rim-behind-a-fill chrome, but each module used to
+// re-derive the fill alpha / rim pad / inner pad / edge inset locally (0.82 vs 0.84 vs 0.74, 0.006
+// vs 0.008 vs 0.010, 0.03 vs 0.04 vs 0.06 — pure drift, none of it commented as deliberate). This
+// spec is the single source of truth; a module departs from it only with a written reason next to
+// its local constant.
+
+/// A card's fill opacity — solid enough to read text over, translucent enough that the world behind
+/// still registers.
+pub const PANEL_BG_ALPHA: f32 = 0.84;
+/// A card's rim opacity — a touch above the fill so the hairline border stays crisp.
+pub const PANEL_RIM_ALPHA: f32 = 0.92;
+/// How far a card's rim quad extends past its fill on each side (the hairline border thickness).
+pub const PANEL_RIM_PAD: f32 = 0.010;
+/// A card's inner padding, between the fill edge and its content.
+pub const PANEL_PAD: f32 = 0.022;
+/// A card's inset from the screen edge — [`SPACE_MARGIN`], the step the corner readout already used
+/// (the objective card's 0.03 and the vitals bar's 0.06 converged here).
+pub const EDGE_INSET: f32 = SPACE_MARGIN;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -425,7 +481,8 @@ mod tests {
         let all: &[Rgb] = &[
             INK, PANEL, PANEL_RAISED, RIM, HAIRLINE, BONE, ASH, MUTED, AMBER, PLAYER, ENEMY,
             NEUTRAL, AVATAR, STATUS_GOOD, STATUS_CRIT, STATUS_LOST, DATA_KILLS, DATA_TERRITORY,
-            DATA_RESOURCE,
+            DATA_RESOURCE, CROSSHAIR, HITMARKER, ALERT_DANGER, ALERT_WARN, ALERT_INFO,
+            ALERT_NEUTRAL,
         ];
         for c in all {
             for &ch in c {
@@ -731,6 +788,53 @@ mod tests {
         assert!(TYPE_TITLE > TYPE_BODY);
         assert!(TYPE_BODY > TYPE_CAPTION);
         assert!(TYPE_CAPTION > TYPE_LABEL);
+    }
+
+    /// The alert palette's CVD contract, pinned where the constants now live: every pair of alert
+    /// hues keeps a gamma-luminance spread above the 0.05 floor (the lightness channel a red-green
+    /// dichromat still reads — the documented rationale for these exact values), and the danger red
+    /// IS the shared status-crit red, so the HUD carries one danger red, not three.
+    #[test]
+    fn alert_palette_keeps_its_cvd_luminance_spread() {
+        assert_eq!(ALERT_DANGER, STATUS_CRIT, "one danger red across the HUD");
+        let alerts = [
+            ("ALERT_DANGER", ALERT_DANGER),
+            ("ALERT_WARN", ALERT_WARN),
+            ("ALERT_INFO", ALERT_INFO),
+            ("ALERT_NEUTRAL", ALERT_NEUTRAL),
+        ];
+        for i in 0..alerts.len() {
+            for j in (i + 1)..alerts.len() {
+                let (ni, ci) = alerts[i];
+                let (nj, cj) = alerts[j];
+                let gap = (luminance(ci) - luminance(cj)).abs();
+                assert!(gap > 0.05, "{ni} and {nj} need a luminance spread, got {gap:.3}");
+            }
+        }
+    }
+
+    /// The embodied reticle/feedback chrome must clear the WCAG UI-component floor over the darkest
+    /// frame it draws on ([`INK`], the going-dark scrim) — a reticle you can't see is a fairness bug
+    /// (invariant #6), not a style choice. The hitmarker, a text-like glyph, clears the stricter
+    /// normal-text floor with room to spare.
+    #[test]
+    fn reticle_chrome_clears_contrast_over_the_dark_frame() {
+        assert!(contrast_ratio(CROSSHAIR, INK) >= 3.0, "crosshair below the 3:1 UI floor");
+        assert!(contrast_ratio(HITMARKER, INK) >= 4.5, "hitmarker below the 4.5:1 text floor");
+    }
+
+    /// Panel-spec sanity: the alphas are drawable opacities with the rim reading above the fill, the
+    /// pads are positive and smaller than the edge inset, and the inset IS the spacing scale's margin
+    /// step (one source of truth, not a near-copy).
+    #[test]
+    fn panel_spec_is_sane_and_rides_the_spacing_scale() {
+        assert!(PANEL_BG_ALPHA > 0.0 && PANEL_BG_ALPHA <= 1.0);
+        assert!(PANEL_RIM_ALPHA > 0.0 && PANEL_RIM_ALPHA <= 1.0);
+        assert!(PANEL_RIM_ALPHA > PANEL_BG_ALPHA, "rim reads above the fill");
+        assert!(PANEL_RIM_PAD > 0.0 && PANEL_PAD > 0.0);
+        assert!(PANEL_RIM_PAD < PANEL_PAD, "rim hairline is thinner than the inner pad");
+        assert!(PANEL_PAD < EDGE_INSET, "inner pad sits below the screen-edge inset");
+        assert_eq!(EDGE_INSET, SPACE_MARGIN, "edge inset is the shared margin step");
     }
 
     /// Spacing scale is strictly ascending across every named step.

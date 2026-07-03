@@ -71,8 +71,11 @@ pub struct PromptLabel {
 const CENTER_Y: f32 = -0.58;
 /// Title glyph cell height. **M6:** bumped from `0.050` — at the old size the highest-urgency teach
 /// copy rendered ~7-9px cap-height on a ~390-430pt landscape phone, barely legible over the dark
-/// frame. These are module-local (independent of the shared `theme` type scale, which the command-
-/// view chrome uses) so the teach card can be sized for its own worst-case reading distance.
+/// frame. These are **intentionally off the shared `theme` type scale** (which the command-view
+/// chrome uses): the title's nearest step (`TYPE_HEADING` 0.085) is ~18% away — not visually
+/// equivalent — and snapping only the body (`TYPE_TITLE` 0.055 is +10%) would half-map the pair and
+/// mislabel a body line with the title step. The M6 sizes were tuned together for the teach card's
+/// own worst-case reading distance over the dark frame.
 const TITLE_SIZE: f32 = 0.072;
 /// Body-line glyph cell height (smaller than the title). **M6:** bumped from `0.036` for the same
 /// phone-legibility reason as [`TITLE_SIZE`].
@@ -85,15 +88,22 @@ const LINE_GAP: f32 = 0.016;
 const PAD_X: f32 = crate::theme::SPACE_MARGIN;
 /// Vertical padding between the line stack and the card edge — the shared standard-inset step.
 const PAD_Y: f32 = crate::theme::SPACE_STD;
-/// The rim quad extends this far past the card on each side to draw a thin border.
-const RIM_PAD: f32 = 0.010;
+/// The rim quad extends this far past the card on each side — the shared panel spec (`theme`).
+const RIM_PAD: f32 = crate::theme::PANEL_RIM_PAD;
 /// Half-height of the tone accent strip across the very top of the card.
 const ACCENT_HH: f32 = 0.006;
 
 const PANEL_COLOR: [f32; 3] = crate::theme::PANEL;
 const RIM_COLOR: [f32; 3] = crate::theme::RIM;
-/// Off-white the body lines draw in, so they read over the dim card.
-const BODY_COLOR: [f32; 3] = [0.90, 0.92, 0.96];
+/// Rim opacity — the shared panel spec (`theme`).
+const RIM_ALPHA: f32 = crate::theme::PANEL_RIM_ALPHA;
+/// Fill opacity — kept a touch denser than the shared `theme::PANEL_BG_ALPHA`: the card composites
+/// over the DARK embodied frame, the same legibility-against-black reasoning as [`tone_color`] / the
+/// M6 type sizes.
+const FILL_ALPHA: f32 = 0.86;
+/// The body lines draw in the shared primary bone (`theme`), so they read over the dim card (was a
+/// hand-typed near-BONE `[0.90, 0.92, 0.96]`).
+const BODY_COLOR: [f32; 3] = crate::theme::BONE;
 
 /// The accent / title color for a [`PromptTone`]. These are a **deliberate distinct sub-palette**,
 /// NOT the raw `theme` signal accents: the teach card draws over the *dark embodied frame*, so each
@@ -181,7 +191,7 @@ pub fn prompt_quads_scaled(p: &Prompt, aspect: f32, ui_scale: f32) -> Vec<Overla
             r: RIM_COLOR[0],
             g: RIM_COLOR[1],
             b: RIM_COLOR[2],
-            alpha: 0.92 * a,
+            alpha: RIM_ALPHA * a,
             role: QuadRole::PanelRim,
         },
         OverlayQuad {
@@ -192,7 +202,7 @@ pub fn prompt_quads_scaled(p: &Prompt, aspect: f32, ui_scale: f32) -> Vec<Overla
             r: PANEL_COLOR[0],
             g: PANEL_COLOR[1],
             b: PANEL_COLOR[2],
-            alpha: 0.86 * a,
+            alpha: FILL_ALPHA * a,
             role: QuadRole::Panel,
         },
         OverlayQuad {
@@ -322,7 +332,9 @@ mod tests {
     fn title_takes_the_tone_color_body_is_off_white() {
         let ls = prompt_labels(&prompt(), 1.0);
         assert_eq!(ls[0].color, tone_color(PromptTone::Caution));
-        assert_eq!(ls[1].color, BODY_COLOR);
+        // Pin the body to the shared theme const (asserting against the local BODY_COLOR alias
+        // alone would pass tautologically no matter what value it held).
+        assert_eq!(ls[1].color, crate::theme::BONE, "body copy is theme::BONE");
         assert_eq!(ls[2].color, BODY_COLOR);
         // Distinct tones give distinct title/accent colors.
         assert_ne!(tone_color(PromptTone::Caution), tone_color(PromptTone::Danger));

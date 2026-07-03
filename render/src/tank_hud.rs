@@ -30,11 +30,22 @@ const SHAPE_RELOAD: f32 = 1.0;
 const SHAPE_TURRET: f32 = 2.0;
 const SHAPE_LEAD: f32 = 3.0;
 
-/// Colors (RGB). Each element reads by shape + position; color is a secondary cue.
-const RETICLE_COL: [f32; 3] = [0.78, 0.94, 0.82]; // pale gunsight green
-const RELOAD_COL: [f32; 3] = [0.96, 0.74, 0.32]; // amber (matches the touch Reload button)
-const TURRET_COL: [f32; 3] = [0.45, 0.85, 0.95]; // cyan compass tick
-const LEAD_COL: [f32; 3] = [1.0, 0.55, 0.20]; // hot orange aim-ahead
+/// Colors (RGB) — all drawn from the shared [`theme`](crate::theme) palette so the tank's sight
+/// chrome speaks the same language as the rest of the HUD (this module used to hand-roll all four).
+/// Each element reads by shape + position; color is a secondary cue.
+///
+/// The gunner's reticle is the SAME [`theme::CROSSHAIR`](crate::theme::CROSSHAIR) the infantry
+/// hip-fire crosshair draws — "where my gun points" is one colour across embodiments.
+const RETICLE_COL: [f32; 3] = crate::theme::CROSSHAIR;
+/// The reload ring reads in the resource/credits gold (the "spend/ready" family, and the same amber
+/// the touch Reload button wears).
+const RELOAD_COL: [f32; 3] = crate::theme::DATA_RESOURCE;
+/// The hull-relative compass tick is *your own hull* — the player-faction cool blue (the old ad-hoc
+/// cyan lived nowhere else in the palette).
+const TURRET_COL: [f32; 3] = crate::theme::PLAYER;
+/// The lead pip is the warm signal accent — the one "act here" colour, telling the gunner where to
+/// aim.
+const LEAD_COL: [f32; 3] = crate::theme::AMBER;
 
 const RETICLE_ALPHA: f32 = 0.85;
 const RELOAD_ALPHA: f32 = 0.90;
@@ -741,6 +752,31 @@ mod tests {
         let pip = *tank_hud_instances(&s).last().unwrap();
         let len = (pip.ndc_x * pip.ndc_x + pip.ndc_y * pip.ndc_y).sqrt();
         assert!(len <= LEAD_CLAMP_R + 1e-6, "pip clamped to {LEAD_CLAMP_R}, got {len}");
+    }
+
+    #[test]
+    fn element_colours_are_sourced_from_the_shared_theme() {
+        // The unification contract: every drawn element carries a `theme` colour (asserted on the
+        // actual emitted instances so the wiring, not just the consts, is covered), the reticle
+        // matches the infantry crosshair exactly (one aim colour across embodiments), and the four
+        // stay pairwise distinct so no two elements collapse into one read.
+        let mut s = state();
+        s.muzzle_vel = 6.0;
+        s.target_range = 12.0;
+        s.target_rel_vel = (3.0, 0.0);
+        s.world_to_ndc = 0.05;
+        let inst = tank_hud_instances(&s);
+        let col = |i: &TankHudInstance| [i.r, i.g, i.b];
+        assert_eq!(col(&inst[0]), crate::theme::CROSSHAIR, "reticle = the shared crosshair");
+        assert_eq!(col(&inst[1]), crate::theme::DATA_RESOURCE, "reload ring = resource gold");
+        assert_eq!(col(&inst[2]), crate::theme::PLAYER, "turret tick = player blue");
+        assert_eq!(col(&inst[3]), crate::theme::AMBER, "lead pip = the amber signal accent");
+        let cols = [RETICLE_COL, RELOAD_COL, TURRET_COL, LEAD_COL];
+        for i in 0..cols.len() {
+            for j in (i + 1)..cols.len() {
+                assert_ne!(cols[i], cols[j], "tank HUD elements must not share a colour");
+            }
+        }
     }
 
     /// Validate `tank_hud.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails

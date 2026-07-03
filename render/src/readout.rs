@@ -252,17 +252,21 @@ pub fn readout_labels_scaled(
     out
 }
 
-/// Inner padding (NDC) between the readout text and its backing card edge.
+/// Inner padding (NDC) between the readout text and its backing card edge. Deliberately tighter
+/// than the shared `theme::PANEL_PAD` (and asymmetric): this is a slim corner tally hugging its
+/// lines, not a full content card.
 const CARD_PAD_X: f32 = 0.020;
 const CARD_PAD_Y: f32 = 0.014;
-/// Backing-card fill + rim — the SAME `theme::PANEL` / `theme::RIM` the contextual command panel and
-/// objective card use, so the three HUD surfaces read as one designed set, not ad-hoc debug text.
+/// Backing-card fill + rim — the SAME `theme::PANEL` / `theme::RIM` **and the same panel-spec
+/// alphas/rim thickness** the contextual command panel and objective card use, so the three HUD
+/// surfaces read as one designed set, not ad-hoc debug text. (The old 0.74 / 0.85 / 0.008 were
+/// uncommented drift from the spec, not a deliberate lighter card.)
 const CARD_BG: [f32; 3] = crate::theme::PANEL;
-const CARD_BG_ALPHA: f32 = 0.74;
+const CARD_BG_ALPHA: f32 = crate::theme::PANEL_BG_ALPHA;
 const CARD_RIM: [f32; 3] = crate::theme::RIM;
-const CARD_RIM_ALPHA: f32 = 0.85;
-/// The rim quad extends this far past the card on each side to draw a thin border.
-const CARD_RIM_PAD: f32 = 0.008;
+const CARD_RIM_ALPHA: f32 = crate::theme::PANEL_RIM_ALPHA;
+/// The rim quad extends this far past the card on each side — the shared panel spec (`theme`).
+const CARD_RIM_PAD: f32 = crate::theme::PANEL_RIM_PAD;
 
 /// A subtle backing card (rim behind a fill) sized to wrap `labels` with padding, so the top-left
 /// readout reads as a designed HUD element instead of bare colored text floating in the corner. Pure
@@ -664,10 +668,17 @@ mod tests {
         assert_eq!(labels[2].color, crate::theme::BONE, "POINTS line is neutral bone");
         assert_eq!(labels[3].color, crate::theme::DATA_RESOURCE, "economy is the resource accent");
         assert_eq!(labels[0].px_size, crate::theme::TYPE_TITLE, "rides the shared type scale");
-        // The backing card is the shared panel fill + rim.
+        // The backing card is the shared panel fill + rim — colours, opacities, AND rim thickness
+        // (the alphas/pad converged from lighter module-local values; pinned against drift-back).
         let card = readout_card(&labels, 1.0);
         assert_eq!(card[0].r, crate::theme::RIM[0]);
         assert_eq!(card[1].r, crate::theme::PANEL[0]);
+        assert_eq!(card[0].alpha, crate::theme::PANEL_RIM_ALPHA, "rim alpha is the shared spec");
+        assert_eq!(card[1].alpha, crate::theme::PANEL_BG_ALPHA, "fill alpha is the shared spec");
+        assert!(
+            (card[0].hw - card[1].hw - crate::theme::PANEL_RIM_PAD).abs() < 1e-6,
+            "rim thickness is the shared PANEL_RIM_PAD"
+        );
     }
 
     #[test]

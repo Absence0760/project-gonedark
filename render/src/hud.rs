@@ -51,12 +51,9 @@ pub const HITMARKER_TICKS: u64 = 10;
 /// Half-size (NDC) of the centered hitmarker quad — a small crosshair flash at screen center.
 const HITMARKER_HALF_SIZE: f32 = 0.085;
 
-/// The hitmarker is a crisp bright white "X" at screen center. White is deliberately distinct from
-/// every other embodied-frame element: the alert-marker palette (warm red/orange, teal, pale grey)
-/// rides the screen *edge* ring; the muzzle flash is a *warm* yellow (low blue); the FPS world is a
-/// muted, low-saturation blue-grey. A high-blue near-white pixel at center reads only as the
-/// hitmarker — which is exactly what the viz pixel-assert keys on.
-const HITMARKER_COLOR: [f32; 3] = [1.0, 1.0, 1.0];
+/// The hitmarker is a crisp bright white "X" at screen center — the shared
+/// [`theme::HITMARKER`](crate::theme::HITMARKER) (the why-white rationale lives with the constant).
+const HITMARKER_COLOR: [f32; 3] = crate::theme::HITMARKER;
 
 /// The hitmarker glyph id matched by `glyph_coverage` in `hud.wgsl` (4 = centered "X").
 const SHAPE_HITMARKER: f32 = 4.0;
@@ -82,23 +79,24 @@ const CROSSHAIR_GAP: f32 = 0.030;
 /// Half-size (NDC) of each small crosshair tick (the four arm dots + the center pip).
 const CROSSHAIR_DOT_HALF: f32 = 0.011;
 
-/// Crosshair color — a pale green-white that stays legible over the muted blue-grey FPS world
-/// without reading as the warm muzzle flash or the red/orange alert ring (invariant #6 legibility).
-const CROSSHAIR_COLOR: [f32; 3] = [0.86, 0.96, 0.90];
+/// Crosshair color — the shared [`theme::CROSSHAIR`](crate::theme::CROSSHAIR), the ONE aim colour
+/// across embodiments (the tank gunner's dispersion reticle draws the same constant).
+const CROSSHAIR_COLOR: [f32; 3] = crate::theme::CROSSHAIR;
 
 /// Crosshair opacity (it is constant chrome, not a fading flash).
 const CROSSHAIR_ALPHA: f32 = 0.82;
 
-/// The RGB color for an alert kind. Color is only ONE of the two cues — [`shape_for`] carries a
-/// redundant shape so the kinds stay distinct for CVD players (invariant #6: the thread back must
-/// stay legible). The palette is spaced along lightness *and* the blue-yellow axis, not just warm
-/// hue, so no pair collapses to the same muddy yellow-brown under deuteranopia/protanopia.
+/// The RGB color for an alert kind — the shared `theme::ALERT_*` palette. Color is only ONE of the
+/// two cues — [`shape_for`] carries a redundant shape so the kinds stay distinct for CVD players
+/// (invariant #6: the thread back must stay legible). The CVD spacing rationale (lightness + the
+/// blue-yellow axis, never hue alone) lives with the constants in [`theme`](crate::theme), and both
+/// modules' tests pin the pairwise luminance spread.
 fn alert_color(kind: AlertKind) -> [f32; 3] {
     match kind {
-        AlertKind::BaseUnderAttack => [1.0, 0.12, 0.12], // hot, dark urgent red
-        AlertKind::TakingFire => [1.0, 0.62, 0.15],      // high-value orange (lighter than red)
-        AlertKind::TerritoryLost => [0.15, 0.52, 0.58],  // darker desaturated teal (off warm axis)
-        AlertKind::UnitLost => [0.88, 0.88, 0.92],       // pale grey (a death; brightest)
+        AlertKind::BaseUnderAttack => crate::theme::ALERT_DANGER,
+        AlertKind::TakingFire => crate::theme::ALERT_WARN,
+        AlertKind::TerritoryLost => crate::theme::ALERT_INFO,
+        AlertKind::UnitLost => crate::theme::ALERT_NEUTRAL,
     }
 }
 
@@ -839,6 +837,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn embodied_chrome_colours_are_sourced_from_the_shared_theme() {
+        // The unification contract: the crosshair, hitmarker, and alert palette are `theme` consts
+        // (no module-local literals left to drift), and the danger ping IS the shared status-crit
+        // red — one danger red across the whole HUD.
+        assert_eq!(CROSSHAIR_COLOR, crate::theme::CROSSHAIR);
+        assert_eq!(HITMARKER_COLOR, crate::theme::HITMARKER);
+        assert_eq!(alert_color(AlertKind::BaseUnderAttack), crate::theme::ALERT_DANGER);
+        assert_eq!(alert_color(AlertKind::TakingFire), crate::theme::ALERT_WARN);
+        assert_eq!(alert_color(AlertKind::TerritoryLost), crate::theme::ALERT_INFO);
+        assert_eq!(alert_color(AlertKind::UnitLost), crate::theme::ALERT_NEUTRAL);
+        assert_eq!(alert_color(AlertKind::BaseUnderAttack), crate::theme::STATUS_CRIT);
     }
 
     #[test]

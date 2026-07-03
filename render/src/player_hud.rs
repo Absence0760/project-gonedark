@@ -28,16 +28,17 @@ use crate::text::Anchor;
 
 // --- layout constants (NDC, bottom-LEFT anchor — a conventionally-empty corner clear of the
 //     screen-center reticle / scope overlay) ------------------------------------------------------
-/// Left edge of the HP bar (a small margin in from the screen edge).
-const LEFT: f32 = -0.94;
+/// Left edge of the HP bar — the shared screen-edge inset (`theme`), so the vitals bar hangs the
+/// same distance off the edge as the objective card and corner readout (was an ad-hoc 0.06).
+const LEFT: f32 = -1.0 + crate::theme::EDGE_INSET;
 /// Bottom edge of the HP bar.
 const BOTTOM: f32 = -0.90;
 /// Full HP-bar width in NDC (the track); the fill spans `frac` of this.
 const BAR_W: f32 = 0.42;
 /// HP-bar half-height in NDC.
 const BAR_HH: f32 = 0.020;
-/// The rim quad extends this far past the track on each side to draw a thin border.
-const RIM_PAD: f32 = 0.008;
+/// The rim quad extends this far past the track on each side — the shared panel spec (`theme`).
+const RIM_PAD: f32 = crate::theme::PANEL_RIM_PAD;
 
 /// HP fraction at/below which the bar reads as critical (red).
 const LOW_HP: f32 = 0.30;
@@ -56,7 +57,8 @@ const AMMO_LOW_COLOR: [f32; 3] = crate::theme::AMBER;
 /// Ammo count fraction (rounds left / mag size) at/below which the count warms to [`AMMO_LOW_COLOR`].
 const AMMO_LOW_FRAC: f32 = 0.25;
 
-/// Track/fill opacity — solid enough to read at a glance over the dark frame.
+/// Track/fill opacity — deliberately denser than the shared `theme::PANEL_BG_ALPHA` card fill: this
+/// is a data bar over the DARK embodied frame, and it must read solid at a combat glance.
 const BAR_ALPHA: f32 = 0.90;
 /// Ammo count opacity.
 const AMMO_ALPHA: f32 = 0.95;
@@ -299,8 +301,13 @@ mod tests {
         assert_eq!(q[0].role, QuadRole::PanelRim);
         assert_eq!(q[1].role, QuadRole::BarTrack);
         assert_eq!(q[2].role, QuadRole::DataBar);
-        // Rim is larger than the track (a crisp border).
+        // Rim is larger than the track (a crisp border) — by exactly the shared panel rim
+        // thickness (converged from a module-local 0.008; pinned so it can't drift back).
         assert!(q[0].hw > q[1].hw && q[0].hh > q[1].hh);
+        assert!(
+            (q[0].hw - q[1].hw - crate::theme::PANEL_RIM_PAD).abs() < 1e-6,
+            "rim thickness is the shared PANEL_RIM_PAD"
+        );
     }
 
     #[test]

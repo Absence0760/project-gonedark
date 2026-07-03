@@ -2239,11 +2239,14 @@ impl Renderer {
     }
 
     /// Draw the embody-unit picker (command view) — the list of selected units the player chooses
-    /// from to possess one — on top of the current command frame (a LOAD text pass; never clears).
+    /// from to possess one — on top of the current command frame (LOAD passes; never clears).
     /// The host calls this ONLY in the command view (never embodied → never over the dark frame,
     /// invariant #6) while its picker is open, and supplies the rows in [`picker::EmbodyPicker`];
-    /// this lays them out ([`picker::picker_labels`]) and queues them through the text pass. Pairs
-    /// with [`picker::picker_row_at`], which the host runs against a tap to resolve the chosen row.
+    /// this draws the PANEL+RIM backing card ([`picker::picker_quads_scaled`]) through the shared
+    /// overlay quad pipeline and the rows ([`picker::picker_labels`]) through the text pass — the
+    /// same construction as [`render_command_panel`](Self::render_command_panel). Pairs with
+    /// [`picker::picker_row_at`], which the host runs against a tap to resolve the chosen row (the
+    /// row centers are ui_scale-independent, so the unscaled hit-test always matches the drawn rows).
     /// Screen-space chrome with no world position — it leaks no intel the command frame doesn't show.
     pub fn render_embody_picker(
         &mut self,
@@ -2252,6 +2255,10 @@ impl Renderer {
         view: &wgpu::TextureView,
         picker: &picker::EmbodyPicker,
     ) {
+        let quads = picker::picker_quads_scaled(picker, self.ui_scale);
+        if !quads.is_empty() {
+            self.overlay.draw_quads(device, queue, view, &quads);
+        }
         for l in picker::picker_labels(picker) {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);

@@ -27,15 +27,18 @@ use gonedark_core::components::Faction;
 // size as the command-panel rows (WS-C). `0.044` overflowed "UPGRADE" past its button in portrait;
 // the body step fits with a small margin (see `upgrade_label_fits_its_button_in_portrait`).
 const LABEL_SIZE: f32 = crate::theme::TYPE_BODY;
-const FILL_ALPHA: f32 = 0.82;
-const RIM_ALPHA: f32 = 0.9;
+/// Fill / rim opacities — the shared panel spec (`theme`), so the buttons wear exactly the panel
+/// cards' chrome density (the old 0.82 / 0.9 were uncommented near-copies of it).
+const FILL_ALPHA: f32 = crate::theme::PANEL_BG_ALPHA;
+const RIM_ALPHA: f32 = crate::theme::PANEL_RIM_ALPHA;
 /// Resting fill / rim colors (RGB) — the shared `theme` raised-surface + rim, so the bar wears the
 /// SAME chrome as the command panel and readout cards (WS-C: one designed set, no ad-hoc literals).
 const FILL: [f32; 3] = crate::theme::PANEL_RAISED;
 const RIM: [f32; 3] = crate::theme::RIM;
 const LABEL_COLOR: [f32; 3] = crate::theme::BONE;
-/// NDC rim thickness added around each button's fill (a crisp border, like the panels' rim).
-const RIM_PAD: f32 = 0.006;
+/// NDC rim thickness added around each button's fill — the shared panel spec (`theme`), the same
+/// crisp border the panels draw.
+const RIM_PAD: f32 = crate::theme::PANEL_RIM_PAD;
 
 /// Icon cell height in NDC — a touch larger than [`LABEL_SIZE`] so the glyph reads as an icon, not a
 /// letter. The icon pass keeps it square in pixels (aspect-corrected at draw time).
@@ -327,6 +330,14 @@ mod tests {
         assert_eq!([rim.r, rim.g, rim.b], crate::theme::RIM, "rim is theme::RIM");
         assert_eq!([fill.r, fill.g, fill.b], crate::theme::PANEL_RAISED, "fill is theme::PANEL_RAISED");
         assert_eq!(command_bar_labels(&v)[0].color, crate::theme::BONE, "label is theme::BONE");
+        // The chrome's opacities + rim thickness ride the shared panel spec (they converged from
+        // module-local 0.82/0.9/0.006 — pinned on the emitted quads so a drift-back is caught).
+        assert_eq!(rim.alpha, crate::theme::PANEL_RIM_ALPHA, "rim alpha is the shared spec");
+        assert_eq!(fill.alpha, crate::theme::PANEL_BG_ALPHA, "fill alpha is the shared spec");
+        assert!(
+            (rim.hw - fill.hw - crate::theme::PANEL_RIM_PAD).abs() < 1e-6,
+            "rim thickness is the shared PANEL_RIM_PAD"
+        );
     }
 
     #[test]
