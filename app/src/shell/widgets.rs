@@ -6,8 +6,8 @@
 
 use crate::shell::theme::*;
 
-/// The shared "menu button" width — every primary/secondary action button is this wide so the action
-/// stacks line up into a clean column.
+/// The shared "menu button" width — the title screen's action stack is this wide, and it is the
+/// minimum width a [`footer_button`] can shrink to, so button columns line up across screens.
 pub(crate) const MENU_BUTTON_W: f32 = 256.0;
 
 /// The shared width of every over-backdrop screen card (Settings / Profile / Army-select / About /
@@ -31,7 +31,7 @@ pub(crate) const SETTINGS_LABEL_W: f32 = 172.0;
 /// reads as one system across the mode/mission/briefing/settings family.
 pub(crate) const FOOTER_GAP: f32 = 20.0;
 
-/// How a [`menu_button`] reads in the visual hierarchy: the one amber call-to-action, a neutral
+/// How a [`footer_button`] reads in the visual hierarchy: the one amber call-to-action, a neutral
 /// secondary, or a de-emphasised tertiary (e.g. QUIT / BACK).
 ///
 /// Shell-wide emphasis policy: **Primary is reserved for the screen's one forward action** (DEPLOY,
@@ -88,10 +88,9 @@ pub(crate) fn confirm_menu_button(
     fired
 }
 
-/// Draw one emphasis-styled action button at an explicit width. The shared body of [`menu_button`]
-/// (title-menu width) and [`footer_button`] (card-content width). Only the primary button sets an
-/// explicit fill; secondary/tertiary leave the fill to the widget ramp in
-/// [`shell_style`](crate::shell::theme::shell_style) so they visibly lift on hover. Glue.
+/// Draw one emphasis-styled action button at an explicit width — the body of [`footer_button`].
+/// Only the primary button sets an explicit fill; secondary/tertiary leave the fill to the widget
+/// ramp in [`shell_style`](crate::shell::theme::shell_style) so they visibly lift on hover. Glue.
 fn emphasis_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis, width: f32) -> bool {
     use egui::{Button, RichText};
     let fg = match emphasis {
@@ -107,17 +106,12 @@ fn emphasis_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis, width: f32
     ui.add(button).clicked()
 }
 
-/// Draw one menu button at the shared title-menu width and report whether it was clicked. Glue (it
-/// needs a live `Ui`), so it's exempt from unit tests — the click→action mapping it feeds is what the
-/// pure [`resolve_title_action`](crate::shell::transitions::resolve_title_action) /
+/// A card-footer action button spanning the card's full content width (never narrower than
+/// [`MENU_BUTTON_W`]), so footer actions align with the rows above them instead of hanging off the
+/// left edge at title-menu width. Glue (it needs a live `Ui`), so it's exempt from unit tests — the
+/// click→action mapping it feeds is what the pure
+/// [`resolve_title_action`](crate::shell::transitions::resolve_title_action) /
 /// [`apply_loadout_action`](crate::shell::loadout::apply_loadout_action) seams cover.
-pub(crate) fn menu_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis) -> bool {
-    emphasis_button(ui, text, emphasis, MENU_BUTTON_W)
-}
-
-/// A card-footer action button spanning the card's full content width, so footer actions align with
-/// the rows above them instead of hanging off the left edge at title-menu width. Same emphasis
-/// language as [`menu_button`]. Glue.
 pub(crate) fn footer_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis) -> bool {
     let w = ui.available_width().max(MENU_BUTTON_W);
     emphasis_button(ui, text, emphasis, w)
@@ -148,7 +142,7 @@ pub(crate) fn glass_card_frame() -> egui::Frame {
 }
 
 /// A compact secondary "chip" button for the title screen's top-right utility cluster
-/// (SETTINGS / PROFILE) — smaller than the full-width [`menu_button`] so it reads as utility chrome
+/// (SETTINGS / PROFILE) — smaller than the full-width [`footer_button`] so it reads as utility chrome
 /// rather than a primary action. Rides the [`shell_style`](crate::shell::theme::shell_style) widget
 /// ramp (lifts to PANEL_RAISED + an amber rim on hover). Glue (needs a live `Ui`); the click→action
 /// mapping it feeds is what the pure
