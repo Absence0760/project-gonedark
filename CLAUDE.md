@@ -37,6 +37,7 @@ flagship; frame-rate/thermal on mid-range silicon and the 200-unit power budget 
 |---|---|
 | `docs/game-design.md` | The design — pillars, embodiment, the going-dark vision model, unit-AI philosophy, progression/customization (§13), the PvE campaign (§14) |
 | `docs/pve-campaign.md` | The PvE pillar (first shippable product, D58) — the Operations-hub campaign, mission archetypes, the host-side objective system, honest-AI difficulty |
+| `docs/modes.md` | The mode taxonomy — Campaign/Skirmish/PvP as three front doors over one match engine; skirmish setup flow; PvP army-select/map-pools/ranking |
 | `docs/customization.md` | Gunsmith (horizontal sidegrades), cosmetics, the mobile HUD layout editor (D60/D61) — all fairness-bounded |
 | `docs/factions.md` | Real-army asymmetric factions — US Army vs French Army (D68/D71); WS-A–E built — the fairness-bounded roster model |
 | `docs/maps.md` | Real-world battlefield maps — the GIS ingest→bake→lint pipeline (D80), the two-artifact split (integer sim cover grid vs. float render mesh), faithful-then-balance-pass, map diagnostics |

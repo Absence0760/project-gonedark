@@ -30,13 +30,13 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  * engine through the host (MainActivity), the one place the shell crosses into the shared core (via
  * the `core::shell` seam, D34).
  *
- * Mirrors the desktop egui title (`app/src/shell.rs`): the same top-level split — **CAMPAIGN / PvE /
+ * Mirrors the desktop egui title (`app/src/shell.rs`): the same top-level split — **CAMPAIGN / SKIRMISH /
  * PvP** — plus **SETTINGS / PROFILE / FIELD MANUAL** and **QUIT**. The click→route decision lives in
  * the pure [resolveTitleAction] seam (D79), so this composable is host-agnostic, previewable without
  * an Activity, and emits only callbacks. Behind the chrome sits the animated Compose-native
  * [TitleBackdrop] (D78 option 1) — a 2D motif, deliberately *not* the desktop's live 3D scene.
  *
- * Actions are passed in as callbacks so the screen stays decoupled from the host nav graph. PvE and
+ * Actions are passed in as callbacks so the screen stays decoupled from the host nav graph. SKIRMISH and
  * PvP both open the gunsmith and Deploy into Skirmish today (their mode divergence — PvP match setup —
  * is Q5/Phase-3 work the host owns, not this screen).
  */
@@ -91,7 +91,7 @@ fun TitleScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 // The top-level play-mode split, mirroring the desktop title. CAMPAIGN is the one
-                // filled call-to-action; PvE / PvP are neutral secondaries (their mode divergence is
+                // filled call-to-action; SKIRMISH / PvP are neutral secondaries (their mode divergence is
                 // future work — see resolveTitleAction).
                 Button(
                     onClick = onCampaign,
@@ -103,7 +103,7 @@ fun TitleScreen(
                     onClick = onPve,
                     modifier = Modifier.fillMaxWidth().height(54.dp),
                 ) {
-                    Text("PvE", letterSpacing = 2.sp)
+                    Text("SKIRMISH", letterSpacing = 2.sp)
                 }
                 OutlinedButton(
                     onClick = onPvp,

@@ -145,7 +145,8 @@ Reads the `.covergrid` (no engine build needed) and reports:
   a no-man's-land crossing;
 - **pvp symmetry** (ERROR, opt-in `--pvp mirror-x|mirror-y|point`) — the CT-G fairness gate: cover,
   spawns and control points must be *exactly* symmetric under the declared transform; rejects an
-  asymmetric fixture, accepts a mirrored one;
+  asymmetric fixture, accepts a mirrored one; this is the load-bearing gate on the PvP map pool
+  ([`modes.md`](modes.md) §4b) — a map enters matchmaking only if it passes this check;
 - **wall specks** (WARN) — isolated single-cell walls (often ingest noise);
 - **symmetry** (info) — left/right mirror mismatch, for the balance pass;
 - **structures** (info) — connected `Heavy` blobs enumerated as objects with **bbox + centroid in

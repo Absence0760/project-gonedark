@@ -86,7 +86,8 @@ soft per-stat tilt, or a hard StarCraft-style divergence) are the open fork in [
 - **PvE campaign ([D58](decisions.md)).** The first shippable product is single-player PvE. The clean
   framing: the campaign is played **US-side**, with the **French Army as one OPFOR** among the PvE
   threats — so factions debut in PvE (no cross-play fairness pressure yet, [Q17](open-questions.md))
-  and graduate to PvP later.
+  and graduate to PvP later. The PvP army-selection surface built on this roster is
+  [`modes.md`](modes.md) §4a — pick-before-queue, no draft/ban while the roster is two armies.
 - **Balance ([Q18](open-questions.md)).** Do the **lethal-speed re-tune of the shared archetypes
   first**, *then* tilt them per faction — balance the skeleton once, against the harness, before adding
   per-faction variance on top. Re-tuning twice (before and after factions) is wasted measurement.

@@ -44,8 +44,10 @@ and are injected by Terraform/deploy, not by `.env`.
 `compose.yaml` brings up the backend's runtime dependencies:
 
 - **Postgres 17** — accounts, leaderboards, replay/validation records. Host port
-  **5434** (avoids this workstation's Supabase 5432 and native 5433).
-- **Redis 7** — ephemeral session/matchmaking state; persistence off for dev.
+  **5434** (avoids this workstation's Supabase 5432 and native 5433). The ratings/
+  leaderboards schema is consumed by PvP ranking design ([`modes.md`](modes.md) §4c).
+- **Redis 7** — ephemeral session/matchmaking state; persistence off for dev. This is the
+  queue-state store the PvP matchmaker design ([`modes.md`](modes.md) §4c/§5) rides on.
 
 ```
 docker compose up -d     # start          docker compose ps      # status

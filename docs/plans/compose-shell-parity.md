@@ -47,7 +47,7 @@ unblock at once.
 | Capability | Desktop | Android today |
 |---|---|---|
 | Live 3D animated title backdrop | `shell.rs:802-809` (`render::title_backdrop`) | flat `MaterialTheme.background` (`TitleScreen.kt:45`) |
-| Top-level play modes | CAMPAIGN / PvE / PvP (`TitleAction`, `shell.rs:27`) | one generic START (`TitleScreen.kt:78`) |
+| Top-level play modes | CAMPAIGN / SKIRMISH / PvP (`TitleAction`, `shell.rs:27`) | one generic START (`TitleScreen.kt:78`) |
 | Settings (audio/look) | real, wired ([D75](../decisions.md), `shell.rs:247`) | **no-op stub** (`MainActivity.kt:32`) |
 | Profile | callsign/faction/record (`shell.rs:375`) | absent |
 | About / field-manual | `draw_about` (`shell.rs:850`) | absent |
@@ -109,7 +109,7 @@ the JNI reader.
 > **Status: LANDED.** All four surfaces ship as stateless Compose screens + pure JVM-tested seams,
 > wired through a `MainActivity` `ShellRoute` navigator (the Compose twin of the desktop `Screen`
 > enum). Settings (audio/look subset, integer-wire-aligned), Profile (callsign/faction/record),
-> About/field-manual, and the title **mode-split** (CAMPAIGN/PvE/PvP + SETTINGS/PROFILE/FIELD-MANUAL)
+> About/field-manual, and the title **mode-split** (CAMPAIGN/SKIRMISH/PvP + SETTINGS/PROFILE/FIELD-MANUAL)
 > over a D78 animated Compose backdrop. Accessibility cues + touch-rebind editor remain out of scope
 > (phase-4-plan §5). Verified: `:app:compileDebugKotlin` + `:app:testDebugUnitTest` green (63 tests).
 
@@ -119,7 +119,7 @@ the JNI reader.
 | **Settings** (audio + look subset) | `SettingsState` `shell.rs:247`; applied `main.rs:367-373` | sliders (master/SFX/music, sensitivity), invert-Y, quality; persist via **DataStore**; fold values into the Tier-0 `LaunchConfig` | [D75](../decisions.md) shipped this subset on desktop, so it's explicitly buildable. **Accessibility cues + touch-layout/rebind editor stay BLOCKED** (phase-4-plan §2/§5) — ship audio/look, flag the rest. |
 | **Profile** | `ProfileState` `shell.rs:375`; `sanitize_callsign`/`win_rate_pct` | callsign field, faction picker, lifetime record; DataStore persist | fully buildable |
 | **About / field-manual** | `draw_about` `shell.rs:850`, `ControlRow` `shell.rs:470` | static content screen reached from Settings | lowest-risk surface — good first slice to prove the nav graph + test-seam pattern |
-| **Title mode-split** | `TitleAction`/`resolve_title_action` `shell.rs:27-94` | CAMPAIGN / PvE / PvP buttons + a Compose nav graph | buttons are trivial; CAMPAIGN/PvE route to Tier 2; **PvP → a "blocked" notice** (match-setup is Q5/Phase-3) |
+| **Title mode-split** | `TitleAction`/`resolve_title_action` `shell.rs:27-94` | CAMPAIGN / SKIRMISH / PvP buttons + a Compose nav graph | buttons are trivial; CAMPAIGN/SKIRMISH route to Tier 2; **PvP → a "blocked" notice** (match-setup is Q5/Phase-3) |
 
 ---
 
@@ -128,7 +128,7 @@ the JNI reader.
 > **Gunsmith + campaign mission-select/briefing: ✅ LANDED.** The Compose gunsmith (`LoadoutSelection`
 > seam, labels verbatim from `core::gunsmith`) and the Operations-hub **mission-select + briefing**
 > (the single "Seize the Outpost" node → `mission1`, with a difficulty cycler) ship. Campaign opens
-> mission-select → briefing → gunsmith → Deploy into `mission1` with the chosen loadout; PvE/PvP open
+> mission-select → briefing → gunsmith → Deploy into `mission1` with the chosen loadout; SKIRMISH/PvP open
 > the gunsmith and Deploy into Skirmish. The engine now **fully consumes** the wire loadout
 > (`new_scene_with_loadout`) and audio gains. **Owed:** the briefing's **difficulty** (needs a `diff`
 > wire key + mission-tuning plumbing) and **look-sensitivity** (the Android look delta is derived in
@@ -221,7 +221,7 @@ test asserting them so drift is caught.
 3. **Profile** — DataStore persistence + `sanitize_callsign`/`win_rate_pct` Kotlin seams + JVM tests.
 4. **Settings** (audio/look subset) — sliders, DataStore, fold into `LaunchConfig`; flag
    accessibility/rebind out-of-scope.
-5. **Title mode-split + backdrop** (D78 option 1) — CAMPAIGN/PvE/PvP buttons; PvP → blocked notice.
+5. **Title mode-split + backdrop** (D78 option 1) — CAMPAIGN/SKIRMISH/PvP buttons; PvP → blocked notice.
 6. **Gunsmith** (Tier 2) — Compose loadout editor → `LaunchConfig`.
 7. **Campaign mission-select + briefing** (Tier 2).
 

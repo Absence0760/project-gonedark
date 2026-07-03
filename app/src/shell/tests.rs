@@ -52,8 +52,8 @@ use gonedark_render::tiers::QualityTier;
 
     #[test]
     fn pve_and_pvp_open_the_mode_select() {
-        // D81: PvE/PvP now open the mode/map select (the deploy gate), not the gunsmith — the
-        // gunsmith moved behind Settings as customization-only. PvE and PvP share the picker until
+        // D81: SKIRMISH (TitleAction::Pve)/PvP now open the mode/map select (the deploy gate), not the gunsmith — the
+        // gunsmith moved behind Settings as customization-only. Skirmish and PvP share the picker until
         // PvP match-setup lands (Q5).
         for mode in [TitleAction::Pve, TitleAction::Pvp] {
             assert_eq!(

@@ -1,8 +1,8 @@
 package com.jaredhoward.goingdark
 
 /**
- * The pure model behind the Pve/Pvp **mode / map select** (D81) — the lightweight picker the player
- * lands on after tapping PvE or PvP, replacing the old "funnel every play mode through the gunsmith"
+ * The pure model behind the Skirmish/PvP **mode / map select** (D81) — the lightweight picker the player
+ * lands on after tapping SKIRMISH or PvP, replacing the old "funnel every play mode through the gunsmith"
  * flow. Each entry names a launchable battle and carries the engine [sceneToken] `Scene::parse`
  * resolves (`engine::lib::Scene::parse`): picking one deploys straight into that scene with the
  * player's persisted loadout — no gunsmith gate.
@@ -30,7 +30,7 @@ data class GameMode(
 val KNOWN_SCENE_TOKENS = setOf("skirmish", "match", "infantry", "mission1", "seize")
 
 /**
- * The modes offered on the Pve/Pvp picker today: the two standing battle scenes. Skirmish is the open
+ * The modes offered on the Skirmish/PvP picker today: the two standing battle scenes. Skirmish is the open
  * fight against the scripted enemy commander; Seize is the take-and-hold objective map. The list grows
  * as more scenes land (and splits per-mode once PvP match-setup exists — Q5).
  */

@@ -169,6 +169,10 @@ reactions.
 board-reading ("can I afford to be blind?") · manual combat while embodied ·
 fast re-entry and reassessment · (PvP) reading the opponent's attention.
 
+The PvP surface this pillar sings through — army selection, map pools, matchmaking and
+ranking — is designed in [`modes.md`](modes.md) §4, kept deliberately separate from
+Skirmish's zero-stakes free play (§3 there).
+
 ## 10. Failure modes we're designing against
 
 | Failure mode | Guard |
@@ -238,3 +242,6 @@ yet face a human: it scripts the temptation to overstay and lets the honest-AI c
 deterministic event stream — *not* sim state, so missions add **zero desync surface** (the
 same footing as the win/lose evaluator, fog, and alerts). Full design:
 [`pve-campaign.md`](pve-campaign.md); build sequencing: [`pve-campaign-plan.md`](plans/pve-campaign-plan.md).
+What sits beside the campaign — free-pick Skirmish and the PvP meta (army select, map
+pools, ranking) — is the mode taxonomy in [`modes.md`](modes.md); a proposed world-map/
+timeline presentation for the campaign itself is [Q28](open-questions.md#q28--conflict-atlas).

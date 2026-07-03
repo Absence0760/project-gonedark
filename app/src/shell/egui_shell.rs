@@ -196,7 +196,7 @@ impl EguiShell {
             .is_some()
     }
 
-    /// Draw the Pve/Pvp **mode / map select** screen for one frame and return the
+    /// Draw the Skirmish/PvP **mode / map select** screen for one frame and return the
     /// [`ModeSelectAction`] used, if any (D81). The mode table is the static
     /// [`SHELL_GAME_MODES`](gonedark_engine::shell_modes::SHELL_GAME_MODES); this holds no host state.
     /// Over the live 3D backdrop, same as the other out-of-match screens. Pure presentation — the
@@ -388,7 +388,7 @@ impl EguiShell {
 ///  - **top-left** — the brand: GOING DARK hero + amber rule + the COMMAND · EMBODY tagline;
 ///  - **top-right** — the identity card (callsign / army / lifetime record; click → Profile) over a
 ///    SETTINGS / ARMY / FIELD MANUAL utility chip row;
-///  - **bottom-left** — the DEPLOY stack under the brand: CAMPAIGN (the lone amber CTA), PvE / PvP,
+///  - **bottom-left** — the DEPLOY stack under the brand: CAMPAIGN (the lone amber CTA), SKIRMISH / PvP,
 ///    then QUIT, in a translucent [`glass_card_frame`] — the classic left-anchored action column;
 ///  - **bottom-right** — the NEXT OPERATION card (campaign progress + a CONTINUE that deep-links
 ///    into the next operation's briefing, derived from persisted clears), over the muted build stamp.
@@ -528,13 +528,13 @@ pub(crate) fn title_ui(
                         action = Some(TitleAction::Campaign);
                     }
                     ui.add_space(10.0);
-                    // PvE / PvP are peers — side by side, so the card gains width instead of a third
+                    // SKIRMISH / PvP are peers — side by side, so the card gains width instead of a third
                     // stacked full-width row.
                     ui.horizontal(|ui| {
                         let half = (MENU_BUTTON_W - 10.0) / 2.0;
                         if ui
                             .add(
-                                Button::new(RichText::new("PvE").color(BONE).size(TYPE_BUTTON))
+                                Button::new(RichText::new("SKIRMISH").color(BONE).size(TYPE_BUTTON))
                                     .min_size([half, 46.0].into()),
                             )
                             .clicked()

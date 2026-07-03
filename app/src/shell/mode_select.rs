@@ -1,4 +1,4 @@
-//! The Pve/Pvp mode/map-select screen (D81) — its action enum plus the egui builders that
+//! The Skirmish/PvP mode/map-select screen (D81) — its action enum plus the egui builders that
 //! present the standing battle scenes as tiles. Picking a mode deploys straight into its scene
 //! with the persisted loadout; BACK returns to the title. The pure launch decision lives in the
 //! `engine`-tested [`GameMode::scene`] seam; these builders only report the pick.
@@ -7,7 +7,7 @@ use crate::shell::theme::*;
 use crate::shell::widgets::*;
 use gonedark_engine::shell_modes::{GameMode, SHELL_GAME_MODES};
 
-/// An action the Pve/Pvp mode/map-select screen (D81) can emit in a frame. Picking a mode deploys
+/// An action the Skirmish/PvP mode/map-select screen (D81) can emit in a frame. Picking a mode deploys
 /// straight into its scene with the persisted loadout (no gunsmith); BACK returns to the title. The
 /// mode table itself is the static [`SHELL_GAME_MODES`] (tested in `gonedark_engine::shell_modes`);
 /// the picked mode's scene resolution is [`GameMode::scene`] — both live in `engine` so the
@@ -37,7 +37,7 @@ pub(crate) fn mode_tile(ui: &mut egui::Ui, mode: &GameMode) -> Option<ModeSelect
     clicked.then_some(ModeSelectAction::Pick(*mode))
 }
 
-/// The immediate-mode Pve/Pvp mode/map-select screen (D81): the standing battle scenes as tiles in a
+/// The immediate-mode Skirmish/PvP mode/map-select screen (D81): the standing battle scenes as tiles in a
 /// card over the backdrop, then BACK. Reads the static [`SHELL_GAME_MODES`] (host presentation, never
 /// the sim); each pick routes through the `engine`-tested [`GameMode::scene`] seam at the host. Glue.
 pub(crate) fn mode_select_ui(ui: &mut egui::Ui) -> Option<ModeSelectAction> {
