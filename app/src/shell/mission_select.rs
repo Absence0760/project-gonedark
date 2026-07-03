@@ -70,7 +70,7 @@ pub(crate) fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Optio
     use egui::RichText;
     let mut action = None;
 
-    over_backdrop_screen(ui, 0.07, |ui| {
+    over_backdrop_screen(ui, "operations", |ui| {
         screen_banner(ui, "OPERATIONS", 130.0);
         ui.label(
             RichText::new(
@@ -103,7 +103,7 @@ pub(crate) fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Optio
         ui.add_space(FOOTER_GAP);
         // Sole exit on this screen — Secondary, not the dimmest Tertiary. (Briefing keeps BACK
         // Tertiary because DEPLOY is the genuine primary action there.)
-        if menu_button(ui, "BACK", Emphasis::Secondary) {
+        if footer_button(ui, "BACK", Emphasis::Secondary) {
             action = Some(MissionSelectAction::Back);
         }
     });

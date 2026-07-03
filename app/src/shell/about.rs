@@ -82,7 +82,7 @@ pub(crate) fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
     use egui::{Grid, RichText};
     let mut back = false;
 
-    over_backdrop_screen(ui, 0.06, |ui| {
+    over_backdrop_screen(ui, "about", |ui| {
         screen_banner(ui, "FIELD MANUAL", 120.0);
         ui.label(RichText::new(FIELD_MANUAL_BLURB).color(ASH).size(TYPE_BODY));
         ui.add_space(14.0);
@@ -124,7 +124,7 @@ pub(crate) fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
         ui.add_space(14.0);
         ui.label(RichText::new(stamp).color(MUTED).size(TYPE_CAPTION));
         ui.add_space(12.0);
-        if menu_button(ui, "BACK", Emphasis::Primary) {
+        if footer_button(ui, "BACK", Emphasis::Secondary) {
             back = true;
         }
     });

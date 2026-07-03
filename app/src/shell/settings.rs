@@ -335,8 +335,8 @@ pub(crate) fn settings_ui(
     use egui::{RichText, Slider};
     let mut action = None;
 
-    over_backdrop_screen(ui, 0.10, |ui| {
-        screen_banner(ui, "SETTINGS", 96.0);
+    over_backdrop_screen(ui, "settings", |ui| {
+        screen_banner(ui, "SETTINGS", 110.0);
 
         // Left-anchor the whole settings body to one shared left margin. `over_backdrop_screen`'s
         // centred column would otherwise centre each row on its own width, scattering controls of
@@ -569,7 +569,7 @@ pub(crate) fn settings_ui(
         // The gunsmith lives here now (D81): customization-only, reached from Settings, not a play
         // gate. Its edits persist for the next match.
         section_label(ui, "LOADOUT");
-        if menu_button(ui, "GUNSMITH", Emphasis::Secondary) {
+        if footer_button(ui, "GUNSMITH", Emphasis::Secondary) {
             action = Some(SettingsAction::OpenLoadout);
         }
         }); // end of the left-anchored settings body
@@ -580,7 +580,7 @@ pub(crate) fn settings_ui(
         ui.add_space(18.0);
         // "FIELD MANUAL" everywhere (matches Android + this screen's own banner) — was "CONTROLS /
         // ABOUT" here and "MANUAL" on the title, three names for one screen.
-        if menu_button(ui, "FIELD MANUAL", Emphasis::Secondary) {
+        if footer_button(ui, "FIELD MANUAL", Emphasis::Secondary) {
             action = Some(SettingsAction::About);
         }
         ui.add_space(18.0);
@@ -597,8 +597,9 @@ pub(crate) fn settings_ui(
             action = Some(SettingsAction::ResetDefaults);
         }
         // BACK anchors the footer (was sandwiched mid-column, hiding the actions below it).
+        // Secondary per the shell emphasis policy: a back-out is never the amber CTA.
         ui.add_space(18.0);
-        if menu_button(ui, "BACK", Emphasis::Primary) {
+        if footer_button(ui, "BACK", Emphasis::Secondary) {
             action = Some(SettingsAction::Back);
         }
     });

@@ -151,8 +151,8 @@ pub(crate) fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Optio
     use egui::{RichText, TextEdit};
     let mut action = None;
 
-    over_backdrop_screen(ui, 0.12, |ui| {
-        screen_banner(ui, "PROFILE", 84.0);
+    over_backdrop_screen(ui, "profile", |ui| {
+        screen_banner(ui, "PROFILE", 110.0);
 
         // Left-anchor the identity/record body to one margin (banner + footer stay centred).
         ui.vertical(|ui| {
@@ -205,7 +205,7 @@ pub(crate) fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Optio
                     (rate.clone(), "WIN RATE"),
                 ] {
                     ui.vertical_centered(|ui| {
-                        ui.label(RichText::new(value).color(AMBER).size(TYPE_SUBHEAD).strong());
+                        ui.label(RichText::new(value).color(AMBER).size(TYPE_STAT).strong());
                         ui.label(RichText::new(caption).color(ASH).size(TYPE_CAPTION));
                     });
                 }
@@ -225,7 +225,7 @@ pub(crate) fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Optio
             action = Some(ProfileAction::ResetStats);
         }
         ui.add_space(10.0);
-        if menu_button(ui, "BACK", Emphasis::Primary) {
+        if footer_button(ui, "BACK", Emphasis::Secondary) {
             action = Some(ProfileAction::Back);
         }
     });

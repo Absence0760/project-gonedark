@@ -36,6 +36,9 @@ pub(crate) const PANEL_GLASS: egui::Color32 = egui::Color32::from_rgba_premultip
 // per-screen banner (GUNSMITH); `BUTTON`/`BODY`/`CAPTION` the rest.
 pub(crate) const TYPE_DISPLAY: f32 = 52.0;
 pub(crate) const TYPE_HEADING: f32 = 30.0;
+/// A large standalone numeral (the Profile record, post-match tallies) — bigger than `SUBHEAD` so a
+/// stat reads as a figure with a caption, not body text that happens to be a number.
+pub(crate) const TYPE_STAT: f32 = 28.0;
 pub(crate) const TYPE_SUBHEAD: f32 = 16.0;
 pub(crate) const TYPE_BUTTON: f32 = 16.0;
 pub(crate) const TYPE_BODY: f32 = 14.0;
@@ -65,6 +68,9 @@ pub(crate) fn shell_style() -> egui::Style {
     v.selection.bg_fill =
         egui::Color32::from_rgba_unmultiplied(AMBER.r(), AMBER.g(), AMBER.b(), 96);
     v.selection.stroke = Stroke::new(1.0, AMBER);
+    // Fill the slider track up to the handle (in the selection amber) so a slider reads its value
+    // at a glance instead of as a bare hairline with a floating knob.
+    v.slider_trailing_fill = true;
 
     // The widget interaction ramp: a button at rest sits on PANEL with a RIM hairline; hover/active
     // lift it to PANEL_RAISED, ring it in amber, and nudge it out by a pixel for tactile feedback.
@@ -112,6 +118,15 @@ pub(crate) fn shell_style() -> egui::Style {
     // value box — the "tiny sliders on the far left" in the Settings screenshot. A fixed, generous
     // width lets the audio/sensitivity/FOV sliders read as proper controls inside the shell card.
     style.spacing.slider_width = 200.0;
+    // Checkbox / radio glyphs at egui's 14px default all but vanish on the dark card (a 1px RIM
+    // outline on PANEL). Larger icons keep the toggle targets legible and finger-friendly.
+    style.spacing.icon_width = 20.0;
+    style.spacing.icon_width_inner = 12.0;
+    style.spacing.icon_spacing = 8.0;
+    // A solid, always-drawn scrollbar: when a card's content overflows (Settings on a short
+    // window), the default hover-only floating bar leaves no visible cue that more rows exist
+    // below the fold.
+    style.spacing.scroll = egui::style::ScrollStyle::solid();
 
     // The default text styles follow the scale. Per-widget `RichText::size`/`color` still override
     // these where a screen wants the title hero or an amber readout, but unstyled text is consistent.

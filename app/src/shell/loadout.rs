@@ -139,169 +139,153 @@ pub(crate) fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<Lo
     use egui::{Button, Label, RichText};
     let mut action = None;
 
-    egui::CentralPanel::default().show(ui, |ui| {
-        let h = ui.available_height();
-        ui.vertical_centered(|ui| {
-            ui.add_space(h * 0.09);
-            // One card wraps the WHOLE screen (banner through RESET), matching every sibling screen's
-            // "everything in one card" convention — previously only the slot rows were boxed and the
-            // banner/blurb/NET/buttons floated on bare ink. Opaque PANEL: the gunsmith has no backdrop.
-            card_frame().show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    // Screen banner + amber rule, mirroring the title hero treatment.
-                    ui.label(
-                        RichText::new("GUNSMITH")
-                            .color(BONE)
-                            .size(TYPE_HEADING)
-                            .strong(),
-                    );
-                    ui.add_space(8.0);
-                    accent_rule(ui, 100.0);
-                    ui.add_space(10.0);
-                    ui.label(
-                        RichText::new(
-                            "Every attachment is a sidegrade -- it spends one stat to buy another. \
-                             No build is strictly better than any other.",
-                        )
-                        .color(ASH)
-                        .size(TYPE_BODY),
-                    );
-                    ui.add_space(20.0);
+    // The shared over-backdrop card scaffold, at the sanctioned wide width (the six fixed-width
+    // slot rows are a real table) — the gunsmith previously kept its own opaque full-bleed
+    // CentralPanel, the one out-of-match screen that didn't read as part of the family.
+    over_backdrop_screen_sized(ui, "gunsmith", SHELL_CARD_WIDE_W, |ui| {
+        screen_banner(ui, "GUNSMITH", 130.0);
+        ui.label(
+            RichText::new(
+                "Every attachment is a sidegrade -- it spends one stat to buy another. \
+                 No build is strictly better than any other.",
+            )
+            .color(ASH)
+            .size(TYPE_BODY),
+        );
+        ui.add_space(20.0);
 
-                    // Column headers so the six rows read as one table, not six independent stacks —
-                    // same fixed widths as the data rows below (the two blank cells sit over the
-                    // `<`/`>` cycler columns).
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [104.0, 18.0],
-                            Label::new(RichText::new("SLOT").color(MUTED).size(TYPE_CAPTION))
-                                .halign(egui::Align::LEFT),
-                        );
-                        ui.add_sized([34.0, 18.0], Label::new(""));
-                        ui.add_sized(
-                            [150.0, 18.0],
-                            Label::new(RichText::new("PICK").color(MUTED).size(TYPE_CAPTION))
-                                .halign(egui::Align::LEFT),
-                        );
-                        ui.add_sized([34.0, 18.0], Label::new(""));
-                        ui.add_sized(
-                            [172.0, 18.0],
-                            Label::new(RichText::new("TRADE").color(MUTED).size(TYPE_CAPTION))
-                                .halign(egui::Align::LEFT),
-                        );
-                        ui.add_sized(
-                            [200.0, 18.0],
-                            Label::new(RichText::new("NET").color(MUTED).size(TYPE_CAPTION))
-                                .halign(egui::Align::LEFT),
-                        );
-                    });
-                    ui.add_space(6.0);
-
-                    // One aligned row per attachment slot. The on-screen index `i` is exactly the index
-                    // the editor's `apply_input` routes on (`LoadoutSlot::from_index`), so the cycler
-                    // maps 1:1. Every text cell is `.halign(LEFT)` so the columns hold a stable left
-                    // edge as picks cycle (bare `add_sized` centres its child, jogging the "columns").
-                    for (i, &slot) in LoadoutSlot::ALL.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            ui.add_sized(
-                                [104.0, 32.0],
-                                Label::new(
-                                    RichText::new(slot.label())
-                                        .color(BONE)
-                                        .size(TYPE_SUBHEAD)
-                                        .strong(),
-                                )
-                                .halign(egui::Align::LEFT),
-                            );
-                            if ui
-                                .add_sized([34.0, 32.0], Button::new(RichText::new("<").color(BONE)))
-                                .clicked()
-                            {
-                                action = Some(LoadoutAction::Cycle {
-                                    slot_index: i,
-                                    forward: false,
-                                });
-                            }
-                            ui.add_sized(
-                                [150.0, 32.0],
-                                Label::new(
-                                    RichText::new(editor.option_label(slot))
-                                        .color(AMBER)
-                                        .size(TYPE_BODY)
-                                        .strong(),
-                                )
-                                .halign(egui::Align::LEFT),
-                            );
-                            if ui
-                                .add_sized([34.0, 32.0], Button::new(RichText::new(">").color(BONE)))
-                                .clicked()
-                            {
-                                action = Some(LoadoutAction::Cycle {
-                                    slot_index: i,
-                                    forward: true,
-                                });
-                            }
-                            ui.add_sized(
-                                [172.0, 32.0],
-                                Label::new(
-                                    RichText::new(slot_trade_hint(slot))
-                                        .color(MUTED)
-                                        .size(TYPE_CAPTION),
-                                )
-                                .halign(egui::Align::LEFT),
-                            );
-                            // The REAL per-option trade numbers (D60/M3): they change as the slot
-                            // cycles, so the sidegrade is legible ("+6.00 dmg  -60 res"), not just an
-                            // axis pair.
-                            ui.add_sized(
-                                [200.0, 32.0],
-                                Label::new(
-                                    RichText::new(stat_delta_summary(&editor.option_delta(slot)))
-                                        .color(ASH)
-                                        .size(TYPE_CAPTION),
-                                )
-                                .halign(egui::Align::LEFT),
-                            );
-                        });
-                        if i + 1 < LoadoutSlot::ALL.len() {
-                            ui.add_space(8.0);
-                        }
-                    }
-
-                    ui.add_space(14.0);
-                    accent_rule(ui, 200.0);
-                    ui.add_space(10.0);
-                    // Build-wide net delta (the sum of the sim slots' trades). By the sidegrade rule
-                    // it is never a flat upgrade over the baseline — surfacing it makes that legible.
-                    ui.label(
-                        RichText::new(format!("NET  {}", stat_delta_summary(&editor.net_delta())))
-                            .color(AMBER)
-                            .size(TYPE_CAPTION)
-                            .strong(),
-                    );
-                    ui.add_space(16.0);
-                    // D81: customization-only — DONE returns to Settings (the entry point), RESET
-                    // clears to baseline. There is no Deploy here: the mode/mission-select screens
-                    // start matches.
-                    if menu_button(ui, "DONE", Emphasis::Primary) {
-                        action = Some(LoadoutAction::Done);
-                    }
-                    // RESET wipes every attachment back to Standard — a real misclick target next to
-                    // DONE, so it takes two clicks (arm, then confirm) AND gets a wider gap so the
-                    // armed amber prompt can't be mistaken for DONE.
-                    ui.add_space(24.0);
-                    if confirm_menu_button(
-                        ui,
-                        "loadout.reset",
-                        "RESET",
-                        "RESET? CLICK AGAIN",
-                        Emphasis::Secondary,
-                    ) {
-                        action = Some(LoadoutAction::Reset);
-                    }
-                });
-            });
+        // Column headers so the six rows read as one table, not six independent stacks —
+        // same fixed widths as the data rows below (the two blank cells sit over the
+        // `<`/`>` cycler columns).
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [104.0, 18.0],
+                Label::new(RichText::new("SLOT").color(MUTED).size(TYPE_CAPTION))
+                    .halign(egui::Align::LEFT),
+            );
+            ui.add_sized([34.0, 18.0], Label::new(""));
+            ui.add_sized(
+                [150.0, 18.0],
+                Label::new(RichText::new("PICK").color(MUTED).size(TYPE_CAPTION))
+                    .halign(egui::Align::LEFT),
+            );
+            ui.add_sized([34.0, 18.0], Label::new(""));
+            ui.add_sized(
+                [172.0, 18.0],
+                Label::new(RichText::new("TRADE").color(MUTED).size(TYPE_CAPTION))
+                    .halign(egui::Align::LEFT),
+            );
+            ui.add_sized(
+                [200.0, 18.0],
+                Label::new(RichText::new("NET").color(MUTED).size(TYPE_CAPTION))
+                    .halign(egui::Align::LEFT),
+            );
         });
+        ui.add_space(6.0);
+
+        // One aligned row per attachment slot. The on-screen index `i` is exactly the index
+        // the editor's `apply_input` routes on (`LoadoutSlot::from_index`), so the cycler
+        // maps 1:1. Every text cell is `.halign(LEFT)` so the columns hold a stable left
+        // edge as picks cycle (bare `add_sized` centres its child, jogging the "columns").
+        for (i, &slot) in LoadoutSlot::ALL.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [104.0, 32.0],
+                    Label::new(
+                        RichText::new(slot.label())
+                            .color(BONE)
+                            .size(TYPE_SUBHEAD)
+                            .strong(),
+                    )
+                    .halign(egui::Align::LEFT),
+                );
+                if ui
+                    .add_sized([34.0, 32.0], Button::new(RichText::new("<").color(BONE)))
+                    .clicked()
+                {
+                    action = Some(LoadoutAction::Cycle {
+                        slot_index: i,
+                        forward: false,
+                    });
+                }
+                ui.add_sized(
+                    [150.0, 32.0],
+                    Label::new(
+                        RichText::new(editor.option_label(slot))
+                            .color(AMBER)
+                            .size(TYPE_BODY)
+                            .strong(),
+                    )
+                    .halign(egui::Align::LEFT),
+                );
+                if ui
+                    .add_sized([34.0, 32.0], Button::new(RichText::new(">").color(BONE)))
+                    .clicked()
+                {
+                    action = Some(LoadoutAction::Cycle {
+                        slot_index: i,
+                        forward: true,
+                    });
+                }
+                ui.add_sized(
+                    [172.0, 32.0],
+                    Label::new(
+                        RichText::new(slot_trade_hint(slot))
+                            .color(MUTED)
+                            .size(TYPE_CAPTION),
+                    )
+                    .halign(egui::Align::LEFT),
+                );
+                // The REAL per-option trade numbers (D60/M3): they change as the slot
+                // cycles, so the sidegrade is legible ("+6.00 dmg  -60 res"), not just an
+                // axis pair.
+                ui.add_sized(
+                    [200.0, 32.0],
+                    Label::new(
+                        RichText::new(stat_delta_summary(&editor.option_delta(slot)))
+                            .color(ASH)
+                            .size(TYPE_CAPTION),
+                    )
+                    .halign(egui::Align::LEFT),
+                );
+            });
+            if i + 1 < LoadoutSlot::ALL.len() {
+                ui.add_space(8.0);
+            }
+        }
+
+        ui.add_space(14.0);
+        accent_rule(ui, 200.0);
+        ui.add_space(10.0);
+        // Build-wide net delta (the sum of the sim slots' trades). By the sidegrade rule
+        // it is never a flat upgrade over the baseline — surfacing it makes that legible.
+        ui.label(
+            RichText::new(format!("NET  {}", stat_delta_summary(&editor.net_delta())))
+                .color(AMBER)
+                .size(TYPE_CAPTION)
+                .strong(),
+        );
+        ui.add_space(16.0);
+        // D81: customization-only — DONE returns to Settings (the entry point), RESET
+        // clears to baseline. There is no Deploy here: the mode/mission-select screens
+        // start matches.
+        if footer_button(ui, "DONE", Emphasis::Primary) {
+            action = Some(LoadoutAction::Done);
+        }
+        // RESET wipes every attachment back to Standard — a real misclick target next to
+        // DONE, so it takes two clicks (arm, then confirm) AND gets a wider gap so the
+        // armed amber prompt can't be mistaken for DONE.
+        ui.add_space(24.0);
+        if confirm_menu_button(
+            ui,
+            "loadout.reset",
+            "RESET",
+            "RESET? CLICK AGAIN",
+            // Tertiary, matching Settings' RESET DEFAULTS — the quiet destructive slot under the CTA.
+            Emphasis::Tertiary,
+        ) {
+            action = Some(LoadoutAction::Reset);
+        }
     });
 
     action

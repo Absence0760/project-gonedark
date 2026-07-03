@@ -91,13 +91,13 @@ pub(crate) fn briefing_ui(
     use egui::{Button, RichText};
     let mut action = None;
 
-    over_backdrop_screen(ui, 0.07, |ui| {
+    over_backdrop_screen(ui, "briefing", |ui| {
         let Some(b) = campaign.briefing(node) else {
             // The hub only opens playable, in-range nodes, so this is purely defensive.
             screen_banner(ui, "BRIEFING", 110.0);
             ui.label(RichText::new("No such operation.").color(ASH).size(TYPE_BODY));
             ui.add_space(16.0);
-            if menu_button(ui, "BACK", Emphasis::Primary) {
+            if footer_button(ui, "BACK", Emphasis::Secondary) {
                 action = Some(BriefingAction::Back);
             }
             return;
@@ -159,11 +159,11 @@ pub(crate) fn briefing_ui(
         });
 
         ui.add_space(FOOTER_GAP);
-        if menu_button(ui, "DEPLOY", Emphasis::Primary) {
+        if footer_button(ui, "DEPLOY", Emphasis::Primary) {
             action = Some(BriefingAction::Deploy);
         }
         ui.add_space(10.0);
-        if menu_button(ui, "BACK", Emphasis::Tertiary) {
+        if footer_button(ui, "BACK", Emphasis::Tertiary) {
             action = Some(BriefingAction::Back);
         }
     });

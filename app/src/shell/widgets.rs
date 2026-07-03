@@ -18,6 +18,11 @@ pub(crate) const MENU_BUTTON_W: f32 = 256.0;
 /// -width labels centre, which is the "controls far-left, headings centred, dead middle" bug.
 pub(crate) const SHELL_CARD_W: f32 = 480.0;
 
+/// The wide variant of [`SHELL_CARD_W`] for the one screen whose content is a real table (the
+/// gunsmith's six fixed-width slot rows). Same card language, one sanctioned wider size — not a
+/// per-screen free-for-all.
+pub(crate) const SHELL_CARD_WIDE_W: f32 = 800.0;
+
 /// The label column width shared by the two-column key/value rows on the shell screens (Settings
 /// sliders/cyclers, Profile identity), so every value control starts at the same x.
 pub(crate) const SETTINGS_LABEL_W: f32 = 172.0;
@@ -28,6 +33,10 @@ pub(crate) const FOOTER_GAP: f32 = 20.0;
 
 /// How a [`menu_button`] reads in the visual hierarchy: the one amber call-to-action, a neutral
 /// secondary, or a de-emphasised tertiary (e.g. QUIT / BACK).
+///
+/// Shell-wide emphasis policy: **Primary is reserved for the screen's one forward action** (DEPLOY,
+/// CAMPAIGN, DONE). BACK is Secondary when it is the sole exit on a screen, and Tertiary when a
+/// Primary CTA is present — a back-out must never be the loudest control on screen.
 #[derive(Clone, Copy)]
 pub(crate) enum Emphasis {
     /// Filled amber, ink text — the single primary action on a screen.
@@ -70,7 +79,8 @@ pub(crate) fn confirm_menu_button(
     let shown = if armed { confirm_label } else { label };
     let shown_emphasis = if armed { Emphasis::Primary } else { emphasis };
     let mut fired = false;
-    if menu_button(ui, shown, shown_emphasis) {
+    // All three confirm-gated actions live inside a card, so ride the card-width footer button.
+    if footer_button(ui, shown, shown_emphasis) {
         let (new_armed, did_fire) = confirm_click(armed);
         ui.data_mut(|d| d.insert_temp(id, new_armed));
         fired = did_fire;
@@ -78,13 +88,11 @@ pub(crate) fn confirm_menu_button(
     fired
 }
 
-/// Draw one full-width menu button in the shell style and report whether it was clicked. Glue (it
-/// needs a live `Ui`), so it's exempt from unit tests — the click→action mapping it feeds is what the
-/// pure [`resolve_title_action`](crate::shell::transitions::resolve_title_action) /
-/// [`apply_loadout_action`](crate::shell::loadout::apply_loadout_action) seams cover. Only the primary
-/// button sets an explicit fill; secondary/tertiary leave the fill to the widget ramp in
-/// [`shell_style`](crate::shell::theme::shell_style) so they visibly lift on hover.
-pub(crate) fn menu_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis) -> bool {
+/// Draw one emphasis-styled action button at an explicit width. The shared body of [`menu_button`]
+/// (title-menu width) and [`footer_button`] (card-content width). Only the primary button sets an
+/// explicit fill; secondary/tertiary leave the fill to the widget ramp in
+/// [`shell_style`](crate::shell::theme::shell_style) so they visibly lift on hover. Glue.
+fn emphasis_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis, width: f32) -> bool {
     use egui::{Button, RichText};
     let fg = match emphasis {
         Emphasis::Primary => INK,
@@ -92,11 +100,27 @@ pub(crate) fn menu_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis) -> 
         Emphasis::Tertiary => ASH,
     };
     let mut button =
-        Button::new(RichText::new(text).color(fg).size(TYPE_BUTTON)).min_size([MENU_BUTTON_W, 46.0].into());
+        Button::new(RichText::new(text).color(fg).size(TYPE_BUTTON)).min_size([width, 46.0].into());
     if matches!(emphasis, Emphasis::Primary) {
         button = button.fill(AMBER);
     }
     ui.add(button).clicked()
+}
+
+/// Draw one menu button at the shared title-menu width and report whether it was clicked. Glue (it
+/// needs a live `Ui`), so it's exempt from unit tests — the click→action mapping it feeds is what the
+/// pure [`resolve_title_action`](crate::shell::transitions::resolve_title_action) /
+/// [`apply_loadout_action`](crate::shell::loadout::apply_loadout_action) seams cover.
+pub(crate) fn menu_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis) -> bool {
+    emphasis_button(ui, text, emphasis, MENU_BUTTON_W)
+}
+
+/// A card-footer action button spanning the card's full content width, so footer actions align with
+/// the rows above them instead of hanging off the left edge at title-menu width. Same emphasis
+/// language as [`menu_button`]. Glue.
+pub(crate) fn footer_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis) -> bool {
+    let w = ui.available_width().max(MENU_BUTTON_W);
+    emphasis_button(ui, text, emphasis, w)
 }
 
 /// A short amber accent rule, centred under a heading — the one bit of "brand" line work that ties
@@ -175,13 +199,47 @@ pub(crate) fn section_divider(ui: &mut egui::Ui) {
     ui.add_space(10.0);
 }
 
+/// Minimum breathing room between an over-backdrop card and the viewport's top/bottom edges.
+pub(crate) const SHELL_CARD_MARGIN: f32 = 40.0;
+
+/// Where an over-backdrop card sits in the leftover vertical space: 0.42 of the slack above it —
+/// the optical centre, a touch above geometric centre, where a framed object reads as balanced.
+const CARD_OPTICAL_CENTRE: f32 = 0.42;
+
+/// The card's top offset for this frame: optically centred from the height remembered last frame,
+/// clamped to [`SHELL_CARD_MARGIN`]; a fixed top band on the very first frame (no height yet). Pure
+/// — the one placement decision in the scaffold, extracted from the egui glue so it's unit-tested.
+pub(crate) fn over_backdrop_top(viewport_h: f32, last_card_h: Option<f32>) -> f32 {
+    match last_card_h {
+        Some(card_h) => ((viewport_h - card_h) * CARD_OPTICAL_CENTRE)
+            .clamp(SHELL_CARD_MARGIN, (viewport_h - SHELL_CARD_MARGIN).max(SHELL_CARD_MARGIN)),
+        None => viewport_h * 0.10,
+    }
+}
+
 /// The transparent full-screen panel the over-backdrop screens (settings/profile/about) sit in, with
 /// their content centred in a translucent [`glass_card_frame`]. The central panel paints **no** fill
 /// (`Frame::NONE`) so the live 3D backdrop shows through around the card. `build` lays out the card's
 /// interior; the whole screen returns whatever `build` produced. Glue.
+///
+/// Vertical placement is *optically centred*: immediate mode can't know the card's height before
+/// laying it out, so the previous frame's height (remembered per `id_salt`) decides this frame's top
+/// offset. The very first frame falls back to a fixed top band and settles one frame later — invisible
+/// live; the screenshot harness renders two passes for exactly this reason.
 pub(crate) fn over_backdrop_screen<T>(
     ui: &mut egui::Ui,
-    top_frac: f32,
+    id_salt: &str,
+    build: impl FnOnce(&mut egui::Ui) -> T,
+) -> T {
+    over_backdrop_screen_sized(ui, id_salt, SHELL_CARD_W, build)
+}
+
+/// [`over_backdrop_screen`] at an explicit card width — only for the sanctioned wide screens
+/// ([`SHELL_CARD_WIDE_W`]); everything else takes the default-width wrapper above.
+pub(crate) fn over_backdrop_screen_sized<T>(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    card_w: f32,
     build: impl FnOnce(&mut egui::Ui) -> T,
 ) -> T {
     let mut out = None;
@@ -189,41 +247,51 @@ pub(crate) fn over_backdrop_screen<T>(
         .frame(egui::Frame::NONE)
         .show(ui, |ui| {
             let h = ui.available_height();
+            let height_id = egui::Id::new(("over_backdrop.card_h", id_salt));
+            let last_h: Option<f32> = ui.data(|d| d.get_temp(height_id));
+            let top = over_backdrop_top(h, last_h);
             // Bound the card to the viewport and let its content scroll if it overflows — so a
             // shrunk window (down to the min inner size) or a growing list (the campaign
             // mission-select) can never push BACK / footer controls off-screen with no way to
             // reach them. A ScrollArea that fits its content shows no scrollbar, so short screens
-            // look identical to before.
-            let max_card_h = (h * (1.0 - top_frac) - 24.0).max(120.0);
-            ui.add_space(h * top_frac);
+            // look identical to before. The frame's own margins + stroke are subtracted so the
+            // card's painted edge (not just its scroll interior) always lands inside the viewport.
+            let frame = glass_card_frame();
+            let frame_v = f32::from(frame.inner_margin.top)
+                + f32::from(frame.inner_margin.bottom)
+                + 2.0 * frame.stroke.width;
+            let max_scroll_h = (h - top - SHELL_CARD_MARGIN - frame_v).max(120.0);
+            ui.add_space(top);
             // Centre a fixed-width card BY HAND — pad the left by half the leftover width, then
             // allocate a region of exactly `SHELL_CARD_W`. Leaning on `vertical_centered` here does
             // NOT work: combined with the inner `ScrollArea` it painted the glass frame full-width and
             // top-left-anchored instead of wrapping a centred column (the frame's rect desynced from
             // the content's). Pinning the card region's width makes the frame wrap a centred,
             // fixed-width column whose content fills it — deterministic, no layout-interaction guesswork.
-            let pad = ((ui.available_width() - SHELL_CARD_W) * 0.5).max(0.0);
+            let pad = ((ui.available_width() - card_w) * 0.5).max(0.0);
             ui.horizontal(|ui| {
                 ui.add_space(pad);
                 // `allocate_ui` inherits the parent layout — and the parent here is the centring
                 // `horizontal`, which would lay the card's interior out left-to-right. Force a
                 // top-down column so the banner / rows / footer stack vertically inside the card.
                 ui.allocate_ui_with_layout(
-                    egui::vec2(SHELL_CARD_W, max_card_h),
+                    egui::vec2(card_w, max_scroll_h),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
-                        glass_card_frame().show(ui, |ui| {
-                        egui::ScrollArea::vertical()
-                            .max_height(max_card_h)
-                            // Fill the card width (don't shrink horizontally), but shrink to content
-                            // height so a short screen shows no scrollbar.
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                out = Some(build(ui));
-                            });
-                    });
-                });
+                        let card = frame.show(ui, |ui| {
+                            egui::ScrollArea::vertical()
+                                .max_height(max_scroll_h)
+                                // Fill the card width (don't shrink horizontally), but shrink to content
+                                // height so a short screen shows no scrollbar.
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    out = Some(build(ui));
+                                });
+                        });
+                        ui.data_mut(|d| d.insert_temp(height_id, card.response.rect.height()));
+                    },
+                );
             });
         });
     out.expect("over_backdrop_screen build ran")

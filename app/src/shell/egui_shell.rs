@@ -128,9 +128,10 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         editor: &LoadoutEditor,
     ) -> Option<LoadoutAction> {
-        // `with_backdrop = false`: the gunsmith keeps its opaque ink panel (it has no 3D backdrop),
-        // so the egui pass clears as before — no regression to `draw_loadout`.
-        self.run_and_paint(surface, false, |ui| loadout_ui(ui, editor))
+        // `with_backdrop = true`: the gunsmith sits in the same translucent card over the live 3D
+        // backdrop as every other out-of-match screen, so the whole shell reads as one family (it
+        // previously kept an opaque ink panel — the lone odd-one-out surface).
+        self.run_and_paint(surface, true, |ui| loadout_ui(ui, editor))
     }
 
     /// Draw the Settings screen for one frame and return the [`SettingsAction`] whose control was
@@ -381,7 +382,7 @@ impl EguiShell {
 ///  - **bottom-centre** — the DEPLOY cluster: CAMPAIGN (the lone amber CTA), PvE / PvP, then QUIT,
 ///    in a translucent [`glass_card_frame`] so it reads as a deliberate panel;
 ///  - **bottom-right** — the muted build stamp, the quiet corner opposite the play cluster.
-fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
+pub(crate) fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
     use egui::{Align2, Area, Id, RichText};
     let mut action = None;
     // Areas attach to the context, not the parent `Ui`, so they float over the (transparent) root

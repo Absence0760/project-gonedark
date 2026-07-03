@@ -50,16 +50,28 @@ fn shoot(device: &wgpu::Device, queue: &wgpu::Queue, path: &str, mut build: impl
         )),
         ..Default::default()
     };
-    // A single pass: egui emits the font-atlas texture delta only on the FIRST frame, and egui-wgpu
-    // samples that atlas for EVERY primitive (solid fills use its white texel), so we must render the
-    // frame whose `textures_delta.set` carries the atlas — a second run would hand back empty deltas
-    // and paint nothing.
-    let full = ctx.run_ui(raw, |ui| build(ui));
+    // TWO passes, rendering the second: `over_backdrop_screen` centres its card from the height it
+    // remembered on the previous frame, so the first pass lays out at the fallback position and the
+    // second is the settled frame the player actually sees. Texture deltas from BOTH passes are
+    // accumulated before rendering — egui emits the font-atlas delta only on the first frame, and
+    // egui-wgpu samples that atlas for every primitive (solid fills use its white texel).
+    let mut deltas = Vec::new();
+    let mut full = ctx.run_ui(raw.clone(), |ui| build(ui));
+    deltas.append(&mut full.textures_delta.set);
+    // Advance the clock a full second on the settled pass so egui's animations (Area fade-in,
+    // style eases) complete — back-to-back passes share ~0ms of wall time and would render the
+    // title screen mid-fade.
+    let raw = egui::RawInput {
+        time: Some(1.0),
+        ..raw
+    };
+    let mut full = ctx.run_ui(raw, |ui| build(ui));
+    deltas.append(&mut full.textures_delta.set);
 
     let jobs = ctx.tessellate(full.shapes, full.pixels_per_point);
     let mut renderer =
         egui_wgpu::Renderer::new(device, FORMAT, egui_wgpu::RendererOptions::default());
-    for (id, delta) in &full.textures_delta.set {
+    for (id, delta) in &deltas {
         renderer.update_texture(device, queue, *id, delta);
     }
 
@@ -195,16 +207,28 @@ fn save_png(path: &str, rgba: &[u8]) {
 #[ignore = "needs a GPU + writes PNGs; run with --ignored"]
 fn shell_screens_to_png() {
     let (device, queue) = headless();
-    let dir = "target/shell-shots";
+    // The workspace target dir (cargo test runs with the crate dir as CWD, so a bare relative
+    // "target/…" would create a stray `app/target/` beside the real build tree).
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../target/shell-shots");
     std::fs::create_dir_all(dir).expect("create shots dir");
 
     let campaign = gonedark_engine::mission_registry::default_campaign();
     let mut settings = SettingsState::default();
     let mut profile = ProfileState::default();
     let army = ArmySelectState::default();
+    let loadout = gonedark_engine::loadout_ui::LoadoutEditor::new();
     let mut rebinding = None;
     let mut conflict = None;
 
+    shoot(&device, &queue, &format!("{dir}/title.png"), |ui| {
+        title_ui(ui, "build dev \u{00b7} v0.0.0");
+    });
+    shoot(&device, &queue, &format!("{dir}/mode_select.png"), |ui| {
+        mode_select_ui(ui);
+    });
+    shoot(&device, &queue, &format!("{dir}/loadout.png"), |ui| {
+        loadout_ui(ui, &loadout);
+    });
     shoot(&device, &queue, &format!("{dir}/operations.png"), |ui| {
         mission_select_ui(ui, &campaign);
     });

@@ -44,7 +44,7 @@ pub(crate) fn mode_select_ui(ui: &mut egui::Ui) -> Option<ModeSelectAction> {
     use egui::RichText;
     let mut action = None;
 
-    over_backdrop_screen(ui, 0.07, |ui| {
+    over_backdrop_screen(ui, "mode_select", |ui| {
         screen_banner(ui, "SELECT MODE", 130.0);
         ui.label(
             RichText::new(
@@ -67,7 +67,7 @@ pub(crate) fn mode_select_ui(ui: &mut egui::Ui) -> Option<ModeSelectAction> {
         ui.add_space(FOOTER_GAP);
         // BACK is the only exit on this screen — Secondary, not Tertiary, so it isn't the dimmest
         // control on a screen where it's the sole way out.
-        if menu_button(ui, "BACK", Emphasis::Secondary) {
+        if footer_button(ui, "BACK", Emphasis::Secondary) {
             action = Some(ModeSelectAction::Back);
         }
     });

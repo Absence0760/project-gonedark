@@ -308,10 +308,41 @@ use gonedark_render::tiers::QualityTier;
         assert_eq!(size(TextStyle::Small), TYPE_CAPTION);
         // The hierarchy is strictly descending (a guard against a future edit inverting two sizes).
         assert!(TYPE_DISPLAY > TYPE_HEADING);
+        assert!(TYPE_HEADING > TYPE_STAT, "a stat numeral stays below the screen banner");
+        assert!(TYPE_STAT > TYPE_SUBHEAD, "a stat numeral reads as a figure, not body text");
         assert!(TYPE_HEADING > TYPE_SUBHEAD);
         assert!(TYPE_SUBHEAD >= TYPE_BUTTON);
         assert!(TYPE_BUTTON > TYPE_BODY);
         assert!(TYPE_BODY > TYPE_CAPTION);
+    }
+
+    #[test]
+    fn shell_style_makes_controls_legible_on_the_dark_card() {
+        let style = shell_style();
+        // Sliders read their value at a glance (amber trailing fill, not a bare hairline).
+        assert!(style.visuals.slider_trailing_fill);
+        // Checkbox / radio glyphs are large enough to see on PANEL (egui's 14px default vanished).
+        assert!(style.spacing.icon_width >= 18.0);
+        assert!(style.spacing.icon_width_inner >= 10.0);
+        // Overflowing cards (Settings on a short window) show a solid, always-drawn scrollbar.
+        assert!(!style.spacing.scroll.floating, "scrollbar must be solid, not hover-only");
+    }
+
+    // ---- The over-backdrop card placement seam ---------------------------------------------------
+
+    #[test]
+    fn over_backdrop_top_settles_at_the_optical_centre_and_clamps() {
+        // First frame (no remembered height): the fixed top band.
+        assert_eq!(over_backdrop_top(1000.0, None), 100.0);
+        // A short card sits at the optical centre: 42% of the leftover space above it.
+        let top = over_backdrop_top(1000.0, Some(400.0));
+        assert!((top - 252.0).abs() < 0.01, "expected (1000-400)*0.42, got {top}");
+        // Its bottom slack exceeds its top slack (optical, not geometric, centring).
+        assert!(1000.0 - (top + 400.0) > top);
+        // A card taller than the viewport clamps to the minimum margin instead of going negative.
+        assert_eq!(over_backdrop_top(600.0, Some(2000.0)), SHELL_CARD_MARGIN);
+        // A degenerate viewport still yields a sane, non-panicking offset.
+        assert!(over_backdrop_top(10.0, Some(50.0)) >= 0.0);
     }
 
     #[test]

@@ -137,7 +137,7 @@ pub(crate) fn army_select_ui(ui: &mut egui::Ui, state: &ArmySelectState) -> Opti
     use egui::RichText;
     let mut action = None;
 
-    over_backdrop_screen(ui, 0.08, |ui| {
+    over_backdrop_screen(ui, "army", |ui| {
         screen_banner(ui, "SELECT ARMY", 130.0);
         ui.label(
             RichText::new(
@@ -163,8 +163,9 @@ pub(crate) fn army_select_ui(ui: &mut egui::Ui, state: &ArmySelectState) -> Opti
         // Picking a card applies the army in place immediately (no staged draft), so this button
         // only leaves the screen — it's a BACK, not a "commit". Labeling it CONFIRM implied a
         // commit-vs-cancel choice that doesn't exist. (Action stays `Confirm`: a transition that
-        // leaves the already-applied selection alone.)
-        if menu_button(ui, "BACK", Emphasis::Primary) {
+        // leaves the already-applied selection alone.) Secondary per the shell emphasis policy: a
+        // back-out is never the amber CTA.
+        if footer_button(ui, "BACK", Emphasis::Secondary) {
             action = Some(ArmySelectAction::Confirm);
         }
     });
