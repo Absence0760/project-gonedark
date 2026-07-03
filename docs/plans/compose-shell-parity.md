@@ -13,11 +13,12 @@
 > wires are consumed end-to-end** on Android (`bec478e`/`ae32cbd`; §12 item 3, §5). The
 > [D85](../decisions.md) Stock/Muzzle gap (§12 item 5) closed 2026-07-03 on both halves — the
 > desktop persist encode and the full Android chain (Compose slots + `stk=`/`muz=` wire keys +
-> prefs keys). What remains is **blocked** (PvP queues/lobby/store/consent per
-> [`phase-4-plan.md`](phase-4-plan.md) §2) plus **three structural gaps** from the 2026-07-03
-> desktop landings: the skirmish match-setup screen (§12 item 6), the [D101](../decisions.md)
-> PvP staging door (§12 item 7), and the D98 conflict-atlas hub grouping (§12 item 8) — all
-> desktop-only, no Compose twins yet. Scope is
+> prefs keys). The [D101](../decisions.md) PvP staging door and the D98 conflict-atlas hub
+> grouping landed with same-day Compose twins (§12 items 7–8, closed 2026-07-03). What remains
+> is **blocked** (PvP queues/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2)
+> plus **one structural gap**: the desktop skirmish match-setup screen has no full Compose twin
+> yet (§12 item 6 — Android's SKIRMISH door opens the retitled battlefield picker, not the §3
+> armies+tier setup). Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
 
@@ -287,7 +288,8 @@ These were deliberately **not** done in the sweep — each a chunk of real work.
 re-audit** then verified items 1–3 closed in code (evidence inline below), item 4 remains a
 deliberate UX fork, item 5 is a gap the re-audit found (closed the same day, both halves), and
 items 6–8 are the 2026-07-03 desktop landings (the skirmish match-setup screen, the D101 PvP
-staging door, the D98 atlas-grouped hub) without Compose twins:
+staging door, the D98 atlas-grouped hub) — items 7–8 closed with same-day Compose twins,
+item 6 still open:
 
 1. **Campaign progress model — ✅ CLOSED (2026-07-03).** `CampaignModel.kt` carries the full
    `CampaignProgress`/`NodeProgress` (Locked/Available/Cleared) derivation, the clear gate,
@@ -372,21 +374,22 @@ staging door, the D98 atlas-grouped hub) without Compose twins:
    `select_army` for both sides, REMATCH-aware); Android's SKIRMISH door still lands on the plain
    mode picker. The Compose twin needs the same pure decision seams JVM-side plus wire keys for
    the enemy army + opponent tier — the [`modes.md`](../modes.md) §5 build-order step 1 remainder.
-7. **PvP staging door is desktop-only (2026-07-03).** Desktop's PvP button now opens the
+7. **PvP staging door — ✅ CLOSED (2026-07-03, same day).** Desktop's PvP button now opens the
    dedicated staging screen ([D101](../decisions.md): the three queues in
    [`modes.md`](../modes.md) §5 build order, nothing joinable pre-net via the pure
    `queue_joinable` seam, the §4a identity line) and the shared "SELECT MODE" picker is
    **deleted** (`app/src/shell/mode_select.rs` is gone; `SHELL_GAME_MODES` now backs only the
-   skirmish battlefield list). Android still routes **both** SKIRMISH and PvP to
-   `ModeSelectScreen.kt` (`TitleAction.kt`: `Pve`/`Pvp -> TitleRoute.ModeSelect`). The Compose
-   twin: a `PvpScreen` + pure queue-table/joinability seams JVM-side, `resolveTitleAction`
-   split (breaks `TitleActionTest`'s shared-route pin), and `ModeSelectScreen` retiring into
-   the item-6 skirmish setup. No new wire keys — the staging door launches nothing.
-8. **Conflict-atlas hub grouping is desktop-only (2026-07-03).** Desktop's Operations hub
+   skirmish battlefield list). The Compose twin landed the same day: `PvpScreen.kt` over the
+   pure `PvpStaging.kt` seam (`pvpQueues`/`queueJoinable`, pinned by `PvpStagingTest` against
+   the Rust table), `resolveTitleAction` split (`Pvp -> TitleRoute.Pvp`; `TitleActionTest` now
+   pins that **no two play modes share a door**), and `ModeSelectScreen.kt` retitled SKIRMISH
+   as that door's interim picker (item 6 owns the rest). No new wire keys — the staging door
+   launches nothing.
+8. **Conflict-atlas hub grouping — ✅ CLOSED (2026-07-03, same day).** Desktop's Operations hub
    renders the D98 conflict → operation → battle grouping (`hub_sections` in
    `app/src/shell/mission_select.rs`: conflict headers with year-span + rollup, operation
-   sub-headers, grouped tiles). Android has the atlas *data* (`CampaignModel.kt`:
-   `Conflict`/`Operation`/`MissionNode.operation`, currently unread by any composable) but
-   `MissionSelectScreen.kt` still draws the flat pre-atlas list. The Compose twin needs a
-   `hubSections` seam (JVM-tested, mirroring the Rust one) + grouped rendering — presentation
-   only, no wire/progress-model change (the item-1 launch seam already covers every node).
+   sub-headers, grouped tiles). The Compose twin landed the same day: `hubSections` +
+   `GroupProgress` + the header-label formatters in `CampaignModel.kt` (JVM-pinned by
+   `HubSectionsTest`, incl. label-formatting parity with the desktop output), consumed by the
+   grouped `MissionSelectScreen.kt`. Presentation only — no wire/progress-model change (the
+   item-1 launch seam already covers every node).

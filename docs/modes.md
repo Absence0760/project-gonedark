@@ -45,7 +45,7 @@ door*: who you fight, how the scenario is chosen, and what persists afterward.
 | Loadout | Gunsmith carries in ([D60](decisions.md)) | Gunsmith | Gunsmith |
 | Stakes / persistence | Node unlocks, best-tier badges (`core::campaign`) | None — it's the sandbox | Rating, rank tier, leaderboards (§4c) |
 | Backend | None (local progress) | None | Matchmaker, relay, accounts, ratings ([`infrastructure.md`](infrastructure.md)) |
-| Status | Functionally complete (PvE WS-B) | Match exists ([D64](decisions.md) `seed_skirmish`); **desktop entry screen landed** (Android + map library owed — §3) | Queues blocked on Phase 3 net layer; **desktop staging door landed** ([D101](decisions.md) — honest, nothing joinable; Android owed) |
+| Status | Functionally complete (PvE WS-B) | Match exists ([D64](decisions.md) `seed_skirmish`); **desktop entry screen landed** (Android full-setup twin + map library owed — §3) | Queues blocked on Phase 3 net layer; **staging door landed, both shells** ([D101](decisions.md) — honest, nothing joinable) |
 
 Keeping the three *distinct* is deliberate product design, not just code hygiene: campaign
 is where a stranger learns the going-dark cost (invariant #6), skirmish is where a player

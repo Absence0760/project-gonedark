@@ -4534,11 +4534,13 @@ with no transport behind it is a small lie, and the corpus already refuses it
 queues and their build order costs nothing and turns the dead-end into a roadmap the
 player can read.
 
-**Scope / follow-ups.** Desktop only; Android still routes both SKIRMISH and PvP to its
-Compose `ModeSelectScreen` — the Compose twins of the skirmish setup **and** this staging
-door are the open parity gap ([`plans/compose-shell-parity.md`](plans/compose-shell-parity.md)
-§12). The first joinable queue is the §5 step-2 custom lobby (Phase 3 transport); ranked
-additionally waits on [Q29](open-questions.md#q29--pvp-rating--ranked-season-design).
+**Scope / follow-ups.** The Compose staging twin landed the same day (`PvpScreen.kt` over the
+`PvpStaging.kt` seam; `resolveTitleAction` split so no two play modes share a door —
+[`plans/compose-shell-parity.md`](plans/compose-shell-parity.md) §12 item 7), with Android's
+`ModeSelectScreen` retitled SKIRMISH as that door's interim picker; the full §3 setup twin
+(both armies + opponent tier, plus its wire keys) stays the open parity item 6. The first
+joinable queue is the §5 step-2 custom lobby (Phase 3 transport); ranked additionally waits
+on [Q29](open-questions.md#q29--pvp-rating--ranked-season-design).
 
 **Cross-link:** [D58](#d58--pve-first-the-operations-campaign-is-the-first-shippable-product-resolves-q5)
 (PvE-first, PvP fast-follow), [D81](#d81--play-modes-dont-funnel-through-the-gunsmith-the-gunsmith-is-loadout-customization-behind-settings)
