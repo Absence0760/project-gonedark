@@ -6,7 +6,9 @@
 > [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). The *why* behind the locked choices is
 > [D58](decisions.md)/[D59](decisions.md); why PvE-first is also the right *competitive*
 > move (ship a strong PvE product without winning the PvP-fidelity arms race) is
-> [`positioning.md`](positioning/positioning.md) §5.
+> [`positioning.md`](positioning/positioning.md) §5. What sits *beside* the campaign —
+> free-pick Skirmish and the PvP meta — is [`modes.md`](modes.md), which deliberately does
+> not restate this doc.
 
 ## 1. Why PvE exists — it teaches *going dark*
 
@@ -57,6 +59,11 @@ Borrowed from **Company of Heroes**' meta-campaign map and **Delta Force**'s rep
 - **Light narrative glue.** A short briefing frames each node (who, where, why); we are
   *not* committing to a hand-authored Halo story arc up front (depth is [Q16](open-questions.md)).
   The structure supports growing into one without rework.
+- **The conflict-atlas grouping is now data over this graph** ([D98](decisions.md)): nodes group
+  into conflict → operation → battle (`core::campaign::{Conflict, Operation}` + per-node tags and
+  derived rollups), with the shipped chain sitting in a placeholder modern conflict. The atlas
+  *presentation* (the [Q28](open-questions.md#q28--conflict-atlas) world-map/timeline shell) and
+  its roster/selection forks stay open — nothing in the hub model above changed.
 
 ## 3. Mission archetypes — the verbs
 

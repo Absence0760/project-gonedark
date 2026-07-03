@@ -96,6 +96,8 @@ enum class Difficulty {
  *
  * Mirrors `core::campaign::OperationNode`: the [prerequisites] are the unlock topology, so the moment
  * a 2nd/gated node ships the lock/unlock derivation ([CampaignProgress.progress]) is already correct.
+ * [operation] is the Q28 conflict-atlas grouping (the id of the [Operation] this battle belongs to,
+ * `null` = ungrouped) — pure metadata, mirroring the Rust field; it never affects unlock logic.
  */
 data class MissionNode(
     val id: Int,
@@ -103,6 +105,31 @@ data class MissionNode(
     val sceneToken: String,
     val briefing: String,
     val prerequisites: List<Int> = emptyList(),
+    val operation: Int? = null,
+)
+
+/**
+ * One **conflict** on the campaign atlas (Q28: conflict → operation → battle) — the Kotlin twin of
+ * `core::campaign::Conflict`. Static authored grouping data, like [campaignNodes]: never persisted,
+ * integer calendar years. The atlas *presentation* (world-map/timeline) is still an open fork (Q28);
+ * this is only the data a future atlas surface renders.
+ */
+data class Conflict(
+    val id: Int,
+    val name: String,
+    val startYear: Int,
+    val endYear: Int,
+    val summary: String,
+)
+
+/**
+ * One **operation** inside a [Conflict] — the Kotlin twin of `core::campaign::Operation`, grouping
+ * the battle nodes ([MissionNode.operation]) a player progresses through.
+ */
+data class Operation(
+    val id: Int,
+    val conflict: Int,
+    val name: String,
 )
 
 /**
@@ -270,6 +297,7 @@ val campaignNodes: List<MissionNode> = listOf(
         sceneToken = "mission1",
         briefing = "Ten of yours against a dug-in garrison. Command them — or go dark and fight one " +
             "yourself. Just don't stay blind too long.",
+        operation = 0,
     ),
     MissionNode(
         id = 1,
@@ -278,5 +306,29 @@ val campaignNodes: List<MissionNode> = listOf(
         briefing = "They're coming for your dug-in line. Fight it from cover, or embody one rifle " +
             "and hold by hand — but go dark and the line you can't see is the one that breaks.",
         prerequisites = listOf(0),
+        operation = 0,
     ),
+)
+
+/**
+ * The shipped conflict atlas, mirroring `default_campaign()`'s Q28 grouping: one **placeholder**
+ * modern fictional conflict (*The Channel Crisis* — a war the shipped US/FR roster plausibly
+ * covers; the name/framing are content, not a lock) holding one operation (*Operation First
+ * Light*) holding both [campaignNodes]. D79 mirrored constants — [CampaignModelTest] pins them
+ * against the Rust copy. Keep in lock-step with `engine::mission_registry::default_campaign()`.
+ */
+val campaignConflicts: List<Conflict> = listOf(
+    Conflict(
+        id = 0,
+        name = "The Channel Crisis",
+        startYear = 2027,
+        endYear = 2028,
+        summary = "A fictional modern flashpoint between US and French expeditionary forces " +
+            "on the Channel coast — the campaign's first (placeholder) conflict.",
+    ),
+)
+
+/** The shipped operations — see [campaignConflicts]. */
+val campaignOperations: List<Operation> = listOf(
+    Operation(id = 0, conflict = 0, name = "Operation First Light"),
 )

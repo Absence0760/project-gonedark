@@ -4356,3 +4356,40 @@ until the post-match writer for `ProfileState` lands (its documented placeholder
 divergence), [D81](#d81) (routing vocabulary), [D82](#d82) (bidirectional parity + persistence),
 [`compose-shell-parity.md`](plans/compose-shell-parity.md), `app/src/shell/{egui_shell,transitions,
 mission_select}.rs`.
+
+## D98 — The campaign carries a conflict atlas: conflict → operation → battle grouping as data (Q28's structural half)
+
+**Status: landed.** `core::campaign` gains the [Q28](open-questions.md#q28--conflict-atlas)
+hierarchy as **static authored grouping data** over the existing Operations-hub node graph:
+`Conflict` (name, integer calendar year span, atlas blurb) and `Operation` (name, owning conflict),
+with `OperationNode` gaining an optional `operation` tag (an `.in_operation` builder — no
+constructor churn). `Campaign::with_atlas` validates the authored atlas with the same
+panic-on-malformed-content discipline as `Campaign::new` (which is now just the empty-atlas case);
+the read surface adds conflict/operation accessors, `operations_in`/`nodes_in`, and derived
+`GroupProgress` rollups (cleared/total/playable — what an atlas tile renders), re-exported through
+the `core::shell` seam (D34). `default_campaign()` now groups *Seize* → *Hold* under a
+**placeholder** modern conflict (*The Channel Crisis*, 2027–2028) holding *Operation First Light*
+— per the Q28 lean (a war the shipped US/FR roster plausibly covers; the name/framing are content,
+not a lock). The Android `CampaignModel` mirror moved in lock-step (D79 discipline): the Kotlin
+`Conflict`/`Operation` twins, the mirrored constants, and a parity-pin test.
+
+**Why.** Q28's lean called this the "blocks nothing" step: the conflict-atlas fantasy (browse wars
+on a world map / time axis, fight the battles inside an operation) needs the hierarchy in the
+campaign **data** long before it needs a globe. Landing it as pure metadata now means every mission
+authored from here on lands inside a conflict/operation from day one, and the presentation can grow
+list → regional map → globe with **zero data-model rework**. It is deliberately inert where it must
+be: host-side like the rest of the campaign model (never sim state, never checksummed — invariants
+#1/#7 untouched), all-integer (years included), and the progress blob is **byte-identical** with or
+without the atlas (test-pinned), so existing saves keep applying and `PROGRESS_VERSION` does not
+bump.
+
+**What this does NOT resolve.** Q28 stays open on its real forks: the **presentation** (2.5D
+regional map lean vs. full globe — D32's native-shell posture is untouched), **per-conflict
+rosters** (fork 1), and the **conflict-selection policy** for real/recent wars (fork 3). The
+placeholder conflict is placeholder *content*, not an identity decision.
+
+**Cross-link:** [Q28](open-questions.md#q28--conflict-atlas) (partially resolved — structural half),
+[D58](#d58)/[D59](#d59) (the hub this groups over), [D79](#d79) (the Kotlin mirror discipline),
+[D83](#d83) (replay difficulty, unchanged), [`modes.md`](modes.md) §2,
+[`pve-campaign.md`](pve-campaign.md) §2, `core/src/campaign.rs`, `engine/src/mission_registry.rs`,
+`android/.../CampaignModel.kt`.

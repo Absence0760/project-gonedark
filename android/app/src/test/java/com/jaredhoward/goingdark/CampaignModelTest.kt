@@ -101,6 +101,29 @@ class CampaignModelTest {
     }
 
     @Test
+    fun campaign_atlas_mirrors_the_rust_grouping() {
+        // Pins the D79 mirror of default_campaign()'s Q28 conflict-atlas grouping: one placeholder
+        // modern conflict (The Channel Crisis) → one operation (Operation First Light) → both
+        // battles. List index == id, mirroring Rust's ConflictId(i)/OperationId(i) invariant.
+        assertEquals(1, campaignConflicts.size)
+        val conflict = campaignConflicts[0]
+        assertEquals(0, conflict.id)
+        assertEquals("The Channel Crisis", conflict.name)
+        assertEquals(2027, conflict.startYear)
+        assertEquals(2028, conflict.endYear)
+        assertTrue("year span is not inverted", conflict.startYear <= conflict.endYear)
+
+        assertEquals(1, campaignOperations.size)
+        val op = campaignOperations[0]
+        assertEquals(0, op.id)
+        assertEquals(0, op.conflict)
+        assertEquals("Operation First Light", op.name)
+
+        // Every shipped node sits in the shipped operation — the grouping is total today.
+        assertTrue(campaignNodes.all { it.operation == 0 })
+    }
+
+    @Test
     fun hold_name_and_briefing_mirror_the_rust_source_verbatim() {
         // Pins the D79 mirror against core::mission_tuning::MISSION_TWO_BRIEFING (title + situation).
         // Like the Seize node, the briefing surface shows only `situation` (not `objective_line`).

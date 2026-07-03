@@ -6,6 +6,13 @@
 //! **replay-at-higher-difficulty** support. It is the meta-progression analogue of a CoH /
 //! Delta-Force *Operations* hub ([`docs/pve-campaign.md`], D58).
 //!
+//! The graph can additionally carry a **conflict atlas** (Q28's `conflict → operation → battle`
+//! hierarchy, [`Campaign::with_atlas`]): [`Conflict`]s (a war, placed in time by integer years)
+//! containing [`Operation`]s (e.g. *Battle of Normandy*) containing battle nodes. The atlas is
+//! pure static grouping metadata over the same node graph — unlock logic, the persistence blob,
+//! and every existing surface are byte-identical with or without it; atlas *presentation* (the
+//! world-map/timeline shell) and the per-conflict roster/selection forks stay open in Q28.
+//!
 //! ## It is HOST-SIDE — never in the sim, never in the checksum (invariants #1/#7)
 //!
 //! Campaign progress is the same footing as everything else on the [`shell`](crate::shell) read
@@ -212,6 +219,96 @@ impl Difficulty {
 }
 
 // ===========================================================================
+// The conflict atlas — conflict → operation → battle grouping (Q28)
+// ===========================================================================
+
+/// A stable index for a [`Conflict`] in a [`Campaign`]. Like [`NodeId`], `ConflictId(i)` is the
+/// conflict at position `i` in the authored list — dense and deterministic.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub struct ConflictId(pub u16);
+
+impl ConflictId {
+    #[inline]
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// A stable index for an [`Operation`] in a [`Campaign`]. `OperationId(i)` is the operation at
+/// position `i` in the authored list.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub struct OperationId(pub u16);
+
+impl OperationId {
+    #[inline]
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// One **conflict** on the campaign atlas — the top of the Q28 `conflict → operation → battle`
+/// hierarchy (a war the atlas places in the world and on the time axis; e.g. a fictional modern
+/// flashpoint today, *Normandy 1944* if a historical conflict ever ships — the era/roster and
+/// presentation forks stay open in Q28).
+///
+/// This is **static authored grouping data**, exactly like the node topology: it carries no
+/// progress, is never persisted (the build re-supplies it via [`Campaign::with_atlas`]), never
+/// enters the sim, and is all-integer (calendar years, invariant #1 — no floats even in host
+/// data). Progress *rollups* over it are derived per read ([`Campaign::conflict_progress`]).
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Conflict {
+    /// This conflict's stable id (must equal its position in the authored list).
+    pub id: ConflictId,
+    /// Display name for the atlas tile (e.g. `"The Channel Crisis"`).
+    pub name: String,
+    /// First calendar year of the conflict (integer; negative = BCE).
+    pub start_year: i16,
+    /// Last calendar year, inclusive (`== start_year` for a single-year conflict).
+    pub end_year: i16,
+    /// Short atlas blurb — the who/where/why framing at the conflict level (the same light-touch
+    /// narrative register as a node briefing; Q16).
+    pub summary: String,
+}
+
+/// One **operation** inside a [`Conflict`] — the middle of the Q28 hierarchy (e.g. *Battle of
+/// Normandy*), grouping the battle nodes a player progresses through. Static authored data, same
+/// footing as [`Conflict`].
+///
+/// Naming note: [`OperationNode`] predates this vocabulary — it is one *battle* (the hub's
+/// original "Operations hub" naming, D59); an `Operation` is the *cluster* above it. The node
+/// type keeps its name so the shipped shell/mirror surfaces don't churn.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Operation {
+    /// This operation's stable id (must equal its position in the authored list).
+    pub id: OperationId,
+    /// The conflict this operation belongs to.
+    pub conflict: ConflictId,
+    /// Display name for the operation tile (e.g. `"Operation First Light"`).
+    pub name: String,
+}
+
+/// A derived clear-count rollup over a group of nodes (an operation or a whole conflict) — what an
+/// atlas tile renders ("2/5 battles", locked/in-progress/complete). Derived per read, like
+/// [`NodeProgress`]: never stored, so it can never drift from the persisted `cleared` set.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct GroupProgress {
+    /// Nodes in the group that have been cleared (at any difficulty).
+    pub cleared: u32,
+    /// Total nodes in the group.
+    pub total: u32,
+    /// Whether at least one node in the group is playable now (Available or Cleared) — the
+    /// "can the player enter this group at all" bit an atlas tile greys out on.
+    pub playable: bool,
+}
+
+impl GroupProgress {
+    /// Every node in the group cleared (and the group is non-empty).
+    pub fn is_complete(self) -> bool {
+        self.total > 0 && self.cleared == self.total
+    }
+}
+
+// ===========================================================================
 // The node graph
 // ===========================================================================
 
@@ -244,6 +341,10 @@ pub struct OperationNode {
     /// clearing the last prerequisite of a node flips it from [`NodeProgress::Locked`] to
     /// [`NodeProgress::Available`].
     pub prerequisites: Vec<NodeId>,
+    /// The [`Operation`] this battle belongs to on the conflict atlas (Q28 grouping), or `None`
+    /// for an ungrouped node (a plain [`Campaign::new`] hub with no atlas). Pure grouping
+    /// metadata — it never affects unlock logic or persistence.
+    pub operation: Option<OperationId>,
     /// Short title for the mission-select tile.
     pub title: String,
     /// Briefing copy for the briefing surface (the light narrative framing WS-E expands; here it
@@ -265,12 +366,20 @@ impl OperationNode {
             prerequisites: Vec::new(),
             title: title.into(),
             briefing: briefing.into(),
+            operation: None,
         }
     }
 
     /// Builder: gate this node behind the given prerequisite nodes (all must be cleared).
     pub fn requires(mut self, prerequisites: impl IntoIterator<Item = NodeId>) -> OperationNode {
         self.prerequisites = prerequisites.into_iter().collect();
+        self
+    }
+
+    /// Builder: place this battle in an [`Operation`] on the conflict atlas (Q28). The operation
+    /// must exist in the campaign's authored atlas — [`Campaign::with_atlas`] validates it.
+    pub fn in_operation(mut self, operation: OperationId) -> OperationNode {
+        self.operation = Some(operation);
         self
     }
 }
@@ -341,6 +450,11 @@ pub struct Campaign {
     /// cleared at best difficulty `best`. Indexed identically to `nodes`. (Unlock state is
     /// *derived* from this, not stored — see [`NodeProgress`].)
     cleared: Vec<Option<Difficulty>>,
+    /// Authored conflict atlas (Q28 grouping), indexed by `ConflictId`. Static grouping data —
+    /// never persisted (like `nodes`), never progress.
+    conflicts: Vec<Conflict>,
+    /// Authored operations, indexed by `OperationId`. Static grouping data, same footing.
+    operations: Vec<Operation>,
 }
 
 /// Version byte for the progress blob format. Bump on any layout change so an old/foreign blob is
@@ -350,11 +464,53 @@ const PROGRESS_VERSION: u8 = 1;
 impl Campaign {
     /// Build a campaign from its authored nodes, with all progress cleared (nothing cleared yet;
     /// roots [`Available`](NodeProgress::Available), the rest [`Locked`](NodeProgress::Locked)).
+    /// The campaign has an **empty atlas** — no conflicts/operations, nodes ungrouped (any node
+    /// naming an operation is rejected as out-of-range). For an atlas-grouped campaign use
+    /// [`Campaign::with_atlas`].
     ///
     /// Panics if the authoring is malformed — `nodes[i].id != NodeId(i)`, or a prerequisite names
     /// an out-of-range node. These are authoring bugs in committed content (caught by the content's
     /// own tests), not runtime conditions, so a panic is the right, loud failure.
     pub fn new(nodes: Vec<OperationNode>) -> Campaign {
+        Campaign::with_atlas(Vec::new(), Vec::new(), nodes)
+    }
+
+    /// Build an **atlas-grouped** campaign (Q28: conflict → operation → battle): the authored
+    /// conflicts and operations plus the node graph, all progress cleared. Grouping is pure
+    /// static metadata over the same node graph — unlock logic and the persistence blob are
+    /// identical to an ungrouped [`Campaign::new`] hub with the same nodes.
+    ///
+    /// Panics on malformed authoring, same discipline as [`Campaign::new`]: ids must equal list
+    /// positions, an operation's conflict and a node's operation must be in range, and a
+    /// conflict's year span must not be inverted.
+    pub fn with_atlas(
+        conflicts: Vec<Conflict>,
+        operations: Vec<Operation>,
+        nodes: Vec<OperationNode>,
+    ) -> Campaign {
+        for (i, conflict) in conflicts.iter().enumerate() {
+            assert_eq!(
+                conflict.id,
+                ConflictId(i as u16),
+                "Conflict at position {i} must have id ConflictId({i})"
+            );
+            assert!(
+                conflict.start_year <= conflict.end_year,
+                "conflict {i} has an inverted year span"
+            );
+        }
+        for (i, op) in operations.iter().enumerate() {
+            assert_eq!(
+                op.id,
+                OperationId(i as u16),
+                "Operation at position {i} must have id OperationId({i})"
+            );
+            assert!(
+                op.conflict.index() < conflicts.len(),
+                "operation {i} names out-of-range conflict {:?}",
+                op.conflict
+            );
+        }
         for (i, node) in nodes.iter().enumerate() {
             assert_eq!(
                 node.id,
@@ -367,9 +523,20 @@ impl Campaign {
                     "node {i} has out-of-range prerequisite {prereq:?}"
                 );
             }
+            if let Some(op) = node.operation {
+                assert!(
+                    op.index() < operations.len(),
+                    "node {i} names out-of-range operation {op:?}"
+                );
+            }
         }
         let cleared = vec![None; nodes.len()];
-        Campaign { nodes, cleared }
+        Campaign {
+            nodes,
+            cleared,
+            conflicts,
+            operations,
+        }
     }
 
     /// Number of nodes in the campaign.
@@ -486,6 +653,79 @@ impl Campaign {
             newly_unlocked,
             raised_difficulty,
         })
+    }
+
+    // -----------------------------------------------------------------------
+    // Conflict-atlas read surface (Q28 grouping — reached through `core::shell`)
+    // -----------------------------------------------------------------------
+
+    /// The authored conflicts, in `ConflictId` order. Empty for an ungrouped campaign.
+    pub fn conflicts(&self) -> &[Conflict] {
+        &self.conflicts
+    }
+
+    /// The authored operations, in `OperationId` order. Empty for an ungrouped campaign.
+    pub fn operations(&self) -> &[Operation] {
+        &self.operations
+    }
+
+    /// The authored conflict for an id, or `None` if out of range.
+    pub fn conflict(&self, id: ConflictId) -> Option<&Conflict> {
+        self.conflicts.get(id.index())
+    }
+
+    /// The authored operation for an id, or `None` if out of range.
+    pub fn operation(&self, id: OperationId) -> Option<&Operation> {
+        self.operations.get(id.index())
+    }
+
+    /// The operations belonging to a conflict, in authored order. Computed by scan, like
+    /// [`successors`](Campaign::successors) — the atlas is small authored data, so the model
+    /// stores no redundant reverse index to keep in sync.
+    pub fn operations_in(&self, conflict: ConflictId) -> Vec<OperationId> {
+        self.operations
+            .iter()
+            .filter(|op| op.conflict == conflict)
+            .map(|op| op.id)
+            .collect()
+    }
+
+    /// The battle nodes belonging to an operation, in authored (`NodeId`) order.
+    pub fn nodes_in(&self, operation: OperationId) -> Vec<NodeId> {
+        self.nodes
+            .iter()
+            .filter(|n| n.operation == Some(operation))
+            .map(|n| n.id)
+            .collect()
+    }
+
+    /// The derived clear-count rollup for one operation's battles — what its atlas tile renders.
+    /// An unknown id (or an operation with no nodes) rolls up to zero-total, not-playable.
+    pub fn operation_progress(&self, operation: OperationId) -> GroupProgress {
+        self.rollup(self.nodes.iter().filter(|n| n.operation == Some(operation)))
+    }
+
+    /// The derived clear-count rollup across every battle in a conflict (all its operations).
+    pub fn conflict_progress(&self, conflict: ConflictId) -> GroupProgress {
+        self.rollup(self.nodes.iter().filter(|n| {
+            n.operation
+                .and_then(|op| self.operation(op))
+                .is_some_and(|op| op.conflict == conflict)
+        }))
+    }
+
+    fn rollup<'a>(&self, nodes: impl Iterator<Item = &'a OperationNode>) -> GroupProgress {
+        let mut progress = GroupProgress::default();
+        for node in nodes {
+            progress.total += 1;
+            if self.is_cleared(node.id) {
+                progress.cleared += 1;
+            }
+            if self.progress(node.id).is_playable() {
+                progress.playable = true;
+            }
+        }
+        progress
     }
 
     // -----------------------------------------------------------------------
@@ -940,6 +1180,196 @@ mod tests {
             chain().apply_progress(&bytes),
             Err(DeserializeError::BadTag(9))
         );
+    }
+
+    // -------- the conflict atlas (Q28 grouping) --------
+
+    // Two conflicts; conflict 0 has two operations (op 0: nodes A,B; op 1: node C), conflict 1 has
+    // one empty operation (authored ahead of its battles — legal). Node D is ungrouped.
+    fn atlas() -> Campaign {
+        Campaign::with_atlas(
+            vec![
+                Conflict {
+                    id: ConflictId(0),
+                    name: "The Channel Crisis".into(),
+                    start_year: 2027,
+                    end_year: 2028,
+                    summary: "a fictional modern flashpoint".into(),
+                },
+                Conflict {
+                    id: ConflictId(1),
+                    name: "Battle of Normandy".into(),
+                    start_year: 1944,
+                    end_year: 1944,
+                    summary: "a historical conflict, content pending".into(),
+                },
+            ],
+            vec![
+                Operation {
+                    id: OperationId(0),
+                    conflict: ConflictId(0),
+                    name: "Operation First Light".into(),
+                },
+                Operation {
+                    id: OperationId(1),
+                    conflict: ConflictId(0),
+                    name: "Operation Ember".into(),
+                },
+                Operation {
+                    id: OperationId(2),
+                    conflict: ConflictId(1),
+                    name: "Pointe du Hoc".into(),
+                },
+            ],
+            vec![
+                OperationNode::new(NodeId(0), MissionId(0), "A", "").in_operation(OperationId(0)),
+                OperationNode::new(NodeId(1), MissionId(1), "B", "")
+                    .requires([NodeId(0)])
+                    .in_operation(OperationId(0)),
+                OperationNode::new(NodeId(2), MissionId(2), "C", "")
+                    .requires([NodeId(1)])
+                    .in_operation(OperationId(1)),
+                OperationNode::new(NodeId(3), MissionId(3), "D", ""),
+            ],
+        )
+    }
+
+    #[test]
+    fn atlas_grouping_reads_back_in_authored_order() {
+        let c = atlas();
+        assert_eq!(c.conflicts().len(), 2);
+        assert_eq!(c.operations().len(), 3);
+        assert_eq!(c.conflict(ConflictId(0)).unwrap().name, "The Channel Crisis");
+        assert_eq!(c.conflict(ConflictId(1)).unwrap().start_year, 1944);
+        assert_eq!(c.conflict(ConflictId(2)), None);
+        assert_eq!(c.operation(OperationId(3)), None);
+        // conflict → operations, operation → nodes, both in authored order.
+        assert_eq!(c.operations_in(ConflictId(0)), vec![OperationId(0), OperationId(1)]);
+        assert_eq!(c.operations_in(ConflictId(1)), vec![OperationId(2)]);
+        assert_eq!(c.nodes_in(OperationId(0)), vec![NodeId(0), NodeId(1)]);
+        assert_eq!(c.nodes_in(OperationId(1)), vec![NodeId(2)]);
+        // The empty (content-pending) operation and the ungrouped node both read back honestly.
+        assert_eq!(c.nodes_in(OperationId(2)), Vec::<NodeId>::new());
+        assert_eq!(c.node(NodeId(3)).unwrap().operation, None);
+    }
+
+    #[test]
+    fn atlas_rollups_track_clears_and_playability() {
+        let mut c = atlas();
+        // Fresh: op 0 has a playable root, nothing cleared; op 1 fully locked; op 2 empty.
+        assert_eq!(
+            c.operation_progress(OperationId(0)),
+            GroupProgress { cleared: 0, total: 2, playable: true }
+        );
+        assert_eq!(
+            c.operation_progress(OperationId(1)),
+            GroupProgress { cleared: 0, total: 1, playable: false }
+        );
+        assert_eq!(c.operation_progress(OperationId(2)), GroupProgress::default());
+        assert!(!c.operation_progress(OperationId(2)).is_complete(), "empty is never complete");
+        // Conflict 0 rolls up across both its operations (3 nodes; the ungrouped D is excluded).
+        assert_eq!(
+            c.conflict_progress(ConflictId(0)),
+            GroupProgress { cleared: 0, total: 3, playable: true }
+        );
+
+        // Clear A, then B: op 0 completes, and B's clear makes op 1's C playable.
+        c.clear(NodeId(0), Difficulty::Regular).unwrap();
+        c.clear(NodeId(1), Difficulty::Regular).unwrap();
+        let op0 = c.operation_progress(OperationId(0));
+        assert_eq!(op0, GroupProgress { cleared: 2, total: 2, playable: true });
+        assert!(op0.is_complete());
+        assert_eq!(
+            c.operation_progress(OperationId(1)),
+            GroupProgress { cleared: 0, total: 1, playable: true }
+        );
+        assert_eq!(
+            c.conflict_progress(ConflictId(0)),
+            GroupProgress { cleared: 2, total: 3, playable: true }
+        );
+        // The unknown-id rollup is the honest zero, same shape as the empty operation.
+        assert_eq!(c.operation_progress(OperationId(99)), GroupProgress::default());
+        assert_eq!(c.conflict_progress(ConflictId(99)), GroupProgress::default());
+    }
+
+    #[test]
+    fn atlas_is_pure_metadata_over_the_same_graph() {
+        // Same nodes, with and without the atlas: unlock behavior and the persistence blob are
+        // byte-identical — grouping can never perturb progress or the blob format.
+        let mut grouped = atlas();
+        let ungrouped_nodes: Vec<OperationNode> = (0..4)
+            .map(|i| {
+                let n = grouped.node(NodeId(i)).unwrap();
+                let mut plain = OperationNode::new(n.id, n.mission, n.title.clone(), n.briefing.clone());
+                plain.prerequisites = n.prerequisites.clone();
+                plain
+            })
+            .collect();
+        let mut ungrouped = Campaign::new(ungrouped_nodes);
+
+        grouped.clear(NodeId(0), Difficulty::Elite).unwrap();
+        ungrouped.clear(NodeId(0), Difficulty::Elite).unwrap();
+        assert_eq!(grouped.serialize_progress(), ungrouped.serialize_progress());
+        // Blobs cross-apply: an ungrouped blob restores onto the grouped campaign and vice versa.
+        let mut fresh = atlas();
+        fresh.apply_progress(&ungrouped.serialize_progress()).unwrap();
+        assert_eq!(fresh.best_cleared(NodeId(0)), Some(Difficulty::Elite));
+    }
+
+    #[test]
+    #[should_panic(expected = "must have id ConflictId")]
+    fn atlas_rejects_misnumbered_conflict() {
+        Campaign::with_atlas(
+            vec![Conflict {
+                id: ConflictId(1), // wrong: position 0
+                name: String::new(),
+                start_year: 0,
+                end_year: 0,
+                summary: String::new(),
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "inverted year span")]
+    fn atlas_rejects_inverted_years() {
+        Campaign::with_atlas(
+            vec![Conflict {
+                id: ConflictId(0),
+                name: String::new(),
+                start_year: 1945,
+                end_year: 1944,
+                summary: String::new(),
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "out-of-range conflict")]
+    fn atlas_rejects_operation_with_unknown_conflict() {
+        Campaign::with_atlas(
+            Vec::new(),
+            vec![Operation {
+                id: OperationId(0),
+                conflict: ConflictId(0), // no conflicts authored
+                name: String::new(),
+            }],
+            Vec::new(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "out-of-range operation")]
+    fn atlas_rejects_node_with_unknown_operation() {
+        // Also covers plain `Campaign::new`: it is `with_atlas` with an empty atlas, so a grouped
+        // node there is rejected the same way.
+        Campaign::new(vec![
+            OperationNode::new(NodeId(0), MissionId(0), "A", "").in_operation(OperationId(0)),
+        ]);
     }
 
     #[test]

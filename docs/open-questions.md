@@ -710,7 +710,13 @@ already platform-neutral and would extend cleanly; the only real work is the PAL
 
 ---
 
-## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? <a id="q28--conflict-atlas"></a>
+## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md): the grouping is landed data; presentation/roster/selection forks open) <a id="q28--conflict-atlas"></a>
+
+> **Structural half resolved in [D98](decisions.md):** the conflict → operation → battle hierarchy
+> now exists as static authored data in `core::campaign` (`Conflict`/`Operation` + node tags +
+> derived `GroupProgress` rollups), and `default_campaign()` ships grouped under a placeholder
+> modern conflict. The three forks below — presentation (globe vs. regional map), per-conflict
+> factions, and the conflict-selection policy — are **still open**; the lean stands.
 
 Proposal (2026-07-03): the campaign presents as a **navigable world map with a time axis** — pick a
 year, see that era's conflicts on the globe, zoom into one, and play its battles. Era-agnostic by

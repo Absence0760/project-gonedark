@@ -31,7 +31,8 @@
 //! state.
 
 use gonedark_core::campaign::{
-    Campaign, Difficulty as ReplayTier, MissionId, NodeId, OperationNode,
+    Campaign, Conflict, ConflictId, Difficulty as ReplayTier, MissionId, NodeId, Operation,
+    OperationId, OperationNode,
 };
 use gonedark_core::ecs::Entity;
 use gonedark_core::gunsmith::Loadout;
@@ -246,22 +247,47 @@ pub fn default_registry() -> MissionRegistry {
 /// hand-maintained Android `CampaignModel` mirror moves in lock-step (`compose-shell-parity.md`).
 /// Every node's [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`] holds —
 /// a test pins it), so launching any playable node always resolves to a runnable mission.
+///
+/// The graph now carries the **conflict atlas** grouping (Q28: conflict → operation → battle):
+/// both battles sit in *Operation First Light* inside *The Channel Crisis* — the **placeholder**
+/// modern fictional conflict the Q28 lean calls for (a war the shipped US/FR roster plausibly
+/// covers; name and framing are content, not a lock). Pure grouping metadata over the same chain —
+/// unlock behavior, progress persistence, and every shell surface are unchanged (a test pins the
+/// blob byte-identical); the atlas *presentation* (world-map/timeline) stays open in Q28.
 pub fn default_campaign() -> Campaign {
-    Campaign::new(vec![
-        OperationNode::new(
-            NodeId(0),
-            MISSION_SEIZE,
-            MISSION_ONE_BRIEFING.title,
-            MISSION_ONE_BRIEFING.situation,
-        ),
-        OperationNode::new(
-            NodeId(1),
-            MISSION_HOLD,
-            MISSION_TWO_BRIEFING.title,
-            MISSION_TWO_BRIEFING.situation,
-        )
-        .requires([NodeId(0)]),
-    ])
+    Campaign::with_atlas(
+        vec![Conflict {
+            id: ConflictId(0),
+            name: "The Channel Crisis".to_string(),
+            start_year: 2027,
+            end_year: 2028,
+            summary: "A fictional modern flashpoint between US and French expeditionary forces \
+                      on the Channel coast — the campaign's first (placeholder) conflict."
+                .to_string(),
+        }],
+        vec![Operation {
+            id: OperationId(0),
+            conflict: ConflictId(0),
+            name: "Operation First Light".to_string(),
+        }],
+        vec![
+            OperationNode::new(
+                NodeId(0),
+                MISSION_SEIZE,
+                MISSION_ONE_BRIEFING.title,
+                MISSION_ONE_BRIEFING.situation,
+            )
+            .in_operation(OperationId(0)),
+            OperationNode::new(
+                NodeId(1),
+                MISSION_HOLD,
+                MISSION_TWO_BRIEFING.title,
+                MISSION_TWO_BRIEFING.situation,
+            )
+            .requires([NodeId(0)])
+            .in_operation(OperationId(0)),
+        ],
+    )
 }
 
 // ================= CT-D — data-backed registry + between-match content hot-reload ================
@@ -691,6 +717,54 @@ mod tests {
         campaign.clear(NodeId(1), CampaignDifficulty::Veteran).unwrap();
         assert!(matches!(campaign.progress(NodeId(1)), NodeProgress::Cleared { .. }));
         assert_eq!(reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id), Some(MISSION_HOLD));
+    }
+
+    /// The shipped graph carries the Q28 conflict-atlas grouping: one placeholder modern conflict
+    /// (*The Channel Crisis*) holding one operation (*Operation First Light*) holding both battles
+    /// — and the grouping is pure metadata (the progress blob is byte-identical to the same chain
+    /// ungrouped, so existing saves keep applying).
+    #[test]
+    fn default_campaign_is_grouped_under_the_placeholder_conflict() {
+        let mut campaign = default_campaign();
+
+        // One conflict, one operation, correctly linked, integer years (the Q28 lean: a modern
+        // fictional conflict the shipped US/FR roster plausibly covers).
+        assert_eq!(campaign.conflicts().len(), 1);
+        assert_eq!(campaign.operations().len(), 1);
+        let conflict = campaign.conflict(ConflictId(0)).unwrap();
+        assert_eq!(conflict.name, "The Channel Crisis");
+        assert!(conflict.start_year >= 2020, "the placeholder conflict is modern (Q28 lean)");
+        let op = campaign.operation(OperationId(0)).unwrap();
+        assert_eq!(op.conflict, ConflictId(0));
+        assert_eq!(campaign.operations_in(ConflictId(0)), vec![OperationId(0)]);
+
+        // Both battles sit in the operation; the rollup tracks the chain end-to-end.
+        assert_eq!(campaign.nodes_in(OperationId(0)), vec![NodeId(0), NodeId(1)]);
+        let fresh = campaign.operation_progress(OperationId(0));
+        assert_eq!((fresh.cleared, fresh.total, fresh.playable), (0, 2, true));
+        campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
+        campaign.clear(NodeId(1), CampaignDifficulty::Recruit).unwrap();
+        assert!(campaign.operation_progress(OperationId(0)).is_complete());
+        assert!(campaign.conflict_progress(ConflictId(0)).is_complete());
+
+        // Pure metadata: the progress blob matches the same chain built with no atlas — the
+        // grouping cannot invalidate existing saves or change the persisted format.
+        let ungrouped = Campaign::new(vec![
+            OperationNode::new(
+                NodeId(0),
+                MISSION_SEIZE,
+                MISSION_ONE_BRIEFING.title,
+                MISSION_ONE_BRIEFING.situation,
+            ),
+            OperationNode::new(
+                NodeId(1),
+                MISSION_HOLD,
+                MISSION_TWO_BRIEFING.title,
+                MISSION_TWO_BRIEFING.situation,
+            )
+            .requires([NodeId(0)]),
+        ]);
+        assert_eq!(default_campaign().serialize_progress(), ungrouped.serialize_progress());
     }
 
     /// The shipped 2-node graph round-trips through the host progress blob (a cleared Seize survives

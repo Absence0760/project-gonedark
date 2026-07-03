@@ -130,7 +130,12 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
   behind Seize), resolved to runnable missions by `default_registry()` and launched into the right
   scene by `Scene::for_mission` (Seize → `Mission1`, Hold → `Mission2`) — wired on both the desktop
   shell (`app/src/main.rs`) and the Android backend (`pal-android/src/android_backend.rs`), with the
-  Android `CampaignModel` Kotlin mirror kept in lock-step.
+  Android `CampaignModel` Kotlin mirror kept in lock-step. **The graph now also carries the Q28
+  conflict-atlas grouping** ([D98](../decisions.md)): `Conflict`/`Operation` structs + per-node tags
+  and derived `GroupProgress` rollups in `core::campaign`, with the shipped chain grouped under a
+  placeholder modern conflict (*The Channel Crisis* / *Operation First Light*) — pure static
+  metadata (progress blob byte-identical, test-pinned); the atlas *presentation* stays open in
+  [Q28](../open-questions.md#q28--conflict-atlas).
 - Mission-select + briefing surface in the **native shell** ([D32](../decisions.md)) reached through
   the `core::shell` seam ([D34](../decisions.md)); progress persisted **outside** the checksum fold as
   **a separate host file** (campaign metadata, not sim state) — the host-side content model

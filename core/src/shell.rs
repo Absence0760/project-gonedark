@@ -588,8 +588,9 @@ pub fn resolve_select_army(
 // rationale and the **WS-A integration seam** ([`MissionId`] is opaque until the mission/objective
 // core lands).
 pub use crate::campaign::{
-    Briefing, Campaign, CampaignError, ClearOutcome, Difficulty, MissionId, MissionSelectEntry,
-    NodeId, NodeProgress, OperationNode,
+    Briefing, Campaign, CampaignError, ClearOutcome, Conflict, ConflictId, Difficulty,
+    GroupProgress, MissionId, MissionSelectEntry, NodeId, NodeProgress, Operation, OperationId,
+    OperationNode,
 };
 
 #[cfg(test)]
