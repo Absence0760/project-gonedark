@@ -1906,6 +1906,16 @@ impl Scene {
     pub fn teaches_going_dark(self) -> bool {
         matches!(self, Scene::Skirmish | Scene::Mission1 | Scene::Mission2 | Scene::Mission3)
     }
+
+    /// Whether this scene is an authored **campaign mission** — the [`for_mission`](Scene::for_mission)
+    /// range: a scene a campaign-launch wire may target and a win may record a clear against. The
+    /// host-tested seam behind the Android glue's campaign-launch gate (`build_match_game`), which
+    /// previously hand-matched the mission scenes and silently missed `Mission3` when Push shipped —
+    /// a Break-the-Line win recorded no clear. Pinned by a test against `for_mission` so a fourth
+    /// mission can't reopen that gap.
+    pub fn is_campaign_mission(self) -> bool {
+        matches!(self, Scene::Mission1 | Scene::Mission2 | Scene::Mission3)
+    }
 }
 
 /// Seed the **Phase 2 demo skirmish** and return `(player, start_embodied)`: two rifle squads, a
@@ -4890,6 +4900,26 @@ mod tests {
         assert!(!Scene::Duel.teaches_going_dark());
         assert!(!Scene::Infantry.teaches_going_dark());
         assert!(!Scene::MapInspect.teaches_going_dark());
+    }
+
+    /// `is_campaign_mission` must cover exactly the `for_mission` range — every scene a registered
+    /// mission resolves to, and nothing else. Regression guard for the Android campaign-launch gate
+    /// hand-matching `Mission1 | Mission2` and silently dropping `Mission3` when Push shipped (a
+    /// Break-the-Line win recorded no clear); deriving the pin from the registry means a fourth
+    /// mission that forgets to extend the gate fails here, not in the field.
+    #[test]
+    fn campaign_mission_scenes_are_exactly_the_for_mission_range() {
+        use crate::mission_registry::{MISSION_HOLD, MISSION_PUSH, MISSION_SEIZE};
+        // Every registered mission's scene reads as a campaign mission.
+        for mission in [MISSION_SEIZE, MISSION_HOLD, MISSION_PUSH] {
+            let scene = Scene::for_mission(mission).expect("registered mission has a scene");
+            assert!(scene.is_campaign_mission(), "{scene:?} must gate as a campaign launch");
+        }
+        // Nothing else does — a skirmish or sandbox launch must never record a clear.
+        for scene in [Scene::Default, Scene::Skirmish, Scene::Duel, Scene::Infantry, Scene::MapInspect]
+        {
+            assert!(!scene.is_campaign_mission(), "{scene:?} must not gate as a campaign launch");
+        }
     }
 
     /// The CP-7 wiring, end to end at the seam `Game::frame` drives: a scene-gated `Onboarding`

@@ -59,6 +59,20 @@ class MissionLaunchTest {
     }
 
     @Test
+    fun every_campaign_node_token_is_one_the_engine_understands() {
+        // The stale-guard regression: KNOWN_SCENE_TOKENS once stopped at mission1/seize, so the
+        // Hold/Push tokens were unguarded — and the engine glue's campaign gate silently missed
+        // Mission3 (a Break-the-Line win recorded no clear). The set now mirrors Scene::parse in
+        // full; every shipped node's token must be in it.
+        for (node in campaignNodes) {
+            assertTrue(
+                "token ${node.sceneToken} of ${node.name} must be engine-known",
+                node.sceneToken in KNOWN_SCENE_TOKENS,
+            )
+        }
+    }
+
+    @Test
     fun difficulty_threads_as_the_diff_tier_for_every_tier() {
         val seize = campaignNodes.first()
         for (tier in Difficulty.entries) {

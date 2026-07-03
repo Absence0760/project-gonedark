@@ -576,10 +576,12 @@ fn build_match_game(
     );
     // Campaign-launch path (Compose parity C4): resolve the node through the SHARED registry seam and
     // apply the chosen replay tier's combat tuning via the SHARED `apply_campaign_tuning` (D83 — both
-    // the 4→3 commander band and the situation modifiers), exactly as the desktop host does. Both
-    // campaign scenes take this path (Seize → Mission1, gated Hold → Mission2).
+    // the 4→3 commander band and the situation modifiers), exactly as the desktop host does. Every
+    // campaign scene takes this path (Seize → Mission1, gated Hold → Mission2, Push → Mission3) —
+    // the gate is the host-tested `Scene::is_campaign_mission`, not a hand-kept match (the old
+    // `Mission1 | Mission2` match silently dropped Mission3's clear recording when Push shipped).
     let mut campaign_launch = None;
-    if matches!(scene, Scene::Mission1 | Scene::Mission2) {
+    if scene.is_campaign_mission() {
         let node = NodeId(launch.node);
         let campaign = gonedark_engine::mission_registry::default_campaign();
         let registry = gonedark_engine::mission_registry::default_registry();

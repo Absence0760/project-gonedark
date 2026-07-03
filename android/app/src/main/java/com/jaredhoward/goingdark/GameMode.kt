@@ -25,9 +25,18 @@ data class GameMode(
 /**
  * The scene tokens `engine::lib::Scene::parse` accepts — the guard the [GameModeTest] checks every
  * [GameMode] against so a typo (e.g. `"skrimish"`) can't ship an un-launchable mode tile. Kept in
- * step with the Rust `Scene::parse` match by hand (D79), like the rest of the shell's pure seams.
+ * step with the Rust `Scene::parse` match by hand (D79), like the rest of the shell's pure seams —
+ * the **full** token set, so the campaign nodes' tokens (`mission2`/`mission3`) are guarded too.
  */
-val KNOWN_SCENE_TOKENS = setOf("skirmish", "match", "infantry", "mission1", "seize")
+val KNOWN_SCENE_TOKENS = setOf(
+    "default", "demo",
+    "skirmish", "match",
+    "duel", "infantry",
+    "mission1", "seize",
+    "mission2", "hold",
+    "mission3", "push",
+    "map", "inspect", "pointe",
+)
 
 /**
  * The modes offered on the Skirmish/PvP picker today: the two standing battle scenes. Skirmish is the open
