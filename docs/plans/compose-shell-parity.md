@@ -7,9 +7,14 @@
 > Compose shell is now at **feature + value parity** with the desktop egui shell
 > ([D36](../decisions.md)) across every shipped out-of-match surface. The Android campaign
 > progress/unlock model has since landed and closed end-to-end (2026-07-03: every playable node —
-> root or gated — launches through the wire; §12 item 1). What remains is **structural**
-> (desktop-side shell-pref persistence) and **blocked**
-> (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) — tracked in §12. Scope is
+> root or gated — launches through the wire; §12 item 1). A 2026-07-03 re-audit closed the other
+> two structural items too: **desktop shell-pref persistence shipped** (`92f5fc3` → the
+> `app/src/shell/persist.rs` codec; §12 item 2), and the **briefing-difficulty + look-sensitivity
+> wires are consumed end-to-end** on Android (`bec478e`/`ae32cbd`; §12 item 3, §5). What remains is
+> **blocked** (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) plus **one
+> newly-found structural gap**: the [D85](../decisions.md) Stock/Muzzle gunsmith slots are
+> desktop-only — absent from the Android gunsmith/wire/prefs, and not persisted across a desktop
+> restart either (§12 item 5, the one caveat on "every shipped surface" above). Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
 
@@ -131,12 +136,19 @@ the JNI reader.
 > seam, labels verbatim from `core::gunsmith`) and the Operations-hub **mission-select + briefing**
 > (the single "Seize the Outpost" node → `mission1`, with a difficulty cycler) ship. Campaign opens
 > mission-select → briefing → gunsmith → Deploy into `mission1` with the chosen loadout; SKIRMISH/PvP open
-> the gunsmith and Deploy into Skirmish. The engine now **fully consumes** the wire loadout
-> (`new_scene_with_loadout`) and audio gains. **Owed:** the briefing's **difficulty** (needs a `diff`
-> wire key + mission-tuning plumbing) and **look-sensitivity** (the Android look delta is derived in
-> `engine::touch_controls`, not scalable at the PAL boundary) — both shown/carried but not yet applied
-> on Android. **Persistence:** Settings/Profile/loadout now survive restarts via `ShellPrefs`
-> (SharedPreferences). **Update:** the shipped campaign is now the **three-node chain** *Seize* →
+> the gunsmith and Deploy into Skirmish. (Since [D81](../decisions.md) the gunsmith is
+> customization-only behind Settings on both shells; briefing/mode-select Deploy boots directly with
+> the *persisted* loadout — `MainActivity.kt:186-187`, `:218-225`.) The engine now **fully consumes**
+> the wire loadout (`new_scene_with_loadout`) and audio gains. **Owed — both since closed
+> (2026-07-03 re-audit; wire traces in §12 item 3):** the briefing's **difficulty** (the `diff` wire
+> key ships and drives the fight via `Difficulty::from_tier` → the shared `apply_campaign_tuning`,
+> [D83](../decisions.md)) and **look-sensitivity** (the "not scalable at the PAL boundary" objection
+> was solved with a `Game` setter instead: the launch `sens`/`invy` values reach
+> `engine::touch_controls::set_look_prefs` every frame) — at the time of writing both were
+> shown/carried but not applied; **both now are**. **Persistence:** Settings/Profile/loadout now
+> survive restarts via `ShellPrefs` (SharedPreferences) — since extended to the army pick + the
+> campaign cleared set (`ShellPrefsCodec.KEY_ARMY`/`KEY_CAMPAIGN`), and desktop has since landed its
+> own twin (§12 item 2). **Update:** the shipped campaign is now the **three-node chain** *Seize* →
 > *Hold* → *Push* on both the shared model (`engine::default_campaign()`) and the Android
 > `CampaignModel` mirror, with the node→scene launch mapping (`Scene::for_mission`) wired through
 > the backend, and the Compose mission-select tiles now render **and launch every playable node**
@@ -268,8 +280,9 @@ the checksum matrix is unaffected.
 
 ### Structural parity items still open (need a design call — *not* a mirror tweak)
 
-These are deliberately **not** done — each is a chunk of real work, and two are symmetric gaps where
-each platform is missing the *other's* state:
+These were deliberately **not** done in the sweep — each a chunk of real work. A **2026-07-03
+re-audit** then verified items 1–3 closed in code (evidence inline below), item 4 remains a
+deliberate UX fork, and item 5 is a new gap the re-audit found:
 
 1. **Campaign progress model — ✅ CLOSED (2026-07-03).** `CampaignModel.kt` carries the full
    `CampaignProgress`/`NodeProgress` (Locked/Available/Cleared) derivation, the clear gate,
@@ -287,13 +300,54 @@ each platform is missing the *other's* state:
    JVM — per-node scene/index resolution, the `mission2`/`node=1` wire round trip, and the full
    launch → win-code → record-on-win → persistence loop for the gated Hold node — so a future node
    can't silently regress to the root.
-2. **Desktop doesn't persist shell prefs.** Settings/Profile/loadout are in-memory only on desktop and
-   lost on exit; only `campaign.dat` (campaign progress) persists. **Android is ahead here** — it
-   round-trips all three via `ShellPrefs`. The two shells persist *disjoint* state.
-3. **Look-sensitivity / briefing-difficulty are carried but inert on Android** — already tracked as
-   "owed" in [§5](#5--tier-2--buildable-once-tier-0-lands-config-seam-blocked-not-netcode-blocked)
-   (the look delta lives in `engine::touch_controls`, not scalable at the PAL boundary; difficulty
-   needs a `diff` wire key + mission-tuning plumbing).
+2. **Desktop doesn't persist shell prefs — ✅ CLOSED (verified 2026-07-03; landed `92f5fc3`
+   2026-06-30, the same day this sweep was written).** The full round trip ships: the tolerant
+   `key=value` codec `encode_shell_prefs`/`decode_shell_prefs` (`app/src/shell/persist.rs:45`/`:96`
+   — pure, round-trip-tested in `app/src/shell/tests.rs`; split out of `shell.rs` by `8df9610`),
+   loaded once at `App` init (`app/src/main.rs:195` → `load_shell_prefs`, `:1147`) and saved on
+   leaving any screen that edits the state — Settings / Profile / Loadout / ArmySelect
+   (`app/src/main.rs:685-692` → `persist_shell_prefs`, `:1169-1181`, best-effort like
+   `campaign.dat`). Coverage **meets or exceeds** Android's `ShellPrefs`: settings (audio, sens,
+   invert-Y, plus desktop-only fov / CVD palette / alert-cue mode / keybind map), profile
+   (callsign/faction/record), loadout, and the army pick (`1ce01cb`); campaign progress still rides
+   `campaign.dat` separately. **One residual hole (open, folded into item 5):** the encode blob
+   writes only optic/barrel/magazine (`persist.rs:57-88`) while decode also reads the D85
+   stock/muzzle keys (`persist.rs:155-162`) — [D85](../decisions.md) (2026-07-01) postdates the
+   codec, and the encode was never extended — so a customized Stock/Muzzle silently resets on a
+   desktop restart, and no test pins those two slots.
+3. **Look-sensitivity / briefing-difficulty are carried but inert on Android — ✅ CLOSED (verified
+   2026-07-03; landed `ae32cbd` 2026-06-30 / `bec478e` 2026-07-01).** Both wires now run
+   end-to-end:
+   - **Difficulty:** the briefing cycler threads the tier into the launch
+     (`MainActivity.kt:225` → `missionLaunchConfig`, `MissionLaunch.kt:72`: `diff =
+     difficulty.tier()`) → the `diff=` wire key (`LaunchConfig.kt:80`; parsed + clamped
+     `pal-android/src/launch.rs:180`) → the android glue maps it back
+     (`Difficulty::from_tier(launch.diff)`) and applies its combat tuning through the **shared**
+     `Game::apply_campaign_tuning` (`pal-android/src/android_backend.rs:584-585` —
+     [D83](../decisions.md), resolving Q21: the tier both drives the fight and is what the
+     win-result code records the clear at, `launch.rs:292`).
+   - **Look-sensitivity:** Settings `sensX100`/`invertY` thread every launch
+     (`MissionLaunch.kt:42-43`) → the `sens=`/`invy=` keys (`LaunchConfig.kt:78-79`; parsed
+     `launch.rs:178-179`) → seeded at boot (`android_backend.rs:152-155`,
+     `input.set_look_prefs(sens_x100_to_f32(…), invert_y)`) → pushed into the engine each frame
+     (`android_backend.rs:330`, `game.set_touch_look_prefs(…)` → `engine/src/lib.rs:2631` →
+     `engine::touch_controls::set_look_prefs`, `touch_controls.rs:396`, unit-tested
+     `:1019-1059`). The original objection — the look delta is derived inside
+     `engine::touch_controls`, not scalable at the PAL boundary — was answered with a `Game`
+     setter rather than `InputFrame` scaling.
 4. **Inverted About entry point** — desktop reaches About from inside Settings (`SettingsAction::About`);
    Android surfaces it as a "FIELD MANUAL" button on the title. A deliberate [D78](../decisions.md) UX
-   choice; left as-is, noted so it isn't mistaken for a regression.
+   choice; left as-is, noted so it isn't mistaken for a regression. (Re-verified 2026-07-03:
+   `app/src/shell/settings.rs:208`, `TitleScreen.kt:142`.)
+5. **D85 gunsmith breadth is desktop-only — OPEN (found by the 2026-07-03 re-audit).**
+   [D85](../decisions.md) (2026-07-01) made **Stock + Muzzle** real sim sidegrade slots, and the
+   desktop gunsmith cycles all five (`engine/src/loadout_ui.rs:160-171`). Android never caught up:
+   `LoadoutSelection`/`GunsmithScreen` carry only optic/barrel/magazine, the launch wire has **no**
+   stock/muzzle keys (`pal-android/src/launch.rs` `opt`/`bar`/`mag` only; ditto
+   `LaunchConfig.kt` — the glue itself says so and defaults both slots to Standard,
+   `android_backend.rs:549-556`), and `ShellPrefsCodec` has no stock/muzzle keys either — zero
+   references in the Android sources. So a D85 sidegrade can't be picked, fielded, or persisted on Android — a
+   real value-level divergence in **sim-affecting** loadout slots, not chrome. Desktop's own
+   persist encode also omits the two slots (item 2's residual hole). Closing it needs the Compose
+   slots + two new wire keys (`stk=`/`muz=`, tolerant-decoded so old emitters stay valid) + the two
+   prefs keys + the desktop encode fix, each with the usual pinned tests.
