@@ -229,6 +229,9 @@ fn shell_screens_to_png() {
     shoot(&device, &queue, &format!("{dir}/mode_select.png"), |ui| {
         mode_select_ui(ui);
     });
+    shoot(&device, &queue, &format!("{dir}/skirmish_setup.png"), |ui| {
+        skirmish_setup_ui(ui, &SkirmishSetupState::default());
+    });
     shoot(&device, &queue, &format!("{dir}/loadout.png"), |ui| {
         loadout_ui(ui, &loadout);
     });

@@ -2,6 +2,7 @@
 //! pure run-loop decision surface, unit-tested with no window. [`EguiShell`](super::egui_shell)
 //! reports a [`TitleAction`]; the run loop switches on the [`HostTransition`] it maps to.
 
+use crate::shell::skirmish::SkirmishConfig;
 use gonedark_core::campaign::{Difficulty, NodeId};
 
 /// A top-level action the player can pick on the title screen. The three play modes all open the
@@ -58,6 +59,17 @@ pub(crate) enum HostTransition {
     /// (the gunsmith no longer gates play — it moved behind Settings). No data: the mode table is the
     /// static [`gonedark_engine::shell_modes::SHELL_GAME_MODES`].
     OpenModeSelect,
+    /// Switch the host to the **skirmish match-setup** screen (`modes.md` §3) — the free-pick PvE
+    /// deploy gate behind the title's SKIRMISH button: battlefield, both armies, and the opponent
+    /// tier, then Deploy. No data: the config lives on the host (`App::skirmish`), re-seeded from
+    /// the persisted army pick when the screen opens.
+    OpenSkirmishSetup,
+    /// Boot the configured skirmish (`modes.md` §3): the setup screen's DEPLOY, carrying the
+    /// resolved [`SkirmishConfig`] the host fields through the landed pre-tick seams
+    /// (`new_scene_with_loadout` + `select_army` for both sides + `apply_campaign_tuning`). The
+    /// config is also remembered across the match (`App::active_skirmish`) so REMATCH re-boots the
+    /// same fight.
+    LaunchSkirmish(SkirmishConfig),
     /// Switch the host to the **Operations-hub mission-select** screen — the PvE campaign entry
     /// (`docs/pve-campaign.md`, D58). Reached from the title's CAMPAIGN button; the player picks a
     /// node tile there, which opens its [`OpenBriefing`](HostTransition::OpenBriefing).
@@ -112,10 +124,14 @@ pub(crate) fn resolve_title_action(action: TitleAction) -> HostTransition {
         // one hop shorter. Reusing OpenBriefing wholesale (same difficulty seeding, same BACK
         // target) means the shortcut can never diverge from the canonical hub path.
         TitleAction::ContinueCampaign(node) => HostTransition::OpenBriefing(node),
-        // PvE/PvP open the mode/map select (D81) — the deploy gate that boots the chosen scene with
-        // the persisted loadout. The gunsmith no longer gates play (it moved behind Settings). PvE
-        // and PvP share the picker until PvP match-setup lands (Q5).
-        TitleAction::Pve | TitleAction::Pvp => HostTransition::OpenModeSelect,
+        // SKIRMISH opens the skirmish match-setup screen (`modes.md` §3, build-order step 1) — the
+        // free-pick deploy gate: battlefield, both armies, opponent tier, then Deploy with the
+        // persisted loadout (D81: the gunsmith stays customization-only behind Settings).
+        TitleAction::Pve => HostTransition::OpenSkirmishSetup,
+        // PvP keeps the lightweight mode/map picker until its own match-setup lands (`modes.md` §5
+        // steps 2–4 are Q5/Phase-3-gated) — it still boots a local match today, so the door stays
+        // functional rather than dead.
+        TitleAction::Pvp => HostTransition::OpenModeSelect,
         TitleAction::Settings => HostTransition::OpenSettings,
         TitleAction::Profile => HostTransition::OpenProfile,
         // The ARMY chip opens the army-select screen (US vs FR); the confirmed pick routes through
