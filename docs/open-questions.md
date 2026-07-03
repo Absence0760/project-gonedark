@@ -722,7 +722,7 @@ surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.m
 
 ---
 
-## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md): the grouping is landed data; presentation/roster/selection forks open) <a id="q28--conflict-atlas"></a>
+## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md) data; [D104](decisions.md) fork 2 resolved for desktop; roster/selection forks open) <a id="q28--conflict-atlas"></a>
 
 > **Structural half resolved in [D98](decisions.md):** the conflict → operation → battle hierarchy
 > now exists as static authored data in `core::campaign` (`Conflict`/`Operation` + node tags +
@@ -730,9 +730,12 @@ surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.m
 > modern conflict. **A presentation *increment* landed in [D103](decisions.md):** the desktop hub
 > draws over a live engine-rendered **atlas globe** (Natural Earth land, one pin per conflict at
 > authored `lat_x10`/`lon_x10` anchors, settled on the conflict being fought) — the backdrop step
-> of the "grow list → map/globe without rework" path, deliberately **not** the interactive
-> endstate. The three forks below — presentation *endstate* (navigable globe vs. regional map),
-> per-conflict factions, and the conflict-selection policy — are **still open**; the lean stands.
+> of the "grow list → map/globe without rework" path. **[D104](decisions.md) then closed fork 2
+> for the desktop as (a), the full navigable globe**: drag/zoom, a year scrubber (out-of-era
+> conflicts dim), pin-click → the conflict's filtered hub. Forks 1 (per-conflict factions) and
+> 3 (conflict-selection policy) are **still open**, as is Android's presentation (deliberately
+> the grouped list until the Compose shell earns an engine surface or a 2.5D map — the D103/D104
+> recorded fork); the leans on the open forks stand.
 
 Proposal (2026-07-03): the campaign presents as a **navigable world map with a time axis** — pick a
 year, see that era's conflicts on the globe, zoom into one, and play its battles. Era-agnostic by
@@ -761,7 +764,7 @@ engine renderer in the out-of-match shell or building 3D navigation natively, tw
 
 | Option | For | Against |
 |---|---|---|
-| **(a) Full 3D globe** | The headline fantasy | Reopens/strains [D32](decisions.md); globe navigation is fiddly on a phone |
+| **(a) Full 3D globe** — ✅ **shipped on desktop ([D104](decisions.md))** | The headline fantasy | The D32 strain dissolved on desktop (D103's backdrop pattern); phone navigation stays the open Android cost |
 | **(b) 2.5D regional map per conflict** (CoH-style meta-map; zoom-in transition to the match) | ~90% of the fantasy; fits the native hub; thumb-friendly | Not literally a globe |
 | **(c) Timeline + styled map art** | Cheapest; ships now | Reads as a menu, not a world |
 
@@ -777,10 +780,11 @@ via the [D68](decisions.md) template). Getting the conflict→operation→battle
 campaign *data* early is cheap; the presentation can then grow list → regional map → globe without
 rework.
 
-**Current lean:** adopt **conflict → operation → battle as data over the existing hub** now (pure
-grouping, nothing reopens); first shippable conflict is a **modern** one the shipped US/FR roster
-plausibly covers (fork 1(c)); presentation starts at **(b) a 2.5D regional map per conflict**, with
-the globe deferred as a later polish pass rather than a foundation; per-conflict rosters and the
+**Current lean (updated post-D104):** the data grouping (D98) and the desktop presentation
+(D104: the full navigable globe) are **decided and shipped**. What remains: first shippable
+conflict stays a **modern** one the shipped US/FR roster plausibly covers (fork 1(c)); **Android's
+presentation** keeps the grouped list until its own call (an engine surface in the Compose shell
+vs. a native 2.5D regional map — the phone half of the old fork 2); per-conflict rosters and the
 conflict-selection policy must be decided **before a second, historical conflict ships**.
 Cross-link: [D58](decisions.md)/[D59](decisions.md), [D68](decisions.md)/[D71](decisions.md),
 [D32](decisions.md), [D76](decisions.md), [D80](decisions.md),

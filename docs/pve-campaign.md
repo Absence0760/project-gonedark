@@ -61,9 +61,14 @@ Borrowed from **Company of Heroes**' meta-campaign map and **Delta Force**'s rep
   The structure supports growing into one without rework.
 - **The conflict-atlas grouping is now data over this graph** ([D98](decisions.md)): nodes group
   into conflict → operation → battle (`core::campaign::{Conflict, Operation}` + per-node tags and
-  derived rollups), with the shipped chain sitting in a placeholder modern conflict. The atlas
-  *presentation* (the [Q28](open-questions.md#q28--conflict-atlas) world-map/timeline shell) and
-  its roster/selection forks stay open — nothing in the hub model above changed.
+  derived rollups), with the shipped chain sitting in a placeholder modern conflict. On desktop
+  the atlas *presentation* has since shipped in two steps ([D103](decisions.md) → [D104](decisions.md)):
+  CAMPAIGN opens a **navigable earth** — drag/zoom, a year scrubber, one glowing pin per conflict
+  at its authored `lat/lon` anchor — and picking a war opens **that conflict's** hub (the tile
+  list above, filtered per-conflict; escape unwinds briefing → hub → atlas → title, and the
+  title's CONTINUE still deep-links straight to the next briefing). Android's hub keeps the
+  grouped list (the recorded [Q28](open-questions.md#q28--conflict-atlas) fork); the roster and
+  conflict-selection forks stay open — nothing in the hub *model* above changed.
 
 ## 3. Mission archetypes — the verbs
 

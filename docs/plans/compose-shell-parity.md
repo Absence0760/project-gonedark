@@ -403,12 +403,15 @@ staging door, the D98 atlas-grouped hub) — all three closed with same-day Comp
    `HubSectionsTest`, incl. label-formatting parity with the desktop output), consumed by the
    grouped `MissionSelectScreen.kt`. Presentation only — no wire/progress-model change (the
    item-1 launch seam already covers every node).
-9. **Atlas-globe campaign backdrop — deliberate desktop-only presentation (2026-07-03,
-   [D103](../decisions.md)).** Desktop's Operations hub/briefing draw over the live
-   engine-rendered atlas globe (`render::globe_backdrop`, conflict pins at the authored
-   `Conflict.lat_x10/lon_x10` anchors). Android's hub **deliberately keeps the grouped list**
-   — the phone-side cost is exactly the D32 strain [Q28](../open-questions.md#q28--conflict-atlas)
-   named (no engine surface in the Compose shell), and it buys one pin today. Like item 4,
-   this is a recorded UX fork, **not an owed mirror**; it gets revisited when Q28's
-   presentation endstate (navigable globe vs. 2.5D regional map) is decided. The mirrored
-   *data* is field-complete either way (`CampaignModel.kt` carries `latX10`/`lonX10`, D79).
+9. **Atlas globe (backdrop → fully navigable) — deliberate desktop-only presentation
+   (2026-07-03, [D103](../decisions.md)/[D104](../decisions.md)).** Desktop's campaign front
+   door is now the **navigable conflict atlas** (`shell::atlas` over `render::globe_backdrop`:
+   drag/zoom, a year scrubber, pin-click → the conflict's filtered hub), and the hub/briefing
+   keep the settled-globe backdrop. Android's hub **deliberately keeps the grouped list** —
+   the phone-side cost is exactly the D32 strain [Q28](../open-questions.md#q28--conflict-atlas)
+   named (no engine surface in the Compose shell), plus the fiddly-touch-navigation half D104
+   left deferred. Like item 4, this is a recorded UX fork, **not an owed mirror**: Q28 fork 2
+   is closed *for desktop* (D104); Android's presentation gets its own decision (engine
+   surface in Compose vs. a native 2.5D regional map) when the campaign earns it. The
+   mirrored *data* is field-complete either way (`CampaignModel.kt` carries
+   `latX10`/`lonX10`, D79).

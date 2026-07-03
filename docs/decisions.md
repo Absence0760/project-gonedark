@@ -4620,7 +4620,8 @@ settled so the conflict the player is actually fighting faces the camera. This i
 increment** — the step the Q28 lean said the presentation could grow through "without rework"
 (list → this → map/globe). **It does not close Q28 fork 2**: whether the *interactive* atlas
 endstate is a free-navigation globe or a 2.5D regional map stays open; nothing here is
-navigation, and the hub card is unchanged.
+navigation, and the hub card is unchanged. *(Since superseded for desktop: D104 shipped the
+full navigable globe the same day; Android's presentation remains open.)*
 
 **Decision — why this shape.** The Q28 lean deferred the globe mainly on the D32 native-shell
 cost ("embed the engine renderer in the out-of-match shell or build 3D navigation natively,
@@ -4653,3 +4654,48 @@ fork 2 stay open), [D98](#d98--the-campaign-carries-a-conflict-atlas-conflict--o
 (unstrained — the backdrop pattern was already shipping), D41/D46/D74 (the scripted-asset
 method + the raw-blob delivery), `render/src/globe_backdrop.rs`, `tools/earth/gen_landmask.py`,
 `assets/earth/manifest.json`, `core/src/campaign.rs` (`Conflict::lat_x10`).
+
+---
+
+## D104 — The campaign's front door is the navigable conflict atlas: drag the earth, scrub the years, pick a war (closes Q28 fork 2 on desktop)
+
+**Status: landed (desktop).** CAMPAIGN now opens the **conflict atlas**: the D103 globe made
+fully navigable — drag to turn the earth (pitch clamped; drag rate scales with zoom so a
+zoomed-in drag stays precise), scroll to zoom (clamped both ends), a **year scrubber**
+spanning the authored wars (an out-of-era conflict stays locatable but dims — the pin
+shader's era lane), click a pin to select a conflict, ENTER to open **that conflict's**
+Operations hub (the hub is now filtered per-conflict). Escape unwinds one layer at a time:
+briefing → hub → atlas → title; the title's CONTINUE still deep-links straight to the next
+briefing, resyncing the atlas selection to the briefed node's conflict (the pure
+`conflict_index_of` seam) so the hub it escapes to can never be filtered to a stale war.
+**This closes [Q28](open-questions.md#q28--conflict-atlas) fork 2 for the desktop as option
+(a), the full 3D globe** — *supersedes D103's "endstate stays open" framing for desktop* —
+while forks 1 (per-conflict rosters) and 3 (conflict-selection policy) stay open, as does
+Android's presentation (deliberately still the grouped list, see below).
+
+**Why (a) stopped being expensive.** The Q28 lean deferred the globe on two costs: the D32
+native-shell strain and fiddly phone navigation. D103 dissolved the first for desktop (the
+globe is engine 3D under egui, the already-shipping backdrop pattern); this step adds only
+input state — a host-owned `GlobeView` (yaw/pitch/zoom) driven through pure clamp seams —
+and screen-space picking built on `project_pin`, the CPU twin of the pin shader's own
+matrices, so a click can never disagree with the drawn pixels. The phone-navigation cost is
+real and stays deferred: **Android keeps the grouped list** (the recorded deliberate fork,
+`compose-shell-parity.md` §12 item 9); its presentation gets its own decision when the
+Compose shell earns an engine surface or a 2.5D map — nothing here forces that call.
+
+**The scrubber's honest scope.** With one authored conflict the year axis spans 2027–2028;
+its machinery (domain derivation, era-dimming, clamped scrubbing that never steals the
+selection) is the deliverable — the axis gets interesting exactly when conflict #2 ships,
+which is gated on forks 1 and 3 anyway. Everything is host presentation over authored
+campaign data — never the sim, never checksummed (invariants #1/#7); every decision
+(navigation clamps, pick radius, year domain, era activity, the filtered hub, the CONTINUE
+resync) is a pure unit-tested seam, and the whole screen renders headlessly in the
+screenshot harness (`atlas.png`) so a shader/layout regression fails in a test run.
+
+**Cross-link:** [Q28](open-questions.md#q28--conflict-atlas) (fork 2 → resolved, desktop),
+[D98](#d98--the-campaign-carries-a-conflict-atlas-conflict--operation--battle-grouping-as-data-q28s-structural-half)
+(the data), [D103](#d103--the-campaign-hub-sits-on-the-atlas-globe-a-desktop-presentation-increment-not-the-q28-endstate)
+(the backdrop step this grows from — its "endstate stays open" line is superseded for
+desktop), [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
+(still unstrained), `app/src/shell/atlas.rs`, `render/src/globe_backdrop.rs`
+(`GlobeView`/`project_pin`), `app/src/shell/mission_select.rs` (`hub_sections_for`).
