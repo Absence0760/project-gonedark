@@ -10,6 +10,7 @@ Going Dark — pnpm tasks (grouped by what device/target they hit)
 DESKTOP — your workstation (x86_64 host): the playable game + host build
   pnpm play                 Run the game on this machine (release build — smooth framerate)
   pnpm play:debug           Run the game on this machine (debug build — fast to compile)
+  pnpm play:mission1        Boot STRAIGHT into PvE Mission 1 (Seize) — release + audio, skips the title (CP-2/CP-7 playtests)
   pnpm desktop:build        Compile the whole workspace FOR THIS MACHINE (host, debug)
   pnpm desktop:build:release Compile the whole workspace for this machine (host, release)
   pnpm desktop:sim          Headless determinism runner on this machine (per-tick checksums)

@@ -118,6 +118,14 @@ struct App {
     /// `Game::new_scene` seeding runs.
     scene: Scene,
 
+    /// Boot **straight into [`scene`](Self::scene)'s match**, skipping the title screen — set when the
+    /// launch line passed an explicit `--scene <name>` (see [`boots_straight_into_scene`]). The normal
+    /// no-flag launch leaves this `false` and opens on the title (the player flow). An explicit scene
+    /// is a dev/playtest launch — a debug sandbox (`duel`/`infantry`) or a specific mission
+    /// (`--scene mission1` for the CP-2/CP-7 playtests) — so dropping the tester directly into it is
+    /// the frictionless intent. Host launch state only; it never touches the sim.
+    boot_straight_to_match: bool,
+
     /// The player's gunsmith selection (the `engine::loadout_ui` seam over `core::gunsmith`). Edited
     /// on the [`Screen::Loadout`] gunsmith screen (D81: customization-only, reached from Settings) and
     /// handed to [`Game::new_scene_with_loadout`] by [`App::enter_match`] whenever a match deploys.
@@ -175,7 +183,7 @@ struct App {
 }
 
 impl App {
-    fn new(scene: Scene) -> Self {
+    fn new(scene: Scene, boot_straight_to_match: bool) -> Self {
         // The shipped Operations-hub campaign + its mission registry (PvE WS-B). Load any persisted
         // progress over the fresh graph — a missing/corrupt blob just leaves it at the start (the
         // load is all-or-nothing, never partial). Host-side meta-state only (invariants #1/#7).
@@ -197,6 +205,7 @@ impl App {
             alt_held: false,
             fullscreen: false,
             scene,
+            boot_straight_to_match,
             loadout,
             settings,
             profile,
@@ -930,6 +939,14 @@ impl ApplicationHandler for App {
         self.shell = Some(shell);
         // Reset the clock so window-creation latency isn't charged to the first frame.
         self.last_frame = Instant::now();
+
+        // A dev/playtest launch with an explicit `--scene` boots STRAIGHT into that scene's match,
+        // skipping the title (a frictionless drop-in for the CP-2/CP-7 playtests and the debug
+        // sandboxes). `enter_match` needs the surface, which we just set. The normal no-flag launch
+        // leaves the flag false and opens on the title screen — the player flow is unchanged.
+        if self.boot_straight_to_match {
+            self.enter_match();
+        }
     }
 
     fn window_event(
@@ -1040,6 +1057,14 @@ fn scene_token(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether the launch should boot **straight into the match**, skipping the title screen — true iff
+/// an explicit `--scene` was passed. A no-flag launch (`None`) is the ordinary player flow and opens
+/// on the title; an explicit scene is a dev/playtest launch we drop the tester directly into. Pure
+/// (delegates to [`scene_token`]), so the boot decision is host-tested without a window.
+fn boots_straight_into_scene(args: &[String]) -> bool {
+    scene_token(args).is_some()
 }
 
 /// The campaign-progress blob filename, under the host data dir (see [`campaign_dir`]).
@@ -1177,9 +1202,12 @@ fn main() {
         // No `--scene`: boot the playable two-base skirmish (the real match), not the canned demo.
         None => Scene::Skirmish,
     };
+    // An explicit `--scene` is a dev/playtest launch → drop straight into that match, skipping the
+    // title (frictionless for the CP-2/CP-7 playtests + the debug sandboxes). No flag → title flow.
+    let boot_straight_to_match = boots_straight_into_scene(&args);
 
     let event_loop = EventLoop::new().expect("create winit event loop");
-    let mut app = App::new(scene);
+    let mut app = App::new(scene, boot_straight_to_match);
     event_loop.run_app(&mut app).expect("run winit app");
 }
 
@@ -1296,7 +1324,7 @@ mod keybind_boundary_tests {
 
 #[cfg(test)]
 mod scene_arg_tests {
-    use super::scene_token;
+    use super::{boots_straight_into_scene, scene_token};
 
     fn args(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|s| s.to_string()).collect()
@@ -1319,6 +1347,17 @@ mod scene_arg_tests {
         assert_eq!(scene_token(&args(&["--fullscreen"])), None);
         // `--scene` with no following value: nothing to take.
         assert_eq!(scene_token(&args(&["--scene"])), None);
+    }
+
+    #[test]
+    fn boots_straight_to_match_only_with_an_explicit_scene() {
+        // An explicit --scene (either form) is a dev/playtest launch → drop straight into the match.
+        assert!(boots_straight_into_scene(&args(&["--scene", "mission1"])));
+        assert!(boots_straight_into_scene(&args(&["--scene=duel"])));
+        // No --scene (or a dangling one that resolves to nothing) → the normal title flow.
+        assert!(!boots_straight_into_scene(&args(&[])));
+        assert!(!boots_straight_into_scene(&args(&["--fullscreen"])));
+        assert!(!boots_straight_into_scene(&args(&["--scene"])));
     }
 }
 
