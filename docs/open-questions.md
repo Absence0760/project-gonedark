@@ -722,7 +722,7 @@ surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.m
 
 ---
 
-## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md) data; [D104](decisions.md) fork 2 resolved for desktop; [D105](decisions.md) grows the atlas to four wars; roster/selection forks open) <a id="q28--conflict-atlas"></a>
+## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md) data; [D104](decisions.md) fork 2 resolved for desktop; [D105](decisions.md) grows the atlas to four wars; [D106](decisions.md) grows the desktop presentation again (battlefield overview); roster/selection forks open) <a id="q28--conflict-atlas"></a>
 
 > **Structural half resolved in [D98](decisions.md):** the conflict → operation → battle hierarchy
 > now exists as static authored data in `core::campaign` (`Conflict`/`Operation` + node tags +
@@ -739,7 +739,12 @@ surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.m
 > so **forks 1 (per-conflict factions) and 3 (conflict-selection policy) did not need deciding
 > to ship this — they still gate the first *historical* conflict**, and Android's presentation
 > is still the recorded deliberate fork (deliberately the grouped list until the Compose shell
-> earns an engine surface or a 2.5D map); the leans on the open forks stand.
+> earns an engine surface or a 2.5D map); the leans on the open forks stand. **[D106](decisions.md)
+> then grew the desktop presentation again, within the same closed fork 2:** picking a war no
+> longer drops into a list over a settled backdrop — it lands on a **battlefield overview**, the
+> globe zoomed onto that war's ground with one progress-toned pin per authored battle. This is an
+> increment *inside* the decided desktop answer, not a re-opening; forks 1 and 3 and the Android
+> presentation fork are untouched.
 
 Proposal (2026-07-03): the campaign presents as a **navigable world map with a time axis** — pick a
 year, see that era's conflicts on the globe, zoom into one, and play its battles. Era-agnostic by
@@ -784,15 +789,16 @@ via the [D68](decisions.md) template). Getting the conflict→operation→battle
 campaign *data* early is cheap; the presentation can then grow list → regional map → globe without
 rework.
 
-**Current lean (updated post-D104):** the data grouping (D98) and the desktop presentation
-(D104: the full navigable globe) are **decided and shipped**. What remains: shipped conflicts
-stay **modern** ones the shipped US/FR roster plausibly covers (fork 1(c) — four such wars ship
-as of [D105](decisions.md)); **Android's presentation** keeps the grouped list until its own
-call (an engine surface in the Compose shell vs. a native 2.5D regional map — the phone half of
-the old fork 2); per-conflict rosters and the conflict-selection policy must be decided
+**Current lean (updated post-D106):** the data grouping (D98) and the desktop presentation
+(D104: the full navigable globe; D106: the per-battle overview it opens into) are **decided and
+shipped**. What remains: shipped conflicts stay **modern** ones the shipped US/FR roster
+plausibly covers (fork 1(c) — four such wars ship as of [D105](decisions.md)); **Android's
+presentation** keeps the grouped list until its own call (an engine surface in the Compose
+shell vs. a native 2.5D regional map — the phone half of the old fork 2); per-conflict rosters
+and the conflict-selection policy must be decided
 **before the first historical conflict ships**.
 Cross-link: [D58](decisions.md)/[D59](decisions.md), [D68](decisions.md)/[D71](decisions.md),
-[D32](decisions.md), [D76](decisions.md), [D80](decisions.md),
+[D32](decisions.md), [D76](decisions.md), [D80](decisions.md), [D106](decisions.md),
 [Q16](#q16--narrative-depth).
 
 ---

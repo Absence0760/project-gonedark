@@ -4751,3 +4751,56 @@ presentation stay open),
 (replay tiers apply per-node, unchanged), [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)
 (where distinct per-war missions come from), `engine/src/mission_registry.rs`
 (`default_campaign`), `android/.../CampaignModel.kt` (the D79 mirror).
+
+## D106 — Entering a war lands on its battlefield: the hub becomes a zoomed overview on the globe, one pin per battle
+
+**Status: landed (desktop).** Picking a conflict on the D104 atlas no longer drops into a
+list floating over a settled backdrop — ENTER now lands on the **battlefield overview**: the
+globe zooms onto that war's ground, each battle draws as its own **progress-toned pin** at an
+authored real-world anchor (amber = available, cold slate = locked, green = cleared; the next
+battle pulses), and the hub card parks at the left margin with the war visible beside it. The
+pins are a second launch surface — clicking a playable battle's pin opens its briefing through
+the **same** playable gate as a tile click — and the briefing keeps the war on screen with the
+briefed node's own pin focused. A conflict with no anchored battles falls back to the settled
+D103 framing, so nothing about the model *requires* anchors.
+
+**The data is one optional field.** `core::campaign::OperationNode` gains
+`anchor: Option<(i16, i16)>` (tenths of a degree, the `Conflict::lat_x10` convention, range-
+asserted in `Campaign::with_atlas` — which now also range-asserts conflict pins) plus an
+`.at(lat, lon)` builder; all twelve shipped battles are anchored on their war's real geography
+(Cotentin road towns; the Lomé port/causeway/N1 corridor; Slite–Visby–Klintehamn; the
+Luganville wharf/airstrip/coast road), pinned by tests to sit on land, near their own war's
+pin, distinct from each other, and on-screen + separated under the overview camera. Campaign
+data stays host-side presentation — never sim state, never checksummed (invariants #1/#7).
+The Android `CampaignModel` mirror carries the anchors field-complete in the same commit
+(D79); its presentation deliberately stays the grouped list (the recorded Q28 Android fork).
+
+**Two engine-level costs surfaced and were paid.** (1) The **near plane**: `NEAR = 0.5`
+silently swallowed the whole globe past zoom ~1.9 — the sphere's front fell inside the near
+plane while the horizon ring fell outside the FOV, so max atlas zoom (D104's own 2.6) already
+rendered empty sky. It is now `0.05`; perspective x/y are independent of the near plane, so
+picking (`project_pin`) and every projection test were unaffected. (2) The **land mask**:
+Natural Earth 1:110m simply omits Gotland and Espiritu Santo — two of the D105 wars would
+have floated in open sea at any resolution. The mask regenerated at **1:50m, 1440×720**
+(0.25°/texel; `tools/earth/gen_landmask.py`, provenance in the manifest): the embedded R8
+grows 259 KB → 1.0 MB, the accepted price of the shipped battlegrounds existing. A future
+mobile-budget squeeze can bit-pack it or regionalise it; deferred until it hurts.
+
+**Presentation seams, all pure and unit-tested:** `GlobeView::over` (the overview camera —
+yaw/pitch aim the war at the *eye*, which sits above the globe axis, not at the equator
+line), `overview_view` (anchor centroid + an east bias in effective degrees so the war clears
+the left-parked card at every latitude), `battlefield_pins`/`battle_tone`/`next_battle_in`,
+and `pick_battle` (nearest visible playable pin, same `PICK_RADIUS`, projected with the SAME
+view the backdrop rendered). The pin shader gains tone + per-pin scale lanes; battle pins draw
+at 1.6× (dust otherwise, at this zoom). The whole screen renders headlessly in the screenshot
+harness (`battlefield.png`).
+
+**Cross-link:** [Q28](open-questions.md#q28--conflict-atlas) (presentation grows within the
+decided desktop fork; Android fork untouched),
+[D103](#d103--the-campaign-hub-sits-on-the-atlas-globe-a-desktop-presentation-increment-not-the-q28-endstate)/[D104](#d104--the-campaigns-front-door-is-the-navigable-conflict-atlas-drag-the-earth-scrub-the-years-pick-a-war-closes-q28-fork-2-on-desktop)
+(the steps this grows from), [D105](#d105--the-atlas-gets-its-wars-four-fictional-modern-conflicts-each-a-self-contained-campaign-chain)
+(the wars these battlefields belong to), [D79](#d79--android-shells-pure-decisionvalidation-seams-are-re-implemented-in-kotlin-with-tests-not-single-sourced-over-jni)
+(the mirrored anchor fields), `core/src/campaign.rs` (`OperationNode::anchor`),
+`render/src/globe_backdrop.rs`/`.wgsl` (`GlobeView::over`, tone/scale lanes, `NEAR`, the
+1:50m mask), `app/src/shell/mission_select.rs` (the overview seams),
+`tools/earth/gen_landmask.py` (the regenerated mask).

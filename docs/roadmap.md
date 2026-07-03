@@ -402,8 +402,11 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   (`Scene::for_mission`) wired on desktop + Android, the egui mission-select/briefing hub (reaches
   every node, now **grouped by conflict/operation** with D98 atlas rollup headers and — on
   desktop — fronted by the **navigable conflict atlas** (D103 → D104: the earth, a year scrubber,
-  pin-pick → the conflict's filtered hub; [Q28](open-questions.md) fork 2 closed for desktop,
-  roster/selection forks + Android's presentation still open), and the **native** Android Compose mission-select/briefing chrome
+  pin-pick → the conflict's filtered hub, which now opens on a per-battle **battlefield
+  overview** rather than a settled backdrop — D106: one progress-toned pin per authored battle,
+  same playable-gate click-through, briefing keeps the war on screen; [Q28](open-questions.md)
+  fork 2 closed for desktop, roster/selection forks + Android's presentation still open), and the
+  **native** Android Compose mission-select/briefing chrome
   (`MissionSelectScreen.kt`/`BriefingScreen.kt`, landed per
   [`compose-shell-parity.md`](plans/compose-shell-parity.md) Tier 2) — plus the `CampaignModel`
   mirror moved in lock-step for record-on-win + persistence parity. The graph engine already

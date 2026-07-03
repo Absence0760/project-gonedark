@@ -65,14 +65,19 @@ Borrowed from **Company of Heroes**' meta-campaign map and **Delta Force**'s rep
   to four** — *The Channel Crisis*, *The Meridian Crisis*, *The Gotland Winter*, and *The Santo
   Crisis* (12 nodes total, each conflict its own self-contained Seize → Hold → Push chain reusing
   the three shipped seeders) — all fictional/modern/roster-plausible per the Q28 fork-1(c) lean.
-  On desktop the atlas *presentation* has since shipped in two steps ([D103](decisions.md) →
-  [D104](decisions.md)):
+  On desktop the atlas *presentation* has since shipped in three steps ([D103](decisions.md) →
+  [D104](decisions.md) → [D106](decisions.md)):
   CAMPAIGN opens a **navigable earth** — drag/zoom, a year scrubber, one glowing pin per conflict
-  at its authored `lat/lon` anchor — and picking a war opens **that conflict's** hub (the tile
-  list above, filtered per-conflict; escape unwinds briefing → hub → atlas → title, and the
-  title's CONTINUE still deep-links straight to the next briefing). Android's hub keeps the
-  grouped list (the recorded [Q28](open-questions.md#q28--conflict-atlas) fork); the roster and
-  conflict-selection forks stay open — nothing in the hub *model* above changed.
+  at its authored `lat/lon` anchor — and picking a war now lands on that war's **battlefield
+  overview**: the globe zooms onto the conflict's ground and each battle draws as its own
+  progress-toned pin (amber available / slate locked / green cleared) at an authored per-battle
+  anchor, clickable through the same playable gate as the tile list above; the briefing keeps
+  the war on screen with the briefed node's pin focused ([D106](decisions.md); escape unwinds
+  briefing → overview → atlas → title, and the title's CONTINUE still deep-links straight to
+  the next briefing). Android's hub keeps the grouped list (the recorded
+  [Q28](open-questions.md#q28--conflict-atlas) fork) — the mirrored data carries the per-battle
+  anchors regardless; the roster and conflict-selection forks stay open — nothing in the hub
+  *model* above changed.
 
 ## 3. Mission archetypes — the verbs
 
