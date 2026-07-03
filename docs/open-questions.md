@@ -763,3 +763,39 @@ conflict-selection policy must be decided **before a second, historical conflict
 Cross-link: [D58](decisions.md)/[D59](decisions.md), [D68](decisions.md)/[D71](decisions.md),
 [D32](decisions.md), [D76](decisions.md), [D80](decisions.md),
 [Q16](#q16--narrative-depth).
+
+---
+
+## Q29 — PvP rating & ranked-season design <a id="q29--pvp-rating--ranked-season-design"></a>
+
+The PvP meta ([`modes.md`](modes.md) §4c) needs a competitive spine: a **hidden matchmaking
+rating** with **visible rank tiers**, placement matches, and seasonal turnover, with rewards
+cosmetic-only ([D13](decisions.md)). The queue structure (Quick vs Ranked), the map-pool/veto
+policy, and the determinism-backed result verification are designed in [`modes.md`](modes.md);
+what stays open is the **rating model** and the season mechanics around it.
+
+| Option | For | Against |
+|---|---|---|
+| **(a) Elo** | Simple, transparent, battle-tested for 1v1 | No confidence measure — slow convergence for new/returning players; K-factor tuning is folklore |
+| **(b) Glicko-2** | Rating *deviation* + volatility handle sparse, bursty mobile play patterns (long gaps widen uncertainty, placements converge fast); still 1v1-native | Slightly opaque to players (mitigated by the visible-tier layer); rating periods to tune |
+| **(c) TrueSkill-style (Bayesian)** | Best if team/co-op ranked ever exists ([Q14](#q14--co-op-pve)); handles multi-player factors | Overkill for 1v1; patent/licence history to check; hardest to explain |
+
+Sub-forks that lock with the model: **season length** (align turnover with content drops —
+if the conflict atlas [Q28](#q28--conflict-atlas) lands, a season and a conflict drop are
+naturally the same beat); **soft-reset formula**; **placement count**; **rank-decay** (or
+none — decay punishes the mobile play pattern Glicko-2's deviation already models); and how
+rating pools compose with [Q17](#q17--crossplay-input-fairness)'s input-based pools without
+fragmenting the queue population (the [`modes.md`](modes.md) lean: strict input pools in
+ranked only, mixed-input quick match).
+
+**Why it matters:** ranked is the retention spine of the PvP fast-follow, and a bad rating
+model reads as *unfair matchmaking* — the meta-level version of the invariant-#6 promise.
+It also fixes backend schema ([`infrastructure.md`](infrastructure.md) Postgres ratings/
+leaderboards), which is cheaper to get right before live data exists.
+
+**Current lean:** **(b) Glicko-2** — 1v1-native with an uncertainty measure suited to mobile
+play gaps — under visible tiers + placements + seasonal soft-reset, no rank decay. Blocks
+nothing now: decide **before the ranked build starts** ([`modes.md`](modes.md) §5 step 4);
+the custom-lobby and quick-match steps need none of it. Cross-link: [`modes.md`](modes.md),
+[D13](decisions.md), [D89](decisions.md), [Q17](#q17--crossplay-input-fairness),
+[Q26](#q26--replay-compatibility), [Q28](#q28--conflict-atlas).

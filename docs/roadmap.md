@@ -260,8 +260,8 @@ in the in-match layer; the **settings surface that configures it** is.
 | **Boot & title** | Splash, title/attract screen, build-channel + version stamp. **Landed (Android [D35](decisions.md) + desktop [D36](decisions.md)):** a native Jetpack Compose title/landing screen on Android (the launcher) and a native egui title screen on desktop (`app` now opens here, Start enters the match); only the iOS shell still pending (no iOS target) | — |
 | **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a new player reads a loss as *"I stayed too long"* | [Q5](open-questions.md) (PvE-first is the natural teach surface); invariant #6 |
 | **Settings** | Graphics tiers (↔ device quality tiers above), audio-mix levels, the touch-layout / rebind editor (configures the D14 scheme), desktop key/gamepad rebinds, **accessibility** | invariant #6 (see accessibility note) |
-| **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry | order/stance vocab (D25) |
-| **Lobby & matchmaking** (PvP) | Party/invite, connection-quality readout, ready-up. **Seam:** the net plumbing is Phase 3 (D27 lockstep, reconnect/handoff); only the *surface* is Phase 4 | Phase 3 netcode; [Q5](open-questions.md) |
+| **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry. **Designed:** [`modes.md`](modes.md) (the mode taxonomy + the skirmish map/army/difficulty setup flow) | order/stance vocab (D25) |
+| **Lobby & matchmaking** (PvP) | Party/invite, connection-quality readout, ready-up. **Seam:** the net plumbing is Phase 3 (D27 lockstep, reconnect/handoff); only the *surface* is Phase 4. **Designed:** [`modes.md`](modes.md) §4–5 (army/map/ranking as three separate subsystems; build order custom lobby → quick match → ranked; rating model open as [Q29](open-questions.md)) | Phase 3 netcode; [Q5](open-questions.md) |
 | **Progression & profile** | Persistence, stats, cosmetic inventory | account/persistence backend ([`infrastructure.md`](infrastructure.md)) |
 | **Store / IAP** | Cosmetic purchases, restore-purchases, receipts, refund paths | [Q9](open-questions.md) (per-platform billing rails); [Q11](open-questions.md) (hero-tier cosmetics feed the catalog) |
 | **Consent & legal** | Telemetry/privacy consent, age gate, ToS/EULA — **gates** store + telemetry, so it precedes them | [`infrastructure.md`](infrastructure.md) |
@@ -539,7 +539,7 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 
 ### Release readiness — the store-facing layer
 
-- [ ] Match-setup / skirmish-entry screen (Phase 4)
+- [ ] Match-setup / skirmish-entry screen (Phase 4) — designed in [`modes.md`](modes.md) §3; step 1 of its build order (no net dependency; all seams landed)
 - [ ] Consent & legal gate (ToS / privacy / age) — gates telemetry + store, so it precedes them
 - [ ] Store listing — icon, screenshots, description + a Play Console build channel
 - [ ] Performance / thermal pass on mid-range arm64 (the honest Phase 1/3 caveat — not yet validated off-flagship)
