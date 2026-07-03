@@ -633,9 +633,18 @@ const LABEL_SIZE: f32 = crate::theme::TYPE_CAPTION;
 /// Glyph cell height (NDC) of the summary outcome title (VICTORY / DEFEAT / DRAW) — the shared type
 /// scale's section-title step, the largest overlay label.
 const TITLE_SIZE: f32 = crate::theme::TYPE_TITLE;
-/// Glyph cell height (NDC) of a button's caption. Bumped alongside the taller `BUTTON_HH` (H3/M4)
-/// so the caption stays proportional to the larger slot.
-const BUTTON_LABEL_SIZE: f32 = 0.046;
+/// How far a button caption sits above the shared type scale's body step. The overlay's choice
+/// slots are 44pt-class modal touch targets (H3/M4 raised `BUTTON_HH` to 0.085 half-height —
+/// roughly twice the in-match command-bar chips that caption at plain `TYPE_BODY`), and the caption
+/// was deliberately bumped with the slot so it stays proportional. Neither neighbouring step fits:
+/// `TYPE_BODY` (0.040) reads under-sized in the tall slot, and `TYPE_TITLE` (0.055, +20%) would
+/// out-shout the panel's own section titles. Value-preserving: `0.040 * 1.15` is the tuned `0.046`.
+const BUTTON_LABEL_SCALE: f32 = 1.15;
+/// Glyph cell height (NDC) of a button's caption — the shared type scale's body step, grown by the
+/// documented [`BUTTON_LABEL_SCALE`] for the tall H3/M4 touch slot (one root scale: a `TYPE_BODY`
+/// retune flows through here). Containment of the widest caption (nine-glyph SURRENDER) is pinned
+/// by `button_captions_fit_their_slots`.
+const BUTTON_LABEL_SIZE: f32 = crate::theme::TYPE_BODY * BUTTON_LABEL_SCALE;
 /// Light off-white the labels draw in, so they read over the dim panels.
 const LABEL_COLOR: [f32; 3] = [0.92, 0.94, 0.98];
 
@@ -2070,6 +2079,56 @@ mod tests {
         let sp_texts: Vec<String> = overlay_labels(&sp).into_iter().map(|l| l.text).collect();
         assert!(!sp_texts.iter().any(|t| t == "YOUR MATCH KEEPS RUNNING"));
         assert!(sp_texts.iter().any(|t| t == "PAUSED"));
+    }
+
+    /// Every overlay text role rides the shared `theme` type scale — directly (the outcome/pause
+    /// title is `TYPE_TITLE`, the bar-row labels are `TYPE_CAPTION`) or via the ONE documented
+    /// multiplier (button captions are `TYPE_BODY * BUTTON_LABEL_SCALE`, the H3/M4 tall-touch-slot
+    /// bump). Then sweeps the labels every surface actually emits, so a new label can't sneak an
+    /// ad-hoc literal back in: the overlay carries no type size that isn't rooted in the scale.
+    #[test]
+    fn overlay_type_rides_the_shared_scale() {
+        use crate::theme;
+        // The role consts derive from the scale.
+        assert_eq!(TITLE_SIZE, theme::TYPE_TITLE, "title is the section-title step");
+        assert_eq!(LABEL_SIZE, theme::TYPE_CAPTION, "row labels are the caption step");
+        assert_eq!(
+            BUTTON_LABEL_SIZE,
+            theme::TYPE_BODY * BUTTON_LABEL_SCALE,
+            "button captions are the body step grown by the documented H3/M4 multiplier"
+        );
+        // The grown caption stays a step BETWEEN body and title — if a `TYPE_BODY` retune pushes it
+        // past the title step, the multiplier must be re-audited, not silently leapfrog the ramp.
+        assert!(
+            BUTTON_LABEL_SIZE > theme::TYPE_BODY && BUTTON_LABEL_SIZE < theme::TYPE_TITLE,
+            "button caption ({BUTTON_LABEL_SIZE}) must sit between TYPE_BODY and TYPE_TITLE"
+        );
+        // Every label any surface emits uses one of the three derived sizes (no orphan literals).
+        let allowed = [TITLE_SIZE, LABEL_SIZE, BUTTON_LABEL_SIZE];
+        for ov in [
+            Overlay::Paused { single_player: false },
+            Overlay::Paused { single_player: true },
+            Overlay::ReconnectPrompt { desynced: false },
+            Overlay::ReconnectPrompt { desynced: true },
+            Overlay::Summary(summary_full(
+                MatchOutcome::Victory(Faction::Player),
+                4,
+                2,
+                3,
+                1,
+                1000,
+                500,
+            )),
+        ] {
+            for l in overlay_labels(&ov) {
+                assert!(
+                    allowed.contains(&l.size),
+                    "label {:?} size {} is off the shared type scale for {ov:?}",
+                    l.text,
+                    l.size
+                );
+            }
+        }
     }
 
     /// Fairness guard (invariant #6): every label is NDC chrome, never a world position.

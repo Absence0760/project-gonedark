@@ -145,7 +145,22 @@ pub fn marker_for(
     yaw: f32,
     tick: u64,
 ) -> Option<HudMarker> {
-    place_marker(
+    marker_for_scaled(alert, avatar_world, yaw, tick, 1.0)
+}
+
+/// [`marker_for`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
+/// Only the marker **glyph** ([`MARKER_HALF_SIZE`]) scales; the ring placement is a positional
+/// encoding (bearing at the fixed [`RING_RADIUS`] edge distance — the no-range-leak fairness
+/// guard, invariant #6) and deliberately does NOT move with `ui_scale`. `ui_scale == 1.0` is
+/// byte-identical to [`marker_for`].
+pub fn marker_for_scaled(
+    alert: &Alert,
+    avatar_world: (f32, f32),
+    yaw: f32,
+    tick: u64,
+    ui_scale: f32,
+) -> Option<HudMarker> {
+    place_marker_scaled(
         (
             crate::fixed_to_f32(alert.pos.x),
             crate::fixed_to_f32(alert.pos.y),
@@ -156,6 +171,7 @@ pub fn marker_for(
         tick,
         alert_color(alert.kind),
         shape_for(alert.kind),
+        ui_scale,
     )
 }
 
@@ -175,6 +191,26 @@ pub fn place_marker(
     tick: u64,
     color: [f32; 3],
     shape: f32,
+) -> Option<HudMarker> {
+    place_marker_scaled(pos_world, event_tick, avatar_world, yaw, tick, color, shape, 1.0)
+}
+
+/// [`place_marker`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
+/// Scales only the marker **glyph** half-size — the ring radius is a positional encoding (the
+/// bearing rides the fixed [`RING_RADIUS`], leaking direction, never range — invariant #6) and
+/// stays put so a scaled HUD still places every ping at the exact same screen point. Scaling the
+/// radius would also break the tank-HUD M1 collision band (keyed on [`RING_RADIUS`]) and push
+/// markers off-screen at large scales. `ui_scale == 1.0` is byte-identical to [`place_marker`].
+#[allow(clippy::too_many_arguments)]
+pub fn place_marker_scaled(
+    pos_world: (f32, f32),
+    event_tick: u64,
+    avatar_world: (f32, f32),
+    yaw: f32,
+    tick: u64,
+    color: [f32; 3],
+    shape: f32,
+    ui_scale: f32,
 ) -> Option<HudMarker> {
     // Age-based fade. A future-stamped event (tick < event_tick) is treated as not-yet-live.
     if tick < event_tick {
@@ -220,9 +256,24 @@ pub fn place_marker(
         g,
         b,
         alpha,
-        half_size: MARKER_HALF_SIZE,
+        half_size: MARKER_HALF_SIZE * ui_scale,
         shape,
     })
+}
+
+/// Re-stamp caller-built markers' **glyph** half-sizes by the accessibility `ui_scale`, leaving
+/// position (the bearing-ring encoding), color, alpha, and shape untouched. The seam for
+/// [`HudRenderer::render_markers`]: the host builds its visual-sound echoes via the unscaled
+/// [`place_marker`], and the renderer applies the scale at the draw boundary — exactly one place
+/// scales, so echoes and alert markers grow together and nothing double-scales. Pure, GPU-free.
+pub fn scale_marker_chrome(markers: &[HudMarker], ui_scale: f32) -> Vec<HudMarker> {
+    markers
+        .iter()
+        .map(|m| HudMarker {
+            half_size: m.half_size * ui_scale,
+            ..*m
+        })
+        .collect()
 }
 
 /// A short, non-color abbreviation for an alert kind — the **colorblind (CVD) cue** (invariant #6).
@@ -264,15 +315,29 @@ pub fn alert_labels(
     yaw: f32,
     tick: u64,
 ) -> Vec<HudLabel> {
+    alert_labels_scaled(alerts, avatar_world, yaw, tick, 1.0)
+}
+
+/// [`alert_labels`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
+/// The label column stays on the marker's (unscaled) ring position; only the [`LABEL_DROP`] gap
+/// scales, so the abbrev keeps riding just below the `ui_scale`-grown marker glyph and the text
+/// pass's `px * ui_scale` glyphs. `ui_scale == 1.0` is byte-identical to [`alert_labels`].
+pub fn alert_labels_scaled(
+    alerts: &AlertChannel,
+    avatar_world: (f32, f32),
+    yaw: f32,
+    tick: u64,
+    ui_scale: f32,
+) -> Vec<HudLabel> {
     alerts
         .recent
         .iter()
         .filter_map(|a| {
-            let m = marker_for(a, avatar_world, yaw, tick)?;
+            let m = marker_for_scaled(a, avatar_world, yaw, tick, ui_scale)?;
             Some(HudLabel {
                 text: alert_label(a.kind),
                 ndc_x: m.ndc_x,
-                ndc_y: m.ndc_y - LABEL_DROP,
+                ndc_y: m.ndc_y - LABEL_DROP * ui_scale,
                 color: [m.r, m.g, m.b],
                 alpha: m.alpha,
             })
@@ -289,6 +354,18 @@ pub fn alert_labels(
 /// (WS-4). A pure float fn (the presentation boundary) so it is unit-testable without a GPU. Placed
 /// dead-center (NDC `(0, 0)`) so it never collides with the edge-ring alert markers.
 pub fn hitmarker_marker(last_hit_tick: Option<u64>, tick: u64) -> Option<HudMarker> {
+    hitmarker_marker_scaled(last_hit_tick, tick, 1.0)
+}
+
+/// [`hitmarker_marker`] with an explicit accessibility `ui_scale` (the picker's `*_scaled`
+/// pattern). The "X" stays dead-center (that placement is the "my own shot connected" read, and
+/// center is scale-independent anyway); only its [`HITMARKER_HALF_SIZE`] glyph grows.
+/// `ui_scale == 1.0` is byte-identical to [`hitmarker_marker`].
+pub fn hitmarker_marker_scaled(
+    last_hit_tick: Option<u64>,
+    tick: u64,
+    ui_scale: f32,
+) -> Option<HudMarker> {
     let fired = last_hit_tick?;
     if tick < fired {
         return None; // future-stamped hit is not yet live
@@ -307,7 +384,7 @@ pub fn hitmarker_marker(last_hit_tick: Option<u64>, tick: u64) -> Option<HudMark
         g,
         b,
         alpha,
-        half_size: HITMARKER_HALF_SIZE,
+        half_size: HITMARKER_HALF_SIZE * ui_scale,
         shape: SHAPE_HITMARKER,
     })
 }
@@ -322,8 +399,19 @@ pub fn hitmarker_marker(last_hit_tick: Option<u64>, tick: u64) -> Option<HudMark
 /// Pure float math (presentation boundary), so it is unit-testable without a GPU. Reveals nothing —
 /// it is screen-center chrome with no world position (invariant #6).
 pub fn crosshair_markers(bloom: f32, aspect: f32) -> Vec<HudMarker> {
+    crosshair_markers_scaled(bloom, aspect, 1.0)
+}
+
+/// [`crosshair_markers`] with an explicit accessibility `ui_scale` (the picker's `*_scaled`
+/// pattern). The whole reticle scales **uniformly** — the resting gap, the recoil bloom spread,
+/// and the tick dots all multiply by `ui_scale` — so the bloom's *relative* read ("how spread am
+/// I vs. settled") is identical at every scale; scaling only the resting gap would make recoil
+/// look proportionally weaker on a large HUD. Screen-center chrome with no world position, so
+/// nothing here is a positional encoding. `ui_scale == 1.0` is byte-identical to
+/// [`crosshair_markers`].
+pub fn crosshair_markers_scaled(bloom: f32, aspect: f32, ui_scale: f32) -> Vec<HudMarker> {
     let aspect = if aspect.abs() < 1.0e-6 { 1.0 } else { aspect };
-    let gap = (CROSSHAIR_GAP + bloom.max(0.0)).max(0.0);
+    let gap = (CROSSHAIR_GAP + bloom.max(0.0)).max(0.0) * ui_scale;
     let gx = gap / aspect; // square the cross on a non-1:1 viewport
     let [r, g, b] = CROSSHAIR_COLOR;
     let tick = |ndc_x: f32, ndc_y: f32| HudMarker {
@@ -333,7 +421,7 @@ pub fn crosshair_markers(bloom: f32, aspect: f32) -> Vec<HudMarker> {
         g,
         b,
         alpha: CROSSHAIR_ALPHA,
-        half_size: CROSSHAIR_DOT_HALF,
+        half_size: CROSSHAIR_DOT_HALF * ui_scale,
         shape: SHAPE_DOT,
     };
     vec![
@@ -522,8 +610,10 @@ impl HudRenderer {
     ///   this signature only because the `lib.rs` boundary still threads it. [`marker_for`] no
     ///   longer takes it. (If aspect correction is ever wanted, re-add a real param there.)
     /// - `tick`: the current sim tick (to fade alerts by age).
+    /// - `ui_scale`: the accessibility UI scale — grows the marker glyphs only
+    ///   ([`marker_for_scaled`]); the bearing ring stays at [`RING_RADIUS`].
     ///
-    /// Builds the live marker set via [`marker_for`], uploads it, and records a single LOAD
+    /// Builds the live marker set via [`marker_for_scaled`], uploads it, and records a single LOAD
     /// render pass so the markers composite over the embodied frame. No-op if nothing is live.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
@@ -536,11 +626,12 @@ impl HudRenderer {
         yaw: f32,
         _viewport: (u32, u32),
         tick: u64,
+        ui_scale: f32,
     ) {
         let markers: Vec<HudMarker> = alerts
             .recent
             .iter()
-            .filter_map(|a| marker_for(a, avatar_world, yaw, tick))
+            .filter_map(|a| marker_for_scaled(a, avatar_world, yaw, tick, ui_scale))
             .collect();
 
         // No live markers → nothing to draw (and the frame must stay untouched).
@@ -562,8 +653,9 @@ impl HudRenderer {
         view: &wgpu::TextureView,
         last_hit_tick: Option<u64>,
         tick: u64,
+        ui_scale: f32,
     ) {
-        let Some(marker) = hitmarker_marker(last_hit_tick, tick) else {
+        let Some(marker) = hitmarker_marker_scaled(last_hit_tick, tick, ui_scale) else {
             return;
         };
         self.draw_markers(device, queue, view, &[marker]);
@@ -581,23 +673,28 @@ impl HudRenderer {
         view: &wgpu::TextureView,
         bloom: f32,
         aspect: f32,
+        ui_scale: f32,
     ) {
-        let markers = crosshair_markers(bloom, aspect);
+        let markers = crosshair_markers_scaled(bloom, aspect, ui_scale);
         self.draw_markers(device, queue, view, &markers);
     }
 
     /// Draw a caller-built set of directional `markers` as a LOAD pass over the embodied frame (same
     /// pipeline/shader as the alert overlay). Used by the host's **accessibility visual-sound cues**
     /// (the hard-of-hearing production-ready / distant-capture echoes it builds via [`place_marker`]),
-    /// so they composite on the same edge ring as the alert markers. No-op on an empty set.
+    /// so they composite on the same edge ring as the alert markers. `ui_scale` grows the glyphs at
+    /// this draw boundary ([`scale_marker_chrome`]) — callers keep building at the unscaled
+    /// [`place_marker`], so exactly one place scales. No-op on an empty set.
     pub fn render_markers(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         markers: &[HudMarker],
+        ui_scale: f32,
     ) {
-        self.draw_markers(device, queue, view, markers);
+        let markers = scale_marker_chrome(markers, ui_scale);
+        self.draw_markers(device, queue, view, &markers);
     }
 
     /// Upload `markers` and composite them as one LOAD pass over `view` (never clears). Shared by
@@ -1102,6 +1199,109 @@ mod tests {
         // from screen-centre is constant — the position carries no range information at all.
         let r = (mn.ndc_x * mn.ndc_x + mn.ndc_y * mn.ndc_y).sqrt();
         assert!((r - RING_RADIUS).abs() < 1e-4, "marker sits on the fixed bearing ring, not a range");
+    }
+
+    // ---- accessibility ui_scale (the picker.rs `*_scaled` contract) ----
+
+    #[test]
+    fn scaled_variants_at_one_match_the_unscaled_fns() {
+        // ui_scale == 1.0 is byte-identical to the unscaled fns (the delegation contract).
+        let a = alert(AlertKind::TakingFire, 7, -3, 2);
+        assert_eq!(
+            marker_for(&a, (1.0, 2.0), 0.3, 20),
+            marker_for_scaled(&a, (1.0, 2.0), 0.3, 20, 1.0)
+        );
+        assert_eq!(
+            hitmarker_marker(Some(5), 8),
+            hitmarker_marker_scaled(Some(5), 8, 1.0)
+        );
+        assert_eq!(
+            crosshair_markers(0.02, 16.0 / 9.0),
+            crosshair_markers_scaled(0.02, 16.0 / 9.0, 1.0)
+        );
+        let mut ch = AlertChannel::new();
+        ch.recent.push(a);
+        assert_eq!(
+            alert_labels(&ch, (1.0, 2.0), 0.3, 20),
+            alert_labels_scaled(&ch, (1.0, 2.0), 0.3, 20, 1.0)
+        );
+    }
+
+    #[test]
+    fn ui_scale_grows_marker_glyphs_but_never_moves_the_bearing_ring() {
+        // The alert ping is a positional encoding (bearing at the fixed RING_RADIUS edge distance);
+        // ui_scale grows only the glyph. Position, color, alpha, shape all stay put.
+        let a = alert(AlertKind::BaseUnderAttack, 3, -7, 0);
+        let base = marker_for_scaled(&a, (0.0, 0.0), 0.4, 10, 1.0).unwrap();
+        let big = marker_for_scaled(&a, (0.0, 0.0), 0.4, 10, 1.5).unwrap();
+        assert!((big.half_size - base.half_size * 1.5).abs() < 1e-6, "glyph grows 1.5x");
+        assert_eq!((big.ndc_x, big.ndc_y), (base.ndc_x, base.ndc_y), "ring point is fixed");
+        let r = (big.ndc_x * big.ndc_x + big.ndc_y * big.ndc_y).sqrt();
+        assert!((r - RING_RADIUS).abs() < 1e-4, "still rides the fixed RING_RADIUS");
+        assert_eq!(
+            ([big.r, big.g, big.b], big.alpha, big.shape),
+            ([base.r, base.g, base.b], base.alpha, base.shape)
+        );
+    }
+
+    #[test]
+    fn ui_scale_grows_the_hitmarker_at_dead_center() {
+        let base = hitmarker_marker_scaled(Some(0), 2, 1.0).unwrap();
+        let big = hitmarker_marker_scaled(Some(0), 2, 1.5).unwrap();
+        assert!((big.half_size - base.half_size * 1.5).abs() < 1e-6);
+        assert!(big.ndc_x.abs() < 1e-9 && big.ndc_y.abs() < 1e-9, "stays dead-center");
+        assert_eq!(big.alpha, base.alpha, "fade is scale-independent");
+    }
+
+    #[test]
+    fn ui_scale_grows_the_whole_crosshair_uniformly() {
+        // Resting gap, bloom spread, and dot half-size all scale together, so the recoil read
+        // ("how spread vs. settled") is proportionally identical at every scale.
+        let base = crosshair_markers_scaled(0.05, 1.0, 1.0);
+        let big = crosshair_markers_scaled(0.05, 1.0, 1.5);
+        let top_b = base.iter().find(|t| t.ndc_y > 0.0).unwrap();
+        let top_s = big.iter().find(|t| t.ndc_y > 0.0).unwrap();
+        assert!((top_s.ndc_y - top_b.ndc_y * 1.5).abs() < 1e-6, "gap+bloom scale 1.5x");
+        assert!((top_s.half_size - top_b.half_size * 1.5).abs() < 1e-6, "dots scale 1.5x");
+        // The center pip never moves.
+        assert!(big[0].ndc_x.abs() < 1e-9 && big[0].ndc_y.abs() < 1e-9);
+        // Aspect squaring still holds under scale.
+        let wide = crosshair_markers_scaled(0.05, 16.0 / 9.0, 1.5);
+        let right = wide.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
+        let top = wide.iter().find(|t| t.ndc_y > 0.0).unwrap().ndc_y;
+        assert!((right * (16.0 / 9.0) - top).abs() < 1e-6, "cross stays square when scaled");
+    }
+
+    #[test]
+    fn ui_scale_drops_labels_further_but_keeps_the_marker_column() {
+        // The CVD label rides just below the scaled glyph: same x column, a scaled drop, and the
+        // marker's own ring point unchanged.
+        let mut ch = AlertChannel::new();
+        ch.recent.push(alert(AlertKind::TakingFire, 10, 0, 0));
+        let base = alert_labels_scaled(&ch, (0.0, 0.0), 0.0, 5, 1.0);
+        let big = alert_labels_scaled(&ch, (0.0, 0.0), 0.0, 5, 1.5);
+        let m = marker_for(&ch.recent[0], (0.0, 0.0), 0.0, 5).unwrap();
+        assert!((big[0].ndc_x - base[0].ndc_x).abs() < 1e-6, "label column is fixed");
+        assert!((base[0].ndc_y - (m.ndc_y - LABEL_DROP)).abs() < 1e-6);
+        assert!((big[0].ndc_y - (m.ndc_y - LABEL_DROP * 1.5)).abs() < 1e-6, "drop scales");
+    }
+
+    #[test]
+    fn scale_marker_chrome_touches_only_the_glyph_size() {
+        // The render_markers draw-boundary seam: host echoes built at 1.0 grow their glyphs, but
+        // position (the bearing encoding), color, alpha, and shape pass through untouched.
+        let echo =
+            place_marker((10.0, 0.0), 0, (0.0, 0.0), 0.0, 3, [0.3, 0.85, 0.45], SHAPE_PLUS).unwrap();
+        let scaled = scale_marker_chrome(&[echo], 1.5);
+        assert_eq!(scaled.len(), 1);
+        assert!((scaled[0].half_size - echo.half_size * 1.5).abs() < 1e-6);
+        assert_eq!(
+            (scaled[0].ndc_x, scaled[0].ndc_y, scaled[0].alpha, scaled[0].shape),
+            (echo.ndc_x, echo.ndc_y, echo.alpha, echo.shape)
+        );
+        assert_eq!([scaled[0].r, scaled[0].g, scaled[0].b], [echo.r, echo.g, echo.b]);
+        // At 1.0 it is the identity.
+        assert_eq!(scale_marker_chrome(&[echo], 1.0), vec![echo]);
     }
 
     /// Validate `hud.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails

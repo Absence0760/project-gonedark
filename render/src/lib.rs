@@ -1697,6 +1697,7 @@ impl Renderer {
             yaw,
             viewport,
             tick,
+            self.ui_scale,
         );
     }
 
@@ -1714,7 +1715,7 @@ impl Renderer {
         tick: u64,
     ) {
         self.hud
-            .render_hitmarker(device, queue, view, last_hit_tick, tick);
+            .render_hitmarker(device, queue, view, last_hit_tick, tick, self.ui_scale);
     }
 
     /// Draw the hip-fire **dynamic crosshair** (WS-A) — the four arm ticks + center pip, spread by the
@@ -1730,7 +1731,8 @@ impl Renderer {
         bloom: f32,
         aspect: f32,
     ) {
-        self.hud.render_crosshair(device, queue, view, bloom, aspect);
+        self.hud
+            .render_crosshair(device, queue, view, bloom, aspect, self.ui_scale);
     }
 
     /// Draw the **colorblind (CVD) text labels** for the live alerts (accessibility, invariant #6) —
@@ -1753,7 +1755,7 @@ impl Renderer {
         aspect: f32,
     ) {
         self.text.set_aspect(aspect);
-        for label in hud::alert_labels(alerts, avatar_world, yaw, tick) {
+        for label in hud::alert_labels_scaled(alerts, avatar_world, yaw, tick, self.ui_scale) {
             self.text.queue(
                 label.text,
                 [label.ndc_x, label.ndc_y],
@@ -1777,7 +1779,8 @@ impl Renderer {
         view: &wgpu::TextureView,
         markers: &[hud::HudMarker],
     ) {
-        self.hud.render_markers(device, queue, view, markers);
+        self.hud
+            .render_markers(device, queue, view, markers, self.ui_scale);
     }
 
     /// Draw the **bullet-impact VFX** (WS-A) — the additive spark/dust burst at the projected hit
@@ -1836,7 +1839,8 @@ impl Renderer {
         state: &tank_hud::TankHudState,
         shell_label: &str,
     ) {
-        self.tank_hud.render(device, queue, view, state);
+        self.tank_hud
+            .render(device, queue, view, state, self.ui_scale);
         // Shell-selector readout: a short label under the reticle, drawn through the shared text pass.
         if !shell_label.is_empty() {
             self.text.queue(
@@ -1953,7 +1957,8 @@ impl Renderer {
         view: &wgpu::TextureView,
         marquee: &marquee::Marquee,
     ) {
-        self.marquee.render(device, queue, view, marquee);
+        self.marquee
+            .render(device, queue, view, marquee, self.ui_scale);
     }
 
     /// Draw the debug overlay's pre-composed world-space line list `verts` on top of the current

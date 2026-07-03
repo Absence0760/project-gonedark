@@ -65,7 +65,7 @@ fn apply_dark(mut c: Rgb, uv: [f32; 2], dark: f32) -> Rgb {
     // Tunnel vignette: darken only toward the edges (r ~0 at centre, ~1 at the corner). Leaves the
     // inner ~30% fully bright, so the embodied view reads as vision closing in, never a black frame.
     let d = [uv[0] - 0.5, uv[1] - 0.5];
-    let r = (d[0] * d[0] + d[1] * d[1]).sqrt() * 1.414_213_5;
+    let r = (d[0] * d[0] + d[1] * d[1]).sqrt() * std::f32::consts::SQRT_2;
     let tunnel = 1.0 - smoothstep(0.30, 1.05, r) * 0.55 * dark;
 
     // Shadow weight: strongest in the darks, ~0 by mid-grey — so lit surfaces (and the amber avatar)

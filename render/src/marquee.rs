@@ -12,6 +12,16 @@
 //! NDC chrome only — the rect carries no fog mask, and the host derives it by projecting the live
 //! selection drag corners and only draws it in the command view (never the dark embodied frame).
 //!
+//! ## `ui_scale` — the rect deliberately does NOT scale
+//!
+//! The marquee's corners ARE the pointer's drag endpoints (projected to NDC by the host), so the
+//! box is a **positional encoding**, not chrome: scaling it with the accessibility `ui_scale`
+//! would detach the rectangle from the finger/cursor and select a different band than the player
+//! swept. The only genuine chrome here is the fixed border **thickness**, and that is what
+//! [`marquee_quads_scaled`] scales — the edges thicken around their pointer-defined midlines
+//! while the fill and all four edge positions track the drag exactly. Don't re-flag this module
+//! as "ignoring ui_scale"; ignoring it for the geometry is the correct behaviour.
+//!
 //! The testable layout (a translucent fill plus four border edges) lives in the free
 //! [`marquee_quads`] so it is unit-testable without a GPU — the `overlay_quads` / `radial_quads`
 //! pattern.
@@ -122,6 +132,15 @@ fn quad(cx: f32, cy: f32, hw: f32, hh: f32, alpha: f32, role: MarqueeRole) -> Ma
 /// (top/bottom/left/right). Pure (no GPU) — the testable layout seam. The corners are normalized so
 /// a drag in any direction yields the same box. Returned fill-first so the border reads over it.
 pub fn marquee_quads(m: &Marquee) -> Vec<MarqueeQuad> {
+    marquee_quads_scaled(m, 1.0)
+}
+
+/// [`marquee_quads`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
+/// Scales ONLY the border half-thickness ([`BORDER_HALF`], the one piece of genuine chrome) — the
+/// rect itself is the pointer's drag band (see the module doc) and must keep tracking the drag
+/// endpoints exactly, so the fill and every edge midline are `ui_scale`-independent.
+/// `ui_scale == 1.0` is byte-identical to [`marquee_quads`].
+pub fn marquee_quads_scaled(m: &Marquee, ui_scale: f32) -> Vec<MarqueeQuad> {
     let x0 = m.min[0].min(m.max[0]);
     let x1 = m.min[0].max(m.max[0]);
     let y0 = m.min[1].min(m.max[1]);
@@ -130,7 +149,7 @@ pub fn marquee_quads(m: &Marquee) -> Vec<MarqueeQuad> {
     let cy = (y0 + y1) * 0.5;
     let hw = (x1 - x0) * 0.5;
     let hh = (y1 - y0) * 0.5;
-    let t = BORDER_HALF;
+    let t = BORDER_HALF * ui_scale;
     vec![
         // Interior fill.
         quad(cx, cy, hw, hh, FILL_ALPHA, MarqueeRole::Fill),
@@ -259,16 +278,18 @@ impl MarqueeRenderer {
     }
 
     /// Draw the band-select marquee on top of `view` (a LOAD pass — never clears). Builds the quad
-    /// set via [`marquee_quads`], uploads it, and records one LOAD render pass. The host calls this
-    /// only while a command-view band-drag is in flight.
+    /// set via [`marquee_quads_scaled`] (`ui_scale` thickens only the border — the rect itself
+    /// tracks the pointer; see the module doc), uploads it, and records one LOAD render pass. The
+    /// host calls this only while a command-view band-drag is in flight.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         marquee: &Marquee,
+        ui_scale: f32,
     ) {
-        let quads = marquee_quads(marquee);
+        let quads = marquee_quads_scaled(marquee, ui_scale);
         let instances: Vec<MarqueeInstance> = quads.iter().map(|q| q.instance()).collect();
         queue.write_buffer(&self.instance_buf, 0, bytemuck::cast_slice(&instances));
 
@@ -424,6 +445,48 @@ mod tests {
             [border.r, border.g, border.b],
             crate::theme::mix(crate::theme::PLAYER, crate::theme::BONE, 0.65)
         );
+    }
+
+    // ---- accessibility ui_scale (the picker.rs `*_scaled` contract) ----
+
+    #[test]
+    fn scaled_at_one_matches_unscaled() {
+        // ui_scale == 1.0 is byte-identical to the unscaled builder (the delegation contract).
+        let m = Marquee {
+            min: [-0.5, -0.3],
+            max: [0.4, 0.6],
+        };
+        assert_eq!(marquee_quads(&m), marquee_quads_scaled(&m, 1.0));
+    }
+
+    #[test]
+    fn ui_scale_thickens_the_border_but_never_moves_the_pointer_rect() {
+        // The rect IS the drag band (a positional encoding): the fill and every edge midline must
+        // stay glued to the pointer corners at any scale; only the border half-thickness grows.
+        let m = Marquee {
+            min: [-0.5, -0.3],
+            max: [0.4, 0.6],
+        };
+        let base = marquee_quads_scaled(&m, 1.0);
+        let big = marquee_quads_scaled(&m, 1.5);
+        // The fill is completely ui_scale-independent — it is the selected band itself.
+        assert_eq!(base[0], big[0], "fill tracks the pointer rect exactly");
+        // Every border edge keeps its midline (cx, cy) and its long half-span; only the thin
+        // half-thickness axis grows 1.5x.
+        for (b, g) in base[1..].iter().zip(big[1..].iter()) {
+            assert_eq!((g.cx, g.cy), (b.cx, b.cy), "edge midline stays on the drag corner");
+            if b.hh < b.hw {
+                // Horizontal edge: thin in y.
+                assert_eq!(g.hw, b.hw, "edge still spans the rect width");
+                assert!((g.hh - b.hh * 1.5).abs() < 1e-7, "thickness grows 1.5x");
+                assert!((g.hh - BORDER_HALF * 1.5).abs() < 1e-7);
+            } else {
+                // Vertical edge: thin in x.
+                assert_eq!(g.hh, b.hh, "edge still spans the rect height");
+                assert!((g.hw - b.hw * 1.5).abs() < 1e-7, "thickness grows 1.5x");
+                assert!((g.hw - BORDER_HALF * 1.5).abs() < 1e-7);
+            }
+        }
     }
 
     #[test]

@@ -57,6 +57,27 @@ const AMMO_LOW_COLOR: [f32; 3] = crate::theme::AMBER;
 /// Ammo count fraction (rounds left / mag size) at/below which the count warms to [`AMMO_LOW_COLOR`].
 const AMMO_LOW_FRAC: f32 = 0.25;
 
+// --- low/empty magazine cue (invariant #6: never colour alone) ----------------------------------
+/// Glyph cell height (NDC) of the low/empty-magazine cue line — slightly smaller than the count it
+/// annotates, still combat-glanceable.
+const CUE_SIZE: f32 = 0.042;
+/// Low-magazine cue text. A literal word, not just a warm tint, so the state survives colour-blind
+/// play and the dark frame (invariant #6: cross-modal, never colour alone). All-caps per the HUD
+/// convention (the atlas has lowercase, the HUD voice doesn't).
+const AMMO_LOW_TEXT: &str = "LOW";
+/// Empty-magazine cue text — the truthful recovery action. The magazine reloads **manually** from
+/// the unit's carried reserve (`Command::Reload`, D67) — so the honest prompt for an empty mag is
+/// RELOAD, not a resupply call. (This surface only knows the magazine; a reserve-dry "RESUPPLY AT
+/// CAMP" cue needs the host to feed `Weapon::reserve` into [`PlayerHudState`] — D67's deferred
+/// out-of-ammo cue.) ASCII-only (`--`, not an em dash): the atlas bakes 0x20..0x7E.
+const AMMO_OUT_TEXT: &str = "MAG EMPTY -- RELOAD";
+/// Low-magazine cue tint — the shared caution orange (a *warning* about own state, not yet a stop).
+const AMMO_LOW_CUE_COLOR: [f32; 3] = crate::theme::ALERT_WARN;
+/// Empty-magazine tint (cue AND count) — [`STATUS_CRIT`](crate::theme::STATUS_CRIT), the theme's
+/// "drained own-state" red (an empty mag is your own weapon run dry, not a world alert like
+/// `ALERT_DANGER`; the two alias to the one HUD danger red anyway).
+const AMMO_OUT_COLOR: [f32; 3] = crate::theme::STATUS_CRIT;
+
 /// Track/fill opacity — deliberately denser than the shared `theme::PANEL_BG_ALPHA` card fill: this
 /// is a data bar over the DARK embodied frame, and it must read solid at a combat glance.
 const BAR_ALPHA: f32 = 0.90;
@@ -131,6 +152,19 @@ pub fn ammo_label(ammo: u32, mag_size: u32) -> String {
     format!("{ammo} / {mag_size}")
 }
 
+/// Is the magazine **low** (some rounds left, at/below [`AMMO_LOW_FRAC`] of capacity)? Exclusive of
+/// empty — a dry mag reads as [`ammo_out`], never as merely low. A magazine-less weapon
+/// (`mag_size == 0`) is never low. Pure, host-testable (the cue-state seam).
+pub fn ammo_low(ammo: u32, mag_size: u32) -> bool {
+    ammo > 0 && mag_size > 0 && (ammo as f32) <= AMMO_LOW_FRAC * mag_size as f32
+}
+
+/// Is the magazine **empty** (`ammo == 0` on a weapon that has one)? A magazine-less weapon
+/// (`mag_size == 0`, e.g. the Medic) is never "out" — it has no mag to run dry. Pure, host-testable.
+pub fn ammo_out(ammo: u32, mag_size: u32) -> bool {
+    mag_size > 0 && ammo == 0
+}
+
 /// The HP bar's quads (drawn through the [`overlay`](crate::overlay) quad pipeline): a rim, the full
 /// track, and a left-anchored fill sized to the current HP fraction. An empty state (no body) or a
 /// zero fill emits no fill quad. Pure + GPU-free → unit-tested.
@@ -198,15 +232,19 @@ pub fn player_hud_quads_scaled(state: &PlayerHudState, ui_scale: f32) -> Vec<Ove
     out
 }
 
-/// The HP bar's text labels — the magazine count above the bar (when the weapon has a magazine).
-/// Left-aligned with the bar. An empty state (no body) or a magazine-less weapon (`mag_size == 0`)
-/// emits nothing. Pure + GPU-free → unit-tested.
+/// The HP bar's text labels — the magazine count above the bar (when the weapon has a magazine),
+/// plus a **cue line** stacked above the count when the mag runs low (`"LOW"`) or dry
+/// (`"MAG EMPTY -- RELOAD"`). The cue is text, not just tint, so the state reads without colour
+/// (invariant #6: alerts must be cross-modal — colour alone excludes colour-blind play and washes
+/// out over the dark frame). Left-aligned with the bar. An empty state (no body) or a magazine-less
+/// weapon (`mag_size == 0`) emits nothing. Pure + GPU-free → unit-tested. Deliberately **stateless
+/// per frame** — no wall-clock pulsing — so the derivation stays a pure function of `state`.
 pub fn player_hud_labels(state: &PlayerHudState) -> Vec<PlayerHudLabel> {
     player_hud_labels_scaled(state, 1.0)
 }
 
-/// [`player_hud_labels`] with an explicit physical `ui_scale`. The count POSITION rides above the
-/// SCALED bar with a scaled gap; the emitted `size` stays UNSCALED — the text pass multiplies it by
+/// [`player_hud_labels`] with an explicit physical `ui_scale`. The count/cue POSITIONS ride above
+/// the SCALED bar with scaled gaps; the emitted `size`s stay UNSCALED — the text pass multiplies by
 /// `ui_scale` at draw time (no double-scaling). `ui_scale == 1.0` is byte-identical.
 pub fn player_hud_labels_scaled(state: &PlayerHudState, ui_scale: f32) -> Vec<PlayerHudLabel> {
     if state.is_empty() || state.mag_size == 0 {
@@ -215,17 +253,46 @@ pub fn player_hud_labels_scaled(state: &PlayerHudState, ui_scale: f32) -> Vec<Pl
     // The bar's top edge; the count sits a gap above it, growing down from a TopLeft anchor.
     let bar_top = BOTTOM + 2.0 * BAR_HH * ui_scale;
     let label_top = bar_top + LABEL_GAP * ui_scale + AMMO_SIZE * ui_scale;
-    // Warm the count when the magazine is nearly spent — a nudge on the player's own weapon.
-    let low = (state.ammo as f32) <= AMMO_LOW_FRAC * state.mag_size as f32;
-    let color = if low { AMMO_LOW_COLOR } else { AMMO_COLOR };
-    vec![PlayerHudLabel {
+    // Magazine cue state: dry outranks low (a dry mag is never "merely low" — `ammo_low` excludes
+    // zero, so the two are mutually exclusive by construction).
+    let out = ammo_out(state.ammo, state.mag_size);
+    let low = ammo_low(state.ammo, state.mag_size);
+    // Count tint: neutral bone → warm (low) → crit red (dry). The colour still carries the glance
+    // read; the cue line below carries the same state as TEXT (invariant #6: never colour alone).
+    let color = if out {
+        AMMO_OUT_COLOR
+    } else if low {
+        AMMO_LOW_COLOR
+    } else {
+        AMMO_COLOR
+    };
+    let mut labels = vec![PlayerHudLabel {
         text: ammo_label(state.ammo, state.mag_size),
         pos: [LEFT, label_top],
         size: AMMO_SIZE,
         anchor: Anchor::TopLeft,
         color,
         alpha: AMMO_ALPHA,
-    }]
+    }];
+    // The cue line — one gap above the count, sharing its left edge, growing down from TopLeft.
+    if out || low {
+        let cue_top = label_top + LABEL_GAP * ui_scale + CUE_SIZE * ui_scale;
+        let (text, cue_color) = if out {
+            // Truthful recovery copy: the mag refills via manual reload from carried reserve (D67).
+            (AMMO_OUT_TEXT, AMMO_OUT_COLOR)
+        } else {
+            (AMMO_LOW_TEXT, AMMO_LOW_CUE_COLOR)
+        };
+        labels.push(PlayerHudLabel {
+            text: text.to_string(),
+            pos: [LEFT, cue_top],
+            size: CUE_SIZE,
+            anchor: Anchor::TopLeft,
+            color: cue_color,
+            alpha: AMMO_ALPHA,
+        });
+    }
+    labels
 }
 
 #[cfg(test)]
@@ -395,6 +462,95 @@ mod tests {
         assert_eq!(full, AMMO_COLOR, "a full mag reads in the neutral bone tint");
         assert_eq!(low, AMMO_LOW_COLOR, "a near-empty mag warms to the low-ammo tint");
         assert_ne!(full, low);
+    }
+
+    // ---- low/empty magazine cue (invariant #6: never colour alone) ----
+
+    #[test]
+    fn cue_predicates_split_low_out_and_healthy() {
+        // Boundary: 25% of a 30-round mag is 7.5, so 7 is low and 8 is not.
+        assert!(ammo_low(7, 30), "7/30 is at/below the low fraction");
+        assert!(!ammo_low(8, 30), "8/30 is above the low fraction");
+        // Dry outranks low: zero is OUT, never merely LOW (mutually exclusive by construction).
+        assert!(ammo_out(0, 30));
+        assert!(!ammo_low(0, 30), "an empty mag is out, not low");
+        assert!(!ammo_out(1, 30), "one round left is low, not out");
+        assert!(ammo_low(1, 30));
+        // A magazine-less weapon (Medic / melee) has no mag to run low OR dry.
+        assert!(!ammo_low(0, 0));
+        assert!(!ammo_out(0, 0));
+    }
+
+    #[test]
+    fn healthy_mag_emits_no_cue() {
+        let ls = player_hud_labels(&state()); // 12/30 = 0.4, above the low fraction
+        assert_eq!(ls.len(), 1, "healthy mag → the count only, no cue line");
+        assert_eq!(ls[0].color, AMMO_COLOR);
+    }
+
+    #[test]
+    fn low_mag_emits_a_text_low_cue_not_colour_alone() {
+        let mut s = state();
+        s.ammo = 3; // 3/30 = 0.1 <= AMMO_LOW_FRAC
+        let ls = player_hud_labels(&s);
+        assert_eq!(ls.len(), 2, "count + cue line");
+        assert_eq!(ls[0].color, AMMO_LOW_COLOR, "count warms (colour channel)");
+        assert_eq!(ls[1].text, "LOW", "…and the state is also spelled out (text channel)");
+        assert_eq!(ls[1].color, crate::theme::ALERT_WARN, "cue in the shared caution tint");
+    }
+
+    #[test]
+    fn empty_mag_cue_names_the_truthful_recovery_action() {
+        let mut s = state();
+        s.ammo = 0;
+        let ls = player_hud_labels(&s);
+        assert_eq!(ls.len(), 2, "count + cue line");
+        // The mag refills via MANUAL reload from carried reserve (D67, `Command::Reload`) — so the
+        // honest empty-mag prompt is RELOAD (resupply-at-camp is the reserve's recovery, which this
+        // surface cannot see). Both the count and the cue read in the drained-own-state red.
+        assert_eq!(ls[1].text, "MAG EMPTY -- RELOAD");
+        assert_eq!(ls[1].color, crate::theme::STATUS_CRIT, "cannot fight → crit red");
+        assert_eq!(ls[0].color, crate::theme::STATUS_CRIT, "the 0-count reads crit too");
+        assert_ne!(ls[1].text, "LOW", "dry outranks low — never both");
+    }
+
+    #[test]
+    fn cue_text_is_uppercase_ascii_for_the_hud_atlas() {
+        // The atlas bakes full printable ASCII (0x20..0x7E) — lowercase would render, but the HUD
+        // voice is all-caps; and anything outside ASCII (an em dash) would drop glyphs entirely.
+        for cue in [AMMO_LOW_TEXT, AMMO_OUT_TEXT] {
+            assert!(cue.chars().all(|c| (' '..='~').contains(&c)), "{cue:?} not printable ASCII");
+            assert!(!cue.chars().any(|c| c.is_ascii_lowercase()), "{cue:?} breaks all-caps");
+        }
+    }
+
+    #[test]
+    fn cue_stacks_above_the_count_left_aligned_and_on_screen() {
+        for ammo in [0, 3] {
+            let mut s = state();
+            s.ammo = ammo;
+            let ls = player_hud_labels(&s);
+            let (count, cue) = (&ls[0], &ls[1]);
+            assert!((cue.pos[0] - LEFT).abs() < 1e-6, "cue shares the bar's left edge");
+            // TopLeft anchors grow down: the cue's bottom edge sits at/above the count's top.
+            assert!(cue.pos[1] - cue.size >= count.pos[1], "cue rides above the count");
+            // Still inside the bottom-left quadrant (clear of the centre reticle, on-screen).
+            assert!(cue.pos[0] < 0.0 && cue.pos[1] < 0.0 && cue.pos[1] > -1.0);
+        }
+    }
+
+    #[test]
+    fn cue_positions_scale_with_ui_scale() {
+        let mut s = state();
+        s.ammo = 0;
+        // Identity at 1× (the golden-test contract) …
+        assert_eq!(player_hud_labels(&s), player_hud_labels_scaled(&s, 1.0));
+        // … and at 2× the cue rides higher (scaled gaps/sizes) while its emitted size stays
+        // unscaled — the text pass applies ui_scale at draw time (no double-scaling).
+        let base = &player_hud_labels_scaled(&s, 1.0)[1];
+        let scaled = &player_hud_labels_scaled(&s, 2.0)[1];
+        assert!(scaled.pos[1] > base.pos[1], "cue rises with the scaled stack");
+        assert_eq!(scaled.size, base.size, "emitted size stays unscaled");
     }
 
     #[test]

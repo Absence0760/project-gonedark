@@ -243,11 +243,26 @@ fn round_half(r: f32, aspect: f32) -> (f32, f32) {
 /// render`] just uploads + draws whatever this returns. The shell-selector *label* is text and is
 /// drawn separately through the shared text pass (it carries no geometry here).
 pub fn tank_hud_instances(state: &TankHudState) -> Vec<TankHudInstance> {
+    tank_hud_instances_scaled(state, 1.0)
+}
+
+/// [`tank_hud_instances`] with an explicit accessibility `ui_scale` (the picker's `*_scaled`
+/// pattern). Only the **chrome sizes** scale — the reticle radius (min AND bloom, so the
+/// dispersion read stays proportionally identical), the reload ring, the chevron glyph, and the
+/// lead-pip glyph. The **positional encodings** stay put: the chevron's strip x (hull-relative
+/// bearing), [`TURRET_STRIP_Y`] (the M1 anchor between the alert ring and the reload ring), and
+/// the lead pip's *center* (the actual aim-ahead point — moving it with `ui_scale` would tell the
+/// gunner to aim at the wrong spot). Note the M1 clearances are pinned at `ui_scale == 1.0`; at
+/// extreme scales the grown glyphs may crowd their neighbours — the standard accessibility
+/// tradeoff every scaled HUD module here accepts. `ui_scale == 1.0` is byte-identical to
+/// [`tank_hud_instances`].
+pub fn tank_hud_instances_scaled(state: &TankHudState, ui_scale: f32) -> Vec<TankHudInstance> {
     let mut out = Vec::with_capacity(4);
 
     // 1. Dispersion reticle — a crosshair ring at screen center sized by current bloom.
     let reticle_r =
-        dispersion_reticle_radius(state.dispersion, RETICLE_MIN_R, RETICLE_GAIN, RETICLE_MAX_R);
+        dispersion_reticle_radius(state.dispersion, RETICLE_MIN_R, RETICLE_GAIN, RETICLE_MAX_R)
+            * ui_scale;
     let (hx, hy) = round_half(reticle_r, state.aspect);
     out.push(TankHudInstance {
         ndc_x: 0.0,
@@ -264,7 +279,7 @@ pub fn tank_hud_instances(state: &TankHudState) -> Vec<TankHudInstance> {
 
     // 2. Reload ring — concentric, just outside the widest reticle bloom, filling as the gun reloads.
     let fill = reload_ring_fill(state.reload_left, state.reload_ticks);
-    let (rhx, rhy) = round_half(RELOAD_R, state.aspect);
+    let (rhx, rhy) = round_half(RELOAD_R * ui_scale, state.aspect);
     out.push(TankHudInstance {
         ndc_x: 0.0,
         ndc_y: 0.0,
@@ -281,7 +296,7 @@ pub fn tank_hud_instances(state: &TankHudState) -> Vec<TankHudInstance> {
     // 3. Hull-relative turret indicator — a chevron on the top compass strip.
     let offset = turret_indicator_offset(state.hull_rad, state.turret_rad);
     let tx = turret_indicator_ndc_x(offset, TURRET_STRIP_HALF_W);
-    let (thx, thy) = round_half(TURRET_CHEVRON_R, state.aspect);
+    let (thx, thy) = round_half(TURRET_CHEVRON_R * ui_scale, state.aspect);
     out.push(TankHudInstance {
         ndc_x: tx,
         ndc_y: TURRET_STRIP_Y,
@@ -305,7 +320,7 @@ pub fn tank_hud_instances(state: &TankHudState) -> Vec<TankHudInstance> {
     if lx != 0.0 || ly != 0.0 {
         // Clamp the pip to a sane on-screen radius so a very fast crosser stays visible.
         let (cx, cy) = clamp_to_radius(lx, ly, LEAD_CLAMP_R);
-        let (lhx, lhy) = round_half(LEAD_PIP_R, state.aspect);
+        let (lhx, lhy) = round_half(LEAD_PIP_R * ui_scale, state.aspect);
         out.push(TankHudInstance {
             ndc_x: cx,
             ndc_y: cy,
@@ -447,16 +462,18 @@ impl TankHudRenderer {
     }
 
     /// Draw the embodied-tank HUD geometry for `state` over `view` (a LOAD pass — never clears).
-    /// Builds the live instance set via [`tank_hud_instances`], uploads it, and records one render
-    /// pass. The shell-selector *label* is drawn separately (text pass) by the `lib.rs` boundary.
+    /// Builds the live instance set via [`tank_hud_instances_scaled`] (`ui_scale` grows the sight
+    /// chrome, never the bearing/lead positions), uploads it, and records one render pass. The
+    /// shell-selector *label* is drawn separately (text pass) by the `lib.rs` boundary.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: &wgpu::TextureView,
         state: &TankHudState,
+        ui_scale: f32,
     ) {
-        let instances = tank_hud_instances(state);
+        let instances = tank_hud_instances_scaled(state, ui_scale);
         if instances.is_empty() {
             return;
         }
@@ -777,6 +794,67 @@ mod tests {
                 assert_ne!(cols[i], cols[j], "tank HUD elements must not share a colour");
             }
         }
+    }
+
+    // ---- accessibility ui_scale (the picker.rs `*_scaled` contract) ----
+
+    /// A state with every element live (including the lead pip) on a hull-off-axis turret, so the
+    /// scale tests cover a non-trivial chevron x and a non-center pip.
+    fn busy_state() -> TankHudState {
+        TankHudState {
+            hull_rad: 0.0,
+            turret_rad: FRAC_PI_2 / 2.0,
+            dispersion: 0.2,
+            muzzle_vel: 6.0,
+            target_range: 12.0,
+            target_rel_vel: (3.0, 1.0),
+            world_to_ndc: 0.05,
+            aspect: 2.0,
+            ..TankHudState::default()
+        }
+    }
+
+    #[test]
+    fn scaled_at_one_matches_unscaled() {
+        // ui_scale == 1.0 is byte-identical to the unscaled builder (the delegation contract).
+        let s = busy_state();
+        assert_eq!(tank_hud_instances(&s), tank_hud_instances_scaled(&s, 1.0));
+    }
+
+    #[test]
+    fn ui_scale_grows_the_sight_chrome_sizes() {
+        // All four elements' quads grow 1.5x on both axes (so the aspect roundness is preserved).
+        let s = busy_state();
+        let base = tank_hud_instances_scaled(&s, 1.0);
+        let big = tank_hud_instances_scaled(&s, 1.5);
+        assert_eq!(base.len(), big.len());
+        for (b, g) in base.iter().zip(big.iter()) {
+            assert_eq!(b.shape, g.shape);
+            assert!(
+                (g.half_x - b.half_x * 1.5).abs() < 1e-6 && (g.half_y - b.half_y * 1.5).abs() < 1e-6,
+                "shape {} chrome must grow 1.5x: {b:?} vs {g:?}",
+                b.shape
+            );
+            // Still round per-axis: half_x == half_y / aspect at every scale.
+            assert!((g.half_x - g.half_y / s.aspect).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn ui_scale_never_moves_the_positional_encodings() {
+        // The chevron x encodes the hull-relative bearing, TURRET_STRIP_Y is the M1 anchor, and the
+        // lead pip's center is the aim-ahead point — none may move with ui_scale (a moved pip would
+        // aim the gunner at the wrong spot). Alpha/color/param are scale-independent too.
+        let s = busy_state();
+        let base = tank_hud_instances_scaled(&s, 1.0);
+        let big = tank_hud_instances_scaled(&s, 1.5);
+        for (b, g) in base.iter().zip(big.iter()) {
+            assert_eq!((g.ndc_x, g.ndc_y), (b.ndc_x, b.ndc_y), "shape {} center fixed", b.shape);
+            assert_eq!((g.r, g.g, g.b, g.a, g.param), (b.r, b.g, b.b, b.a, b.param));
+        }
+        let chevron = big.iter().find(|i| i.shape == SHAPE_TURRET).unwrap();
+        assert!((chevron.ndc_y - TURRET_STRIP_Y).abs() < 1e-6, "strip anchor stays put");
+        assert!(chevron.ndc_x < 0.0, "CCW-swung turret still marks left at scale");
     }
 
     /// Validate `tank_hud.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails

@@ -127,9 +127,10 @@ pub fn present_grade(rgb: Rgb, uv: [f32; 2]) -> Rgb {
     let grey = luminance(c);
     c = mix(c, [grey, grey, grey], shadow_w * 0.12);
 
-    // 4. Smooth radial vignette — darkens only toward the corners.
+    // 4. Smooth radial vignette — darkens only toward the corners. (×√2 normalises the corner
+    // distance to 1.0.)
     let d = [uv[0] - 0.5, uv[1] - 0.5];
-    let r = (d[0] * d[0] + d[1] * d[1]).sqrt() * 1.414_213_5;
+    let r = (d[0] * d[0] + d[1] * d[1]).sqrt() * std::f32::consts::SQRT_2;
     let vignette = 1.0 - smoothstep(0.55, 1.15, r) * 0.34;
     for ch in &mut c {
         *ch = (*ch * vignette).clamp(0.0, 1.0);
