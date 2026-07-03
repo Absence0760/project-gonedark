@@ -639,9 +639,13 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 **PC-facing parity** — meeting a seated, genre-literate player's expectations without forking the
 game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
 
-- [ ] **PC-1 — Mouse-and-keyboard combat feel.** The embodied layer must feel right with a *mouse*,
+- [~] **PC-1 — Mouse-and-keyboard combat feel.** The embodied layer must feel right with a *mouse*,
   not just thumbs — precise aim, sensible defaults, FOV control. PC players notice instantly.
-  (Pairs with CP-2.)
+  (Pairs with CP-2.) **Mechanics landed:** raw unaccelerated mouse-look (`pal-desktop`
+  `DeviceEvent::MouseMotion`), an adjustable look-sensitivity multiplier + invert-Y (Settings), and
+  now an **adjustable base FOV** (`Game::set_base_fov`, 60–110°, default 90° — the 60° hardcode read
+  as tunnel-vision on a monitor), verified re-projecting the embodied view in `viz-runner`. **Owed:**
+  the *feel* sign-off — a playtest with a mouse (the human half, like CP-2's).
 - [ ] **PC-2 — PC control & options surface.** Full rebinds, graphics options, ultrawide /
   high-refresh / high-DPI support — the settings depth a PC player expects.
 - [~] **PC-3 — Replays & spectating (a determinism freebie).** A match is a seed + an input log
