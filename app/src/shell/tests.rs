@@ -734,7 +734,7 @@ use gonedark_render::tiers::QualityTier;
 
     // ---- The shell-prefs persistence codec -------------------------------------------------------
 
-    use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Optic};
+    use gonedark_core::gunsmith::{Barrel, Loadout, Magazine, Muzzle, Optic, Stock};
 
     /// A non-default state across all four objects, to prove the round-trip carries every field.
     fn sample_state() -> (SettingsState, ProfileState, LoadoutEditor, ArmySelectState) {
@@ -764,11 +764,14 @@ use gonedark_render::tiers::QualityTier;
             matches_played: 12,
             wins: 7,
         };
+        // Every slot non-default — including the D85 Stock/Muzzle pair, so the round-trip proves
+        // the encoder writes them (the §12-item-5 encode hole: decode read the keys, encode didn't).
         let loadout = LoadoutEditor::with_loadout(Loadout {
             optic: Optic::Marksman,
             barrel: Barrel::Heavy,
             magazine: Magazine::Extended,
-            ..Loadout::STANDARD
+            stock: Stock::Agile,
+            muzzle: Muzzle::Suppressor,
         });
         // A non-default army pick (FR, not the US default) so the round-trip proves the field carries.
         let army = ArmySelectState {
@@ -818,7 +821,7 @@ use gonedark_render::tiers::QualityTier;
         // an unparseable value keeps the field default. Never panics.
         let blob = "master=9.9\nsfx=-3\nsens=999\ninverty=maybe\nquality=42\n\
                     faction=99\nmatches=notanumber\noptic=7\nbarrel=-1\nmagazine=abc\n\
-                    army=42\ncallsign=   \n";
+                    stock=9\nmuzzle=xyz\narmy=42\ncallsign=   \n";
         let (s, p, l, a) = decode_shell_prefs(blob);
         assert_eq!(s.master_volume, 1.0, "over-range gain clamps to 1.0");
         assert_eq!(s.sfx_volume, 0.0, "negative gain clamps to 0.0");

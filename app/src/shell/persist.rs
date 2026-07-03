@@ -30,6 +30,14 @@ pub(crate) fn barrel_index(b: Barrel) -> usize {
 pub(crate) fn magazine_index(m: Magazine) -> usize {
     Magazine::ALL.iter().position(|&x| x == m).unwrap_or(0)
 }
+/// This [`Stock`]'s stable index in [`Stock::ALL`] (gunsmith breadth, D85).
+pub(crate) fn stock_index(s: Stock) -> usize {
+    Stock::ALL.iter().position(|&x| x == s).unwrap_or(0)
+}
+/// This [`Muzzle`]'s stable index in [`Muzzle::ALL`] (gunsmith breadth, D85).
+pub(crate) fn muzzle_index(m: Muzzle) -> usize {
+    Muzzle::ALL.iter().position(|&x| x == m).unwrap_or(0)
+}
 
 /// Serialize the three player-owned shell state objects — [`SettingsState`] (audio/look/video),
 /// [`ProfileState`] (callsign/faction/record), and the gunsmith [`LoadoutEditor`] — to a flat,
@@ -59,7 +67,7 @@ pub(crate) fn encode_shell_prefs(
          master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nfov={}\nquality={}\n\
          cvdcues={}\nsoundcues={}\ncvdpal={}\nalertcue={}\n\
          callsign={}\nfaction={}\nmatches={}\nwins={}\n\
-         optic={}\nbarrel={}\nmagazine={}\n\
+         optic={}\nbarrel={}\nmagazine={}\nstock={}\nmuzzle={}\n\
          army={}\nkeybinds={}\n",
         s.master_volume,
         s.sfx_volume,
@@ -79,6 +87,10 @@ pub(crate) fn encode_shell_prefs(
         optic_index(l.optic),
         barrel_index(l.barrel),
         magazine_index(l.magazine),
+        // The two D85 slots. Decode already read these keys; the encoder omitting them was the
+        // parity-plan §12-item-5 hole — a customized Stock/Muzzle silently reset on restart.
+        stock_index(l.stock),
+        muzzle_index(l.muzzle),
         // The selected army as its stable `Army::index` ordinal (the same tag order the sim/wire
         // codecs use), tolerant-decoded back by [`decode_army`].
         army.selected.index(),

@@ -13,8 +13,8 @@
 > wires are consumed end-to-end** on Android (`bec478e`/`ae32cbd`; §12 item 3, §5). What remains is
 > **blocked** (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) plus **two
 > structural gaps**: the [D85](../decisions.md) Stock/Muzzle gunsmith slots are
-> desktop-only — absent from the Android gunsmith/wire/prefs, and not persisted across a desktop
-> restart either (§12 item 5, the one caveat on "every shipped surface" above) — and the new
+> desktop-only — absent from the Android gunsmith/wire/prefs (§12 item 5, the one caveat on
+> "every shipped surface" above; the desktop persist half was fixed 2026-07-03) — and the new
 > desktop skirmish match-setup screen has no Compose twin yet (§12 item 6). Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
@@ -312,11 +312,12 @@ match-setup screen landing (2026-07-03) without a Compose twin:
    `campaign.dat`). Coverage **meets or exceeds** Android's `ShellPrefs`: settings (audio, sens,
    invert-Y, plus desktop-only fov / CVD palette / alert-cue mode / keybind map), profile
    (callsign/faction/record), loadout, and the army pick (`1ce01cb`); campaign progress still rides
-   `campaign.dat` separately. **One residual hole (open, folded into item 5):** the encode blob
-   writes only optic/barrel/magazine (`persist.rs:57-88`) while decode also reads the D85
-   stock/muzzle keys (`persist.rs:155-162`) — [D85](../decisions.md) (2026-07-01) postdates the
-   codec, and the encode was never extended — so a customized Stock/Muzzle silently resets on a
-   desktop restart, and no test pins those two slots.
+   `campaign.dat` separately. **The one residual hole is now closed too (2026-07-03):** the encode
+   blob used to write only optic/barrel/magazine while decode also read the D85 stock/muzzle keys
+   ([D85](../decisions.md) (2026-07-01) postdated the codec), so a customized Stock/Muzzle silently
+   reset on a desktop restart. `encode_shell_prefs` now writes `stock=`/`muzzle=`
+   (`persist.rs`, `stock_index`/`muzzle_index`), and the round-trip test's sample loadout sets
+   **every** slot non-default so the encoder can't drop one again; item 5's Android half remains.
 3. **Look-sensitivity / briefing-difficulty are carried but inert on Android — ✅ CLOSED (verified
    2026-07-03; landed `ae32cbd` 2026-06-30 / `bec478e` 2026-07-01).** Both wires now run
    end-to-end:
@@ -349,10 +350,10 @@ match-setup screen landing (2026-07-03) without a Compose twin:
    `LaunchConfig.kt` — the glue itself says so and defaults both slots to Standard,
    `android_backend.rs:549-556`), and `ShellPrefsCodec` has no stock/muzzle keys either — zero
    references in the Android sources. So a D85 sidegrade can't be picked, fielded, or persisted on Android — a
-   real value-level divergence in **sim-affecting** loadout slots, not chrome. Desktop's own
-   persist encode also omits the two slots (item 2's residual hole). Closing it needs the Compose
-   slots + two new wire keys (`stk=`/`muz=`, tolerant-decoded so old emitters stay valid) + the two
-   prefs keys + the desktop encode fix, each with the usual pinned tests.
+   real value-level divergence in **sim-affecting** loadout slots, not chrome. (Desktop's own
+   persist encode also omitted the two slots — fixed 2026-07-03, see item 2.) Closing the Android
+   half needs the Compose slots + two new wire keys (`stk=`/`muz=`, tolerant-decoded so old
+   emitters stay valid) + the two prefs keys, each with the usual pinned tests.
 6. **Skirmish match-setup screen is desktop-only (2026-07-03).** The desktop SKIRMISH door now
    opens the full [`modes.md`](../modes.md) §3 setup surface (`app/src/shell/skirmish.rs`:
    battlefield / both armies / opponent tier, launched through `apply_campaign_tuning` +
