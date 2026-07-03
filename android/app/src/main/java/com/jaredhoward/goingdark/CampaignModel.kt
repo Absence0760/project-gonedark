@@ -342,3 +342,106 @@ val campaignConflicts: List<Conflict> = listOf(
 val campaignOperations: List<Operation> = listOf(
     Operation(id = 0, conflict = 0, name = "Operation First Light"),
 )
+
+/**
+ * A group's rollup on the atlas hub — the Kotlin twin of `core::campaign::GroupProgress`:
+ * cleared-vs-total plus the "can the player enter this group at all" bit a header greys out on.
+ * Derived, never stored (like [NodeProgress]).
+ */
+data class GroupProgress(val cleared: Int, val total: Int, val playable: Boolean) {
+    /** Every node in the group cleared (and the group is non-empty). */
+    val isComplete: Boolean get() = total > 0 && cleared == total
+}
+
+/**
+ * One renderable section of the grouped Operations hub — the Kotlin twin of the desktop
+ * `HubSection` (`app/src/shell/mission_select.rs`, D98: conflict → operation → battle). An
+ * optional conflict header (present only on the conflict's *first* section, so a multi-operation
+ * conflict draws its header once), an optional operation sub-header, and that operation's battle
+ * nodes. The trailing untitled section (both headers `null`) carries the ungrouped nodes, so an
+ * atlas-less campaign degrades to exactly one untitled section — the pre-atlas flat list. Where
+ * the Rust seam carries ids and looks the groups back up at the render site, this one carries the
+ * [Conflict]/[Operation] values directly (same information, no lookup indirection to test twice).
+ */
+data class HubSection(
+    val conflict: Pair<Conflict, GroupProgress>?,
+    val operation: Pair<Operation, GroupProgress>?,
+    val nodes: List<MissionNode>,
+)
+
+/** The rollup over one operation's nodes ([MissionNode.operation] == its id). */
+fun operationProgress(campaign: CampaignProgress, operation: Operation): GroupProgress =
+    groupProgress(campaign, campaign.nodes.filter { it.operation == operation.id })
+
+/** The rollup over every node in a conflict's operations. */
+fun conflictProgress(
+    campaign: CampaignProgress,
+    conflict: Conflict,
+    operations: List<Operation> = campaignOperations,
+): GroupProgress {
+    val opIds: Set<Int?> = operations.filter { it.conflict == conflict.id }.map { it.id }.toSet()
+    return groupProgress(campaign, campaign.nodes.filter { it.operation != null && it.operation in opIds })
+}
+
+private fun groupProgress(campaign: CampaignProgress, nodes: List<MissionNode>): GroupProgress =
+    GroupProgress(
+        cleared = nodes.count { campaign.isCleared(it.id) },
+        total = nodes.size,
+        playable = nodes.any { campaign.progress(it.id).isPlayable },
+    )
+
+/**
+ * Derive the hub's ordered section list — the Kotlin twin of the desktop `hub_sections` (D98),
+ * same semantics by hand (D79): conflicts in authored order, each conflict's operations in
+ * authored order, each operation's nodes in authored ([MissionNode.id]) order, then a trailing
+ * untitled section for ungrouped nodes. A **content-pending** (empty) operation contributes no
+ * section — no header scaffolding without tiles — and a conflict whose operations are all empty
+ * therefore contributes nothing at all. Pure — JVM-tested in [CampaignModelTest], no Compose.
+ */
+fun hubSections(
+    campaign: CampaignProgress,
+    conflicts: List<Conflict> = campaignConflicts,
+    operations: List<Operation> = campaignOperations,
+): List<HubSection> {
+    val sections = mutableListOf<HubSection>()
+    for (conflict in conflicts) {
+        // Consumed by the conflict's first non-empty operation, so the header draws exactly once.
+        var header: Pair<Conflict, GroupProgress>? =
+            conflict to conflictProgress(campaign, conflict, operations)
+        for (op in operations.filter { it.conflict == conflict.id }) {
+            val nodes = campaign.nodes.filter { it.operation == op.id }.sortedBy { it.id }
+            if (nodes.isEmpty()) continue // content-pending operation: nothing to render yet
+            sections +=
+                HubSection(
+                    conflict = header.also { header = null },
+                    operation = op to operationProgress(campaign, op),
+                    nodes = nodes,
+                )
+        }
+    }
+    val ungrouped = campaign.nodes.filter { it.operation == null }.sortedBy { it.id }
+    if (ungrouped.isNotEmpty()) {
+        sections += HubSection(conflict = null, operation = null, nodes = ungrouped)
+    }
+    return sections
+}
+
+/**
+ * The conflict header line, e.g. `THE CHANNEL CRISIS · 2027-2028 · 0/2` — name, year span
+ * (collapsed to a single year when start == end), and the campaign-level rollup. Identical
+ * formatting to the desktop `conflict_header_label` (ASCII plus U+00B7, the [StatusPill] rule).
+ */
+fun conflictHeaderLabel(conflict: Conflict, progress: GroupProgress): String {
+    val years =
+        if (conflict.startYear == conflict.endYear) "${conflict.startYear}"
+        else "${conflict.startYear}-${conflict.endYear}"
+    return "${conflict.name.uppercase()} · $years · ${progress.cleared}/${progress.total}"
+}
+
+/**
+ * The operation sub-header line, e.g. `OPERATION FIRST LIGHT · 0/2` — name plus its own rollup.
+ * Identical formatting to the desktop `operation_header_label`; the greyed-when-unplayable colour
+ * pick is the composable's job.
+ */
+fun operationHeaderLabel(operation: Operation, progress: GroupProgress): String =
+    "${operation.name.uppercase()} · ${progress.cleared}/${progress.total}"

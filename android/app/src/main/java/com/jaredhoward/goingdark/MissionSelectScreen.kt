@@ -37,6 +37,10 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  * Campaign → MissionSelect → Briefing routing is the host's (MainActivity's) job, not this
  * screen's. The model ships the three-node *Seize* → *Hold* → *Push* chain (each gated on the last); every
  * **playable** tile — root or gated — opens its briefing, and the list grows with the Rust campaign.
+ *
+ * Tiles are grouped by the **conflict atlas** (D98: conflict header → operation sub-header →
+ * battle tiles), the Compose twin of the desktop's grouped hub — the ordering/rollup decisions
+ * are the pure, JVM-tested [hubSections] seam; this is the exempt glue.
  */
 @Composable
 fun MissionSelectScreen(
@@ -76,19 +80,45 @@ fun MissionSelectScreen(
             Spacer(Modifier.height(24.dp))
 
             // The mission list, width-capped so tiles don't stretch across a wide landscape screen.
+            // Grouped by the conflict atlas (D98): conflict header, operation sub-header, then that
+            // operation's tiles — the grouping/rollups come from the pure [hubSections] seam.
             Column(
                 modifier = Modifier.widthIn(max = 440.dp).fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                for (node in campaign.nodes) {
-                    val progress = campaign.progress(node.id)
-                    MissionTile(
-                        node = node,
-                        progress = progress,
-                        // A locked tile can't launch (the pure isPlayable gate, mirroring desktop's
-                        // playable_node) — the tap is only wired for a playable node.
-                        onClick = { if (progress.isPlayable) onOpenNode(node) },
-                    )
+                for (section in hubSections(campaign)) {
+                    section.conflict?.let { (conflict, rollup) ->
+                        Text(
+                            text = conflictHeaderLabel(conflict, rollup),
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontSize = 14.sp,
+                            letterSpacing = 2.sp,
+                        )
+                    }
+                    section.operation?.let { (operation, rollup) ->
+                        Text(
+                            text = operationHeaderLabel(operation, rollup),
+                            // Greyed when nothing in the operation is playable yet (still gated) —
+                            // the desktop colour rule.
+                            color = if (rollup.playable) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.outline
+                            },
+                            fontSize = 11.sp,
+                            letterSpacing = 2.sp,
+                        )
+                    }
+                    for (node in section.nodes) {
+                        val progress = campaign.progress(node.id)
+                        MissionTile(
+                            node = node,
+                            progress = progress,
+                            // A locked tile can't launch (the pure isPlayable gate, mirroring
+                            // desktop's playable_node) — the tap is only wired for a playable node.
+                            onClick = { if (progress.isPlayable) onOpenNode(node) },
+                        )
+                    }
                 }
             }
 
