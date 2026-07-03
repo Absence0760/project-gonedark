@@ -45,7 +45,7 @@ door*: who you fight, how the scenario is chosen, and what persists afterward.
 | Loadout | Gunsmith carries in ([D60](decisions.md)) | Gunsmith | Gunsmith |
 | Stakes / persistence | Node unlocks, best-tier badges (`core::campaign`) | None — it's the sandbox | Rating, rank tier, leaderboards (§4c) |
 | Backend | None (local progress) | None | Matchmaker, relay, accounts, ratings ([`infrastructure.md`](infrastructure.md)) |
-| Status | Functionally complete (PvE WS-B) | Match exists ([D64](decisions.md) `seed_skirmish`); **desktop entry screen landed** (Android + map library owed — §3) | Blocked on Phase 3 net layer; **all chrome unbuilt** |
+| Status | Functionally complete (PvE WS-B) | Match exists ([D64](decisions.md) `seed_skirmish`); **desktop entry screen landed** (Android + map library owed — §3) | Queues blocked on Phase 3 net layer; **desktop staging door landed** ([D101](decisions.md) — honest, nothing joinable; Android owed) |
 
 Keeping the three *distinct* is deliberate product design, not just code hygiene: campaign
 is where a stranger learns the going-dark cost (invariant #6), skirmish is where a player
@@ -117,6 +117,12 @@ after it has been playable in skirmish (same spirit as faithful-then-balance-pas
 
 PvP is not one "multiplayer screen." It is three systems with different owners, different
 backends, and different failure modes — designed separately, composed at the queue:
+
+> **The door exists before the queues do.** The title's PvP button opens a dedicated
+> **staging screen** ([D101](decisions.md)): the three queues below in §5 build order,
+> the §4a pre-queue identity line, and *nothing joinable* until the Phase 3 transport
+> exists — the honesty rule is a tested seam (`queue_joinable`), not copy. The old shared
+> PvE/PvP mode picker is retired; no door leaks another's content (§1).
 
 ### 4a. Army selection
 

@@ -4499,3 +4499,49 @@ toolchain), [Q1](open-questions.md) (the real-audio playtest gate),
 [`roadmap.md`](roadmap.md) CP-6, [`content-pipeline.md`](content-pipeline.md) §6,
 `tools/audio/gen_sfx.py`, `assets/audio/manifest.json`, `pal/src/bank.rs`,
 `engine/src/alert_cues.rs` (the alert-ping consumers).
+
+---
+
+## D101 — Three distinct front doors in the shells: PvP gets an honest staging screen, the shared mode picker retires
+
+**Status: landed (desktop; Android twin owed).** The title's three play buttons now open
+three genuinely distinct surfaces (`modes.md` §1): CAMPAIGN → the Operations hub, SKIRMISH
+→ the match-setup screen (`modes.md` §3, the D81 follow-through), and PvP → a new
+**staging screen** (`app/src/shell/pvp.rs`). The shared PvE/PvP "SELECT MODE" picker that
+D81 shipped as a stopgap ("PvE and PvP share the picker until PvP match-setup exists") is
+**retired** — deleted, not repointed.
+
+**Decision.** Until the Phase 3 net layer exists, the PvP door is a *staging post, not a
+fake matchmaker*: it lists the three queues in `modes.md` §5 build order (custom lobby
+first — flagged FIRST UP — then quick match, then ranked), shows the §4a pre-queue
+identity line (the persisted army pick, read-only), and offers **nothing joinable**. The
+rule is enforced by a pure, unit-tested seam (`queue_joinable`, the PvP twin of the hub's
+`playable_node`), so a live-looking queue cannot ship by styling accident; when the custom
+lobby lands, that seam is where joinability flips per-queue. `SHELL_GAME_MODES` survives
+as the **skirmish battlefield table** (its tiles were always standing battles; content is
+mode-agnostic, [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)),
+and the now producer-less `HostTransition::EnterMatch` is gone — every player-facing door
+deploys a *configured* launch (mission, skirmish config); the only unconfigured boot left
+is the `--scene` dev flag.
+
+**Why.** Keeping the doors distinct is product design, not hygiene (`modes.md` §1):
+the old shared picker leaked campaign content (its "Seize Ground" tile is Mission 1's
+scene) into the PvP door, and a local bot match dressed up as "PvP" teaches a stranger
+the wrong game. The same honesty principle that governs a loss (invariant #6: *"I stayed
+too long,"* never *"the game robbed me"*) governs a surface: a queue that looks joinable
+with no transport behind it is a small lie, and the corpus already refuses it
+(`modes.md` §1 status row called PvP chrome unbuilt rather than faking it). Naming the
+queues and their build order costs nothing and turns the dead-end into a roadmap the
+player can read.
+
+**Scope / follow-ups.** Desktop only; Android still routes both SKIRMISH and PvP to its
+Compose `ModeSelectScreen` — the Compose twins of the skirmish setup **and** this staging
+door are the open parity gap ([`plans/compose-shell-parity.md`](plans/compose-shell-parity.md)
+§12). The first joinable queue is the §5 step-2 custom lobby (Phase 3 transport); ranked
+additionally waits on [Q29](open-questions.md#q29--pvp-rating--ranked-season-design).
+
+**Cross-link:** [D58](#d58--pve-first-the-operations-campaign-is-the-first-shippable-product-resolves-q5)
+(PvE-first, PvP fast-follow), [D81](#d81--play-modes-dont-funnel-through-the-gunsmith-the-gunsmith-is-loadout-customization-behind-settings)
+(the picker this retires), [D64](#d64--the-playable-skirmish--a-scenario-local-income-pace-lever)
+(the standing battle), [`modes.md`](modes.md) §1/§4/§5, `app/src/shell/pvp.rs`,
+`app/src/shell/skirmish.rs`, `engine/src/shell_modes.rs`.
