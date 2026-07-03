@@ -17,9 +17,10 @@
 > [D101](../decisions.md) PvP staging door (§12 item 7), the D98 conflict-atlas hub grouping
 > (§12 item 8), and the full skirmish match-setup (§12 item 6 — battlefield / both armies /
 > opponent tier over the new `earmy`/`skirm` wire keys). **Every structural parity item is now
-> closed**; what remains is **blocked** on later phases (PvP queues/lobby/store/consent per
-> [`phase-4-plan.md`](phase-4-plan.md) §2) plus the shared map-library seam both shells still
-> owe ([`modes.md`](../modes.md) §3 — a D34 manifest listing, not a parity gap). Scope is
+> closed**, and the shared map-library seam landed same-commit on both shells too
+> ([D102](../decisions.md): the `BATTLEFIELDS` table + the `map=` wire key — content work,
+> never a parity gap). What remains is **blocked** on later phases (PvP queues/lobby/store/
+> consent per [`phase-4-plan.md`](phase-4-plan.md) §2). Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
 
@@ -379,8 +380,10 @@ staging door, the D98 atlas-grouped hub) — all three closed with same-day Comp
    configured-skirmish discriminator — the glue applies the tier + enemy pick through the shared
    seams and **never** records a campaign clear, so a skirmish win on Seize Ground stays the
    no-stakes sandbox). The old `ModeSelectScreen.kt` is deleted, mirroring the desktop's retired
-   picker. Remaining §3 work is the shared **map-library** seam (D34 manifest listing) — both
-   shells, not a parity gap.
+   picker. The remaining §3 work named here — the shared **map-library** seam (D34 manifest
+   listing) — landed same-commit on both shells ([D102](../decisions.md): one `BATTLEFIELDS`
+   table, Kotlin twin `Battlefield.kt`, the `map=` wire key; never a parity gap, closed as
+   content work).
 7. **PvP staging door — ✅ CLOSED (2026-07-03, same day).** Desktop's PvP button now opens the
    dedicated staging screen ([D101](../decisions.md): the three queues in
    [`modes.md`](../modes.md) §5 build order, nothing joinable pre-net via the pure

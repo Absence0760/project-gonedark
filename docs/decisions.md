@@ -4519,7 +4519,9 @@ rule is enforced by a pure, unit-tested seam (`queue_joinable`, the PvP twin of 
 `playable_node`), so a live-looking queue cannot ship by styling accident; when the custom
 lobby lands, that seam is where joinability flips per-queue. `SHELL_GAME_MODES` survives
 as the **skirmish battlefield table** (its tiles were always standing battles; content is
-mode-agnostic, [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)),
+mode-agnostic, [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15))
+*(since superseded: [D102](#d102--the-map-library-lands-as-an-embedded-battlefield-table-one-picker-list-a-map-driven-skirmish-boot-a-second-interim-bridge)
+unified that table into `engine::map_library::BATTLEFIELDS`)*,
 and the now producer-less `HostTransition::EnterMatch` is gone — every player-facing door
 deploys a *configured* launch (mission, skirmish config); the only unconfigured boot left
 is the `--scene` dev flag.
@@ -4547,3 +4549,60 @@ waits on [Q29](open-questions.md#q29--pvp-rating--ranked-season-design).
 (the picker this retires), [D64](#d64--the-playable-skirmish--a-scenario-local-income-pace-lever)
 (the standing battle), [`modes.md`](modes.md) §1/§4/§5, `app/src/shell/pvp.rs`,
 `app/src/shell/skirmish.rs`, `engine/src/shell_modes.rs`.
+
+---
+
+## D102 — The map library lands as an embedded battlefield table: one picker list, a map-driven skirmish boot, a second interim bridge
+
+**Status: landed (both shells, same commit).** The skirmish setup's battlefield picker now
+lists the **map library** — the owed [D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)
+map-manifest listing `modes.md` §3 named — beside the standing battle scenes, and a picked
+map boots a real skirmish on it. One unified `const` table (`engine::map_library::BATTLEFIELDS`;
+Kotlin twin `Battlefield.kt`/`shellBattlefields`, D79) replaces the D81 `SHELL_GAME_MODES`
+table on both shells — **superseding D101's "survives as the skirmish battlefield table"
+note**: the table survived three weeks, then unified into the library it was holding the
+door for.
+
+**Decision — delivery.** Library maps are the authored `*.map.ron` battlefields
+([D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)),
+**embedded via `include_str!`** — deliberately the same *interim bridge* shape
+[D80](#d80--real-world-battlefield-maps-a-scripted-gis-ingestbakelint-pipeline-faithful-then-balance-passed)
+used for the Pointe du Hoc covergrid: committed git-diffable text compiled into the
+binary/APK, so the identical library exists on every platform with no filesystem, AAsset,
+or distribution story yet. The D94/CT-D content-directory loader is the intended
+replacement — it landed for *missions* but scans directories, which does not solve
+Android's in-APK delivery; when the [D77](#d77--content-addressed-terrain-resolves-q22)
+content-hash loader lands, both bridges (this one and D80's) retire together. v1 ships
+**one authored map (Crossroads)**; baked (D80) and generated (CT-G) maps stay out until
+D77 replaces `Terrain::from_map_id` (their grids are unreachable through the `u16`
+registry), and the picker does not yet surface the lint preview PNG or balance metrics
+`modes.md` §3 targets — deferred presentation, not a changed design.
+
+**Decision — the boot.** A map skirmish composes two proven halves: `MapSpec::apply` lays
+the battlefield (terrain, control points, cover — the D76 airlock), and a new
+**`core::scenario::seed_positioned_skirmish`** drops the canonical skirmish force recipe
+(income pace, US-vs-FR, operational camps, the small purse, one posted troop each, the
+gunsmith loadout) into the map's `player`/`enemy` spawn zones — troop placement/facing
+derived by the pure `skirmish_troop_post`, pinned by an oracle test to reproduce the
+hand-seeded skirmish's exact values on its canonical geometry. The pick rides a new `map=`
+wire key on Android (mirrored `launch.rs`/`LaunchConfig.kt`, D79) with `scene=skirmish`
+always alongside, so an older decoder — or an unknown id anywhere — degrades to the plain
+open skirmish, never a failed launch.
+
+**Determinism.** The force recipe lives in `core` (fixed-point, fixed spawn order,
+double-seed checksum-pinned), so it rides the `determinism.yml` cross-arch matrix like
+every sim seeder. The engine-side composition is pinned by a 120-tick double-seed
+checksum sweep per library map — engine-tier tests that, per the existing convention
+(the mission content-lint suite sits the same way), do **not** ride the cross-arch
+matrix; if engine-composed seeding ever grows beyond composing matrix-covered core
+seams, promoting the engine determinism tests onto the matrix is the flagged follow-up.
+Nothing here adds a per-tick checksum surface (map content stays out of the fold,
+invariant #7); the shells' tables are read-only presentation data (the D34 rules).
+
+**Cross-link:** [D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)
+(the seam this closes), [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)/[D77](#d77--content-addressed-terrain-resolves-q22)/[D80](#d80--real-world-battlefield-maps-a-scripted-gis-ingestbakelint-pipeline-faithful-then-balance-passed)
+(format / target identity / the sibling bridge),
+[D101](#d101--three-distinct-front-doors-in-the-shells-pvp-gets-an-honest-staging-screen-the-shared-mode-picker-retires)
+(the table this unifies away), [`modes.md`](modes.md) §3, `engine/src/map_library.rs`,
+`core/src/scenario.rs` (`seed_positioned_skirmish`), `app/src/shell/skirmish.rs`,
+`pal-android/src/launch.rs`, `android/.../Battlefield.kt`, `maps/crossroads.map.ron`.

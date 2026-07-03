@@ -45,7 +45,7 @@ door*: who you fight, how the scenario is chosen, and what persists afterward.
 | Loadout | Gunsmith carries in ([D60](decisions.md)) | Gunsmith | Gunsmith |
 | Stakes / persistence | Node unlocks, best-tier badges (`core::campaign`) | None — it's the sandbox | Rating, rank tier, leaderboards (§4c) |
 | Backend | None (local progress) | None | Matchmaker, relay, accounts, ratings ([`infrastructure.md`](infrastructure.md)) |
-| Status | Functionally complete (PvE WS-B) | Match exists ([D64](decisions.md) `seed_skirmish`); **entry screen landed, both shells** (map library owed — §3) | Queues blocked on Phase 3 net layer; **staging door landed, both shells** ([D101](decisions.md) — honest, nothing joinable) |
+| Status | Functionally complete (PvE WS-B) | Match exists ([D64](decisions.md) `seed_skirmish`); **entry screen + map library landed, both shells** ([D102](decisions.md); picker preview/metrics + baked/generated maps still target-model — §3) | Queues blocked on Phase 3 net layer; **staging door landed, both shells** ([D101](decisions.md) — honest, nothing joinable) |
 
 Keeping the three *distinct* is deliberate product design, not just code hygiene: campaign
 is where a stranger learns the going-dark cost (invariant #6), skirmish is where a player
@@ -80,6 +80,15 @@ order a player thinks:
    registry recompile per map. The picker shows the lint preview PNG + the balance
    metrics the baker already emits (cover density, asymmetry) so a player can see what
    they're getting into.
+
+   > **Shipped v1 vs the target model ([D102](decisions.md)).** The picker's library is
+   > live on both shells (`engine::map_library::BATTLEFIELDS` — the standing battles +
+   > the authored maps, one embedded `include_str!` table, the D80-bridge delivery), and
+   > a picked map boots a real skirmish (`seed_positioned_skirmish` in its spawn zones).
+   > Still target-model, not shipped: the preview PNG + balance metrics in the picker
+   > UI; baked (D80) and generated (CT-G) maps joining the library (blocked on the D77
+   > content-hash loader — their grids aren't reachable through `Terrain::from_map_id`);
+   > and more than the one authored map (Crossroads).
 2. **Army** — US or FR via the existing army-select seam ([D71](decisions.md); the
    native screens already landed on both platforms). Pick the enemy's army too.
 3. **Opponent** — the honest commander's difficulty tier (the 3-tier
@@ -104,10 +113,13 @@ fight. Proof of the "chrome over landed seams" claim: it needed **zero** engine 
 **Android Compose twin landed the same day**
 ([`compose-shell-parity.md`](plans/compose-shell-parity.md) §12 item 6: `SkirmishSetup.kt` +
 `SkirmishSetupScreen.kt`, with the enemy army + configured-skirmish flag riding new
-`earmy`/`skirm` wire keys — a skirmish win records no campaign clear). One half stays owed:
-surfacing the **map library** in the shell↔sim seam ([D34](decisions.md) — a
-presentation-safe map-manifest listing; content, not sim state) — until that lands, both
-shells' battlefield pickers list the standing battle scenes, not manifest entries.
+`earmy`/`skirm` wire keys — a skirmish win records no campaign clear). The **map library
+landed next** ([D102](decisions.md)): the [D34](decisions.md) presentation-safe manifest
+listing is `engine::map_library::BATTLEFIELDS` (standing battles + embedded authored
+`*.map.ron`, one table both shells render), and a picked map boots a real skirmish through
+`MapSpec::apply` + `core::scenario::seed_positioned_skirmish` in its spawn zones. What's
+still target-model: the picker's preview PNG / balance metrics, and baked/generated maps
+joining the library (blocked on the D77 content-hash loader — see the step-1 note above).
 
 Skirmish is also the **content proving ground**: a map or faction enters the PvP pool only
 after it has been playable in skirmish (same spirit as faithful-then-balance-pass,

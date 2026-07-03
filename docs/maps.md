@@ -108,6 +108,13 @@ its content hash, `Terrain::from_content` replaces the hardcoded arm, and the br
 `tools/maps/lint.py` is likewise the interim, real-world analogue of the **CT-F** content-lint and
 CT-G PvP-symmetry validator.
 
+A **second, parallel bridge of the same shape** now exists for the authored `*.map.ron` library
+([D102](decisions.md)): `engine::map_library` `include_str!`s the shipped battlefields so the
+skirmish picker's map library exists on every platform (in-APK included) without a filesystem or
+distribution story. Both bridges retire together when the D77 loader lands — baked maps like this
+one join that picker at the same moment (their grids aren't reachable through `from_map_id`'s
+hardcoded arms).
+
 ---
 
 ## Fidelity: faithful, then balance-passed
