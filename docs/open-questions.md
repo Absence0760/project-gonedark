@@ -707,3 +707,59 @@ threading a `KeybindMap` from the host into the PAL input decode — a PAL-bound
 already platform-neutral and would extend cleanly; the only real work is the PAL wiring + widening the
 `GameAction` vocabulary. Pairs with the [PC-2](roadmap.md) PC control/options surface. Cross-link:
 [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.md) PC-2.
+
+---
+
+## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? <a id="q28--conflict-atlas"></a>
+
+Proposal (2026-07-03): the campaign presents as a **navigable world map with a time axis** — pick a
+year, see that era's conflicts on the globe, zoom into one, and play its battles. Era-agnostic by
+design: Normandy 1944 and the Second Congo War (1998–2002) are both just conflicts on the atlas. A
+conflict (e.g. *Battle of Normandy*) is an **operation** containing battles you progress through,
+some locked until the previous one is cleared.
+
+Structurally this is **not** a new campaign system. Conflict → operation → battle is a grouping +
+presentation layer *over* the existing Operations hub node graph ([D58](decisions.md)/[D59](decisions.md)
+— gated unlocks, replay tiers, and modifiers all carry over unchanged), and the [D80](decisions.md)
+maps pipeline (`historical` mode; the Pointe du Hoc sample) is the enabler for the real battlefields.
+The real forks are the three below.
+
+**1. Factions per conflict.** [D68](decisions.md)/[D71](decisions.md) lock US vs French *modern*
+armies; every historical conflict implies its own belligerents.
+
+| Option | For | Against |
+|---|---|---|
+| **(a) Stand-in armies** — the shipped roster fights every battle | Cheapest; nothing reopens | Ahistorical (US vs FR at Normandy?); wastes the atlas fantasy |
+| **(b) Per-conflict rosters** — the fairness-bounded roster model ([D68](decisions.md)) becomes a *template* stamped per war | The right fantasy; each conflict is a real content drop | A full roster + balance pass **per conflict** — the big bill |
+| **(c) Constrain the atlas** — ship only conflicts the current roster plausibly covers; grow rosters conflict-by-conflict | Honest *and* affordable; (b) on an incremental schedule | The launch atlas is small; "any war" is a promise kept slowly |
+
+**2. Presentation.** The Operations hub is functionally complete as a **native** shell
+([D32](decisions.md): Compose on Android), so a free-navigation 3D globe means either embedding the
+engine renderer in the out-of-match shell or building 3D navigation natively, twice.
+
+| Option | For | Against |
+|---|---|---|
+| **(a) Full 3D globe** | The headline fantasy | Reopens/strains [D32](decisions.md); globe navigation is fiddly on a phone |
+| **(b) 2.5D regional map per conflict** (CoH-style meta-map; zoom-in transition to the match) | ~90% of the fantasy; fits the native hub; thumb-friendly | Not literally a globe |
+| **(c) Timeline + styled map art** | Cheapest; ships now | Reads as a menu, not a world |
+
+**3. Conflict selection policy.** Recent real wars carry weight WWII largely doesn't — the Second
+Congo War killed millions and has living survivors; depicting it is a ratings / regional-release /
+reputational exposure that needs an explicit editorial line (which conflicts, how framed, how the
+light-briefing narrative ([Q16](#q16--narrative-depth)) handles real atrocity) *before* the atlas
+promises "any war in history."
+
+**Why it matters:** this is the campaign's **content model and live-ops cadence** — each conflict is
+a self-contained drop (maps via [D80](decisions.md), missions via [D76](decisions.md) RON, a roster
+via the [D68](decisions.md) template). Getting the conflict→operation→battle hierarchy into the
+campaign *data* early is cheap; the presentation can then grow list → regional map → globe without
+rework.
+
+**Current lean:** adopt **conflict → operation → battle as data over the existing hub** now (pure
+grouping, nothing reopens); first shippable conflict is a **modern** one the shipped US/FR roster
+plausibly covers (fork 1(c)); presentation starts at **(b) a 2.5D regional map per conflict**, with
+the globe deferred as a later polish pass rather than a foundation; per-conflict rosters and the
+conflict-selection policy must be decided **before a second, historical conflict ships**.
+Cross-link: [D58](decisions.md)/[D59](decisions.md), [D68](decisions.md)/[D71](decisions.md),
+[D32](decisions.md), [D76](decisions.md), [D80](decisions.md),
+[Q16](#q16--narrative-depth).
