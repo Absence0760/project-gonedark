@@ -196,12 +196,15 @@ art. All are installed machine-wide and on PATH:
 These are the **visual/audio polish toolchain — always reach for them first** for any model,
 sound, icon, font, texture, or normal map (the visual-design pass uses them heavily). Worked
 examples: `tools/models/gen_models.py` (Blender greybox), `tools/fonts/gen_hud_font.py`
-(ImageMagick → raw R8 atlas `include_bytes!`d so the render crate stays `wgpu`+`bytemuck` only).
+(ImageMagick → raw R8 atlas `include_bytes!`d so the render crate stays `wgpu`+`bytemuck` only),
+`tools/audio/gen_sfx.py` (Csound+SoX → WAVs `include_bytes!`d + hand-parsed in `pal::bank` so the
+pal crate stays dependency-free — the shipped CP-6 cue set, D99).
 
 Full rationale + the can/can't boundary: [`docs/content-pipeline.md`](docs/content-pipeline.md)
-§6 (**D46** logs the toolchain; **D41** the Blender method; **D74** the font atlas). Per-tool
-install provenance lives in the workstation `~/CLAUDE.md` — note **Csound is a source build** and
-is *not* swept by `update-all` (bump manually).
+§6 (**D46** logs the toolchain; **D41** the Blender method; **D74** the font atlas; **D99** the
+CP-6 SFX set). Per-tool install provenance lives in the workstation `~/CLAUDE.md` — on this
+machine **Csound and SoX are Homebrew formulae** (the old "Csound is a source build" note
+described the previous workstation; both are swept by `update-all`).
 
 ## Glossary
 

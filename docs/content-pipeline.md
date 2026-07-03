@@ -161,8 +161,8 @@ needs an asset; script the generator and commit the *script* + a manifest entry
 |---|---|---|
 | **Blender** (`bpy`) | 3D author | procedural/greybox meshes, geometry-nodes terrain, rig/anim, glTF export (`tools/models/gen_models.py`, D41; rig + clip authoring `tools/models/gen_trooper_rig.py`, CP-3/WS-B) |
 | **gltfpack** | 3D cook | glTF mesh/texture compression (meshopt/Draco) for the mobile / 200-unit budget; **drives the greybox LOD chain** (`-si … -sa`, gen_models.py §2) |
-| **SoX** | audio | SFX synthesis + processing |
-| **Csound** | audio | deterministic, **seed-scripted** SFX — regenerable + git-diffable, the audio analogue of D41 (audio is a primary system, invariant #6) |
+| **SoX** | audio | SFX synthesis + processing — the shared master chain (`-D`, no dither, for byte-determinism) every CP-6 cue passes through (`tools/audio/gen_sfx.py`, D99) |
+| **Csound** | audio | deterministic, **seed-scripted** SFX — regenerable + git-diffable, the audio analogue of D41 (audio is a primary system, invariant #6); **drives the shipped CP-6 cue set** (`tools/audio/gen_sfx.py` → `assets/audio/`, decoded at stream-open by `pal::bank`, D99) |
 | **Inkscape** (`--export-type=png`) | 2D / UI | vector → PNG HUD / command-layer icons across DPIs |
 | **ImageMagick** (`magick`) | 2D | scripted textures, atlases, noise / normal maps |
 

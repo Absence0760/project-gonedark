@@ -33,8 +33,9 @@ A build **clears the floor** when every line is a yes:
   never *glued* (floored at 45%). Infantry get a gentle iron-sight (~1.7×); the tank keeps its
   sniper gun-sight (~3.3×) + scope chrome.
 - [ ] **Audio is coupled to the visual.** Fire/impact cues land in lockstep with the muzzle/impact
-  flashes — no audible lag, no double-thunk. (Deliberate *sound identity* is CP-6; WS-A owns only the
-  **coupling timing**, and ships placeholder synth.)
+  flashes — no audible lag, no double-thunk. (Deliberate *sound identity* landed with CP-6
+  ([D99](decisions.md)) — designed Csound+SoX cues served by `pal::bank`; WS-A owns only the
+  **coupling timing**.)
 - [ ] **Nothing reads as unfair (invariant #6).** No feedback element reveals an unseen enemy: the
   hitmarker/impact/muzzle are feedback on **your own** action; ADS *narrows* the frustum (reveals
   less). "World goes dark" still strips the strategic map, not the soldier in your sights.
@@ -91,9 +92,9 @@ expanding as it ages.
 
 ### Audio coupling — `pal::SoundId` / `pal::mix`
 
-New host-clock cues (placeholder synth; identity is CP-6): `WeaponFire` (a press-time crack, decoupled
-from the connecting-shot `Gunfire`), `Impact` (a strike thud coupled to the impact VFX). The existing
-`HitConfirm` UI tick still fires on a landed shot.
+New host-clock cues (designed CP-6 assets since [D99](decisions.md), served by `pal::bank`):
+`WeaponFire` (a press-time crack, decoupled from the connecting-shot `Gunfire`), `Impact` (a strike
+thud coupled to the impact VFX). The existing `HitConfirm` UI tick still fires on a landed shot.
 
 ---
 
