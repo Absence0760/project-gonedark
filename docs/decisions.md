@@ -4441,3 +4441,61 @@ decode, the rebound-map PAL decode, and the winit mapping's totality — green i
 **Cross-link:** [Q27](open-questions.md#q27--gameplay-key-rebind) (resolved), [D90](#d90),
 [D42](#d42) (the button split + the `R` share), invariant #2, [`roadmap.md`](roadmap.md) PC-2,
 `pal/src/keybind.rs`, `pal-desktop/src/lib.rs`, `app/src/shell/settings.rs`.
+
+## D100 — CP-6 audio identity: a designed, committed Csound+SoX cue set served through `pal::bank`
+
+**Status: landed (cue set + runtime path).** The eight procedural placeholder cues (D26
+desktop / D29 Android — `pal::mix::synth_bank`) are replaced by a **designed SFX set**.
+`tools/audio/gen_sfx.py` synthesizes every `SoundId` cue offline with Csound (fixed
+`seed 271828`) and masters all of them through one shared SoX chain (rumble highpass, a
+2.5 kHz presence lift, de-click fades, normalize to −2.9 dBFS — inside the mixer's ±0.8
+stacking headroom), emitting `assets/audio/*.wav` (mono 16-bit 48 kHz PCM) plus a
+`manifest.json` with per-file sha256 — the D41/D46 script-not-binary discipline; the
+generator renders every cue **twice** and refuses to write a nondeterministic byte stream
+(`sox -D`, no dither, is the one stage that needed forcing). The runtime side is a new
+shared seam, `pal::bank`: a hand-rolled RIFF/PCM16 parse + linear resampler (the `pal`
+crate stays dependency-free — the same discipline as `render`'s raw `.gray` font atlas)
+that `include_bytes!`s the committed WAVs and builds the per-`SoundId` bank at the
+negotiated device rate. Both backends (`pal-desktop` cpal, `pal-android` oboe/AAudio) now
+call `bank::sample_bank` exactly where they called `synth_bank`; the synth placeholders
+remain only as the per-cue decode-failure fallback, so a corrupted regeneration degrades
+to a placeholder — never to a silent alert channel (invariant #6).
+
+**The identity ("night-ops radio").** One coherent palette, not eight isolated bleeps: a
+single A-minor tuning (losses **fall** — UnitDown is a descending E5–C5–A4 motif; gains
+**rise** — Capture A4→E5, HitConfirm E6→A6; neutral confirmations sit on the root —
+ProductionReady A5), two timbre families (noise-transient *world* sounds: Gunfire,
+WeaponFire, Impact, BaseHit — vs. clean-tone *signal* sounds: UnitDown, Capture,
+ProductionReady, HitConfirm), and the one shared master chain that makes the set read as
+one game. Because the going-dark alert pings (`engine::alert_cues`) and the embodied
+world mix both key off Gunfire/UnitDown/BaseHit/Capture, those four are four distinct
+sound **classes** — noise crack / falling motif / boom-plus-metal clang / rising chime —
+pinned pairwise-distinct by a `pal::bank` test, and every cue carries deliberate
+>1.5 kHz energy because the equal-power mixer pans by ILD alone and pure lows don't
+lateralize. That is the invariant-#6 contract in audio form: the alert channel must
+localize by ear while the map is dark.
+
+**Why.** Audio is load-bearing here, not polish (roadmap CP-6): while embodied, the alert
+channel is directional flash + audio, and [Q1](open-questions.md)'s alerts-only lock is
+explicitly gated on a playtest **with real audio** — which the placeholder bleeps could
+never carry. Designing within the existing eight-`SoundId` vocabulary (rather than adding
+alert-specific samples) keeps the architecture untouched: the mix derivation, the
+accessibility ping seam, and both backends' render math are unchanged, and the alert
+palette gets its distinctness from the sound design itself. Committing generated WAVs +
+generator (rather than synthesizing at runtime) is the established asset convention
+(fonts/textures/models), makes the set auditable (sha256 manifest) and by-ear reviewable
+(any player can open a WAV), and keeps regeneration one `pnpm assets:sfx` away.
+
+**Scope / follow-ups.** The looping music bed is still the `synth_music` procedural pad
+(a designed bed is separate work); win/lose stingers and command-UI button ticks need new
+`SoundId`s + host trigger points that don't exist yet; the Q1 lock still needs the human
+by-ear playtest (this lands the *real audio* that playtest was gated on). Workstation
+provenance note: Csound + SoX are **Homebrew formulae** on this machine (the D46 "source
+build" note described the previous workstation; both are swept by `update-all`).
+
+**Cross-link:** invariant #6, [D26](#d26--phase-2-polish-round-real-opt-in-audio-output-a-selection-highlight-and-a-first-pass-balance-baseline)/[D29](#d29--android-audio-sink-oboe-low-latency-aaudio-mixing-through-a-shared-host-tested-seam)
+(the placeholders this replaces), [D41](#d41)/[D46](#d46) (the scripted-asset method +
+toolchain), [Q1](open-questions.md) (the real-audio playtest gate),
+[`roadmap.md`](roadmap.md) CP-6, [`content-pipeline.md`](content-pipeline.md) §6,
+`tools/audio/gen_sfx.py`, `assets/audio/manifest.json`, `pal/src/bank.rs`,
+`engine/src/alert_cues.rs` (the alert-ping consumers).

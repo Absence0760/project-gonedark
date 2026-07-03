@@ -4,12 +4,14 @@
 //! `core` never sees them. Keep this seam *thin* — only what genuinely differs per
 //! platform crosses it. Floats are fine here: this is the platform side, not the sim.
 //!
-//! [`mix`] and [`keybind`] are the two pieces of *shared* logic in this crate: the per-voice
-//! audio render math (pan/gain/muffle/sum) every backend mixes through, and the platform-neutral
-//! key-rebind model (`KeyId`/`GameAction`/`KeybindMap`) the host owns and the desktop backend
-//! decodes through — both pure, host-testable, and pulling no platform deps (see their module
-//! docs).
+//! [`mix`], [`bank`], and [`keybind`] are the pieces of *shared* logic in this crate: the
+//! per-voice audio render math (pan/gain/muffle/sum) every backend mixes through, the designed
+//! SFX bank (the committed CP-6 cue assets, decoded + resampled at stream-open) every backend
+//! plays from, and the platform-neutral key-rebind model (`KeyId`/`GameAction`/`KeybindMap`)
+//! the host owns and the desktop backend decodes through — all pure, host-testable, and pulling
+//! no platform deps (see their module docs).
 
+pub mod bank;
 pub mod keybind;
 pub mod mix;
 

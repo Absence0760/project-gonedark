@@ -19,6 +19,8 @@ The "world goes dark" rule is locked (D7), but *how much* gets through is not.
 tension. **Reaffirmed at Phase-2 close ([decisions.md](decisions.md) D31, high confidence):** the
 only option satisfying both pillar 2 and invariant #6, and already the shipped mechanism — but the
 lock is gated on a *real-audio* playtest (the load-bearing half has never been validated by ear).
+The designed audio that playtest was waiting on now exists ([decisions.md](decisions.md) D100: the
+CP-6 cue set, four distinct directional alert classes) — the by-ear playtest itself is still owed.
 
 ---
 

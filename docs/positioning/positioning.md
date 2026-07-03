@@ -163,7 +163,7 @@ match. **Lag** = an incumbent is materially better and we must close or consciou
 | Animation / character fidelity | ⏳ floor slice landed (WS-B/D84) | Delta Force (UE5) | **LAG (conceded tier)** | **CP-3** "not jarring" floor, not parity |
 | Mobile control feel / HUD | ⏳ editor designed (WS-D) | CoD Mobile | **PAR (closing)** | **CP-4** HUD editor + touch polish |
 | Cross-platform progression | ⏳ persist exists | Warzone (CoD wallet) | **LAG** | **CP-5** unified entitlement layer |
-| Audio fidelity (a primary system, #6) | ⏳ procedural placeholders | Delta Force | **LAG** | **CP-6** audio identity pass |
+| Audio fidelity (a primary system, #6) | ⏳ designed cue set landed (D100) | Delta Force | **LAG (closing)** | **CP-6** music bed + stingers still owed |
 | Onboarding / teach-the-twist | ⏳ PvE M1 designed | (none need it) | **AT-RISK** | **CP-7** the most important screen |
 | Live-ops / content cadence | ⏳ server scaffolding | all of them | **LAG (post-launch)** | **CP-8** modifier/content engine |
 | Net infra robustness (reconnect, handoff) | ⏳ designed | all of them | **LAG (Phase 3)** | Phase 3 reconnect/handoff |
@@ -206,6 +206,9 @@ the reason to choose us.** None reopens an invariant.
 - **CP-6 — Audio identity pass.** Replace procedural placeholders ([D26](../decisions.md)/[D29](../decisions.md))
   with a deliberate sound identity — *load-bearing*, not polish, because audio is the going-dark alert
   channel (invariant #6). Use the scripted Csound/SoX pipeline; keep the accessibility-equivalent cue.
+  *Designed cue set landed ([D100](../decisions.md)): all eight cues are seed-scripted Csound+SoX
+  assets served by `pal::bank` on both backends, alert palette test-pinned distinct; music bed,
+  win/lose stingers + the by-ear playtest still owed.*
 - **CP-7 — Onboarding that teaches the twist.** The highest-leverage screen in the project: a new
   player must read their first death as *"I stayed too long"* (invariant #6). Built into PvE mission 1
   ([`pve-campaign.md`](../pve-campaign.md) §3, WS-A). No incumbent needs this because no incumbent has the

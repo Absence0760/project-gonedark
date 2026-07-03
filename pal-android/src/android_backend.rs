@@ -35,7 +35,8 @@ use gonedark_engine::objectives::MissionStatus;
 use gonedark_engine::{
     haptic_pulse_ms, pixel_to_ndc, Game, OverlayClick, Scene, BUTTON_TICK_MS, DEFAULT_SEED,
 };
-use gonedark_pal::mix::{oneshot_sound, scaled_gain, synth_bank, voice_from_cue, Mixer};
+use gonedark_pal::bank::sample_bank;
+use gonedark_pal::mix::{oneshot_sound, scaled_gain, voice_from_cue, Mixer};
 use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Window, MAX_TOUCHES};
 
 // Bring oboe's stream-control traits into scope for the methods used below (`get_sample_rate`
@@ -1355,7 +1356,7 @@ pub struct AndroidAudio {
 }
 
 /// The live oboe output stream (kept alive by ownership), the shared mixer the realtime callback
-/// reads, and the synthesized cue bank the game thread looks voices up in.
+/// reads, and the decoded designed cue bank the game thread looks voices up in.
 struct AndroidAudioActive {
     // The async stream owns the callback (which holds a clone of `mixer`). Kept alive by
     // ownership; dropping it stops + closes the stream. Boxed behind the concrete oboe type.
@@ -1459,7 +1460,7 @@ impl AndroidAudioActive {
 
         // Low-latency AAudio output (platforms.md §2): stereo f32, exclusive sharing + low-latency
         // performance mode is the lowest-latency AAudio path. We let oboe negotiate the device
-        // sample rate (no `set_sample_rate`), then read it back to synthesize the cue bank at that
+        // sample rate (no `set_sample_rate`), then read it back to decode the cue bank at that
         // rate so cues play at the intended pitch.
         let mut stream = oboe::AudioStreamBuilder::default()
             .set_performance_mode(oboe::PerformanceMode::LowLatency)
@@ -1477,7 +1478,7 @@ impl AndroidAudioActive {
         } else {
             48_000 // defensive: a non-positive rate shouldn't happen, but never divide by it
         };
-        let bank = synth_bank(sample_rate);
+        let bank = sample_bank(sample_rate);
 
         stream
             .request_start()

@@ -185,15 +185,18 @@ impl Mixer {
     }
 }
 
-// --- procedural cue synthesis (no audio assets yet) --------------------------------------------
+// --- procedural cue synthesis (the FALLBACK bank) -----------------------------------------------
 //
-// Synthesized once per backend at the device sample rate, shared (`Arc`) into every voice playing
-// that sound. Identical on every platform so a cue sounds the same everywhere; amplitudes stay
-// ~0.5 so a few stacked cues don't clip. Audio noise need not be deterministic (presentation, not
-// the sim) — the xorshift here is just for a recognizable texture.
+// Since CP-6 the shipped cues are the designed, committed assets served by `crate::bank::
+// sample_bank`; these synth placeholders remain only as its per-cue decode-failure fallback (a
+// corrupted asset degrades to a placeholder, never to silence — the going-dark alert channel must
+// keep sounding, invariant #6). Synthesized at the device sample rate, shared (`Arc`) into every
+// voice playing that sound; amplitudes stay ~0.5 so a few stacked cues don't clip. Audio noise
+// need not be deterministic (presentation, not the sim) — the xorshift here is just for a
+// recognizable texture.
 
-/// Synthesize a short buffer per [`SoundId`] at sample rate `sr`. Backends call this once on
-/// stream-open and look voices up by id in `submit_mix` / `play_oneshot`.
+/// Synthesize a short placeholder buffer per [`SoundId`] at sample rate `sr` — the fallback base
+/// layer of [`crate::bank::sample_bank`] (which backends now call on stream-open instead of this).
 pub fn synth_bank(sr: u32) -> HashMap<SoundId, Arc<Vec<f32>>> {
     let mut bank = HashMap::new();
     bank.insert(SoundId::Gunfire, Arc::new(gunfire(sr)));
@@ -389,7 +392,12 @@ mod tests {
     fn pan_dead_ahead_is_balanced() {
         let v = voice_from_cue(ones(8), 0.0, 1.0, false);
         // azimuth 0 → both ears at g/√2.
-        assert!((v.gain_l - v.gain_r).abs() < EPS, "l {} r {}", v.gain_l, v.gain_r);
+        assert!(
+            (v.gain_l - v.gain_r).abs() < EPS,
+            "l {} r {}",
+            v.gain_l,
+            v.gain_r
+        );
         assert!((v.gain_l - 1.0 / 2.0_f32.sqrt()).abs() < EPS);
     }
 
@@ -449,7 +457,10 @@ mod tests {
         plain.push(voice_from_cue(ones(8), 0.0, 1.0, false));
         let (pl, _) = plain.next_frame();
 
-        assert!(ml < pl, "muffled first sample {ml} should be < unmuffled {pl}");
+        assert!(
+            ml < pl,
+            "muffled first sample {ml} should be < unmuffled {pl}"
+        );
         // The muffled output is exactly MUFFLED_ALPHA of the unmuffled one on the first frame.
         assert!((ml - MUFFLED_ALPHA * pl).abs() < EPS);
     }
@@ -514,7 +525,7 @@ mod tests {
             m.push(voice_from_cue(ones(1), 0.0, 1.0, false));
         }
         m.next_frame(); // advance every voice past its single sample → all finished
-        // The next push should prune the finished ones rather than evict a live voice.
+                        // The next push should prune the finished ones rather than evict a live voice.
         m.push(voice_from_cue(ones(64), 0.0, 1.0, false));
         // Only the fresh, live voice should remain audible; the rest were pruned as finished.
         assert!(m.len() <= MAX_VOICES);
@@ -638,7 +649,10 @@ mod tests {
         // A loud centred voice on top of a loud bed: the sum stays within the soft clamp.
         m.push(voice_from_cue(flat_bed(0.9, 8), 0.0, 1.0, false));
         let (l, r) = m.next_frame();
-        assert!((-1.0..=1.0).contains(&l) && (-1.0..=1.0).contains(&r), "clamped: {l},{r}");
+        assert!(
+            (-1.0..=1.0).contains(&l) && (-1.0..=1.0).contains(&r),
+            "clamped: {l},{r}"
+        );
         assert!(l > 0.2, "both the bed and the voice contribute ({l})");
     }
 

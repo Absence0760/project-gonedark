@@ -647,10 +647,20 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 - [ ] **CP-5 — Unified cross-platform entitlement.** One account/entitlement layer so progression,
   loadouts, and cosmetics follow the player across Android/iOS/desktop — the cross-progression
   Warzone Mobile trained the market to expect ([Q9](open-questions.md) billing rails feed this).
-- [ ] **CP-6 — Audio identity pass.** Replace the procedural placeholders
+- [~] **CP-6 — Audio identity pass.** Replace the procedural placeholders
   ([D26](decisions.md)/[D29](decisions.md)) with a deliberate sound identity via the scripted
   Csound/SoX pipeline — **load-bearing, not polish** (audio is the going-dark alert channel, #6);
-  keep the accessibility-equivalent cue.
+  keep the accessibility-equivalent cue. **Designed cue set landed ([D100](decisions.md)):** all
+  eight `SoundId` cues are committed, seed-scripted Csound+SoX WAVs (`tools/audio/gen_sfx.py` →
+  `assets/audio/` + sha256 manifest; one "night-ops radio" palette — A-minor tuning, two timbre
+  families, one shared master chain), decoded + resampled at stream-open by the new shared
+  `pal::bank` seam on **both** backends. The four going-dark alert pings
+  (Gunfire/UnitDown/BaseHit/Capture) are four distinct sound *classes* (noise crack / falling
+  motif / boom+metal clang / rising chime), test-pinned pairwise-distinct, with >1.5 kHz energy
+  in every cue so the equal-power pan localizes (#6); the accessibility ping seam is untouched.
+  **Owed:** the human by-ear listen pass (the [Q1](open-questions.md) real-audio playtest gate),
+  a designed music bed (`synth_music` is still the placeholder pad), and win/lose stingers +
+  command-UI button ticks (need new `SoundId`s + host trigger points).
 - [~] **CP-7 — Onboarding that teaches the twist (launch-critical).** A new player must read their
   first death as *"I stayed too long"* (#6). **Functionally complete, wired end-to-end on desktop
   AND Android:** `engine::onboarding` (a 3-beat WentDark→Lingering→StayedTooLong teach machine) is
