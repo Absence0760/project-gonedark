@@ -1283,12 +1283,71 @@ fn main() {
         format!("toggling the cover overlay changed {changed} px on the baked map (the cover grid draws)"),
     );
 
+    // --- Scenario 5.95: the CP-7 going-dark teach banner draws over the embodied frame ---------
+    // The single most launch-critical screen: a first-time player's first embody must telegraph the
+    // going-dark cost. Boot the campaign mission (Scene::Mission1 — `teaches_going_dark`), press
+    // embody once, and the `WentDark` beat fires the instant the world goes dark (engine
+    // `onboarding.observe` → `render_prompt`, drawn through the REAL `Game::frame`). The teach card
+    // is a lower-third panel whose body copy is off-white ([0.90,0.92,0.96]) — a near-white signal
+    // the muted blue-grey embodied world never produces there. Negative control: the same embodied
+    // first-person frame on Scene::Default, where onboarding is structurally DISABLED
+    // (`teaches_going_dark()` is false), so no banner draws — isolating the card from the world.
+    println!("[teach_prompt] going dark on the campaign mission draws the CP-7 teach banner");
+    // Near-white body-copy pixels inside the lower-third card band (centered, below frame center),
+    // where the teach card sits (NDC CENTER_Y = -0.58). The amber title (low blue) is excluded; the
+    // two off-white body lines are the signal.
+    let card_band_ink = |rgba: &[u8]| -> usize {
+        let (x0, x1) = (W * 12 / 100, W * 88 / 100);
+        let (y0, y1) = (H * 64 / 100, H * 92 / 100);
+        let mut n = 0;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = ((y * W + x) * 4) as usize;
+                let (r, g, b) = (rgba[i], rgba[i + 1], rgba[i + 2]);
+                if r > 205 && g > 205 && b > 200 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+
+    let mut teach = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Mission1);
+    advance(&mut teach, 1, embody.clone(), &gpu, &view); // one embody frame → go dark → WentDark fires
+    let teach_frame = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/teach_prompt.png", &teach_frame);
+    let teach_embodied = teach.is_embodied();
+    let teach_ink = card_band_ink(&teach_frame);
+
+    let mut control = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Default);
+    advance(&mut control, 1, embody.clone(), &gpu, &view); // same embodied view, no teach
+    let control_frame = read_pixels(&gpu.device, &gpu.queue, &target);
+    let control_embodied = control.is_embodied();
+    let control_ink = card_band_ink(&control_frame);
+
+    check(
+        &mut failures,
+        "teach_prompt_scene_is_embodied",
+        teach_embodied && control_embodied,
+        format!(
+            "both frames went first-person (teach={teach_embodied}, control={control_embodied}) — the banner only draws over the dark embodied frame"
+        ),
+    );
+    check(
+        &mut failures,
+        "teach_prompt_banner_drawn",
+        teach_ink > control_ink + 40 && teach_ink > 60,
+        format!(
+            "{teach_ink} near-white card-band px on the teaching mission vs {control_ink} on the non-teaching control — the going-dark teach banner drew"
+        ),
+    );
+
     // --- Scenario 6: animated parallax title backdrop (render-crate component) -----------------
     backdrop_scene(&gpu, &mut failures);
 
     println!(
         "\nPNGs: target/viz/{{command,selected,radial,marquee,embodied_dark,embodied_hud,\
-         combat_muzzle,embodied_kill_before,embodied_kill_after,title_backdrop,\
+         combat_muzzle,embodied_kill_before,embodied_kill_after,teach_prompt,title_backdrop,\
          title_backdrop_parallax}}.png"
     );
     if failures == 0 {

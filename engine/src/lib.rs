@@ -4818,6 +4818,56 @@ mod tests {
         assert!(!Scene::MapInspect.teaches_going_dark());
     }
 
+    /// The CP-7 wiring, end to end at the seam `Game::frame` drives: a scene-gated `Onboarding`
+    /// fed the EXACT `TeachInput` shape `frame` builds (`embodied` + the `should_auto_surface`
+    /// death edge + `sim.tick_count()`) must raise the drawn payoff. This closes the audit gap that
+    /// the pieces were each unit-tested but nothing proved the scene gate → observe → `current_prompt`
+    /// path fires as `frame` wires it. GPU-free (the seam, not the renderer), like the scene tests.
+    #[test]
+    fn onboarding_wiring_teaches_the_going_dark_payoff_on_a_real_match() {
+        use gonedark_render::prompt::PromptTone;
+
+        // `frame` constructs the observed input exactly this way (see the `observe` call site): the
+        // live embodied flag, the death edge captured *before* the auto-surface flip via
+        // `should_auto_surface`, and the current sim tick.
+        let step = |ob: &mut onboarding::Onboarding, embodied: bool, avatar_present: bool, tick: u64| {
+            let avatar_died = should_auto_surface(embodied, avatar_present);
+            ob.observe(onboarding::TeachInput { embodied, avatar_died, tick })
+        };
+
+        // A real campaign match: the teach is enabled by the scene gate `new_scene` uses.
+        let mut teach = onboarding::Onboarding::new(Scene::Mission1.teaches_going_dark());
+        assert!(teach.is_enabled(), "Mission1 must enable the going-dark teach");
+
+        // Tick 0 — the player goes dark (embody, avatar alive). The cost is telegraphed instantly.
+        assert_eq!(step(&mut teach, true, true, 0), Some(onboarding::TeachBeat::WentDark));
+        let p = teach.current_prompt(0).expect("WentDark prompt is live the tick it fires");
+        assert_eq!(p.tone, PromptTone::Caution);
+        assert!(p.title.contains("GOING DARK"), "went-dark title: {:?}", p.title);
+
+        // A few ticks embodied, no death yet — the WentDark prompt stays up, no new beat.
+        assert_eq!(step(&mut teach, true, true, 30), None);
+
+        // The avatar dies (still embodied → an auto-surface, not a voluntary return): the payoff beat
+        // frames it as the player's own overstay — the whole point of CP-7 (invariant #6).
+        assert_eq!(
+            step(&mut teach, true, false, 90),
+            Some(onboarding::TeachBeat::StayedTooLong),
+            "an embodied death must raise the 'you stayed too long' payoff"
+        );
+        let p = teach.current_prompt(90).expect("payoff prompt is live the tick it fires");
+        assert_eq!(p.tone, PromptTone::Reflect);
+        assert!(p.title.contains("STAYED TOO LONG"), "payoff title: {:?}", p.title);
+
+        // Negative control: a debug sandbox (teach disabled by the same gate) fed the identical
+        // sequence never raises a prompt — no tutorial leaks into the sandboxes.
+        let mut sandbox = onboarding::Onboarding::new(Scene::Duel.teaches_going_dark());
+        assert!(!sandbox.is_enabled());
+        assert_eq!(step(&mut sandbox, true, true, 0), None);
+        assert_eq!(step(&mut sandbox, true, false, 90), None);
+        assert!(sandbox.current_prompt(90).is_none(), "a sandbox must never teach");
+    }
+
     #[test]
     fn scene_for_mission_maps_each_campaign_mission_to_its_scene() {
         use crate::mission_registry::{MISSION_HOLD, MISSION_SEIZE};
