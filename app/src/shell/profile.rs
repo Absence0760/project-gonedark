@@ -171,15 +171,7 @@ pub(crate) fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Optio
                 ui.end_row();
                 ui.label(RichText::new("Faction").color(BONE).size(TYPE_BODY));
                 let fw = ui.available_width();
-                if ui
-                    .add_sized(
-                        [fw, 28.0],
-                        egui::Button::new(
-                            RichText::new(profile.faction.label()).color(AMBER).size(TYPE_BODY),
-                        ),
-                    )
-                    .clicked()
-                {
+                if value_chip(ui, profile.faction.label(), fw) {
                     action = Some(ProfileAction::CycleFaction);
                 }
                 ui.end_row();

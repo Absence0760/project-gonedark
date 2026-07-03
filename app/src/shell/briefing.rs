@@ -88,7 +88,7 @@ pub(crate) fn briefing_ui(
     node: NodeId,
     selected: Difficulty,
 ) -> Option<BriefingAction> {
-    use egui::{Button, RichText};
+    use egui::RichText;
     let mut action = None;
 
     over_backdrop_screen(ui, "briefing", |ui| {
@@ -115,18 +115,7 @@ pub(crate) fn briefing_ui(
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Difficulty").color(BONE).size(TYPE_BODY));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add_sized(
-                            [200.0, 32.0],
-                            Button::new(
-                                RichText::new(difficulty_label(selected))
-                                    .color(AMBER)
-                                    .size(TYPE_BODY)
-                                    .strong(),
-                            ),
-                        )
-                        .clicked()
-                    {
+                    if value_chip(ui, difficulty_label(selected), 200.0) {
                         action = Some(BriefingAction::CycleDifficulty);
                     }
                 });

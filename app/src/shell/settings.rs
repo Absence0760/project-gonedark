@@ -505,28 +505,12 @@ pub(crate) fn settings_ui(
             .spacing([16.0, 10.0])
             .show(ui, |ui| {
                 ui.label(RichText::new("Colorblind palette").color(BONE).size(TYPE_BODY));
-                if ui
-                    .add_sized(
-                        [140.0, 26.0],
-                        egui::Button::new(
-                            RichText::new(state.cvd_palette.label()).color(AMBER).size(TYPE_BODY),
-                        ),
-                    )
-                    .clicked()
-                {
+                if value_chip(ui, state.cvd_palette.label(), 140.0) {
                     state.cvd_palette = state.cvd_palette.next();
                 }
                 ui.end_row();
                 ui.label(RichText::new("Alert cues").color(BONE).size(TYPE_BODY));
-                if ui
-                    .add_sized(
-                        [140.0, 26.0],
-                        egui::Button::new(
-                            RichText::new(state.alert_cue_mode.label()).color(AMBER).size(TYPE_BODY),
-                        ),
-                    )
-                    .clicked()
-                {
+                if value_chip(ui, state.alert_cue_mode.label(), 140.0) {
                     state.alert_cue_mode = state.alert_cue_mode.next();
                 }
                 ui.end_row();
@@ -546,16 +530,8 @@ pub(crate) fn settings_ui(
             .spacing([16.0, 10.0])
             .show(ui, |ui| {
                 ui.label(RichText::new("Quality").color(BONE).size(TYPE_BODY));
-                // A single cycling button over the discrete tiers (a direct edit — no action needed).
-                if ui
-                    .add_sized(
-                        [140.0, 26.0],
-                        egui::Button::new(
-                            RichText::new(state.quality.label()).color(AMBER).size(TYPE_BODY),
-                        ),
-                    )
-                    .clicked()
-                {
+                // A single cycling chip over the discrete tiers (a direct edit — no action needed).
+                if value_chip(ui, state.quality.label(), 140.0) {
                     state.quality = state.quality.next();
                 }
                 ui.end_row();

@@ -117,6 +117,20 @@ pub(crate) fn footer_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis) -
     emphasis_button(ui, text, emphasis, w)
 }
 
+/// A cycling **value chip**: the current value in amber inside a rounded chip; clicking advances
+/// the cycle at the call site. The one shared control for every "click to cycle" setting —
+/// Settings' colorblind-palette / alert-cues / quality, Profile's faction, the briefing's
+/// difficulty — which were five hand-sized bespoke buttons before. Glue (needs a live `Ui`); the
+/// cycle decisions it feeds are the pure per-screen seams (`next()` / `apply_*_action`).
+pub(crate) fn value_chip(ui: &mut egui::Ui, value: &str, width: f32) -> bool {
+    use egui::{Button, RichText};
+    ui.add_sized(
+        [width, 30.0],
+        Button::new(RichText::new(value).color(AMBER).size(TYPE_BODY).strong()),
+    )
+    .clicked()
+}
+
 /// A short amber accent rule, centred under a heading — the one bit of "brand" line work that ties
 /// the title and gunsmith screens together. Pure presentation glue (needs a `Ui`/painter).
 pub(crate) fn accent_rule(ui: &mut egui::Ui, width: f32) {
