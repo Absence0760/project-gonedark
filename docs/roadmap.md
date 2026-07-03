@@ -546,7 +546,13 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 
 ### Release readiness — the store-facing layer
 
-- [ ] Match-setup / skirmish-entry screen (Phase 4) — designed in [`modes.md`](modes.md) §3; step 1 of its build order (no net dependency; all seams landed)
+- [~] Match-setup / skirmish-entry screen (Phase 4) — designed in [`modes.md`](modes.md) §3; step 1
+  of its build order (no net dependency; all seams landed). **Desktop half landed:** the egui
+  skirmish-setup screen behind the title's SKIRMISH door — battlefield / both armies / opponent
+  tier, wired through the landed pre-tick launch seams (`apply_campaign_tuning`, `select_army` for
+  both sides). Still owed: the Android Compose twin
+  ([`compose-shell-parity.md`](plans/compose-shell-parity.md) §12) and the map-library manifest
+  picker (modes.md §3 step 1 — the battlefield list is the standing battle scenes until then)
 - [ ] Consent & legal gate (ToS / privacy / age) — gates telemetry + store, so it precedes them
 - [ ] Store listing — icon, screenshots, description + a Play Console build channel
 - [ ] Performance / thermal pass on mid-range arm64 (the honest Phase 1/3 caveat — not yet validated off-flagship)

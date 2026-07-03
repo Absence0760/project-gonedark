@@ -8,7 +8,8 @@
 > ([D36](../decisions.md)) across every shipped out-of-match surface. The Android campaign
 > progress/unlock model has since landed and closed end-to-end (2026-07-03: every playable node —
 > root or gated — launches through the wire; §12 item 1). What remains is **structural**
-> (desktop-side shell-pref persistence) and **blocked**
+> (desktop-side shell-pref persistence, and the desktop-only skirmish match-setup screen —
+> §12 item 5) and **blocked**
 > (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) — tracked in §12. Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
@@ -297,3 +298,9 @@ each platform is missing the *other's* state:
 4. **Inverted About entry point** — desktop reaches About from inside Settings (`SettingsAction::About`);
    Android surfaces it as a "FIELD MANUAL" button on the title. A deliberate [D78](../decisions.md) UX
    choice; left as-is, noted so it isn't mistaken for a regression.
+5. **Skirmish match-setup screen is desktop-only (2026-07-03).** The desktop SKIRMISH door now
+   opens the full [`modes.md`](../modes.md) §3 setup surface (`app/src/shell/skirmish.rs`:
+   battlefield / both armies / opponent tier, launched through `apply_campaign_tuning` +
+   `select_army` for both sides, REMATCH-aware); Android's SKIRMISH door still lands on the plain
+   mode picker. The Compose twin needs the same pure decision seams JVM-side plus wire keys for
+   the enemy army + opponent tier — the [`modes.md`](../modes.md) §5 build-order step 1 remainder.
