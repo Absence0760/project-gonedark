@@ -5,10 +5,11 @@
 //! sibling modules.
 
 use crate::shell::about::about_ui;
-use crate::shell::army::{army_select_ui, ArmySelectAction, ArmySelectState};
+use crate::shell::army::{army_label, army_select_ui, ArmySelectAction, ArmySelectState};
 use crate::shell::briefing::{briefing_ui, BriefingAction};
 use crate::shell::loadout::{loadout_ui, LoadoutAction};
-use crate::shell::mission_select::{mission_select_ui, MissionSelectAction};
+use crate::shell::mission_select::{mission_select_ui, MissionSelectAction, NextOperation};
+use crate::shell::profile::win_rate_pct;
 use crate::shell::mode_select::{mode_select_ui, ModeSelectAction};
 use crate::shell::profile::{profile_ui, ProfileAction, ProfileState};
 use crate::shell::settings::{settings_ui, SettingsAction, SettingsState};
@@ -111,13 +112,20 @@ impl EguiShell {
 
     /// Draw the title screen for one frame and return a clicked [`TitleAction`], if any. Pure
     /// presentation — it never touches sim state.
-    pub(crate) fn draw_title(&mut self, surface: &mut DesktopRenderSurface) -> Option<TitleAction> {
+    pub(crate) fn draw_title(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+        profile: &ProfileState,
+        army: &ArmySelectState,
+        next: Option<&NextOperation>,
+    ) -> Option<TitleAction> {
         // Clone the stamp so the immediate-mode closure doesn't alias the `&mut self` borrow
-        // `run_and_paint` takes.
+        // `run_and_paint` takes. The identity/campaign state is HOST state (disjoint from
+        // `EguiShell`), so it threads straight through as borrows.
         let stamp = self.stamp.clone();
         // `with_backdrop = true`: paint the live 3D backdrop into the frame first, then composite the
         // title HUD over it (`LoadOp::Load`).
-        self.run_and_paint(surface, true, |ui| title_ui(ui, &stamp))
+        self.run_and_paint(surface, true, |ui| title_ui(ui, &stamp, profile, army, next))
     }
 
     /// Draw the pre-match gunsmith / loadout screen for one frame and return the [`LoadoutAction`]
@@ -376,13 +384,21 @@ impl EguiShell {
 ///
 /// Layout (four floating [`egui::Area`]s anchored to the corners over the backdrop, so the central
 /// field stays transparent and the 3D shows through — there is deliberately **no** opaque
-/// CentralPanel fill here):
-///  - **top-left**  — the brand: GOING DARK hero + amber rule + the COMMAND · EMBODY tagline;
-///  - **top-right** — a compact SETTINGS / PROFILE / ARMY / FIELD MANUAL utility chip row;
-///  - **bottom-centre** — the DEPLOY cluster: CAMPAIGN (the lone amber CTA), PvE / PvP, then QUIT,
-///    in a translucent [`glass_card_frame`] so it reads as a deliberate panel;
-///  - **bottom-right** — the muted build stamp, the quiet corner opposite the play cluster.
-pub(crate) fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
+/// CentralPanel fill here). A hub, not a menu: every corner carries live player state.
+///  - **top-left** — the brand: GOING DARK hero + amber rule + the COMMAND · EMBODY tagline;
+///  - **top-right** — the identity card (callsign / army / lifetime record; click → Profile) over a
+///    SETTINGS / ARMY / FIELD MANUAL utility chip row;
+///  - **bottom-left** — the DEPLOY stack under the brand: CAMPAIGN (the lone amber CTA), PvE / PvP,
+///    then QUIT, in a translucent [`glass_card_frame`] — the classic left-anchored action column;
+///  - **bottom-right** — the NEXT OPERATION card (campaign progress + a CONTINUE that deep-links
+///    into the next operation's briefing, derived from persisted clears), over the muted build stamp.
+pub(crate) fn title_ui(
+    ui: &mut egui::Ui,
+    stamp: &str,
+    profile: &crate::shell::profile::ProfileState,
+    army: &ArmySelectState,
+    next: Option<&NextOperation>,
+) -> Option<TitleAction> {
     use egui::{Align2, Area, Id, RichText};
     let mut action = None;
     // Areas attach to the context, not the parent `Ui`, so they float over the (transparent) root
@@ -411,40 +427,81 @@ pub(crate) fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
             );
         });
 
-    // ---- Utility chips, top-right ----------------------------------------------------------------
-    Area::new(Id::new("title.utility"))
+    // ---- Identity card + utility chips, top-right -------------------------------------------------
+    Area::new(Id::new("title.identity"))
         .anchor(Align2::RIGHT_TOP, egui::vec2(-32.0, 32.0))
         .show(&ctx, |ui| {
-            ui.horizontal(|ui| {
-                // Uniform width for all chips (fits "FIELD MANUAL", the longest) so they read as a
-                // clean pill row, not three short + one wide. A gap separates account utility
-                // (SETTINGS/PROFILE) from the pre-match/reference pair (ARMY/FIELD MANUAL).
-                const CHIP_W: f32 = 132.0;
-                if chip_button(ui, "SETTINGS", CHIP_W) {
-                    action = Some(TitleAction::Settings);
+            // Uniform chip width (fits "FIELD MANUAL", the longest); the identity card above spans
+            // the whole chip row so the corner reads as one right-aligned block.
+            const CHIP_W: f32 = 132.0;
+            let block_w = CHIP_W * 3.0 + 2.0 * ui.spacing().item_spacing.x;
+            ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                // The identity card: who you are, at a glance — callsign over the fielded army and
+                // the lifetime record. The whole card is the Profile entry (click → Profile), so
+                // PROFILE no longer needs its own chip.
+                let card = glass_card_frame().show(ui, |ui| {
+                    ui.set_width(block_w - 44.0); // block width minus the frame's inner margins
+                    // Re-anchor the card interior left: the surrounding right-aligned column would
+                    // otherwise right-justify these lines against a dead left half.
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.label(
+                            RichText::new(&profile.callsign).color(BONE).size(TYPE_SUBHEAD).strong(),
+                        );
+                        ui.label(
+                            RichText::new(army_label(army.selected)).color(AMBER).size(TYPE_CAPTION),
+                        );
+                        ui.add_space(4.0);
+                        let record = match win_rate_pct(profile.wins, profile.matches_played) {
+                            Some(p) => format!(
+                                "{} MATCHES \u{00B7} {} WINS \u{00B7} {p}%",
+                                profile.matches_played, profile.wins
+                            ),
+                            None => format!(
+                                "{} MATCHES \u{00B7} {} WINS",
+                                profile.matches_played, profile.wins
+                            ),
+                        };
+                        ui.label(RichText::new(record).color(MUTED).size(TYPE_CAPTION));
+                    });
+                });
+                let rect = card.response.rect;
+                let resp = ui.interact(rect, Id::new("title.identity.card"), egui::Sense::click());
+                if resp.hovered() {
+                    // The shell's active-state convention (mirrors `selectable_row`).
+                    ui.painter().rect_stroke(
+                        rect,
+                        egui::CornerRadius::same(12),
+                        egui::Stroke::new(1.5, AMBER),
+                        egui::StrokeKind::Outside,
+                    );
                 }
-                if chip_button(ui, "PROFILE", CHIP_W) {
+                if resp.clicked() {
                     action = Some(TitleAction::Profile);
                 }
-                ui.add_space(16.0);
-                // The army-select entry (US vs FR) — a pre-deploy pick fielded at every match start.
-                if chip_button(ui, "ARMY", CHIP_W) {
-                    action = Some(TitleAction::Army);
-                }
-                // The field manual (About) — reachable straight from the title, mirroring Android's
-                // title About entry (it is also reachable from Settings).
-                if chip_button(ui, "FIELD MANUAL", CHIP_W) {
-                    action = Some(TitleAction::About);
-                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if chip_button(ui, "SETTINGS", CHIP_W) {
+                        action = Some(TitleAction::Settings);
+                    }
+                    // The army-select entry (US vs FR) — a pre-deploy pick fielded every match start.
+                    if chip_button(ui, "ARMY", CHIP_W) {
+                        action = Some(TitleAction::Army);
+                    }
+                    // The field manual (About) — reachable straight from the title, mirroring
+                    // Android's title About entry (it is also reachable from Settings).
+                    if chip_button(ui, "FIELD MANUAL", CHIP_W) {
+                        action = Some(TitleAction::About);
+                    }
+                });
             });
         });
 
-    // ---- Deploy cluster, bottom-centre -----------------------------------------------------------
-    // Anchored bottom-centre so the play cluster reads as the focal point of the screen rather than
-    // a lonely stack in one corner, balancing the brand (top-left) / chips (top-right) / stamp
-    // (bottom-right) around it.
+    // ---- Deploy stack, bottom-left ---------------------------------------------------------------
+    // Anchored bottom-left, under the brand: the classic left-anchored action column every RTS/FPS
+    // hub trains players on. The corners then balance — brand/deploy on the left rail, identity/
+    // next-operation on the right — instead of a floating box in the bottom-centre dead space.
     Area::new(Id::new("title.deploy"))
-        .anchor(Align2::CENTER_BOTTOM, egui::vec2(0.0, -48.0))
+        .anchor(Align2::LEFT_BOTTOM, egui::vec2(40.0, -44.0))
         .show(&ctx, |ui| {
             use egui::Button;
             glass_card_frame().show(ui, |ui| {
@@ -511,9 +568,45 @@ pub(crate) fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
             });
         });
 
-    // ---- Build stamp, bottom-right (the quiet corner opposite the play cluster) -------------------
+    // ---- Next-operation card, bottom-right --------------------------------------------------------
+    // Campaign progress at a glance + CONTINUE, deep-linking into the next operation's briefing
+    // (the same hub→briefing→Deploy flow, one hop shorter — resolve_title_action reuses
+    // OpenBriefing). Derived from persisted clears by the pure `next_operation` seam; absent only
+    // for an empty campaign.
+    if let Some(op) = next {
+        Area::new(Id::new("title.continue"))
+            .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-32.0, -56.0))
+            .show(&ctx, |ui| {
+                glass_card_frame().show(ui, |ui| {
+                    ui.set_width(256.0);
+                    let header = if op.replay { "REPLAY OPERATION" } else { "NEXT OPERATION" };
+                    ui.label(RichText::new(header).color(ASH).size(TYPE_CAPTION).strong());
+                    ui.add_space(2.0);
+                    ui.label(
+                        RichText::new(op.title.to_uppercase())
+                            .color(BONE)
+                            .size(TYPE_SUBHEAD)
+                            .strong(),
+                    );
+                    ui.label(
+                        RichText::new(format!(
+                            "{} / {} OPERATIONS CLEARED",
+                            op.cleared, op.total
+                        ))
+                        .color(MUTED)
+                        .size(TYPE_CAPTION),
+                    );
+                    ui.add_space(10.0);
+                    if footer_button(ui, "CONTINUE", Emphasis::Secondary) {
+                        action = Some(TitleAction::ContinueCampaign(op.node));
+                    }
+                });
+            });
+    }
+
+    // ---- Build stamp, bottom-right (the quiet line under the next-operation card) -----------------
     Area::new(Id::new("title.stamp"))
-        .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-28.0, -24.0))
+        .anchor(Align2::RIGHT_BOTTOM, egui::vec2(-32.0, -24.0))
         .show(&ctx, |ui| {
             ui.label(RichText::new(stamp).color(MUTED).size(TYPE_CAPTION));
         });

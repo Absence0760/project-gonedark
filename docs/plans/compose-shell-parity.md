@@ -53,9 +53,12 @@ unblock at once.
 | About / field-manual | `draw_about` (`shell.rs:850`) | absent |
 | Gunsmith / loadout | `engine::loadout_ui`, read at Deploy (`main.rs:484`) | absent — boots `DEFAULT_SEED` default match |
 | Campaign mission-select + briefing | `Screen::MissionSelect`/`Briefing` (`main.rs`) | absent |
+| Title-screen hub (identity card, deploy rail, NEXT OPERATION shortcut) | corner-anchored hub — DEPLOY rail bottom-left, identity card top-right, NEXT OPERATION/CONTINUE bottom-right (`app/src/shell/egui_shell.rs`, [D97](../decisions.md)) | centred single-column title — no identity/progress surfaced (`TitleScreen.kt`) |
 
 Input handling for what Android *does* show is fine (the three buttons work). The gap is missing
-surfaces, not broken ones.
+surfaces, not broken ones. The title-hub row is **not** a Tier-N todo like the rows above it — D97
+explicitly scopes it as a possible future Tier-2 follow-up, not a blocker, since routing semantics
+and validation rules didn't fork.
 
 ---
 

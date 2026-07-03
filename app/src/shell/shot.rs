@@ -220,8 +220,11 @@ fn shell_screens_to_png() {
     let mut rebinding = None;
     let mut conflict = None;
 
+    // The hub with real state: default identity + the NEXT OPERATION card derived from the
+    // shipped campaign (fresh progress → first node).
+    let next = next_operation(&campaign);
     shoot(&device, &queue, &format!("{dir}/title.png"), |ui| {
-        title_ui(ui, "build dev \u{00b7} v0.0.0");
+        title_ui(ui, "build dev \u{00b7} v0.0.0", &profile, &army, next.as_ref());
     });
     shoot(&device, &queue, &format!("{dir}/mode_select.png"), |ui| {
         mode_select_ui(ui);

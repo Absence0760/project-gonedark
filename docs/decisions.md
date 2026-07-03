@@ -4321,3 +4321,38 @@ config, and a server-side live-ops persistence backend, are separate larger foll
 
 **Cross-link:** invariants #1/#2/#6/#7, [`roadmap.md`](roadmap.md) CP-8, `core::mission_tuning`
 (WS-E / D30 discipline), `campaign::Difficulty::scenario_modifiers` (the sibling pattern this mirrors).
+
+## D97 — The desktop title screen is a live hub: identity card, deploy rail, and a NEXT OPERATION shortcut
+
+**Status: landed (desktop).** The desktop egui title screen was re-laid-out from a centred menu box
+into a corner-anchored hub over the live 3D backdrop: the **DEPLOY rail** (CAMPAIGN hero, PvE / PvP,
+quiet QUIT) sits bottom-left under the brand; a clickable **identity card** (callsign, fielded army,
+lifetime record — click → Profile, replacing the PROFILE chip) sits top-right over the SETTINGS /
+ARMY / FIELD MANUAL chips; and a **NEXT OPERATION card** sits bottom-right — campaign completion
+tally plus a **CONTINUE** that deep-links into the next operation's briefing.
+
+CONTINUE is deliberately a *shortcut into the existing D81 flow*, not a second campaign entry:
+`TitleAction::ContinueCampaign(NodeId)` resolves to the hub's own `HostTransition::OpenBriefing`
+(same difficulty seeding, BACK still lands on the Operations hub), so the shortcut can never diverge
+from the canonical CAMPAIGN → hub → briefing → Deploy path. The target node is **derived** from
+persisted clears by the pure, unit-tested `next_operation` seam (first Available node; a fully
+cleared campaign degrades to replaying the last operation) — never a stored cursor, matching the
+campaign-persistence model (clears only, D82).
+
+**Why.** The centred menu box read as a placeholder: three corner ornaments around a dead middle,
+and none of the player's persisted state (callsign, army pick, campaign progress) was visible
+anywhere on the landing surface. A left-anchored action rail is the hub layout this genre trains
+players on; surfacing identity and next-step progress makes the title a hub rather than a router,
+and CONTINUE removes two hops from the most common session ("keep playing the campaign").
+
+**Scope / parity.** Layout is desktop chrome — sanctioned per-platform divergence (D32/D78);
+vocabulary is unchanged (CAMPAIGN / PvE / PvP, "operation", FIELD MANUAL — D81/D82). Android keeps
+its centred single-column title for now; if the identity/NEXT-OPERATION affordances prove out, the
+Compose shell re-authors them per D32 (a `compose-shell-parity.md` Tier-2 follow-up, not a blocker —
+routing semantics and validation rules did not fork). The identity card's record line reads 0/0
+until the post-match writer for `ProfileState` lands (its documented placeholder).
+
+**Cross-link:** [D32](#d32)/[D36](#d36) (native per-platform chrome), [D78](#d78) (sanctioned title
+divergence), [D81](#d81) (routing vocabulary), [D82](#d82) (bidirectional parity + persistence),
+[`compose-shell-parity.md`](plans/compose-shell-parity.md), `app/src/shell/{egui_shell,transitions,
+mission_select}.rs`.

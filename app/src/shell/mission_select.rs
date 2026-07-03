@@ -29,6 +29,47 @@ pub(crate) fn playable_node(entry: &MissionSelectEntry) -> Option<NodeId> {
     entry.progress.is_playable().then_some(entry.node)
 }
 
+/// The title screen's NEXT OPERATION card model: which node CONTINUE deep-links to, its display
+/// title, the campaign completion tally, and whether the pick is a replay (everything cleared) or
+/// fresh progress. Pure data derived from the campaign — never the sim.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct NextOperation {
+    /// The node CONTINUE opens the briefing for.
+    pub node: NodeId,
+    /// The node's display title.
+    pub title: String,
+    /// How many operations are cleared (any tier).
+    pub cleared: usize,
+    /// Total operations in the campaign.
+    pub total: usize,
+    /// `true` when every operation is cleared and the pick is a replay of the last one.
+    pub replay: bool,
+}
+
+/// Derive the NEXT OPERATION card from the campaign: the first **Available** node, or — once the
+/// campaign is fully cleared — the **last** playable node offered as a replay. `None` only for an
+/// empty campaign (the card simply doesn't draw). Pure — the title screen's one campaign decision,
+/// unit-tested; the card rendering is the exempt glue.
+pub(crate) fn next_operation(campaign: &Campaign) -> Option<NextOperation> {
+    let entries = campaign.mission_select();
+    let total = entries.len();
+    let cleared = entries
+        .iter()
+        .filter(|e| matches!(e.progress, NodeProgress::Cleared { .. }))
+        .count();
+    let pick = entries
+        .iter()
+        .find(|e| matches!(e.progress, NodeProgress::Available))
+        .or_else(|| entries.iter().rev().find(|e| e.progress.is_playable()))?;
+    Some(NextOperation {
+        node: pick.node,
+        title: pick.title.clone(),
+        cleared,
+        total,
+        replay: matches!(pick.progress, NodeProgress::Cleared { .. }),
+    })
+}
+
 /// One mission-select tile: a status pill (Locked/Available/Cleared, colour-coded) beside the node
 /// title as a full-width button. A **playable** node (Available or already-Cleared/replayable) is an
 /// enabled button that emits [`MissionSelectAction::OpenNode`]; a **Locked** node renders disabled and

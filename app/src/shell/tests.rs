@@ -1038,6 +1038,64 @@ use gonedark_render::tiers::QualityTier;
     }
 
     #[test]
+    fn next_operation_walks_the_chain_then_offers_a_replay() {
+        let mut campaign = chain_campaign();
+        // Fresh campaign: CONTINUE points at the first Available node, nothing cleared.
+        let op = next_operation(&campaign).unwrap();
+        assert_eq!(op.node, NodeId(0));
+        assert_eq!(op.title, "Alpha");
+        assert_eq!((op.cleared, op.total), (0, 2));
+        assert!(!op.replay);
+        // Clearing A advances CONTINUE to the newly-opened B and bumps the tally.
+        campaign.clear(NodeId(0), Difficulty::Regular).unwrap();
+        let op = next_operation(&campaign).unwrap();
+        assert_eq!(op.node, NodeId(1));
+        assert_eq!((op.cleared, op.total), (1, 2));
+        assert!(!op.replay);
+        // Fully cleared: CONTINUE degrades to a replay of the last operation (never disappears).
+        campaign.clear(NodeId(1), Difficulty::Regular).unwrap();
+        let op = next_operation(&campaign).unwrap();
+        assert_eq!(op.node, NodeId(1));
+        assert_eq!((op.cleared, op.total), (2, 2));
+        assert!(op.replay);
+    }
+
+    #[test]
+    fn next_operation_prefers_fresh_progress_over_a_higher_index_replay() {
+        // Two parallel branches: root A (node 0) untouched, root B (node 1) cleared through its
+        // successor (node 2). CONTINUE must point at the low-index Available node — fresh progress —
+        // not the higher-index Cleared ones (pins the find(Available)-before-replay-fallback order).
+        let mut campaign = Campaign::new(vec![
+            OperationNode::new(NodeId(0), MissionId(1), "Alpha", "take the outpost"),
+            OperationNode::new(NodeId(1), MissionId(2), "Bravo", "hold the ridge"),
+            OperationNode::new(NodeId(2), MissionId(3), "Charlie", "push the line")
+                .requires([NodeId(1)]),
+        ]);
+        campaign.clear(NodeId(1), Difficulty::Regular).unwrap();
+        campaign.clear(NodeId(2), Difficulty::Regular).unwrap();
+        let op = next_operation(&campaign).unwrap();
+        assert_eq!(op.node, NodeId(0), "fresh progress beats a higher-index replay");
+        assert_eq!((op.cleared, op.total), (2, 3));
+        assert!(!op.replay);
+    }
+
+    #[test]
+    fn next_operation_is_absent_for_an_empty_campaign() {
+        // No nodes → no card (the title simply doesn't draw it).
+        assert_eq!(next_operation(&Campaign::new(vec![])), None);
+    }
+
+    #[test]
+    fn continue_deep_links_into_the_operations_briefing() {
+        // The title hub's CONTINUE reuses the hub's own briefing transition — same flow, one hop
+        // shorter — so the shortcut can never diverge from the canonical CAMPAIGN path.
+        assert_eq!(
+            resolve_title_action(TitleAction::ContinueCampaign(NodeId(1))),
+            HostTransition::OpenBriefing(NodeId(1))
+        );
+    }
+
+    #[test]
     fn difficulty_cycles_through_all_four_tiers_and_wraps() {
         // The briefing's cycler walks every campaign tier exactly once, then wraps.
         let mut d = Difficulty::Recruit;

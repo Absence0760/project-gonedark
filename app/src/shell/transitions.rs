@@ -10,6 +10,11 @@ use gonedark_core::campaign::{Difficulty, NodeId};
 pub(crate) enum TitleAction {
     /// The PvE story campaign — the first shippable pillar (`docs/pve-campaign.md`, D58).
     Campaign,
+    /// The title hub's NEXT OPERATION shortcut: open this campaign node's briefing directly — the
+    /// same hub→briefing→Deploy flow (D81), skipping only the node list. The node comes from the
+    /// pure [`next_operation`](crate::shell::mission_select::next_operation) derivation over
+    /// persisted clears (never a stored cursor).
+    ContinueCampaign(NodeId),
     /// A standalone PvE skirmish against the scripted enemy commander.
     Pve,
     /// Player-vs-player — the lockstep-netcode match.
@@ -103,6 +108,10 @@ pub(crate) fn resolve_title_action(action: TitleAction) -> HostTransition {
         // node, reads its briefing, and launches it. PvE/PvP open the mode/map select (D81); the
         // gunsmith is customization-only behind Settings, no longer a play gate.
         TitleAction::Campaign => HostTransition::OpenMissionSelect,
+        // CONTINUE deep-links into the next operation's briefing — the same flow the hub reaches,
+        // one hop shorter. Reusing OpenBriefing wholesale (same difficulty seeding, same BACK
+        // target) means the shortcut can never diverge from the canonical hub path.
+        TitleAction::ContinueCampaign(node) => HostTransition::OpenBriefing(node),
         // PvE/PvP open the mode/map select (D81) — the deploy gate that boots the chosen scene with
         // the persisted loadout. The gunsmith no longer gates play (it moved behind Settings). PvE
         // and PvP share the picker until PvP match-setup lands (Q5).

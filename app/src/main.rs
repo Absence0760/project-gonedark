@@ -414,8 +414,14 @@ impl App {
         let mut transition = None;
         match &mut self.screen {
             Screen::Title => {
+                // The hub's live state: identity (persisted profile/army) and the NEXT OPERATION
+                // card derived from persisted campaign clears. Disjoint-field borrows beside
+                // `self.shell` — none of these alias the shell.
+                let next = shell::next_operation(&self.campaign);
                 if let Some(sh) = self.shell.as_mut() {
-                    if let Some(action) = sh.draw_title(surface) {
+                    if let Some(action) =
+                        sh.draw_title(surface, &self.profile, &self.army_select, next.as_ref())
+                    {
                         transition = Some(resolve_title_action(action));
                     }
                 }
