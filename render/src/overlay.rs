@@ -211,7 +211,12 @@ fn quad_style(role: QuadRole, hw: f32, hh: f32) -> QuadStyle {
 }
 
 // Layout constants (NDC). Panels are centered; the scrim spans the screen.
-const SCRIM_ALPHA: f32 = 0.55;
+/// Opacity of the full-screen scrim behind every modal surface (pause / reconnect / summary — they
+/// share one constant because they share the same modal logic: the frame beneath is context, not
+/// UI). Raised from 0.55: the full HUD keeps rendering under the overlay and its chrome read
+/// straight through the lighter scrim, so the pause screen looked unfinished. 0.72 keeps the world
+/// a faint silhouette while the HUD recedes behind the modal.
+const SCRIM_ALPHA: f32 = 0.72;
 const PANEL_HW: f32 = 0.5;
 const PANEL_HH: f32 = 0.32;
 /// Half-height of the accent strip across the top of a panel (reconnect cause / match outcome).
@@ -647,13 +652,18 @@ fn button_label_color(role: QuadRole) -> [f32; 3] {
 }
 
 /// A short human label for a faction, used as the per-row tag in the summary (uppercase: the font
-/// is all-caps). Neutral rows are tagged too so a three-row summary stays unambiguous.
+/// is all-caps). Neutral rows are tagged too so a three-row summary stays unambiguous. Width bound:
+/// the tag is centered at `-BAR_MAX_HW - 0.02`, so at LABEL_SIZE and the worst-case square aspect
+/// a five-glyph tag (~0.095 NDC) is the longest that stays inside the panel fill — the same width
+/// class as the produced/lost readout drawn at the same x. "NEUTRAL" (seven glyphs, ~0.134 NDC)
+/// would bleed past the panel's left edge, hence the abbreviated "NEUT." (pinned by the
+/// `faction_tags_stay_inside_the_panel` test).
 fn faction_label(faction: gonedark_core::shell::FactionTag) -> &'static str {
     use gonedark_core::shell::FactionTag;
     match faction {
         FactionTag::Player => "YOU",
-        FactionTag::Enemy => "FOE",
-        FactionTag::Neutral => "NEU",
+        FactionTag::Enemy => "ENEMY",
+        FactionTag::Neutral => "NEUT.",
     }
 }
 
@@ -675,7 +685,11 @@ fn outcome_title(outcome: MatchOutcome) -> &'static str {
 fn button_label(overlay: &Overlay, slot: usize) -> &'static str {
     match (overlay, slot) {
         (Overlay::Paused { .. }, 0) => "RESUME",
-        (Overlay::Paused { .. }, 1) => "QUIT",
+        // Slot 1 maps to `SessionAction::Surrender` in the engine's `overlay_click_action` — it
+        // ends the *match*, not the app, so the caption says so ("QUIT" read as quit-to-desktop).
+        // Nine glyphs at BUTTON_LABEL_SIZE is ~0.26 NDC wide — inside the 2*BUTTON_HW = 0.36 slot
+        // (the `button_captions_fit_their_slots` test pins this).
+        (Overlay::Paused { .. }, 1) => "SURRENDER",
         (Overlay::ReconnectPrompt { .. }, 0) => "RESUME",
         (Overlay::ReconnectPrompt { .. }, 1) => "LEAVE",
         // Summary now offers a rematch (primary) beside a return to the hub (secondary) — H1.
@@ -1277,6 +1291,39 @@ mod tests {
         }
     }
 
+    /// Every modal surface shares ONE scrim opacity (same modal logic — the frame beneath is
+    /// context, not UI), and it sits in the heavy-modal band: strong enough that the still-rendered
+    /// HUD chrome recedes rather than reading through, yet below full black so the world stays a
+    /// faint silhouette.
+    #[test]
+    fn modal_surfaces_share_one_heavy_scrim() {
+        let alphas: Vec<f32> = [
+            Overlay::Paused { single_player: true },
+            Overlay::ReconnectPrompt { desynced: true },
+            Overlay::Summary(summary_with_kills(
+                1,
+                0,
+                MatchOutcome::Victory(Faction::Player),
+            )),
+        ]
+        .iter()
+        .map(|ov| overlay_quads(ov)[0].alpha)
+        .collect();
+        for a in &alphas {
+            assert_eq!(*a, alphas[0], "all modal surfaces share one scrim alpha");
+        }
+        assert!(
+            alphas[0] >= 0.7,
+            "scrim ({}) is heavy enough to recede the HUD beneath",
+            alphas[0]
+        );
+        assert!(
+            alphas[0] < 1.0,
+            "scrim ({}) stays translucent so the world silhouette survives",
+            alphas[0]
+        );
+    }
+
     /// Fairness guard (invariant #6): no overlay quad carries a world position — every quad is in
     /// NDC and bounded to the screen. The overlay has no spatial sim data to leak.
     #[test]
@@ -1361,6 +1408,50 @@ mod tests {
                         2.0 * b.hw
                     );
                 }
+            }
+        }
+    }
+
+    /// Every surface's button captions fit their slot at the base scale — including the pause
+    /// surface's nine-glyph SURRENDER (the widest caption in the vocabulary). Measured at the
+    /// worst-case square aspect; the ui_scale variant above covers the DPI-scaled path for the
+    /// summary.
+    #[test]
+    fn button_captions_fit_their_slots() {
+        for ov in [
+            Overlay::Paused { single_player: true },
+            Overlay::ReconnectPrompt { desynced: true },
+            Overlay::Summary(summary_with_kills(
+                1,
+                0,
+                MatchOutcome::Victory(Faction::Player),
+            )),
+        ] {
+            let buttons: Vec<OverlayQuad> = overlay_quads(&ov)
+                .into_iter()
+                .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
+                .collect();
+            let captions: Vec<TextLabel> = overlay_labels(&ov)
+                .into_iter()
+                .filter(|l| (l.pos[1] - BUTTON_ROW_CY).abs() < 1e-4)
+                .collect();
+            assert_eq!(
+                captions.len(),
+                buttons.len(),
+                "every slot carries a caption for {ov:?}"
+            );
+            for cap in &captions {
+                let b = buttons
+                    .iter()
+                    .find(|b| (b.cx - cap.pos[0]).abs() < 1e-4)
+                    .expect("caption is centered on a drawn slot");
+                let w = crate::text::measure(&cap.text, cap.size, 1.0).0;
+                assert!(
+                    w <= 2.0 * b.hw + 1e-5,
+                    "caption {:?} ({w}) overflows its {} slot",
+                    cap.text,
+                    2.0 * b.hw
+                );
             }
         }
     }
@@ -1513,9 +1604,9 @@ mod tests {
         let tags: Vec<&str> = labels
             .iter()
             .map(|l| l.text.as_str())
-            .filter(|t| matches!(*t, "YOU" | "FOE" | "NEU"))
+            .filter(|t| matches!(*t, "YOU" | "ENEMY" | "NEUT."))
             .collect();
-        assert_eq!(tags, ["YOU", "FOE"], "only the two active rows are tagged");
+        assert_eq!(tags, ["YOU", "ENEMY"], "only the two active rows are tagged");
     }
 
     /// L4 keeps a row that *holds territory* even with zero kills and zero resources — that's
@@ -1539,6 +1630,33 @@ mod tests {
             3 * FACTION_COUNT,
             "a territory-holding neutral row is retained"
         );
+    }
+
+    /// Every faction tag — including the widest, the five-glyph ENEMY / NEUT. — stays inside the
+    /// panel fill's left edge at the worst-case square aspect. This is the width bound that forced
+    /// "NEUT." over "NEUTRAL" (seven glyphs would bleed past the panel onto the scrim); it pins the
+    /// tag column's geometry so a future relabel can't silently overflow the card.
+    #[test]
+    fn faction_tags_stay_inside_the_panel() {
+        // All three rows show: kills for Player/Enemy, held territory keeps the Neutral row.
+        let mut summary = summary_full(MatchOutcome::Victory(Faction::Player), 4, 2, 0, 0, 0, 0);
+        summary.per_faction[Faction::Neutral.index()].territory_held = 2;
+        let tags: Vec<TextLabel> = overlay_labels(&Overlay::Summary(summary))
+            .into_iter()
+            .filter(|l| matches!(l.text.as_str(), "YOU" | "ENEMY" | "NEUT."))
+            .collect();
+        assert_eq!(tags.len(), 3, "all three faction rows are tagged");
+        for tag in &tags {
+            // Center-anchored: the box extends half the measured width left of `pos`.
+            let half_w = crate::text::measure(&tag.text, tag.size, 1.0).0 * 0.5;
+            assert!(
+                tag.pos[0] - half_w >= -PANEL_HW,
+                "tag {:?} (left edge {}) bleeds past the panel edge {}",
+                tag.text,
+                tag.pos[0] - half_w,
+                -PANEL_HW
+            );
+        }
     }
 
     /// The panel rim is drawn directly before the panel for every surface that has a panel — a
@@ -1810,7 +1928,10 @@ mod tests {
         let labels = overlay_labels(&Overlay::Paused { single_player: true });
         let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
         assert!(texts.contains(&"RESUME"), "paused labels Resume");
-        assert!(texts.contains(&"QUIT"), "paused labels its secondary");
+        assert!(
+            texts.contains(&"SURRENDER"),
+            "paused labels its secondary for what it does (ends the match, not the app)"
+        );
     }
 
     #[test]
