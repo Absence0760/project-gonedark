@@ -385,6 +385,11 @@ pub struct SettingsState {
     pub mouse_sensitivity: f32,
     /// Invert the embodied vertical look axis.
     pub invert_look_y: bool,
+    /// Embodied **hip field-of-view** in degrees (PC-1), [`Self::FOV_MIN`]`..=`[`Self::FOV_MAX`].
+    /// A seated mouse player wants a wider field than the 60° that reads as tunnel-vision on a
+    /// monitor; the host pushes this to `Game::set_base_fov` each match frame. Presentation only —
+    /// the camera frustum, never the sim (invariants #4/#5), and only the player's OWN view (#6).
+    pub fov_deg: f32,
     /// Render-quality preference (see [`QualityChoice`]).
     pub quality: QualityChoice,
     /// Accessibility — **Colorblind (CVD) cues**. When on, the embodied alert HUD labels each ring
@@ -424,6 +429,9 @@ impl Default for SettingsState {
             music_volume: 0.6,
             mouse_sensitivity: 1.0,
             invert_look_y: false,
+            // A seated-PC default — wider than the 60° hip FOV that reads as tunnel-vision on a
+            // monitor (PC-1). Android leaves the engine's 60° default (its own settings surface).
+            fov_deg: 90.0,
             quality: QualityChoice::Auto,
             // Accessibility cues default OFF — the base alert channel already carries shape +
             // luminance-spread CVD redundancy and the primary audio channel, so these are opt-in
@@ -446,6 +454,10 @@ impl SettingsState {
     /// Sensitivity slider bounds (a multiplier around 1.0).
     pub const SENS_MIN: f32 = 0.1;
     pub const SENS_MAX: f32 = 3.0;
+    /// FOV slider bounds (degrees) — mirror the engine's embodied-FOV band so the slider can never
+    /// request a value `Game::set_base_fov` would reject, keeping the two clamps in lock-step.
+    pub const FOV_MIN: f32 = gonedark_engine::EMBODIED_FOV_MIN_DEG;
+    pub const FOV_MAX: f32 = gonedark_engine::EMBODIED_FOV_MAX_DEG;
 
     /// Clamp every field back into its valid range — called after the egui sliders write, so a future
     /// non-slider edit path (config import, keybind) can never leave an out-of-range value. Pure.
@@ -458,6 +470,7 @@ impl SettingsState {
             *v = v.clamp(0.0, 1.0);
         }
         self.mouse_sensitivity = self.mouse_sensitivity.clamp(Self::SENS_MIN, Self::SENS_MAX);
+        self.fov_deg = self.fov_deg.clamp(Self::FOV_MIN, Self::FOV_MAX);
     }
 
     /// Restore the shipped defaults — the Settings RESET button.
@@ -783,7 +796,7 @@ pub fn encode_shell_prefs(
     let callsign = sanitize_callsign(&profile.callsign).replace(['\n', '\r'], " ");
     format!(
         "{SHELL_PREFS_VERSION}\n\
-         master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nquality={}\n\
+         master={}\nsfx={}\nmusic={}\nsens={}\ninverty={}\nfov={}\nquality={}\n\
          cvdcues={}\nsoundcues={}\ncvdpal={}\nalertcue={}\n\
          callsign={}\nfaction={}\nmatches={}\nwins={}\n\
          optic={}\nbarrel={}\nmagazine={}\n\
@@ -793,6 +806,7 @@ pub fn encode_shell_prefs(
         s.music_volume,
         s.mouse_sensitivity,
         s.invert_look_y as u8,
+        s.fov_deg,
         s.quality.index(),
         s.colorblind_cues as u8,
         s.visual_sound_cues as u8,
@@ -839,6 +853,7 @@ pub fn decode_shell_prefs(
         music_volume: parse_or(map.get("music"), ds.music_volume),
         mouse_sensitivity: parse_or(map.get("sens"), ds.mouse_sensitivity),
         invert_look_y: parse_bool(map.get("inverty"), ds.invert_look_y),
+        fov_deg: parse_or(map.get("fov"), ds.fov_deg),
         quality: QualityChoice::from_index(parse_or::<usize>(map.get("quality"), 0)),
         colorblind_cues: parse_bool(map.get("cvdcues"), ds.colorblind_cues),
         visual_sound_cues: parse_bool(map.get("soundcues"), ds.visual_sound_cues),
@@ -2114,6 +2129,14 @@ fn settings_ui(
             .text("Look sensitivity"),
         );
         ui.checkbox(&mut state.invert_look_y, "Invert look Y");
+        // Embodied hip FOV (PC-1) — a seated mouse player expects a wider field than the 60° that
+        // reads as tunnel-vision on a monitor. `clamp` re-bounds to the engine's embodied-FOV band;
+        // `main.rs` pushes it to `Game::set_base_fov` each match frame (camera only, never the sim).
+        ui.add(
+            Slider::new(&mut state.fov_deg, SettingsState::FOV_MIN..=SettingsState::FOV_MAX)
+                .text("Field of view")
+                .suffix("°"),
+        );
 
         // The key-rebind editor (D75 follow-up). One row per rebindable host action (pause /
         // fullscreen / debug overlay — the keys `main.rs` owns): its label + a button showing the
@@ -3065,6 +3088,7 @@ mod tests {
             assert!((0.0..=1.0).contains(&v));
         }
         assert!((SettingsState::SENS_MIN..=SettingsState::SENS_MAX).contains(&s.mouse_sensitivity));
+        assert!((SettingsState::FOV_MIN..=SettingsState::FOV_MAX).contains(&s.fov_deg));
         assert_eq!(s.quality, QualityChoice::Auto);
         assert!(!s.invert_look_y);
         // Accessibility cues default OFF (opt-in intensifiers over the base fair channel).
@@ -3156,6 +3180,7 @@ mod tests {
             music_volume: 0.5,
             mouse_sensitivity: 99.0,
             invert_look_y: true,
+            fov_deg: 200.0,
             quality: QualityChoice::High,
             colorblind_cues: false,
             visual_sound_cues: false,
@@ -3168,6 +3193,7 @@ mod tests {
         assert_eq!(s.sfx_volume, 0.0);
         assert_eq!(s.music_volume, 0.5);
         assert_eq!(s.mouse_sensitivity, SettingsState::SENS_MAX);
+        assert_eq!(s.fov_deg, SettingsState::FOV_MAX, "over-range FOV clamps to the ceiling");
         // Non-numeric fields are untouched by clamp.
         assert!(s.invert_look_y);
         assert_eq!(s.quality, QualityChoice::High);
@@ -3385,6 +3411,8 @@ mod tests {
             music_volume: 0.25,
             mouse_sensitivity: 2.4,
             invert_look_y: true,
+            // A non-default in-band FOV (distinct from the 90° default) so the round-trip proves it.
+            fov_deg: 100.0,
             quality: QualityChoice::High,
             colorblind_cues: true,
             visual_sound_cues: true,

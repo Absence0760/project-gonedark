@@ -574,6 +574,11 @@ impl App {
                 // chrome (text/icons + their panels) and touch controls read at a constant physical
                 // size instead of a raw-pixel fraction. Presentation only — never the sim.
                 game.set_ui_scale(surface.ui_scale());
+                // Embodied hip FOV (PC-1): push the player's chosen field of view before the frame
+                // builds the camera. `set_base_fov` re-clamps to the engine's embodied-FOV band, so
+                // even a corrupted setting can't distort the projection. Presentation only — the
+                // camera frustum, never the deterministic sim.
+                game.set_base_fov(self.settings.fov_deg);
                 let mut input = self.input.drain_frame();
                 let viewport = surface.size();
                 // Shell overlay buttons (pause / reconnect / post-match summary). A click while an

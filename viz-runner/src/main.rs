@@ -1381,6 +1381,39 @@ fn main() {
         ),
     );
 
+    // --- Scenario 5.97: PC-1 base-FOV actually re-projects the embodied first-person view --------
+    // set_base_fov widens the hip FOV (a seated mouse player's fix for the 60° that reads as
+    // tunnel-vision on a monitor). Prove the setting reaches the CAMERA end to end: the SAME embodied
+    // scene rendered at the 60° floor vs the 110° ceiling must differ across a large fraction of the
+    // frame — a wider FOV re-projects the whole world (objects shrink toward centre). Presentation
+    // only; no sim state touched (a pure camera-projection diff). Scene::Infantry boots embodied.
+    println!("[fov] a widened base FOV re-projects the embodied first-person view");
+    let mut g = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Infantry);
+    g.set_base_fov(gonedark_engine::EMBODIED_FOV_MIN_DEG); // 60° — the narrow floor
+    advance(&mut g, 3, InputFrame::default(), &gpu, &view);
+    let fov_embodied = g.is_embodied();
+    let narrow = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/fov_narrow.png", &narrow);
+    g.set_base_fov(gonedark_engine::EMBODIED_FOV_MAX_DEG); // 110° — the wide ceiling
+    advance(&mut g, 1, InputFrame::default(), &gpu, &view);
+    let wide = read_pixels(&gpu.device, &gpu.queue, &target);
+    save_png("target/viz/fov_wide.png", &wide);
+    let fov_changed = narrow
+        .chunks_exact(4)
+        .zip(wide.chunks_exact(4))
+        .filter(|(a, b)| {
+            (a[0] as i16 - b[0] as i16).abs() > 12
+                || (a[1] as i16 - b[1] as i16).abs() > 12
+                || (a[2] as i16 - b[2] as i16).abs() > 12
+        })
+        .count();
+    check(
+        &mut failures,
+        "base_fov_reprojects_embodied_view",
+        fov_embodied && fov_changed > 3000,
+        format!("{fov_changed} px changed between the 60° and 110° embodied FOV (embodied={fov_embodied}; the widened field re-projects the world)"),
+    );
+
     // --- Scenario 6: animated parallax title backdrop (render-crate component) -----------------
     backdrop_scene(&gpu, &mut failures);
 

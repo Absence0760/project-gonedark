@@ -490,6 +490,23 @@ fn topdown_view_proj(width: u32, height: u32, focus_x: f32, focus_y: f32, half_e
 /// camera) and [`embodied_proj`] (handed to the weapon viewmodel pass) so the gun's projection can
 /// never drift from the world it sits in.
 const EMBODIED_FOV_DEG: f32 = 60.0;
+/// The band the host-set hip FOV ([`Game::set_base_fov`], PC-1) is clamped to. The floor keeps the
+/// old default in range; the ceiling caps how wide the player's own first-person frustum can open —
+/// a sane limit avoids fisheye distortion while still meeting a seated PC player's ~90–105°
+/// expectation. Presentation only: FOV widens only the avatar's own view, never the strategic map
+/// (invariant #6).
+pub const EMBODIED_FOV_MIN_DEG: f32 = 60.0;
+pub const EMBODIED_FOV_MAX_DEG: f32 = 110.0;
+
+/// Validate + clamp a host-requested hip FOV (PC-1): `None` for a non-finite value (a bad host read
+/// must never NaN the projection — the caller keeps the prior FOV), else the value clamped into
+/// [`EMBODIED_FOV_MIN_DEG`]`..=`[`EMBODIED_FOV_MAX_DEG`]. Pure → unit-tested without a GPU `Game`
+/// (the seam [`Game::set_base_fov`] is the thin `&mut self` wrapper over it).
+fn clamp_base_fov(fov_deg: f32) -> Option<f32> {
+    fov_deg
+        .is_finite()
+        .then(|| fov_deg.clamp(EMBODIED_FOV_MIN_DEG, EMBODIED_FOV_MAX_DEG))
+}
 const EMBODIED_NEAR: f32 = 0.05;
 const EMBODIED_FAR: f32 = 500.0;
 
@@ -1517,6 +1534,15 @@ pub struct Game {
     /// (invariant #6).
     aim_zoom_t: f32,
 
+    /// The **hip (un-zoomed) embodied camera FOV** in degrees (PC-1). Defaults to
+    /// [`EMBODIED_FOV_DEG`]; the desktop host pushes the player's chosen value via
+    /// [`set_base_fov`](Self::set_base_fov) each match frame (a seated mouse player wants a wider
+    /// field than the 60° that reads as tunnel-vision on a monitor). PRESENTATION ONLY — it only
+    /// widens the player's OWN first-person frustum (never a strategic-map reveal, invariant #6),
+    /// touches no sim state, and adds no checksum surface (invariants #4/#5/#7). ADS narrows
+    /// *relative to* this base, so the gun-sight zoom is unchanged in feel.
+    base_fov_deg: f32,
+
     /// Command-camera ground focus (the world point centered on screen) and framed half-extent
     /// (zoom). Presentation only — the RTS camera pans (`cam_focus_*`) and zooms (`cam_half_extent`)
     /// with no effect on the sim. Updated from `move_axis`/`scroll` each command-view frame.
@@ -2384,6 +2410,7 @@ impl Game {
             yaw: 0.0,
             pitch: EMBODIED_PITCH_DEFAULT,
             aim_zoom_t: 0.0,
+            base_fov_deg: EMBODIED_FOV_DEG,
             cam_focus_x: 0.0,
             cam_focus_y: 0.0,
             cam_half_extent: TOPDOWN_HALF_EXTENT,
@@ -2984,7 +3011,19 @@ impl Game {
     /// ([`scope::SCOPED_FOV_DEG`]) or infantry's gentler iron-sight ([`scope::ADS_FOV_DEG`], WS-A).
     /// Pure presentation.
     fn embodied_fov_deg(&self) -> f32 {
-        scope::zoom_fov_deg(EMBODIED_FOV_DEG, self.ads_scoped_fov(), self.aim_zoom_t)
+        scope::zoom_fov_deg(self.base_fov_deg, self.ads_scoped_fov(), self.aim_zoom_t)
+    }
+
+    /// Set the **hip embodied camera FOV** (degrees), clamped to
+    /// [`EMBODIED_FOV_MIN_DEG`]`..=`[`EMBODIED_FOV_MAX_DEG`] (PC-1). The desktop host calls this
+    /// each match frame from the player's Settings; Android leaves the [`EMBODIED_FOV_DEG`] default.
+    /// PRESENTATION ONLY — the camera frustum, never sim state; adds no checksum surface
+    /// (invariants #4/#5/#7) and only widens the avatar's own view, not the map (invariant #6).
+    /// A non-finite value is ignored so a bad host read can never NaN the projection.
+    pub fn set_base_fov(&mut self, fov_deg: f32) {
+        if let Some(v) = clamp_base_fov(fov_deg) {
+            self.base_fov_deg = v;
+        }
     }
 
     /// The fully-aimed FOV target (degrees) for the possessed unit: the **tank** gun-sight
@@ -3477,7 +3516,7 @@ impl Game {
         // non-inverted (mouse/drag right → look right, up → look up); pitch is clamped shy of vertical.
         let look_scale = scope::ads_look_scale(
             self.aim_zoom_t,
-            scope::zoom_magnification(EMBODIED_FOV_DEG, self.embodied_fov_deg()),
+            scope::zoom_magnification(self.base_fov_deg, self.embodied_fov_deg()),
         );
         self.yaw = integrate_look_yaw(self.yaw, look_axis.0 * look_scale);
         self.pitch = integrate_look_pitch(self.pitch, look_axis.1 * look_scale);
@@ -4390,7 +4429,7 @@ impl Game {
                     zoom_t: self.aim_zoom_t,
                 };
                 let magnification =
-                    scope::zoom_magnification(EMBODIED_FOV_DEG, self.embodied_fov_deg());
+                    scope::zoom_magnification(self.base_fov_deg, self.embodied_fov_deg());
                 self.renderer
                     .render_scope(device, queue, view, &scope_state, magnification);
             }
@@ -4877,6 +4916,36 @@ mod tests {
         assert_eq!(Scene::for_mission(MISSION_HOLD), Some(Scene::Mission2));
         // An unmapped MissionId (no scene of its own) resolves to nothing — never guessed.
         assert_eq!(Scene::for_mission(MissionId(999)), None);
+    }
+
+    /// PC-1 hip-FOV clamp: a host-set base FOV is validated + clamped into the embodied band, and a
+    /// non-finite request is rejected (the caller keeps the prior FOV rather than NaN-ing the
+    /// camera). Pure seam behind `Game::set_base_fov` — the `&mut self` wrapper needs a GPU `Game`,
+    /// so the logic is tested here, exactly as the camera/input seams are.
+    #[test]
+    fn base_fov_clamps_to_the_embodied_band_and_ads_always_narrows() {
+        // In-band values pass through unchanged.
+        assert_eq!(clamp_base_fov(90.0), Some(90.0));
+        assert_eq!(clamp_base_fov(EMBODIED_FOV_MIN_DEG), Some(EMBODIED_FOV_MIN_DEG));
+        assert_eq!(clamp_base_fov(EMBODIED_FOV_MAX_DEG), Some(EMBODIED_FOV_MAX_DEG));
+        // Out of band clamps to the nearest bound (never tunnel-vision below the floor, never fisheye
+        // past the ceiling).
+        assert_eq!(clamp_base_fov(30.0), Some(EMBODIED_FOV_MIN_DEG));
+        assert_eq!(clamp_base_fov(179.0), Some(EMBODIED_FOV_MAX_DEG));
+        // A non-finite read is rejected so it can never NaN the projection.
+        assert_eq!(clamp_base_fov(f32::NAN), None);
+        assert_eq!(clamp_base_fov(f32::INFINITY), None);
+
+        // The default hip FOV sits in-band, and BOTH ADS targets narrow strictly below even the
+        // widest-allowed base — so aiming down sight always zooms IN, never out, at any chosen base
+        // (invariant #6: a narrower FOV reveals *less* of the world).
+        assert!((EMBODIED_FOV_MIN_DEG..=EMBODIED_FOV_MAX_DEG).contains(&EMBODIED_FOV_DEG));
+        assert!(scope::ADS_FOV_DEG < EMBODIED_FOV_MIN_DEG);
+        assert!(scope::SCOPED_FOV_DEG < scope::ADS_FOV_DEG);
+        // The wiring `embodied_fov_deg` rides: at hip the embodied FOV IS the base; at full ADS it
+        // eases to the scoped target strictly below it — for a widened base too.
+        assert_eq!(scope::zoom_fov_deg(100.0, scope::ADS_FOV_DEG, 0.0), 100.0);
+        assert!(scope::zoom_fov_deg(100.0, scope::ADS_FOV_DEG, 1.0) < 100.0);
     }
 
     // --- detection "gone dark" tell → render markers (the pure seam) -------------------------------
