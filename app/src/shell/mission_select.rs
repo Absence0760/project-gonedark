@@ -1,13 +1,19 @@
-//! The Operations-hub mission-select screen — the campaign's nodes as status-coded tiles.
+//! The Operations-hub mission-select screen — the campaign's nodes as status-coded tiles,
+//! grouped by the conflict atlas (D98: conflict → operation → battle).
 //!
-//! A pure launchability seam ([`playable_node`]) gates every tile click, plus the egui glue
-//! ([`mission_tile`], [`mission_select_ui`]) that renders the hub over the backdrop. Reads the
-//! campaign through [`Campaign::mission_select`] (host-side, never the sim — invariants #1/#7).
+//! Two pure seams gate the egui glue: [`playable_node`] (every tile click) and [`hub_sections`]
+//! (the grouped section order + rollups), plus the glue itself ([`mission_tile`],
+//! [`mission_select_ui`]) that renders the hub over the backdrop. Reads the campaign through
+//! [`Campaign::mission_select`] and the atlas accessors (host-side, never the sim — invariants
+//! #1/#7).
 
 use crate::shell::theme::*;
 use crate::shell::widgets::*;
 use crate::shell::briefing::difficulty_label;
-use gonedark_core::campaign::{Campaign, MissionSelectEntry, NodeId, NodeProgress};
+use gonedark_core::campaign::{
+    Campaign, Conflict, ConflictId, GroupProgress, MissionSelectEntry, NodeId, NodeProgress,
+    Operation, OperationId,
+};
 
 /// An action the mission-select (Operations-hub) screen can emit in a frame. The hub reads the
 /// campaign through [`Campaign::mission_select`] (host-side, never the sim — invariants #1/#7); the
@@ -70,6 +76,85 @@ pub(crate) fn next_operation(campaign: &Campaign) -> Option<NextOperation> {
     })
 }
 
+/// One renderable section of the grouped Operations hub — the conflict-atlas (D98) shape the tile
+/// list draws top-to-bottom: an optional conflict header (present only on the conflict's *first*
+/// section, so a multi-operation conflict draws its header once), an optional operation sub-header,
+/// and that operation's battle tiles. The trailing untitled section (`conflict`/`operation` both
+/// `None`) carries the ungrouped nodes, so a plain [`Campaign::new`] hub degrades to exactly one
+/// untitled section — the pre-atlas flat list. Pure data derived from the campaign, never the sim.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct HubSection {
+    /// Set when this section opens a new conflict: the header the hub draws once above it.
+    pub conflict: Option<(ConflictId, GroupProgress)>,
+    /// The operation these tiles belong to, or `None` for the trailing ungrouped section.
+    pub operation: Option<(OperationId, GroupProgress)>,
+    /// The section's battle tiles, in authored (`NodeId`) order.
+    pub nodes: Vec<NodeId>,
+}
+
+/// Derive the hub's ordered section list from the campaign: conflicts in authored order, each
+/// conflict's operations in authored order, each operation's nodes in authored order, then a
+/// trailing untitled section for ungrouped nodes. A **content-pending** (empty) operation renders
+/// nothing — no header scaffolding without tiles — and a conflict whose operations are all empty
+/// therefore contributes no section at all. Pure — the grouping decision behind the egui glue,
+/// unit-tested without a GPU (repo testing rule).
+pub(crate) fn hub_sections(campaign: &Campaign) -> Vec<HubSection> {
+    let mut sections = Vec::new();
+    for conflict in campaign.conflicts() {
+        // `take()`n by the conflict's first non-empty operation, so the header draws exactly once.
+        let mut header = Some((conflict.id, campaign.conflict_progress(conflict.id)));
+        for op in campaign.operations_in(conflict.id) {
+            let nodes = campaign.nodes_in(op);
+            if nodes.is_empty() {
+                continue; // content-pending operation: nothing to render yet
+            }
+            sections.push(HubSection {
+                conflict: header.take(),
+                operation: Some((op, campaign.operation_progress(op))),
+                nodes,
+            });
+        }
+    }
+    let ungrouped: Vec<NodeId> = (0..campaign.len() as u32)
+        .map(NodeId)
+        .filter(|&id| campaign.node(id).is_some_and(|n| n.operation.is_none()))
+        .collect();
+    if !ungrouped.is_empty() {
+        sections.push(HubSection { conflict: None, operation: None, nodes: ungrouped });
+    }
+    sections
+}
+
+/// The conflict header line, e.g. `THE CHANNEL CRISIS · 2027-2028 · 0/2` — name, year span
+/// (collapsed to a single year when `start_year == end_year`), and the campaign-level rollup.
+/// ASCII plus U+00B7 only (the one non-ASCII glyph proven to render in egui's default font — same
+/// rule as the tile status pill). Pure formatting, unit-tested.
+pub(crate) fn conflict_header_label(conflict: &Conflict, progress: GroupProgress) -> String {
+    let years = if conflict.start_year == conflict.end_year {
+        format!("{}", conflict.start_year)
+    } else {
+        format!("{}-{}", conflict.start_year, conflict.end_year)
+    };
+    format!(
+        "{} \u{00B7} {} \u{00B7} {}/{}",
+        conflict.name.to_uppercase(),
+        years,
+        progress.cleared,
+        progress.total
+    )
+}
+
+/// The operation sub-header line, e.g. `OPERATION FIRST LIGHT · 0/2` — name plus its own rollup.
+/// Pure formatting, unit-tested; the greyed-when-unplayable colour pick is the glue's job.
+pub(crate) fn operation_header_label(operation: &Operation, progress: GroupProgress) -> String {
+    format!(
+        "{} \u{00B7} {}/{}",
+        operation.name.to_uppercase(),
+        progress.cleared,
+        progress.total
+    )
+}
+
 /// One mission-select tile: a status pill (Locked/Available/Cleared, colour-coded) beside the node
 /// title as a full-width button. A **playable** node (Available or already-Cleared/replayable) is an
 /// enabled button that emits [`MissionSelectAction::OpenNode`]; a **Locked** node renders disabled and
@@ -125,18 +210,54 @@ pub(crate) fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Optio
 
         // Each mission is its own selectable card, so they sit directly in the screen card (no
         // second enclosing frame). The list has its own bounded scroll so the banner and BACK stay
-        // pinned as the campaign grows; a short list shows no scrollbar.
+        // pinned as the campaign grows; a short list shows no scrollbar. Tiles are grouped by the
+        // conflict atlas (D98): a conflict header, an operation sub-header, then that operation's
+        // tiles — the ordering/rollup decisions are the pure [`hub_sections`] seam; this is glue.
+        // `mission_select()` returns one entry per node in `NodeId` order, so `entries[node.0]` is
+        // that node's tile — same entry, same [`mission_tile`], so launch behavior is unchanged.
         let entries = campaign.mission_select();
+        let sections = hub_sections(campaign);
         egui::ScrollArea::vertical()
             .max_height(5.0 * 72.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                for (i, entry) in entries.iter().enumerate() {
-                    if let Some(act) = mission_tile(ui, entry) {
-                        action = Some(act);
+                for (si, section) in sections.iter().enumerate() {
+                    if si > 0 {
+                        ui.add_space(14.0);
                     }
-                    if i + 1 < entries.len() {
-                        ui.add_space(8.0);
+                    if let Some((id, rollup)) = section.conflict {
+                        if let Some(conflict) = campaign.conflict(id) {
+                            ui.label(
+                                RichText::new(conflict_header_label(conflict, rollup))
+                                    .color(BONE)
+                                    .size(TYPE_BODY)
+                                    .strong(),
+                            );
+                            ui.add_space(6.0);
+                        }
+                    }
+                    if let Some((id, rollup)) = section.operation {
+                        if let Some(operation) = campaign.operation(id) {
+                            // Greyed when nothing in the operation is playable yet (still gated).
+                            let color = if rollup.playable { ASH } else { MUTED };
+                            ui.label(
+                                RichText::new(operation_header_label(operation, rollup))
+                                    .color(color)
+                                    .size(TYPE_CAPTION)
+                                    .strong(),
+                            );
+                            ui.add_space(6.0);
+                        }
+                    }
+                    for (i, &node) in section.nodes.iter().enumerate() {
+                        if let Some(entry) = entries.get(node.0 as usize) {
+                            if let Some(act) = mission_tile(ui, entry) {
+                                action = Some(act);
+                            }
+                        }
+                        if i + 1 < section.nodes.len() {
+                            ui.add_space(8.0);
+                        }
                     }
                 }
             });

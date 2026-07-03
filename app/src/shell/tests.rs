@@ -1085,6 +1085,181 @@ use gonedark_render::tiers::QualityTier;
         assert_eq!(next_operation(&Campaign::new(vec![])), None);
     }
 
+    // ---- The conflict-atlas grouping seam (D98) -------------------------------------------------
+
+    use gonedark_core::campaign::{Conflict, ConflictId, GroupProgress, Operation, OperationId};
+
+    /// An atlas-grouped campaign exercising every grouping shape at once: conflict 0 with two
+    /// operations (op 0: Alpha → Bravo; op 1: Charlie gated on Bravo), conflict 1 with only a
+    /// content-pending (empty) operation, and an ungrouped node Delta.
+    fn atlas_campaign() -> Campaign {
+        Campaign::with_atlas(
+            vec![
+                Conflict {
+                    id: ConflictId(0),
+                    name: "The Channel Crisis".into(),
+                    start_year: 2027,
+                    end_year: 2028,
+                    summary: "a fictional modern flashpoint".into(),
+                },
+                Conflict {
+                    id: ConflictId(1),
+                    name: "Battle of Normandy".into(),
+                    start_year: 1944,
+                    end_year: 1944,
+                    summary: "content pending".into(),
+                },
+            ],
+            vec![
+                Operation {
+                    id: OperationId(0),
+                    conflict: ConflictId(0),
+                    name: "Operation First Light".into(),
+                },
+                Operation {
+                    id: OperationId(1),
+                    conflict: ConflictId(0),
+                    name: "Operation Ember".into(),
+                },
+                Operation {
+                    id: OperationId(2),
+                    conflict: ConflictId(1),
+                    name: "Pointe du Hoc".into(),
+                },
+            ],
+            vec![
+                OperationNode::new(NodeId(0), MissionId(1), "Alpha", "").in_operation(OperationId(0)),
+                OperationNode::new(NodeId(1), MissionId(2), "Bravo", "")
+                    .requires([NodeId(0)])
+                    .in_operation(OperationId(0)),
+                OperationNode::new(NodeId(2), MissionId(3), "Charlie", "")
+                    .requires([NodeId(1)])
+                    .in_operation(OperationId(1)),
+                OperationNode::new(NodeId(3), MissionId(4), "Delta", ""),
+            ],
+        )
+    }
+
+    #[test]
+    fn hub_sections_order_conflicts_then_operations_then_trailing_ungrouped() {
+        let sections = hub_sections(&atlas_campaign());
+        assert_eq!(sections.len(), 3);
+
+        // Section 0 opens conflict 0 (header present) with operation 0's tiles, in authored order.
+        assert_eq!(sections[0].conflict.map(|(id, _)| id), Some(ConflictId(0)));
+        assert_eq!(sections[0].operation.map(|(id, _)| id), Some(OperationId(0)));
+        assert_eq!(sections[0].nodes, vec![NodeId(0), NodeId(1)]);
+
+        // Section 1 continues the SAME conflict — no repeated conflict header, just op 1's tiles.
+        assert_eq!(sections[1].conflict, None, "a conflict header draws once, on its first section");
+        assert_eq!(sections[1].operation.map(|(id, _)| id), Some(OperationId(1)));
+        assert_eq!(sections[1].nodes, vec![NodeId(2)]);
+
+        // Conflict 1's only operation is content-pending (no nodes): no header scaffolding at all.
+        // The trailing section is the untitled ungrouped one.
+        assert_eq!(sections[2].conflict, None);
+        assert_eq!(sections[2].operation, None, "ungrouped nodes render in an untitled section");
+        assert_eq!(sections[2].nodes, vec![NodeId(3)]);
+    }
+
+    #[test]
+    fn hub_sections_index_the_mission_select_entries_exactly() {
+        // The glue looks tiles up as `entries[node.0]` — pin that every sectioned node id indexes
+        // its own entry (mission_select() is in NodeId order), and that every node appears exactly
+        // once across the sections, so grouping can never drop or duplicate a tile.
+        let campaign = atlas_campaign();
+        let entries = campaign.mission_select();
+        let mut seen: Vec<NodeId> = hub_sections(&campaign)
+            .iter()
+            .flat_map(|s| s.nodes.iter().copied())
+            .collect();
+        for &node in &seen {
+            assert_eq!(entries[node.0 as usize].node, node);
+        }
+        seen.sort_unstable();
+        let all: Vec<NodeId> = (0..campaign.len() as u32).map(NodeId).collect();
+        assert_eq!(seen, all, "every node renders exactly once");
+    }
+
+    #[test]
+    fn hub_section_rollups_track_clears() {
+        let mut campaign = atlas_campaign();
+
+        // Fresh: nothing cleared; op 0 has the playable root, op 1 is fully gated (greyed).
+        let sections = hub_sections(&campaign);
+        assert_eq!(
+            sections[0].conflict.map(|(_, r)| r),
+            Some(GroupProgress { cleared: 0, total: 3, playable: true })
+        );
+        assert_eq!(
+            sections[0].operation.map(|(_, r)| r),
+            Some(GroupProgress { cleared: 0, total: 2, playable: true })
+        );
+        assert_eq!(
+            sections[1].operation.map(|(_, r)| r),
+            Some(GroupProgress { cleared: 0, total: 1, playable: false }),
+            "a fully gated operation reads not-playable (the glue greys its header)"
+        );
+
+        // Clear Alpha then Bravo: op 0 completes (2/2), Bravo's clear opens Charlie so op 1 turns
+        // playable, and the conflict rollup advances to 2/3.
+        campaign.clear(NodeId(0), Difficulty::Regular).unwrap();
+        campaign.clear(NodeId(1), Difficulty::Regular).unwrap();
+        let sections = hub_sections(&campaign);
+        assert_eq!(
+            sections[0].conflict.map(|(_, r)| r),
+            Some(GroupProgress { cleared: 2, total: 3, playable: true })
+        );
+        assert_eq!(
+            sections[0].operation.map(|(_, r)| r),
+            Some(GroupProgress { cleared: 2, total: 2, playable: true })
+        );
+        assert_eq!(
+            sections[1].operation.map(|(_, r)| r),
+            Some(GroupProgress { cleared: 0, total: 1, playable: true })
+        );
+    }
+
+    #[test]
+    fn hub_sections_degrade_to_one_untitled_section_without_an_atlas() {
+        // A plain `Campaign::new` hub (empty atlas, all nodes ungrouped) is exactly the pre-atlas
+        // flat list: one untitled section carrying every node in authored order.
+        let sections = hub_sections(&chain_campaign());
+        assert_eq!(
+            sections,
+            vec![HubSection {
+                conflict: None,
+                operation: None,
+                nodes: vec![NodeId(0), NodeId(1)],
+            }]
+        );
+        // And an empty campaign renders no sections at all (the hub just shows BACK).
+        assert_eq!(hub_sections(&Campaign::new(vec![])), Vec::<HubSection>::new());
+    }
+
+    #[test]
+    fn hub_header_labels_format_names_years_and_rollups() {
+        let campaign = atlas_campaign();
+        // Multi-year conflict: NAME · span · rollup (ASCII + U+00B7 only — the no-tofu rule).
+        let channel = campaign.conflict(ConflictId(0)).unwrap();
+        assert_eq!(
+            conflict_header_label(channel, campaign.conflict_progress(ConflictId(0))),
+            "THE CHANNEL CRISIS \u{00B7} 2027-2028 \u{00B7} 0/3"
+        );
+        // Single-year conflict collapses the span to one year.
+        let normandy = campaign.conflict(ConflictId(1)).unwrap();
+        assert_eq!(
+            conflict_header_label(normandy, campaign.conflict_progress(ConflictId(1))),
+            "BATTLE OF NORMANDY \u{00B7} 1944 \u{00B7} 0/0"
+        );
+        // Operation sub-header: NAME · its own rollup.
+        let first_light = campaign.operation(OperationId(0)).unwrap();
+        assert_eq!(
+            operation_header_label(first_light, campaign.operation_progress(OperationId(0))),
+            "OPERATION FIRST LIGHT \u{00B7} 0/2"
+        );
+    }
+
     #[test]
     fn continue_deep_links_into_the_operations_briefing() {
         // The title hub's CONTINUE reuses the hub's own briefing transition — same flow, one hop
