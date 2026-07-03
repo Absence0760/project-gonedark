@@ -21,7 +21,7 @@
 //!
 //! ## The wire format (v1) — a versioned, tolerant `key=value` string
 //!
-//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0;earmy=0;skirm=0`
+//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0;earmy=0;skirm=0;map=`
 //!
 //! - `;`-separated `key=value` pairs.
 //! - **Tolerant decode** (the forward-compat contract): unknown keys are ignored, missing keys take
@@ -141,6 +141,13 @@ pub struct LaunchConfig {
     /// (skirmish is the no-stakes sandbox), even on a battlefield that reuses a campaign scene
     /// (Seize Ground → `Mission1`). Default `false`: an older wire behaves exactly as before.
     pub skirmish: bool,
+    /// The **library-map id** a configured skirmish boots on (D102: an
+    /// `engine::map_library::MAP_LIBRARY` id, e.g. `"crossroads"`), or empty for a scene
+    /// battlefield. Consumed only when [`skirmish`](Self::skirmish) is set; the glue boots it via
+    /// `Game::new_map_skirmish_with_loadout`, and an unknown/invalid id degrades to the standing
+    /// `Scene::Skirmish` (the emitter also sets `scene=skirmish` alongside, so an **older decoder
+    /// that has never heard of this key boots a plain open skirmish** — graceful by construction).
+    pub map: String,
 }
 
 impl Default for LaunchConfig {
@@ -166,6 +173,7 @@ impl Default for LaunchConfig {
             visual_sound_cues: false,
             enemy_army: ENEMY_ARMY_UNSET,
             skirmish: false,
+            map: String::new(),
         }
     }
 }
@@ -212,6 +220,7 @@ pub fn parse_launch_config(raw: &str) -> LaunchConfig {
             "army" => cfg.army = clamp_army(value, cfg.army),
             "earmy" => cfg.enemy_army = clamp_enemy_army(value, cfg.enemy_army),
             "skirm" => cfg.skirmish = parse_bool(value, cfg.skirmish),
+            "map" if !value.is_empty() => cfg.map = value.to_string(),
             "cvd" => cfg.colorblind_cues = parse_bool(value, cfg.colorblind_cues),
             "snd" => cfg.visual_sound_cues = parse_bool(value, cfg.visual_sound_cues),
             _ => {} // unknown key — ignore (forward-compat)
@@ -359,6 +368,20 @@ mod tests {
         assert!(!d.visual_sound_cues);
         assert_eq!(d.enemy_army, ENEMY_ARMY_UNSET); // no explicit enemy pick — scenario default
         assert!(!d.skirmish); // not a configured-skirmish launch
+        assert!(d.map.is_empty()); // no library map — the scene battlefield boots
+    }
+
+    #[test]
+    fn a_library_map_skirmish_rides_the_map_key_and_degrades_to_the_scene() {
+        // The D102 map pick: `map=` carries the library id beside `scene=skirmish`, so a decoder
+        // that predates the key (or an unknown id downstream) boots the plain open skirmish.
+        let cfg = parse_launch_config("v=1;scene=skirmish;skirm=1;map=crossroads");
+        assert_eq!(cfg.map, "crossroads");
+        assert!(cfg.skirmish);
+        assert_eq!(cfg.scene, "skirmish"); // the graceful-degradation scene rides alongside
+        // Empty/missing keeps the default (no library map).
+        assert!(parse_launch_config("map=").map.is_empty());
+        assert!(parse_launch_config("v=1;scene=skirmish").map.is_empty());
     }
 
     #[test]

@@ -32,6 +32,17 @@ class LaunchConfigTest {
         assertFalse(d.visualSoundCues)
         assertEquals(LaunchConfig.ENEMY_ARMY_UNSET, d.enemyArmy) // no explicit enemy pick
         assertFalse(d.skirmish) // not a configured-skirmish launch
+        assertEquals("", d.map) // no library map — the scene battlefield boots
+    }
+
+    @Test
+    fun the_map_key_round_trips_and_missing_or_empty_stays_unset() {
+        // The D102 library-map key (mirrors launch.rs): the id survives the codec…
+        val cfg = LaunchConfig(scene = "skirmish", skirmish = true, map = "crossroads")
+        assertEquals("crossroads", LaunchConfig.decode(cfg.encode()).map)
+        // …and a missing/empty key keeps the default (no library map).
+        assertEquals("", LaunchConfig.decode("map=").map)
+        assertEquals("", LaunchConfig.decode("v=1;scene=skirmish").map)
     }
 
     @Test
@@ -232,10 +243,10 @@ class LaunchConfigTest {
         val emitted = LaunchConfig(scene = "skirmish").encode()
         assertEquals(LaunchConfig(scene = "skirmish"), LaunchConfig.decode(emitted))
         // And it is the documented v1 shape (now carrying the D85 `stk`/`muz` slots, the campaign
-        // `diff`/`node`, the `army` pick, the accessibility `cvd`/`snd` cues, and the skirmish
-        // `earmy`/`skirm` pair — all at defaults).
+        // `diff`/`node`, the `army` pick, the accessibility `cvd`/`snd` cues, the skirmish
+        // `earmy`/`skirm` pair, and the D102 `map` id — all at defaults).
         assertEquals(
-            "v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0;earmy=0;skirm=0",
+            "v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0;earmy=0;skirm=0;map=",
             emitted,
         )
     }

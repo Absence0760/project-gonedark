@@ -37,9 +37,9 @@ class SkirmishSetupTest {
     @Test
     fun out_of_range_battlefield_clamps_to_the_first_and_never_throws() {
         assertEquals(0, clampBattlefield(-1))
-        assertEquals(0, clampBattlefield(shellGameModes.size))
+        assertEquals(0, clampBattlefield(shellBattlefields.size))
         assertEquals(0, clampBattlefield(Int.MAX_VALUE))
-        for (i in shellGameModes.indices) assertEquals(i, clampBattlefield(i))
+        for (i in shellBattlefields.indices) assertEquals(i, clampBattlefield(i))
     }
 
     @Test
@@ -62,11 +62,32 @@ class SkirmishSetupTest {
     }
 
     @Test
-    fun every_battlefield_resolves_to_its_own_scene_token() {
-        for ((i, mode) in shellGameModes.withIndex()) {
+    fun every_battlefield_resolves_to_its_own_deploy() {
+        // The launch decision is total over the unified table (D102): a scene tile rides its own
+        // token with no map id; a library-map tile rides its id on `map=` with the fallback
+        // `scene=skirmish` alongside (graceful degradation for an old decoder / unknown id).
+        for ((i, battlefield) in shellBattlefields.withIndex()) {
             val cfg = skirmishLaunchConfig(SkirmishSetup(battlefield = i), settings, loadout)
-            assertEquals(mode.sceneToken, cfg.scene)
+            if (battlefield.mapId != null) {
+                assertEquals(battlefield.mapId, cfg.map)
+                assertEquals("skirmish", cfg.scene)
+            } else {
+                assertEquals(battlefield.sceneToken, cfg.scene)
+                assertEquals("", cfg.map)
+            }
         }
+    }
+
+    @Test
+    fun a_library_map_deploy_round_trips_the_wire() {
+        // The crossroads pick end-to-end through the REAL codec: map id + skirm survive encode →
+        // decode, exactly what android_main hands the engine (mirrors launch.rs).
+        val crossroads = shellBattlefields.indexOfFirst { it.mapId == "crossroads" }
+        val cfg = skirmishLaunchConfig(SkirmishSetup(battlefield = crossroads), settings, loadout)
+        val decoded = LaunchConfig.decode(cfg.encode())
+        assertEquals("crossroads", decoded.map)
+        assertTrue(decoded.skirmish)
+        assertEquals("skirmish", decoded.scene)
     }
 
     @Test
@@ -81,7 +102,7 @@ class SkirmishSetupTest {
             difficulty = Difficulty.Elite,
         )
         val cfg = skirmishLaunchConfig(setup, settings, loadout)
-        assertEquals(shellGameModes[1].sceneToken, cfg.scene)
+        assertEquals(shellBattlefields[1].sceneToken, cfg.scene)
         assertEquals(Army.Fr.index, cfg.army)
         assertEquals(Army.Us.index, cfg.enemyArmy)
         assertEquals(Difficulty.Elite.tier(), cfg.diff)
@@ -101,7 +122,7 @@ class SkirmishSetupTest {
     @Test
     fun a_stale_battlefield_index_deploys_the_first_battle_not_a_crash() {
         val cfg = skirmishLaunchConfig(SkirmishSetup(battlefield = 99), settings, loadout)
-        assertEquals(shellGameModes.first().sceneToken, cfg.scene)
+        assertEquals(shellBattlefields.first().sceneToken, cfg.scene)
     }
 
     @Test

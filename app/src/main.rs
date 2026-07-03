@@ -46,9 +46,10 @@ mod shell;
 use shell::{
     apply_army_select_action, apply_briefing_action, apply_loadout_action, apply_profile_action,
     apply_settings_action, apply_skirmish_setup_action, build_channel, build_stamp,
-    resolve_title_action, AboutReturn, ArmySelectState, ArmySelectStep, BriefingOutcome, EguiShell,
-    HostTransition, LoadoutStep, MissionSelectAction, ProfileState, ProfileStep, PvpAction,
-    SettingsState, SettingsStep, SkirmishConfig, SkirmishSetupState, SkirmishSetupStep,
+    resolve_title_action, AboutReturn, ArmySelectState, ArmySelectStep, BattlefieldPick,
+    BriefingOutcome, EguiShell, HostTransition, LoadoutStep, MissionSelectAction, ProfileState,
+    ProfileStep, PvpAction, SettingsState, SettingsStep, SkirmishConfig, SkirmishSetupState,
+    SkirmishSetupStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -320,8 +321,27 @@ impl App {
             //  - the ENEMY army via the same `core::shell` SelectArmy seam the player pick rides —
             //    the §3 "pick the enemy's army too" half (campaign/mode launches keep their
             //    scene-seeded enemy army instead).
-            let mut game =
-                Game::new_scene_with_loadout(device, format, DEFAULT_SEED, cfg.scene, loadout);
+            // A library-map battlefield (D102) boots the picked `*.map.ron` through
+            // `new_map_skirmish_with_loadout`; a `None` (unknown/invalid id — forbidden for shipped
+            // entries by the engine's library tests) defensively degrades to the standing open
+            // skirmish rather than failing the deploy.
+            let mut game = match cfg.battlefield {
+                BattlefieldPick::Scene(scene) => {
+                    Game::new_scene_with_loadout(device, format, DEFAULT_SEED, scene, loadout)
+                }
+                BattlefieldPick::LibraryMap(id) => {
+                    Game::new_map_skirmish_with_loadout(device, format, DEFAULT_SEED, id, loadout)
+                        .unwrap_or_else(|| {
+                            Game::new_scene_with_loadout(
+                                device,
+                                format,
+                                DEFAULT_SEED,
+                                Scene::Skirmish,
+                                loadout,
+                            )
+                        })
+                }
+            };
             game.apply_campaign_tuning(cfg.difficulty);
             game.select_army(Faction::Enemy, cfg.enemy_army);
             player_army = cfg.player_army;

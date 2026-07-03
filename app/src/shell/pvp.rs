@@ -17,7 +17,7 @@ use gonedark_core::components::Army;
 
 /// One PvP queue on the staging screen: a stable id, the tile name + one-line blurb, and the
 /// build-order status its chip shows. All fields `&'static str`, so the table is a `const` —
-/// exactly the `GameMode` convention.
+/// exactly the battlefield-table convention (`engine::map_library::Battlefield`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct PvpQueue {
     /// Stable id (also a tile key). ASCII.

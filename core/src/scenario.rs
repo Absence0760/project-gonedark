@@ -704,6 +704,87 @@ pub fn seed_skirmish_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> Ski
     }
 }
 
+/// Where a base's single starting troop stands and faces, given its own base and the opposing one:
+/// [`SKIRMISH_TROOP_GAP`] world units from the base **toward the enemy** along the dominant axis
+/// (the axis the two bases differ most on), facing that way. The positioned-skirmish twin of
+/// [`seed_skirmish_with_loadout`]'s hardcoded `±(BASE_X − TROOP_GAP)` / `Angle(0)` maths — on the
+/// canonical skirmish geometry it reproduces those values exactly (pinned by test). Validated map
+/// spawn zones never overlap, so the two bases always differ on at least one axis; an exact tie in
+/// magnitude picks x (deterministic — invariant #1, all integer/`Fixed`). Pure — unit-tested.
+pub fn skirmish_troop_post(base: Vec2, enemy_base: Vec2) -> (Vec2, Angle) {
+    let dx = enemy_base.x - base.x;
+    let dy = enemy_base.y - base.y;
+    let gap = Fixed::from_int(SKIRMISH_TROOP_GAP);
+    if dx.abs() >= dy.abs() {
+        if dx >= Fixed::ZERO {
+            (Vec2::new(base.x + gap, base.y), Angle(0)) // +X, toward the enemy
+        } else {
+            (Vec2::new(base.x - gap, base.y), Angle(ANGLE_FULL / 2)) // −X
+        }
+    } else if dy >= Fixed::ZERO {
+        (Vec2::new(base.x, base.y + gap), Angle(ANGLE_FULL / 4)) // +Y
+    } else {
+        (Vec2::new(base.x, base.y - gap), Angle(3 * ANGLE_FULL / 4)) // −Y
+    }
+}
+
+/// Seed the two-base skirmish **force recipe at caller-supplied base positions** — the map-driven
+/// half of the library seam (`modes.md` §3): income pace, the US-vs-FR matchup, both operational
+/// camps, the small purse, and one starting troop each ([`skirmish_troop_post`]) with the player's
+/// gunsmith loadout applied. Everything [`seed_skirmish_with_loadout`] seeds **except** the
+/// battlefield itself — no posts, no cover, no terrain: the caller lays those first (the engine's
+/// `MapSpec::apply` — control points and cover are *map* content, D76, while the force recipe is
+/// the *skirmish* recipe, shared across every battlefield it boots on).
+///
+/// Deterministic fixed-point throughout (invariant #1): spawn order is fixed (player camp, enemy
+/// camp, player troop, enemy troop) and every position derives from the two inputs by integer
+/// math, so two seeds of a fresh `Sim` are bit-identical — unit-tested in both profiles. The
+/// canonical `(∓SKIRMISH_BASE_X, 0)` inputs reproduce [`seed_skirmish_with_loadout`]'s camp/troop
+/// bytes exactly (the oracle test); only the posts/cover differ, and those are the caller's.
+pub fn seed_positioned_skirmish(
+    sim: &mut Sim,
+    player_base_pos: Vec2,
+    enemy_base_pos: Vec2,
+    player_loadout: Loadout,
+) -> Skirmish {
+    let mut b = ScenarioBuilder::new(sim);
+
+    // The skirmish pace + matchup, exactly as `seed_skirmish_with_loadout` sets them — armies
+    // BEFORE any unit spawn so the per-army roster read sees the right army.
+    b.set_income(SKIRMISH_INCOME_PERIOD);
+    b.set_army(Faction::Player, Army::Us);
+    b.set_army(Faction::Enemy, Army::Fr);
+
+    // Both bases operational through the canonical `build_camp` path, then the real small purse
+    // (uniform, wiping each `build_camp`'s temp funding) — the hand-seeder purse dance.
+    let player_base = b.build_camp(player_base_pos, Faction::Player);
+    let enemy_base = b.build_camp(enemy_base_pos, Faction::Enemy);
+    b.set_purse(SKIRMISH_START_PURSE);
+
+    // One starting troop per base, posted toward the enemy (`skirmish_troop_post`), FireAtWill —
+    // the same engagement default and for the same reason as the canonical skirmish (ReturnFire
+    // would deadlock the two starting troops).
+    let (player_post, player_facing) = skirmish_troop_post(player_base_pos, enemy_base_pos);
+    let (enemy_post, enemy_facing) = skirmish_troop_post(enemy_base_pos, player_base_pos);
+    let player_troop =
+        b.spawn(UnitKind::Rifleman, player_post, Faction::Player, Stance::FireAtWill, player_facing);
+    let enemy_troop =
+        b.spawn(UnitKind::Rifleman, enemy_post, Faction::Enemy, Stance::FireAtWill, enemy_facing);
+
+    // The player's gunsmith loadout on their starting troop's weapon — deterministic match-setup
+    // input, already in `Sim::fold`, no new checksum surface (invariant #7); STANDARD is a no-op.
+    let player_army = b.sim_mut().army_of(Faction::Player);
+    player_loadout
+        .apply_to_weapon_for(player_army, &mut b.sim_mut().world.weapon[player_troop.index as usize]);
+
+    Skirmish {
+        player_base,
+        enemy_base,
+        player_troop,
+        enemy_troop,
+    }
+}
+
 // --- The *Seize* archetype: mission 1, "10 troops, take the base" (PvE WS-A) ---------------------
 //
 // The first PvE campaign mission (pve-campaign-plan WS-A). Unlike the skirmish — a two-base economy
@@ -2736,5 +2817,82 @@ mod tests {
             seed_seize_mission(&mut probe).garrison.len() as u32
         };
         assert_eq!(cleared_a, m_strength, "the US assault broke the whole French OPFOR garrison");
+    }
+
+    // --- The positioned skirmish (the map-library force recipe, D102) ---------------------------
+
+    #[test]
+    fn troop_post_reproduces_the_canonical_skirmish_geometry() {
+        // On the canonical `(∓BASE_X, 0)` bases, the derived posts/facings must be EXACTLY the
+        // values `seed_skirmish_with_loadout` hardcodes — the oracle that pins the derivation.
+        let player = at((-SKIRMISH_BASE_X, 0));
+        let enemy = at((SKIRMISH_BASE_X, 0));
+        let (p_post, p_face) = skirmish_troop_post(player, enemy);
+        assert_eq!(p_post, at((-(SKIRMISH_BASE_X - SKIRMISH_TROOP_GAP), 0)));
+        assert_eq!(p_face, Angle(0));
+        let (e_post, e_face) = skirmish_troop_post(enemy, player);
+        assert_eq!(e_post, at((SKIRMISH_BASE_X - SKIRMISH_TROOP_GAP, 0)));
+        assert_eq!(e_face, Angle(ANGLE_FULL / 2));
+    }
+
+    #[test]
+    fn troop_post_covers_the_vertical_axis_and_breaks_ties_on_x() {
+        // Bases stacked vertically → the troop steps and faces along ±Y.
+        let (post, face) = skirmish_troop_post(at((0, -20)), at((0, 20)));
+        assert_eq!(post, at((0, -20 + SKIRMISH_TROOP_GAP)));
+        assert_eq!(face, Angle(ANGLE_FULL / 4));
+        let (post, face) = skirmish_troop_post(at((0, 20)), at((0, -20)));
+        assert_eq!(post, at((0, 20 - SKIRMISH_TROOP_GAP)));
+        assert_eq!(face, Angle(3 * ANGLE_FULL / 4));
+        // An exact magnitude tie picks the x axis (deterministic, never data-dependent drift).
+        let (post, face) = skirmish_troop_post(at((0, 0)), at((10, 10)));
+        assert_eq!(post, at((SKIRMISH_TROOP_GAP, 0)));
+        assert_eq!(face, Angle(0));
+    }
+
+    #[test]
+    fn positioned_skirmish_seeds_the_full_force_recipe() {
+        let mut sim = fresh();
+        let player_pos = at((-40, 4));
+        let enemy_pos = at((44, 4));
+        let s = seed_positioned_skirmish(&mut sim, player_pos, enemy_pos, Loadout::STANDARD);
+        // Camps: operational, at the supplied positions, right factions.
+        for (base, faction, pos) in [
+            (s.player_base, Faction::Player, player_pos),
+            (s.enemy_base, Faction::Enemy, enemy_pos),
+        ] {
+            let i = base.index as usize;
+            assert_eq!(sim.world.kind[i], EntityKind::Building);
+            assert_eq!(sim.world.faction[i], faction);
+            assert_eq!(sim.world.pos[i], pos);
+        }
+        // Troops: one Rifleman each, posted toward the enemy, FireAtWill.
+        for (troop, faction, own, other) in [
+            (s.player_troop, Faction::Player, player_pos, enemy_pos),
+            (s.enemy_troop, Faction::Enemy, enemy_pos, player_pos),
+        ] {
+            let i = troop.index as usize;
+            assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
+            assert_eq!(sim.world.faction[i], faction);
+            assert_eq!(sim.world.pos[i], skirmish_troop_post(own, other).0);
+            assert_eq!(sim.world.stance[i], Stance::FireAtWill);
+        }
+        // The skirmish economy: the small uniform purse + the slow accrual pace.
+        assert_eq!(sim.resources.amounts[Faction::Player.index()], SKIRMISH_START_PURSE);
+        assert_eq!(sim.resources.amounts[Faction::Enemy.index()], SKIRMISH_START_PURSE);
+        assert_eq!(sim.income_period(), SKIRMISH_INCOME_PERIOD);
+        // The matchup: US player, French enemy (WS-A).
+        assert_eq!(sim.army_of(Faction::Player), Army::Us);
+        assert_eq!(sim.army_of(Faction::Enemy), Army::Fr);
+    }
+
+    #[test]
+    fn positioned_skirmish_is_bit_identical_across_seeds() {
+        // The determinism floor (invariant #1): two fresh sims seeded identically fold identically.
+        let mut a = fresh();
+        let mut b = fresh();
+        seed_positioned_skirmish(&mut a, at((-40, 4)), at((44, 4)), Loadout::STANDARD);
+        seed_positioned_skirmish(&mut b, at((-40, 4)), at((44, 4)), Loadout::STANDARD);
+        assert_eq!(a.checksum(), b.checksum());
     }
 }

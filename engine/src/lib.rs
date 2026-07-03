@@ -154,10 +154,6 @@ pub mod tuning;
 /// smooths measured RTT (host-side `f64` EWMA) and decides when to ask `core::lockstep` to change
 /// the integer input delay. Floats stay here (engine glue), never `core`/sim (invariants #1/#2).
 pub mod net_tuning;
-/// The Pve/Pvp mode/map-select model (D81): `GameMode` + `SHELL_GAME_MODES`, the pure picker table the
-/// out-of-match shells render. Host presentation only — maps a picked mode to a `Scene`; no sim state
-/// (invariants #1/#7). The Rust twin of Android's `GameMode.kt`.
-pub mod shell_modes;
 /// Cross-modal alert cues (WS-D accessibility, invariant #6): the pure seam turning the live alert
 /// channel into the NON-visual equivalents of the directional flash — a bearing-panned audio ping
 /// and a coarse haptic pulse — each still an *alert, not intel* (bearing + kind only). Presentation
@@ -179,6 +175,7 @@ pub use gonedark_pal::keybind;
 /// (invariant #2) and no float ever reaches the sim (invariant #1). `deny_unknown_fields`,
 /// range-checked, fails loud; the applied `Sim` adds no checksum surface (invariants #4/#7).
 pub mod map_format;
+pub mod map_library;
 
 pub use tuning::RenderTuning;
 /// The music-bus gain seam (D75 follow-up), re-exported so the desktop host can carry the Settings
@@ -2426,6 +2423,57 @@ impl Game {
         // host-testable without a device; the renderer below is the only GPU-bound part of boot.
         let (player, start_embodied, objectives) =
             seed_scene_with_loadout(&mut sim, scene, player_loadout);
+        Self::from_seeded_sim(device, surface_format, seed, scene, sim, player, start_embodied, objectives)
+    }
+
+    /// Build the game into a **skirmish on a library map** (D102, `modes.md` §3): the picked
+    /// [`map_library::MAP_LIBRARY`] battlefield laid through the D76 airlock plus the shared
+    /// skirmish force recipe in its spawn zones (`map_library::seed_map_skirmish`), fielding the
+    /// player's gunsmith loadout exactly like [`Game::new_scene_with_loadout`]. Returns `None` for
+    /// an unknown/invalid id or a map without the skirmish zones — both forbidden for shipped
+    /// entries by the library tests, so a host treats `None` as the defensive arm and falls back
+    /// to the standing [`Scene::Skirmish`]. Skirmish semantics throughout (`Scene::Skirmish` flags:
+    /// the going-dark teach runs, no debug overlay, no objectives — the win is `evaluate_outcome`).
+    pub fn new_map_skirmish_with_loadout(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        seed: u64,
+        map_id: &str,
+        player_loadout: Loadout,
+    ) -> Option<Self> {
+        let spec = map_library::library_spec(map_id)?;
+        let mut sim = Sim::new(seed);
+        let s = map_library::seed_map_skirmish(&mut sim, &spec, player_loadout)?;
+        Some(Self::from_seeded_sim(
+            device,
+            surface_format,
+            seed,
+            Scene::Skirmish,
+            sim,
+            s.player_troop,
+            false,
+            objectives::ObjectiveSet::default(),
+        ))
+    }
+
+    /// Assemble the [`Game`] around an already-seeded `Sim` — the shared tail of every boot path
+    /// ([`new_scene_with_loadout`](Game::new_scene_with_loadout) and
+    /// [`new_map_skirmish_with_loadout`](Game::new_map_skirmish_with_loadout)), extracted so a new
+    /// seeding front (a library map today, a lobby-configured match later) can never drift from
+    /// the canonical host wiring below (lockstep, commander RNG, onboarding, tuning). `scene`
+    /// drives only the presentation flags (`debug_overlay_default`, `teaches_going_dark`); the
+    /// world itself is whatever the caller seeded.
+    #[allow(clippy::too_many_arguments)]
+    fn from_seeded_sim(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        seed: u64,
+        scene: Scene,
+        sim: Sim,
+        player: Entity,
+        start_embodied: bool,
+        objectives: objectives::ObjectiveSet,
+    ) -> Self {
         // The debug overlay defaults on for the sandboxes (their whole point), off for a real
         // match; F3 toggles it either way.
         let debug_hitboxes = scene.debug_overlay_default();

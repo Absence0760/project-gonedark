@@ -32,7 +32,7 @@ class PvpStagingTest {
 
     @Test
     fun queue_table_is_distinct_ascii_and_complete() {
-        // The mode-table hygiene rule (the `GameModeTest` guard, applied here): every field is
+        // The mode-table hygiene rule (the `BattlefieldTest` guard, applied here): every field is
         // non-empty ASCII and every tile is uniquely keyed.
         for (q in pvpQueues) {
             for (field in listOf(q.id, q.name, q.blurb, q.status)) {

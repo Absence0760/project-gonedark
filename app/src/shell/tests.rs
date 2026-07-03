@@ -1345,7 +1345,7 @@ use gonedark_render::tiers::QualityTier;
 
     // ---- The skirmish match-setup pure seam (modes.md §3) ----------------------------------------
 
-    use gonedark_engine::shell_modes::SHELL_GAME_MODES;
+    use gonedark_engine::map_library::{BattlefieldKind, BATTLEFIELDS};
     use gonedark_engine::Scene;
 
     #[test]
@@ -1356,7 +1356,7 @@ use gonedark_render::tiers::QualityTier;
         // no-op (`Difficulty::Regular.scenario_modifiers() == ScenarioModifiers::default()`).
         let state = SkirmishSetupState::default();
         let cfg = resolve_skirmish_config(&state);
-        assert_eq!(cfg.scene, Scene::Skirmish);
+        assert_eq!(cfg.battlefield, BattlefieldPick::Scene(Scene::Skirmish));
         assert_eq!(cfg.player_army, Army::Us);
         assert_eq!(cfg.enemy_army, Army::Fr);
         assert_ne!(cfg.player_army, cfg.enemy_army, "the default reads as a two-army fight");
@@ -1387,24 +1387,41 @@ use gonedark_render::tiers::QualityTier;
     }
 
     #[test]
-    fn every_battlefield_resolves_to_a_real_scene() {
-        // The launch decision is total over the shipped battlefield list: each tile resolves
-        // through the engine-tested `GameMode::scene` seam to a real scene.
-        for (i, mode) in SHELL_GAME_MODES.iter().enumerate() {
+    fn every_battlefield_resolves_to_a_real_deploy() {
+        // The launch decision is total over the unified battlefield list (D102): a scene tile
+        // resolves through the engine-tested `Battlefield::scene` seam, a map tile carries its
+        // library id — and every entry's index round-trips to its own pick, never a neighbour's.
+        for (i, entry) in BATTLEFIELDS.iter().enumerate() {
             let state = SkirmishSetupState { battlefield: i, ..Default::default() };
             let cfg = resolve_skirmish_config(&state);
-            assert_eq!(Some(cfg.scene), mode.scene(), "battlefield {i}");
+            match entry.kind {
+                BattlefieldKind::Scene(_) => {
+                    assert_eq!(
+                        cfg.battlefield,
+                        BattlefieldPick::Scene(entry.scene().unwrap()),
+                        "battlefield {i}"
+                    );
+                }
+                BattlefieldKind::LibraryMap(id) => {
+                    assert_eq!(cfg.battlefield, BattlefieldPick::LibraryMap(id), "battlefield {i}");
+                }
+            }
         }
+        // The list genuinely spans both kinds — the library seam is live, not vestigial.
+        assert!(BATTLEFIELDS.iter().any(|b| matches!(b.kind, BattlefieldKind::LibraryMap(_))));
     }
 
     #[test]
     fn out_of_range_battlefield_clamps_to_the_first_and_never_panics() {
         // A stale/foreign index (impossible from the tiles, defensive) snaps to the first
         // battlefield — the standing skirmish — both in the clamp and through the full resolution.
-        assert_eq!(clamp_battlefield(SHELL_GAME_MODES.len()), 0);
+        assert_eq!(clamp_battlefield(BATTLEFIELDS.len()), 0);
         assert_eq!(clamp_battlefield(usize::MAX), 0);
         let state = SkirmishSetupState { battlefield: usize::MAX, ..Default::default() };
-        assert_eq!(resolve_skirmish_config(&state).scene, Scene::Skirmish);
+        assert_eq!(
+            resolve_skirmish_config(&state).battlefield,
+            BattlefieldPick::Scene(Scene::Skirmish)
+        );
     }
 
     #[test]
@@ -1456,7 +1473,7 @@ use gonedark_render::tiers::QualityTier;
         assert_eq!(
             step,
             SkirmishSetupStep::Deploy(SkirmishConfig {
-                scene: SHELL_GAME_MODES[1].scene().unwrap(),
+                battlefield: BattlefieldPick::Scene(BATTLEFIELDS[1].scene().unwrap()),
                 player_army: Army::Fr,
                 enemy_army: Army::Fr,
                 difficulty: Difficulty::Elite,

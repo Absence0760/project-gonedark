@@ -86,9 +86,9 @@ fun SkirmishSetupScreen(
             ) {
                 SectionLabel("BATTLEFIELD")
                 val selected = clampBattlefield(setup.battlefield)
-                for ((i, mode) in shellGameModes.withIndex()) {
+                for ((i, battlefield) in shellBattlefields.withIndex()) {
                     BattlefieldTile(
-                        mode = mode,
+                        battlefield = battlefield,
                         selected = i == selected,
                         onClick = { onChooseBattlefield(i) },
                     )
@@ -183,11 +183,13 @@ private fun Caption(text: String) {
 
 /**
  * One battlefield tile: the battle name (accented when picked, with a SELECTED trailing label —
- * legible beyond colour alone) over its one-line blurb. Tapping any tile picks it; the clamping
- * decision is the pure [clampBattlefield] seam.
+ * legible beyond colour alone) over its one-line blurb; a library-map entry wears a muted
+ * MAP LIBRARY label (the D102 manifest entries beside the standing battles — informational, never
+ * a second tap target). Tapping any tile picks it; the clamping decision is the pure
+ * [clampBattlefield] seam.
  */
 @Composable
-private fun BattlefieldTile(mode: GameMode, selected: Boolean, onClick: () -> Unit) {
+private fun BattlefieldTile(battlefield: Battlefield, selected: Boolean, onClick: () -> Unit) {
     OutlinedButton(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -198,7 +200,7 @@ private fun BattlefieldTile(mode: GameMode, selected: Boolean, onClick: () -> Un
         ) {
             Row(modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    text = mode.name.uppercase(),
+                    text = battlefield.name.uppercase(),
                     color = if (selected) {
                         MaterialTheme.colorScheme.primary
                     } else {
@@ -208,9 +210,17 @@ private fun BattlefieldTile(mode: GameMode, selected: Boolean, onClick: () -> Un
                     letterSpacing = 2.sp,
                     modifier = Modifier.weight(1f),
                 )
+                if (battlefield.mapId != null) {
+                    Text(
+                        text = "MAP LIBRARY",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        letterSpacing = 2.sp,
+                    )
+                }
                 if (selected) {
                     Text(
-                        text = "SELECTED",
+                        text = if (battlefield.mapId != null) "  SELECTED" else "SELECTED",
                         color = MaterialTheme.colorScheme.primary,
                         fontSize = 11.sp,
                         letterSpacing = 2.sp,
@@ -218,7 +228,7 @@ private fun BattlefieldTile(mode: GameMode, selected: Boolean, onClick: () -> Un
                 }
             }
             Text(
-                text = mode.blurb,
+                text = battlefield.blurb,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 13.sp,
             )

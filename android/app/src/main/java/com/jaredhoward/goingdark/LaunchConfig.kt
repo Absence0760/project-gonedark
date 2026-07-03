@@ -84,6 +84,13 @@ data class LaunchConfig(
      * `mission1`). Mirrors `launch.rs`'s `skirm` key; default `false` keeps old wires unchanged.
      */
     val skirmish: Boolean = false,
+    /**
+     * The **library-map id** a configured skirmish boots on (D102: an `engine::map_library`
+     * `MAP_LIBRARY` id, e.g. `"crossroads"`), or empty for a scene battlefield. Consumed only when
+     * [skirmish] is set; the emitter also sets `scene=skirmish` alongside, so an older decoder
+     * that has never heard of this key boots a plain open skirmish. Mirrors `launch.rs`'s `map` key.
+     */
+    val map: String = "",
 ) {
     /** Encode to the v1 wire string (clamping every field into range first). */
     fun encode(): String = buildString {
@@ -105,6 +112,7 @@ data class LaunchConfig(
         append(";snd=").append(if (visualSoundCues) 1 else 0)
         append(";earmy=").append(clampEnemyArmy(enemyArmy.toString(), ENEMY_ARMY_UNSET))
         append(";skirm=").append(if (skirmish) 1 else 0)
+        append(";map=").append(map)
     }
 
     companion object {
@@ -160,6 +168,7 @@ data class LaunchConfig(
                     "army" -> cfg.copy(army = clampArmy(value, cfg.army))
                     "earmy" -> cfg.copy(enemyArmy = clampEnemyArmy(value, cfg.enemyArmy))
                     "skirm" -> cfg.copy(skirmish = parseBool(value, cfg.skirmish))
+                    "map" -> if (value.isEmpty()) cfg else cfg.copy(map = value)
                     "cvd" -> cfg.copy(colorblindCues = parseBool(value, cfg.colorblindCues))
                     "snd" -> cfg.copy(visualSoundCues = parseBool(value, cfg.visualSoundCues))
                     else -> cfg // unknown key — ignore (forward-compat)

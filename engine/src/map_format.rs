@@ -64,7 +64,7 @@ impl CellRef {
     /// `Fixed` only (invariant #1): `HALF_EXTENT == GRID/2` world units, so the centre is
     /// `Fixed::from_int(x - GRID/2) + 1/2`.
     #[inline]
-    fn to_world_center(self) -> Vec2 {
+    pub(crate) fn to_world_center(self) -> Vec2 {
         let half = (GRID / 2) as i32;
         let c = |v: i32| Fixed::from_int(v - half) + Fixed::from_ratio(1, 2);
         Vec2::new(c(self.x), c(self.y))
@@ -124,7 +124,7 @@ impl SpawnZoneSpec {
     /// The inclusive `(lo_x, lo_y, hi_x, hi_y)` extent, corners sorted. Pure — the seam the overlap
     /// and bounds checks read.
     #[inline]
-    fn extent(&self) -> (i32, i32, i32, i32) {
+    pub(crate) fn extent(&self) -> (i32, i32, i32, i32) {
         let (lo_x, hi_x) = if self.min.x <= self.max.x {
             (self.min.x, self.max.x)
         } else {

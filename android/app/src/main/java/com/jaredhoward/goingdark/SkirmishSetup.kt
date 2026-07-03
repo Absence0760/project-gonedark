@@ -5,7 +5,7 @@ package com.jaredhoward.goingdark
  * [SkirmishSetupScreen], the Kotlin mirror of the desktop `app/src/shell/skirmish.rs`
  * (`SkirmishSetupState` / `next_army` / `clamp_battlefield` / `resolve_skirmish_config`). This is
  * the `modes.md` §5 build-order step 1 remainder — the full setup surface behind the SKIRMISH door:
- * **battlefield** (the launchable standing battles, [shellGameModes]), **both armies** (US/FR for
+ * **battlefield** (the standing battles + the map library, [shellBattlefields] — D102), **both armies** (US/FR for
  * the player *and* the enemy commander), and the **opponent tier** (the D83 [Difficulty], both
  * combat axes). Everything here is host-side match-setup config, never sim state: the picks reach
  * the sim only through the launch wire's pre-tick seams (invariants #1/#7).
@@ -16,8 +16,9 @@ package com.jaredhoward.goingdark
  */
 data class SkirmishSetup(
     /**
-     * The picked battlefield as an index into [shellGameModes] (the launchable standing battles).
-     * Kept in range by [clampBattlefield]; resolved to a scene token at Deploy.
+     * The picked battlefield as an index into [shellBattlefields] (the standing battles + the map
+     * library, D102). Kept in range by [clampBattlefield]; resolved to a scene token or a library
+     * map id at Deploy.
      */
     val battlefield: Int = 0,
     /**
@@ -60,16 +61,18 @@ fun nextArmy(a: Army): Army {
 }
 
 /**
- * Clamp a battlefield index into [shellGameModes] range (an out-of-range pick — impossible from
+ * Clamp a battlefield index into [shellBattlefields] range (an out-of-range pick — impossible from
  * the tiles, defensive against a stale/foreign value — snaps to the first battlefield, never
  * throws). Pure — mirrors the desktop `clamp_battlefield`.
  */
-fun clampBattlefield(i: Int): Int = if (i in shellGameModes.indices) i else 0
+fun clampBattlefield(i: Int): Int = if (i in shellBattlefields.indices) i else 0
 
 /**
  * Resolve the current setup into the [LaunchConfig] a DEPLOY boots — the Kotlin twin of the
- * desktop `resolve_skirmish_config` + `LaunchSkirmish` fielding. The battlefield's scene token
- * rides `scene=`, both army picks ride `army=`/`earmy=`, the opponent tier rides `diff=`, and
+ * desktop `resolve_skirmish_config` + `LaunchSkirmish` fielding. A scene battlefield's token rides
+ * `scene=`; a library-map battlefield (D102) rides `map=` with `scene=skirmish` alongside (so an
+ * older decoder — or an unknown id engine-side — degrades to the plain open skirmish, never a
+ * failed launch). Both army picks ride `army=`/`earmy=`, the opponent tier rides `diff=`, and
  * `skirm=1` marks the launch as the no-stakes sandbox — the engine applies the tuning + enemy
  * army but **never** records a campaign clear ([LaunchConfig.skirmish]). `node` stays 0 (inert —
  * this is not a campaign launch).
@@ -78,9 +81,10 @@ fun skirmishLaunchConfig(
     setup: SkirmishSetup,
     settings: SettingsState,
     loadout: LoadoutSelection,
-): LaunchConfig =
-    launchConfigOf(
-        scene = shellGameModes[clampBattlefield(setup.battlefield)].sceneToken,
+): LaunchConfig {
+    val battlefield = shellBattlefields[clampBattlefield(setup.battlefield)]
+    return launchConfigOf(
+        scene = battlefield.sceneToken ?: "skirmish",
         settings = settings,
         loadout = loadout,
         army = setup.playerArmy,
@@ -89,4 +93,6 @@ fun skirmishLaunchConfig(
     ).copy(
         enemyArmy = setup.enemyArmy.index,
         skirmish = true,
+        map = battlefield.mapId ?: "",
     )
+}

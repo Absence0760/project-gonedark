@@ -2,7 +2,7 @@
 //! build-order step 1) — pure seams (unit-tested) plus the immediate-mode egui glue.
 //!
 //! The title's SKIRMISH door lands here instead of the bare mode picker: the player configures the
-//! whole match — **battlefield** (the launchable standing battles, [`SHELL_GAME_MODES`]), **both
+//! whole match — **battlefield** (the standing battles + the map library, [`BATTLEFIELDS`]), **both
 //! armies** (US/FR for the player *and* the enemy commander), and the **opponent tier** (the D83
 //! campaign [`Difficulty`], which carries both combat axes: the honest commander band + the
 //! scenario situation modifiers) — then DEPLOYs straight into the match with the persisted gunsmith
@@ -11,10 +11,10 @@
 //! `Game::select_army`, `Game::apply_campaign_tuning`), so they are deterministic setup input, not
 //! a checksum surface (invariants #1/#7).
 //!
-//! The battlefield list is the standing battle scenes, not yet the modes.md §3 map-library
-//! manifest — booting `seed_skirmish` on an arbitrary baked map (and the D34 map-manifest listing
-//! that would feed the picker) is engine work this screen deliberately does not take on ("no new
-//! engine work; chrome over landed seams"). The picker grows into the library when that seam lands.
+//! The battlefield list is the unified [`BATTLEFIELDS`] table (D102): the standing battle scenes
+//! plus the embedded map library (`engine::map_library` — the `modes.md` §3 D34 manifest listing).
+//! A scene tile deploys through `Scene::parse` exactly as before; a library-map tile carries its
+//! map id into the launch, and the host boots it through `Game::new_map_skirmish_with_loadout`.
 
 use crate::shell::army::{army_label, SELECTABLE_ARMIES};
 use crate::shell::briefing::{difficulty_label, next_difficulty};
@@ -22,7 +22,7 @@ use crate::shell::theme::*;
 use crate::shell::widgets::*;
 use gonedark_core::campaign::Difficulty;
 use gonedark_core::components::Army;
-use gonedark_engine::shell_modes::SHELL_GAME_MODES;
+use gonedark_engine::map_library::{BattlefieldKind, BATTLEFIELDS};
 use gonedark_engine::Scene;
 
 /// Host-side skirmish setup state — the free-pick match configuration (`modes.md` §3). Session
@@ -32,8 +32,9 @@ use gonedark_engine::Scene;
 /// the per-match overrides here live for the session.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct SkirmishSetupState {
-    /// The picked battlefield as an index into [`SHELL_GAME_MODES`] (the launchable standing
-    /// battles). Always kept in range by [`clamp_battlefield`]; resolved to a [`Scene`] at Deploy.
+    /// The picked battlefield as an index into [`BATTLEFIELDS`] (the standing battles + the map
+    /// library, D102). Always kept in range by [`clamp_battlefield`]; resolved to a
+    /// [`BattlefieldPick`] at Deploy.
     pub battlefield: usize,
     /// The army the player fields this match. Seeded from the persisted army-select pick on screen
     /// open; cycling it here is a per-match override, never a write-back to the identity pick.
@@ -74,13 +75,25 @@ impl SkirmishSetupState {
     }
 }
 
+/// How a configured skirmish's battlefield boots — the resolved form of a [`BATTLEFIELDS`] entry's
+/// kind: a standing battle [`Scene`], or a library map by id (booted through the engine's
+/// `Game::new_map_skirmish_with_loadout`). `&'static str` keeps the config `Copy` for REMATCH.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum BattlefieldPick {
+    /// A code-seeded standing battle scene.
+    Scene(Scene),
+    /// An authored library map (`engine::map_library::MAP_LIBRARY` id).
+    LibraryMap(&'static str),
+}
+
 /// The launch configuration a skirmish DEPLOY resolves to — everything the host needs to boot the
-/// match through the landed seams: the scene, both army picks, and the D83 tier. Pure data; carried
-/// on the `LaunchSkirmish` host transition and remembered across the match for REMATCH.
+/// match through the landed seams: the battlefield pick, both army picks, and the D83 tier. Pure
+/// data; carried on the `LaunchSkirmish` host transition and remembered across the match for
+/// REMATCH.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct SkirmishConfig {
-    /// The battlefield's engine scene (`GameMode::scene`, resolved at Deploy).
-    pub scene: Scene,
+    /// The battlefield to boot (scene or library map), resolved at Deploy.
+    pub battlefield: BattlefieldPick,
     /// The army the player fields (`Game::select_army(Faction::Player, ..)`).
     pub player_army: Army,
     /// The army the enemy commander fields (`Game::select_army(Faction::Enemy, ..)`).
@@ -93,7 +106,7 @@ pub(crate) struct SkirmishConfig {
 /// `Deploy`/`Back` are screen transitions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SkirmishSetupAction {
-    /// Pick the battlefield at this [`SHELL_GAME_MODES`] index (an in-place edit).
+    /// Pick the battlefield at this [`BATTLEFIELDS`] index (an in-place edit).
     ChooseBattlefield(usize),
     /// Advance the player's army to the next selectable roster (wrapping).
     CyclePlayerArmy,
@@ -129,11 +142,11 @@ pub(crate) fn next_army(a: Army) -> Army {
     }
 }
 
-/// Clamp a battlefield index into [`SHELL_GAME_MODES`] range (an out-of-range pick — impossible
-/// from the tiles, defensive against a stale/foreign value — snaps to the first battlefield, never
+/// Clamp a battlefield index into [`BATTLEFIELDS`] range (an out-of-range pick — impossible from
+/// the tiles, defensive against a stale/foreign value — snaps to the first battlefield, never
 /// panics). Pure — unit-tested.
 pub(crate) fn clamp_battlefield(i: usize) -> usize {
-    if i < SHELL_GAME_MODES.len() {
+    if i < BATTLEFIELDS.len() {
         i
     } else {
         0
@@ -141,16 +154,21 @@ pub(crate) fn clamp_battlefield(i: usize) -> usize {
 }
 
 /// Resolve the current setup state into the [`SkirmishConfig`] a DEPLOY launches. The battlefield
-/// index is clamped and its scene resolved through the `engine`-tested `GameMode::scene` seam; an
-/// un-parseable token (forbidden by the `shell_modes` test) defensively falls back to the standing
-/// [`Scene::Skirmish`], so this is total — a deploy can never resolve to nothing. Pure — the
+/// index is clamped and resolved by kind: a scene entry through the `engine`-tested
+/// `Battlefield::scene` seam (an un-parseable token — forbidden by the library test — defensively
+/// falls back to the standing [`Scene::Skirmish`]), a library-map entry to its id (the host boots
+/// it and holds the matching fallback). Total — a deploy can never resolve to nothing. Pure — the
 /// screen's launch decision, unit-tested.
 pub(crate) fn resolve_skirmish_config(state: &SkirmishSetupState) -> SkirmishConfig {
-    let scene = SHELL_GAME_MODES[clamp_battlefield(state.battlefield)]
-        .scene()
-        .unwrap_or(Scene::Skirmish);
+    let entry = &BATTLEFIELDS[clamp_battlefield(state.battlefield)];
+    let battlefield = match entry.kind {
+        BattlefieldKind::Scene(_) => {
+            BattlefieldPick::Scene(entry.scene().unwrap_or(Scene::Skirmish))
+        }
+        BattlefieldKind::LibraryMap(id) => BattlefieldPick::LibraryMap(id),
+    };
     SkirmishConfig {
-        scene,
+        battlefield,
         player_army: state.player_army,
         enemy_army: state.enemy_army,
         difficulty: state.difficulty,
@@ -197,23 +215,28 @@ fn battlefield_tile(
     selected: bool,
 ) -> Option<SkirmishSetupAction> {
     use egui::RichText;
-    let mode = &SHELL_GAME_MODES[index];
+    let entry = &BATTLEFIELDS[index];
     let name_color = if selected { AMBER } else { BONE };
-    let clicked = selectable_row(ui, ("skirmish_bf", mode.id), true, |ui| {
+    let clicked = selectable_row(ui, ("skirmish_bf", entry.id), true, |ui| {
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(mode.name.to_uppercase())
+                RichText::new(entry.name.to_uppercase())
                     .color(name_color)
                     .size(TYPE_SUBHEAD)
                     .strong(),
             );
-            if selected {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if selected {
                     status_chip(ui, "SELECTED", AMBER);
-                });
-            }
+                }
+                // A library-map tile wears its provenance (the D102 manifest entries beside the
+                // standing battles) — informational, muted, never a second click target.
+                if matches!(entry.kind, BattlefieldKind::LibraryMap(_)) {
+                    status_chip(ui, "MAP LIBRARY", MUTED);
+                }
+            });
         });
-        ui.label(RichText::new(mode.blurb).color(ASH).size(TYPE_CAPTION));
+        ui.label(RichText::new(entry.blurb).color(ASH).size(TYPE_CAPTION));
     });
     clicked.then_some(SkirmishSetupAction::ChooseBattlefield(index))
 }
@@ -259,11 +282,11 @@ pub(crate) fn skirmish_setup_ui(
 
         section_label(ui, "BATTLEFIELD");
         let selected_bf = clamp_battlefield(state.battlefield);
-        for i in 0..SHELL_GAME_MODES.len() {
+        for i in 0..BATTLEFIELDS.len() {
             if let Some(act) = battlefield_tile(ui, i, i == selected_bf) {
                 action = Some(act);
             }
-            if i + 1 < SHELL_GAME_MODES.len() {
+            if i + 1 < BATTLEFIELDS.len() {
                 ui.add_space(8.0);
             }
         }

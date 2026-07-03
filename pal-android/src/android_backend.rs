@@ -557,8 +557,24 @@ fn build_match_game(
         stock: Stock::ALL[launch.stock as usize],
         muzzle: Muzzle::ALL[launch.muzzle as usize],
     };
-    let mut game =
-        Game::new_scene_with_loadout(rhi.device(), rhi.format(), DEFAULT_SEED, scene, loadout);
+    // A configured skirmish on a library map (D102: `skirm=1` + a `map=` id) boots the picked
+    // `*.map.ron` through the same engine constructor the desktop uses; an unknown/invalid id
+    // (forbidden for shipped entries by the engine's library tests) degrades to the standing open
+    // skirmish the `scene=` key already carries — never a failed launch.
+    let mut game = if launch.skirmish && !launch.map.is_empty() {
+        Game::new_map_skirmish_with_loadout(rhi.device(), rhi.format(), DEFAULT_SEED, &launch.map, loadout)
+            .unwrap_or_else(|| {
+                Game::new_scene_with_loadout(
+                    rhi.device(),
+                    rhi.format(),
+                    DEFAULT_SEED,
+                    Scene::Skirmish,
+                    loadout,
+                )
+            })
+    } else {
+        Game::new_scene_with_loadout(rhi.device(), rhi.format(), DEFAULT_SEED, scene, loadout)
+    };
     // Field the player's picked army through the SHARED `Game::select_army` → `core::shell` seam
     // (never a per-platform fork, invariant #2). The parser guarantees a valid ordinal; the guarded
     // lookup can never index past `Army::ALL`.
