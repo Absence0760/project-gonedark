@@ -970,9 +970,10 @@ pub const FIELD_MANUAL_BLURB: &str =
 /// The list is **prefixed by a non-keybinding "GOING DARK" concept section** (A1 parity with
 /// Android's `fieldManualSections`): those rows reuse the `ControlRow` shape with the concept name in
 /// the `keys` column and its one-line framing in `action`, so the grouped `about_ui` renderer draws
-/// them ahead of the COMMAND/EMBODIED/GLOBAL keymap groups with no special case. Content is Android's
-/// verbatim, with its "Going dark" em-dash rendered as ASCII `--` (the file's default-font/no-tofu
-/// rule is the one deviation).
+/// them ahead of the COMMAND/EMBODIED/GLOBAL keymap groups needing no special case for grouping or
+/// ordering. (`about_ui` *does* special-case their *styling* — plain amber text, not a keycap chip —
+/// since a chip would imply a pressable key.) Content is Android's verbatim, with its "Going dark"
+/// em-dash rendered as ASCII `--` (the file's default-font/no-tofu rule is the one deviation).
 pub fn controls_reference() -> &'static [ControlRow] {
     const fn row(group: &'static str, keys: &'static str, action: &'static str) -> ControlRow {
         ControlRow {
@@ -1243,6 +1244,10 @@ fn shell_style() -> egui::Style {
     // Generous, even spacing so rows and buttons breathe.
     style.spacing.item_spacing = egui::vec2(10.0, 8.0);
     style.spacing.button_padding = egui::vec2(16.0, 9.0);
+    // A real slider track length. egui's default (~100px) collapses the track to a stub next to its
+    // value box — the "tiny sliders on the far left" in the Settings screenshot. A fixed, generous
+    // width lets the audio/sensitivity/FOV sliders read as proper controls inside the shell card.
+    style.spacing.slider_width = 200.0;
 
     // The default text styles follow the scale. Per-widget `RichText::size`/`color` still override
     // these where a screen wants the title hero or an amber readout, but unstyled text is consistent.
@@ -1615,6 +1620,22 @@ impl EguiShell {
 /// stacks line up into a clean column.
 const MENU_BUTTON_W: f32 = 256.0;
 
+/// The shared width of every over-backdrop screen card (Settings / Profile / Army-select / About /
+/// mode-mission-briefing). One number so the whole shell family reads as one system instead of the
+/// old per-screen 420/460/500 drift, and — load-bearing — so [`over_backdrop_screen`] can pin the
+/// centred content column to a *fixed* width. Without a fixed width, egui's `vertical_centered`
+/// lets full-width widgets (sliders, `horizontal` rows) stretch to the window edge while intrinsic
+/// -width labels centre, which is the "controls far-left, headings centred, dead middle" bug.
+const SHELL_CARD_W: f32 = 480.0;
+
+/// The label column width shared by the two-column key/value rows on the shell screens (Settings
+/// sliders/cyclers, Profile identity), so every value control starts at the same x.
+const SETTINGS_LABEL_W: f32 = 172.0;
+
+/// Vertical gap between a screen's content and its footer button(s), shared so the footer rhythm
+/// reads as one system across the mode/mission/briefing/settings family.
+const FOOTER_GAP: f32 = 20.0;
+
 /// How a [`menu_button`] reads in the visual hierarchy: the one amber call-to-action, a neutral
 /// secondary, or a de-emphasised tertiary (e.g. QUIT / BACK).
 #[derive(Clone, Copy)]
@@ -1717,11 +1738,11 @@ fn glass_card_frame() -> egui::Frame {
 /// amber rim on hover). Glue (needs a live `Ui`); the click→action mapping it feeds is what the pure
 /// [`resolve_title_action`] seam covers. Text-only, uppercase ASCII — never a risky glyph (the
 /// file's tofu caution: only default-font glyphs like U+00B7 are trusted).
-fn chip_button(ui: &mut egui::Ui, text: &str) -> bool {
+fn chip_button(ui: &mut egui::Ui, text: &str, width: f32) -> bool {
     use egui::{Button, RichText};
     ui.add(
         Button::new(RichText::new(text).color(BONE).size(TYPE_BODY))
-            .min_size([104.0, 32.0].into()),
+            .min_size([width, 32.0].into()),
     )
     .clicked()
 }
@@ -1772,55 +1793,98 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
         .anchor(Align2::RIGHT_TOP, egui::vec2(-32.0, 32.0))
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
-                if chip_button(ui, "SETTINGS") {
+                // Uniform width for all chips (fits "FIELD MANUAL", the longest) so they read as a
+                // clean pill row, not three short + one wide. A gap separates account utility
+                // (SETTINGS/PROFILE) from the pre-match/reference pair (ARMY/FIELD MANUAL).
+                const CHIP_W: f32 = 132.0;
+                if chip_button(ui, "SETTINGS", CHIP_W) {
                     action = Some(TitleAction::Settings);
                 }
-                if chip_button(ui, "PROFILE") {
+                if chip_button(ui, "PROFILE", CHIP_W) {
                     action = Some(TitleAction::Profile);
                 }
+                ui.add_space(16.0);
                 // The army-select entry (US vs FR) — a pre-deploy pick fielded at every match start.
-                if chip_button(ui, "ARMY") {
+                if chip_button(ui, "ARMY", CHIP_W) {
                     action = Some(TitleAction::Army);
                 }
                 // The field manual (About) — reachable straight from the title, mirroring Android's
                 // title About entry (it is also reachable from Settings).
-                if chip_button(ui, "FIELD MANUAL") {
+                if chip_button(ui, "FIELD MANUAL", CHIP_W) {
                     action = Some(TitleAction::About);
                 }
             });
         });
 
-    // ---- Deploy cluster, bottom-left -------------------------------------------------------------
+    // ---- Deploy cluster, bottom-centre -----------------------------------------------------------
+    // Anchored bottom-centre so the play cluster reads as the focal point of the screen rather than
+    // a lonely stack in one corner, balancing the brand (top-left) / chips (top-right) / stamp
+    // (bottom-right) around it.
     Area::new(Id::new("title.deploy"))
-        .anchor(Align2::LEFT_BOTTOM, egui::vec2(40.0, -40.0))
+        .anchor(Align2::CENTER_BOTTOM, egui::vec2(0.0, -48.0))
         .show(&ctx, |ui| {
+            use egui::Button;
             glass_card_frame().show(ui, |ui| {
-                ui.label(
-                    RichText::new("DEPLOY")
-                        .color(ASH)
-                        .size(TYPE_SUBHEAD)
-                        .strong(),
-                );
-                ui.add_space(6.0);
-                accent_rule(ui, 72.0);
-                ui.add_space(14.0);
-                // One amber call-to-action (CAMPAIGN); the other modes are neutral secondaries; QUIT
-                // is the quiet tertiary at the foot.
-                if menu_button(ui, "CAMPAIGN", Emphasis::Primary) {
-                    action = Some(TitleAction::Campaign);
-                }
-                ui.add_space(10.0);
-                if menu_button(ui, "PvE", Emphasis::Secondary) {
-                    action = Some(TitleAction::Pve);
-                }
-                ui.add_space(10.0);
-                if menu_button(ui, "PvP", Emphasis::Secondary) {
-                    action = Some(TitleAction::Pvp);
-                }
-                ui.add_space(14.0);
-                if menu_button(ui, "QUIT", Emphasis::Tertiary) {
-                    action = Some(TitleAction::Quit);
-                }
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new("DEPLOY")
+                            .color(ASH)
+                            .size(TYPE_SUBHEAD)
+                            .strong(),
+                    );
+                    ui.add_space(6.0);
+                    accent_rule(ui, 72.0);
+                    ui.add_space(14.0);
+                    // CAMPAIGN is the lone CTA — taller as well as amber, so it outranks the peers by
+                    // shape, not just colour.
+                    if ui
+                        .add(
+                            Button::new(RichText::new("CAMPAIGN").color(INK).size(TYPE_BUTTON))
+                                .min_size([MENU_BUTTON_W, 58.0].into())
+                                .fill(AMBER),
+                        )
+                        .clicked()
+                    {
+                        action = Some(TitleAction::Campaign);
+                    }
+                    ui.add_space(10.0);
+                    // PvE / PvP are peers — side by side, so the card gains width instead of a third
+                    // stacked full-width row.
+                    ui.horizontal(|ui| {
+                        let half = (MENU_BUTTON_W - 10.0) / 2.0;
+                        if ui
+                            .add(
+                                Button::new(RichText::new("PvE").color(BONE).size(TYPE_BUTTON))
+                                    .min_size([half, 46.0].into()),
+                            )
+                            .clicked()
+                        {
+                            action = Some(TitleAction::Pve);
+                        }
+                        if ui
+                            .add(
+                                Button::new(RichText::new("PvP").color(BONE).size(TYPE_BUTTON))
+                                    .min_size([half, 46.0].into()),
+                            )
+                            .clicked()
+                        {
+                            action = Some(TitleAction::Pvp);
+                        }
+                    });
+                    ui.add_space(16.0);
+                    // QUIT is the odd one out (exit) — a quiet frameless text control, not a peer of
+                    // the three play actions.
+                    if ui
+                        .add(
+                            Button::new(RichText::new("QUIT").color(MUTED).size(TYPE_CAPTION))
+                                .frame(false)
+                                .min_size([80.0, 28.0].into()),
+                        )
+                        .clicked()
+                    {
+                        action = Some(TitleAction::Quit);
+                    }
+                });
             });
         });
 
@@ -1836,8 +1900,9 @@ fn title_ui(ui: &mut egui::Ui, stamp: &str) -> Option<TitleAction> {
 
 /// The immediate-mode gunsmith / loadout screen, drawn into the root [`egui::Ui`] for the frame.
 /// Reads the current selection from `editor` (host-side pre-match state — never the sim) and returns
-/// the action whose control was used this frame. Layout: a centered column of the three attachment
-/// slots — each a `<` / `>` cycler over its current option plus the slot's trade-axis hint — the
+/// the action whose control was used this frame. Layout: a centered card of the attachment slots
+/// (five sim slots plus the cosmetic Grip row, D85) — each a `<` / `>` cycler over its current option
+/// plus the slot's trade-axis hint — the
 /// sidegrade explainer, then DONE / RESET (D81: customization-only, no Deploy). All the decision
 /// logic is in the pure seam
 /// ([`apply_loadout_action`], [`slot_trade_hint`], and the `core::gunsmith`-backed editor); this fn
@@ -1850,110 +1915,164 @@ fn loadout_ui(ui: &mut egui::Ui, editor: &LoadoutEditor) -> Option<LoadoutAction
         let h = ui.available_height();
         ui.vertical_centered(|ui| {
             ui.add_space(h * 0.09);
-            // Screen banner + amber rule, mirroring the title hero treatment.
-            ui.label(
-                RichText::new("GUNSMITH")
-                    .color(BONE)
-                    .size(TYPE_HEADING)
-                    .strong(),
-            );
-            ui.add_space(8.0);
-            accent_rule(ui, 100.0);
-            ui.add_space(10.0);
-            ui.label(
-                RichText::new(
-                    "Every attachment is a sidegrade -- it spends one stat to buy another. \
-                     No build is strictly better than any other.",
-                )
-                .color(ASH)
-                .size(TYPE_BODY),
-            );
-            ui.add_space(24.0);
-
-            // The three attachment slots live in a framed card so the cyclers read as a panel.
+            // One card wraps the WHOLE screen (banner through RESET), matching every sibling screen's
+            // "everything in one card" convention — previously only the slot rows were boxed and the
+            // banner/blurb/NET/buttons floated on bare ink. Opaque PANEL: the gunsmith has no backdrop.
             card_frame().show(ui, |ui| {
-                // One aligned row per attachment slot. The on-screen index `i` is exactly the index
-                // the editor's `apply_input` routes on (`LoadoutSlot::from_index`), so the cycler maps
-                // 1:1.
-                for (i, &slot) in LoadoutSlot::ALL.iter().enumerate() {
+                ui.vertical_centered(|ui| {
+                    // Screen banner + amber rule, mirroring the title hero treatment.
+                    ui.label(
+                        RichText::new("GUNSMITH")
+                            .color(BONE)
+                            .size(TYPE_HEADING)
+                            .strong(),
+                    );
+                    ui.add_space(8.0);
+                    accent_rule(ui, 100.0);
+                    ui.add_space(10.0);
+                    ui.label(
+                        RichText::new(
+                            "Every attachment is a sidegrade -- it spends one stat to buy another. \
+                             No build is strictly better than any other.",
+                        )
+                        .color(ASH)
+                        .size(TYPE_BODY),
+                    );
+                    ui.add_space(20.0);
+
+                    // Column headers so the six rows read as one table, not six independent stacks —
+                    // same fixed widths as the data rows below (the two blank cells sit over the
+                    // `<`/`>` cycler columns).
                     ui.horizontal(|ui| {
                         ui.add_sized(
-                            [104.0, 32.0],
-                            Label::new(
-                                RichText::new(slot.label()).color(BONE).size(TYPE_SUBHEAD).strong(),
-                            ),
+                            [104.0, 18.0],
+                            Label::new(RichText::new("SLOT").color(MUTED).size(TYPE_CAPTION))
+                                .halign(egui::Align::LEFT),
                         );
-                        if ui
-                            .add_sized([34.0, 32.0], Button::new(RichText::new("<").color(BONE)))
-                            .clicked()
-                        {
-                            action = Some(LoadoutAction::Cycle {
-                                slot_index: i,
-                                forward: false,
-                            });
-                        }
+                        ui.add_sized([34.0, 18.0], Label::new(""));
                         ui.add_sized(
-                            [150.0, 32.0],
-                            Label::new(
-                                RichText::new(editor.option_label(slot))
-                                    .color(AMBER)
-                                    .size(TYPE_BODY)
-                                    .strong(),
-                            ),
+                            [150.0, 18.0],
+                            Label::new(RichText::new("PICK").color(MUTED).size(TYPE_CAPTION))
+                                .halign(egui::Align::LEFT),
                         );
-                        if ui
-                            .add_sized([34.0, 32.0], Button::new(RichText::new(">").color(BONE)))
-                            .clicked()
-                        {
-                            action = Some(LoadoutAction::Cycle {
-                                slot_index: i,
-                                forward: true,
-                            });
-                        }
+                        ui.add_sized([34.0, 18.0], Label::new(""));
                         ui.add_sized(
-                            [172.0, 32.0],
-                            Label::new(
-                                RichText::new(slot_trade_hint(slot)).color(MUTED).size(TYPE_CAPTION),
-                            ),
+                            [172.0, 18.0],
+                            Label::new(RichText::new("TRADE").color(MUTED).size(TYPE_CAPTION))
+                                .halign(egui::Align::LEFT),
                         );
-                        // The REAL per-option trade numbers (D60/M3): they change as the slot cycles,
-                        // so the sidegrade is legible ("+6.00 dmg  -60 res"), not just an axis pair.
                         ui.add_sized(
-                            [200.0, 32.0],
-                            Label::new(
-                                RichText::new(stat_delta_summary(&editor.option_delta(slot)))
-                                    .color(ASH)
-                                    .size(TYPE_CAPTION),
-                            ),
+                            [200.0, 18.0],
+                            Label::new(RichText::new("NET").color(MUTED).size(TYPE_CAPTION))
+                                .halign(egui::Align::LEFT),
                         );
                     });
-                    if i + 1 < LoadoutSlot::ALL.len() {
-                        ui.add_space(8.0);
-                    }
-                }
-            });
+                    ui.add_space(6.0);
 
-            ui.add_space(14.0);
-            // Build-wide net delta (the sum of the sim slots' trades). By the sidegrade rule it is
-            // never a flat upgrade over the baseline — surfacing it makes that legible at a glance.
-            ui.label(
-                RichText::new(format!("NET  {}", stat_delta_summary(&editor.net_delta())))
-                    .color(AMBER)
-                    .size(TYPE_CAPTION)
-                    .strong(),
-            );
-            ui.add_space(14.0);
-            // D81: customization-only — DONE returns to Settings (the entry point), RESET clears to
-            // baseline. There is no Deploy here: the mode/mission-select screens start matches.
-            if menu_button(ui, "DONE", Emphasis::Primary) {
-                action = Some(LoadoutAction::Done);
-            }
-            ui.add_space(10.0);
-            // RESET wipes every attachment back to Standard and sits right next to DONE — a real
-            // misclick target — so it takes two clicks (arm, then confirm) with no undo otherwise.
-            if confirm_menu_button(ui, "loadout.reset", "RESET", "RESET? CLICK AGAIN", Emphasis::Secondary) {
-                action = Some(LoadoutAction::Reset);
-            }
+                    // One aligned row per attachment slot. The on-screen index `i` is exactly the index
+                    // the editor's `apply_input` routes on (`LoadoutSlot::from_index`), so the cycler
+                    // maps 1:1. Every text cell is `.halign(LEFT)` so the columns hold a stable left
+                    // edge as picks cycle (bare `add_sized` centres its child, jogging the "columns").
+                    for (i, &slot) in LoadoutSlot::ALL.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.add_sized(
+                                [104.0, 32.0],
+                                Label::new(
+                                    RichText::new(slot.label())
+                                        .color(BONE)
+                                        .size(TYPE_SUBHEAD)
+                                        .strong(),
+                                )
+                                .halign(egui::Align::LEFT),
+                            );
+                            if ui
+                                .add_sized([34.0, 32.0], Button::new(RichText::new("<").color(BONE)))
+                                .clicked()
+                            {
+                                action = Some(LoadoutAction::Cycle {
+                                    slot_index: i,
+                                    forward: false,
+                                });
+                            }
+                            ui.add_sized(
+                                [150.0, 32.0],
+                                Label::new(
+                                    RichText::new(editor.option_label(slot))
+                                        .color(AMBER)
+                                        .size(TYPE_BODY)
+                                        .strong(),
+                                )
+                                .halign(egui::Align::LEFT),
+                            );
+                            if ui
+                                .add_sized([34.0, 32.0], Button::new(RichText::new(">").color(BONE)))
+                                .clicked()
+                            {
+                                action = Some(LoadoutAction::Cycle {
+                                    slot_index: i,
+                                    forward: true,
+                                });
+                            }
+                            ui.add_sized(
+                                [172.0, 32.0],
+                                Label::new(
+                                    RichText::new(slot_trade_hint(slot))
+                                        .color(MUTED)
+                                        .size(TYPE_CAPTION),
+                                )
+                                .halign(egui::Align::LEFT),
+                            );
+                            // The REAL per-option trade numbers (D60/M3): they change as the slot
+                            // cycles, so the sidegrade is legible ("+6.00 dmg  -60 res"), not just an
+                            // axis pair.
+                            ui.add_sized(
+                                [200.0, 32.0],
+                                Label::new(
+                                    RichText::new(stat_delta_summary(&editor.option_delta(slot)))
+                                        .color(ASH)
+                                        .size(TYPE_CAPTION),
+                                )
+                                .halign(egui::Align::LEFT),
+                            );
+                        });
+                        if i + 1 < LoadoutSlot::ALL.len() {
+                            ui.add_space(8.0);
+                        }
+                    }
+
+                    ui.add_space(14.0);
+                    accent_rule(ui, 200.0);
+                    ui.add_space(10.0);
+                    // Build-wide net delta (the sum of the sim slots' trades). By the sidegrade rule
+                    // it is never a flat upgrade over the baseline — surfacing it makes that legible.
+                    ui.label(
+                        RichText::new(format!("NET  {}", stat_delta_summary(&editor.net_delta())))
+                            .color(AMBER)
+                            .size(TYPE_CAPTION)
+                            .strong(),
+                    );
+                    ui.add_space(16.0);
+                    // D81: customization-only — DONE returns to Settings (the entry point), RESET
+                    // clears to baseline. There is no Deploy here: the mode/mission-select screens
+                    // start matches.
+                    if menu_button(ui, "DONE", Emphasis::Primary) {
+                        action = Some(LoadoutAction::Done);
+                    }
+                    // RESET wipes every attachment back to Standard — a real misclick target next to
+                    // DONE, so it takes two clicks (arm, then confirm) AND gets a wider gap so the
+                    // armed amber prompt can't be mistaken for DONE.
+                    ui.add_space(24.0);
+                    if confirm_menu_button(
+                        ui,
+                        "loadout.reset",
+                        "RESET",
+                        "RESET? CLICK AGAIN",
+                        Emphasis::Secondary,
+                    ) {
+                        action = Some(LoadoutAction::Reset);
+                    }
+                });
+            });
         });
     });
 
@@ -1983,6 +2102,18 @@ fn section_label(ui: &mut egui::Ui, text: &str) {
     ui.add_space(6.0);
 }
 
+/// A hairline `RIM` divider spanning the current row width — the low-emphasis section break for
+/// long single-card screens (Settings, About group boundaries). Deliberately `RIM`, not `AMBER`:
+/// amber is the lone signal accent (reserved for `accent_rule`/active state), so a generic divider
+/// stays quiet chrome. Glue.
+fn section_divider(ui: &mut egui::Ui) {
+    ui.add_space(4.0);
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, RIM);
+    ui.add_space(10.0);
+}
+
 /// The transparent full-screen panel the over-backdrop screens (settings/profile/about) sit in, with
 /// their content centred in a translucent [`glass_card_frame`]. The central panel paints **no** fill
 /// (`Frame::NONE`) so the live 3D backdrop shows through around the card. `build` lays out the card's
@@ -2009,6 +2140,12 @@ fn over_backdrop_screen<T>(
                     egui::ScrollArea::vertical()
                         .max_height(max_card_h)
                         .show(ui, |ui| {
+                            // Pin the content column to a fixed width. This is the load-bearing half
+                            // of the shared layout fix: without it, `vertical_centered` above lets a
+                            // full-width widget (a slider, a `horizontal` row) stretch to the window
+                            // edge while intrinsic-width labels centre — the "controls far-left,
+                            // headings centred, dead middle" bug across every over-backdrop screen.
+                            ui.set_width(SHELL_CARD_W);
                             out = Some(build(ui));
                         });
                 });
@@ -2112,32 +2249,62 @@ fn settings_ui(
     let mut action = None;
 
     over_backdrop_screen(ui, 0.10, |ui| {
-        ui.set_min_width(420.0);
         screen_banner(ui, "SETTINGS", 96.0);
 
+        // Left-anchor the whole settings body to one shared left margin. `over_backdrop_screen`'s
+        // centred column would otherwise centre each row on its own width, scattering controls of
+        // different lengths (the "sliders far-left, headings centred" screenshot). The banner above
+        // and the footer buttons below stay outside this `vertical`, so they remain centred.
+        ui.vertical(|ui| {
         section_label(ui, "AUDIO");
-        ui.add(Slider::new(&mut state.master_volume, 0.0..=1.0).text("Master"));
-        ui.add(Slider::new(&mut state.sfx_volume, 0.0..=1.0).text("SFX"));
-        ui.add(Slider::new(&mut state.music_volume, 0.0..=1.0).text("Music"));
+        egui::Grid::new("settings.audio")
+            .num_columns(2)
+            .min_col_width(SETTINGS_LABEL_W)
+            .spacing([16.0, 10.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Master").color(BONE).size(TYPE_BODY));
+                ui.add(Slider::new(&mut state.master_volume, 0.0..=1.0).fixed_decimals(2));
+                ui.end_row();
+                ui.label(RichText::new("SFX").color(BONE).size(TYPE_BODY));
+                ui.add(Slider::new(&mut state.sfx_volume, 0.0..=1.0).fixed_decimals(2));
+                ui.end_row();
+                ui.label(RichText::new("Music").color(BONE).size(TYPE_BODY));
+                ui.add(Slider::new(&mut state.music_volume, 0.0..=1.0).fixed_decimals(2));
+                ui.end_row();
+            });
 
+        section_divider(ui);
         section_label(ui, "CONTROLS");
-        ui.add(
-            Slider::new(
-                &mut state.mouse_sensitivity,
-                SettingsState::SENS_MIN..=SettingsState::SENS_MAX,
-            )
-            .text("Look sensitivity"),
-        );
-        ui.checkbox(&mut state.invert_look_y, "Invert look Y");
         // Embodied hip FOV (PC-1) — a seated mouse player expects a wider field than the 60° that
         // reads as tunnel-vision on a monitor. `clamp` re-bounds to the engine's embodied-FOV band;
         // `main.rs` pushes it to `Game::set_base_fov` each match frame (camera only, never the sim).
-        ui.add(
-            Slider::new(&mut state.fov_deg, SettingsState::FOV_MIN..=SettingsState::FOV_MAX)
-                .text("Field of view")
-                .suffix("°"),
-        );
+        egui::Grid::new("settings.controls")
+            .num_columns(2)
+            .min_col_width(SETTINGS_LABEL_W)
+            .spacing([16.0, 10.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Look sensitivity").color(BONE).size(TYPE_BODY));
+                ui.add(
+                    Slider::new(
+                        &mut state.mouse_sensitivity,
+                        SettingsState::SENS_MIN..=SettingsState::SENS_MAX,
+                    )
+                    .fixed_decimals(2),
+                );
+                ui.end_row();
+                ui.label(RichText::new("Field of view").color(BONE).size(TYPE_BODY));
+                ui.add(
+                    Slider::new(&mut state.fov_deg, SettingsState::FOV_MIN..=SettingsState::FOV_MAX)
+                        .suffix("°")
+                        .fixed_decimals(0),
+                );
+                ui.end_row();
+            });
+        // A boolean toggle, not a label:value row — sits under the two sliders rather than inside
+        // the grid.
+        ui.checkbox(&mut state.invert_look_y, "Invert look Y");
 
+        section_divider(ui);
         // The key-rebind editor (D75 follow-up). One row per rebindable host action (pause /
         // fullscreen / debug overlay — the keys `main.rs` owns): its label + a button showing the
         // current binding. Clicking a button arms capture ("press a key…"); the next mappable key
@@ -2218,8 +2385,13 @@ fn settings_ui(
         }
         // Reset only the bindings to the shipped defaults (a direct in-place edit — no action needed);
         // clears any in-flight capture / conflict. The screen's RESET DEFAULTS also covers these.
+        // Sized to the full key/value row width so it reads as a footer action for the bindings
+        // section rather than a stray shrink-wrapped button.
         if ui
-            .button(RichText::new("Reset bindings").color(BONE).size(TYPE_BODY))
+            .add_sized(
+                [SETTINGS_LABEL_W + 16.0 + 140.0, 28.0],
+                egui::Button::new(RichText::new("Reset bindings").color(BONE).size(TYPE_BODY)),
+            )
             .clicked()
         {
             state.keybinds.reset();
@@ -2227,42 +2399,53 @@ fn settings_ui(
             *rebind_conflict = None;
         }
 
+        section_divider(ui);
         // The going-dark fairness floor (invariant #6): the embodied alert channel is directional
         // flash + positioned audio. These two opt-in cues give colorblind / hard-of-hearing players a
         // non-color / visual equivalent so the core mechanic stays fair. Direct-mutate checkboxes (the
         // `invert_look_y` pattern), fed to the engine each match frame via `set_accessibility_prefs`.
+        // The cycling palette / alert-cue buttons keep their TEXT labels (`.label()`) — the state is
+        // never communicated by colour alone, which is the whole point of these controls.
         section_label(ui, "ACCESSIBILITY");
         ui.checkbox(&mut state.colorblind_cues, "Colorblind cues");
         ui.checkbox(&mut state.visual_sound_cues, "Visual sound cues");
-        // Colourblind-safe faction palette (WS-D): a cycling button over the modes (a direct edit —
-        // no action needed), the `quality` pattern. Swaps the render ramp so "mine / theirs / neutral
-        // / possessed" stay separable without hue; presentation only, pushed via
-        // `set_accessibility_prefs` → `Renderer::set_palette_mode`.
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Colorblind palette").color(BONE).size(TYPE_BODY));
-            ui.add_space(8.0);
-            if ui
-                .button(RichText::new(state.cvd_palette.label()).color(AMBER).size(TYPE_BODY))
-                .clicked()
-            {
-                state.cvd_palette = state.cvd_palette.next();
-            }
-        });
-        // Cross-modal alert cues (WS-D): the NON-visual equivalent(s) of the directional flash — a
-        // bearing-panned audio ping and/or a directional haptic pulse — for a player who can't read
-        // the colour flash. A cycling button over the modes (a direct edit — the `cvd_palette`
-        // pattern), pushed to the engine via `Game::set_alert_cue_mode`; still an alert, not intel.
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Alert cues").color(BONE).size(TYPE_BODY));
-            ui.add_space(8.0);
-            if ui
-                .button(RichText::new(state.alert_cue_mode.label()).color(AMBER).size(TYPE_BODY))
-                .clicked()
-            {
-                state.alert_cue_mode = state.alert_cue_mode.next();
-            }
-        });
+        // Colourblind-safe faction palette + cross-modal alert cues (WS-D): cycling buttons over the
+        // modes (direct edits — no action needed). A two-column grid so both buttons start at the
+        // same x as the sliders above.
+        egui::Grid::new("settings.accessibility")
+            .num_columns(2)
+            .min_col_width(SETTINGS_LABEL_W)
+            .spacing([16.0, 10.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Colorblind palette").color(BONE).size(TYPE_BODY));
+                if ui
+                    .add_sized(
+                        [140.0, 26.0],
+                        egui::Button::new(
+                            RichText::new(state.cvd_palette.label()).color(AMBER).size(TYPE_BODY),
+                        ),
+                    )
+                    .clicked()
+                {
+                    state.cvd_palette = state.cvd_palette.next();
+                }
+                ui.end_row();
+                ui.label(RichText::new("Alert cues").color(BONE).size(TYPE_BODY));
+                if ui
+                    .add_sized(
+                        [140.0, 26.0],
+                        egui::Button::new(
+                            RichText::new(state.alert_cue_mode.label()).color(AMBER).size(TYPE_BODY),
+                        ),
+                    )
+                    .clicked()
+                {
+                    state.alert_cue_mode = state.alert_cue_mode.next();
+                }
+                ui.end_row();
+            });
 
+        section_divider(ui);
         section_label(ui, "VIDEO");
         // The window-mode source of truth is the host: reflect it, and emit the toggle action rather
         // than editing a second copy here.
@@ -2270,36 +2453,50 @@ fn settings_ui(
         if ui.checkbox(&mut fs, "Fullscreen").clicked() {
             action = Some(SettingsAction::ToggleFullscreen);
         }
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Quality").color(BONE).size(TYPE_BODY));
-            ui.add_space(8.0);
-            // A single cycling button over the discrete tiers (a direct edit — no action needed).
-            if ui
-                .button(RichText::new(state.quality.label()).color(AMBER).size(TYPE_BODY))
-                .clicked()
-            {
-                state.quality = state.quality.next();
-            }
-        });
+        egui::Grid::new("settings.video")
+            .num_columns(2)
+            .min_col_width(SETTINGS_LABEL_W)
+            .spacing([16.0, 10.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Quality").color(BONE).size(TYPE_BODY));
+                // A single cycling button over the discrete tiers (a direct edit — no action needed).
+                if ui
+                    .add_sized(
+                        [140.0, 26.0],
+                        egui::Button::new(
+                            RichText::new(state.quality.label()).color(AMBER).size(TYPE_BODY),
+                        ),
+                    )
+                    .clicked()
+                {
+                    state.quality = state.quality.next();
+                }
+                ui.end_row();
+            });
 
         // Defensive re-clamp after the slider writes (sliders already bound, but a future edit path
         // might not).
         state.clamp();
 
+        section_divider(ui);
         // The gunsmith lives here now (D81): customization-only, reached from Settings, not a play
         // gate. Its edits persist for the next match.
         section_label(ui, "LOADOUT");
         if menu_button(ui, "GUNSMITH", Emphasis::Secondary) {
             action = Some(SettingsAction::OpenLoadout);
         }
+        }); // end of the left-anchored settings body
 
+        // Footer navigation — outside the `vertical` above so it stays centred under the card. A
+        // divider marks "settings content ends, navigation starts".
+        section_divider(ui);
         ui.add_space(18.0);
         // "FIELD MANUAL" everywhere (matches Android + this screen's own banner) — was "CONTROLS /
         // ABOUT" here and "MANUAL" on the title, three names for one screen.
         if menu_button(ui, "FIELD MANUAL", Emphasis::Secondary) {
             action = Some(SettingsAction::About);
         }
-        ui.add_space(10.0);
+        ui.add_space(18.0);
         // RESET DEFAULTS wipes audio levels, sensitivity, EVERY rebound key, the accessibility/CVD
         // picks, and the quality tier in one click — gate it behind a confirm so it can't happen by
         // accident with no undo.
@@ -2331,52 +2528,66 @@ fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Option<ProfileAc
     let mut action = None;
 
     over_backdrop_screen(ui, 0.12, |ui| {
-        ui.set_min_width(420.0);
         screen_banner(ui, "PROFILE", 84.0);
 
+        // Left-anchor the identity/record body to one margin (banner + footer stay centred).
+        ui.vertical(|ui| {
         section_label(ui, "IDENTITY");
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                [96.0, 28.0],
-                egui::Label::new(RichText::new("Callsign").color(BONE).size(TYPE_BODY)),
-            );
-            ui.add_sized(
-                [220.0, 28.0],
-                TextEdit::singleline(&mut profile.callsign).char_limit(CALLSIGN_MAX),
-            );
-        });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.add_sized(
-                [96.0, 28.0],
-                egui::Label::new(RichText::new("Faction").color(BONE).size(TYPE_BODY)),
-            );
-            if ui
-                .add_sized(
-                    [220.0, 28.0],
-                    egui::Button::new(
-                        RichText::new(profile.faction.label()).color(AMBER).size(TYPE_BODY),
-                    ),
-                )
-                .clicked()
-            {
-                action = Some(ProfileAction::CycleFaction);
-            }
-        });
+        egui::Grid::new("profile.identity")
+            .num_columns(2)
+            .min_col_width(96.0)
+            .spacing([16.0, 10.0])
+            .show(ui, |ui| {
+                ui.label(RichText::new("Callsign").color(BONE).size(TYPE_BODY));
+                ui.add(
+                    TextEdit::singleline(&mut profile.callsign)
+                        .char_limit(CALLSIGN_MAX)
+                        .desired_width(f32::INFINITY),
+                );
+                ui.end_row();
+                ui.label(RichText::new("Faction").color(BONE).size(TYPE_BODY));
+                let fw = ui.available_width();
+                if ui
+                    .add_sized(
+                        [fw, 28.0],
+                        egui::Button::new(
+                            RichText::new(profile.faction.label()).color(AMBER).size(TYPE_BODY),
+                        ),
+                    )
+                    .clicked()
+                {
+                    action = Some(ProfileAction::CycleFaction);
+                }
+                ui.end_row();
+            });
 
+        section_divider(ui);
         section_label(ui, "RECORD");
         let rate = match win_rate_pct(profile.wins, profile.matches_played) {
             Some(p) => format!("{p}%"),
             None => "--".to_string(),
         };
-        ui.label(
-            RichText::new(format!(
-                "Matches {}   ·   Wins {}   ·   Win rate {}",
-                profile.matches_played, profile.wins, rate
-            ))
-            .color(ASH)
-            .size(TYPE_BODY),
-        );
+        // A 3-up stat row: a big amber numeral over a small ash caption per stat, instead of one
+        // flat grey sentence — the same numeral/caption relationship the rest of the shell uses.
+        let stat_col = (ui.available_width() / 3.0 - 8.0).max(64.0);
+        egui::Grid::new("profile.record")
+            .num_columns(3)
+            .min_col_width(stat_col)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                for (value, caption) in [
+                    (profile.matches_played.to_string(), "MATCHES"),
+                    (profile.wins.to_string(), "WINS"),
+                    (rate.clone(), "WIN RATE"),
+                ] {
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new(value).color(AMBER).size(TYPE_SUBHEAD).strong());
+                        ui.label(RichText::new(caption).color(ASH).size(TYPE_CAPTION));
+                    });
+                }
+                ui.end_row();
+            });
+        }); // end left-anchored body
 
         ui.add_space(18.0);
         // RESET RECORD zeroes lifetime matches/wins with no recovery — gate it behind a confirm.
@@ -2411,13 +2622,24 @@ fn army_card(ui: &mut egui::Ui, army: Army, selected: bool) -> Option<ArmySelect
         .size(TYPE_SUBHEAD)
         .strong();
     let mut clicked = false;
-    card_frame().show(ui, |ui| {
-        ui.set_min_width(MENU_BUTTON_W);
-        let resp = ui.add(Button::new(label).frame(false).min_size([MENU_BUTTON_W, 28.0].into()));
+    // The selected card rings amber (the shell's active-state convention); the others keep the
+    // neutral RIM hairline, so the pick is legible from the card, not just the small text.
+    let frame = if selected {
+        card_frame().stroke(egui::Stroke::new(1.5, AMBER))
+    } else {
+        card_frame()
+    };
+    frame.show(ui, |ui| {
+        // Fill the card's width instead of shrink-wrapping to the button column, so both rosters
+        // share one column edge with the intro paragraph above them.
+        let w = ui.available_width();
+        ui.set_width(w);
+        let resp = ui.add(Button::new(label).frame(false).min_size([w, 28.0].into()));
         ui.label(RichText::new(army_flavor(army)).color(ASH).size(TYPE_CAPTION));
-        if selected {
-            ui.label(RichText::new("SELECTED").color(AMBER).size(TYPE_CAPTION).strong());
-        }
+        // Always reserve the marker row (an empty label still takes one line height) so selecting a
+        // roster never changes the card's height — the column no longer jumps as you compare rosters.
+        let marker = if selected { "SELECTED" } else { "" };
+        ui.label(RichText::new(marker).color(AMBER).size(TYPE_CAPTION).strong());
         clicked = resp.clicked();
     });
     clicked.then_some(ArmySelectAction::Choose(army))
@@ -2433,7 +2655,6 @@ fn army_select_ui(ui: &mut egui::Ui, state: &ArmySelectState) -> Option<ArmySele
     let mut action = None;
 
     over_backdrop_screen(ui, 0.08, |ui| {
-        ui.set_min_width(460.0);
         screen_banner(ui, "SELECT ARMY", 130.0);
         ui.label(
             RichText::new(
@@ -2443,7 +2664,8 @@ fn army_select_ui(ui: &mut egui::Ui, state: &ArmySelectState) -> Option<ArmySele
             .color(ASH)
             .size(TYPE_BODY),
         );
-        ui.add_space(18.0);
+        ui.add_space(12.0);
+        section_label(ui, "ROSTER");
 
         for (i, &army) in SELECTABLE_ARMIES.iter().enumerate() {
             if let Some(act) = army_card(ui, army, state.selected == army) {
@@ -2467,34 +2689,64 @@ fn army_select_ui(ui: &mut egui::Ui, state: &ArmySelectState) -> Option<ArmySele
     action
 }
 
+/// One keybinding rendered as a small rounded "keycap" — [`PANEL_RAISED`] fill, [`RIM`] hairline,
+/// bold [`AMBER`] text — so it reads as a physical key. Used only for the literal
+/// COMMAND/EMBODIED/GLOBAL rows in [`about_ui`]; the GOING DARK concept block (whose `keys` cell holds
+/// a concept name, not a binding) renders as plain text via `about_ui`'s own branch, never a chip.
+fn keycap_chip(ui: &mut egui::Ui, text: &str) {
+    use egui::{Frame, RichText, Stroke};
+    Frame::default()
+        .fill(PANEL_RAISED)
+        .stroke(Stroke::new(1.0, RIM))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).color(AMBER).size(TYPE_BODY).strong());
+        });
+}
+
 /// The immediate-mode About / field-manual screen: the one-line pitch, the real default keymap
 /// (grouped), and the build stamp, centred over the backdrop. Returns `true` on BACK. Static content
 /// from the pure [`controls_reference`] seam. Glue.
 fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
-    use egui::{Grid, RichText, ScrollArea};
+    use egui::{Grid, RichText};
     let mut back = false;
 
     over_backdrop_screen(ui, 0.06, |ui| {
-        ui.set_min_width(460.0);
         screen_banner(ui, "FIELD MANUAL", 120.0);
         ui.label(RichText::new(FIELD_MANUAL_BLURB).color(ASH).size(TYPE_BODY));
         ui.add_space(14.0);
 
-        // The keymap, grouped by layer. A bounded ScrollArea keeps the card sane on a short window.
-        ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-            let mut current_group = "";
-            for row in controls_reference() {
-                if row.group != current_group {
-                    section_label(ui, row.group);
-                    current_group = row.group;
+        // The keymap, grouped by layer. ONE Grid per group so every row's key column shares a single
+        // width (a per-row Grid let a wide cell like "Left-click / Space" jog only its own row's
+        // action column). No nested ScrollArea — `over_backdrop_screen`'s own scroll handles a short
+        // window, matching every sibling screen. Left-anchored so headings/rows share one margin.
+        ui.vertical(|ui| {
+            for (gi, group) in controls_reference().chunk_by(|a, b| a.group == b.group).enumerate() {
+                if gi > 0 {
+                    section_divider(ui);
                 }
-                Grid::new(("about.controls", row.group, row.keys))
+                section_label(ui, group[0].group);
+                // The leading GOING DARK block holds concept names in the `keys` column, not real
+                // key bindings — render those as plain amber text; a keycap chip there would imply a
+                // pressable key that doesn't exist. The literal COMMAND/EMBODIED/GLOBAL rows get chips.
+                let is_concept = group[0].group == "GOING DARK";
+                Grid::new(("about.controls", group[0].group))
                     .num_columns(2)
-                    .min_col_width(150.0)
+                    .min_col_width(if is_concept { 92.0 } else { 96.0 })
+                    .spacing([16.0, 6.0])
                     .show(ui, |ui| {
-                        ui.label(RichText::new(row.keys).color(AMBER).size(TYPE_BODY).strong());
-                        ui.label(RichText::new(row.action).color(BONE).size(TYPE_BODY));
-                        ui.end_row();
+                        for row in group {
+                            if is_concept {
+                                ui.label(
+                                    RichText::new(row.keys).color(AMBER).size(TYPE_BODY).strong(),
+                                );
+                            } else {
+                                keycap_chip(ui, row.keys);
+                            }
+                            ui.label(RichText::new(row.action).color(BONE).size(TYPE_BODY));
+                            ui.end_row();
+                        }
                     });
             }
         });
@@ -2510,13 +2762,64 @@ fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
     back
 }
 
+/// A full-width selectable "card row": fills the list's available width (never shrink-wraps to its
+/// content, unlike [`card_frame`]), rides the amber hover ring, and reports whether it was clicked
+/// this frame. `enabled == false` disables the click and the ring (a locked row). `content` draws
+/// the row interior against the already-full-width `Ui` it's handed. Glue. Used by the mode/mission
+/// tiles so both read as one row language instead of a bare button and a double-framed mini-card.
+fn selectable_row(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    enabled: bool,
+    content: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    let id = ui.id().with(id_salt);
+    let inner = egui::Frame::default()
+        .fill(PANEL)
+        .stroke(egui::Stroke::new(1.0, RIM))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(16, 12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            content(ui);
+        });
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let response = ui.interact(inner.response.rect, id, sense);
+    if enabled && response.hovered() {
+        ui.painter().rect_stroke(
+            inner.response.rect,
+            egui::CornerRadius::same(8),
+            egui::Stroke::new(1.5, AMBER),
+            egui::StrokeKind::Outside,
+        );
+    }
+    enabled && response.clicked()
+}
+
+/// A small rounded status badge (LOCKED / AVAILABLE / CLEARED · TIER) — [`PANEL_RAISED`] fill, the
+/// caller's status colour for both border and text. Sits at the right of a mission row. Glue.
+fn status_chip(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+    egui::Frame::default()
+        .fill(PANEL_RAISED)
+        .stroke(egui::Stroke::new(1.0, color))
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(8, 3))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(text).color(color).size(TYPE_CAPTION).strong());
+        });
+}
+
 /// One mission-select tile: a status pill (Locked/Available/Cleared, colour-coded) beside the node
 /// title as a full-width button. A **playable** node (Available or already-Cleared/replayable) is an
 /// enabled button that emits [`MissionSelectAction::OpenNode`]; a **Locked** node renders disabled and
 /// cannot be clicked. The launchable decision is the pure [`playable_node`] seam (double-guarded on
 /// the click), so this is the exempt egui glue. Returns the action on a click. ASCII status text only.
 fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Option<MissionSelectAction> {
-    use egui::{Button, Label, RichText};
+    use egui::RichText;
     let playable = playable_node(entry).is_some();
     let (status, status_color) = match entry.progress {
         NodeProgress::Locked => ("LOCKED".to_string(), MUTED),
@@ -2527,17 +2830,16 @@ fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Option<Mission
         }
     };
     let title_color = if playable { BONE } else { MUTED };
-    let mut clicked = false;
-    ui.horizontal(|ui| {
-        ui.add_sized(
-            [150.0, 36.0],
-            Label::new(RichText::new(status).color(status_color).size(TYPE_CAPTION).strong()),
-        );
-        let button = Button::new(
-            RichText::new(entry.title.clone()).color(title_color).size(TYPE_BODY).strong(),
-        )
-        .min_size([280.0, 36.0].into());
-        clicked = ui.add_enabled(playable, button).clicked();
+    // Title first (primary), status as a right-aligned chip — the whole row is one selectable card.
+    let clicked = selectable_row(ui, ("mission_tile", entry.node), playable, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(entry.title.clone()).color(title_color).size(TYPE_SUBHEAD).strong(),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                status_chip(ui, &status, status_color);
+            });
+        });
     });
     clicked
         .then(|| playable_node(entry).map(MissionSelectAction::OpenNode))
@@ -2548,17 +2850,15 @@ fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Option<Mission
 /// deploys that mode. Mirrors Android's `ModeTile`. Glue (needs a live `Ui`) — the launch decision is
 /// the pure [`GameMode::scene`] seam the host resolves; this only reports the pick. ASCII only.
 fn mode_tile(ui: &mut egui::Ui, mode: &GameMode) -> Option<ModeSelectAction> {
-    use egui::{Button, RichText};
-    let label = RichText::new(mode.name.to_uppercase())
-        .color(BONE)
-        .size(TYPE_SUBHEAD)
-        .strong();
-    let mut clicked = false;
-    card_frame().show(ui, |ui| {
-        ui.set_min_width(MENU_BUTTON_W);
-        let resp = ui.add(Button::new(label).frame(false).min_size([MENU_BUTTON_W, 28.0].into()));
-        ui.label(RichText::new(mode.blurb).color(ASH).size(TYPE_CAPTION));
-        clicked = resp.clicked();
+    use egui::RichText;
+    let title = mode.name.to_uppercase();
+    // One full-width selectable card row (name over blurb) — no more per-tile shrink-wrapped card
+    // that drew each mode at a different width and double-framed it inside the screen card.
+    let clicked = selectable_row(ui, ("mode_tile", mode.id), true, |ui| {
+        ui.vertical(|ui| {
+            ui.label(RichText::new(title).color(BONE).size(TYPE_SUBHEAD).strong());
+            ui.label(RichText::new(mode.blurb).color(ASH).size(TYPE_CAPTION));
+        });
     });
     clicked.then_some(ModeSelectAction::Pick(*mode))
 }
@@ -2570,8 +2870,7 @@ fn mode_select_ui(ui: &mut egui::Ui) -> Option<ModeSelectAction> {
     use egui::RichText;
     let mut action = None;
 
-    over_backdrop_screen(ui, 0.08, |ui| {
-        ui.set_min_width(460.0);
+    over_backdrop_screen(ui, 0.07, |ui| {
         screen_banner(ui, "SELECT MODE", 130.0);
         ui.label(
             RichText::new(
@@ -2591,7 +2890,7 @@ fn mode_select_ui(ui: &mut egui::Ui) -> Option<ModeSelectAction> {
             }
         }
 
-        ui.add_space(22.0);
+        ui.add_space(FOOTER_GAP);
         // BACK is the only exit on this screen — Secondary, not Tertiary, so it isn't the dimmest
         // control on a screen where it's the sole way out.
         if menu_button(ui, "BACK", Emphasis::Secondary) {
@@ -2611,7 +2910,6 @@ fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Option<MissionSe
     let mut action = None;
 
     over_backdrop_screen(ui, 0.07, |ui| {
-        ui.set_min_width(500.0);
         screen_banner(ui, "OPERATIONS", 130.0);
         ui.label(
             RichText::new(
@@ -2623,19 +2921,25 @@ fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Option<MissionSe
         );
         ui.add_space(16.0);
 
-        card_frame().show(ui, |ui| {
-            let entries = campaign.mission_select();
-            for (i, entry) in entries.iter().enumerate() {
-                if let Some(act) = mission_tile(ui, entry) {
-                    action = Some(act);
+        // Each mission is its own selectable card, so they sit directly in the screen card (no
+        // second enclosing frame). The list has its own bounded scroll so the banner and BACK stay
+        // pinned as the campaign grows; a short list shows no scrollbar.
+        let entries = campaign.mission_select();
+        egui::ScrollArea::vertical()
+            .max_height(5.0 * 72.0)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (i, entry) in entries.iter().enumerate() {
+                    if let Some(act) = mission_tile(ui, entry) {
+                        action = Some(act);
+                    }
+                    if i + 1 < entries.len() {
+                        ui.add_space(8.0);
+                    }
                 }
-                if i + 1 < entries.len() {
-                    ui.add_space(8.0);
-                }
-            }
-        });
+            });
 
-        ui.add_space(20.0);
+        ui.add_space(FOOTER_GAP);
         // Sole exit on this screen — Secondary, not the dimmest Tertiary. (Briefing keeps BACK
         // Tertiary because DEPLOY is the genuine primary action there.)
         if menu_button(ui, "BACK", Emphasis::Secondary) {
@@ -2657,11 +2961,10 @@ fn briefing_ui(
     node: NodeId,
     selected: Difficulty,
 ) -> Option<BriefingAction> {
-    use egui::{Button, Label, RichText};
+    use egui::{Button, RichText};
     let mut action = None;
 
     over_backdrop_screen(ui, 0.07, |ui| {
-        ui.set_min_width(500.0);
         let Some(b) = campaign.briefing(node) else {
             // The hub only opens playable, in-range nodes, so this is purely defensive.
             screen_banner(ui, "BRIEFING", 110.0);
@@ -2678,24 +2981,42 @@ fn briefing_ui(
         ui.add_space(16.0);
 
         card_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
             // Difficulty cycler — the replay tier that drives the fight (D83: the 4→3 enemy-commander
             // band + the scenario situation modifiers) and the tier the CLEAR is recorded against on a
-            // win.
+            // win. Label flush-left, cycle button flush-right so the row spans the card.
             ui.horizontal(|ui| {
-                ui.add_sized(
-                    [120.0, 32.0],
-                    Label::new(RichText::new("Difficulty").color(BONE).size(TYPE_BODY)),
-                );
-                if ui
-                    .add_sized(
-                        [200.0, 32.0],
-                        Button::new(
-                            RichText::new(difficulty_label(selected)).color(AMBER).size(TYPE_BODY).strong(),
-                        ),
-                    )
-                    .clicked()
-                {
-                    action = Some(BriefingAction::CycleDifficulty);
+                ui.label(RichText::new("Difficulty").color(BONE).size(TYPE_BODY));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_sized(
+                            [200.0, 32.0],
+                            Button::new(
+                                RichText::new(difficulty_label(selected))
+                                    .color(AMBER)
+                                    .size(TYPE_BODY)
+                                    .strong(),
+                            ),
+                        )
+                        .clicked()
+                    {
+                        action = Some(BriefingAction::CycleDifficulty);
+                    }
+                });
+            });
+            ui.add_space(6.0);
+            // A 4-pip ladder (Recruit -> Elite) showing where the selected tier sits — a fixed cycle
+            // button otherwise gives no sense of "1 of 4". Presentation only; `selected` is threaded.
+            ui.horizontal(|ui| {
+                for d in Difficulty::ALL {
+                    let filled = d <= selected;
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 4.0), egui::Sense::hover());
+                    ui.painter().rect_filled(
+                        rect,
+                        egui::CornerRadius::same(2),
+                        if filled { AMBER } else { RIM },
+                    );
+                    ui.add_space(4.0);
                 }
             });
             ui.add_space(8.0);
@@ -2710,7 +3031,7 @@ fn briefing_ui(
             ui.label(RichText::new(status).color(MUTED).size(TYPE_CAPTION));
         });
 
-        ui.add_space(20.0);
+        ui.add_space(FOOTER_GAP);
         if menu_button(ui, "DEPLOY", Emphasis::Primary) {
             action = Some(BriefingAction::Deploy);
         }
