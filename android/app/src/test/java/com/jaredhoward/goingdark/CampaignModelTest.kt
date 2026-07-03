@@ -160,6 +160,23 @@ class CampaignModelTest {
         // Every shipped node sits in its conflict's operation — the grouping is total, three
         // battles per operation (node id / 3 == operation id).
         campaignNodes.forEachIndexed { i, node -> assertEquals(i / 3, node.operation) }
+
+        // Every shipped battle carries its D106 battlefield anchor (field-complete D79 mirror of
+        // `OperationNode::anchor`), within ~1.5 degrees of its own war's pin — the same authoring
+        // bound the Rust `every_shipped_battle_is_anchored_near_its_war` test pins.
+        campaignNodes.forEach { node ->
+            val conflict = campaignConflicts[node.operation!!]
+            val lat = node.latX10 ?: error("node ${node.id} has no battlefield anchor")
+            val lon = node.lonX10 ?: error("node ${node.id} has no battlefield anchor")
+            assertTrue(
+                "node ${node.id} strays from ${conflict.name}'s pin",
+                kotlin.math.abs(lat - conflict.latX10) <= 15 &&
+                    kotlin.math.abs(lon - conflict.lonX10) <= 15,
+            )
+        }
+        // Spot-pin one anchor verbatim against the Rust source (Visby Airport).
+        assertEquals(577, campaignNodes[7].latX10)
+        assertEquals(184, campaignNodes[7].lonX10)
     }
 
     @Test

@@ -122,6 +122,7 @@ struct PinOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) corner: vec2<f32>,
     @location(1) glow: f32,
+    @location(2) tone: f32,
 }
 
 @vertex
@@ -130,6 +131,8 @@ fn vs_pin(
     @location(0) unit: vec3<f32>,
     @location(1) focused: f32,
     @location(2) era: f32,
+    @location(3) tone: f32,
+    @location(4) scale: f32,
 ) -> PinOut {
     var corners = array<vec2<f32>, 6>(
         vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
@@ -144,7 +147,8 @@ fn vs_pin(
     let pulse = select(0.0, (sin(t * 2.4) * 0.5 + 0.5) * 0.35, focused > 0.5);
     // An out-of-era pin (the atlas year scrubber, D104) shrinks and dims but stays locatable.
     let era_size = mix(0.55, 1.0, era);
-    let size = (0.011 + 0.008 * focused + 0.006 * pulse) * era_size * clip.w;
+    // `scale` is the per-pin size lane (D106): battle pins draw smaller than conflict pins.
+    let size = (0.011 + 0.008 * focused + 0.006 * pulse) * era_size * scale * clip.w;
     let c = corners[vi];
     clip.x += c.x * size / max(u.misc.x, 0.05);
     clip.y += c.y * size;
@@ -152,19 +156,32 @@ fn vs_pin(
     // Fade a pin as it rotates onto the far side (the horizon swallow), instead of popping.
     let wn = normalize((u.model * vec4(unit, 0.0)).xyz);
     let facing = dot(wn, normalize(u.eye.xyz - world.xyz));
+    // A locked battle (tone 1) glows colder AND dimmer — reachable ground reads brighter.
+    // (0.68, not lower: locked grounds must still read as places on the map, not noise.)
+    let locked_dim = select(1.0, 0.68, tone > 0.5 && tone < 1.5);
     var out: PinOut;
     out.pos = clip;
     out.corner = c;
-    out.glow = clamp(facing * 3.0, 0.0, 1.0) * (0.55 + 0.45 * focused + pulse) * mix(0.22, 1.0, era);
+    out.glow = clamp(facing * 3.0, 0.0, 1.0) * (0.55 + 0.45 * focused + pulse)
+        * mix(0.22, 1.0, era) * locked_dim;
+    out.tone = tone;
     return out;
 }
 
 @fragment
 fn fs_pin(in: PinOut) -> @location(0) vec4<f32> {
-    // A soft amber mote with a hot core (theme::AMBER) — additive, like the diorama embers.
+    // A soft mote with a hot core — additive, like the diorama embers. The tone lane (D106)
+    // picks the tint: neutral amber (theme::AMBER — a conflict, or an available battle),
+    // locked slate, cleared green.
+    var tint = vec3(0.96, 0.62, 0.20);
+    if (in.tone > 1.5) {
+        tint = vec3(0.36, 0.85, 0.48);
+    } else if (in.tone > 0.5) {
+        tint = vec3(0.42, 0.47, 0.58);
+    }
     let r = length(in.corner);
     let core = smoothstep(0.45, 0.0, r);
     let halo = smoothstep(1.0, 0.15, r) * 0.35;
     let a = (core + halo) * in.glow;
-    return vec4(vec3(0.96, 0.62, 0.20) * a, a);
+    return vec4(tint * a, a);
 }

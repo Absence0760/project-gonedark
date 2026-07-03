@@ -24,8 +24,9 @@ const DRAG_SENS: f32 = 0.006;
 /// Zoom factor per scroll "line" (egui's scroll unit); >1 = scroll-up zooms in.
 const ZOOM_STEP: f32 = 1.10;
 /// Click-to-pin pick radius in NDC (fraction of the half-screen) — generous enough for a pin's
-/// halo, tight enough that empty-ocean clicks don't select.
-const PICK_RADIUS: f32 = 0.075;
+/// halo, tight enough that empty-ocean clicks don't select. Shared by the battlefield overview's
+/// pin picking (D106) so both pick circles feel identical.
+pub(crate) const PICK_RADIUS: f32 = 0.075;
 
 /// The atlas screen's host state: where the player has turned the globe, the scrubbed year, and
 /// the selected conflict. Session state (like the skirmish setup) — never persisted, never sim.
@@ -170,11 +171,13 @@ pub(crate) fn atlas_pins_for(campaign: &Campaign, state: &AtlasState) -> Vec<Glo
         .conflicts()
         .iter()
         .enumerate()
-        .map(|(i, c)| GlobePin {
-            lat_deg: c.lat_x10 as f32 / 10.0,
-            lon_deg: c.lon_x10 as f32 / 10.0,
-            focused: i == state.selected,
-            active: conflict_active_in(c, state.year),
+        .map(|(i, c)| {
+            GlobePin::conflict(
+                c.lat_x10 as f32 / 10.0,
+                c.lon_x10 as f32 / 10.0,
+                i == state.selected,
+                conflict_active_in(c, state.year),
+            )
         })
         .collect()
 }

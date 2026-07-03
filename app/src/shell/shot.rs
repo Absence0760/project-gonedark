@@ -44,22 +44,24 @@ fn shoot(device: &wgpu::Device, queue: &wgpu::Queue, path: &str, build: impl FnM
 
 /// [`shoot`], composited over the LIVE campaign globe backdrop (D103) instead of the grey stand-in —
 /// the one shot that exercises the real `render::globe_backdrop` WGSL + pipelines headlessly, so a
-/// shader regression fails here instead of at title boot.
+/// shader regression fails here instead of at title boot. `view` is the explicit camera (the D106
+/// battlefield overview); `None` = the settled D103 framing.
 fn shoot_over_globe(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     path: &str,
+    view: Option<GlobeView>,
     pins: &[GlobePin],
     build: impl FnMut(&mut egui::Ui),
 ) {
-    shoot_impl(device, queue, path, Some(pins), build)
+    shoot_impl(device, queue, path, Some((view, pins)), build)
 }
 
 fn shoot_impl(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     path: &str,
-    globe_pins: Option<&[GlobePin]>,
+    globe_pins: Option<(Option<GlobeView>, &[GlobePin])>,
     mut build: impl FnMut(&mut egui::Ui),
 ) {
     let ctx = egui::Context::default();
@@ -124,10 +126,13 @@ fn shoot_impl(
     });
     // The globe variant paints the real backdrop first (it clears the view itself), then the
     // egui pass LOADs over it — the same compositing order as `run_and_paint`.
-    if let Some(pins) = globe_pins {
+    if let Some((globe_view, pins)) = globe_pins {
         let mut globe = GlobeBackdrop::new(device, FORMAT);
-        let focus = pins.iter().find(|p| p.focused).map_or(0.0, |p| p.lon_deg);
-        globe.render(device, queue, &view, (W, H), 1.0, None, GlobeView::settled(focus, 1.0), pins);
+        let gv = globe_view.unwrap_or_else(|| {
+            let focus = pins.iter().find(|p| p.focused).map_or(0.0, |p| p.lon_deg);
+            GlobeView::settled(focus, 1.0)
+        });
+        globe.render(device, queue, &view, (W, H), 1.0, None, gv, pins);
     }
     let user_cmds = renderer.update_buffers(device, queue, &mut enc, &jobs, &screen);
     {
@@ -272,17 +277,35 @@ fn shell_screens_to_png() {
         loadout_ui(ui, &loadout);
     });
     shoot(&device, &queue, &format!("{dir}/operations.png"), |ui| {
-        mission_select_ui(ui, &campaign, None);
+        mission_select_ui(ui, &campaign, None, None);
     });
     // The hub over the LIVE atlas globe (D103) — exercises the real globe WGSL headlessly.
     let pins = atlas_pins(&campaign);
-    shoot_over_globe(&device, &queue, &format!("{dir}/operations_globe.png"), &pins, |ui| {
-        mission_select_ui(ui, &campaign, None);
+    shoot_over_globe(&device, &queue, &format!("{dir}/operations_globe.png"), None, &pins, |ui| {
+        mission_select_ui(ui, &campaign, None, None);
     });
+    // The battlefield overview (D106): the hub filtered to the first war, zoomed onto its
+    // battle anchors with progress-toned pins — exercises the tone/scale pin lanes headlessly.
+    let first = campaign.conflicts().first().map(|c| c.id);
+    if let Some(c) = first {
+        if let Some(view) = overview_view(&campaign, c) {
+            let battle = battlefield_pins(&campaign, c, next_battle_in(&campaign, c));
+            shoot_over_globe(
+                &device,
+                &queue,
+                &format!("{dir}/battlefield.png"),
+                Some(view),
+                &battle,
+                |ui| {
+                    mission_select_ui(ui, &campaign, Some(c), Some(view));
+                },
+            );
+        }
+    }
     // The navigable conflict atlas (D104), over the live globe at its opened view.
     let atlas = AtlasState::opened(&campaign);
     let atlas_pins_now = atlas_pins_for(&campaign, &atlas);
-    shoot_over_globe(&device, &queue, &format!("{dir}/atlas.png"), &atlas_pins_now, |ui| {
+    shoot_over_globe(&device, &queue, &format!("{dir}/atlas.png"), None, &atlas_pins_now, |ui| {
         atlas_ui(ui, &campaign, &atlas);
     });
     shoot(&device, &queue, &format!("{dir}/settings.png"), |ui| {

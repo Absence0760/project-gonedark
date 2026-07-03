@@ -1,13 +1,13 @@
 {
   "landmask.gray": {
-    "source": "Natural Earth 1:110m Land (ne_110m_land)",
+    "source": "Natural Earth 1:50m Land (ne_50m_land)",
     "license": "Public Domain (Natural Earth terms of use)",
-    "url": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_land.geojson",
+    "url": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_land.geojson",
     "generator": "tools/earth/gen_landmask.py",
-    "width": 720,
-    "height": 360,
+    "width": 1440,
+    "height": 720,
     "format": "R8 (255=land, 0=sea), equirectangular, row 0 = lat +90",
-    "land_pct": 33.95,
-    "sha256": "e257178f2739718eac9db6e56531b513bdbc9f7ea99f69d379aee6c8bc7b8f99"
+    "land_pct": 33.65,
+    "sha256": "3706ace94977098f3bbabca37e2ac690dd4d9aa3a6261455fb817fd1a1583ca7"
   }
 }

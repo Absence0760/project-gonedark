@@ -1110,6 +1110,7 @@ use gonedark_render::tiers::QualityTier;
     // ---- The conflict-atlas grouping seam (D98) -------------------------------------------------
 
     use gonedark_core::campaign::{Conflict, ConflictId, GroupProgress, Operation, OperationId};
+    use gonedark_render::globe_backdrop::{project_pin, PinTone};
 
     /// An atlas-grouped campaign exercising every grouping shape at once: conflict 0 with two
     /// operations (op 0: Alpha → Bravo; op 1: Charlie gated on Bravo), conflict 1 with only a
@@ -1154,10 +1155,16 @@ use gonedark_render::tiers::QualityTier;
                 },
             ],
             vec![
-                OperationNode::new(NodeId(0), MissionId(1), "Alpha", "").in_operation(OperationId(0)),
+                // Conflict 0's battles carry battlefield anchors (D106) spread around the
+                // conflict pin; Charlie is deliberately UN-anchored (a battle with no authored
+                // ground never pins), and Delta stays fully ungrouped.
+                OperationNode::new(NodeId(0), MissionId(1), "Alpha", "")
+                    .in_operation(OperationId(0))
+                    .at(496, -13),
                 OperationNode::new(NodeId(1), MissionId(2), "Bravo", "")
                     .requires([NodeId(0)])
-                    .in_operation(OperationId(0)),
+                    .in_operation(OperationId(0))
+                    .at(494, -13),
                 OperationNode::new(NodeId(2), MissionId(3), "Charlie", "")
                     .requires([NodeId(1)])
                     .in_operation(OperationId(1)),
@@ -1399,6 +1406,122 @@ use gonedark_render::tiers::QualityTier;
             assert_eq!(campaign.operation(op).unwrap().conflict, ConflictId(0));
         }
         assert!(only.len() < hub_sections(&campaign).len());
+    }
+
+    // ---- the battlefield overview (D106) --------------------------------------------------------
+
+    /// The overview camera + pins compose end-to-end for every SHIPPED war: each anchored battle
+    /// projects on-screen under its own conflict's overview view, no two battle pins of one war
+    /// land within a pick radius of each other (they must read as separate grounds AND stay
+    /// unambiguously pickable), and every authored anchor sits on the land mask — a wet pin reads
+    /// as a bug on the Natural Earth globe.
+    #[test]
+    fn the_shipped_wars_frame_their_battlefields_on_screen() {
+        use gonedark_engine::mission_registry::default_campaign;
+        use gonedark_render::globe_backdrop::{land_at, project_pin};
+        let campaign = default_campaign();
+        for conflict in campaign.conflicts() {
+            let view = overview_view(&campaign, conflict.id)
+                .expect("every shipped war has anchored battles");
+            let mut projected: Vec<[f32; 2]> = Vec::new();
+            for op in campaign.operations_in(conflict.id) {
+                for n in campaign.nodes_in(op) {
+                    let (lat, lon) = campaign.node(n).unwrap().anchor.expect("anchored");
+                    let (lat, lon) = (lat as f32 / 10.0, lon as f32 / 10.0);
+                    assert!(
+                        land_at(lat, lon),
+                        "{}'s battle {n:?} anchors in the sea at ({lat}, {lon})",
+                        conflict.name,
+                    );
+                    let p = project_pin(view, 16.0 / 9.0, lat, lon).unwrap_or_else(|| {
+                        panic!("{}'s battle {n:?} is not visible in its overview", conflict.name)
+                    });
+                    assert!(
+                        p[0].abs() <= 0.9 && p[1].abs() <= 0.9,
+                        "{}'s battle {n:?} projects off-screen at {p:?}",
+                        conflict.name,
+                    );
+                    projected.push(p);
+                }
+            }
+            for (i, a) in projected.iter().enumerate() {
+                for b in &projected[..i] {
+                    let (dx, dy) = ((a[0] - b[0]) * (16.0 / 9.0), a[1] - b[1]);
+                    let d = (dx * dx + dy * dy).sqrt();
+                    // Half a pick radius ≈ a pin's drawn diameter: far enough apart to read as
+                    // two grounds, and a dead-center click is always nearer its own pin than any
+                    // neighbour (nearest-wins picking needs only nonzero separation).
+                    assert!(
+                        d >= PICK_RADIUS / 2.0,
+                        "two of {}'s battle pins overlap on screen (separation {d})",
+                        conflict.name,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Battle pins carry campaign progress (D106): tones map Locked/Available/Cleared, the next
+    /// battle is focused, an un-anchored battle never pins, and progressing the war re-tones the
+    /// same ground.
+    #[test]
+    fn battle_pins_tone_and_focus_follow_progress() {
+        let mut campaign = atlas_campaign();
+        // Fresh: Alpha available (amber, focused — it is the next battle), Bravo locked (slate).
+        // Charlie has no anchor, so conflict 0 pins exactly its two anchored battles.
+        assert_eq!(battle_tone(NodeProgress::Available), PinTone::Neutral);
+        assert_eq!(next_battle_in(&campaign, ConflictId(0)), Some(NodeId(0)));
+        let pins =
+            battlefield_pins(&campaign, ConflictId(0), next_battle_in(&campaign, ConflictId(0)));
+        assert_eq!(pins.len(), 2, "only anchored battles pin");
+        assert_eq!((pins[0].tone, pins[0].focused), (PinTone::Neutral, true));
+        assert_eq!((pins[1].tone, pins[1].focused), (PinTone::Locked, false));
+        assert!(pins.iter().all(|p| p.scale > 1.0), "battle pins draw larger than conflict pins");
+
+        // Clear Alpha: it goes green, Bravo opens amber and takes the focus.
+        campaign.clear(NodeId(0), Difficulty::Recruit).unwrap();
+        assert_eq!(next_battle_in(&campaign, ConflictId(0)), Some(NodeId(1)));
+        let pins =
+            battlefield_pins(&campaign, ConflictId(0), next_battle_in(&campaign, ConflictId(0)));
+        assert_eq!((pins[0].tone, pins[0].focused), (PinTone::Cleared, false));
+        assert_eq!((pins[1].tone, pins[1].focused), (PinTone::Neutral, true));
+
+        // A war with no anchored battles has no overview — the hub falls back to the settled
+        // framing (conflict 1's only node, Charlie, is un-anchored).
+        assert_eq!(overview_view(&campaign, ConflictId(1)), None);
+        // A fully cleared war focuses its LAST battle as the replay target (Charlie — conflict
+        // 0's final node, even though it is un-anchored and so never pins).
+        campaign.clear(NodeId(1), Difficulty::Recruit).unwrap();
+        campaign.clear(NodeId(2), Difficulty::Recruit).unwrap();
+        assert_eq!(next_battle_in(&campaign, ConflictId(0)), Some(NodeId(2)));
+    }
+
+    /// Clicking the battlefield resolves through the same playable gate as a tile (D106): the
+    /// available battle picks at its projected position, a LOCKED battle refuses the click even
+    /// dead-center, and empty ground picks nothing.
+    #[test]
+    fn picking_a_battle_honours_the_playable_gate() {
+        let campaign = atlas_campaign();
+        let view = overview_view(&campaign, ConflictId(0)).expect("conflict 0 is anchored");
+        let aspect = 16.0 / 9.0;
+        let at = |node: NodeId| {
+            let (lat, lon) = campaign.node(node).unwrap().anchor.unwrap();
+            project_pin(view, aspect, lat as f32 / 10.0, lon as f32 / 10.0)
+                .expect("battle visible in its overview")
+        };
+        let (alpha, bravo) = (at(NodeId(0)), at(NodeId(1)));
+        // Alpha (Available) picks at its own pin.
+        assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, alpha), Some(NodeId(0)));
+        // Bravo is Locked — a dead-center click on it picks nothing (never launches).
+        assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, bravo), None);
+        // Empty ground picks nothing.
+        assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, [0.95, 0.95]), None);
+
+        // Clear Alpha: Bravo opens and now picks; Alpha stays pickable (replayable).
+        let mut campaign = campaign;
+        campaign.clear(NodeId(0), Difficulty::Recruit).unwrap();
+        assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, bravo), Some(NodeId(1)));
+        assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, alpha), Some(NodeId(0)));
     }
 
     #[test]

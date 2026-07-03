@@ -26,10 +26,12 @@ use crate::title_backdrop::{look_at_rh, mat4_mul, parallax_offset, perspective_r
 
 // ---- the embedded land mask (the contract with tools/earth/gen_landmask.py) --------------------
 
-/// Mask width in texels (0.5°/texel longitude). MUST match the generator's `MASK_W`.
-pub const MASK_W: usize = 720;
+/// Mask width in texels (0.25°/texel longitude — Natural Earth 1:50m since D106, so the small
+/// islands the battlefield overview zooms onto actually exist). MUST match the generator's
+/// `MASK_W`.
+pub const MASK_W: usize = 1440;
 /// Mask height in texels. MUST match the generator's `MASK_H`.
-pub const MASK_H: usize = 360;
+pub const MASK_H: usize = 720;
 /// The equirectangular R8 land mask (255 = land, 0 = sea; row 0 = lat +90°), embedded raw so the
 /// crate needs no decode dependency — the `assets/fonts/hud_atlas.gray` contract.
 pub static LANDMASK: &[u8] = include_bytes!("../../assets/earth/landmask.gray");
@@ -38,7 +40,15 @@ pub static LANDMASK: &[u8] = include_bytes!("../../assets/earth/landmask.gray");
 
 /// Vertical FOV (radians) and clip planes for the globe camera.
 const FOVY: f32 = 0.85;
-const NEAR: f32 = 0.5;
+/// Near plane. Was `0.5`, which silently swallowed the whole globe past zoom ~1.9: the sphere's
+/// front fell inside the near plane while the visible horizon ring fell outside the FOV, so max
+/// atlas zoom rendered empty sky. The D106 battlefield overview lives exactly in that zoom band,
+/// so the plane sits at `0.02` — at [`GlobeView::ZOOM_MAX`] the sphere's closest point clears the
+/// eye by ~0.030, so the whole legal zoom range renders hole-free (a pure test pins this), and
+/// depth precision at `FAR/NEAR = 2000` is far beyond this scene's needs. (Perspective x/y are
+/// independent of the near plane, so `project_pin` picking and every projection test are
+/// unaffected.)
+const NEAR: f32 = 0.02;
 const FAR: f32 = 40.0;
 /// Camera eye/target: slightly above the equator line, looking gently down at the globe.
 const EYE: [f32; 3] = [0.0, 0.55, 3.6];
@@ -57,16 +67,52 @@ const SPHERE_SEGS: u32 = 96;
 
 // ---- pure math seam (unit-tested, no GPU) ------------------------------------------------------
 
-/// A conflict pin for the globe: authored anchor in **degrees** (the shell converts the campaign's
-/// integer tenth-degrees at this boundary), whether it is the focused conflict (brighter, pulsing,
-/// and the settled-yaw target), and whether it is **active** under the atlas year scrubber (an
-/// out-of-era conflict stays visible but dims — D104).
+/// A pin's **tone** — the progress lane the battlefield overview reads (D106). Conflict pins on
+/// the atlas are always [`Neutral`](PinTone::Neutral) (amber, the D103/D104 look); battle pins
+/// carry their node's campaign progress so the zoomed-in war reads at a glance.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PinTone {
+    /// The default amber mote — a conflict pin, or an available (playable, uncleared) battle.
+    #[default]
+    Neutral,
+    /// A still-locked battle: cold slate, dimmed — visible ground, not yet reachable.
+    Locked,
+    /// A cleared battle: green — taken ground.
+    Cleared,
+}
+
+/// A pin for the globe: authored anchor in **degrees** (the shell converts the campaign's
+/// integer tenth-degrees at this boundary), whether it is the focused pin (brighter, pulsing,
+/// and the settled-yaw target), whether it is **active** under the atlas year scrubber (an
+/// out-of-era conflict stays visible but dims — D104), its progress [`PinTone`], and a size
+/// `scale` (`1.0` = the conflict-pin size; battle pins draw smaller so a zoomed war reads as
+/// several grounds, not one blob — D106). Build with [`GlobePin::conflict`]/[`GlobePin::battle`].
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct GlobePin {
     pub lat_deg: f32,
     pub lon_deg: f32,
     pub focused: bool,
     pub active: bool,
+    pub tone: PinTone,
+    pub scale: f32,
+}
+
+/// Battle pins draw at this multiple of the conflict-pin size (D106): the overview zoom shrinks
+/// the war to a few degrees of screen, so its grounds render larger than atlas pins or they read
+/// as dust.
+pub const BATTLE_PIN_SCALE: f32 = 1.6;
+
+impl GlobePin {
+    /// A conflict pin on the atlas — the D103/D104 vocabulary (amber, full size).
+    pub fn conflict(lat_deg: f32, lon_deg: f32, focused: bool, active: bool) -> GlobePin {
+        GlobePin { lat_deg, lon_deg, focused, active, tone: PinTone::Neutral, scale: 1.0 }
+    }
+
+    /// A battle pin on the zoomed battlefield overview (D106): smaller, always in-era (the hub
+    /// has no year scrubber), toned by its node's progress.
+    pub fn battle(lat_deg: f32, lon_deg: f32, focused: bool, tone: PinTone) -> GlobePin {
+        GlobePin { lat_deg, lon_deg, focused, active: true, tone, scale: BATTLE_PIN_SCALE }
+    }
 }
 
 /// The navigable globe camera/orientation (D104): the player's yaw/pitch (radians) and zoom.
@@ -97,6 +143,26 @@ impl GlobeView {
     /// gentle sway, a slight fixed tilt, no zoom — exactly the pre-D104 framing.
     pub fn settled(focus_lon_deg: f32, time: f32) -> Self {
         GlobeView { yaw: globe_yaw(focus_lon_deg, time), pitch: 0.0, zoom: 1.0 }
+    }
+
+    /// The battlefield-overview view (D106): centered on a latitude/longitude — yaw brings the
+    /// longitude to face the camera (no sway; a stable ground for picking), pitch tips the
+    /// latitude toward the **eye**, not the equator line: the backdrop camera sits above the
+    /// globe axis ([`EYE`]), so the anchor must land at the eye's elevation off `+Z` or the
+    /// facing gate ([`project_pin`]) swallows it at close zoom. Under [`globe_model`]'s
+    /// `R_x(pitch)·R_y(yaw)`, a point at latitude `φ` ends up `φ − pitch` above `+Z`, so
+    /// `pitch = φ − elevation(zoom)` points its surface normal straight up the eye ray.
+    /// Clamped like every other view (unit-tested via [`project_pin`]).
+    pub fn over(lat_deg: f32, lon_deg: f32, zoom: f32) -> Self {
+        let k = 1.0 / zoom.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX);
+        // The eye's elevation angle above +Z as seen from the globe center.
+        let elevation = (EYE[1] * k - GLOBE_CENTER[1]).atan2(EYE[2] * k);
+        GlobeView {
+            yaw: -lon_deg.to_radians(),
+            pitch: lat_deg.to_radians() - elevation,
+            zoom,
+        }
+        .clamped()
     }
 
     /// This view with pitch/zoom clamped into their legal ranges (yaw wraps free). Pure — the
@@ -259,6 +325,9 @@ struct PinInstance {
     unit: [f32; 3],
     focused: f32,
     active: f32,
+    /// [`PinTone`] as a float lane: 0 = neutral, 1 = locked, 2 = cleared.
+    tone: f32,
+    scale: f32,
 }
 
 /// The self-contained globe renderer — same lifecycle as [`crate::title_backdrop::TitleBackdrop`]:
@@ -464,7 +533,9 @@ impl GlobeBackdrop {
         let pin_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<PinInstance>() as u64,
             step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32, 2 => Float32],
+            attributes: &wgpu::vertex_attr_array![
+                0 => Float32x3, 1 => Float32, 2 => Float32, 3 => Float32, 4 => Float32
+            ],
         };
         let pin_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("gonedark.globe_backdrop_pin"),
@@ -618,6 +689,12 @@ impl GlobeBackdrop {
                 unit: latlon_to_unit(p.lat_deg, p.lon_deg),
                 focused: if p.focused { 1.0 } else { 0.0 },
                 active: if p.active { 1.0 } else { 0.0 },
+                tone: match p.tone {
+                    PinTone::Neutral => 0.0,
+                    PinTone::Locked => 1.0,
+                    PinTone::Cleared => 2.0,
+                },
+                scale: p.scale,
             })
             .collect();
         if !instances.is_empty() {
@@ -801,6 +878,58 @@ mod tests {
         let tipped = GlobeView { pitch: 0.3, ..view };
         let pt = project_pin(tipped, 1.6, 50.0, -1.5).expect("a tipped focus stays visible");
         assert!(pt[1] < p[1], "positive pitch must lower the northern pin (got {} vs {})", pt[1], p[1]);
+    }
+
+    /// The near plane never cuts into the globe anywhere in the legal zoom range — the
+    /// regression guard for the D106 `NEAR` fix. The failure mode is silent (the sphere's front
+    /// clips away and the screen shows sky/a hole, no error), and the only other coverage is the
+    /// ignored GPU screenshot harness, so this pins the pure geometry: at every legal zoom the
+    /// sphere's closest point to the eye stays beyond `NEAR` with margin. Re-tune `EYE`, `NEAR`,
+    /// `GLOBE_*`, or `ZOOM_MAX` independently and this fails loudly instead of blanking the
+    /// atlas at max zoom again.
+    #[test]
+    fn the_near_plane_never_cuts_the_globe_at_legal_zoom() {
+        for zoom in [GlobeView::ZOOM_MIN, 1.0, 1.9, 2.0, 2.4, GlobeView::ZOOM_MAX] {
+            let view = GlobeView { yaw: 0.0, pitch: 0.0, zoom };
+            let eye = view_eye(view, [0.0, 0.0]);
+            let rel = [
+                eye[0] - GLOBE_CENTER[0],
+                eye[1] - GLOBE_CENTER[1],
+                eye[2] - GLOBE_CENTER[2],
+            ];
+            let clearance =
+                (rel[0] * rel[0] + rel[1] * rel[1] + rel[2] * rel[2]).sqrt() - GLOBE_RADIUS;
+            assert!(
+                clearance > NEAR * 1.2,
+                "at zoom {zoom} the globe's front ({clearance}) crowds the near plane ({NEAR})",
+            );
+        }
+    }
+
+    /// `GlobeView::over` (the D106 battlefield-overview camera) really centers its target: the
+    /// anchored point projects visible and near screen center at every latitude band the shipped
+    /// wars live in, and a polar target clamps to the closest legal pitch instead of flipping.
+    #[test]
+    fn the_overview_camera_centers_its_target() {
+        for &(lat, lon) in
+            &[(50.0f32, -1.5f32), (6.2, 0.6), (57.6, 18.3), (-15.5, 167.2), (0.0, 0.0)]
+        {
+            let view = GlobeView::over(lat, lon, 2.4);
+            assert_eq!(view.zoom, 2.4, "an in-range zoom passes through");
+            let p = project_pin(view, 16.0 / 9.0, lat, lon)
+                .expect("the overview target must be visible");
+            assert!(
+                p[0].abs() < 0.1 && p[1].abs() < 0.6,
+                "({lat}, {lon}) should sit near screen center, got {p:?}",
+            );
+        }
+        // Even a polar war frames legally (the eye-elevation correction keeps the needed pitch
+        // inside the clamp) and stays visible.
+        let polar = GlobeView::over(89.0, 0.0, 2.4);
+        assert!(polar.pitch.abs() <= GlobeView::PITCH_LIMIT);
+        assert!(project_pin(polar, 16.0 / 9.0, 89.0, 0.0).is_some());
+        // Zoom clamps like every other view — `over` can't escape the navigation bounds.
+        assert_eq!(GlobeView::over(0.0, 0.0, 99.0).zoom, GlobeView::ZOOM_MAX);
     }
 
     #[test]

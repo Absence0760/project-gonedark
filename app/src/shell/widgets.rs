@@ -250,6 +250,20 @@ pub(crate) fn over_backdrop_screen_sized<T>(
     card_w: f32,
     build: impl FnOnce(&mut egui::Ui) -> T,
 ) -> T {
+    over_backdrop_screen_at(ui, id_salt, card_w, None, build)
+}
+
+/// [`over_backdrop_screen_sized`] with an explicit **left edge** instead of horizontal centring —
+/// for screens whose backdrop is itself content: the D106 battlefield overview parks the hub card
+/// at the left margin so the war (globe + battle pins) stays visible beside it. `left = None`
+/// keeps the classic centred card.
+pub(crate) fn over_backdrop_screen_at<T>(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    card_w: f32,
+    left: Option<f32>,
+    build: impl FnOnce(&mut egui::Ui) -> T,
+) -> T {
     let mut out = None;
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
@@ -276,7 +290,7 @@ pub(crate) fn over_backdrop_screen_sized<T>(
             // top-left-anchored instead of wrapping a centred column (the frame's rect desynced from
             // the content's). Pinning the card region's width makes the frame wrap a centred,
             // fixed-width column whose content fills it — deterministic, no layout-interaction guesswork.
-            let pad = ((ui.available_width() - card_w) * 0.5).max(0.0);
+            let pad = left.unwrap_or(((ui.available_width() - card_w) * 0.5).max(0.0));
             ui.horizontal(|ui| {
                 ui.add_space(pad);
                 // `allocate_ui` inherits the parent layout — and the parent here is the centring

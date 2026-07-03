@@ -353,6 +353,13 @@ pub struct OperationNode {
     /// for an ungrouped node (a plain [`Campaign::new`] hub with no atlas). Pure grouping
     /// metadata — it never affects unlock logic or persistence.
     pub operation: Option<OperationId>,
+    /// The battle's **battlefield anchor** on the conflict atlas as `(lat_x10, lon_x10)` in
+    /// tenths of a degree (same convention as [`Conflict::lat_x10`]: negative = south/west,
+    /// lat `-900..=900`, lon `-1800..=1800`), or `None` for a node with no authored ground
+    /// (list-only hubs, ungrouped nodes). Presentation data like the conflict pin — the
+    /// per-battle pin the zoomed battlefield overview draws (D106); never sim state, never
+    /// checksummed, never persisted.
+    pub anchor: Option<(i16, i16)>,
     /// Short title for the mission-select tile.
     pub title: String,
     /// Briefing copy for the briefing surface (the light narrative framing WS-E expands; here it
@@ -375,6 +382,7 @@ impl OperationNode {
             title: title.into(),
             briefing: briefing.into(),
             operation: None,
+            anchor: None,
         }
     }
 
@@ -388,6 +396,13 @@ impl OperationNode {
     /// must exist in the campaign's authored atlas — [`Campaign::with_atlas`] validates it.
     pub fn in_operation(mut self, operation: OperationId) -> OperationNode {
         self.operation = Some(operation);
+        self
+    }
+
+    /// Builder: anchor this battle's ground on the atlas at `(lat_x10, lon_x10)`, tenths of a
+    /// degree (see [`OperationNode::anchor`]). [`Campaign::with_atlas`] validates the range.
+    pub fn at(mut self, lat_x10: i16, lon_x10: i16) -> OperationNode {
+        self.anchor = Some((lat_x10, lon_x10));
         self
     }
 }
@@ -489,8 +504,10 @@ impl Campaign {
     /// identical to an ungrouped [`Campaign::new`] hub with the same nodes.
     ///
     /// Panics on malformed authoring, same discipline as [`Campaign::new`]: ids must equal list
-    /// positions, an operation's conflict and a node's operation must be in range, and a
-    /// conflict's year span must not be inverted.
+    /// positions, an operation's conflict and a node's operation must be in range, a
+    /// conflict's year span must not be inverted, and every atlas anchor (a conflict's pin, a
+    /// node's battlefield anchor) must be a real coordinate (lat `-900..=900`, lon
+    /// `-1800..=1800`, tenths of a degree).
     pub fn with_atlas(
         conflicts: Vec<Conflict>,
         operations: Vec<Operation>,
@@ -505,6 +522,13 @@ impl Campaign {
             assert!(
                 conflict.start_year <= conflict.end_year,
                 "conflict {i} has an inverted year span"
+            );
+            assert!(
+                (-900..=900).contains(&conflict.lat_x10)
+                    && (-1800..=1800).contains(&conflict.lon_x10),
+                "conflict {i} has an out-of-range atlas anchor ({}, {})",
+                conflict.lat_x10,
+                conflict.lon_x10
             );
         }
         for (i, op) in operations.iter().enumerate() {
@@ -535,6 +559,12 @@ impl Campaign {
                 assert!(
                     op.index() < operations.len(),
                     "node {i} names out-of-range operation {op:?}"
+                );
+            }
+            if let Some((lat, lon)) = node.anchor {
+                assert!(
+                    (-900..=900).contains(&lat) && (-1800..=1800).contains(&lon),
+                    "node {i} has an out-of-range battlefield anchor ({lat}, {lon})"
                 );
             }
         }
@@ -1386,6 +1416,45 @@ mod tests {
         Campaign::new(vec![
             OperationNode::new(NodeId(0), MissionId(0), "A", "").in_operation(OperationId(0)),
         ]);
+    }
+
+    #[test]
+    fn a_node_battlefield_anchor_is_authored_via_at_and_defaults_to_none() {
+        // `new` leaves the anchor unset (a list-only hub has no ground to point at)...
+        let bare = OperationNode::new(NodeId(0), MissionId(0), "A", "");
+        assert_eq!(bare.anchor, None);
+        // ...and `.at()` authors it in Conflict-pin convention (tenths of a degree, D106).
+        let anchored = OperationNode::new(NodeId(0), MissionId(0), "A", "").at(496, -13);
+        assert_eq!(anchored.anchor, Some((496, -13)));
+        // A valid anchor passes campaign validation.
+        let c = Campaign::new(vec![anchored]);
+        assert_eq!(c.node(NodeId(0)).unwrap().anchor, Some((496, -13)));
+    }
+
+    #[test]
+    #[should_panic(expected = "out-of-range battlefield anchor")]
+    fn atlas_rejects_a_node_anchor_off_the_earth() {
+        Campaign::new(vec![
+            OperationNode::new(NodeId(0), MissionId(0), "A", "").at(901, 0),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "out-of-range atlas anchor")]
+    fn atlas_rejects_a_conflict_anchor_off_the_earth() {
+        Campaign::with_atlas(
+            vec![Conflict {
+                id: ConflictId(0),
+                name: String::new(),
+                start_year: 2027,
+                end_year: 2028,
+                summary: String::new(),
+                lat_x10: 0,
+                lon_x10: -1801,
+            }],
+            Vec::new(),
+            Vec::new(),
+        );
     }
 
     #[test]

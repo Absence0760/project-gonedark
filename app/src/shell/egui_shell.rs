@@ -9,7 +9,10 @@ use crate::shell::army::{army_label, army_select_ui, ArmySelectAction, ArmySelec
 use crate::shell::briefing::{briefing_ui, BriefingAction};
 use crate::shell::loadout::{loadout_ui, LoadoutAction};
 use crate::shell::atlas::{atlas_pins_for, atlas_ui, AtlasAction, AtlasState};
-use crate::shell::mission_select::{atlas_pins, mission_select_ui, MissionSelectAction, NextOperation};
+use crate::shell::mission_select::{
+    atlas_pins, battlefield_pins, mission_select_ui, next_battle_in, overview_view,
+    MissionSelectAction, NextOperation,
+};
 use crate::shell::profile::win_rate_pct;
 use crate::shell::pvp::{pvp_ui, PvpAction};
 use crate::shell::profile::{profile_ui, ProfileAction, ProfileState};
@@ -259,12 +262,18 @@ impl EguiShell {
         campaign: &Campaign,
         only: Option<ConflictId>,
     ) -> Option<MissionSelectAction> {
-        // The campaign door swaps the diorama for the atlas globe (D103), pinned per conflict
-        // and settled on the one the player is fighting (the pure `atlas_pins` seam). `only`
-        // filters the hub to the atlas-selected conflict (D104).
-        let pins = atlas_pins(campaign);
-        self.run_and_paint(surface, ShellBackdrop::Globe(None, &pins), |ui| {
-            mission_select_ui(ui, campaign, only)
+        // The campaign door swaps the diorama for the atlas globe (D103). With a conflict picked
+        // (D104's `only` filter) the backdrop becomes the **battlefield overview** (D106): the
+        // globe zooms onto the war's battle anchors, one progress-toned pin per battle, with the
+        // next battle focused — and the pins are pickable (mission_select_ui gets the same view).
+        // A conflict with no anchored battles falls back to the settled per-conflict framing.
+        let overview = only.and_then(|c| overview_view(campaign, c));
+        let pins = match (only, overview) {
+            (Some(c), Some(_)) => battlefield_pins(campaign, c, next_battle_in(campaign, c)),
+            _ => atlas_pins(campaign),
+        };
+        self.run_and_paint(surface, ShellBackdrop::Globe(overview, &pins), |ui| {
+            mission_select_ui(ui, campaign, only, overview)
         })
     }
 
@@ -297,8 +306,18 @@ impl EguiShell {
         selected: Difficulty,
     ) -> Option<BriefingAction> {
         // The briefing stays under the atlas globe — the whole campaign flow shares one sky.
-        let pins = atlas_pins(campaign);
-        self.run_and_paint(surface, ShellBackdrop::Globe(None, &pins), |ui| briefing_ui(ui, campaign, node, selected))
+        // With the D106 overview it stays on the war's battlefield too, the briefed node's own
+        // pin focused (pulsing) — "this is the ground you're about to fight."
+        let conflict = crate::shell::atlas::conflict_index_of(campaign, node)
+            .and_then(|i| campaign.conflicts().get(i).map(|c| c.id));
+        let overview = conflict.and_then(|c| overview_view(campaign, c));
+        let pins = match (conflict, overview) {
+            (Some(c), Some(_)) => battlefield_pins(campaign, c, Some(node)),
+            _ => atlas_pins(campaign),
+        };
+        self.run_and_paint(surface, ShellBackdrop::Globe(overview, &pins), |ui| {
+            briefing_ui(ui, campaign, node, selected)
+        })
     }
 
     /// Run one egui frame (`build` lays out the UI and returns this frame's action) and paint the

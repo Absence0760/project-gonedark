@@ -14,7 +14,7 @@ use gonedark_core::campaign::{
     Campaign, Conflict, ConflictId, GroupProgress, MissionSelectEntry, NodeId, NodeProgress,
     Operation, OperationId,
 };
-use gonedark_render::globe_backdrop::GlobePin;
+use gonedark_render::globe_backdrop::{project_pin, GlobePin, GlobeView, PinTone};
 
 /// An action the mission-select (Operations-hub) screen can emit in a frame. The hub reads the
 /// campaign through [`Campaign::mission_select`] (host-side, never the sim — invariants #1/#7); the
@@ -196,14 +196,140 @@ pub(crate) fn atlas_pins(campaign: &Campaign) -> Vec<GlobePin> {
         .conflicts()
         .iter()
         .enumerate()
-        .map(|(i, c)| GlobePin {
-            lat_deg: c.lat_x10 as f32 / 10.0,
-            lon_deg: c.lon_x10 as f32 / 10.0,
-            focused: i == focus,
-            // The hub/briefing backdrop has no year scrubber — every conflict reads in-era.
-            active: true,
+        .map(|(i, c)| {
+            GlobePin::conflict(
+                c.lat_x10 as f32 / 10.0,
+                c.lon_x10 as f32 / 10.0,
+                i == focus,
+                // The hub/briefing backdrop has no year scrubber — every conflict reads in-era.
+                true,
+            )
         })
         .collect()
+}
+
+// ---- the battlefield overview (D106) -----------------------------------------------------------
+
+/// How far the battlefield overview zooms into a war. Inside the D104 navigation clamp
+/// ([`GlobeView::ZOOM_MAX`] = 2.6 — nothing the atlas player couldn't already reach by hand),
+/// close enough that a war's battle anchors read as separate grounds (the shipped anchor
+/// authoring keeps them ≥ ~0.1° apart — a test pins the on-screen separation).
+pub(crate) const OVERVIEW_ZOOM: f32 = 2.4;
+
+/// How far EAST of the war the overview camera centers, in **effective** degrees (divided by
+/// `cos(lat)` so the on-screen shift is the same at every latitude): the hub card parks at the
+/// left margin, so the battlefield gets pushed into the clear right half of the screen.
+pub(crate) const OVERVIEW_EAST_BIAS_DEG: f32 = 1.0;
+
+/// A battle pin's [`PinTone`] from its node's campaign progress — the D106 progress lane:
+/// available ground glows amber (the same "this is where you act" read as the tile's AVAILABLE
+/// pill), locked ground goes cold, cleared ground goes green. Pure.
+pub(crate) fn battle_tone(progress: NodeProgress) -> PinTone {
+    match progress {
+        NodeProgress::Locked => PinTone::Locked,
+        NodeProgress::Available => PinTone::Neutral,
+        NodeProgress::Cleared { .. } => PinTone::Cleared,
+    }
+}
+
+/// The **next battle** in a conflict: its first Available node in authored order, or — once the
+/// war is fully cleared — its last node (the replay target, mirroring [`next_operation`]). `None`
+/// only for a conflict with no nodes. Pure — the overview's focus decision.
+pub(crate) fn next_battle_in(campaign: &Campaign, conflict: ConflictId) -> Option<NodeId> {
+    let nodes: Vec<NodeId> = campaign
+        .operations_in(conflict)
+        .into_iter()
+        .flat_map(|op| campaign.nodes_in(op))
+        .collect();
+    nodes
+        .iter()
+        .copied()
+        .find(|&n| campaign.progress(n) == NodeProgress::Available)
+        .or_else(|| nodes.last().copied())
+}
+
+/// The battlefield overview's pin list (D106): one [`GlobePin::battle`] per **anchored** node of
+/// `conflict` (a node with no authored ground simply doesn't pin — the tile list still carries
+/// it), toned by progress ([`battle_tone`]) with `focused` marked. Integer tenth-degrees convert
+/// to render-side degrees here — the same float boundary as [`atlas_pins`] (invariant #1). Pure.
+pub(crate) fn battlefield_pins(
+    campaign: &Campaign,
+    conflict: ConflictId,
+    focused: Option<NodeId>,
+) -> Vec<GlobePin> {
+    campaign
+        .operations_in(conflict)
+        .into_iter()
+        .flat_map(|op| campaign.nodes_in(op))
+        .filter_map(|n| {
+            let (lat, lon) = campaign.node(n)?.anchor?;
+            Some(GlobePin::battle(
+                lat as f32 / 10.0,
+                lon as f32 / 10.0,
+                Some(n) == focused,
+                battle_tone(campaign.progress(n)),
+            ))
+        })
+        .collect()
+}
+
+/// The battlefield overview's camera (D106): centered on the **centroid** of `conflict`'s battle
+/// anchors at [`OVERVIEW_ZOOM`] — the whole war on screen, dead-on, stable (no sway; the pins
+/// are pickable). `None` when the conflict has no anchored battles — the hub then falls back to
+/// the settled D103 framing, so a list-only campaign renders exactly as before. Pure.
+pub(crate) fn overview_view(campaign: &Campaign, conflict: ConflictId) -> Option<GlobeView> {
+    let anchors: Vec<(i16, i16)> = campaign
+        .operations_in(conflict)
+        .into_iter()
+        .flat_map(|op| campaign.nodes_in(op))
+        .filter_map(|n| campaign.node(n)?.anchor)
+        .collect();
+    if anchors.is_empty() {
+        return None;
+    }
+    let n = anchors.len() as f32;
+    let lat = anchors.iter().map(|&(la, _)| la as f32 / 10.0).sum::<f32>() / n;
+    let lon = anchors.iter().map(|&(_, lo)| lo as f32 / 10.0).sum::<f32>() / n;
+    // Center WEST of the war so the war sits right of screen center, clear of the left-parked
+    // hub card. Divided by cos(lat) so the shift reads the same at Gotland as at the equator
+    // (guarded away from the poles, capped so a polar war can't spin the camera off its ground).
+    let bias = (OVERVIEW_EAST_BIAS_DEG / lat.to_radians().cos().max(0.2)).min(3.0);
+    Some(GlobeView::over(lat, lon - bias, OVERVIEW_ZOOM))
+}
+
+/// Resolve a click at `ndc` on the battlefield overview to the battle it lands on: the nearest
+/// visible **playable** anchored node of `conflict` within [`PICK_RADIUS`](crate::shell::atlas) —
+/// the same gate as a tile click ([`playable_node`]), so a locked pin can never launch. Projected
+/// with the SAME view the backdrop rendered, so picking can never disagree with the drawn pixels
+/// (the D104 discipline). Pure.
+pub(crate) fn pick_battle(
+    campaign: &Campaign,
+    conflict: ConflictId,
+    view: GlobeView,
+    aspect: f32,
+    ndc: [f32; 2],
+) -> Option<NodeId> {
+    let mut best: Option<(NodeId, f32)> = None;
+    for op in campaign.operations_in(conflict) {
+        for n in campaign.nodes_in(op) {
+            if !campaign.progress(n).is_playable() {
+                continue;
+            }
+            let Some((lat, lon)) = campaign.node(n).and_then(|node| node.anchor) else {
+                continue;
+            };
+            let Some(p) = project_pin(view, aspect, lat as f32 / 10.0, lon as f32 / 10.0) else {
+                continue;
+            };
+            let dx = (p[0] - ndc[0]) * aspect;
+            let dy = p[1] - ndc[1];
+            let d = (dx * dx + dy * dy).sqrt();
+            if d <= crate::shell::atlas::PICK_RADIUS && best.is_none_or(|(_, bd)| d < bd) {
+                best = Some((n, d));
+            }
+        }
+    }
+    best.map(|(n, _)| n)
 }
 
 /// The mission list's scroll-viewport cap for the height actually available inside the card —
@@ -260,16 +386,45 @@ pub(crate) fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Opt
 /// The immediate-mode Operations-hub mission-select screen: the campaign's nodes as
 /// status-coded tiles in a card over the backdrop, then BACK. Reads
 /// [`Campaign::mission_select`] (host-side, never the sim); each tile's launchability + the click
-/// routing go through the pure [`playable_node`] seam. Glue.
+/// routing go through the pure [`playable_node`] seam. When the backdrop is the zoomed
+/// **battlefield overview** (D106 — `overview` carries the exact view it rendered with), the
+/// battle pins are a second launch surface: a click on a playable pin opens its briefing, through
+/// the same [`pick_battle`] → playable gate as a tile. Glue.
 pub(crate) fn mission_select_ui(
     ui: &mut egui::Ui,
     campaign: &Campaign,
     only: Option<ConflictId>,
+    overview: Option<GlobeView>,
 ) -> Option<MissionSelectAction> {
     use egui::RichText;
     let mut action = None;
 
-    over_backdrop_screen(ui, "operations", |ui| {
+    // The battlefield surface: a fullscreen click area added FIRST, so the card/tiles drawn after
+    // it win pointer priority — exactly the atlas_ui pattern. Only live when the backdrop really
+    // is the overview (picking must share the drawn view, never guess one).
+    if let (Some(view), Some(conflict)) = (overview, only) {
+        let screen = ui.ctx().input(|i| i.raw.screen_rect).unwrap_or_else(|| ui.clip_rect());
+        let aspect = if screen.height() > 1.0 { screen.width() / screen.height() } else { 1.0 };
+        let surface =
+            ui.interact(screen, ui.id().with("battlefield_surface"), egui::Sense::click());
+        if surface.clicked() {
+            if let Some(pos) = surface.interact_pointer_pos() {
+                let ndc = crate::shell::util::pointer_to_ndc(
+                    [pos.x, pos.y],
+                    [screen.width(), screen.height()],
+                );
+                if let Some(node) = pick_battle(campaign, conflict, view, aspect, ndc) {
+                    action = Some(MissionSelectAction::OpenNode(node));
+                }
+            }
+        }
+    }
+
+    // With the battlefield overview live, park the card at the left margin so the war (globe +
+    // battle pins) stays visible beside it; without one (no picked conflict / no anchored
+    // battles) keep the classic centred card.
+    let left = overview.map(|_| 40.0);
+    over_backdrop_screen_at(ui, "operations", SHELL_CARD_W, left, |ui| {
         screen_banner(ui, "OPERATIONS", 130.0);
         ui.label(
             RichText::new(

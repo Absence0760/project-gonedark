@@ -356,7 +356,9 @@ pub fn default_campaign() -> Campaign {
                 MISSION_ONE_BRIEFING.title,
                 MISSION_ONE_BRIEFING.situation,
             )
-            .in_operation(OperationId(0)),
+            .in_operation(OperationId(0))
+            // Quettehou, the heights behind Saint-Vaast-la-Hougue (~49.6°N, 1.3°W).
+            .at(496, -13),
             OperationNode::new(
                 NodeId(1),
                 MISSION_HOLD,
@@ -364,7 +366,9 @@ pub fn default_campaign() -> Campaign {
                 MISSION_TWO_BRIEFING.situation,
             )
             .requires([NodeId(0)])
-            .in_operation(OperationId(0)),
+            .in_operation(OperationId(0))
+            // Sainte-Mere-Eglise, the inland N13 crossroads (~49.4°N, 1.3°W).
+            .at(494, -13),
             OperationNode::new(
                 NodeId(2),
                 MISSION_PUSH,
@@ -372,7 +376,9 @@ pub fn default_campaign() -> Campaign {
                 MISSION_THREE_BRIEFING.situation,
             )
             .requires([NodeId(1)])
-            .in_operation(OperationId(0)),
+            .in_operation(OperationId(0))
+            // Valognes, up the N13 lane toward Cherbourg (~49.5°N, 1.5°W).
+            .at(495, -15),
             // ---- The Meridian Crisis — Operation Dry Season ----
             OperationNode::new(
                 NodeId(3),
@@ -382,7 +388,9 @@ pub fn default_campaign() -> Campaign {
                  yours to take it. Command the assault from above — or go dark and breach the \
                  wire yourself. The dust hides them; it hides you too.",
             )
-            .in_operation(OperationId(1)),
+            .in_operation(OperationId(1))
+            // Tank-farm flats behind the Port of Lome wharf (~6.2°N, 1.3°E).
+            .at(62, 13),
             OperationNode::new(
                 NodeId(4),
                 MISSION_HOLD,
@@ -392,7 +400,9 @@ pub fn default_campaign() -> Campaign {
                  bank you can't see is the one they wade across.",
             )
             .requires([NodeId(3)])
-            .in_operation(OperationId(1)),
+            .in_operation(OperationId(1))
+            // The Aneho lagoon crossing, the one road east (~6.3°N, 1.6°E).
+            .at(63, 16),
             OperationNode::new(
                 NodeId(5),
                 MISSION_PUSH,
@@ -403,7 +413,9 @@ pub fn default_campaign() -> Campaign {
                  you.",
             )
             .requires([NodeId(4)])
-            .in_operation(OperationId(1)),
+            .in_operation(OperationId(1))
+            // Tsevie, first checkpoint town on the N1 north (~6.4°N, 1.2°E).
+            .at(64, 12),
             // ---- The Gotland Winter — Operation Frostline ----
             OperationNode::new(
                 NodeId(6),
@@ -414,7 +426,9 @@ pub fn default_campaign() -> Campaign {
                  take a rifle onto the ice yourself, and remember the quay you can't see is \
                  still shooting.",
             )
-            .in_operation(OperationId(2)),
+            .in_operation(OperationId(2))
+            // Slite, Gotland's industrial deep harbor (~57.7°N, 18.8°E).
+            .at(577, 188),
             OperationNode::new(
                 NodeId(7),
                 MISSION_HOLD,
@@ -424,7 +438,9 @@ pub fn default_campaign() -> Campaign {
                  but the treeline you go dark on is the one they come through.",
             )
             .requires([NodeId(6)])
-            .in_operation(OperationId(2)),
+            .in_operation(OperationId(2))
+            // Visby Airport, interior Gotland (~57.7°N, 18.4°E).
+            .at(577, 184),
             OperationNode::new(
                 NodeId(8),
                 MISSION_PUSH,
@@ -434,7 +450,9 @@ pub fn default_campaign() -> Campaign {
                  yourself. But the strongpoint you rush blind is the one retaken behind you.",
             )
             .requires([NodeId(7)])
-            .in_operation(OperationId(2)),
+            .in_operation(OperationId(2))
+            // Klintehamn, southern end of the west-coast road (~57.4°N, 18.2°E).
+            .at(574, 182),
             // ---- The Santo Crisis — Operation Trade Wind ----
             OperationNode::new(
                 NodeId(9),
@@ -445,7 +463,9 @@ pub fn default_campaign() -> Campaign {
                  ridge — or wade in yourself, and hope the wharf you can't see isn't \
                  reinforcing.",
             )
-            .in_operation(OperationId(3)),
+            .in_operation(OperationId(3))
+            // Luganville Main Wharf on the Segond Channel (~15.5°S, 167.1°E).
+            .at(-155, 1671),
             OperationNode::new(
                 NodeId(10),
                 MISSION_HOLD,
@@ -455,7 +475,9 @@ pub fn default_campaign() -> Campaign {
                  stretch of runway you go dark on is the one they land on.",
             )
             .requires([NodeId(9)])
-            .in_operation(OperationId(3)),
+            .in_operation(OperationId(3))
+            // The Pekoa/Turtle Bay airfield corridor (~15.4°S, 167.2°E).
+            .at(-154, 1672),
             OperationNode::new(
                 NodeId(11),
                 MISSION_PUSH,
@@ -465,7 +487,9 @@ pub fn default_campaign() -> Campaign {
                  But the post you clear blind is theirs again before you turn around.",
             )
             .requires([NodeId(10)])
-            .in_operation(OperationId(3)),
+            .in_operation(OperationId(3))
+            // Hog Harbour on the East Coast Road (~15.1°S, 167.1°E).
+            .at(-151, 1671),
         ],
     )
 }
@@ -1008,6 +1032,42 @@ mod tests {
             let nodes = campaign.nodes_in(OperationId(i));
             assert_eq!(campaign.progress(nodes[1]), NodeProgress::Locked);
             assert_eq!(campaign.progress(nodes[2]), NodeProgress::Locked);
+        }
+    }
+
+    /// Every shipped battle is anchored on the atlas (D106): the anchor sits near its own war's
+    /// pin (the battlefield overview zooms to a region, not a hemisphere) and no two battles in
+    /// one war share ground (their pins must separate when zoomed in). Range validity is already
+    /// `Campaign::with_atlas`'s panic; this pins the *authoring* quality on top.
+    #[test]
+    fn every_shipped_battle_is_anchored_near_its_war() {
+        let campaign = default_campaign();
+        for i in 0..4u16 {
+            let conflict = campaign.conflict(ConflictId(i)).unwrap();
+            let nodes = campaign.nodes_in(OperationId(i));
+            let anchors: Vec<(i16, i16)> = nodes
+                .iter()
+                .map(|&n| {
+                    campaign
+                        .node(n)
+                        .unwrap()
+                        .anchor
+                        .unwrap_or_else(|| panic!("shipped node {n:?} has no battlefield anchor"))
+                })
+                .collect();
+            for (j, &(lat, lon)) in anchors.iter().enumerate() {
+                // Within ~1.5 degrees of the war's pin (tenths-of-a-degree units).
+                assert!(
+                    (lat - conflict.lat_x10).abs() <= 15 && (lon - conflict.lon_x10).abs() <= 15,
+                    "battle {j} of {} strays from its war's pin: ({lat}, {lon}) vs ({}, {})",
+                    conflict.name,
+                    conflict.lat_x10,
+                    conflict.lon_x10,
+                );
+                for &other in &anchors[..j] {
+                    assert_ne!((lat, lon), other, "two battles of {} share ground", conflict.name);
+                }
+            }
         }
     }
 

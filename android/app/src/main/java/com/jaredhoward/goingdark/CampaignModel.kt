@@ -18,11 +18,11 @@ package com.jaredhoward.goingdark
  * or the two shells silently disagree. The [CampaignModelTest] pins the id strings and the cycle so a
  * drift trips a test rather than shipping.
  *
- * [campaignNodes] mirrors `engine::mission_registry::default_campaign()`: the WS-B **three-node
- * chain** — the root *Seize* mission ("10 troops, take the base"), the gated *Hold the Line*
- * defense, and the gated *Break the Line* push (each unlocks once the one before is cleared).
- * Integration (not this file) resolves a node's [MissionNode.sceneToken] to a real launchable scene
- * (via the Rust `Scene::for_mission` seam — `mission1`/`mission2`/`mission3`) and wires the
+ * [campaignNodes] mirrors `engine::mission_registry::default_campaign()`: the D105 **four-conflict
+ * atlas** — every war a self-contained Seize → Hold → Push chain (each battle unlocks once the one
+ * before it is cleared; every war's root is open from the start). Integration (not this file)
+ * resolves a node's [MissionNode.sceneToken] to a real launchable scene (via the Rust
+ * `Scene::for_mission` seam — `mission1`/`mission2`/`mission3`) and wires the
  * Campaign → MissionSelect → Briefing flow; this model only names the mission.
  */
 
@@ -106,6 +106,14 @@ data class MissionNode(
     val briefing: String,
     val prerequisites: List<Int> = emptyList(),
     val operation: Int? = null,
+    /**
+     * The battle's battlefield anchor on the conflict atlas in **tenths of a degree**
+     * (D106; same convention as [Conflict.latX10]), or `null` for a node with no authored
+     * ground. Android renders no globe, but the mirrored model stays field-complete (D79)
+     * so the data can't drift when it does — exactly like the conflict pin fields.
+     */
+    val latX10: Int? = null,
+    val lonX10: Int? = null,
 )
 
 /**
@@ -309,6 +317,8 @@ val campaignNodes: List<MissionNode> = listOf(
         briefing = "Ten of yours against a dug-in garrison. Command them — or go dark and fight one " +
             "yourself. Just don't stay blind too long.",
         operation = 0,
+        latX10 = 496,
+        lonX10 = -13,
     ),
     MissionNode(
         id = 1,
@@ -318,6 +328,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "and hold by hand — but go dark and the line you can't see is the one that breaks.",
         prerequisites = listOf(0),
         operation = 0,
+        latX10 = 494,
+        lonX10 = -13,
     ),
     MissionNode(
         id = 2,
@@ -328,6 +340,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "rush blind is the one they take back behind you.",
         prerequisites = listOf(1),
         operation = 0,
+        latX10 = 495,
+        lonX10 = -15,
     ),
     // ---- The Meridian Crisis — Operation Dry Season ----
     MissionNode(
@@ -338,6 +352,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "yours to take it. Command the assault from above — or go dark and breach the wire " +
             "yourself. The dust hides them; it hides you too.",
         operation = 1,
+        latX10 = 62,
+        lonX10 = 13,
     ),
     MissionNode(
         id = 4,
@@ -348,6 +364,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "you can't see is the one they wade across.",
         prerequisites = listOf(3),
         operation = 1,
+        latX10 = 63,
+        lonX10 = 16,
     ),
     MissionNode(
         id = 5,
@@ -358,6 +376,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "in hand. But the checkpoint you rush blind is the one that closes behind you.",
         prerequisites = listOf(4),
         operation = 1,
+        latX10 = 64,
+        lonX10 = 12,
     ),
     // ---- The Gotland Winter — Operation Frostline ----
     MissionNode(
@@ -368,6 +388,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "strait refreezes. Ten of yours, no more coming. Direct them from above — or take a " +
             "rifle onto the ice yourself, and remember the quay you can't see is still shooting.",
         operation = 2,
+        latX10 = 577,
+        lonX10 = 188,
     ),
     MissionNode(
         id = 7,
@@ -378,6 +400,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "the treeline you go dark on is the one they come through.",
         prerequisites = listOf(6),
         operation = 2,
+        latX10 = 577,
+        lonX10 = 184,
     ),
     MissionNode(
         id = 8,
@@ -388,6 +412,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "the strongpoint you rush blind is the one retaken behind you.",
         prerequisites = listOf(7),
         operation = 2,
+        latX10 = 574,
+        lonX10 = 182,
     ),
     // ---- The Santo Crisis — Operation Trade Wind ----
     MissionNode(
@@ -398,6 +424,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "yours to take it before their heavy lift arrives. Command the assault from the ridge " +
             "— or wade in yourself, and hope the wharf you can't see isn't reinforcing.",
         operation = 3,
+        latX10 = -155,
+        lonX10 = 1671,
     ),
     MissionNode(
         id = 10,
@@ -408,6 +436,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "runway you go dark on is the one they land on.",
         prerequisites = listOf(9),
         operation = 3,
+        latX10 = -154,
+        lonX10 = 1672,
     ),
     MissionNode(
         id = 11,
@@ -418,6 +448,8 @@ val campaignNodes: List<MissionNode> = listOf(
             "the post you clear blind is theirs again before you turn around.",
         prerequisites = listOf(10),
         operation = 3,
+        latX10 = -151,
+        lonX10 = 1671,
     ),
 )
 

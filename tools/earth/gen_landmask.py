@@ -2,7 +2,7 @@
 """Generate the equirectangular Earth land mask the globe backdrop samples (D103).
 
 Script-not-binary (decisions.md D41/D46): this generator + the manifest entry are the committed
-source of record; the mask is a regenerable artifact. It downloads the **Natural Earth 1:110m
+source of record; the mask is a regenerable artifact. It downloads the **Natural Earth 1:50m
 land** polygons (public domain) and rasterizes them — pure-Python scanline fill, no GIS deps —
 into an equirectangular 8-bit mask (255 = land, 0 = sea), and emits:
 
@@ -31,19 +31,23 @@ import urllib.request
 from pathlib import Path
 
 # ---- The contract with render::globe_backdrop (MASK_* consts there must match) ------------------
-MASK_W = 720  # 0.5° per texel in longitude
-MASK_H = 360  # 0.5° per texel in latitude
+# 1440x720 @ 1:50m (was 720x360 @ 1:110m): the D106 battlefield overview zooms the globe onto a
+# single war, and at that framing the 1:110m data simply omits the smaller shipped battlegrounds
+# (Gotland, Espiritu Santo) — no resolution bump fixes missing source polygons. 0.25°/texel keeps
+# the embedded R8 at ~1 MB (1,036,800 bytes), the accepted cost of islands existing.
+MASK_W = 1440  # 0.25° per texel in longitude
+MASK_H = 720  # 0.25° per texel in latitude
 
-SOURCE_NAME = "Natural Earth 1:110m Land (ne_110m_land)"
+SOURCE_NAME = "Natural Earth 1:50m Land (ne_50m_land)"
 SOURCE_LICENSE = "Public Domain (Natural Earth terms of use)"
 SOURCE_URL = (
     "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/"
-    "geojson/ne_110m_land.geojson"
+    "geojson/ne_50m_land.geojson"
 )
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT_DIR = ROOT / "assets" / "earth"
-CACHE = Path(__file__).resolve().parent / "ne_110m_land.geojson"
+CACHE = Path(__file__).resolve().parent / "ne_50m_land.geojson"
 
 
 def fetch_geojson() -> dict:
