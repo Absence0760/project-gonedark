@@ -170,6 +170,10 @@ pub mod world;
 /// the cursor with a clamped parallax — the live mood-setting background behind the desktop title
 /// screen. Render-only (invariant #1/#4); reads no sim state. Public so the app shell drives it.
 pub mod title_backdrop;
+/// The campaign atlas globe backdrop (D103) — the earth + conflict pins behind the desktop
+/// Operations hub, `title_backdrop`'s self-contained sibling (own pipelines, procedural sphere,
+/// one embedded land-mask blob). Q28's presentation increment; the endstate fork stays open.
+pub mod globe_backdrop;
 
 /// Command-view ground grid (W6). Owns `TerrainRenderer`: a world-space lattice drawn under the units
 /// (first in the command pass) so position/motion read against a fixed reference instead of flat

@@ -103,7 +103,7 @@ fn camera_matrix(time: f32, cursor: [f32; 2], aspect: f32) -> ([[f32; 4]; 4], [f
 
 /// Right-handed perspective projection with a `z ∈ [0, 1]` clip range (wgpu/D3D/Metal/Vulkan),
 /// column-major. Mirrors `glam::Mat4::perspective_rh`. Hand-rolled scalar `f32` (no `glam`, D19).
-fn perspective_rh_zo(fovy: f32, aspect: f32, near: f32, far: f32) -> [[f32; 4]; 4] {
+pub(crate) fn perspective_rh_zo(fovy: f32, aspect: f32, near: f32, far: f32) -> [[f32; 4]; 4] {
     let f = 1.0 / (fovy * 0.5).tan();
     let nf = 1.0 / (near - far);
     [
@@ -116,7 +116,7 @@ fn perspective_rh_zo(fovy: f32, aspect: f32, near: f32, far: f32) -> [[f32; 4]; 
 
 /// Right-handed look-at view matrix (camera at `eye` looking toward `target`, `up` roughly up),
 /// column-major. Mirrors `glam::Mat4::look_at_rh`. Hand-rolled scalar `f32` (no `glam`, D19).
-fn look_at_rh(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [[f32; 4]; 4] {
+pub(crate) fn look_at_rh(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [[f32; 4]; 4] {
     let f = normalize(sub(target, eye)); // forward (toward the target)
     let s = normalize(cross(f, up)); // right
     let uu = cross(s, f); // true up
@@ -129,7 +129,7 @@ fn look_at_rh(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [[f32; 4]; 4] {
 }
 
 /// Column-major 4×4 multiply: returns `a * b`.
-fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+pub(crate) fn mat4_mul(a: [[f32; 4]; 4], b: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
     let mut m = [[0.0f32; 4]; 4];
     for c in 0..4 {
         for r in 0..4 {

@@ -268,6 +268,14 @@ pub struct Conflict {
     /// Short atlas blurb — the who/where/why framing at the conflict level (the same light-touch
     /// narrative register as a node briefing; Q16).
     pub summary: String,
+    /// The conflict's anchor **latitude in tenths of a degree** (`505` = 50.5°N, negative =
+    /// south) — where its atlas pin sits on the globe/map presentation (D103). Integer only
+    /// (invariant #1: `core` stays float-free; the render side converts at its boundary).
+    /// Presentation data like the years — never sim state, never checksummed.
+    pub lat_x10: i16,
+    /// Anchor **longitude in tenths of a degree** (`-15` = 1.5°W, negative = west; range
+    /// `-1800..=1800`). See [`Self::lat_x10`].
+    pub lon_x10: i16,
 }
 
 /// One **operation** inside a [`Conflict`] — the middle of the Q28 hierarchy (e.g. *Battle of
@@ -1195,6 +1203,8 @@ mod tests {
                     start_year: 2027,
                     end_year: 2028,
                     summary: "a fictional modern flashpoint".into(),
+                    lat_x10: 500,
+                    lon_x10: -15,
                 },
                 Conflict {
                     id: ConflictId(1),
@@ -1202,6 +1212,8 @@ mod tests {
                     start_year: 1944,
                     end_year: 1944,
                     summary: "a historical conflict, content pending".into(),
+                    lat_x10: 494,
+                    lon_x10: -6,
                 },
             ],
             vec![
@@ -1326,6 +1338,8 @@ mod tests {
                 start_year: 0,
                 end_year: 0,
                 summary: String::new(),
+                lat_x10: 0,
+                lon_x10: 0,
             }],
             Vec::new(),
             Vec::new(),
@@ -1342,6 +1356,8 @@ mod tests {
                 start_year: 1945,
                 end_year: 1944,
                 summary: String::new(),
+                lat_x10: 0,
+                lon_x10: 0,
             }],
             Vec::new(),
             Vec::new(),

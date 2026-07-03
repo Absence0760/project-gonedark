@@ -120,6 +120,14 @@ data class Conflict(
     val startYear: Int,
     val endYear: Int,
     val summary: String,
+    /**
+     * Atlas-pin anchor in **tenths of a degree** (D103; `505` = 50.5°N / negative = south,
+     * `-15` = 1.5°W / negative = west) — mirrors the Rust `Conflict::lat_x10`/`lon_x10`.
+     * Presentation data like the years; Android doesn't render the globe yet, but the mirrored
+     * model stays field-complete (D79) so the data can't drift when it does.
+     */
+    val latX10: Int = 0,
+    val lonX10: Int = 0,
 )
 
 /**
@@ -335,6 +343,9 @@ val campaignConflicts: List<Conflict> = listOf(
         endYear = 2028,
         summary = "A fictional modern flashpoint between US and French expeditionary forces " +
             "on the Channel coast — the campaign's first (placeholder) conflict.",
+        // Mid-Channel off the Cotentin coast (~50.0°N, 1.5°W) — the atlas pin (D103).
+        latX10 = 500,
+        lonX10 = -15,
     ),
 )
 

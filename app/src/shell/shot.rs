@@ -11,6 +11,7 @@
 
 use super::*;
 use gonedark_core::campaign::{Difficulty, NodeId};
+use gonedark_render::globe_backdrop::{GlobeBackdrop, GlobePin};
 
 const W: u32 = 1600;
 const H: u32 = 1000;
@@ -37,7 +38,30 @@ fn headless() -> (wgpu::Device, wgpu::Queue) {
 
 /// Render one screen builder into a PNG at `path`, clearing to a mid grey so the (dark, translucent)
 /// card reads against the background the live 3D backdrop would otherwise provide.
-fn shoot(device: &wgpu::Device, queue: &wgpu::Queue, path: &str, mut build: impl FnMut(&mut egui::Ui)) {
+fn shoot(device: &wgpu::Device, queue: &wgpu::Queue, path: &str, build: impl FnMut(&mut egui::Ui)) {
+    shoot_impl(device, queue, path, None, build)
+}
+
+/// [`shoot`], composited over the LIVE campaign globe backdrop (D103) instead of the grey stand-in —
+/// the one shot that exercises the real `render::globe_backdrop` WGSL + pipelines headlessly, so a
+/// shader regression fails here instead of at title boot.
+fn shoot_over_globe(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    path: &str,
+    pins: &[GlobePin],
+    build: impl FnMut(&mut egui::Ui),
+) {
+    shoot_impl(device, queue, path, Some(pins), build)
+}
+
+fn shoot_impl(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    path: &str,
+    globe_pins: Option<&[GlobePin]>,
+    mut build: impl FnMut(&mut egui::Ui),
+) {
     let ctx = egui::Context::default();
     ctx.set_theme(egui::ThemePreference::Dark);
     ctx.all_styles_mut(|style| *style = shell_style());
@@ -98,8 +122,25 @@ fn shoot(device: &wgpu::Device, queue: &wgpu::Queue, path: &str, mut build: impl
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("shell-shot.encoder"),
     });
+    // The globe variant paints the real backdrop first (it clears the view itself), then the
+    // egui pass LOADs over it — the same compositing order as `run_and_paint`.
+    if let Some(pins) = globe_pins {
+        let mut globe = GlobeBackdrop::new(device, FORMAT);
+        globe.render(device, queue, &view, (W, H), 1.0, None, pins);
+    }
     let user_cmds = renderer.update_buffers(device, queue, &mut enc, &jobs, &screen);
     {
+        let load = if globe_pins.is_some() {
+            wgpu::LoadOp::Load
+        } else {
+            // A mid slate grey stand-in for the live backdrop, so the card's edges are visible.
+            wgpu::LoadOp::Clear(wgpu::Color {
+                r: 0.22,
+                g: 0.25,
+                b: 0.30,
+                a: 1.0,
+            })
+        };
         let pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("shell-shot.pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -107,13 +148,7 @@ fn shoot(device: &wgpu::Device, queue: &wgpu::Queue, path: &str, mut build: impl
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    // A mid slate grey stand-in for the live backdrop, so the card's edges are visible.
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.22,
-                        g: 0.25,
-                        b: 0.30,
-                        a: 1.0,
-                    }),
+                    load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
@@ -236,6 +271,11 @@ fn shell_screens_to_png() {
         loadout_ui(ui, &loadout);
     });
     shoot(&device, &queue, &format!("{dir}/operations.png"), |ui| {
+        mission_select_ui(ui, &campaign);
+    });
+    // The hub over the LIVE atlas globe (D103) — exercises the real globe WGSL headlessly.
+    let pins = atlas_pins(&campaign);
+    shoot_over_globe(&device, &queue, &format!("{dir}/operations_globe.png"), &pins, |ui| {
         mission_select_ui(ui, &campaign);
     });
     shoot(&device, &queue, &format!("{dir}/settings.png"), |ui| {

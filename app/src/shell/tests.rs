@@ -1123,6 +1123,8 @@ use gonedark_render::tiers::QualityTier;
                     start_year: 2027,
                     end_year: 2028,
                     summary: "a fictional modern flashpoint".into(),
+                    lat_x10: 500,
+                    lon_x10: -15,
                 },
                 Conflict {
                     id: ConflictId(1),
@@ -1130,6 +1132,8 @@ use gonedark_render::tiers::QualityTier;
                     start_year: 1944,
                     end_year: 1944,
                     summary: "content pending".into(),
+                    lat_x10: 494,
+                    lon_x10: -6,
                 },
             ],
             vec![
@@ -1201,6 +1205,28 @@ use gonedark_render::tiers::QualityTier;
         seen.sort_unstable();
         let all: Vec<NodeId> = (0..campaign.len() as u32).map(NodeId).collect();
         assert_eq!(seen, all, "every node renders exactly once");
+    }
+
+    #[test]
+    fn the_globe_focuses_the_conflict_being_fought_and_pins_every_conflict() {
+        // Fresh atlas: the first conflict is in progress → it holds the focus, and every authored
+        // conflict gets exactly one pin at its tenth-degree anchor converted to degrees (D103).
+        let mut campaign = atlas_campaign();
+        assert_eq!(focused_conflict(&campaign), 0);
+        let pins = atlas_pins(&campaign);
+        assert_eq!(pins.len(), 2);
+        assert!((pins[0].lat_deg - 50.0).abs() < 1e-6);
+        assert!((pins[0].lon_deg - -1.5).abs() < 1e-6);
+        assert!(pins[0].focused);
+        assert!(!pins[1].focused);
+        assert_eq!(pins.iter().filter(|p| p.focused).count(), 1, "exactly one focus");
+
+        // Clear everything in conflict 0 → the focus advances to the next unfinished conflict.
+        for node in 0..campaign.len() as u32 {
+            let _ = campaign.clear(NodeId(node), Difficulty::Regular);
+        }
+        assert_eq!(focused_conflict(&campaign), 1);
+        assert!(atlas_pins(&campaign)[1].focused);
     }
 
     #[test]

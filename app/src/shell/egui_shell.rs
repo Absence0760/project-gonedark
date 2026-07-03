@@ -8,7 +8,7 @@ use crate::shell::about::about_ui;
 use crate::shell::army::{army_label, army_select_ui, ArmySelectAction, ArmySelectState};
 use crate::shell::briefing::{briefing_ui, BriefingAction};
 use crate::shell::loadout::{loadout_ui, LoadoutAction};
-use crate::shell::mission_select::{mission_select_ui, MissionSelectAction, NextOperation};
+use crate::shell::mission_select::{atlas_pins, mission_select_ui, MissionSelectAction, NextOperation};
 use crate::shell::profile::win_rate_pct;
 use crate::shell::pvp::{pvp_ui, PvpAction};
 use crate::shell::profile::{profile_ui, ProfileAction, ProfileState};
@@ -23,8 +23,21 @@ use gonedark_core::campaign::{Campaign, Difficulty, NodeId};
 use gonedark_engine::keybind::GameAction;
 use gonedark_engine::loadout_ui::LoadoutEditor;
 use gonedark_pal_desktop::DesktopRenderSurface;
+use gonedark_render::globe_backdrop::{GlobeBackdrop, GlobePin};
 use gonedark_render::title_backdrop::TitleBackdrop;
+
 use winit::window::Window;
+
+/// Which live 3D scene paints behind a shell screen (D103): the title **diorama** (the greybox
+/// city — every general screen), or the campaign **globe** (the conflict atlas earth, pins from
+/// [`atlas_pins`](crate::shell::mission_select::atlas_pins) — the Operations hub + briefing).
+/// The per-screen `draw_*` wrapper picks; `run_and_paint` just paints what it's told.
+pub(crate) enum ShellBackdrop<'a> {
+    /// The title diorama (the shipped default for every out-of-match screen).
+    Diorama,
+    /// The campaign atlas globe, with one pin per conflict.
+    Globe(&'a [GlobePin]),
+}
 
 /// The egui-backed title screen: an egui context, the winit→egui input bridge, and the egui-wgpu
 /// renderer that paints into the same surface the engine uses. Owns no game state.
@@ -38,6 +51,9 @@ pub(crate) struct EguiShell {
     /// flat-clear title without panicking the shell — the pinned `new` is infallible today, so it is
     /// always `Some`. Only the title screen uses it; the loadout screen clears its own ink panel.
     backdrop: Option<TitleBackdrop>,
+    /// The campaign atlas globe (D103) — the Operations hub / briefing backdrop. Built beside the
+    /// diorama; only one paints per frame (`ShellBackdrop`).
+    globe: Option<GlobeBackdrop>,
     /// Transient Settings **rebind-editor** state (D75 follow-up): the action currently capturing a
     /// key (`Some` while the row shows "press a key…"), and the last conflict `(action, owner)` to
     /// surface as feedback. Ephemeral UI interaction state — not a persisted pref (the map itself
@@ -83,6 +99,8 @@ impl EguiShell {
         // Build the live 3D title backdrop against the swapchain's sRGB scene format (it renders into
         // the sRGB view). Infallible per the pinned API, so always `Some` today.
         let backdrop = Some(TitleBackdrop::new(device, scene_format));
+        // The campaign globe renders into the same sRGB scene view (D103).
+        let globe = Some(GlobeBackdrop::new(device, scene_format));
 
         EguiShell {
             ctx,
@@ -90,6 +108,7 @@ impl EguiShell {
             renderer,
             stamp,
             backdrop,
+            globe,
             rebinding: None,
             rebind_conflict: None,
         }
@@ -124,9 +143,9 @@ impl EguiShell {
         // `run_and_paint` takes. The identity/campaign state is HOST state (disjoint from
         // `EguiShell`), so it threads straight through as borrows.
         let stamp = self.stamp.clone();
-        // `with_backdrop = true`: paint the live 3D backdrop into the frame first, then composite the
+        // Diorama backdrop: paint the live 3D scene into the frame first, then composite the
         // title HUD over it (`LoadOp::Load`).
-        self.run_and_paint(surface, true, |ui| title_ui(ui, &stamp, profile, army, next))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| title_ui(ui, &stamp, profile, army, next))
     }
 
     /// Draw the pre-match gunsmith / loadout screen for one frame and return the [`LoadoutAction`]
@@ -140,7 +159,7 @@ impl EguiShell {
         // `with_backdrop = true`: the gunsmith sits in the same translucent card over the live 3D
         // backdrop as every other out-of-match screen, so the whole shell reads as one family (it
         // previously kept an opaque ink panel — the lone odd-one-out surface).
-        self.run_and_paint(surface, true, |ui| loadout_ui(ui, editor))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| loadout_ui(ui, editor))
     }
 
     /// Draw the Settings screen for one frame and return the [`SettingsAction`] whose control was
@@ -157,7 +176,7 @@ impl EguiShell {
         // `&mut self` borrow `run_and_paint` takes (the `stamp` clone pattern), then write it back.
         let mut rebinding = self.rebinding;
         let mut conflict = self.rebind_conflict;
-        let action = self.run_and_paint(surface, true, |ui| {
+        let action = self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| {
             settings_ui(ui, state, fullscreen, &mut rebinding, &mut conflict)
         });
         self.rebinding = rebinding;
@@ -173,7 +192,7 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         profile: &mut ProfileState,
     ) -> Option<ProfileAction> {
-        self.run_and_paint(surface, true, |ui| profile_ui(ui, profile))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| profile_ui(ui, profile))
     }
 
     /// Draw the **army-select** screen for one frame and return the [`ArmySelectAction`] used, if any.
@@ -186,14 +205,14 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         state: &ArmySelectState,
     ) -> Option<ArmySelectAction> {
-        self.run_and_paint(surface, true, |ui| army_select_ui(ui, state))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| army_select_ui(ui, state))
     }
 
     /// Draw the About / controls-reference screen for one frame. Returns `true` on BACK (the only
     /// control), so the run loop returns to Settings. Static content over the backdrop. Pure.
     pub(crate) fn draw_about(&mut self, surface: &mut DesktopRenderSurface) -> bool {
         let stamp = self.stamp.clone();
-        self.run_and_paint(surface, true, |ui| about_ui(ui, &stamp).then_some(()))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| about_ui(ui, &stamp).then_some(()))
             .is_some()
     }
 
@@ -207,7 +226,7 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         player_army: gonedark_core::components::Army,
     ) -> Option<PvpAction> {
-        self.run_and_paint(surface, true, |ui| pvp_ui(ui, player_army))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| pvp_ui(ui, player_army))
     }
 
     /// Draw the **skirmish match-setup** screen (`modes.md` §3) for one frame and return the
@@ -222,7 +241,7 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         state: &SkirmishSetupState,
     ) -> Option<SkirmishSetupAction> {
-        self.run_and_paint(surface, true, |ui| skirmish_setup_ui(ui, state))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| skirmish_setup_ui(ui, state))
     }
 
     /// Draw the Operations-hub **mission-select** screen for one frame and return the
@@ -236,7 +255,10 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         campaign: &Campaign,
     ) -> Option<MissionSelectAction> {
-        self.run_and_paint(surface, true, |ui| mission_select_ui(ui, campaign))
+        // The campaign door swaps the diorama for the atlas globe (D103), pinned per conflict
+        // and settled on the one the player is fighting (the pure `atlas_pins` seam).
+        let pins = atlas_pins(campaign);
+        self.run_and_paint(surface, ShellBackdrop::Globe(&pins), |ui| mission_select_ui(ui, campaign))
     }
 
     /// Draw the **briefing** screen for `node` for one frame and return the [`BriefingAction`] used,
@@ -251,7 +273,9 @@ impl EguiShell {
         node: NodeId,
         selected: Difficulty,
     ) -> Option<BriefingAction> {
-        self.run_and_paint(surface, true, |ui| briefing_ui(ui, campaign, node, selected))
+        // The briefing stays under the atlas globe — the whole campaign flow shares one sky.
+        let pins = atlas_pins(campaign);
+        self.run_and_paint(surface, ShellBackdrop::Globe(&pins), |ui| briefing_ui(ui, campaign, node, selected))
     }
 
     /// Run one egui frame (`build` lays out the UI and returns this frame's action) and paint the
@@ -270,7 +294,7 @@ impl EguiShell {
     fn run_and_paint<T>(
         &mut self,
         surface: &mut DesktopRenderSurface,
-        with_backdrop: bool,
+        backdrop: ShellBackdrop<'_>,
         // `egui::Context::run_ui` takes an `FnMut` (it may run the UI more than once for a sizing
         // pass), so the per-screen builder is `FnMut` too.
         mut build: impl FnMut(&mut egui::Ui) -> Option<T>,
@@ -333,11 +357,20 @@ impl EguiShell {
         // Paint the 3D backdrop into the (sRGB) view BEFORE egui (it clears + submits its own encoder),
         // so the egui pass below loads over it. `self.backdrop`/`self.renderer` are disjoint fields, so
         // this split borrow is fine.
-        if with_backdrop {
-            if let Some(bd) = self.backdrop.as_mut() {
-                bd.render(device, queue, &view, (w, h), time, cursor);
+        let painted = match backdrop {
+            ShellBackdrop::Diorama => {
+                if let Some(bd) = self.backdrop.as_mut() {
+                    bd.render(device, queue, &view, (w, h), time, cursor);
+                }
+                self.backdrop.is_some()
             }
-        }
+            ShellBackdrop::Globe(pins) => {
+                if let Some(gb) = self.globe.as_mut() {
+                    gb.render(device, queue, &view, (w, h), time, cursor, pins);
+                }
+                self.globe.is_some()
+            }
+        };
 
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [w, h],
@@ -354,7 +387,7 @@ impl EguiShell {
             // backdrop), preserving the original opaque look. The clear targets the linear
             // (non-sRGB) egui view, so these are gamma-space (raw-byte) values matching the INK
             // panel colour (0x07,0x09,0x0C) — not linear values.
-            let load = if with_backdrop {
+            let load = if painted {
                 wgpu::LoadOp::Load
             } else {
                 wgpu::LoadOp::Clear(wgpu::Color {

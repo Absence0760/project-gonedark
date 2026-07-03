@@ -14,6 +14,7 @@ use gonedark_core::campaign::{
     Campaign, Conflict, ConflictId, GroupProgress, MissionSelectEntry, NodeId, NodeProgress,
     Operation, OperationId,
 };
+use gonedark_render::globe_backdrop::GlobePin;
 
 /// An action the mission-select (Operations-hub) screen can emit in a frame. The hub reads the
 /// campaign through [`Campaign::mission_select`] (host-side, never the sim — invariants #1/#7); the
@@ -153,6 +154,36 @@ pub(crate) fn operation_header_label(operation: &Operation, progress: GroupProgr
         progress.cleared,
         progress.total
     )
+}
+
+/// Which conflict the globe backdrop settles on (D103): the **first not-yet-complete** conflict in
+/// authored order — the one the player is actually fighting — falling back to the first when the
+/// whole atlas is cleared (a finished campaign still frames its opening war). Pure — the backdrop's
+/// one campaign decision, unit-tested; the rendering is the exempt glue.
+pub(crate) fn focused_conflict(campaign: &Campaign) -> usize {
+    campaign
+        .conflicts()
+        .iter()
+        .position(|c| !campaign.conflict_progress(c.id).is_complete())
+        .unwrap_or(0)
+}
+
+/// The globe backdrop's pin list (D103): one [`GlobePin`] per authored conflict, at its
+/// `lat_x10`/`lon_x10` anchor (integer tenth-degrees → render-side degrees — the float boundary,
+/// invariant #1: the conversion happens here, on the render side of the seam), with exactly the
+/// [`focused_conflict`] marked. Pure data derived from the campaign — never the sim.
+pub(crate) fn atlas_pins(campaign: &Campaign) -> Vec<GlobePin> {
+    let focus = focused_conflict(campaign);
+    campaign
+        .conflicts()
+        .iter()
+        .enumerate()
+        .map(|(i, c)| GlobePin {
+            lat_deg: c.lat_x10 as f32 / 10.0,
+            lon_deg: c.lon_x10 as f32 / 10.0,
+            focused: i == focus,
+        })
+        .collect()
 }
 
 /// The mission list's scroll-viewport cap for the height actually available inside the card —

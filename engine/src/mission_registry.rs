@@ -274,6 +274,9 @@ pub fn default_campaign() -> Campaign {
             summary: "A fictional modern flashpoint between US and French expeditionary forces \
                       on the Channel coast — the campaign's first (placeholder) conflict."
                 .to_string(),
+            // Mid-Channel off the Cotentin coast (~50.0°N, 1.5°W) — the atlas pin (D103).
+            lat_x10: 500,
+            lon_x10: -15,
         }],
         vec![Operation {
             id: OperationId(0),
