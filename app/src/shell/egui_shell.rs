@@ -10,7 +10,7 @@ use crate::shell::briefing::{briefing_ui, BriefingAction};
 use crate::shell::loadout::{loadout_ui, LoadoutAction};
 use crate::shell::mission_select::{mission_select_ui, MissionSelectAction, NextOperation};
 use crate::shell::profile::win_rate_pct;
-use crate::shell::mode_select::{mode_select_ui, ModeSelectAction};
+use crate::shell::pvp::{pvp_ui, PvpAction};
 use crate::shell::profile::{profile_ui, ProfileAction, ProfileState};
 use crate::shell::settings::{settings_ui, SettingsAction, SettingsState};
 use crate::shell::skirmish::{skirmish_setup_ui, SkirmishSetupAction, SkirmishSetupState};
@@ -197,17 +197,17 @@ impl EguiShell {
             .is_some()
     }
 
-    /// Draw the Skirmish/PvP **mode / map select** screen for one frame and return the
-    /// [`ModeSelectAction`] used, if any (D81). The mode table is the static
-    /// [`SHELL_GAME_MODES`](gonedark_engine::shell_modes::SHELL_GAME_MODES); this holds no host state.
-    /// Over the live 3D backdrop, same as the other out-of-match screens. Pure presentation — the
-    /// picked mode's scene resolution is the `engine`-tested `GameMode::scene` seam, this is the
-    /// device-gated glue.
-    pub(crate) fn draw_mode_select(
+    /// Draw the **PvP staging** screen for one frame and return the [`PvpAction`] used, if any.
+    /// `player_army` is the persisted identity pick shown read-only on the §4a pre-queue line —
+    /// this holds no host state of its own. Over the live 3D backdrop, same as the other
+    /// out-of-match screens. Pure presentation — the no-queue-is-joinable rule is the pure
+    /// [`queue_joinable`](crate::shell::pvp::queue_joinable) seam, this is the device-gated glue.
+    pub(crate) fn draw_pvp(
         &mut self,
         surface: &mut DesktopRenderSurface,
-    ) -> Option<ModeSelectAction> {
-        self.run_and_paint(surface, true, mode_select_ui)
+        player_army: gonedark_core::components::Army,
+    ) -> Option<PvpAction> {
+        self.run_and_paint(surface, true, |ui| pvp_ui(ui, player_army))
     }
 
     /// Draw the **skirmish match-setup** screen (`modes.md` §3) for one frame and return the

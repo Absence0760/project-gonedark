@@ -1,7 +1,7 @@
 //! The pure-seam unit tests for the whole shell module tree — the decision/formatting logic across
 //! [`transitions`](super::transitions), [`settings`](super::settings), [`loadout`](super::loadout),
 //! [`profile`](super::profile), [`army`](super::army), [`about`](super::about),
-//! [`mode_select`](super::mode_select), [`mission_select`](super::mission_select),
+//! [`pvp`](super::pvp), [`mission_select`](super::mission_select),
 //! [`briefing`](super::briefing), [`skirmish`](super::skirmish), [`persist`](super::persist),
 //! [`util`](super::util) and
 //! [`theme`](super::theme)/[`widgets`](super::widgets). The egui glue (`EguiShell`/`title_ui`/
@@ -52,18 +52,23 @@ use gonedark_render::tiers::QualityTier;
     }
 
     #[test]
-    fn skirmish_opens_the_match_setup_and_pvp_keeps_the_mode_select() {
-        // SKIRMISH (TitleAction::Pve) opens the skirmish match-setup screen (`modes.md` §3,
-        // build-order step 1) — the free-pick deploy gate. PvP keeps the lightweight mode picker
-        // until its own match-setup lands (Q5/Phase-3-gated); the gunsmith stays
+    fn each_play_mode_opens_its_own_door() {
+        // The three front doors stay distinct (`modes.md` §1): SKIRMISH (TitleAction::Pve) opens
+        // the skirmish match-setup screen (§3, build-order step 1) and PvP opens its own staging
+        // door (§5) — no play mode shares another's surface, and the gunsmith stays
         // customization-only behind Settings (D81).
         assert_eq!(
             resolve_title_action(TitleAction::Pve),
             HostTransition::OpenSkirmishSetup
         );
-        assert_eq!(
+        assert_eq!(resolve_title_action(TitleAction::Pvp), HostTransition::OpenPvp);
+        assert_ne!(
             resolve_title_action(TitleAction::Pvp),
-            HostTransition::OpenModeSelect
+            resolve_title_action(TitleAction::Pve)
+        );
+        assert_ne!(
+            resolve_title_action(TitleAction::Pvp),
+            resolve_title_action(TitleAction::Campaign)
         );
     }
 
@@ -1489,4 +1494,46 @@ use gonedark_render::tiers::QualityTier;
         let mut state = SkirmishSetupState::default();
         state.reseed_player_army(Army::Us);
         assert_eq!(state, SkirmishSetupState::default());
+    }
+
+    // ---- pvp: the staging door (`modes.md` §1/§5) ----------------------------------------------
+
+    #[test]
+    fn no_pvp_queue_is_joinable_before_the_net_layer() {
+        // The staging screen's honesty rule as a tested invariant: with no Phase 3 session
+        // transport, nothing on the PvP door may present as joinable — every queue row routes
+        // through this gate exactly as mission tiles route through `playable_node`. When the
+        // custom lobby lands, this test is what changes (per-queue), not the screen's structure.
+        for queue in PVP_QUEUES {
+            assert!(
+                !queue_joinable(queue),
+                "queue {:?} reads joinable with no net layer to back it",
+                queue.id
+            );
+        }
+    }
+
+    #[test]
+    fn pvp_queues_are_the_three_doors_in_build_order() {
+        // The table mirrors `modes.md` §5: the custom lobby is first (the first real PvP surface —
+        // the smallest thing that puts two humans in one lockstep match), then quick, then ranked.
+        assert_eq!(PVP_QUEUES.len(), 3);
+        assert_eq!(PVP_QUEUES[0].id, "custom");
+        assert_eq!(PVP_QUEUES[1].id, "quick");
+        assert_eq!(PVP_QUEUES[2].id, "ranked");
+    }
+
+    #[test]
+    fn pvp_queue_table_is_distinct_ascii_and_complete() {
+        // The mode-table hygiene rule (`shell_modes`' ASCII/uniqueness guard, applied here): every
+        // field renders in egui's default font and every tile is uniquely keyed.
+        for q in PVP_QUEUES {
+            assert!(q.id.is_ascii() && q.name.is_ascii() && q.blurb.is_ascii() && q.status.is_ascii());
+            assert!(!q.id.is_empty() && !q.name.is_empty() && !q.blurb.is_empty() && !q.status.is_empty());
+        }
+        for (i, a) in PVP_QUEUES.iter().enumerate() {
+            for b in &PVP_QUEUES[i + 1..] {
+                assert_ne!(a.id, b.id, "duplicate queue id {:?}", a.id);
+            }
+        }
     }

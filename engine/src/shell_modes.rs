@@ -1,8 +1,11 @@
-//! The Pve/Pvp **mode / map select** model (D81) — the lightweight picker the desktop and Android
-//! shells land on after a play-mode tap, replacing the old "funnel every play mode through the
-//! gunsmith" flow. Each [`GameMode`] names a launchable battle and carries the engine scene token
-//! [`Scene::parse`] resolves; picking one deploys straight into that scene with the player's
-//! persisted loadout — no gunsmith gate (the gunsmith moved behind Settings, D81).
+//! The **standing-battle table** (D81) — the launchable free-pick battles the shells' skirmish
+//! surfaces list. Born as the shared Pve/Pvp "mode / map select"; with the three front doors now
+//! distinct (`modes.md` §1 — PvP has its own staging door, nothing joinable pre-net), this table
+//! backs the **skirmish battlefield picker** (desktop `shell::skirmish`, Android's Compose twin).
+//! Each [`GameMode`] names a launchable battle and carries the engine scene token [`Scene::parse`]
+//! resolves; a Deploy boots straight into that scene with the player's persisted loadout — no
+//! gunsmith gate (the gunsmith moved behind Settings, D81). It grows into the `modes.md` §3
+//! map-library manifest when the D34 listing seam lands.
 //!
 //! This is the **pure, testable seam** the device-gated shell chrome renders — the Rust counterpart
 //! of Android's `GameMode.kt` / `shellGameModes`. It holds no game state and never touches the sim
@@ -12,9 +15,9 @@
 
 use crate::Scene;
 
-/// One selectable battle on the mode/map picker: a stable id, a display name + one-line blurb for the
-/// tile, and the engine [`Scene`] token deployed on pick. All fields are `&'static str`, so the type
-/// is `Copy` and the whole table is a `const`.
+/// One selectable standing battle on the skirmish battlefield picker: a stable id, a display name +
+/// one-line blurb for the tile, and the engine [`Scene`] token deployed on pick. All fields are
+/// `&'static str`, so the type is `Copy` and the whole table is a `const`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GameMode {
     /// Stable id (also a tile key). ASCII.
@@ -30,17 +33,18 @@ pub struct GameMode {
 impl GameMode {
     /// The [`Scene`] this mode deploys into, or `None` if its token is unknown to [`Scene::parse`]
     /// (which the [`SHELL_GAME_MODES`] test forbids for any shipped mode, so in practice always
-    /// `Some`). Pure — this is the mode-select's one real decision, unit-tested without a GPU.
+    /// `Some`). Pure — this is the battlefield picker's one real decision, unit-tested without a GPU.
     #[inline]
     pub fn scene(self) -> Option<Scene> {
         Scene::parse(self.scene_token)
     }
 }
 
-/// The modes offered on the Pve/Pvp picker today: the two standing battle scenes, mirroring Android's
+/// The standing battles the skirmish battlefield picker offers today, mirroring Android's
 /// `shellGameModes`. Skirmish is the open fight against the scripted enemy commander; Seize Ground is
-/// the take-and-hold objective map. The list grows as more scenes land (and splits per-mode once PvP
-/// match-setup exists — Q5).
+/// the take-and-hold objective map (the same battlefield campaign mission 1 is authored on — content
+/// is mode-agnostic, D76). The list grows as more scenes land, and becomes the map-library manifest
+/// when the D34 listing seam does.
 pub const SHELL_GAME_MODES: &[GameMode] = &[
     GameMode {
         id: "skirmish",

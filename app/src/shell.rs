@@ -18,7 +18,7 @@
 //!  - [`theme`] — colour ramp, type scale, the cohesive [`shell_style`];
 //!  - [`widgets`] — the reusable egui component library + shared layout constants;
 //!  - [`transitions`] — the title action → host-transition decision surface;
-//!  - [`settings`], [`loadout`], [`profile`], [`army`], [`about`], [`mode_select`],
+//!  - [`settings`], [`loadout`], [`profile`], [`army`], [`about`], [`pvp`],
 //!    [`mission_select`], [`briefing`], [`skirmish`] — one out-of-match screen each (model + seam
 //!    + builder);
 //!  - [`persist`] — the tolerant shell-prefs `key=value` codec;
@@ -31,9 +31,9 @@ mod briefing;
 mod egui_shell;
 mod loadout;
 mod mission_select;
-mod mode_select;
 mod persist;
 mod profile;
+mod pvp;
 mod settings;
 mod skirmish;
 mod theme;
@@ -51,9 +51,9 @@ pub(crate) use briefing::*;
 pub(crate) use egui_shell::*;
 pub(crate) use loadout::*;
 pub(crate) use mission_select::*;
-pub(crate) use mode_select::*;
 pub(crate) use persist::*;
 pub(crate) use profile::*;
+pub(crate) use pvp::*;
 pub(crate) use settings::*;
 pub(crate) use skirmish::*;
 pub(crate) use transitions::*;

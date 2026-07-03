@@ -226,8 +226,8 @@ fn shell_screens_to_png() {
     shoot(&device, &queue, &format!("{dir}/title.png"), |ui| {
         title_ui(ui, "build dev \u{00b7} v0.0.0", &profile, &army, next.as_ref());
     });
-    shoot(&device, &queue, &format!("{dir}/mode_select.png"), |ui| {
-        mode_select_ui(ui);
+    shoot(&device, &queue, &format!("{dir}/pvp.png"), |ui| {
+        pvp_ui(ui, gonedark_core::components::Army::Us);
     });
     shoot(&device, &queue, &format!("{dir}/skirmish_setup.png"), |ui| {
         skirmish_setup_ui(ui, &SkirmishSetupState::default());

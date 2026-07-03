@@ -4,7 +4,7 @@
 //!
 //! The out-of-match host screens are the desktop counterpart of Android's `MainActivity →
 //! NativeActivity` split ([D35](../docs/decisions.md)): the **Title** screen, the **skirmish
-//! match-setup** (`modes.md` §3), PvP **mode-select** and campaign **mission-select/briefing**
+//! match-setup** (`modes.md` §3), the **PvP staging** door and campaign **mission-select/briefing**
 //! deploy gates, the **Settings** screen and
 //! the gunsmith **Loadout** customization screen behind it — all egui, in [`shell`] — and the in-match
 //! **Game** (the shared engine loop — deterministic fixed-tick sim, render interpolation (invariant
@@ -47,7 +47,7 @@ use shell::{
     apply_army_select_action, apply_briefing_action, apply_loadout_action, apply_profile_action,
     apply_settings_action, apply_skirmish_setup_action, build_channel, build_stamp,
     resolve_title_action, AboutReturn, ArmySelectState, ArmySelectStep, BriefingOutcome, EguiShell,
-    HostTransition, LoadoutStep, MissionSelectAction, ModeSelectAction, ProfileState, ProfileStep,
+    HostTransition, LoadoutStep, MissionSelectAction, ProfileState, ProfileStep, PvpAction,
     SettingsState, SettingsStep, SkirmishConfig, SkirmishSetupState, SkirmishSetupStep,
 };
 
@@ -69,10 +69,10 @@ enum Screen {
     /// The **army-select** screen — pick the US/FR roster the player deploys as (factions-plan WS-D,
     /// D68). State lives on [`App::army_select`]; carries no data of its own.
     ArmySelect,
-    /// The Pve/Pvp **mode / map select** screen (D81). Reads the static
-    /// [`gonedark_engine::shell_modes::SHELL_GAME_MODES`]; carries no host data. Picking a mode sets
-    /// [`App::scene`] and deploys straight into the match with the persisted loadout.
-    ModeSelect,
+    /// The **PvP staging** screen (`modes.md` §1/§5) — the title's PvP door. Reads the static
+    /// `PVP_QUEUES` table plus the persisted [`App::army_select`] pick (read-only); carries no host
+    /// data. Nothing is joinable until the Phase 3 net layer lands, so its only exit is BACK.
+    Pvp,
     /// The **skirmish match-setup** screen (`modes.md` §3) — the free-pick PvE deploy gate behind
     /// the title's SKIRMISH button: battlefield, both armies, opponent tier. State lives on
     /// [`App::skirmish`]; carries no data of its own.
@@ -271,11 +271,12 @@ impl App {
     /// the 4→3 enemy-commander band + the scenario situation modifiers); a queued **configured
     /// skirmish** ([`App::pending_skirmish`], set by the setup screen's DEPLOY) boots its picked
     /// battlefield with both army picks and the opponent tier (see the branch below); otherwise it
-    /// fields [`App::scene`] (the CLI default, or the scene a mode-select pick chose). The chosen
+    /// fields [`App::scene`] (the `--scene` dev/playtest launch — the only remaining unconfigured
+    /// boot now that every player-facing door deploys a configured launch). The chosen
     /// tier is also carried in [`App::active_mission`] for clear-recording, and a skirmish config in
     /// [`App::active_skirmish`] for REMATCH.
     ///
-    /// Shared by the [`EnterMatch`](HostTransition::EnterMatch) and
+    /// Shared by the [`LaunchSkirmish`](HostTransition::LaunchSkirmish) and
     /// [`LaunchMission`](HostTransition::LaunchMission) transitions: under D81 both deploy **directly**
     /// (no gunsmith intermediate — the gunsmith is customization-only behind Settings now). The
     /// deterministic sim is untouched: the loadout only reaches the sim through the scenario seeder at
@@ -536,25 +537,13 @@ impl App {
                     }
                 }
             }
-            Screen::ModeSelect => {
+            Screen::Pvp => {
                 if let Some(sh) = self.shell.as_mut() {
-                    if let Some(action) = sh.draw_mode_select(surface) {
+                    // The staging screen's only live control is BACK — no queue is joinable until
+                    // the Phase 3 net layer lands (the pure `queue_joinable` seam).
+                    if let Some(action) = sh.draw_pvp(surface, self.army_select.selected) {
                         transition = match action {
-                            // Pick a mode → resolve its scene (the engine-tested `GameMode::scene`
-                            // seam) and deploy straight in with the persisted loadout (D81 — no
-                            // gunsmith gate). An un-parseable token (forbidden by the shell_modes
-                            // test) defensively keeps the current scene.
-                            ModeSelectAction::Pick(mode) => {
-                                if let Some(scene) = mode.scene() {
-                                    self.scene = scene;
-                                }
-                                // A mode-select deploy is never a campaign or configured-skirmish
-                                // launch.
-                                self.pending_launch = None;
-                                self.pending_skirmish = None;
-                                Some(HostTransition::EnterMatch)
-                            }
-                            ModeSelectAction::Back => Some(HostTransition::ExitToTitle),
+                            PvpAction::Back => Some(HostTransition::ExitToTitle),
                         };
                     }
                 }
@@ -778,10 +767,10 @@ impl App {
                 self.screen = Screen::Loadout;
                 self.last_frame = Instant::now();
             }
-            // PvE/PvP → the mode/map select (D81). Picking a mode there deploys straight into the
-            // match with the persisted loadout (no gunsmith gate).
-            Some(HostTransition::OpenModeSelect) => {
-                self.screen = Screen::ModeSelect;
+            // PvP → the staging door (`modes.md` §1/§5): the queues in build order, none joinable
+            // until the Phase 3 net layer lands.
+            Some(HostTransition::OpenPvp) => {
+                self.screen = Screen::Pvp;
                 self.last_frame = Instant::now();
             }
             // SKIRMISH → the match-setup screen (`modes.md` §3). Re-seed the player side from the
@@ -826,7 +815,6 @@ impl App {
                 self.pending_skirmish = None;
                 self.enter_match();
             }
-            Some(HostTransition::EnterMatch) => self.enter_match(),
             // Out-of-match utility screens — drawn over the same 3D backdrop as the title.
             Some(HostTransition::OpenSettings) => {
                 self.screen = Screen::Settings;
@@ -918,7 +906,7 @@ fn escape_transition(screen: &Screen) -> Option<HostTransition> {
         Screen::Settings
         | Screen::Profile
         | Screen::ArmySelect
-        | Screen::ModeSelect
+        | Screen::Pvp
         | Screen::SkirmishSetup
         | Screen::MissionSelect => Some(HostTransition::ExitToTitle),
         // A briefing backs out to its mission list (its own BACK target).
@@ -994,13 +982,13 @@ impl ApplicationHandler for App {
         // nothing leaks between the shell and the sim.)
         match self.screen {
             // The egui shell owns input on every out-of-match screen (title, gunsmith, settings,
-            // profile, army-select, mode-select, skirmish-setup, mission-select, briefing, about).
+            // profile, army-select, pvp, skirmish-setup, mission-select, briefing, about).
             Screen::Title
             | Screen::Loadout
             | Screen::Settings
             | Screen::Profile
             | Screen::ArmySelect
-            | Screen::ModeSelect
+            | Screen::Pvp
             | Screen::SkirmishSetup
             | Screen::MissionSelect
             | Screen::Briefing(_)
@@ -1289,7 +1277,7 @@ mod escape_nav_tests {
             Screen::Settings,
             Screen::Profile,
             Screen::ArmySelect,
-            Screen::ModeSelect,
+            Screen::Pvp,
             Screen::SkirmishSetup,
             Screen::MissionSelect,
         ] {

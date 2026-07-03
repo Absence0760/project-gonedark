@@ -5,8 +5,9 @@
 use crate::shell::skirmish::SkirmishConfig;
 use gonedark_core::campaign::{Difficulty, NodeId};
 
-/// A top-level action the player can pick on the title screen. The three play modes all open the
-/// gunsmith→match flow today; their divergence is future work (see [`resolve_title_action`]).
+/// A top-level action the player can pick on the title screen. The three play modes each open
+/// their own front door (`modes.md` §1): the Operations hub, the skirmish setup, and the PvP
+/// staging screen (see [`resolve_title_action`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TitleAction {
     /// The PvE story campaign — the first shippable pillar (`docs/pve-campaign.md`, D58).
@@ -54,11 +55,12 @@ pub(crate) enum HostTransition {
     /// Switch the host to the pre-match gunsmith / loadout screen. Start now lands here first; the
     /// screen's **Deploy** is what subsequently creates the `Game` (carrying the chosen loadout).
     OpenLoadout,
-    /// Switch the host to the Pve/Pvp **mode / map select** screen (D81). Reached from the title's
-    /// PvE / PvP buttons; picking a mode deploys straight into that scene with the persisted loadout
-    /// (the gunsmith no longer gates play — it moved behind Settings). No data: the mode table is the
-    /// static [`gonedark_engine::shell_modes::SHELL_GAME_MODES`].
-    OpenModeSelect,
+    /// Switch the host to the **PvP staging** screen — the title's PvP door (`modes.md` §1/§5).
+    /// Names the three queues in build order and the pre-queue identity pick; nothing is joinable
+    /// until the Phase 3 net layer lands (the pure `queue_joinable` seam keeps that honest). No
+    /// data: the queue table is the static [`PVP_QUEUES`](crate::shell::pvp::PVP_QUEUES) and the
+    /// army line reads the persisted `App::army_select` pick.
+    OpenPvp,
     /// Switch the host to the **skirmish match-setup** screen (`modes.md` §3) — the free-pick PvE
     /// deploy gate behind the title's SKIRMISH button: battlefield, both armies, and the opponent
     /// tier, then Deploy. No data: the config lives on the host (`App::skirmish`), re-seeded from
@@ -80,13 +82,11 @@ pub(crate) enum HostTransition {
     /// Queue the campaign mission for `node` at the chosen replay `difficulty`, then route through
     /// the gunsmith (the player still picks a loadout) before the match starts. The host stashes the
     /// pending launch and switches to the loadout screen; the gunsmith's **Deploy** then creates the
-    /// `Game` for this node (see [`EnterMatch`](HostTransition::EnterMatch)). The `difficulty` is the
+    /// `Game` for this node. The `difficulty` is the
     /// chosen replay tier: it drives the launched fight on both D83 axes (the 4→3 enemy-commander band
     /// + the scenario situation modifiers, via `Game::apply_campaign_tuning`) **and** is the tier the
     /// **clear** is recorded against on a win.
     LaunchMission { node: NodeId, difficulty: Difficulty },
-    /// Lazily create `engine::Game` and switch the host to the in-match screen.
-    EnterMatch,
     /// Switch the host to the Settings screen (audio / video / controls preferences).
     OpenSettings,
     /// Switch the host to the player Profile screen (callsign, faction preference, lifetime record).
@@ -117,8 +117,8 @@ pub(crate) enum HostTransition {
 pub(crate) fn resolve_title_action(action: TitleAction) -> HostTransition {
     match action {
         // CAMPAIGN opens the Operations-hub mission-select (the PvE pillar, D58) — the player picks a
-        // node, reads its briefing, and launches it. PvE/PvP open the mode/map select (D81); the
-        // gunsmith is customization-only behind Settings, no longer a play gate.
+        // node, reads its briefing, and launches it. Each play mode has its own door (`modes.md` §1);
+        // the gunsmith is customization-only behind Settings, no longer a play gate (D81).
         TitleAction::Campaign => HostTransition::OpenMissionSelect,
         // CONTINUE deep-links into the next operation's briefing — the same flow the hub reaches,
         // one hop shorter. Reusing OpenBriefing wholesale (same difficulty seeding, same BACK
@@ -128,10 +128,10 @@ pub(crate) fn resolve_title_action(action: TitleAction) -> HostTransition {
         // free-pick deploy gate: battlefield, both armies, opponent tier, then Deploy with the
         // persisted loadout (D81: the gunsmith stays customization-only behind Settings).
         TitleAction::Pve => HostTransition::OpenSkirmishSetup,
-        // PvP keeps the lightweight mode/map picker until its own match-setup lands (`modes.md` §5
-        // steps 2–4 are Q5/Phase-3-gated) — it still boots a local match today, so the door stays
-        // functional rather than dead.
-        TitleAction::Pvp => HostTransition::OpenModeSelect,
+        // PvP opens its own staging door — the queues in `modes.md` §5 build order, none joinable
+        // until the Phase 3 net layer exists. Deliberately not the old shared mode picker: a local
+        // match dressed up as PvP would leak skirmish (and campaign scenes) into the third door.
+        TitleAction::Pvp => HostTransition::OpenPvp,
         TitleAction::Settings => HostTransition::OpenSettings,
         TitleAction::Profile => HostTransition::OpenProfile,
         // The ARMY chip opens the army-select screen (US vs FR); the confirmed pick routes through
