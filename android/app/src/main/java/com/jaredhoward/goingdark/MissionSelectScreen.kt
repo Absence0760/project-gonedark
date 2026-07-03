@@ -34,8 +34,9 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  *
  * **Stateless / hoisted state**, exactly like [TitleScreen] / [SettingsScreen]: every action is a
  * callback, so the composable is device-agnostic and previewable without an Activity. The
- * Campaign → MissionSelect → Briefing → gunsmith routing is the host's (MainActivity's) job, not
- * this screen's. Today the model ships one playable node; this list grows with the Rust campaign.
+ * Campaign → MissionSelect → Briefing routing is the host's (MainActivity's) job, not this
+ * screen's. The model ships the three-node *Seize* → *Hold* → *Push* chain (each gated on the last); every
+ * **playable** tile — root or gated — opens its briefing, and the list grows with the Rust campaign.
  */
 @Composable
 fun MissionSelectScreen(

@@ -5,8 +5,10 @@
 > mission-select/briefing (Tier 2) — and a **parity-gap sweep** ([§12](#12-parity-gap-sweep-2026-06-30))
 > then closed the six concrete UI/content divergences a four-cluster audit turned up. The Android
 > Compose shell is now at **feature + value parity** with the desktop egui shell
-> ([D36](../decisions.md)) across every shipped out-of-match surface. What remains is **structural**
-> (a campaign progress/unlock model on Android; desktop-side shell-pref persistence) and **blocked**
+> ([D36](../decisions.md)) across every shipped out-of-match surface. The Android campaign
+> progress/unlock model has since landed and closed end-to-end (2026-07-03: every playable node —
+> root or gated — launches through the wire; §12 item 1). What remains is **structural**
+> (desktop-side shell-pref persistence) and **blocked**
 > (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) — tracked in §12. Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
@@ -134,11 +136,11 @@ the JNI reader.
 > wire key + mission-tuning plumbing) and **look-sensitivity** (the Android look delta is derived in
 > `engine::touch_controls`, not scalable at the PAL boundary) — both shown/carried but not yet applied
 > on Android. **Persistence:** Settings/Profile/loadout now survive restarts via `ShellPrefs`
-> (SharedPreferences). **Update:** the shipped campaign is now the **two-node chain** *Seize* →
-> *Hold* on both the shared model (`engine::default_campaign()`) and the Android `CampaignModel`
-> mirror, with the node→scene launch mapping (`Scene::for_mission`) wired through the backend — but
-> the Compose mission-select tiles still render/launch only the root until this D32-blocked chrome
-> renders the gated node and threads the selected `launch.node` through. Still pending: PvP
+> (SharedPreferences). **Update:** the shipped campaign is now the **three-node chain** *Seize* →
+> *Hold* → *Push* on both the shared model (`engine::default_campaign()`) and the Android
+> `CampaignModel` mirror, with the node→scene launch mapping (`Scene::for_mission`) wired through
+> the backend, and the Compose mission-select tiles now render **and launch every playable node**
+> (§12 item 1, closed 2026-07-03 via the pure `missionLaunchConfig` seam). Still pending: PvP
 > match-setup (Q5/Phase-3).
 
 
@@ -269,18 +271,22 @@ the checksum matrix is unaffected.
 These are deliberately **not** done — each is a chunk of real work, and two are symmetric gaps where
 each platform is missing the *other's* state:
 
-1. **Campaign progress model — parity reached; the 2-node graph now ships mirrored (was the
-   single-node risk).** `CampaignModel.kt` now carries the full `CampaignProgress`/`NodeProgress`
-   (Locked/Available/Cleared) derivation, the clear gate, best-tier tracking, and the persistence
-   codec — the JVM-testable twin of desktop's `Campaign`. **The shipped campaign is now the two-node
-   chain** *Seize* → *Hold* (`engine::default_campaign()`), and `campaignNodes` mirrors it (Hold
-   `prerequisites = [0]`, gated behind Seize); the node→scene launch mapping (`Scene::for_mission`)
-   is wired on both hosts, and the `CampaignModelTest`/`CampaignProgressTest` pin the 2-node
-   structure + the Hold briefing verbatim. So the old "breaks parity the moment a second/gated node
-   lands" risk is **resolved** for this node. What's left is only the **D32-blocked Compose chrome**
-   (the native mission-select/briefing tiles that read this model) and threading the *selected* node
-   index through the Android launch wire (`launch.node`) once that chrome exists — the desktop egui
-   hub + the Android backend's node-resolution path are already correct.
+1. **Campaign progress model — ✅ CLOSED (2026-07-03).** `CampaignModel.kt` carries the full
+   `CampaignProgress`/`NodeProgress` (Locked/Available/Cleared) derivation, the clear gate,
+   best-tier tracking, and the persistence codec — the JVM-testable twin of desktop's `Campaign`.
+   **The shipped campaign is the three-node chain** *Seize* → *Hold* → *Push* (`engine::default_campaign()`),
+   and `campaignNodes` mirrors it (Hold `prerequisites = [0]`, gated behind Seize); the node→scene
+   launch mapping (`Scene::for_mission`) is wired on both hosts, and the
+   `CampaignModelTest`/`CampaignProgressTest` pin the chain structure + the Hold briefing verbatim.
+   The last open piece — the Compose chrome launching only the root node — is now closed too: the
+   mission-select tiles render **every** node (locked tiles disabled from the derived
+   `NodeProgress`), and the briefing Deploy resolves the *selected* node — root or gated — through
+   the pure launch-resolution seam (`MissionLaunch.kt`: `missionLaunchConfig` threads the node's
+   `sceneToken` + `NodeId` ordinal + replay tier onto the `scene`/`node`/`diff` wire keys), matching
+   the desktop host's `pending_launch` scene/node pair. `MissionLaunchTest` pins the routing on the
+   JVM — per-node scene/index resolution, the `mission2`/`node=1` wire round trip, and the full
+   launch → win-code → record-on-win → persistence loop for the gated Hold node — so a future node
+   can't silently regress to the root.
 2. **Desktop doesn't persist shell prefs.** Settings/Profile/loadout are in-memory only on desktop and
    lost on exit; only `campaign.dat` (campaign progress) persists. **Android is ahead here** — it
    round-trips all three via `ShellPrefs`. The two shells persist *disjoint* state.

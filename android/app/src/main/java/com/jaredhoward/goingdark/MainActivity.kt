@@ -29,8 +29,9 @@ import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
  * native/in-engine split: out-of-match chrome is native, the in-match (and in-session) surfaces are
  * in-engine under avatar-only fog (invariant #6).
  *
- * Campaign opens the Operations hub → a mission briefing → Deploy into the mission scene (`mission1`,
- * where the loadout applies to the player's troops). The hub renders per-node status pills (LOCKED /
+ * Campaign opens the Operations hub → a mission briefing → Deploy into the briefed node's own scene
+ * (`mission1`/`mission2` via [missionLaunchConfig] — every playable node, not just the root). The hub
+ * renders per-node status pills (LOCKED /
  * AVAILABLE / CLEARED·tier) and disables locked tiles from the pure [CampaignProgress] model, and a
  * campaign win is recorded (best-tier) and persisted via [ShellPrefs] — the split-activity twin of
  * the desktop host's record-on-win, delivered back as an Activity result code. PvE/PvP open a
@@ -138,7 +139,7 @@ private fun Shell(
     // the engine on Deploy via the `diff` wire key, C3). `campaign` (the cleared/locked progress) is
     // hoisted to MainActivity so the match-result callback can record a win; the shell only reads it.
     // The launch scene is not held here — each Deploy path (ModeSelect / Briefing) carries its own
-    // scene token straight into `launchConfigOf`.
+    // scene token straight into the pure launch-resolution seam (`MissionLaunch.kt`).
     var briefedNode by remember { mutableStateOf(campaignNodes.first()) }
     var difficulty by remember { mutableStateOf(Difficulty.Recruit) }
 
@@ -217,21 +218,11 @@ private fun Shell(
             // Briefing Deploy boots this mission's scene directly with the persisted loadout — the
             // gunsmith is no longer an intermediate step (D81) — threading the chosen replay tier as
             // `diff` (C3) so the engine records the clear at it on a win.
-            onDeploy = {
-                // Thread the selected campaign node index (`briefedNode.id` == the `NodeId` ordinal)
-                // as the `node` wire key so the engine resolves the right mission through the shared
-                // registry (matching the desktop host's `pending_launch` node) — no longer pinned to 0.
-                onDeploy(
-                    launchConfigOf(
-                        briefedNode.sceneToken,
-                        settings,
-                        loadout,
-                        army,
-                        difficulty.tier(),
-                        briefedNode.id,
-                    ),
-                )
-            },
+            // Resolve the briefed node — root or gated, any playable node — through the pure,
+            // JVM-tested seam (MissionLaunch.kt): its sceneToken + node index (`NodeId` ordinal) +
+            // the chosen replay tier all thread the launch wire, matching the desktop host's
+            // `pending_launch` scene/node pair.
+            onDeploy = { onDeploy(missionLaunchConfig(briefedNode, settings, loadout, army, difficulty)) },
             onBack = { route = ShellRoute.MissionSelect },
         )
         ShellRoute.Gunsmith -> GunsmithScreen(
@@ -243,35 +234,3 @@ private fun Shell(
         )
     }
 }
-
-/**
- * Assemble the [LaunchConfig] the engine receives at Deploy: the chosen scene token, the
- * [LoadoutSelection] slot indices, the [SettingsState] audio / look / accessibility prefs, the picked
- * [army], and the campaign replay [diff] tier + [node] index folded into the wire keys
- * (`opt`/`bar`/`mag`, `vol`/`sfx`/`sens`/`invy`, `army`, `cvd`/`snd`, `diff`/`node`). Pure — kept out of
- * the composable so the wiring is obvious. [diff]/[node] are the campaign replay tier + node index; both
- * are inert (`0`) for non-campaign Deploys (ModeSelect), so those keep their prior behaviour.
- */
-private fun launchConfigOf(
-    scene: String,
-    settings: SettingsState,
-    loadout: LoadoutSelection,
-    army: Army,
-    diff: Int = 0,
-    node: Int = 0,
-): LaunchConfig =
-    LaunchConfig(
-        scene = scene,
-        optic = loadout.optic,
-        barrel = loadout.barrel,
-        magazine = loadout.magazine,
-        masterPct = settings.masterPct,
-        sfxPct = settings.sfxPct,
-        sensX100 = settings.sensX100,
-        invertY = settings.invertLookY,
-        diff = diff,
-        node = node,
-        army = army.index,
-        colorblindCues = settings.colorblindCues,
-        visualSoundCues = settings.visualSoundCues,
-    )
