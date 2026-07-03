@@ -19,7 +19,8 @@
 //!  - [`widgets`] — the reusable egui component library + shared layout constants;
 //!  - [`transitions`] — the title action → host-transition decision surface;
 //!  - [`settings`], [`loadout`], [`profile`], [`army`], [`about`], [`mode_select`],
-//!    [`mission_select`], [`briefing`] — one out-of-match screen each (model + seam + builder);
+//!    [`mission_select`], [`briefing`], [`skirmish`] — one out-of-match screen each (model + seam
+//!    + builder);
 //!  - [`persist`] — the tolerant shell-prefs `key=value` codec;
 //!  - [`util`] — the build stamp / channel / pointer→NDC helpers;
 //!  - [`egui_shell`] — the [`EguiShell`] device glue + the title-screen layout.
@@ -34,6 +35,7 @@ mod mode_select;
 mod persist;
 mod profile;
 mod settings;
+mod skirmish;
 mod theme;
 mod transitions;
 mod util;
@@ -53,6 +55,7 @@ pub(crate) use mode_select::*;
 pub(crate) use persist::*;
 pub(crate) use profile::*;
 pub(crate) use settings::*;
+pub(crate) use skirmish::*;
 pub(crate) use transitions::*;
 pub(crate) use util::*;
 // `main.rs` names nothing from these three directly (the theme/widgets primitives are imported by

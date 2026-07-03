@@ -3,8 +3,9 @@
 //! [`gonedark_engine::Game`].
 //!
 //! The out-of-match host screens are the desktop counterpart of Android's `MainActivity →
-//! NativeActivity` split ([D35](../docs/decisions.md)): the **Title** screen, the Pve/Pvp
-//! **mode-select** and campaign **mission-select/briefing** deploy gates, the **Settings** screen and
+//! NativeActivity` split ([D35](../docs/decisions.md)): the **Title** screen, the **skirmish
+//! match-setup** (`modes.md` §3), PvP **mode-select** and campaign **mission-select/briefing**
+//! deploy gates, the **Settings** screen and
 //! the gunsmith **Loadout** customization screen behind it — all egui, in [`shell`] — and the in-match
 //! **Game** (the shared engine loop — deterministic fixed-tick sim, render interpolation (invariant
 //! #4), the embodiment input-source swap (invariant #5)). The shell holds no game logic and reaches
@@ -44,9 +45,10 @@ const DESKTOP_DEFAULT_TIER: QualityTier = QualityTier::High;
 mod shell;
 use shell::{
     apply_army_select_action, apply_briefing_action, apply_loadout_action, apply_profile_action,
-    apply_settings_action, build_channel, build_stamp, resolve_title_action, AboutReturn,
-    ArmySelectState, ArmySelectStep, BriefingOutcome, EguiShell, HostTransition, LoadoutStep,
-    MissionSelectAction, ModeSelectAction, ProfileState, ProfileStep, SettingsState, SettingsStep,
+    apply_settings_action, apply_skirmish_setup_action, build_channel, build_stamp,
+    resolve_title_action, AboutReturn, ArmySelectState, ArmySelectStep, BriefingOutcome, EguiShell,
+    HostTransition, LoadoutStep, MissionSelectAction, ModeSelectAction, ProfileState, ProfileStep,
+    SettingsState, SettingsStep, SkirmishConfig, SkirmishSetupState, SkirmishSetupStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -71,6 +73,10 @@ enum Screen {
     /// [`gonedark_engine::shell_modes::SHELL_GAME_MODES`]; carries no host data. Picking a mode sets
     /// [`App::scene`] and deploys straight into the match with the persisted loadout.
     ModeSelect,
+    /// The **skirmish match-setup** screen (`modes.md` §3) — the free-pick PvE deploy gate behind
+    /// the title's SKIRMISH button: battlefield, both armies, opponent tier. State lives on
+    /// [`App::skirmish`]; carries no data of its own.
+    SkirmishSetup,
     /// The Operations-hub **mission-select** screen (PvE campaign, D58). Reads [`App::campaign`];
     /// carries no data of its own.
     MissionSelect,
@@ -145,6 +151,12 @@ struct App {
     /// reaches the sim except through the `core::shell` SelectArmy seam at match start
     /// ([`App::enter_match`] → `Game::select_army`), and persists across launches in the shell prefs.
     army_select: ArmySelectState,
+    /// Host-side skirmish match-setup config (`modes.md` §3) edited on the [`Screen::SkirmishSetup`]
+    /// screen: battlefield, both armies, opponent tier. **Match-setup config, session-only** (like
+    /// [`App::briefing_difficulty`], not a persisted pref): the player-army side re-seeds from the
+    /// persisted [`App::army_select`] pick each time the screen opens. It reaches the sim only
+    /// through the landed pre-tick launch seams at match start — never sim state itself.
+    skirmish: SkirmishSetupState,
 
     /// The Operations-hub campaign model (PvE WS-B, D58) the mission-select / briefing screens read
     /// and a win advances. **Host-side meta-progression — never sim state, never in the per-tick
@@ -164,6 +176,14 @@ struct App {
     /// when a briefing's DEPLOY routes through the gunsmith, consumed when the match is created. The
     /// `difficulty` is the campaign tier the **clear** is recorded against — not the commander tier.
     pending_launch: Option<(NodeId, Difficulty)>,
+    /// A configured skirmish queued for launch (the setup screen's DEPLOY), consumed when the match
+    /// is created — the skirmish twin of [`App::pending_launch`]. Mutually exclusive with a campaign
+    /// launch: each launch path clears the other.
+    pending_skirmish: Option<SkirmishConfig>,
+    /// The skirmish config backing the *running* match, if any, so REMATCH re-boots the same
+    /// configured fight — the skirmish twin of [`App::active_mission`]. `None` for campaign/debug
+    /// matches; cleared on exit-to-title.
+    active_skirmish: Option<SkirmishConfig>,
     /// The campaign mission backing the *running* match, if any (`node` + the chosen replay
     /// `difficulty`), so a win can record the clear. `None` for non-campaign matches (PvE/PvP, debug
     /// scenes). Carried across the in-match screen; cleared on exit-to-title.
@@ -212,10 +232,15 @@ impl App {
             settings,
             profile,
             army_select,
+            // The skirmish setup opens re-seeded from the persisted army pick (`OpenSkirmishSetup`),
+            // so the boot value only needs sensible defaults.
+            skirmish: SkirmishSetupState::default(),
             campaign,
             registry: default_registry(),
             briefing_difficulty: Difficulty::default(),
             pending_launch: None,
+            pending_skirmish: None,
+            active_skirmish: None,
             active_mission: None,
             mission_recorded: false,
             // Recomputed each match frame from the Settings volumes; the default mirrors
@@ -243,9 +268,12 @@ impl App {
     /// briefing's DEPLOY) it boots the *selected* node's mission scene (resolved via the shared
     /// `resolve_node` + [`Scene::for_mission`] seams — Seize → `Mission1`, Hold → `Mission2`) and applies the player's
     /// chosen replay tier's combat tuning via the shared [`Game::apply_campaign_tuning`] seam (D83:
-    /// the 4→3 enemy-commander band + the scenario situation modifiers); otherwise it fields
-    /// [`App::scene`] (the CLI default, or the scene a mode-select pick chose). The chosen tier is
-    /// also carried in [`App::active_mission`] for clear-recording.
+    /// the 4→3 enemy-commander band + the scenario situation modifiers); a queued **configured
+    /// skirmish** ([`App::pending_skirmish`], set by the setup screen's DEPLOY) boots its picked
+    /// battlefield with both army picks and the opponent tier (see the branch below); otherwise it
+    /// fields [`App::scene`] (the CLI default, or the scene a mode-select pick chose). The chosen
+    /// tier is also carried in [`App::active_mission`] for clear-recording, and a skirmish config in
+    /// [`App::active_skirmish`] for REMATCH.
     ///
     /// Shared by the [`EnterMatch`](HostTransition::EnterMatch) and
     /// [`LaunchMission`](HostTransition::LaunchMission) transitions: under D81 both deploy **directly**
@@ -257,6 +285,9 @@ impl App {
         let device = surface.device();
         let format = surface.format();
         let loadout = self.loadout.current();
+        // The army the player fields this match: the persisted identity pick, unless a configured
+        // skirmish overrides it per match (the skirmish branch below).
+        let mut player_army = self.army_select.selected;
         let mut game = if let Some((node, difficulty)) = self.pending_launch.take() {
             // Resolve the launched node's mission → its scene (Seize → `Mission1`, Hold →
             // `Mission2`) through the shared engine seams (`resolve_node` + `Scene::for_mission`,
@@ -276,20 +307,41 @@ impl App {
                 game.apply_campaign_tuning(difficulty);
             }
             self.active_mission = Some((node, difficulty));
+            self.active_skirmish = None;
+            game
+        } else if let Some(cfg) = self.pending_skirmish.take() {
+            // A configured skirmish (`modes.md` §3): boot the picked battlefield and field the whole
+            // setup through the landed pre-tick seams — all deterministic match-setup input, applied
+            // before tick 0 exactly like a campaign launch (invariant #7):
+            //  - the opponent tier via the shared D83 `apply_campaign_tuning` (the honest commander
+            //    band + the reinforcement-cadence situation lever; the neutral Regular tier is a
+            //    byte-identical no-op, so the default skirmish reproduces the shipped fight);
+            //  - the ENEMY army via the same `core::shell` SelectArmy seam the player pick rides —
+            //    the §3 "pick the enemy's army too" half (campaign/mode launches keep their
+            //    scene-seeded enemy army instead).
+            let mut game =
+                Game::new_scene_with_loadout(device, format, DEFAULT_SEED, cfg.scene, loadout);
+            game.apply_campaign_tuning(cfg.difficulty);
+            game.select_army(Faction::Enemy, cfg.enemy_army);
+            player_army = cfg.player_army;
+            self.active_mission = None;
+            self.active_skirmish = Some(cfg);
             game
         } else {
             // Field the player's chosen gunsmith loadout at match start (WS-C, D60). For scenes that
             // carry no player loadout it is inert; `Loadout::STANDARD` (the untouched editor)
             // reproduces `new_scene` exactly.
             self.active_mission = None;
+            self.active_skirmish = None;
             Game::new_scene_with_loadout(device, format, DEFAULT_SEED, self.scene, loadout)
         };
         // Field the player's picked army at match setup. `Game::select_army` routes it through the
         // `core::shell` SelectArmy seam (the same lockstep-ordered command a peer would apply) and
         // records it on the sim before tick 0 — match-setup config, checksum-neutral (invariant #7),
         // so `gunsmith::pool_for` / `economy::unit_stats_for` field the chosen roster (WS-B). The
-        // enemy side keeps its scene/mission-seeded army (not this host pick).
-        game.select_army(Faction::Player, self.army_select.selected);
+        // enemy side keeps its scene/mission-seeded army, unless a configured skirmish picked one
+        // (the skirmish branch above).
+        game.select_army(Faction::Player, player_army);
         self.mission_recorded = false;
         self.screen = Screen::InMatch(Box::new(game));
         // Don't charge the time spent on the out-of-match screens to the first sim tick.
@@ -496,11 +548,28 @@ impl App {
                                 if let Some(scene) = mode.scene() {
                                     self.scene = scene;
                                 }
-                                // A mode-select deploy is never a campaign launch.
+                                // A mode-select deploy is never a campaign or configured-skirmish
+                                // launch.
                                 self.pending_launch = None;
+                                self.pending_skirmish = None;
                                 Some(HostTransition::EnterMatch)
                             }
                             ModeSelectAction::Back => Some(HostTransition::ExitToTitle),
+                        };
+                    }
+                }
+            }
+            Screen::SkirmishSetup => {
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) = sh.draw_skirmish_setup(surface, &self.skirmish) {
+                        // Config edits (battlefield / armies / tier) mutate the setup in place
+                        // (Stay); DEPLOY carries the resolved config out; BACK returns to the title.
+                        transition = match apply_skirmish_setup_action(action, &mut self.skirmish) {
+                            SkirmishSetupStep::Stay => None,
+                            SkirmishSetupStep::Deploy(cfg) => {
+                                Some(HostTransition::LaunchSkirmish(cfg))
+                            }
+                            SkirmishSetupStep::Back => Some(HostTransition::ExitToTitle),
                         };
                     }
                 }
@@ -715,6 +784,21 @@ impl App {
                 self.screen = Screen::ModeSelect;
                 self.last_frame = Instant::now();
             }
+            // SKIRMISH → the match-setup screen (`modes.md` §3). Re-seed the player side from the
+            // persisted identity pick so the setup always opens on the army the player declared
+            // they field (the other picks stay as last configured this session).
+            Some(HostTransition::OpenSkirmishSetup) => {
+                self.skirmish.reseed_player_army(self.army_select.selected);
+                self.screen = Screen::SkirmishSetup;
+                self.last_frame = Instant::now();
+            }
+            // The setup screen's DEPLOY: queue the configured skirmish and boot it — `enter_match`
+            // consumes `pending_skirmish` to field the battlefield, both armies, and the tier.
+            Some(HostTransition::LaunchSkirmish(cfg)) => {
+                self.pending_launch = None;
+                self.pending_skirmish = Some(cfg);
+                self.enter_match();
+            }
             // CAMPAIGN → the Operations-hub mission-select (PvE pillar, D58).
             Some(HostTransition::OpenMissionSelect) => {
                 self.screen = Screen::MissionSelect;
@@ -738,6 +822,8 @@ impl App {
             // remember the node for clear-recording, fielding the persisted loadout.
             Some(HostTransition::LaunchMission { node, difficulty }) => {
                 self.pending_launch = Some((node, difficulty));
+                // A campaign launch is never a configured-skirmish launch.
+                self.pending_skirmish = None;
                 self.enter_match();
             }
             Some(HostTransition::EnterMatch) => self.enter_match(),
@@ -768,7 +854,9 @@ impl App {
             // one — its clear, if any, was already recorded the frame the match was Won).
             Some(HostTransition::ExitToTitle) => {
                 self.pending_launch = None;
+                self.pending_skirmish = None;
                 self.active_mission = None;
+                self.active_skirmish = None;
                 self.mission_recorded = false;
                 self.screen = Screen::Title;
                 self.last_frame = Instant::now();
@@ -780,6 +868,10 @@ impl App {
             Some(HostTransition::Rematch) => {
                 if let Some(active) = self.active_mission {
                     self.pending_launch = Some(active);
+                } else if let Some(cfg) = self.active_skirmish {
+                    // A configured skirmish re-boots the same configured fight (battlefield, both
+                    // armies, tier) — a fresh deterministic `Game`, not a reuse of the ended sim.
+                    self.pending_skirmish = Some(cfg);
                 }
                 self.enter_match();
             }
@@ -827,6 +919,7 @@ fn escape_transition(screen: &Screen) -> Option<HostTransition> {
         | Screen::Profile
         | Screen::ArmySelect
         | Screen::ModeSelect
+        | Screen::SkirmishSetup
         | Screen::MissionSelect => Some(HostTransition::ExitToTitle),
         // A briefing backs out to its mission list (its own BACK target).
         Screen::Briefing(_) => Some(HostTransition::OpenMissionSelect),
@@ -901,13 +994,14 @@ impl ApplicationHandler for App {
         // nothing leaks between the shell and the sim.)
         match self.screen {
             // The egui shell owns input on every out-of-match screen (title, gunsmith, settings,
-            // profile, army-select, mode-select, mission-select, briefing, about).
+            // profile, army-select, mode-select, skirmish-setup, mission-select, briefing, about).
             Screen::Title
             | Screen::Loadout
             | Screen::Settings
             | Screen::Profile
             | Screen::ArmySelect
             | Screen::ModeSelect
+            | Screen::SkirmishSetup
             | Screen::MissionSelect
             | Screen::Briefing(_)
             | Screen::About(_) => {
@@ -1196,6 +1290,7 @@ mod escape_nav_tests {
             Screen::Profile,
             Screen::ArmySelect,
             Screen::ModeSelect,
+            Screen::SkirmishSetup,
             Screen::MissionSelect,
         ] {
             assert_eq!(escape_transition(&s), Some(HostTransition::ExitToTitle));

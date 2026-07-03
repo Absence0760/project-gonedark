@@ -45,7 +45,7 @@ door*: who you fight, how the scenario is chosen, and what persists afterward.
 | Loadout | Gunsmith carries in ([D60](decisions.md)) | Gunsmith | Gunsmith |
 | Stakes / persistence | Node unlocks, best-tier badges (`core::campaign`) | None — it's the sandbox | Rating, rank tier, leaderboards (§4c) |
 | Backend | None (local progress) | None | Matchmaker, relay, accounts, ratings ([`infrastructure.md`](infrastructure.md)) |
-| Status | Functionally complete (PvE WS-B) | Match exists ([D64](decisions.md) `seed_skirmish`); **entry screen unbuilt** | Blocked on Phase 3 net layer; **all chrome unbuilt** |
+| Status | Functionally complete (PvE WS-B) | Match exists ([D64](decisions.md) `seed_skirmish`); **desktop entry screen landed** (Android + map library owed — §3) | Blocked on Phase 3 net layer; **all chrome unbuilt** |
 
 Keeping the three *distinct* is deliberate product design, not just code hygiene: campaign
 is where a stranger learns the going-dark cost (invariant #6), skirmish is where a player
@@ -94,11 +94,18 @@ machinery is mode-agnostic — but the first skirmish ships with the plain match
 
 **What exists / what's owed.** The match itself is live ([D64](decisions.md): the two-base
 `seed_skirmish` boots by default and is winnable end-to-end); army select and the gunsmith
-are landed. What's missing is exactly the **skirmish-entry / match-setup screen**
-([`roadmap.md`](roadmap.md) § Release readiness) in both native shells, plus surfacing the
-map library in the shell↔sim seam ([D34](decisions.md) — a presentation-safe map-manifest
-listing; content, not sim state). No new engine work; this is chrome over landed seams —
-which is why it's the **first** mode surface to build (§5).
+are landed. The **desktop skirmish-entry / match-setup screen has now landed**
+(`app/src/shell/skirmish.rs`, behind the title's SKIRMISH door): the battlefield pick, both
+armies — the enemy commander's roster too, through the same `SelectArmy` seam the player pick
+rides — and the opponent tier, the D83 campaign `Difficulty` whose `combat_tuning` carries
+both step-3 axes (commander band + situation modifiers) via `Game::apply_campaign_tuning`;
+DEPLOY fields the persisted loadout, and the post-match REMATCH re-boots the same configured
+fight. Proof of the "chrome over landed seams" claim: it needed **zero** engine work. Two
+halves stay owed: the **Android Compose twin**
+([`compose-shell-parity.md`](plans/compose-shell-parity.md) §12) and surfacing the **map
+library** in the shell↔sim seam ([D34](decisions.md) — a presentation-safe map-manifest
+listing; content, not sim state) — until that lands, the battlefield picker lists the
+standing battle scenes, not manifest entries.
 
 Skirmish is also the **content proving ground**: a map or faction enters the PvP pool only
 after it has been playable in skirmish (same spirit as faithful-then-balance-pass,
@@ -181,7 +188,8 @@ Sequenced by dependency, not ambition — each step ships something playable:
 
 1. **Skirmish entry screen** (both native shells). No net dependency; every seam is
    landed. This is the Phase 4 "Match setup" row and closes the release-readiness
-   checklist item.
+   checklist item. **Desktop half landed** (§3); the Android Compose twin is owed
+   ([`compose-shell-parity.md`](plans/compose-shell-parity.md) §12).
 2. **Custom PvP lobby** — direct connect / invite over the Phase 3 transport, host picks
    the map, both ready-up. First two-human match; unblocks the PvP mind-game tuning the
    roadmap has been waiting on. No matchmaker, no rating.

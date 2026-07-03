@@ -13,6 +13,7 @@ use crate::shell::profile::win_rate_pct;
 use crate::shell::mode_select::{mode_select_ui, ModeSelectAction};
 use crate::shell::profile::{profile_ui, ProfileAction, ProfileState};
 use crate::shell::settings::{settings_ui, SettingsAction, SettingsState};
+use crate::shell::skirmish::{skirmish_setup_ui, SkirmishSetupAction, SkirmishSetupState};
 use crate::shell::theme::*;
 use crate::shell::transitions::TitleAction;
 use crate::shell::util::pointer_to_ndc;
@@ -207,6 +208,21 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
     ) -> Option<ModeSelectAction> {
         self.run_and_paint(surface, true, mode_select_ui)
+    }
+
+    /// Draw the **skirmish match-setup** screen (`modes.md` §3) for one frame and return the
+    /// [`SkirmishSetupAction`] used, if any. `state` is the host-side match config (read here to
+    /// show the current picks; edits go through the pure
+    /// [`apply_skirmish_setup_action`](crate::shell::skirmish::apply_skirmish_setup_action) seam at
+    /// the host). Over the live 3D backdrop, same as the other out-of-match screens. Pure
+    /// presentation — the launch resolution is the pure
+    /// [`resolve_skirmish_config`](crate::shell::skirmish::resolve_skirmish_config) seam.
+    pub(crate) fn draw_skirmish_setup(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+        state: &SkirmishSetupState,
+    ) -> Option<SkirmishSetupAction> {
+        self.run_and_paint(surface, true, |ui| skirmish_setup_ui(ui, state))
     }
 
     /// Draw the Operations-hub **mission-select** screen for one frame and return the

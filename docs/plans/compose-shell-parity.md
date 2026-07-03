@@ -11,10 +11,11 @@
 > two structural items too: **desktop shell-pref persistence shipped** (`92f5fc3` → the
 > `app/src/shell/persist.rs` codec; §12 item 2), and the **briefing-difficulty + look-sensitivity
 > wires are consumed end-to-end** on Android (`bec478e`/`ae32cbd`; §12 item 3, §5). What remains is
-> **blocked** (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) plus **one
-> newly-found structural gap**: the [D85](../decisions.md) Stock/Muzzle gunsmith slots are
+> **blocked** (PvP/lobby/store/consent per [`phase-4-plan.md`](phase-4-plan.md) §2) plus **two
+> structural gaps**: the [D85](../decisions.md) Stock/Muzzle gunsmith slots are
 > desktop-only — absent from the Android gunsmith/wire/prefs, and not persisted across a desktop
-> restart either (§12 item 5, the one caveat on "every shipped surface" above). Scope is
+> restart either (§12 item 5, the one caveat on "every shipped surface" above) — and the new
+> desktop skirmish match-setup screen has no Compose twin yet (§12 item 6). Scope is
 > **Android Compose only**; iOS has no native target at all (Phase 3). Sections 1–2 below are the
 > original gap analysis, kept for the *why*; the per-tier status notes record what landed.
 
@@ -282,7 +283,8 @@ the checksum matrix is unaffected.
 
 These were deliberately **not** done in the sweep — each a chunk of real work. A **2026-07-03
 re-audit** then verified items 1–3 closed in code (evidence inline below), item 4 remains a
-deliberate UX fork, and item 5 is a new gap the re-audit found:
+deliberate UX fork, item 5 is a new gap the re-audit found, and item 6 is the desktop skirmish
+match-setup screen landing (2026-07-03) without a Compose twin:
 
 1. **Campaign progress model — ✅ CLOSED (2026-07-03).** `CampaignModel.kt` carries the full
    `CampaignProgress`/`NodeProgress` (Locked/Available/Cleared) derivation, the clear gate,
@@ -351,3 +353,9 @@ deliberate UX fork, and item 5 is a new gap the re-audit found:
    persist encode also omits the two slots (item 2's residual hole). Closing it needs the Compose
    slots + two new wire keys (`stk=`/`muz=`, tolerant-decoded so old emitters stay valid) + the two
    prefs keys + the desktop encode fix, each with the usual pinned tests.
+6. **Skirmish match-setup screen is desktop-only (2026-07-03).** The desktop SKIRMISH door now
+   opens the full [`modes.md`](../modes.md) §3 setup surface (`app/src/shell/skirmish.rs`:
+   battlefield / both armies / opponent tier, launched through `apply_campaign_tuning` +
+   `select_army` for both sides, REMATCH-aware); Android's SKIRMISH door still lands on the plain
+   mode picker. The Compose twin needs the same pure decision seams JVM-side plus wire keys for
+   the enemy army + opponent tier — the [`modes.md`](../modes.md) §5 build-order step 1 remainder.

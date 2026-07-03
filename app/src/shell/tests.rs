@@ -2,7 +2,8 @@
 //! [`transitions`](super::transitions), [`settings`](super::settings), [`loadout`](super::loadout),
 //! [`profile`](super::profile), [`army`](super::army), [`about`](super::about),
 //! [`mode_select`](super::mode_select), [`mission_select`](super::mission_select),
-//! [`briefing`](super::briefing), [`persist`](super::persist), [`util`](super::util) and
+//! [`briefing`](super::briefing), [`skirmish`](super::skirmish), [`persist`](super::persist),
+//! [`util`](super::util) and
 //! [`theme`](super::theme)/[`widgets`](super::widgets). The egui glue (`EguiShell`/`title_ui`/
 //! `loadout_ui`/`run_and_paint`) needs a GPU + window and is the exempt device-gated chrome (D32 /
 //! CLAUDE.md testing rule). Kept as one test module (as before the split) so the cross-cutting
@@ -51,17 +52,19 @@ use gonedark_render::tiers::QualityTier;
     }
 
     #[test]
-    fn pve_and_pvp_open_the_mode_select() {
-        // D81: SKIRMISH (TitleAction::Pve)/PvP now open the mode/map select (the deploy gate), not the gunsmith — the
-        // gunsmith moved behind Settings as customization-only. Skirmish and PvP share the picker until
-        // PvP match-setup lands (Q5).
-        for mode in [TitleAction::Pve, TitleAction::Pvp] {
-            assert_eq!(
-                resolve_title_action(mode),
-                HostTransition::OpenModeSelect,
-                "{mode:?} must open the mode select"
-            );
-        }
+    fn skirmish_opens_the_match_setup_and_pvp_keeps_the_mode_select() {
+        // SKIRMISH (TitleAction::Pve) opens the skirmish match-setup screen (`modes.md` §3,
+        // build-order step 1) — the free-pick deploy gate. PvP keeps the lightweight mode picker
+        // until its own match-setup lands (Q5/Phase-3-gated); the gunsmith stays
+        // customization-only behind Settings (D81).
+        assert_eq!(
+            resolve_title_action(TitleAction::Pve),
+            HostTransition::OpenSkirmishSetup
+        );
+        assert_eq!(
+            resolve_title_action(TitleAction::Pvp),
+            HostTransition::OpenModeSelect
+        );
     }
 
     #[test]
@@ -1330,4 +1333,157 @@ use gonedark_render::tiers::QualityTier;
             BriefingOutcome::Back
         );
         assert_eq!(selected, Difficulty::Veteran);
+    }
+
+    // ---- The skirmish match-setup pure seam (modes.md §3) ----------------------------------------
+
+    use gonedark_engine::shell_modes::SHELL_GAME_MODES;
+    use gonedark_engine::Scene;
+
+    #[test]
+    fn skirmish_default_is_the_neutral_shipped_match() {
+        // The default deploy must reproduce the pre-setup-screen skirmish: the first battlefield
+        // resolves to the standing two-base Scene::Skirmish, US vs FR (two distinct combatant
+        // rosters), at Regular — the neutral D83 tier whose combat tuning is a byte-identical
+        // no-op (`Difficulty::Regular.scenario_modifiers() == ScenarioModifiers::default()`).
+        let state = SkirmishSetupState::default();
+        let cfg = resolve_skirmish_config(&state);
+        assert_eq!(cfg.scene, Scene::Skirmish);
+        assert_eq!(cfg.player_army, Army::Us);
+        assert_eq!(cfg.enemy_army, Army::Fr);
+        assert_ne!(cfg.player_army, cfg.enemy_army, "the default reads as a two-army fight");
+        assert_eq!(cfg.difficulty, Difficulty::Regular);
+        assert_eq!(
+            Difficulty::Regular.scenario_modifiers(),
+            gonedark_core::mission_tuning::ScenarioModifiers::default(),
+            "Regular must stay the neutral (no-op) baseline the default deploy relies on"
+        );
+    }
+
+    #[test]
+    fn next_army_wraps_the_selectable_rosters_and_rejects_neutral() {
+        // The cycler walks every selectable roster exactly once, then wraps.
+        let mut a = SELECTABLE_ARMIES[0];
+        let mut seen = Vec::new();
+        for _ in 0..SELECTABLE_ARMIES.len() {
+            seen.push(a);
+            a = next_army(a);
+        }
+        for army in SELECTABLE_ARMIES {
+            assert!(seen.contains(&army), "{army:?} must appear in the cycle");
+        }
+        assert_eq!(a, SELECTABLE_ARMIES[0], "the cycle wraps back to the start");
+        // The non-aligned Neutral is never a pick; a (defensive) Neutral input lands on the first
+        // selectable roster rather than guessing.
+        assert_eq!(next_army(Army::Neutral), SELECTABLE_ARMIES[0]);
+    }
+
+    #[test]
+    fn every_battlefield_resolves_to_a_real_scene() {
+        // The launch decision is total over the shipped battlefield list: each tile resolves
+        // through the engine-tested `GameMode::scene` seam to a real scene.
+        for (i, mode) in SHELL_GAME_MODES.iter().enumerate() {
+            let state = SkirmishSetupState { battlefield: i, ..Default::default() };
+            let cfg = resolve_skirmish_config(&state);
+            assert_eq!(Some(cfg.scene), mode.scene(), "battlefield {i}");
+        }
+    }
+
+    #[test]
+    fn out_of_range_battlefield_clamps_to_the_first_and_never_panics() {
+        // A stale/foreign index (impossible from the tiles, defensive) snaps to the first
+        // battlefield — the standing skirmish — both in the clamp and through the full resolution.
+        assert_eq!(clamp_battlefield(SHELL_GAME_MODES.len()), 0);
+        assert_eq!(clamp_battlefield(usize::MAX), 0);
+        let state = SkirmishSetupState { battlefield: usize::MAX, ..Default::default() };
+        assert_eq!(resolve_skirmish_config(&state).scene, Scene::Skirmish);
+    }
+
+    #[test]
+    fn skirmish_config_edits_apply_in_place_and_stay() {
+        let mut state = SkirmishSetupState::default();
+
+        // Battlefield: an in-range pick lands; an out-of-range one clamps to the first.
+        assert_eq!(
+            apply_skirmish_setup_action(SkirmishSetupAction::ChooseBattlefield(1), &mut state),
+            SkirmishSetupStep::Stay
+        );
+        assert_eq!(state.battlefield, 1);
+        apply_skirmish_setup_action(
+            SkirmishSetupAction::ChooseBattlefield(usize::MAX),
+            &mut state,
+        );
+        assert_eq!(state.battlefield, 0);
+
+        // The three cyclers advance their own field (and only it) in place.
+        assert_eq!(
+            apply_skirmish_setup_action(SkirmishSetupAction::CyclePlayerArmy, &mut state),
+            SkirmishSetupStep::Stay
+        );
+        assert_eq!(state.player_army, Army::Fr);
+        assert_eq!(state.enemy_army, Army::Fr, "cycling the player side never edits the enemy");
+        assert_eq!(
+            apply_skirmish_setup_action(SkirmishSetupAction::CycleEnemyArmy, &mut state),
+            SkirmishSetupStep::Stay
+        );
+        assert_eq!(state.enemy_army, Army::Us);
+        assert_eq!(
+            apply_skirmish_setup_action(SkirmishSetupAction::CycleDifficulty, &mut state),
+            SkirmishSetupStep::Stay
+        );
+        assert_eq!(state.difficulty, Difficulty::Veteran, "Regular cycles to Veteran");
+    }
+
+    #[test]
+    fn skirmish_deploy_carries_the_configured_match_and_back_leaves_it_alone() {
+        // A fully hand-configured setup: Deploy resolves it verbatim (a mirror FR-vs-FR match is a
+        // legitimate pick), and Back is a pure transition.
+        let mut state = SkirmishSetupState {
+            battlefield: 1,
+            player_army: Army::Fr,
+            enemy_army: Army::Fr,
+            difficulty: Difficulty::Elite,
+        };
+        let step = apply_skirmish_setup_action(SkirmishSetupAction::Deploy, &mut state);
+        assert_eq!(
+            step,
+            SkirmishSetupStep::Deploy(SkirmishConfig {
+                scene: SHELL_GAME_MODES[1].scene().unwrap(),
+                player_army: Army::Fr,
+                enemy_army: Army::Fr,
+                difficulty: Difficulty::Elite,
+            })
+        );
+        let before = state;
+        assert_eq!(
+            apply_skirmish_setup_action(SkirmishSetupAction::Back, &mut state),
+            SkirmishSetupStep::Back
+        );
+        assert_eq!(state, before, "Back never edits the configuration");
+    }
+
+    #[test]
+    fn reseed_player_army_follows_the_identity_pick_and_bumps_a_colliding_enemy() {
+        // Opening the screen re-seeds the player side from the persisted army-select pick…
+        let mut state = SkirmishSetupState::default();
+        state.reseed_player_army(Army::Fr);
+        assert_eq!(state.player_army, Army::Fr);
+        // …and when that collides with the current enemy pick, the enemy bumps to the opposing
+        // roster so the default reads as a real two-army fight (FR was the default enemy here).
+        assert_eq!(state.enemy_army, Army::Us);
+
+        // No collision → the enemy pick is left exactly as the player configured it.
+        let mut state = SkirmishSetupState {
+            enemy_army: Army::Us,
+            ..Default::default()
+        };
+        state.reseed_player_army(Army::Fr);
+        assert_eq!(state.player_army, Army::Fr);
+        assert_eq!(state.enemy_army, Army::Us, "a non-colliding enemy pick is preserved");
+
+        // Reseeding is idempotent for the already-consistent default — opening the screen twice
+        // in a row changes nothing (the bump fires only on a genuine collision).
+        let mut state = SkirmishSetupState::default();
+        state.reseed_player_army(Army::Us);
+        assert_eq!(state, SkirmishSetupState::default());
     }
