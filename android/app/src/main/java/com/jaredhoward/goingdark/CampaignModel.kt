@@ -18,12 +18,12 @@ package com.jaredhoward.goingdark
  * or the two shells silently disagree. The [CampaignModelTest] pins the id strings and the cycle so a
  * drift trips a test rather than shipping.
  *
- * [campaignNodes] mirrors `engine::mission_registry::default_campaign()`: the WS-B **two-node
- * chain** — the root *Seize* mission ("10 troops, take the base") and, gated behind it, the *Hold
- * the Line* defense (unlocks once Seize is cleared). Integration (not this file) resolves a node's
- * [MissionNode.sceneToken] to a real launchable scene (via the Rust `Scene::for_mission` seam —
- * `mission1`/`mission2`) and wires the Campaign → MissionSelect → Briefing flow; this model only
- * names the mission.
+ * [campaignNodes] mirrors `engine::mission_registry::default_campaign()`: the WS-B **three-node
+ * chain** — the root *Seize* mission ("10 troops, take the base"), the gated *Hold the Line*
+ * defense, and the gated *Break the Line* push (each unlocks once the one before is cleared).
+ * Integration (not this file) resolves a node's [MissionNode.sceneToken] to a real launchable scene
+ * (via the Rust `Scene::for_mission` seam — `mission1`/`mission2`/`mission3`) and wires the
+ * Campaign → MissionSelect → Briefing flow; this model only names the mission.
  */
 
 /**
@@ -282,7 +282,7 @@ data class CampaignResult(val node: Int, val tier: Difficulty) {
 
 /**
  * The shipped campaign nodes, mirroring `engine::mission_registry::default_campaign()`: the WS-B
- * **two-node chain** — the root *Seize* mission and, gated behind it ([prerequisites] = `[0]`), the
+ * **three-node chain** — the root *Seize* mission, the gated *Hold the Line* defense, and the
  * *Hold the Line* defense. Each node's [name]/[briefing] mirror the Rust `MISSION_*_BRIEFING`
  * `title`/`situation` **verbatim** (the desktop/Compose briefing surface shows only the situation,
  * not the separate `objective_line`, so neither does this), and each [sceneToken] mirrors the Rust
@@ -306,6 +306,16 @@ val campaignNodes: List<MissionNode> = listOf(
         briefing = "They're coming for your dug-in line. Fight it from cover, or embody one rifle " +
             "and hold by hand — but go dark and the line you can't see is the one that breaks.",
         prerequisites = listOf(0),
+        operation = 0,
+    ),
+    MissionNode(
+        id = 2,
+        name = "Break the Line",
+        sceneToken = "mission3",
+        briefing = "Three posts down one lane, every one of them held. Take them in order and " +
+            "hold what you take — or embody a rifle and clear the way yourself. But the post you " +
+            "rush blind is the one they take back behind you.",
+        prerequisites = listOf(1),
         operation = 0,
     ),
 )

@@ -1031,6 +1031,138 @@ pub fn seed_hold_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) ->
     HoldMission { defenders, attackers }
 }
 
+// --- The *Push* archetype: mission 3, "capture the lane" (pve-campaign.md §3) --------------------
+//
+// The third campaign mission and the third verb: a **lane of three control points**, each guarded
+// by a dug-in enemy fire team, captured in order west → east. Unlike *Seize* (assault one camp)
+// and *Hold* (survive one assault), this is the **territory-capture teach** — posts are how a real
+// match's economy is won (`seed_skirmish`), and Push is where the campaign teaches taking ground
+// methodically. Fixed forces on both sides (no production), so the outcome is a deterministic
+// function of the seeded forces + cover, exactly like *Hold*. The host-side objective layer
+// (`engine::objectives::ObjectiveSet::mission_push`) wins on all three `Captured` flips to the
+// Player and fails on a Player wipe; it observes, and never folds into the checksum.
+
+/// X of the player's squad spawn, west of the lane.
+pub const PUSH_PLAYER_X: i32 = -24;
+/// How many troops the player commands in mission 3. A fixed force — there is no production, so
+/// this squad is the whole army for the whole mission.
+pub const PUSH_TROOPS: usize = 8;
+/// The lane: the X of each control point in capture (and spawn) order, west → east, all at y = 0.
+pub const PUSH_POST_XS: [i32; 3] = [-8, 4, 16];
+/// Defender placements **relative to each post**, in stable spawn order — a two-man fire team dug
+/// in just east of the post it guards, facing the player's advance.
+const PUSH_GUARD_OFFSETS: [(i32, i32); 2] = [(3, 3), (3, -3)];
+
+/// The handles a seeded *Push* mission hands back: the player's squad, the dug-in guards, and the
+/// three lane posts (in capture order — the `Vec2`s the host feeds
+/// `ObjectiveSet::mission_push`). The host embodies/commands `troops`; the objective layer watches
+/// the posts for `Captured` flips and the Player faction for a wipe.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PushMission {
+    /// The player's squad (no base — production is disabled), in stable spawn order. The first is
+    /// the embodiable/selectable handle.
+    pub troops: Vec<Entity>,
+    /// The dug-in guards, two per post in post order, holding position at their post.
+    pub defenders: Vec<Entity>,
+    /// The three lane posts in capture order — the objective targets.
+    pub posts: [Vec2; 3],
+}
+
+/// Lay the Push form-up cover: a short `Light` sandbag bar just **west of each post** — the covered
+/// position a squad forms up on before the last open stretch onto the post (the same "cover, used,
+/// is the edge" teach as *Hold*, applied on the move). Never `Heavy` (the lane must stay sighted —
+/// the guards are supposed to see you coming). Static integer map data (invariant #1), never in the
+/// per-tick checksum; it spawns nothing (entity/spawn order + the checksum stream untouched).
+fn build_push_terrain(sim: &mut Sim) {
+    for &px in &PUSH_POST_XS {
+        let (cx0, cy0) = sim.terrain.cell_of(at((px - 4, -2)));
+        let (cx1, cy1) = sim.terrain.cell_of(at((px - 3, 2)));
+        sim.terrain.fill_rect(cx0, cy0, cx1, cy1, Cover::Light);
+    }
+}
+
+/// Seed `sim` with Mission 3 — the *Push* — and return its [`PushMission`] handles. See the module
+/// note above for the design. This is the all-`Standard` loadout entry point
+/// ([`Loadout::STANDARD`] is a proven no-op, so the seeded world is byte-identical to the
+/// pre-gunsmith mission); call [`seed_push_mission_with_loadout`] to field the player's chosen build.
+pub fn seed_push_mission(sim: &mut Sim) -> PushMission {
+    seed_push_mission_with_loadout(sim, Loadout::STANDARD)
+}
+
+/// Seed Mission 3, applying the player's chosen gunsmith [`Loadout`] to every squad member's weapon
+/// **at match start** — the WS-C live-spawn wiring, with the identical determinism contract as
+/// [`seed_hold_mission_with_loadout`]: the loadout is deterministic match-setup input drawn from the
+/// Player army's gunsmith pool, applied once here, and all the modified weapon fields are already in
+/// `Sim::fold`, so it rides the per-tick checksum with **no new fold surface** (invariant #7).
+pub fn seed_push_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> PushMission {
+    // Fixed-force attrition: empty purses + a slow income drip ⇒ no reinforcement for either side,
+    // exactly like *Hold* — the deterministic footing the host-side Capture objectives rest on.
+    sim.set_income_period(600);
+
+    // The PvE matchup (D68/D71): played US-side with the French Army as OPFOR, matching the other
+    // campaign missions. Identity only (logistics-tilted rosters) — the matchup stays fair.
+    sim.set_army(Faction::Player, Army::Us);
+    sim.set_army(Faction::Enemy, Army::Fr);
+
+    // The lane: three neutral posts, spawn order = capture order (west → east). The guards dug in
+    // beside each post are what makes them *held* — a post flips only once its fire team is dead
+    // and the squad stands on it alone.
+    let posts = PUSH_POST_XS.map(|px| at((px, 0)));
+    for &post in &posts {
+        sim.territory.points.push(ControlPoint::neutral(post));
+    }
+
+    let hp = economy::unit_stats(UnitKind::Rifleman).0.max;
+
+    // Player squad: two rows west of the lane, `FireAtWill`, facing +X (the advance). They *move*
+    // only on the player's orders (invariant #3) — the push itself is the mission.
+    let mut troops = Vec::with_capacity(PUSH_TROOPS);
+    for col in 0..(PUSH_TROOPS as i32 / 2) {
+        for &row_y in &[-2, 2] {
+            let t = spawn_rifleman(
+                sim,
+                at((PUSH_PLAYER_X - col * 2, row_y)),
+                Faction::Player,
+                Stance::FireAtWill,
+                hp,
+                Angle(0),
+            );
+            troops.push(t);
+        }
+    }
+
+    // Apply the player's gunsmith loadout to every squad member (WS-C match-setup input; `STANDARD`
+    // is a no-op ⇒ byte-identical baseline weapon). Drawn from the Player army's pool; folds into
+    // the per-tick checksum with no new fold surface (invariant #7).
+    let player_army = sim.army_of(Faction::Player);
+    for &t in &troops {
+        player_loadout.apply_to_weapon_for(player_army, &mut sim.world.weapon[t.index as usize]);
+    }
+
+    // Guards: a dug-in two-man fire team per post (`HoldPosition` + `FireAtWill` — they defend
+    // their post and never chase, the literal-executor defence), facing −X into the advance.
+    let mut defenders = Vec::with_capacity(PUSH_POST_XS.len() * PUSH_GUARD_OFFSETS.len());
+    for &px in &PUSH_POST_XS {
+        for &(dx, dy) in &PUSH_GUARD_OFFSETS {
+            let g = spawn_rifleman(
+                sim,
+                at((px + dx, dy)),
+                Faction::Enemy,
+                Stance::FireAtWill,
+                hp,
+                Angle(ANGLE_FULL / 2),
+            );
+            sim.world.order[g.index as usize] = Order::HoldPosition;
+            defenders.push(g);
+        }
+    }
+
+    // Lay the form-up cover (spawns nothing — entity/spawn order untouched).
+    build_push_terrain(sim);
+
+    PushMission { troops, defenders, posts }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1870,6 +2002,134 @@ mod tests {
         assert_eq!(passive_survivors, 0, "a passive defence is wiped out");
         let wiped = passive_wiped.expect("a passive defence is wiped");
         assert!(wiped < HOLD_TICKS, "the wipe lands before the hold window ({wiped} < {HOLD_TICKS})");
+    }
+
+    // -------- Mission 3: the *Push* (lane of guarded posts) --------
+
+    #[test]
+    fn push_seeds_a_squad_a_guarded_lane_and_no_production() {
+        let mut sim = fresh();
+        let m = seed_push_mission(&mut sim);
+        assert_eq!(m.troops.len(), PUSH_TROOPS, "the fixed squad");
+        assert_eq!(m.defenders.len(), PUSH_POST_XS.len() * 2, "two guards per post");
+        // The three posts sit on the lane in capture order, and are seeded as neutral points.
+        assert_eq!(sim.territory.points.len(), 3);
+        for (i, (&post, p)) in m.posts.iter().zip(&sim.territory.points).enumerate() {
+            assert_eq!(p.pos, post, "post {i} at its authored lane position");
+            assert_eq!(p.owner, Faction::Neutral, "post {i} starts neutral");
+            assert_eq!(post.x, Fixed::from_int(PUSH_POST_XS[i]), "capture order west → east");
+        }
+        // Fixed forces: no purse on either side (production disabled), guards hold position.
+        assert_eq!(sim.resources.get(Faction::Player), 0);
+        assert_eq!(sim.resources.get(Faction::Enemy), 0);
+        for &g in &m.defenders {
+            assert_eq!(sim.world.order[g.index as usize], Order::HoldPosition);
+            assert_eq!(sim.world.faction[g.index as usize], Faction::Enemy);
+        }
+        // The matchup is the campaign's US-vs-FR (D68), same as Seize/Hold.
+        assert_eq!(sim.army_of(Faction::Player), Army::Us);
+        assert_eq!(sim.army_of(Faction::Enemy), Army::Fr);
+        // The form-up cover is really laid: a Light bar just west of every post (and the post
+        // cell itself stays open — the last stretch is crossed in the open, by design).
+        for &px in &PUSH_POST_XS {
+            assert_eq!(sim.terrain.cover_at(at((px - 4, 0))), Cover::Light, "form-up bar at {px}");
+            assert_eq!(sim.terrain.cover_at(at((px, 0))), Cover::None, "post {px} stays open");
+        }
+    }
+
+    #[test]
+    fn push_seeding_is_deterministic() {
+        // Single-sourcing (invariant #1): two seeds of a fresh Sim are bit-identical, so the played
+        // mission and any headless Capture-objective driver agree.
+        let mut a = fresh();
+        let mut b = fresh();
+        seed_push_mission(&mut a);
+        seed_push_mission(&mut b);
+        assert_eq!(a.checksum(), b.checksum());
+    }
+
+    /// The mission's load-bearing design property (proven, not assumed): a squad **ordered down the
+    /// lane** takes all three posts with survivors, while a squad left at the start line captures
+    /// nothing. That is exactly the "winnable-yet-losable" footing the host-side Capture objectives
+    /// rest on. Deterministic, so this margin is stable (a combat re-tune that erased it trips here).
+    #[test]
+    fn push_is_winnable_ordered_forward_and_inert_passive() {
+        // Drive the push: order every living squad member onto the current post until it flips to
+        // the Player, then advance to the next — the methodical lane-take the mission teaches.
+        let mut sim = fresh();
+        let m = seed_push_mission(&mut sim);
+        let budget_per_post: u64 = 90 * crate::sim::TICK_HZ as u64;
+        for (i, &post) in m.posts.iter().enumerate() {
+            for &t in &m.troops {
+                if sim.world.health[t.index as usize].cur > Fixed::ZERO {
+                    sim.world.order[t.index as usize] = Order::AttackMove(post);
+                }
+            }
+            let deadline = sim.tick_count() + budget_per_post;
+            while sim.territory.points[i].owner != Faction::Player {
+                sim.step(&[]);
+                assert!(
+                    sim.tick_count() < deadline,
+                    "post {i} must fall inside the budget (an ordered push wins)"
+                );
+            }
+        }
+        let survivors = m
+            .troops
+            .iter()
+            .filter(|t| sim.world.health[t.index as usize].cur > Fixed::ZERO)
+            .count();
+        assert!(survivors > 0, "the ordered push ends with survivors");
+
+        // Passive control: an unordered squad (FireAtWill but rooted out of range) captures nothing.
+        let mut idle = fresh();
+        let mi = seed_push_mission(&mut idle);
+        for _ in 0..(30 * crate::sim::TICK_HZ as u64) {
+            idle.step(&[]);
+        }
+        assert!(
+            idle.territory.points.iter().all(|p| p.owner != Faction::Player),
+            "no post falls to a squad that never advances"
+        );
+        assert_eq!(mi.troops.len(), PUSH_TROOPS);
+    }
+
+    #[test]
+    fn push_standard_loadout_is_byte_identical_to_no_loadout() {
+        // The all-Standard loadout entry point is a proven no-op on the weapon, so the seeded world
+        // is byte-identical to the explicit STANDARD apply (the WS-C opt-out guarantee).
+        let mut plain = fresh();
+        let mut std = fresh();
+        let m_plain = seed_push_mission(&mut plain);
+        let m_std = seed_push_mission_with_loadout(&mut std, Loadout::STANDARD);
+        assert_eq!(m_plain, m_std, "same handles");
+        assert_eq!(plain.checksum(), std.checksum(), "same seeded checksum");
+    }
+
+    /// The WS-C live-spawn application (non-Standard path, mirroring the seize/hold twins): every
+    /// squad member's weapon is the player-army (US) base Rifleman with the chosen loadout applied,
+    /// and the guards are untouched by the *player's* gunsmith.
+    #[test]
+    fn push_applies_the_chosen_loadout_to_every_squad_member() {
+        use crate::gunsmith::{Barrel, Magazine, Optic};
+        let loadout = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+            ..Loadout::STANDARD
+        };
+        let mut sim = fresh();
+        let m = seed_push_mission_with_loadout(&mut sim, loadout);
+
+        let mut expected = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
+        loadout.apply_to_weapon_for(Army::Us, &mut expected);
+        for &t in &m.troops {
+            assert_eq!(sim.world.weapon[t.index as usize], expected, "squad carries the build");
+        }
+        let baseline = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
+        for &g in &m.defenders {
+            assert_eq!(sim.world.weapon[g.index as usize], baseline, "guards keep their FR baseline");
+        }
     }
 
     #[test]

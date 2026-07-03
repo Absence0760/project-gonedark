@@ -37,7 +37,8 @@ use gonedark_core::campaign::{
 use gonedark_core::ecs::Entity;
 use gonedark_core::gunsmith::Loadout;
 use gonedark_core::mission_tuning::{
-    Briefing, Difficulty, ScenarioModifiers, MISSION_ONE_BRIEFING, MISSION_TWO_BRIEFING,
+    Briefing, Difficulty, ScenarioModifiers, MISSION_ONE_BRIEFING, MISSION_THREE_BRIEFING,
+    MISSION_TWO_BRIEFING,
 };
 use gonedark_core::sim::Sim;
 
@@ -58,6 +59,11 @@ pub const MISSION_SEIZE: MissionId = MissionId(1);
 /// The shared identity of the WS-A *Hold the Line* mission (Mission 2, a Survive/defense archetype).
 /// Wired to the engine's `seed_hold_mission_scene` seeder + the [`MISSION_TWO_BRIEFING`].
 pub const MISSION_HOLD: MissionId = MissionId(2);
+
+/// The shared identity of the *Break the Line* mission (Mission 3, the Push archetype — capture a
+/// lane of guarded control points in order). Wired to the engine's `seed_push_mission_scene` seeder
+/// + the [`MISSION_THREE_BRIEFING`].
+pub const MISSION_PUSH: MissionId = MissionId(3);
 
 /// Seeds a `Sim` for a mission and hands back the runnable handles, matching the engine's existing
 /// GPU-free scene seeders (e.g. the crate-private `seed_seize_mission_scene`): the embodiable/
@@ -220,10 +226,11 @@ impl MissionRegistry {
     }
 }
 
-/// The shipped host-side mission registry. It holds the two runnable campaign missions WS-A has
-/// shipped — the *Seize* assault ("10 troops, take the base", [`MISSION_SEIZE`]) and the *Hold the
-/// Line* defense ([`MISSION_HOLD`]) — each wired to its GPU-free `core::scenario` seeder + WS-E
-/// briefing. New missions are added here as more seeders ship.
+/// The shipped host-side mission registry. It holds the three runnable campaign missions — the
+/// *Seize* assault ("10 troops, take the base", [`MISSION_SEIZE`]), the *Hold the Line* defense
+/// ([`MISSION_HOLD`]), and the *Break the Line* push ([`MISSION_PUSH`]) — each wired to its
+/// GPU-free `core::scenario` seeder + WS-E briefing. New missions are added here as more seeders
+/// ship.
 ///
 /// Both missions are now **placed as nodes** in [`default_campaign`] (*Seize* → *Hold*), so the
 /// registry and the campaign graph cover the same two missions. [`MissionRegistry::covers`] only
@@ -234,16 +241,19 @@ pub fn default_registry() -> MissionRegistry {
     MissionRegistry::new(vec![
         MissionDef::new(MISSION_SEIZE, crate::seed_seize_mission_scene, MISSION_ONE_BRIEFING),
         MissionDef::new(MISSION_HOLD, crate::seed_hold_mission_scene, MISSION_TWO_BRIEFING),
+        MissionDef::new(MISSION_PUSH, crate::seed_push_mission_scene, MISSION_THREE_BRIEFING),
     ])
 }
 
-/// The shipped Operations-hub campaign graph, wired to [`default_registry`]. A **two-node chain**:
-/// the root *Seize* mission ([`NodeId(0)`](NodeId) → [`MISSION_SEIZE`], framed from
-/// [`MISSION_ONE_BRIEFING`]) and, gated behind it, the *Hold the Line* defense
-/// ([`NodeId(1)`](NodeId) → [`MISSION_HOLD`], framed from [`MISSION_TWO_BRIEFING`],
-/// `.requires([NodeId(0)])` — it unlocks the moment *Seize* is cleared). Each node names its mission
-/// by [`MissionId`] only; the registry resolves the body, and [`Scene::for_mission`](crate::Scene::for_mission)
-/// maps that id to the launchable scene (*Seize* → `Mission1`, *Hold* → `Mission2`). The
+/// The shipped Operations-hub campaign graph, wired to [`default_registry`]. A **three-node
+/// chain**: the root *Seize* mission ([`NodeId(0)`](NodeId) → [`MISSION_SEIZE`], framed from
+/// [`MISSION_ONE_BRIEFING`]), the *Hold the Line* defense gated behind it
+/// ([`NodeId(1)`](NodeId) → [`MISSION_HOLD`], framed from [`MISSION_TWO_BRIEFING`]), and the
+/// *Break the Line* push gated behind that ([`NodeId(2)`](NodeId) → [`MISSION_PUSH`], framed from
+/// [`MISSION_THREE_BRIEFING`] — each unlocks the moment the one before is cleared). Each node names
+/// its mission by [`MissionId`] only; the registry resolves the body, and
+/// [`Scene::for_mission`](crate::Scene::for_mission) maps that id to the launchable scene
+/// (*Seize* → `Mission1`, *Hold* → `Mission2`, *Push* → `Mission3`). The
 /// hand-maintained Android `CampaignModel` mirror moves in lock-step (`compose-shell-parity.md`).
 /// Every node's [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`] holds —
 /// a test pins it), so launching any playable node always resolves to a runnable mission.
@@ -285,6 +295,14 @@ pub fn default_campaign() -> Campaign {
                 MISSION_TWO_BRIEFING.situation,
             )
             .requires([NodeId(0)])
+            .in_operation(OperationId(0)),
+            OperationNode::new(
+                NodeId(2),
+                MISSION_PUSH,
+                MISSION_THREE_BRIEFING.title,
+                MISSION_THREE_BRIEFING.situation,
+            )
+            .requires([NodeId(1)])
             .in_operation(OperationId(0)),
         ],
     )
@@ -620,7 +638,7 @@ mod tests {
     #[test]
     fn default_registry_holds_the_shipped_missions() {
         let reg = default_registry();
-        assert_eq!(reg.len(), 2, "the Seize assault + the Hold defense");
+        assert_eq!(reg.len(), 3, "the Seize assault + the Hold defense + the Push lane");
 
         let seize = reg.get(MISSION_SEIZE).expect("the Seize mission is registered");
         assert_eq!(seize.id, MISSION_SEIZE);
@@ -633,7 +651,13 @@ mod tests {
         // Hold is briefed a step up (Veteran) with neutral modifiers.
         assert_eq!(hold.briefing.difficulty, CommanderDifficulty::Veteran);
         assert_eq!(hold.modifiers(), ScenarioModifiers::default());
+        let push = reg.get(MISSION_PUSH).expect("the Push mission is registered");
+        assert_eq!(push.id, MISSION_PUSH);
+        // Push tops the opening ramp (Elite) with neutral modifiers.
+        assert_eq!(push.briefing.difficulty, CommanderDifficulty::Elite);
+        assert_eq!(push.modifiers(), ScenarioModifiers::default());
         assert_ne!(seize.briefing.title, hold.briefing.title, "distinct missions");
+        assert_ne!(hold.briefing.title, push.briefing.title, "distinct missions");
 
         // An unregistered id resolves to nothing (a content gap, never guessed).
         assert!(reg.get(MissionId(999)).is_none());
@@ -682,14 +706,13 @@ mod tests {
         assert_eq!(def.id, MISSION_SEIZE);
     }
 
-    /// The shipped campaign is now a **two-node chain**: Seize (root) → Hold (gated). Node 1 is
-    /// locked until Seize is cleared, then unlocks and resolves to the Hold mission; Seize stays
-    /// replayable throughout. This is the WS-B node placement of Mission 2.
+    /// The shipped campaign is a **three-node chain**: Seize (root) → Hold → Push, each gated on
+    /// the one before. A locked node never launches; a cleared node stays replayable throughout.
     #[test]
-    fn default_campaign_is_seize_then_hold() {
+    fn default_campaign_is_seize_then_hold_then_push() {
         let reg = default_registry();
         let mut campaign = default_campaign();
-        assert_eq!(campaign.mission_select().len(), 2, "Seize + Hold are both node-placed");
+        assert_eq!(campaign.mission_select().len(), 3, "all three missions are node-placed");
 
         // Node 0 is the root Seize; node 1 is the gated Hold, framed from MISSION_TWO_BRIEFING.
         assert_eq!(campaign.node(NodeId(0)).unwrap().mission, MISSION_SEIZE);
@@ -697,15 +720,23 @@ mod tests {
         assert_eq!(hold_node.mission, MISSION_HOLD);
         assert_eq!(hold_node.title, MISSION_TWO_BRIEFING.title);
         assert_eq!(hold_node.prerequisites, vec![NodeId(0)], "Hold is gated behind Seize");
+        let push_node = campaign.node(NodeId(2)).expect("the third node is placed");
+        assert_eq!(push_node.mission, MISSION_PUSH);
+        assert_eq!(push_node.title, MISSION_THREE_BRIEFING.title);
+        assert_eq!(push_node.prerequisites, vec![NodeId(1)], "Push is gated behind Hold");
 
-        // Locked until Seize is cleared: node 1 won't launch, even though its mission is registered.
+        // Locked until the one before clears: neither gated node launches at the start.
         assert_eq!(campaign.progress(NodeId(0)), NodeProgress::Available);
         assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Locked);
+        assert_eq!(campaign.progress(NodeId(2)), NodeProgress::Locked);
         assert!(reg.resolve_node(&campaign, NodeId(1)).is_none(), "Hold is locked at the start");
+        assert!(reg.resolve_node(&campaign, NodeId(2)).is_none(), "Push is locked at the start");
 
-        // Clear Seize → Hold unlocks and resolves to MISSION_HOLD; Seize stays replayable.
+        // Clear Seize → Hold unlocks and resolves to MISSION_HOLD; Push stays locked (its gate is
+        // Hold, not Seize); Seize stays replayable.
         campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
         assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Available);
+        assert_eq!(campaign.progress(NodeId(2)), NodeProgress::Locked, "Push waits on Hold");
         assert_eq!(reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id), Some(MISSION_HOLD));
         assert_eq!(
             reg.resolve_node(&campaign, NodeId(0)).map(|m| m.id),
@@ -713,10 +744,12 @@ mod tests {
             "a cleared node stays replayable",
         );
 
-        // Clearing Hold too leaves both replayable (the chain is complete).
+        // Clear Hold → Push finally unlocks and resolves; the cleared nodes stay replayable.
         campaign.clear(NodeId(1), CampaignDifficulty::Veteran).unwrap();
         assert!(matches!(campaign.progress(NodeId(1)), NodeProgress::Cleared { .. }));
+        assert_eq!(campaign.progress(NodeId(2)), NodeProgress::Available);
         assert_eq!(reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id), Some(MISSION_HOLD));
+        assert_eq!(reg.resolve_node(&campaign, NodeId(2)).map(|m| m.id), Some(MISSION_PUSH));
     }
 
     /// The shipped graph carries the Q28 conflict-atlas grouping: one placeholder modern conflict
@@ -738,12 +771,13 @@ mod tests {
         assert_eq!(op.conflict, ConflictId(0));
         assert_eq!(campaign.operations_in(ConflictId(0)), vec![OperationId(0)]);
 
-        // Both battles sit in the operation; the rollup tracks the chain end-to-end.
-        assert_eq!(campaign.nodes_in(OperationId(0)), vec![NodeId(0), NodeId(1)]);
+        // All three battles sit in the operation; the rollup tracks the chain end-to-end.
+        assert_eq!(campaign.nodes_in(OperationId(0)), vec![NodeId(0), NodeId(1), NodeId(2)]);
         let fresh = campaign.operation_progress(OperationId(0));
-        assert_eq!((fresh.cleared, fresh.total, fresh.playable), (0, 2, true));
+        assert_eq!((fresh.cleared, fresh.total, fresh.playable), (0, 3, true));
         campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
         campaign.clear(NodeId(1), CampaignDifficulty::Recruit).unwrap();
+        campaign.clear(NodeId(2), CampaignDifficulty::Recruit).unwrap();
         assert!(campaign.operation_progress(OperationId(0)).is_complete());
         assert!(campaign.conflict_progress(ConflictId(0)).is_complete());
 
@@ -763,6 +797,13 @@ mod tests {
                 MISSION_TWO_BRIEFING.situation,
             )
             .requires([NodeId(0)]),
+            OperationNode::new(
+                NodeId(2),
+                MISSION_PUSH,
+                MISSION_THREE_BRIEFING.title,
+                MISSION_THREE_BRIEFING.situation,
+            )
+            .requires([NodeId(1)]),
         ]);
         assert_eq!(default_campaign().serialize_progress(), ungrouped.serialize_progress());
     }

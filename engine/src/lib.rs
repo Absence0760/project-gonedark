@@ -1839,6 +1839,11 @@ pub enum Scene {
     /// determined enemy assault to the timer; a passive line is overrun and it's over. The objective
     /// HUD shows the survive progress.
     Mission2,
+    /// The PvE *Break the Line* mission (Mission 3, the Push archetype,
+    /// [`gonedark_core::scenario::seed_push_mission`]). Booted in the command view with a live
+    /// host-side [`objectives::ObjectiveSet`]: a fixed Player squad captures a lane of three
+    /// guarded control points in order; a wipe ends it. The objective HUD shows per-post progress.
+    Mission3,
     /// **Map inspection** ([`gonedark_core::scenario::seed_map_inspect`]) — drive a baked real-world
     /// battlefield (the Pointe du Hoc map, `tools/maps/`) to diagnose it. Booted in the command view
     /// with the **cover overlay on** (F3) so the sim's actual cover grid — the cells the flow field
@@ -1858,6 +1863,7 @@ impl Scene {
             "infantry" => Some(Scene::Infantry),
             "mission1" | "seize" => Some(Scene::Mission1),
             "mission2" | "hold" => Some(Scene::Mission2),
+            "mission3" | "push" => Some(Scene::Mission3),
             "map" | "inspect" | "pointe" => Some(Scene::MapInspect),
             _ => None,
         }
@@ -1874,6 +1880,7 @@ impl Scene {
         match mission {
             crate::mission_registry::MISSION_SEIZE => Some(Scene::Mission1),
             crate::mission_registry::MISSION_HOLD => Some(Scene::Mission2),
+            crate::mission_registry::MISSION_PUSH => Some(Scene::Mission3),
             _ => None,
         }
     }
@@ -1894,7 +1901,7 @@ impl Scene {
     /// (the picker's first tile) never saw the going-dark teach at all — the hardest-to-grasp
     /// mechanic in the game, silently un-taught on the most-tapped entry point.
     pub fn teaches_going_dark(self) -> bool {
-        matches!(self, Scene::Skirmish | Scene::Mission1 | Scene::Mission2)
+        matches!(self, Scene::Skirmish | Scene::Mission1 | Scene::Mission2 | Scene::Mission3)
     }
 }
 
@@ -2043,6 +2050,27 @@ fn seed_hold_mission_scene(
     (player, false, objectives)
 }
 
+/// Seed the **PvE *Break the Line* mission** (Mission 3, the Push archetype) and return `(player,
+/// start_embodied, objectives)`. Seeds the shared `core::scenario::seed_push_mission` scene (a fixed
+/// Player squad west of a lane of three guarded control points) and builds the host-side
+/// [`objectives::ObjectiveSet::mission_push`] that watches it — win by capturing every post, lose by
+/// being wiped. The `player` is the first squad member (the embodiable/selectable handle); booted in
+/// the command view. GPU-free, so it is host-tested directly. The objective layer only OBSERVES the
+/// sim — never folded (invariant #1/#7).
+///
+/// The player's pre-match gunsmith `player_loadout` is applied to the squad's weapons **at match
+/// start** (WS-C live-spawn wiring), folded into the per-tick checksum with no new fold surface;
+/// `Loadout::STANDARD` is a no-op.
+fn seed_push_mission_scene(
+    sim: &mut Sim,
+    player_loadout: Loadout,
+) -> (Entity, bool, objectives::ObjectiveSet) {
+    let m = gonedark_core::scenario::seed_push_mission_with_loadout(sim, player_loadout);
+    let objectives = objectives::ObjectiveSet::mission_push(Faction::Player, &m.posts);
+    let player = m.troops[0];
+    (player, false, objectives)
+}
+
 /// Seed the **two-tank hitbox duel** and return `(player, start_embodied)`. Seeds the shared
 /// `core::scenario::seed_duel` scene, then possesses the player tank so the sandbox boots in first
 /// person (`start_embodied == true`) — the input-source swap (invariant #5) is the `Command::Embody`
@@ -2107,6 +2135,7 @@ fn seed_scene_with_loadout(
     match scene {
         Scene::Mission1 => seed_seize_mission_scene(sim, player_loadout),
         Scene::Mission2 => seed_hold_mission_scene(sim, player_loadout),
+        Scene::Mission3 => seed_push_mission_scene(sim, player_loadout),
         Scene::Default => {
             let (p, e) = seed_default_scene(sim, player_loadout);
             (p, e, objectives::ObjectiveSet::default())
@@ -4824,6 +4853,8 @@ mod tests {
         assert_eq!(Scene::parse("seize"), Some(Scene::Mission1));
         assert_eq!(Scene::parse("mission2"), Some(Scene::Mission2));
         assert_eq!(Scene::parse("hold"), Some(Scene::Mission2));
+        assert_eq!(Scene::parse("mission3"), Some(Scene::Mission3));
+        assert_eq!(Scene::parse("push"), Some(Scene::Mission3));
         assert_eq!(Scene::parse("map"), Some(Scene::MapInspect));
         assert_eq!(Scene::parse("inspect"), Some(Scene::MapInspect));
         assert_eq!(Scene::parse("pointe"), Some(Scene::MapInspect));
@@ -4850,6 +4881,7 @@ mod tests {
         assert!(Scene::Skirmish.teaches_going_dark());
         assert!(Scene::Mission1.teaches_going_dark());
         assert!(Scene::Mission2.teaches_going_dark());
+        assert!(Scene::Mission3.teaches_going_dark());
         // The canned demo and debug sandboxes do not (not first-run entry points).
         assert!(!Scene::Default.teaches_going_dark());
         assert!(!Scene::Duel.teaches_going_dark());
@@ -4909,11 +4941,12 @@ mod tests {
 
     #[test]
     fn scene_for_mission_maps_each_campaign_mission_to_its_scene() {
-        use crate::mission_registry::{MISSION_HOLD, MISSION_SEIZE};
+        use crate::mission_registry::{MISSION_HOLD, MISSION_PUSH, MISSION_SEIZE};
         use gonedark_core::campaign::MissionId;
         // The node→scene mapping the shells launch a selected campaign node through.
         assert_eq!(Scene::for_mission(MISSION_SEIZE), Some(Scene::Mission1));
         assert_eq!(Scene::for_mission(MISSION_HOLD), Some(Scene::Mission2));
+        assert_eq!(Scene::for_mission(MISSION_PUSH), Some(Scene::Mission3));
         // An unmapped MissionId (no scene of its own) resolves to nothing — never guessed.
         assert_eq!(Scene::for_mission(MissionId(999)), None);
     }
@@ -5209,12 +5242,15 @@ mod tests {
 
         // Each loadout-bearing live scene paired with the un-loadout-ed `core::scenario` seed it must
         // reproduce byte-for-byte under `Loadout::STANDARD` (the default-loadout fast path).
-        let baselines: [(Scene, fn(&mut Sim)); 4] = [
+        let baselines: [(Scene, fn(&mut Sim)); 5] = [
             (Scene::Mission1, |s| {
                 gonedark_core::scenario::seed_seize_mission(s);
             }),
             (Scene::Mission2, |s| {
                 gonedark_core::scenario::seed_hold_mission(s);
+            }),
+            (Scene::Mission3, |s| {
+                gonedark_core::scenario::seed_push_mission(s);
             }),
             (Scene::Default, |s| {
                 gonedark_core::scenario::seed_skirmish(s);

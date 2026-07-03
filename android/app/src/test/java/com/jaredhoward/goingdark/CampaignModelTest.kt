@@ -83,10 +83,10 @@ class CampaignModelTest {
     }
 
     @Test
-    fun campaign_is_the_two_node_seize_then_hold_chain() {
-        // Mirrors engine::default_campaign()'s WS-B 2-node graph: NodeId(0)=Seize (root),
-        // NodeId(1)=Hold gated behind it. The list index == the node id (Rust's NodeId(i)==nodes[i]).
-        assertEquals("Seize + Hold are both node-placed", 2, campaignNodes.size)
+    fun campaign_is_the_three_node_seize_hold_push_chain() {
+        // Mirrors engine::default_campaign()'s 3-node graph: NodeId(0)=Seize (root), NodeId(1)=Hold
+        // gated behind it, NodeId(2)=Push gated behind that. List index == node id (NodeId(i)==nodes[i]).
+        assertEquals("all three missions are node-placed", 3, campaignNodes.size)
 
         val seize = campaignNodes[0]
         assertEquals(0, seize.id)
@@ -98,6 +98,26 @@ class CampaignModelTest {
         assertEquals("mission2", hold.sceneToken)
         // Hold is gated behind Seize — the unlock edge that mirrors `.requires([NodeId(0)])`.
         assertEquals(listOf(0), hold.prerequisites)
+
+        val push = campaignNodes[2]
+        assertEquals(2, push.id)
+        assertEquals("mission3", push.sceneToken)
+        // Push is gated behind Hold — the chain's third link.
+        assertEquals(listOf(1), push.prerequisites)
+    }
+
+    @Test
+    fun push_name_and_briefing_mirror_the_rust_source_verbatim() {
+        // Pins the D79 mirror against core::mission_tuning::MISSION_THREE_BRIEFING (title +
+        // situation). Like the other nodes, the briefing surface shows only `situation`.
+        val push = campaignNodes.first { it.sceneToken == "mission3" }
+        assertEquals("Break the Line", push.name)
+        assertEquals(
+            "Three posts down one lane, every one of them held. Take them in order and " +
+                "hold what you take — or embody a rifle and clear the way yourself. But the post you " +
+                "rush blind is the one they take back behind you.",
+            push.briefing,
+        )
     }
 
     @Test

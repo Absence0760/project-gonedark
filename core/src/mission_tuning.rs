@@ -353,6 +353,26 @@ pub const MISSION_TWO_BRIEFING: Briefing = Briefing {
     },
 };
 
+/// The third campaign node's briefing — Mission 3, *Break the Line*
+/// ([`crate::scenario::seed_push_mission`], the Push archetype: capture a chain of control points
+/// down a lane). The top of the campaign's opening difficulty ramp (Recruit → Veteran → `Elite`),
+/// with neutral modifiers. The situation reframes the going-dark cost around *momentum* — the post
+/// you clear blind is the one retaken behind you.
+pub const MISSION_THREE_BRIEFING: Briefing = Briefing {
+    title: "Break the Line",
+    situation: "Three posts down one lane, every one of them held. Take them in order and hold \
+                what you take — or embody a rifle and clear the way yourself. But the post you \
+                rush blind is the one they take back behind you.",
+    objective_line: "Capture all three control points.",
+    difficulty: Difficulty::Elite,
+    modifiers: ScenarioModifiers {
+        force_scale_pct: 100,
+        reinforcement_period: None,
+        fog: TellMode::Subtle,
+        time_limit_ticks: None,
+    },
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
