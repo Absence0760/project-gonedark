@@ -195,20 +195,34 @@ pub(crate) fn over_backdrop_screen<T>(
             // reach them. A ScrollArea that fits its content shows no scrollbar, so short screens
             // look identical to before.
             let max_card_h = (h * (1.0 - top_frac) - 24.0).max(120.0);
-            ui.vertical_centered(|ui| {
-                ui.add_space(h * top_frac);
-                glass_card_frame().show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .max_height(max_card_h)
-                        .show(ui, |ui| {
-                            // Pin the content column to a fixed width. This is the load-bearing half
-                            // of the shared layout fix: without it, `vertical_centered` above lets a
-                            // full-width widget (a slider, a `horizontal` row) stretch to the window
-                            // edge while intrinsic-width labels centre — the "controls far-left,
-                            // headings centred, dead middle" bug across every over-backdrop screen.
-                            ui.set_width(SHELL_CARD_W);
-                            out = Some(build(ui));
-                        });
+            ui.add_space(h * top_frac);
+            // Centre a fixed-width card BY HAND — pad the left by half the leftover width, then
+            // allocate a region of exactly `SHELL_CARD_W`. Leaning on `vertical_centered` here does
+            // NOT work: combined with the inner `ScrollArea` it painted the glass frame full-width and
+            // top-left-anchored instead of wrapping a centred column (the frame's rect desynced from
+            // the content's). Pinning the card region's width makes the frame wrap a centred,
+            // fixed-width column whose content fills it — deterministic, no layout-interaction guesswork.
+            let pad = ((ui.available_width() - SHELL_CARD_W) * 0.5).max(0.0);
+            ui.horizontal(|ui| {
+                ui.add_space(pad);
+                // `allocate_ui` inherits the parent layout — and the parent here is the centring
+                // `horizontal`, which would lay the card's interior out left-to-right. Force a
+                // top-down column so the banner / rows / footer stack vertically inside the card.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(SHELL_CARD_W, max_card_h),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        glass_card_frame().show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .max_height(max_card_h)
+                            // Fill the card width (don't shrink horizontally), but shrink to content
+                            // height so a short screen shows no scrollbar.
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                out = Some(build(ui));
+                            });
+                    });
                 });
             });
         });

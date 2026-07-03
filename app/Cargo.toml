@@ -58,3 +58,10 @@ gonedark-render = { path = "../render" }
 # `cargo build --target aarch64-linux-android` of the workspace still resolves the host.
 [target.'cfg(target_os = "android")'.dependencies]
 gonedark-pal-android = { path = "../pal-android" }
+
+# Dev-only: the headless shell-screenshot harness (`shell::shot`, an #[ignore]d test) renders each
+# out-of-match screen to a PNG offscreen so the egui layout can be eyeballed without a window. Mirrors
+# the `viz-runner` readback path (pollster-blocked device, png readback). Not shipped in the binary.
+[dev-dependencies]
+pollster = "0.4"
+png = "0.17"

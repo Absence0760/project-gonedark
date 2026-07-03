@@ -68,3 +68,7 @@ pub(crate) use widgets::*;
 
 #[cfg(test)]
 mod tests;
+
+// Dev-only headless screenshot harness for eyeballing the egui screen layouts (an #[ignore]d test).
+#[cfg(test)]
+mod shot;
