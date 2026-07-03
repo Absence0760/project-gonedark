@@ -727,8 +727,12 @@ surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.m
 > **Structural half resolved in [D98](decisions.md):** the conflict → operation → battle hierarchy
 > now exists as static authored data in `core::campaign` (`Conflict`/`Operation` + node tags +
 > derived `GroupProgress` rollups), and `default_campaign()` ships grouped under a placeholder
-> modern conflict. The three forks below — presentation (globe vs. regional map), per-conflict
-> factions, and the conflict-selection policy — are **still open**; the lean stands.
+> modern conflict. **A presentation *increment* landed in [D103](decisions.md):** the desktop hub
+> draws over a live engine-rendered **atlas globe** (Natural Earth land, one pin per conflict at
+> authored `lat_x10`/`lon_x10` anchors, settled on the conflict being fought) — the backdrop step
+> of the "grow list → map/globe without rework" path, deliberately **not** the interactive
+> endstate. The three forks below — presentation *endstate* (navigable globe vs. regional map),
+> per-conflict factions, and the conflict-selection policy — are **still open**; the lean stands.
 
 Proposal (2026-07-03): the campaign presents as a **navigable world map with a time axis** — pick a
 year, see that era's conflicts on the globe, zoom into one, and play its battles. Era-agnostic by

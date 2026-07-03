@@ -4606,3 +4606,50 @@ invariant #7); the shells' tables are read-only presentation data (the D34 rules
 (the table this unifies away), [`modes.md`](modes.md) §3, `engine/src/map_library.rs`,
 `core/src/scenario.rs` (`seed_positioned_skirmish`), `app/src/shell/skirmish.rs`,
 `pal-android/src/launch.rs`, `android/.../Battlefield.kt`, `maps/crossroads.map.ron`.
+
+---
+
+## D103 — The campaign hub sits on the atlas globe: a desktop presentation increment, not the Q28 endstate
+
+**Status: landed (desktop; a deliberate presentation increment).** The desktop Operations hub
+and briefing now draw over a live, engine-rendered **earth** instead of the title diorama: a
+stylized globe (land/sea from the public-domain Natural Earth 1:110m mask, a faint 30°
+graticule, the diorama's amber fresnel rim) with one glowing **pin per authored conflict**,
+settled so the conflict the player is actually fighting faces the camera. This is Q28's
+"3D model of the earth with battlefields per year" fantasy delivered as the **backdrop
+increment** — the step the Q28 lean said the presentation could grow through "without rework"
+(list → this → map/globe). **It does not close Q28 fork 2**: whether the *interactive* atlas
+endstate is a free-navigation globe or a 2.5D regional map stays open; nothing here is
+navigation, and the hub card is unchanged.
+
+**Decision — why this shape.** The Q28 lean deferred the globe mainly on the D32 native-shell
+cost ("embed the engine renderer in the out-of-match shell or build 3D navigation natively,
+twice"). The desktop shell already composites egui over a live engine 3D scene — the title
+diorama — so a globe *backdrop* reopens nothing: `render::globe_backdrop` is the diorama's
+self-contained sibling (own pipelines, procedural UV-sphere, one embedded blob), selected
+per-screen by the shell (`ShellBackdrop::{Diorama, Globe}`). Android's hub deliberately keeps
+the grouped list — the phone-side cost is exactly the D32 strain Q28 named, and it buys one
+pin today; that stays a recorded, deliberate presentation divergence (not a parity item)
+until the Q28 endstate is decided.
+
+**Decision — the data.** `core::campaign::Conflict` gains an authored anchor: `lat_x10`/
+`lon_x10` (integer tenth-degrees — invariant #1, `core` stays float-free; the render side
+converts at the seam, `atlas_pins`). The Kotlin mirror carries the same fields (D79,
+field-complete even though Compose doesn't render them yet). The land mask follows the asset
+pipeline to the letter (D41/D46): `tools/earth/gen_landmask.py` (committed generator +
+committed source GeoJSON) rasterizes Natural Earth land — **public domain**, manifest entry
+with source/license/url/sha256 — into a 720×360 R8 equirectangular mask the render crate
+`include_bytes!`s (the D74 font-atlas delivery; the crate stays `wgpu`+`bytemuck`).
+
+**Honest coverage.** The pure seams are unit-tested (lat/lon→sphere mapping, the mask's
+orientation pinned against real geography — Paris land, mid-Channel sea — the focus yaw, the
+sphere mesh, `focused_conflict`/`atlas_pins`), and the WGSL + pipelines are exercised
+headlessly by the screenshot harness's `operations_globe.png` shot, so a shader regression
+fails in a test run, not at title boot. The GPU glue itself is the standard exemption.
+
+**Cross-link:** [Q28](open-questions.md#q28--conflict-atlas) (forks 1/3 and the endstate of
+fork 2 stay open), [D98](#d98--the-campaign-carries-a-conflict-atlas-conflict--operation--battle-grouping-as-data-q28s-structural-half)
+(the data this renders), [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
+(unstrained — the backdrop pattern was already shipping), D41/D46/D74 (the scripted-asset
+method + the raw-blob delivery), `render/src/globe_backdrop.rs`, `tools/earth/gen_landmask.py`,
+`assets/earth/manifest.json`, `core/src/campaign.rs` (`Conflict::lat_x10`).
