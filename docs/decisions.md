@@ -4393,3 +4393,51 @@ placeholder conflict is placeholder *content*, not an identity decision.
 [D83](#d83) (replay difficulty, unchanged), [`modes.md`](modes.md) §2,
 [`pve-campaign.md`](pve-campaign.md) §2, `core/src/campaign.rs`, `engine/src/mission_registry.rs`,
 `android/.../CampaignModel.kt`.
+
+## D99 — The gameplay keymap is rebindable: a host-owned `KeybindMap` threads into the PAL decode (closes Q27)
+
+**Status: landed.** The [D90](#d90) rebind editor's scope cap is lifted: the **gameplay** keys
+(embody/surface, movement, jump, the order menu + its ten vocabulary slots, build/train/upgrade,
+crouch/reload/select-fire) are now rebindable alongside the three host toggles. Three moves make it
+hold invariant #2 on both sides of the seam:
+
+1. **The model moved down, not the PAL up.** `engine::keybind` relocated to `pal::keybind`
+   (`gonedark-pal` — the zero-dep, platform-free trait crate that already owns the neutral
+   `InputFrame` vocabulary); `engine` re-exports it, so every D90 call site
+   (`gonedark_engine::keybind::…`) compiles unchanged. `pal-desktop` consumes the model without
+   depending on `engine` (no game-loop crate in a PAL backend), and the model still pulls no
+   windowing/GPU crate.
+2. **The host owns the map; the PAL decodes through a copy.** The live `KeybindMap` stays on the
+   desktop `SettingsState` (edited by the same click-to-arm editor, persisted in the same
+   `keybinds=` shell-prefs field). The host pushes it into `DesktopInput` each match frame via
+   `set_keybinds` — the exact `set_look_prefs` pattern — and `DesktopInput::on_key` resolves every
+   press through it instead of a hardcoded `KeyCode` match. `keycode_to_keyid` moved from `app`
+   into `pal-desktop` as the single winit→neutral boundary (the app reuses it for its own
+   toggles).
+3. **Conflicts are layer-aware.** `GameAction` widened 3 → 28 with a `BindLayer` per action
+   (`Global` / `Command` / `Embodied`): actions may share a key **iff** their layers can never be
+   live together. That is the D42 mode-exclusive split made data — the shipped `R` = train-Rifleman
+   (command) + reload (embodied) stays legal, while `Global` (host toggles, movement) conflicts
+   with everything. `rebind`/`decode` reject only *overlapping-layer* shares.
+
+Compatibility: `GameAction::ALL` is append-only and the host-toggle ordinals 0–2 are **frozen**, so
+a pre-Q27 saved blob decodes its host rebinds and leaves gameplay keys at their defaults; a legacy
+rebind that now collides with a gameplay default falls back to the shipped map (the D90 corruption
+contract, unchanged). The hardcoded `V` reload *secondary* is retired — a rebindable map holds one
+key per action, and binding Reload to `V` is now a player choice, not a hardcode. Mouse buttons are
+deliberately **not** bindings: the classic-RTS button split (D42 — left select/fire, right
+command/aim) is a design lock, and hold-Left-Alt stays a hardcoded held-modifier gesture.
+
+**Why.** Q27's lean, adopted as-is: the D90 seam was already platform-neutral and proved the UX;
+the only honest blocker was that gameplay keys decoded in a different crate. Threading a host-owned
+neutral map through the PAL keeps invariant #2 airtight in both directions (no `engine` types in
+`pal-desktop`, no winit in the model) while making "full rebinds" ([PC-2](roadmap.md)) real instead
+of three-keys-deep. Keybinds remain presentation/input-only — never sim state, never checksummed
+(invariants #1/#4/#7); the sim sees the same `InputFrame` intents regardless of which physical key
+produced them. Tested at the platform-free seam per the repo discipline: default-map completeness
+(every action bound, no overlapping-layer duplicates), the layer conflict rules, legacy-blob
+decode, the rebound-map PAL decode, and the winit mapping's totality — green in dev + release.
+
+**Cross-link:** [Q27](open-questions.md#q27--gameplay-key-rebind) (resolved), [D90](#d90),
+[D42](#d42) (the button split + the `R` share), invariant #2, [`roadmap.md`](roadmap.md) PC-2,
+`pal/src/keybind.rs`, `pal-desktop/src/lib.rs`, `app/src/shell/settings.rs`.
