@@ -18,12 +18,14 @@
 
 use gonedark_core::campaign::{Campaign, Difficulty, NodeId};
 use gonedark_core::components::Faction;
-use gonedark_engine::keybind::{GameAction, KeyId};
+use gonedark_engine::keybind::GameAction;
 use gonedark_engine::loadout_ui::LoadoutEditor;
 use gonedark_engine::mission_registry::{default_campaign, default_registry, MissionRegistry};
 use gonedark_engine::objectives::MissionStatus;
 use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
-use gonedark_pal_desktop::{DesktopAudio, DesktopInput, DesktopRenderSurface, DesktopThermalSensor};
+use gonedark_pal_desktop::{
+    keycode_to_keyid, DesktopAudio, DesktopInput, DesktopRenderSurface, DesktopThermalSensor,
+};
 use gonedark_render::tiers::QualityTier;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -392,6 +394,9 @@ impl App {
                             GameAction::ToggleDebugOverlay => game.toggle_debug_hitboxes(),
                             // Fullscreen is a global (every-screen) key, handled in handle_global_keys.
                             GameAction::ToggleFullscreen => {}
+                            // Every other action is a GAMEPLAY key (Q27): decoded by
+                            // `DesktopInput` through the same map, never by the host.
+                            _ => {}
                         }
                     }
                 }
@@ -552,6 +557,11 @@ impl App {
                 // host-side presentation only — neither reaches the deterministic sim.
                 self.input
                     .set_look_prefs(self.settings.mouse_sensitivity, self.settings.invert_look_y);
+                // The live key-rebind map (Q27): push the player's bindings into the PAL input
+                // decode each frame, so gameplay keys (move/fire/embody/build/train/…) resolve
+                // through the same host-owned `KeybindMap` the Settings rebind editor edits and
+                // persists. Host-side input shaping only — never the deterministic sim.
+                self.input.set_keybinds(self.settings.keybinds);
                 self.audio
                     .set_gains(self.settings.master_volume, self.settings.sfx_volume);
                 // Music volume (D75 follow-up): compose the effective music-bus gain via the engine
@@ -828,84 +838,6 @@ fn escape_transition(screen: &Screen) -> Option<HostTransition> {
         // Nowhere to back out from the title; a match handles Escape as the pause toggle.
         Screen::Title | Screen::InMatch(_) => None,
     }
-}
-
-/// Map a winit [`KeyCode`] to the engine's platform-neutral [`KeyId`], or `None` for a key outside
-/// the rebind vocabulary. The desktop **app boundary** for the rebind editor (D75 follow-up): the
-/// engine `keybind` seam is winit-free (invariant #2), so this `winit::KeyCode` → [`KeyId`] mapping
-/// lives here (its egui twin, `shell::egui_key_to_keyid`, handles the capture side). Pure (a total
-/// match over plain enums) — unit-tested without a window.
-fn keycode_to_keyid(code: KeyCode) -> Option<KeyId> {
-    Some(match code {
-        KeyCode::F1 => KeyId::F1,
-        KeyCode::F2 => KeyId::F2,
-        KeyCode::F3 => KeyId::F3,
-        KeyCode::F4 => KeyId::F4,
-        KeyCode::F5 => KeyId::F5,
-        KeyCode::F6 => KeyId::F6,
-        KeyCode::F7 => KeyId::F7,
-        KeyCode::F8 => KeyId::F8,
-        KeyCode::F9 => KeyId::F9,
-        KeyCode::F10 => KeyId::F10,
-        KeyCode::F11 => KeyId::F11,
-        KeyCode::F12 => KeyId::F12,
-        KeyCode::KeyA => KeyId::A,
-        KeyCode::KeyB => KeyId::B,
-        KeyCode::KeyC => KeyId::C,
-        KeyCode::KeyD => KeyId::D,
-        KeyCode::KeyE => KeyId::E,
-        KeyCode::KeyF => KeyId::F,
-        KeyCode::KeyG => KeyId::G,
-        KeyCode::KeyH => KeyId::H,
-        KeyCode::KeyI => KeyId::I,
-        KeyCode::KeyJ => KeyId::J,
-        KeyCode::KeyK => KeyId::K,
-        KeyCode::KeyL => KeyId::L,
-        KeyCode::KeyM => KeyId::M,
-        KeyCode::KeyN => KeyId::N,
-        KeyCode::KeyO => KeyId::O,
-        KeyCode::KeyP => KeyId::P,
-        KeyCode::KeyQ => KeyId::Q,
-        KeyCode::KeyR => KeyId::R,
-        KeyCode::KeyS => KeyId::S,
-        KeyCode::KeyT => KeyId::T,
-        KeyCode::KeyU => KeyId::U,
-        KeyCode::KeyV => KeyId::V,
-        KeyCode::KeyW => KeyId::W,
-        KeyCode::KeyX => KeyId::X,
-        KeyCode::KeyY => KeyId::Y,
-        KeyCode::KeyZ => KeyId::Z,
-        KeyCode::Digit0 => KeyId::Digit0,
-        KeyCode::Digit1 => KeyId::Digit1,
-        KeyCode::Digit2 => KeyId::Digit2,
-        KeyCode::Digit3 => KeyId::Digit3,
-        KeyCode::Digit4 => KeyId::Digit4,
-        KeyCode::Digit5 => KeyId::Digit5,
-        KeyCode::Digit6 => KeyId::Digit6,
-        KeyCode::Digit7 => KeyId::Digit7,
-        KeyCode::Digit8 => KeyId::Digit8,
-        KeyCode::Digit9 => KeyId::Digit9,
-        KeyCode::Escape => KeyId::Escape,
-        KeyCode::Tab => KeyId::Tab,
-        KeyCode::Space => KeyId::Space,
-        KeyCode::Enter => KeyId::Enter,
-        KeyCode::Backspace => KeyId::Backspace,
-        KeyCode::Insert => KeyId::Insert,
-        KeyCode::Delete => KeyId::Delete,
-        KeyCode::Home => KeyId::Home,
-        KeyCode::End => KeyId::End,
-        KeyCode::PageUp => KeyId::PageUp,
-        KeyCode::PageDown => KeyId::PageDown,
-        KeyCode::ArrowUp => KeyId::Up,
-        KeyCode::ArrowDown => KeyId::Down,
-        KeyCode::ArrowLeft => KeyId::Left,
-        KeyCode::ArrowRight => KeyId::Right,
-        KeyCode::Minus => KeyId::Minus,
-        KeyCode::Equal => KeyId::Equals,
-        KeyCode::Backquote => KeyId::Backquote,
-        // Any other physical key (modifiers, punctuation, media keys, …) is not bindable here.
-        _ => return None,
-    })
 }
 
 impl ApplicationHandler for App {
@@ -1293,27 +1225,15 @@ mod escape_nav_tests {
 
 #[cfg(test)]
 mod keybind_boundary_tests {
-    //! The winit→engine key mapping is the only rebind logic in this binary worth testing; the
-    //! `KeyboardInput` event plumbing and `Game` toggles it drives are un-constructible glue
-    //! (winit `KeyEvent` has no public test constructor), exercised by running the app. The pure
-    //! rebind/conflict/persistence model is tested in `gonedark_engine::keybind`, and the egui capture
-    //! boundary in `shell`.
-    use super::{keycode_to_keyid, GameAction, KeyId};
+    //! The host's key routing composes `pal-desktop`'s `keycode_to_keyid` (the winit boundary —
+    //! tested in that crate with the mapping itself, where it moved for Q27) with the pure
+    //! `KeybindMap::action_for` lookup; the `KeyboardInput` event plumbing and `Game` toggles it
+    //! drives are un-constructible glue (winit `KeyEvent` has no public test constructor),
+    //! exercised by running the app. The rebind/conflict/persistence model is tested in
+    //! `gonedark_pal::keybind`, and the egui capture boundary in `shell`.
+    use super::{keycode_to_keyid, GameAction};
     use gonedark_engine::keybind::KeybindMap;
     use winit::keyboard::KeyCode;
-
-    #[test]
-    fn maps_the_default_binding_keys_and_a_sample_of_others() {
-        assert_eq!(keycode_to_keyid(KeyCode::Escape), Some(KeyId::Escape));
-        assert_eq!(keycode_to_keyid(KeyCode::F11), Some(KeyId::F11));
-        assert_eq!(keycode_to_keyid(KeyCode::F3), Some(KeyId::F3));
-        assert_eq!(keycode_to_keyid(KeyCode::KeyP), Some(KeyId::P));
-        assert_eq!(keycode_to_keyid(KeyCode::Digit5), Some(KeyId::Digit5));
-        assert_eq!(keycode_to_keyid(KeyCode::ArrowUp), Some(KeyId::Up));
-        assert_eq!(keycode_to_keyid(KeyCode::Equal), Some(KeyId::Equals));
-        // A non-bindable key (a modifier) resolves to nothing.
-        assert_eq!(keycode_to_keyid(KeyCode::ShiftLeft), None);
-    }
 
     #[test]
     fn default_map_routes_the_historical_desktop_keys_to_their_actions() {
@@ -1323,6 +1243,9 @@ mod keybind_boundary_tests {
         assert_eq!(action(KeyCode::Escape), Some(GameAction::Pause));
         assert_eq!(action(KeyCode::F11), Some(GameAction::ToggleFullscreen));
         assert_eq!(action(KeyCode::F3), Some(GameAction::ToggleDebugOverlay));
+        // A gameplay key resolves to its gameplay action — which `handle_host_keys` ignores
+        // (only the three host toggles above are the host's to act on).
+        assert_eq!(action(KeyCode::KeyE), Some(GameAction::Embody));
         // An unbound key drives nothing (so a stray press is a no-op).
         assert_eq!(action(KeyCode::KeyJ), None);
     }

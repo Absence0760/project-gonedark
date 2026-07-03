@@ -127,11 +127,14 @@ pub(crate) struct SettingsState {
     /// Still an *alert, not intel* (bearing + kind only). Fed to the engine via `Game::set_alert_cue_mode`.
     /// Presentation only.
     pub alert_cue_mode: AlertCueMode,
-    /// The desktop key-rebind map (D75 follow-up "the rebind editor"): which physical key fires each
-    /// rebindable host action (pause / fullscreen / debug overlay). The pure model lives in
-    /// `gonedark_engine::keybind` (winit-free, invariant #2); `main.rs` maps `winit::KeyCode` ↔ `KeyId`
-    /// at its boundary and routes each press through this map. Persisted by stable ordinal alongside
-    /// the other prefs. Presentation only — a keybind never reaches the sim (invariants #1/#4).
+    /// The desktop key-rebind map (D90 host toggles + the Q27 gameplay keymap): which physical key
+    /// fires each rebindable action — the host toggles (pause / fullscreen / debug overlay) `main.rs`
+    /// routes itself, and every gameplay key (move/embody/build/train/…) the host pushes into
+    /// `pal-desktop`'s `DesktopInput` each match frame (`set_keybinds`). The pure model lives in
+    /// `gonedark_pal::keybind` (platform-free, invariant #2; re-exported as `engine::keybind`);
+    /// `pal-desktop` maps `winit::KeyCode` ↔ `KeyId` at the winit boundary. Persisted by stable
+    /// ordinal alongside the other prefs. Presentation only — a keybind never reaches the sim
+    /// (invariants #1/#4).
     pub keybinds: KeybindMap,
 }
 
@@ -392,13 +395,25 @@ pub(crate) fn settings_ui(
         ui.checkbox(&mut state.invert_look_y, "Invert look Y");
 
         section_divider(ui);
-        // The key-rebind editor (D75 follow-up). One row per rebindable host action (pause /
-        // fullscreen / debug overlay — the keys `main.rs` owns): its label + a button showing the
-        // current binding. Clicking a button arms capture ("press a key…"); the next mappable key
-        // press rebinds through the pure `KeybindMap::rebind`, which rejects a key another action
-        // already owns and reports the owner for conflict feedback. Direct-mutates `state.keybinds`
-        // (like the sliders); persisted with the other prefs and read by `main.rs` each key event.
+        // The key-rebind editor (D90, widened by Q27). One row per rebindable action — the host
+        // toggles (pause / fullscreen / debug overlay — the keys `main.rs` owns) AND the gameplay
+        // keymap (move/embody/build/train/… — decoded by `pal-desktop` through this same map): its
+        // label + a button showing the current binding. Clicking a button arms capture ("press a
+        // key…"); the next mappable key press rebinds through the pure `KeybindMap::rebind`, which
+        // rejects a key an overlapping-layer action already owns and reports the owner for conflict
+        // feedback (a command-view and an embodied action MAY share a key — they are never live
+        // together; the shipped R = train rifleman / reload). Direct-mutates `state.keybinds` (like
+        // the sliders); persisted with the other prefs, read by `main.rs` each key event, and pushed
+        // into `DesktopInput` each match frame.
         section_label(ui, "KEY BINDINGS");
+        ui.label(
+            RichText::new(
+                "Command-view and embodied actions may share one key (they are never active \
+                 together). Esc cancels a capture.",
+            )
+            .color(BONE)
+            .size(TYPE_CAPTION),
+        );
         for act in GameAction::ALL {
             let capturing = *rebinding == Some(act);
             ui.horizontal(|ui| {

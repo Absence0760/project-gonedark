@@ -163,12 +163,15 @@ pub mod shell_modes;
 /// and a coarse haptic pulse — each still an *alert, not intel* (bearing + kind only). Presentation
 /// only; reads no sim state, never checksummed (invariants #1/#4/#7).
 pub mod alert_cues;
-/// The desktop key-rebind model (D75 follow-up "the rebind editor"): `GameAction` + `KeyId` +
-/// `KeybindMap`, the pure, **winit-free** rebind / conflict-detection / ordinal-persistence seam the
-/// desktop Settings rebind editor drives. The `app` layer maps `winit::KeyCode` / egui `Key` ↔ `KeyId`
-/// at its boundary (invariant #2). Presentation only — a keybind never reaches the sim (invariants
-/// #1/#4/#7).
-pub mod keybind;
+/// The desktop key-rebind model (D90 host toggles + the Q27 gameplay keymap): `GameAction` +
+/// `KeyId` + `KeybindMap`, the pure, **winit-free** rebind / conflict-detection /
+/// ordinal-persistence seam the desktop Settings rebind editor drives. The model now lives in
+/// `gonedark_pal::keybind` (still platform-free — zero deps) so `pal-desktop` can decode gameplay
+/// keys through a host-owned map without depending on this crate; re-exported here so the D90
+/// call sites (`gonedark_engine::keybind::…`) are unchanged. The `app` layer maps
+/// `winit::KeyCode` / egui `Key` ↔ `KeyId` at its boundary (invariant #2). Presentation only — a
+/// keybind never reaches the sim (invariants #1/#4/#7).
+pub use gonedark_pal::keybind;
 /// Host-side `*.map.ron` battlefield format + its float-airlock loader (content-tooling CT-C). Owns
 /// `MapSpec`: the spatial half of a scenario (terrain id, control points, cover props, spawn zones)
 /// as a designer-editable RON data file, and the validator that turns every authored **integer**
