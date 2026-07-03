@@ -559,13 +559,16 @@ use gonedark_render::tiers::QualityTier;
 
     #[test]
     fn keybinds_survive_the_shell_prefs_round_trip_and_default_when_missing() {
-        // A remapped keybind survives encode→decode alongside the other prefs.
+        // A remapped keybind — host toggle AND gameplay key (Q27) — survives encode→decode
+        // alongside the other prefs.
         let mut s = SettingsState::default();
         assert_eq!(s.keybinds.rebind(GameAction::Pause, KeyId::P), RebindOutcome::Bound);
         assert_eq!(
             s.keybinds.rebind(GameAction::ToggleDebugOverlay, KeyId::G),
             RebindOutcome::Bound
         );
+        assert_eq!(s.keybinds.rebind(GameAction::Jump, KeyId::V), RebindOutcome::Bound);
+        assert_eq!(s.keybinds.rebind(GameAction::Embody, KeyId::T), RebindOutcome::Bound);
         let blob = encode_shell_prefs(
             &s,
             &ProfileState::default(),
@@ -575,6 +578,8 @@ use gonedark_render::tiers::QualityTier;
         let (s2, _, _, _) = decode_shell_prefs(&blob);
         assert_eq!(s2.keybinds, s.keybinds, "keybinds survive the round-trip");
         assert_eq!(s2.keybinds.key_for(GameAction::Pause), KeyId::P);
+        assert_eq!(s2.keybinds.key_for(GameAction::Jump), KeyId::V);
+        assert_eq!(s2.keybinds.key_for(GameAction::Embody), KeyId::T);
 
         // A blob missing the key (an older save) decodes to the shipped default bindings, never panics.
         let (s3, _, _, _) = decode_shell_prefs("gonedark-shell 1\nmaster=0.5\n");
@@ -582,6 +587,12 @@ use gonedark_render::tiers::QualityTier;
         // A garbage value also falls back to defaults (KeybindMap::decode is total).
         let (s4, _, _, _) = decode_shell_prefs("keybinds=wat,nope\n");
         assert_eq!(s4.keybinds, KeybindMap::default(), "garbage keybinds → defaults");
+        // A pre-Q27 blob (three host-toggle fields only) keeps its host rebind and leaves every
+        // gameplay key at its shipped default — the frozen 0–2 ordinal contract.
+        let (s5, _, _, _) = decode_shell_prefs("keybinds=27,10,2\n");
+        assert_eq!(s5.keybinds.key_for(GameAction::Pause), KeyId::P);
+        assert_eq!(s5.keybinds.key_for(GameAction::MoveUp), KeyId::W);
+        assert_eq!(s5.keybinds.key_for(GameAction::SelectFire), KeyId::X);
     }
 
     #[test]

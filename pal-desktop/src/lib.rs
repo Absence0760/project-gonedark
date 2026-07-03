@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use gonedark_pal::keybind::{GameAction, KeyId, KeybindMap};
 use gonedark_pal::{InputFrame, PowerState, ThermalSensor, ThermalState};
 use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
@@ -265,12 +266,18 @@ impl DesktopRenderSurface {
 /// intents (embody / surface / click) are *latched* so they read `true` for exactly one
 /// [`drain_frame`](Self::drain_frame) and are then cleared.
 ///
-/// Default keymap (desktop, classic-RTS split — D42): `E` embody, `Q` surface, `WASD` move, raw
-/// mouse delta looks. **Left-click selects** (the command-layer pointer-down / band-select) and, when
-/// embodied, **fires**; **right-click commands** the current selection (move, or attack on an enemy);
-/// `Space` is the alternate fire. Number keys `1`–`0` pick the advanced order/stance vocabulary slots.
-/// Command-view production keys (Phase 2): `B` places a Camp at the cursor, `R`/`H` queue a Rifleman/
-/// Heavy at the active camp, `U` upgrades it.
+/// **Keyboard decode is data, not hardcoded `KeyCode`s (Q27):** every gameplay key resolves
+/// through a **host-owned** [`KeybindMap`] the app pushes each frame via
+/// [`set_keybinds`](Self::set_keybinds) — the platform-neutral rebind model in
+/// `gonedark_pal::keybind` (invariant #2: this backend consumes neutral data; no `engine` types
+/// leak in, no winit types leak out). The *default* map is the classic-RTS split the desktop
+/// always shipped (D42): `E` embody, `Q` surface, `WASD` move, `Space` jump, `F` holds the order
+/// menu, `1`–`0` pick the order/stance vocabulary slots, `B`/`R`/`H`/`U` drive production, and
+/// `C`/`R`/`X` crouch/reload/select-fire while embodied (`R` is the D42 mode-exclusive share).
+/// Mouse buttons stay a design lock, not bindings: **left-click selects** (the command-layer
+/// pointer-down / band-select) and, when embodied, **fires**; **right-click commands** the current
+/// selection (press edge) and holds aim-down-sight while embodied. The host-toggle actions in the
+/// map (pause / fullscreen / debug overlay) are decoded by the `app` host, never here.
 #[derive(Debug)]
 pub struct DesktopInput {
     // Accumulated (held / latest) state.
@@ -324,6 +331,10 @@ pub struct DesktopInput {
     // mapping here). `look_sensitivity` is a multiplier (1.0 = stock); `invert_look_y` flips pitch.
     look_sensitivity: f32,
     invert_look_y: bool,
+    // The host-owned key→action bindings (Q27): a copy of the live rebind map the app pushes each
+    // frame via `set_keybinds`, defaulting to the shipped keymap. Every key press decodes through
+    // it in `on_key` — presentation/input shaping only, never sim state.
+    keybinds: KeybindMap,
 }
 
 impl Default for DesktopInput {
@@ -356,6 +367,7 @@ impl Default for DesktopInput {
             aim_held: false,
             look_sensitivity: 1.0,
             invert_look_y: false,
+            keybinds: KeybindMap::default(),
         }
     }
 }
@@ -398,6 +410,15 @@ impl DesktopInput {
         self.invert_look_y = invert_y;
     }
 
+    /// Set the live key→action bindings (Q27). The **host owns** the map (it lives on the app's
+    /// Settings state, edited by the rebind editor and persisted with the shell prefs); it pushes a
+    /// copy here each match frame — exactly the [`set_look_prefs`](Self::set_look_prefs) pattern —
+    /// so every key press decodes through the player's bindings instead of hardcoded `KeyCode`s.
+    /// Host-side input shaping only; never touches the deterministic sim.
+    pub fn set_keybinds(&mut self, map: KeybindMap) {
+        self.keybinds = map;
+    }
+
     /// Feed one `winit` [`WindowEvent`]. This is a **thin decoder**: it unpacks the platform event
     /// into the engine-neutral primitives (a moved/left pointer, a button edge, a key edge with its
     /// held/repeat flags) and forwards them to the pure `on_*` mappers below. All the *meaning*
@@ -424,8 +445,13 @@ impl DesktopInput {
                 self.on_mouse_wheel(dy);
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                // Decode the platform key to the neutral `KeyId` right here at the winit boundary;
+                // everything past this point (the keymap lookup, the latch/held rules) is
+                // platform-free and unit-tested. A key outside the bindable vocabulary is a no-op.
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    self.on_key(code, event.state == ElementState::Pressed, event.repeat);
+                    if let Some(key) = keycode_to_keyid(code) {
+                        self.on_key(key, event.state == ElementState::Pressed, event.repeat);
+                    }
                 }
             }
             _ => {}
@@ -441,9 +467,10 @@ impl DesktopInput {
     }
 
     // --- Pure input mappers (the testable seam) -------------------------------------------------
-    // These take engine-neutral primitives, not winit types, so the keymap + latch/held rules are
-    // unit-tested directly (see `input_tests`). `KeyCode`/`MouseButton` are plain constructible
-    // enums; the un-constructible `KeyEvent` is decoded away in `handle_window_event` above.
+    // These take engine-neutral primitives (`KeyId`, not winit's `KeyCode`), so the keymap + the
+    // latch/held rules are unit-tested directly (see `input_tests`). `MouseButton` is a plain
+    // constructible enum; the un-constructible `KeyEvent` is decoded away in `handle_window_event`
+    // above (via `keycode_to_keyid`).
 
     /// The command-layer pointer moved to `(x, y)` window pixels.
     fn on_cursor_moved(&mut self, x: f32, y: f32) {
@@ -489,73 +516,85 @@ impl DesktopInput {
     }
 
     /// A key changed state. `pressed` is the up/down edge; `repeat` is the OS key-repeat flag.
-    /// Edge intents (embody/surface, vocabulary slots) latch only on the first press (`pressed &&
-    /// !repeat`); held inputs (WASD, fire, the F context key) track the level directly.
-    fn on_key(&mut self, code: KeyCode, pressed: bool, repeat: bool) {
-        match code {
-            // Edge-triggered intents: latch only on the press edge, and only on the first press
-            // (ignore key-repeat) so they fire exactly once.
-            KeyCode::KeyE => {
-                if pressed && !repeat {
-                    self.embody_latch = true;
+    /// The key resolves through the host-owned [`KeybindMap`] (Q27) to every action bound to it —
+    /// plural on purpose: the map allows one key across the mode-exclusive command/embodied layers
+    /// (the shipped `R` = train-Rifleman + reload), and the engine only ever consumes one side, so
+    /// applying both latches is exactly the pre-Q27 hardcoded behaviour. An unbound key is a no-op.
+    fn on_key(&mut self, key: KeyId, pressed: bool, repeat: bool) {
+        for action in GameAction::ALL {
+            if self.keybinds.key_for(action) == key {
+                self.apply_action(action, pressed, repeat);
+            }
+        }
+    }
+
+    /// Apply one resolved [`GameAction`] to the accumulated input state — the latch-vs-held rules,
+    /// unchanged from the pre-Q27 hardcoded keymap. Edge intents (embody/surface, vocabulary slots,
+    /// production, crouch/reload/select-fire) latch only on the first press (`pressed && !repeat`)
+    /// so they fire exactly once; held inputs (movement, the order-menu hold) track the level
+    /// directly. The host-toggle actions (pause / fullscreen / debug overlay) are the `app` host's
+    /// to decode — they never reach the engine-neutral input frame, so they are inert here.
+    fn apply_action(&mut self, action: GameAction, pressed: bool, repeat: bool) {
+        // The one-shot press edge (ignore OS key-repeat) every latched intent shares.
+        let edge = pressed && !repeat;
+        match action {
+            // Host toggles: decoded by the `app` boundary, never part of the gameplay input frame.
+            GameAction::Pause | GameAction::ToggleFullscreen | GameAction::ToggleDebugOverlay => {}
+            // Edge-triggered layer swaps.
+            GameAction::Embody => self.embody_latch |= edge,
+            GameAction::Surface => self.surface_latch |= edge,
+            // Held locomotion axes (default WASD).
+            GameAction::MoveUp => self.move_up = pressed,
+            GameAction::MoveDown => self.move_down = pressed,
+            GameAction::MoveLeft => self.move_left = pressed,
+            GameAction::MoveRight => self.move_right = pressed,
+            // Jump — a one-shot edge that starts a cosmetic embodied hop (fire is the left mouse
+            // button, matching the genre).
+            GameAction::Jump => self.jump_latch |= edge,
+            // The order/stance context is HELD (a level signal, like movement), NOT an edge: the
+            // radial command menu stays open while the key is down and closes on release. An edge
+            // latch here would open the menu for a single frame and then immediately drop it.
+            GameAction::OrderMenu => self.long_press = pressed,
+            // The ten order/stance vocabulary slots (0-based on the wire — see engine::command_ui
+            // for the slot table; `order_slot` owns the numbering).
+            GameAction::OrderSlot1
+            | GameAction::OrderSlot2
+            | GameAction::OrderSlot3
+            | GameAction::OrderSlot4
+            | GameAction::OrderSlot5
+            | GameAction::OrderSlot6
+            | GameAction::OrderSlot7
+            | GameAction::OrderSlot8
+            | GameAction::OrderSlot9
+            | GameAction::OrderSlot10 => {
+                if edge {
+                    self.command_slot = action.order_slot();
                 }
             }
-            KeyCode::KeyQ => {
-                if pressed && !repeat {
-                    self.surface_latch = true;
+            // Command-view "command and grow your camps" production edges (Phase 2). The engine
+            // ignores them while embodied.
+            GameAction::BuildCamp => {
+                if edge {
+                    self.building_slot = Some(0);
                 }
             }
-            // Held locomotion axes (WASD).
-            KeyCode::KeyW => self.move_up = pressed,
-            KeyCode::KeyS => self.move_down = pressed,
-            KeyCode::KeyA => self.move_left = pressed,
-            KeyCode::KeyD => self.move_right = pressed,
-            // Jump (standard FPS Space binding) — a one-shot edge that starts a cosmetic embodied
-            // hop. Space no longer fires: fire is the left mouse button, matching the genre.
-            KeyCode::Space => {
-                if pressed && !repeat {
-                    self.jump_latch = true;
+            GameAction::TrainRifleman => {
+                if edge {
+                    self.train_slot = Some(0);
                 }
             }
-            // Touch-UI desktop bindings: F opens the order/stance context; number keys pick a
-            // vocabulary slot (0-based on the wire) — 1–9 → slots 0–8, 0 → slot 9 (see
-            // engine::command_ui for the slot table).
-            // F is HELD (a level signal, like WASD), NOT an edge: the radial command menu stays open
-            // while F is down and closes on release. An edge latch here would open the menu for a
-            // single frame and then immediately drop it.
-            KeyCode::KeyF => self.long_press = pressed,
-            KeyCode::Digit1 if pressed && !repeat => self.command_slot = Some(0),
-            KeyCode::Digit2 if pressed && !repeat => self.command_slot = Some(1),
-            KeyCode::Digit3 if pressed && !repeat => self.command_slot = Some(2),
-            KeyCode::Digit4 if pressed && !repeat => self.command_slot = Some(3),
-            KeyCode::Digit5 if pressed && !repeat => self.command_slot = Some(4),
-            KeyCode::Digit6 if pressed && !repeat => self.command_slot = Some(5),
-            KeyCode::Digit7 if pressed && !repeat => self.command_slot = Some(6),
-            KeyCode::Digit8 if pressed && !repeat => self.command_slot = Some(7),
-            KeyCode::Digit9 if pressed && !repeat => self.command_slot = Some(8),
-            KeyCode::Digit0 if pressed && !repeat => self.command_slot = Some(9),
-            // Command-view "command and grow your camps" production keys (Phase 2). Edge-latched
-            // (press, ignore key-repeat), command view only — the engine ignores them while embodied.
-            // Mnemonic letters, distinct from the 1–0 order/stance vocabulary: B(uild) places a Camp
-            // at the cursor's ground point; R(ifleman)/H(eavy) queue that unit at the active camp;
-            // U(pgrade) levels the active camp. (These bindings are recorded in docs/decisions.md.)
-            KeyCode::KeyB if pressed && !repeat => self.building_slot = Some(0),
-            // R queues a Rifleman in the command view AND reloads while embodied (the standard FPS
-            // reload key). The two consumers are mode-exclusive — the engine reads `train_slot` only
-            // in the command view and `reload_pressed` only while embodied — so one key is unambiguous.
-            KeyCode::KeyR if pressed && !repeat => {
-                self.train_slot = Some(0);
-                self.reload_latch = true;
+            GameAction::TrainHeavy => {
+                if edge {
+                    self.train_slot = Some(1);
+                }
             }
-            KeyCode::KeyH if pressed && !repeat => self.train_slot = Some(1),
-            KeyCode::KeyU if pressed && !repeat => self.upgrade_latch = true,
-            // Embodied FPS keys (mirror the Android Crouch/Reload buttons so the mechanics are
-            // testable on desktop). Edge-latched; the engine ignores them while not embodied.
-            // C=crouch, R/V=reload (V kept as a secondary), X=select-fire (semi ⇄ auto).
-            KeyCode::KeyC if pressed && !repeat => self.crouch_latch = true,
-            KeyCode::KeyV if pressed && !repeat => self.reload_latch = true,
-            KeyCode::KeyX if pressed && !repeat => self.select_fire_latch = true,
-            _ => {}
+            GameAction::UpgradeCamp => self.upgrade_latch |= edge,
+            // Embodied FPS edges (mirror the Android Crouch/Reload buttons so the mechanics are
+            // testable on desktop). The engine ignores them while not embodied. Crouch is
+            // load-bearing as an edge: the sim inverts posture, so a held level would thrash it.
+            GameAction::Crouch => self.crouch_latch |= edge,
+            GameAction::Reload => self.reload_latch |= edge,
+            GameAction::SelectFire => self.select_fire_latch |= edge,
         }
     }
 
@@ -644,6 +683,85 @@ impl DesktopInput {
     }
 }
 
+/// Map a winit [`KeyCode`] to the platform-neutral [`KeyId`], or `None` for a key outside the
+/// rebind vocabulary. The desktop **winit boundary** for the whole keybind system: `DesktopInput`
+/// decodes every gameplay key through it (Q27), and the `app` host reuses it to route its own
+/// host toggles — one mapping, one crate that owns winit types (its egui twin,
+/// `shell::egui_key_to_keyid`, handles the rebind-editor capture side). Pure (a total match over
+/// plain enums) — unit-tested without a window.
+pub fn keycode_to_keyid(code: KeyCode) -> Option<KeyId> {
+    Some(match code {
+        KeyCode::F1 => KeyId::F1,
+        KeyCode::F2 => KeyId::F2,
+        KeyCode::F3 => KeyId::F3,
+        KeyCode::F4 => KeyId::F4,
+        KeyCode::F5 => KeyId::F5,
+        KeyCode::F6 => KeyId::F6,
+        KeyCode::F7 => KeyId::F7,
+        KeyCode::F8 => KeyId::F8,
+        KeyCode::F9 => KeyId::F9,
+        KeyCode::F10 => KeyId::F10,
+        KeyCode::F11 => KeyId::F11,
+        KeyCode::F12 => KeyId::F12,
+        KeyCode::KeyA => KeyId::A,
+        KeyCode::KeyB => KeyId::B,
+        KeyCode::KeyC => KeyId::C,
+        KeyCode::KeyD => KeyId::D,
+        KeyCode::KeyE => KeyId::E,
+        KeyCode::KeyF => KeyId::F,
+        KeyCode::KeyG => KeyId::G,
+        KeyCode::KeyH => KeyId::H,
+        KeyCode::KeyI => KeyId::I,
+        KeyCode::KeyJ => KeyId::J,
+        KeyCode::KeyK => KeyId::K,
+        KeyCode::KeyL => KeyId::L,
+        KeyCode::KeyM => KeyId::M,
+        KeyCode::KeyN => KeyId::N,
+        KeyCode::KeyO => KeyId::O,
+        KeyCode::KeyP => KeyId::P,
+        KeyCode::KeyQ => KeyId::Q,
+        KeyCode::KeyR => KeyId::R,
+        KeyCode::KeyS => KeyId::S,
+        KeyCode::KeyT => KeyId::T,
+        KeyCode::KeyU => KeyId::U,
+        KeyCode::KeyV => KeyId::V,
+        KeyCode::KeyW => KeyId::W,
+        KeyCode::KeyX => KeyId::X,
+        KeyCode::KeyY => KeyId::Y,
+        KeyCode::KeyZ => KeyId::Z,
+        KeyCode::Digit0 => KeyId::Digit0,
+        KeyCode::Digit1 => KeyId::Digit1,
+        KeyCode::Digit2 => KeyId::Digit2,
+        KeyCode::Digit3 => KeyId::Digit3,
+        KeyCode::Digit4 => KeyId::Digit4,
+        KeyCode::Digit5 => KeyId::Digit5,
+        KeyCode::Digit6 => KeyId::Digit6,
+        KeyCode::Digit7 => KeyId::Digit7,
+        KeyCode::Digit8 => KeyId::Digit8,
+        KeyCode::Digit9 => KeyId::Digit9,
+        KeyCode::Escape => KeyId::Escape,
+        KeyCode::Tab => KeyId::Tab,
+        KeyCode::Space => KeyId::Space,
+        KeyCode::Enter => KeyId::Enter,
+        KeyCode::Backspace => KeyId::Backspace,
+        KeyCode::Insert => KeyId::Insert,
+        KeyCode::Delete => KeyId::Delete,
+        KeyCode::Home => KeyId::Home,
+        KeyCode::End => KeyId::End,
+        KeyCode::PageUp => KeyId::PageUp,
+        KeyCode::PageDown => KeyId::PageDown,
+        KeyCode::ArrowUp => KeyId::Up,
+        KeyCode::ArrowDown => KeyId::Down,
+        KeyCode::ArrowLeft => KeyId::Left,
+        KeyCode::ArrowRight => KeyId::Right,
+        KeyCode::Minus => KeyId::Minus,
+        KeyCode::Equal => KeyId::Equals,
+        KeyCode::Backquote => KeyId::Backquote,
+        // Any other physical key (modifiers, punctuation, media keys, …) is not bindable here.
+        _ => return None,
+    })
+}
+
 /// Also satisfy the abstract `pal::Input` seam so `DesktopInput` can be used wherever the
 /// engine-neutral trait is expected. `poll` is the trait's per-frame drain.
 impl gonedark_pal::Input for DesktopInput {
@@ -705,11 +823,13 @@ impl ThermalSensor for DesktopThermalSensor {
 #[cfg(test)]
 mod input_tests {
     //! Tests for the pure input mappers (`on_key` / `on_mouse_button` / `on_cursor_*` /
-    //! `on_mouse_motion`) + `drain_frame`. These cover the keymap and the latch-vs-held rules — the
-    //! seam that the un-constructible winit `KeyEvent` previously hid from coverage. `KeyCode` and
-    //! `MouseButton` are plain enums, so the mappers are driven directly.
+    //! `on_mouse_motion`) + `drain_frame`. These cover the default keymap (through the shipped
+    //! `KeybindMap` the Q27 decode resolves against), the rebound-map path (`set_keybinds`), and
+    //! the latch-vs-held rules — the seam that the un-constructible winit `KeyEvent` previously hid
+    //! from coverage. `KeyId` and `MouseButton` are plain enums, so the mappers are driven directly.
 
     use super::*;
+    use gonedark_pal::keybind::RebindOutcome;
 
     /// THE regression guard: the F context key must be HELD (true while down), not a one-shot edge.
     /// A prior edge-latch made the radial command menu flash for a single frame and vanish.
@@ -717,26 +837,26 @@ mod input_tests {
     fn long_press_is_held_until_release() {
         let mut input = DesktopInput::new();
         assert!(!input.drain_frame().long_press, "idle: not pressed");
-        input.on_key(KeyCode::KeyF, true, false);
+        input.on_key(KeyId::F, true, false);
         assert!(input.drain_frame().long_press, "held the frame F goes down");
         assert!(
             input.drain_frame().long_press,
             "STILL held with no new event (level state, not a cleared edge)"
         );
-        input.on_key(KeyCode::KeyF, false, false);
+        input.on_key(KeyId::F, false, false);
         assert!(!input.drain_frame().long_press, "released → false");
     }
 
     #[test]
     fn embody_and_surface_are_one_shot_edges() {
         let mut input = DesktopInput::new();
-        input.on_key(KeyCode::KeyE, true, false);
+        input.on_key(KeyId::E, true, false);
         assert!(input.drain_frame().embody_pressed, "embody fires on press");
         assert!(
             !input.drain_frame().embody_pressed,
             "and clears after one drain (one-shot)"
         );
-        input.on_key(KeyCode::KeyQ, true, false);
+        input.on_key(KeyId::Q, true, false);
         let f = input.drain_frame();
         assert!(f.surface_pressed && !f.embody_pressed);
     }
@@ -745,12 +865,12 @@ mod input_tests {
     fn edge_intents_ignore_key_repeat() {
         let mut input = DesktopInput::new();
         // An OS key-repeat (repeat = true) must NOT re-fire an edge intent.
-        input.on_key(KeyCode::KeyE, true, true);
+        input.on_key(KeyId::E, true, true);
         assert!(
             !input.drain_frame().embody_pressed,
             "repeat doesn't latch embody"
         );
-        input.on_key(KeyCode::Digit1, true, true);
+        input.on_key(KeyId::Digit1, true, true);
         assert_eq!(
             input.drain_frame().command_slot,
             None,
@@ -761,23 +881,23 @@ mod input_tests {
     #[test]
     fn number_keys_map_to_zero_based_slots_then_clear() {
         let mut input = DesktopInput::new();
-        input.on_key(KeyCode::Digit1, true, false);
+        input.on_key(KeyId::Digit1, true, false);
         assert_eq!(input.drain_frame().command_slot, Some(0), "1 → slot 0");
         assert_eq!(input.drain_frame().command_slot, None, "slot is one-shot");
-        input.on_key(KeyCode::Digit0, true, false);
+        input.on_key(KeyId::Digit0, true, false);
         assert_eq!(input.drain_frame().command_slot, Some(9), "0 → slot 9");
     }
 
     #[test]
     fn wasd_is_held_level_state() {
         let mut input = DesktopInput::new();
-        input.on_key(KeyCode::KeyW, true, false); // up → -Y (screen convention)
+        input.on_key(KeyId::W, true, false); // up → -Y (screen convention)
         assert_eq!(input.drain_frame().move_axis, (0.0, -1.0));
         assert_eq!(input.drain_frame().move_axis, (0.0, -1.0), "still held");
-        input.on_key(KeyCode::KeyD, true, false); // + right → +X
+        input.on_key(KeyId::D, true, false); // + right → +X
         assert_eq!(input.drain_frame().move_axis, (1.0, -1.0));
-        input.on_key(KeyCode::KeyW, false, false);
-        input.on_key(KeyCode::KeyD, false, false);
+        input.on_key(KeyId::W, false, false);
+        input.on_key(KeyId::D, false, false);
         assert_eq!(
             input.drain_frame().move_axis,
             (0.0, 0.0),
@@ -824,7 +944,7 @@ mod input_tests {
         input.on_mouse_button(MouseButton::Left, false);
         assert!(!input.drain_frame().fire, "LMB released → no fire");
         // Space no longer fires — it latches a one-shot jump edge instead.
-        input.on_key(KeyCode::Space, true, false);
+        input.on_key(KeyId::Space, true, false);
         let f = input.drain_frame();
         assert!(!f.fire, "Space does NOT fire");
         assert!(f.jump_pressed, "Space latches a jump edge");
@@ -837,12 +957,12 @@ mod input_tests {
         // Standard reload is R (also queues a Rifleman in the command view — mode-exclusive), and X
         // toggles the fire mode. Both are one-shot edges cleared on drain.
         let mut input = DesktopInput::new();
-        input.on_key(KeyCode::KeyR, true, false);
+        input.on_key(KeyId::R, true, false);
         let f = input.drain_frame();
         assert!(f.reload_pressed, "R reloads while embodied");
         assert_eq!(f.train_slot, Some(0), "and queues a Rifleman in the command view");
         assert!(!input.drain_frame().reload_pressed, "reload edge clears after one drain");
-        input.on_key(KeyCode::KeyX, true, false);
+        input.on_key(KeyId::X, true, false);
         assert!(input.drain_frame().select_fire_pressed, "X toggles fire mode");
         assert!(!input.drain_frame().select_fire_pressed, "select-fire edge clears after one drain");
     }
@@ -918,7 +1038,7 @@ mod input_tests {
         // B → build-palette slot 0 (Camp), R/H → train slots 0/1 (Rifleman/Heavy), U → upgrade.
         let mut input = DesktopInput::new();
 
-        input.on_key(KeyCode::KeyB, true, false);
+        input.on_key(KeyId::B, true, false);
         let f = input.drain_frame();
         assert_eq!(f.building_slot, Some(0), "B → build slot 0 (Camp)");
         assert_eq!(
@@ -927,9 +1047,9 @@ mod input_tests {
             "build slot is one-shot"
         );
 
-        input.on_key(KeyCode::KeyR, true, false);
+        input.on_key(KeyId::R, true, false);
         assert_eq!(input.drain_frame().train_slot, Some(0), "R → train Rifleman");
-        input.on_key(KeyCode::KeyH, true, false);
+        input.on_key(KeyId::H, true, false);
         assert_eq!(input.drain_frame().train_slot, Some(1), "H → train Heavy");
         assert_eq!(
             input.drain_frame().train_slot,
@@ -937,7 +1057,7 @@ mod input_tests {
             "train slot is one-shot"
         );
 
-        input.on_key(KeyCode::KeyU, true, false);
+        input.on_key(KeyId::U, true, false);
         assert!(input.drain_frame().upgrade_pressed, "U → upgrade edge");
         assert!(
             !input.drain_frame().upgrade_pressed,
@@ -949,9 +1069,9 @@ mod input_tests {
     fn production_keys_ignore_key_repeat() {
         // OS key-repeat must not re-fire a production edge (same rule as embody / command_slot).
         let mut input = DesktopInput::new();
-        input.on_key(KeyCode::KeyB, true, true);
-        input.on_key(KeyCode::KeyR, true, true);
-        input.on_key(KeyCode::KeyU, true, true);
+        input.on_key(KeyId::B, true, true);
+        input.on_key(KeyId::R, true, true);
+        input.on_key(KeyId::U, true, true);
         let f = input.drain_frame();
         assert_eq!(f.building_slot, None, "repeat doesn't latch a build");
         assert_eq!(f.train_slot, None, "repeat doesn't latch a train");
@@ -960,13 +1080,13 @@ mod input_tests {
 
     #[test]
     fn embodied_crouch_and_reload_keys_latch_one_shot_then_clear() {
-        // The desktop mirror of the Android Crouch/Reload buttons: C → `crouch_pressed`, V →
+        // The desktop mirror of the Android Crouch/Reload buttons: C → `crouch_pressed`, R →
         // `reload_pressed`. Both are ONE-SHOT edges (the engine's `crouch_toggle_command` inverts
         // posture off the authoritative sim state, so the host must emit a single edge, never a held
         // level — a held crouch would flip posture every frame).
         let mut input = DesktopInput::new();
 
-        input.on_key(KeyCode::KeyC, true, false);
+        input.on_key(KeyId::C, true, false);
         let f = input.drain_frame();
         assert!(f.crouch_pressed && !f.reload_pressed, "C → one crouch edge");
         assert!(
@@ -974,25 +1094,94 @@ mod input_tests {
             "crouch edge cleared after one drain (a held key never re-toggles)"
         );
 
-        input.on_key(KeyCode::KeyV, true, false);
+        input.on_key(KeyId::R, true, false);
         let f = input.drain_frame();
-        assert!(f.reload_pressed && !f.crouch_pressed, "V → one reload edge");
+        assert!(f.reload_pressed && !f.crouch_pressed, "R → one reload edge");
         assert!(
             !input.drain_frame().reload_pressed,
             "reload edge cleared after one drain"
         );
+        // The pre-Q27 hardcoded V *secondary* reload is retired: reload is one rebindable action
+        // (default R). An unbound key does nothing.
+        input.on_key(KeyId::V, true, false);
+        assert!(!input.drain_frame().reload_pressed, "V is unbound by default");
     }
 
     #[test]
     fn embodied_crouch_and_reload_keys_ignore_key_repeat() {
-        // Holding C/V (OS key-repeat) must NOT re-latch — same edge rule as embody/production, and
+        // Holding C/R (OS key-repeat) must NOT re-latch — same edge rule as embody/production, and
         // load-bearing for crouch (a re-latch each repeat frame would thrash the posture toggle).
         let mut input = DesktopInput::new();
-        input.on_key(KeyCode::KeyC, true, true);
-        input.on_key(KeyCode::KeyV, true, true);
+        input.on_key(KeyId::C, true, true);
+        input.on_key(KeyId::R, true, true);
         let f = input.drain_frame();
         assert!(!f.crouch_pressed, "repeat doesn't latch a crouch");
         assert!(!f.reload_pressed, "repeat doesn't latch a reload");
+    }
+
+    // --- the host-owned rebind map (Q27) --------------------------------------------------------
+
+    #[test]
+    fn set_keybinds_moves_a_gameplay_action_to_the_new_key() {
+        // Rebinding Reload to V (through the pure `KeybindMap`, as the Settings editor would) makes
+        // V reload — and R stops reloading but still queues a Rifleman (the two were a cross-layer
+        // share; only the embodied half moved).
+        let mut input = DesktopInput::new();
+        let mut map = KeybindMap::default();
+        assert_eq!(map.rebind(GameAction::Reload, KeyId::V), RebindOutcome::Bound);
+        input.set_keybinds(map);
+
+        input.on_key(KeyId::V, true, false);
+        let f = input.drain_frame();
+        assert!(f.reload_pressed, "rebound V now reloads");
+        assert_eq!(f.train_slot, None, "V carries no command-layer action");
+
+        input.on_key(KeyId::R, true, false);
+        let f = input.drain_frame();
+        assert!(!f.reload_pressed, "R no longer reloads after the rebind");
+        assert_eq!(f.train_slot, Some(0), "R still queues a Rifleman");
+    }
+
+    #[test]
+    fn set_keybinds_rebinds_held_and_edge_intents_alike() {
+        // A held intent (movement) and an edge intent (embody) both follow the map: bind MoveUp to
+        // the Up arrow and Embody to T, then check the old defaults are inert.
+        let mut input = DesktopInput::new();
+        let mut map = KeybindMap::default();
+        assert_eq!(map.rebind(GameAction::MoveUp, KeyId::Up), RebindOutcome::Bound);
+        assert_eq!(map.rebind(GameAction::Embody, KeyId::T), RebindOutcome::Bound);
+        input.set_keybinds(map);
+
+        input.on_key(KeyId::Up, true, false);
+        assert_eq!(input.drain_frame().move_axis, (0.0, -1.0), "Up arrow moves up");
+        input.on_key(KeyId::Up, false, false);
+        input.on_key(KeyId::W, true, false);
+        assert_eq!(input.drain_frame().move_axis, (0.0, 0.0), "W is unbound now");
+
+        input.on_key(KeyId::T, true, false);
+        assert!(input.drain_frame().embody_pressed, "T embodies");
+        input.on_key(KeyId::E, true, false);
+        assert!(!input.drain_frame().embody_pressed, "E is unbound now");
+    }
+
+    #[test]
+    fn host_toggle_keys_are_inert_in_the_gameplay_decode() {
+        // Pause/fullscreen/debug-overlay are the `app` host's to decode: their bound keys must not
+        // perturb the engine-neutral input frame (they are in the same map, but `apply_action`
+        // ignores them here).
+        let mut input = DesktopInput::new();
+        input.on_key(KeyId::Escape, true, false); // Pause
+        input.on_key(KeyId::F11, true, false); // ToggleFullscreen
+        input.on_key(KeyId::F3, true, false); // ToggleDebugOverlay
+        let f = input.drain_frame();
+        assert_eq!(f.pointer, None);
+        assert!(!f.embody_pressed && !f.surface_pressed && !f.long_press);
+        assert_eq!(f.command_slot, None);
+        assert_eq!(f.building_slot, None);
+        assert_eq!(f.train_slot, None);
+        assert!(!f.upgrade_pressed && !f.crouch_pressed && !f.reload_pressed);
+        assert!(!f.jump_pressed && !f.select_fire_pressed && !f.fire);
+        assert_eq!(f.move_axis, (0.0, 0.0));
     }
 
     // --- look prefs (sensitivity + invert) ----------------------------------------------------
@@ -1023,6 +1212,61 @@ mod input_tests {
         let f = input.drain_frame();
         assert!((f.look_axis.0 - 4.0).abs() < 1e-6, "x scaled 2x: {:?}", f.look_axis);
         assert!((f.look_axis.1 - 6.0).abs() < 1e-6, "y inverted+scaled: {:?}", f.look_axis);
+    }
+}
+
+#[cfg(test)]
+mod keycode_boundary_tests {
+    //! The winit→neutral key mapping (`keycode_to_keyid`) — the one place a `winit::KeyCode`
+    //! becomes a `KeyId`. Moved here from `app` with the function itself (Q27): the gameplay
+    //! decode and the host toggles now share this single boundary. The `KeyboardInput` event
+    //! plumbing above it is un-constructible glue (winit `KeyEvent` has no public test
+    //! constructor), exercised by running the app.
+
+    use super::*;
+
+    #[test]
+    fn maps_the_default_binding_keys_and_a_sample_of_others() {
+        assert_eq!(keycode_to_keyid(KeyCode::Escape), Some(KeyId::Escape));
+        assert_eq!(keycode_to_keyid(KeyCode::F11), Some(KeyId::F11));
+        assert_eq!(keycode_to_keyid(KeyCode::F3), Some(KeyId::F3));
+        assert_eq!(keycode_to_keyid(KeyCode::KeyP), Some(KeyId::P));
+        assert_eq!(keycode_to_keyid(KeyCode::Digit5), Some(KeyId::Digit5));
+        assert_eq!(keycode_to_keyid(KeyCode::ArrowUp), Some(KeyId::Up));
+        assert_eq!(keycode_to_keyid(KeyCode::Equal), Some(KeyId::Equals)); // names differ
+        // A non-bindable key (a modifier) resolves to nothing.
+        assert_eq!(keycode_to_keyid(KeyCode::ShiftLeft), None);
+        assert_eq!(keycode_to_keyid(KeyCode::AltLeft), None);
+    }
+
+    #[test]
+    fn every_neutral_key_is_reachable_from_some_keycode() {
+        // Default-map completeness at the platform boundary: every `KeyId` in the vocabulary has a
+        // winit `KeyCode` that maps to it (otherwise a binding could exist that no physical desktop
+        // key can ever fire).
+        use std::collections::HashSet;
+        let reachable: HashSet<KeyId> = [
+            KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4, KeyCode::F5, KeyCode::F6,
+            KeyCode::F7, KeyCode::F8, KeyCode::F9, KeyCode::F10, KeyCode::F11, KeyCode::F12,
+            KeyCode::KeyA, KeyCode::KeyB, KeyCode::KeyC, KeyCode::KeyD, KeyCode::KeyE,
+            KeyCode::KeyF, KeyCode::KeyG, KeyCode::KeyH, KeyCode::KeyI, KeyCode::KeyJ,
+            KeyCode::KeyK, KeyCode::KeyL, KeyCode::KeyM, KeyCode::KeyN, KeyCode::KeyO,
+            KeyCode::KeyP, KeyCode::KeyQ, KeyCode::KeyR, KeyCode::KeyS, KeyCode::KeyT,
+            KeyCode::KeyU, KeyCode::KeyV, KeyCode::KeyW, KeyCode::KeyX, KeyCode::KeyY,
+            KeyCode::KeyZ, KeyCode::Digit0, KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
+            KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8,
+            KeyCode::Digit9, KeyCode::Escape, KeyCode::Tab, KeyCode::Space, KeyCode::Enter,
+            KeyCode::Backspace, KeyCode::Insert, KeyCode::Delete, KeyCode::Home, KeyCode::End,
+            KeyCode::PageUp, KeyCode::PageDown, KeyCode::ArrowUp, KeyCode::ArrowDown,
+            KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::Minus, KeyCode::Equal,
+            KeyCode::Backquote,
+        ]
+        .into_iter()
+        .filter_map(keycode_to_keyid)
+        .collect();
+        for &k in &KeyId::ALL {
+            assert!(reachable.contains(&k), "{k:?} has no winit KeyCode mapping");
+        }
     }
 }
 

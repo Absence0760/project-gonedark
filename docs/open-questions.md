@@ -695,7 +695,17 @@ feature is actually scoped. Cross-link: [D89](decisions.md), invariant #1.
 
 ---
 
-## Q27 — Should the `pal-desktop` gameplay keymap become rebindable too? <a id="q27--gameplay-key-rebind"></a>
+## Q27 — Should the `pal-desktop` gameplay keymap become rebindable too? — RESOLVED ([D99](decisions.md): yes — a host-owned `KeybindMap` threads into the PAL decode) <a id="q27--gameplay-key-rebind"></a>
+
+**Resolved in [D99](decisions.md), taking the lean as-is.** The rebind model moved from
+`engine::keybind` down to `pal::keybind` (zero-dep, platform-free — `engine` re-exports it), so
+`pal-desktop` consumes a **host-owned** neutral map (pushed each frame via `set_keybinds`, the
+`set_look_prefs` pattern) without depending on `engine`; `GameAction` widened 3 → 28 to cover the
+whole gameplay vocabulary, with **layer-aware conflicts** (`Global`/`Command`/`Embodied` — the D42
+mode-exclusive `R` = train/reload share stays legal as data). Pre-D99 saved blobs keep decoding
+(host-toggle ordinals frozen). Original question retained below.
+
+---
 
 The key-rebind editor ([D90](decisions.md)) rebinds only the **`app`-owned host toggles**
 (pause/fullscreen/debug-overlay). The **gameplay** keys (move/fire/embody/build/train/upgrade/…) decode
@@ -703,10 +713,10 @@ inside `pal-desktop`'s `DesktopInput`, so they stay hardcoded. Extending the reb
 threading a `KeybindMap` from the host into the PAL input decode — a PAL-boundary change (invariant #2:
 `pal-desktop` would consume a host-owned neutral keymap rather than hardcoding `KeyCode`s).
 
-**Current lean:** **yes, once the host-key editor proves the UX** — the `engine::keybind` seam is
-already platform-neutral and would extend cleanly; the only real work is the PAL wiring + widening the
-`GameAction` vocabulary. Pairs with the [PC-2](roadmap.md) PC control/options surface. Cross-link:
-[D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.md) PC-2.
+**Current lean (adopted by [D99](decisions.md)):** **yes, once the host-key editor proves the UX** — the
+`engine::keybind` seam is already platform-neutral and would extend cleanly; the only real work is the
+PAL wiring + widening the `GameAction` vocabulary. Pairs with the [PC-2](roadmap.md) PC control/options
+surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.md) PC-2.
 
 ---
 

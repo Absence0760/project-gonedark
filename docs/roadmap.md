@@ -496,10 +496,12 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   ramps/shape glyphs); **graphics-tier selection now drives `render::tiers` live and music volume
   drives a real looping music bus** in the shared `pal::mix` mixer (desktop cpal sink; Android oboe
   wiring pending) ([D75](decisions.md) follow-up); **the desktop key-rebind editor now landed**
-  ([D90](decisions.md)) — a pure winit-free `engine::keybind` seam (defaults / conflict-rejecting
-  rebind / ordinal persistence) with a click-to-arm egui "KEY BINDINGS" section, covering the
-  `app`-owned host toggles (pause/fullscreen/debug); rebinding the `pal-desktop` **gameplay** keymap
-  is deferred to [Q27](open-questions.md), and the *touch*-layout editor is the separate item below.
+  ([D90](decisions.md)) — a pure winit-free `pal::keybind` seam (defaults / conflict-rejecting
+  rebind / ordinal persistence) with a click-to-arm egui "KEY BINDINGS" section — and now covers the
+  **full desktop keymap**: [D99](decisions.md) (closing [Q27](open-questions.md)) threads a
+  host-owned `KeybindMap` into `pal-desktop`'s input decode, so the gameplay keys
+  (move/embody/build/train/…) rebind alongside the host toggles, with layer-aware conflicts
+  (command vs embodied may share a key). The *touch*-layout editor is the separate item below.
 - [ ] Game-feel polish — build/select/hit SFX + VFX, button states, screen transitions.
   **Hit feedback (the embodied "I hit him" cue) is tracked as TF-4** under *Test & feedback
   hardening* above ([`test-harness-plan.md`](plans/test-harness-plan.md) WS-4)
@@ -684,8 +686,12 @@ game (full analysis: [`positioning-pc.md`](positioning/positioning-pc.md)):
   now an **adjustable base FOV** (`Game::set_base_fov`, 60–110°, default 90° — the 60° hardcode read
   as tunnel-vision on a monitor), verified re-projecting the embodied view in `viz-runner`. **Owed:**
   the *feel* sign-off — a playtest with a mouse (the human half, like CP-2's).
-- [ ] **PC-2 — PC control & options surface.** Full rebinds, graphics options, ultrawide /
-  high-refresh / high-DPI support — the settings depth a PC player expects.
+- [~] **PC-2 — PC control & options surface.** Full rebinds, graphics options, ultrawide /
+  high-refresh / high-DPI support — the settings depth a PC player expects. **Full rebinds
+  landed** ([D99](decisions.md), closing [Q27](open-questions.md)): every desktop key — host
+  toggles + the whole gameplay keymap — rebinds through the one `pal::keybind` map, persisted
+  with the shell prefs. **Owed:** the graphics-options depth beyond the tier picker, and
+  ultrawide / high-refresh / high-DPI verification.
 - [~] **PC-3 — Replays & spectating (a determinism freebie).** A match is a seed + an input log
   (invariant #1), so replay + spectator view are *cheap* and a real PC / e-sports differentiator.
   **Foundation landed ([D89](decisions.md)):** the headless `replay-runner` crate records a scenario's
