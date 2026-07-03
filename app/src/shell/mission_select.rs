@@ -155,6 +155,24 @@ pub(crate) fn operation_header_label(operation: &Operation, progress: GroupProgr
     )
 }
 
+/// The mission list's scroll-viewport cap for the height actually available inside the card —
+/// small enough that the footer (BACK) below the list **always stays on screen**, large enough to
+/// show up to five tile-rows on a roomy window. This is the fix for the un-pinned-BACK defect: the
+/// old fixed `5 × 72` cap ignored the window height, so once the D98 atlas headers grew the card,
+/// a short window overflowed the *outer* card scroll and pushed BACK below the fold — defeating
+/// the pinning this cap exists for. Reserves the footer gap + button + a breathing margin, floors
+/// at one tile-row so the list never collapses. Pure — unit-tested; the glue passes
+/// `ui.available_height()`.
+pub(crate) fn list_viewport_cap(available: f32) -> f32 {
+    /// What must stay visible below the list: [`FOOTER_GAP`] + the 46px footer button + margin.
+    const FOOTER_RESERVE: f32 = FOOTER_GAP + 46.0 + 8.0;
+    /// The roomy-window cap (the previous fixed value — five tile-rows).
+    const MAX: f32 = 5.0 * 72.0;
+    /// Never collapse below one tile-row, even on a degenerate viewport.
+    const MIN: f32 = 72.0;
+    (available - FOOTER_RESERVE).clamp(MIN, MAX)
+}
+
 /// One mission-select tile: a status pill (Locked/Available/Cleared, colour-coded) beside the node
 /// title as a full-width button. A **playable** node (Available or already-Cleared/replayable) is an
 /// enabled button that emits [`MissionSelectAction::OpenNode`]; a **Locked** node renders disabled and
@@ -218,7 +236,7 @@ pub(crate) fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Optio
         let entries = campaign.mission_select();
         let sections = hub_sections(campaign);
         egui::ScrollArea::vertical()
-            .max_height(5.0 * 72.0)
+            .max_height(list_viewport_cap(ui.available_height()))
             .auto_shrink([false, true])
             .show(ui, |ui| {
                 for (si, section) in sections.iter().enumerate() {

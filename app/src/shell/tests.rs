@@ -1204,6 +1204,30 @@ use gonedark_render::tiers::QualityTier;
     }
 
     #[test]
+    fn the_list_cap_always_leaves_the_footer_on_screen() {
+        // The un-pinned-BACK regression (found via screenshot): the old fixed 5×72 cap ignored the
+        // window height, so a short window overflowed the card and pushed BACK below the fold. The
+        // cap must leave the footer reserve visible at every height…
+        const FOOTER_RESERVE: f32 = FOOTER_GAP + 46.0 + 8.0;
+        for available in [200.0_f32, 300.0, 380.0, 450.0, 600.0, 900.0] {
+            let cap = list_viewport_cap(available);
+            assert!(
+                cap + FOOTER_RESERVE <= available || cap == 72.0,
+                "cap {cap} at available {available} pushes the footer off-screen"
+            );
+        }
+        // …grow to (and stop at) the roomy five-row cap…
+        assert_eq!(list_viewport_cap(1000.0), 5.0 * 72.0);
+        assert_eq!(list_viewport_cap(10_000.0), 5.0 * 72.0);
+        // …never collapse below one tile-row on a degenerate viewport (the min-window floor)…
+        assert_eq!(list_viewport_cap(0.0), 72.0);
+        assert_eq!(list_viewport_cap(90.0), 72.0);
+        // …and shrink smoothly in between (monotone: more room never means a smaller list).
+        assert!(list_viewport_cap(300.0) <= list_viewport_cap(400.0));
+        assert!(list_viewport_cap(400.0) <= list_viewport_cap(500.0));
+    }
+
+    #[test]
     fn hub_section_rollups_track_clears() {
         let mut campaign = atlas_campaign();
 
