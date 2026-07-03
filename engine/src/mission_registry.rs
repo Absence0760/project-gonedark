@@ -245,45 +245,111 @@ pub fn default_registry() -> MissionRegistry {
     ])
 }
 
-/// The shipped Operations-hub campaign graph, wired to [`default_registry`]. A **three-node
-/// chain**: the root *Seize* mission ([`NodeId(0)`](NodeId) → [`MISSION_SEIZE`], framed from
-/// [`MISSION_ONE_BRIEFING`]), the *Hold the Line* defense gated behind it
-/// ([`NodeId(1)`](NodeId) → [`MISSION_HOLD`], framed from [`MISSION_TWO_BRIEFING`]), and the
-/// *Break the Line* push gated behind that ([`NodeId(2)`](NodeId) → [`MISSION_PUSH`], framed from
-/// [`MISSION_THREE_BRIEFING`] — each unlocks the moment the one before is cleared). Each node names
-/// its mission by [`MissionId`] only; the registry resolves the body, and
+/// The shipped Operations-hub campaign graph, wired to [`default_registry`]. **Four fictional
+/// modern conflicts on the atlas** (D105), each a self-contained three-battle chain
+/// Seize → Hold → Push over the three shipped seeders: *The Channel Crisis* (2027–2028, the
+/// original D98 placeholder, framed from the `MISSION_*_BRIEFING` consts), then *The Meridian
+/// Crisis* (2029–2030, Gulf of Guinea), *The Gotland Winter* (2031–2032, central Baltic), and
+/// *The Santo Crisis* (2033–2034, Melanesia) — each with its own per-node titles/situations
+/// authored inline. Every conflict's root is open from the start ("pick a war"); gating runs
+/// only *within* a conflict, so clearing one war never unlocks another. Each node names its
+/// mission by [`MissionId`] only — the three archetypes are deliberately **reused** across
+/// conflicts (legal: nothing keys on node-mission uniqueness, and the content lint dedupes
+/// targets by mission) — the registry resolves the body, and
 /// [`Scene::for_mission`](crate::Scene::for_mission) maps that id to the launchable scene
-/// (*Seize* → `Mission1`, *Hold* → `Mission2`, *Push* → `Mission3`). The
-/// hand-maintained Android `CampaignModel` mirror moves in lock-step (`compose-shell-parity.md`).
-/// Every node's [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`] holds —
-/// a test pins it), so launching any playable node always resolves to a runnable mission.
+/// (*Seize* → `Mission1`, *Hold* → `Mission2`, *Push* → `Mission3`). The hand-maintained
+/// Android `CampaignModel` mirror moves in lock-step (`compose-shell-parity.md`). Every node's
+/// [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`] holds — a test
+/// pins it), so launching any playable node always resolves to a runnable mission.
 ///
-/// The graph now carries the **conflict atlas** grouping (Q28: conflict → operation → battle):
-/// both battles sit in *Operation First Light* inside *The Channel Crisis* — the **placeholder**
-/// modern fictional conflict the Q28 lean calls for (a war the shipped US/FR roster plausibly
-/// covers; name and framing are content, not a lock). Pure grouping metadata over the same chain —
-/// unlock behavior, progress persistence, and every shell surface are unchanged (a test pins the
-/// blob byte-identical); the atlas *presentation* (world-map/timeline) stays open in Q28.
+/// The conflicts stay inside the Q28 fork-1(c) lean: **fictional, modern, plausibly covered by
+/// the shipped US/FR roster** — no historical conflict ships before the roster and
+/// conflict-selection forks are decided. The atlas grouping remains pure metadata over the node
+/// chains — unlock behavior and the persisted format are unchanged (a test pins the blob
+/// byte-identical to the same nodes ungrouped) — but the node count is now 12: a pre-existing
+/// 3-node progress blob no longer applies (`apply_progress` rejects the topology skew cleanly —
+/// a fresh-progress reset, by design; see D105).
 pub fn default_campaign() -> Campaign {
     Campaign::with_atlas(
-        vec![Conflict {
-            id: ConflictId(0),
-            name: "The Channel Crisis".to_string(),
-            start_year: 2027,
-            end_year: 2028,
-            summary: "A fictional modern flashpoint between US and French expeditionary forces \
-                      on the Channel coast — the campaign's first (placeholder) conflict."
-                .to_string(),
-            // Mid-Channel off the Cotentin coast (~50.0°N, 1.5°W) — the atlas pin (D103).
-            lat_x10: 500,
-            lon_x10: -15,
-        }],
-        vec![Operation {
-            id: OperationId(0),
-            conflict: ConflictId(0),
-            name: "Operation First Light".to_string(),
-        }],
         vec![
+            Conflict {
+                id: ConflictId(0),
+                name: "The Channel Crisis".to_string(),
+                start_year: 2027,
+                end_year: 2028,
+                summary: "A fictional modern flashpoint between US and French expeditionary forces \
+                          on the Channel coast — the campaign's first (placeholder) conflict."
+                    .to_string(),
+                // Mid-Channel off the Cotentin coast (~50.0°N, 1.5°W) — the atlas pin (D103).
+                lat_x10: 500,
+                lon_x10: -15,
+            },
+            Conflict {
+                id: ConflictId(1),
+                name: "The Meridian Crisis".to_string(),
+                start_year: 2029,
+                end_year: 2030,
+                summary: "A fictional near-future flashpoint on the Gulf of Guinea — US and French \
+                          expeditionary task forces, deployed under rival stabilization mandates \
+                          after a regional security pact collapses, come to blows over a deepwater \
+                          port and the trans-Sahel supply corridor that runs north from it."
+                    .to_string(),
+                // Just inland of the Gulf of Guinea coast (~6.2°N, 0.6°E) — on the land mask.
+                lat_x10: 62,
+                lon_x10: 6,
+            },
+            Conflict {
+                id: ConflictId(2),
+                name: "The Gotland Winter".to_string(),
+                start_year: 2031,
+                end_year: 2032,
+                summary: "A fictional near-future flashpoint in the central Baltic — US and French \
+                          expeditionary forces contest Gotland through the winter of 2031, the war \
+                          for the sea lanes decided on the frozen island that commands them."
+                    .to_string(),
+                // Visby, Gotland (~57.6°N, 18.3°E) — the island landmass reads on the mask.
+                lat_x10: 576,
+                lon_x10: 183,
+            },
+            Conflict {
+                id: ConflictId(3),
+                name: "The Santo Crisis".to_string(),
+                start_year: 2033,
+                end_year: 2034,
+                summary: "A fictional near-future flashpoint in Melanesia — a state collapse leaves \
+                          Espiritu Santo's deepwater port and airstrip ungoverned, and the US and \
+                          French expeditionary task forces sent to secure them end up fighting each \
+                          other for the island."
+                    .to_string(),
+                // Luganville, Espiritu Santo (~15.5°S, 167.2°E).
+                lat_x10: -155,
+                lon_x10: 1672,
+            },
+        ],
+        vec![
+            Operation {
+                id: OperationId(0),
+                conflict: ConflictId(0),
+                name: "Operation First Light".to_string(),
+            },
+            Operation {
+                id: OperationId(1),
+                conflict: ConflictId(1),
+                name: "Operation Dry Season".to_string(),
+            },
+            Operation {
+                id: OperationId(2),
+                conflict: ConflictId(2),
+                name: "Operation Frostline".to_string(),
+            },
+            Operation {
+                id: OperationId(3),
+                conflict: ConflictId(3),
+                name: "Operation Trade Wind".to_string(),
+            },
+        ],
+        vec![
+            // ---- The Channel Crisis — Operation First Light (the D98 originals) ----
             OperationNode::new(
                 NodeId(0),
                 MISSION_SEIZE,
@@ -307,6 +373,99 @@ pub fn default_campaign() -> Campaign {
             )
             .requires([NodeId(1)])
             .in_operation(OperationId(0)),
+            // ---- The Meridian Crisis — Operation Dry Season ----
+            OperationNode::new(
+                NodeId(3),
+                MISSION_SEIZE,
+                "Take the Fuel Yard",
+                "The port runs on one fuel yard, and their garrison is sitting on it. Ten of \
+                 yours to take it. Command the assault from above — or go dark and breach the \
+                 wire yourself. The dust hides them; it hides you too.",
+            )
+            .in_operation(OperationId(1)),
+            OperationNode::new(
+                NodeId(4),
+                MISSION_HOLD,
+                "Hold the Causeway",
+                "One causeway carries the only road into the port, and they want it back. Dig in \
+                 and fight it from the map — or embody a rifle at the barricade. Go dark and the \
+                 bank you can't see is the one they wade across.",
+            )
+            .requires([NodeId(3)])
+            .in_operation(OperationId(1)),
+            OperationNode::new(
+                NodeId(5),
+                MISSION_PUSH,
+                "Open the Corridor",
+                "Three checkpoints between the port and the highway north, every one of them \
+                 held. Take them in order and hold what you take — or clear each gate yourself, \
+                 rifle in hand. But the checkpoint you rush blind is the one that closes behind \
+                 you.",
+            )
+            .requires([NodeId(4)])
+            .in_operation(OperationId(1)),
+            // ---- The Gotland Winter — Operation Frostline ----
+            OperationNode::new(
+                NodeId(6),
+                MISSION_SEIZE,
+                "Seize the Quay",
+                "A garrison winters on the ice-bound harbor, and command wants it before the \
+                 strait refreezes. Ten of yours, no more coming. Direct them from above — or \
+                 take a rifle onto the ice yourself, and remember the quay you can't see is \
+                 still shooting.",
+            )
+            .in_operation(OperationId(2)),
+            OperationNode::new(
+                NodeId(7),
+                MISSION_HOLD,
+                "Hold the Airfield",
+                "The airstrip is yours; they want it back before first light. Fight the \
+                 perimeter from the map, or embody one rifle in the snow and hold it by hand — \
+                 but the treeline you go dark on is the one they come through.",
+            )
+            .requires([NodeId(6)])
+            .in_operation(OperationId(2)),
+            OperationNode::new(
+                NodeId(8),
+                MISSION_PUSH,
+                "Break the Coast Road",
+                "Three strongpoints up the coast road to Visby, every one dug into the drifts. \
+                 Take them in order and keep them taken — or clear each one point-blank \
+                 yourself. But the strongpoint you rush blind is the one retaken behind you.",
+            )
+            .requires([NodeId(7)])
+            .in_operation(OperationId(2)),
+            // ---- The Santo Crisis — Operation Trade Wind ----
+            OperationNode::new(
+                NodeId(9),
+                MISSION_SEIZE,
+                "Seize the Wharf",
+                "Their task force beat you ashore and dug in on Santo's deepwater wharf. Ten of \
+                 yours to take it before their heavy lift arrives. Command the assault from the \
+                 ridge — or wade in yourself, and hope the wharf you can't see isn't \
+                 reinforcing.",
+            )
+            .in_operation(OperationId(3)),
+            OperationNode::new(
+                NodeId(10),
+                MISSION_HOLD,
+                "Hold the Airstrip",
+                "The wharf bought you the airstrip; now they want it back before dawn. Hold the \
+                 perimeter from above, or put yourself behind a rifle on the wire — but the \
+                 stretch of runway you go dark on is the one they land on.",
+            )
+            .requires([NodeId(9)])
+            .in_operation(OperationId(3)),
+            OperationNode::new(
+                NodeId(11),
+                MISSION_PUSH,
+                "Break the Road to Luganville",
+                "Three strongpoints down the coast road to Luganville, every one of them held. \
+                 Take them in order and hold what you take — the town falls when the road does. \
+                 But the post you clear blind is theirs again before you turn around.",
+            )
+            .requires([NodeId(10)])
+            .in_operation(OperationId(3)),
         ],
     )
 }
@@ -715,7 +874,7 @@ mod tests {
     fn default_campaign_is_seize_then_hold_then_push() {
         let reg = default_registry();
         let mut campaign = default_campaign();
-        assert_eq!(campaign.mission_select().len(), 3, "all three missions are node-placed");
+        assert_eq!(campaign.mission_select().len(), 12, "four conflicts x three battles (D105)");
 
         // Node 0 is the root Seize; node 1 is the gated Hold, framed from MISSION_TWO_BRIEFING.
         assert_eq!(campaign.node(NodeId(0)).unwrap().mission, MISSION_SEIZE);
@@ -755,26 +914,41 @@ mod tests {
         assert_eq!(reg.resolve_node(&campaign, NodeId(2)).map(|m| m.id), Some(MISSION_PUSH));
     }
 
-    /// The shipped graph carries the Q28 conflict-atlas grouping: one placeholder modern conflict
-    /// (*The Channel Crisis*) holding one operation (*Operation First Light*) holding both battles
-    /// — and the grouping is pure metadata (the progress blob is byte-identical to the same chain
-    /// ungrouped, so existing saves keep applying).
+    /// The shipped graph carries the Q28 conflict-atlas grouping, grown to the D105 four-conflict
+    /// atlas: every conflict holds exactly one operation holding its three battles, all conflicts
+    /// are fictional-modern (the Q28 fork-1(c) lean), and the grouping is pure metadata (the
+    /// progress blob is byte-identical to the same node set built with no atlas).
     #[test]
-    fn default_campaign_is_grouped_under_the_placeholder_conflict() {
+    fn default_campaign_is_grouped_under_the_conflict_atlas() {
         let mut campaign = default_campaign();
 
-        // One conflict, one operation, correctly linked, integer years (the Q28 lean: a modern
-        // fictional conflict the shipped US/FR roster plausibly covers).
-        assert_eq!(campaign.conflicts().len(), 1);
-        assert_eq!(campaign.operations().len(), 1);
-        let conflict = campaign.conflict(ConflictId(0)).unwrap();
-        assert_eq!(conflict.name, "The Channel Crisis");
-        assert!(conflict.start_year >= 2020, "the placeholder conflict is modern (Q28 lean)");
-        let op = campaign.operation(OperationId(0)).unwrap();
-        assert_eq!(op.conflict, ConflictId(0));
-        assert_eq!(campaign.operations_in(ConflictId(0)), vec![OperationId(0)]);
+        // Four conflicts, four operations, linked one-to-one, all modern fiction (Q28 fork 1(c):
+        // wars the shipped US/FR roster plausibly covers — no historical conflict before the
+        // roster/selection forks are decided).
+        assert_eq!(campaign.conflicts().len(), 4);
+        assert_eq!(campaign.operations().len(), 4);
+        assert_eq!(campaign.conflict(ConflictId(0)).unwrap().name, "The Channel Crisis");
+        assert_eq!(campaign.conflict(ConflictId(1)).unwrap().name, "The Meridian Crisis");
+        assert_eq!(campaign.conflict(ConflictId(2)).unwrap().name, "The Gotland Winter");
+        assert_eq!(campaign.conflict(ConflictId(3)).unwrap().name, "The Santo Crisis");
+        for i in 0..4u16 {
+            let conflict = campaign.conflict(ConflictId(i)).unwrap();
+            assert!(conflict.start_year >= 2020, "every shipped conflict is modern (Q28 lean)");
+            let op = campaign.operation(OperationId(i)).unwrap();
+            assert_eq!(op.conflict, ConflictId(i), "operations link to their conflicts in order");
+            assert_eq!(campaign.operations_in(ConflictId(i)), vec![OperationId(i)]);
+            assert_eq!(campaign.nodes_in(OperationId(i)).len(), 3, "three battles per war");
+        }
+        // The eras are staggered so the atlas year scrubber has spread (2027..=2034, no gaps).
+        let spans: Vec<(i16, i16)> = campaign
+            .conflicts()
+            .iter()
+            .map(|c| (c.start_year, c.end_year))
+            .collect();
+        assert_eq!(spans, vec![(2027, 2028), (2029, 2030), (2031, 2032), (2033, 2034)]);
 
-        // All three battles sit in the operation; the rollup tracks the chain end-to-end.
+        // The Channel chain still sits in its operation; the rollup tracks it end-to-end — and
+        // completing one war completes only that war.
         assert_eq!(campaign.nodes_in(OperationId(0)), vec![NodeId(0), NodeId(1), NodeId(2)]);
         let fresh = campaign.operation_progress(OperationId(0));
         assert_eq!((fresh.cleared, fresh.total, fresh.playable), (0, 3, true));
@@ -783,35 +957,61 @@ mod tests {
         campaign.clear(NodeId(2), CampaignDifficulty::Recruit).unwrap();
         assert!(campaign.operation_progress(OperationId(0)).is_complete());
         assert!(campaign.conflict_progress(ConflictId(0)).is_complete());
+        assert!(!campaign.conflict_progress(ConflictId(1)).is_complete());
 
-        // Pure metadata: the progress blob matches the same chain built with no atlas — the
-        // grouping cannot invalidate existing saves or change the persisted format.
-        let ungrouped = Campaign::new(vec![
-            OperationNode::new(
-                NodeId(0),
-                MISSION_SEIZE,
-                MISSION_ONE_BRIEFING.title,
-                MISSION_ONE_BRIEFING.situation,
-            ),
-            OperationNode::new(
-                NodeId(1),
-                MISSION_HOLD,
-                MISSION_TWO_BRIEFING.title,
-                MISSION_TWO_BRIEFING.situation,
-            )
-            .requires([NodeId(0)]),
-            OperationNode::new(
-                NodeId(2),
-                MISSION_PUSH,
-                MISSION_THREE_BRIEFING.title,
-                MISSION_THREE_BRIEFING.situation,
-            )
-            .requires([NodeId(1)]),
-        ]);
+        // Pure metadata: the progress blob matches the same node set built with no atlas — the
+        // grouping itself cannot change the persisted format. (Same-node-set only: the D105
+        // node-count growth DOES retire pre-D105 3-node blobs — apply_progress rejects the
+        // topology skew cleanly, a deliberate fresh-progress reset.)
+        let grouped = default_campaign();
+        let ungrouped = Campaign::new(
+            (0..grouped.len())
+                .map(|i| {
+                    let n = grouped.node(NodeId(i as u32)).unwrap().clone();
+                    OperationNode::new(n.id, n.mission, n.title, n.briefing)
+                        .requires(n.prerequisites)
+                })
+                .collect(),
+        );
         assert_eq!(default_campaign().serialize_progress(), ungrouped.serialize_progress());
     }
 
-    /// The shipped 2-node graph round-trips through the host progress blob (a cleared Seize survives
+    /// Every conflict on the D105 atlas is a self-contained Seize → Hold → Push chain: the root is
+    /// open from the start ("pick a war"), gating runs only within the conflict, and clearing one
+    /// war unlocks nothing in another.
+    #[test]
+    fn every_conflict_is_a_self_contained_chain() {
+        let reg = default_registry();
+        let mut campaign = default_campaign();
+
+        let expected = [MISSION_SEIZE, MISSION_HOLD, MISSION_PUSH];
+        for i in 0..4u16 {
+            let nodes = campaign.nodes_in(OperationId(i));
+            assert_eq!(nodes.len(), 3);
+            for (j, (node, mission)) in nodes.iter().zip(expected).enumerate() {
+                let n = campaign.node(*node).unwrap();
+                assert_eq!(n.mission, mission, "each war runs Seize -> Hold -> Push");
+                let want: Vec<NodeId> = if j == 0 { vec![] } else { vec![nodes[j - 1]] };
+                assert_eq!(n.prerequisites, want, "gating chains within the war only");
+                assert!(reg.get(n.mission).is_some(), "every node resolves to a seeder");
+            }
+            // Every war's root is open before anything anywhere has been cleared.
+            assert_eq!(campaign.progress(nodes[0]), NodeProgress::Available);
+        }
+
+        // Clearing all of one war leaves every other war's gated nodes locked.
+        for node in campaign.nodes_in(OperationId(1)) {
+            campaign.clear(node, CampaignDifficulty::Recruit).unwrap();
+        }
+        assert!(campaign.conflict_progress(ConflictId(1)).is_complete());
+        for i in [0u16, 2, 3] {
+            let nodes = campaign.nodes_in(OperationId(i));
+            assert_eq!(campaign.progress(nodes[1]), NodeProgress::Locked);
+            assert_eq!(campaign.progress(nodes[2]), NodeProgress::Locked);
+        }
+    }
+
+    /// The shipped graph round-trips through the host progress blob (a cleared Seize survives
     /// serialize→apply onto a freshly-built campaign, so Hold stays unlocked across a restart).
     #[test]
     fn default_campaign_progress_round_trips() {

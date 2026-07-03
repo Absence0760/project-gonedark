@@ -113,14 +113,20 @@ class HubSectionsTest {
     }
 
     @Test
-    fun the_shipped_campaign_groups_under_its_one_conflict_and_operation() {
-        // The shipped tables: one conflict, one operation, every node grouped — so the hub renders
-        // one headed section and no ungrouped tail. Pins the authored data's atlas integrity.
+    fun the_shipped_campaign_groups_one_section_per_conflict() {
+        // The shipped tables (D105): four conflicts, one operation each, every node grouped — so
+        // the hub renders one headed section per war and no ungrouped tail. Pins the authored
+        // data's atlas integrity.
         val sections = hubSections(CampaignProgress())
-        assertEquals(1, sections.size)
-        assertEquals("The Channel Crisis", sections[0].conflict?.first?.name)
-        assertEquals("Operation First Light", sections[0].operation?.first?.name)
-        assertEquals(campaignNodes.map { it.id }, sections[0].nodes.map { it.id })
-        assertTrue(sections[0].operation!!.second.playable)
+        assertEquals(4, sections.size)
+        assertEquals(campaignConflicts.map { it.name }, sections.map { it.conflict?.first?.name })
+        assertEquals(campaignOperations.map { it.name }, sections.map { it.operation?.first?.name })
+        // Each section carries its own conflict's three battles, in authored order, covering the
+        // whole node list with no ungrouped tail.
+        assertEquals(campaignNodes.map { it.id }, sections.flatMap { s -> s.nodes.map { it.id } })
+        sections.forEach { section ->
+            assertEquals(3, section.nodes.size)
+            assertTrue("every war's root chain starts playable", section.operation!!.second.playable)
+        }
     }
 }

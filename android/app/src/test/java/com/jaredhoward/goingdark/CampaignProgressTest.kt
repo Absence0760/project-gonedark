@@ -57,7 +57,7 @@ class CampaignProgressTest {
 
     @Test
     fun shipped_default_campaign_gates_hold_behind_seize() {
-        // The WS-B 2-node chain over the real `campaignNodes`: Hold (node 1) is Locked until Seize
+        // The shipped chain over the real `campaignNodes`: Hold (node 1) is Locked until Seize
         // (node 0) is cleared, then unlocks and stays replayable — mirrors engine::default_campaign().
         var c = CampaignProgress()
         assertEquals(NodeProgress.Available, c.progress(0))

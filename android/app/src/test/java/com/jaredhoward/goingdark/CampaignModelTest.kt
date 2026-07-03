@@ -83,27 +83,30 @@ class CampaignModelTest {
     }
 
     @Test
-    fun campaign_is_the_three_node_seize_hold_push_chain() {
-        // Mirrors engine::default_campaign()'s 3-node graph: NodeId(0)=Seize (root), NodeId(1)=Hold
-        // gated behind it, NodeId(2)=Push gated behind that. List index == node id (NodeId(i)==nodes[i]).
-        assertEquals("all three missions are node-placed", 3, campaignNodes.size)
+    fun campaign_is_four_self_contained_seize_hold_push_chains() {
+        // Mirrors engine::default_campaign()'s D105 graph: four conflicts, each a self-contained
+        // Seize -> Hold -> Push chain (root open, gating within the conflict only). List index ==
+        // node id (NodeId(i)==nodes[i]).
+        assertEquals("four conflicts x three battles (D105)", 12, campaignNodes.size)
 
-        val seize = campaignNodes[0]
-        assertEquals(0, seize.id)
-        assertEquals("mission1", seize.sceneToken)
-        assertTrue("Seize is a root (no prerequisites)", seize.prerequisites.isEmpty())
+        for ((chain, root) in listOf(0, 3, 6, 9).withIndex()) {
+            val seize = campaignNodes[root]
+            assertEquals(root, seize.id)
+            assertEquals("mission1", seize.sceneToken)
+            assertTrue("chain $chain's Seize is a root (no prerequisites)", seize.prerequisites.isEmpty())
 
-        val hold = campaignNodes[1]
-        assertEquals(1, hold.id)
-        assertEquals("mission2", hold.sceneToken)
-        // Hold is gated behind Seize — the unlock edge that mirrors `.requires([NodeId(0)])`.
-        assertEquals(listOf(0), hold.prerequisites)
+            val hold = campaignNodes[root + 1]
+            assertEquals(root + 1, hold.id)
+            assertEquals("mission2", hold.sceneToken)
+            // Hold is gated behind its own conflict's Seize — mirrors `.requires([NodeId(root)])`.
+            assertEquals(listOf(root), hold.prerequisites)
 
-        val push = campaignNodes[2]
-        assertEquals(2, push.id)
-        assertEquals("mission3", push.sceneToken)
-        // Push is gated behind Hold — the chain's third link.
-        assertEquals(listOf(1), push.prerequisites)
+            val push = campaignNodes[root + 2]
+            assertEquals(root + 2, push.id)
+            assertEquals("mission3", push.sceneToken)
+            // Push is gated behind its own conflict's Hold — the chain's third link.
+            assertEquals(listOf(root + 1), push.prerequisites)
+        }
     }
 
     @Test
@@ -122,25 +125,56 @@ class CampaignModelTest {
 
     @Test
     fun campaign_atlas_mirrors_the_rust_grouping() {
-        // Pins the D79 mirror of default_campaign()'s Q28 conflict-atlas grouping: one placeholder
-        // modern conflict (The Channel Crisis) → one operation (Operation First Light) → both
-        // battles. List index == id, mirroring Rust's ConflictId(i)/OperationId(i) invariant.
-        assertEquals(1, campaignConflicts.size)
-        val conflict = campaignConflicts[0]
-        assertEquals(0, conflict.id)
-        assertEquals("The Channel Crisis", conflict.name)
-        assertEquals(2027, conflict.startYear)
-        assertEquals(2028, conflict.endYear)
-        assertTrue("year span is not inverted", conflict.startYear <= conflict.endYear)
+        // Pins the D79 mirror of default_campaign()'s Q28 conflict-atlas grouping — since D105
+        // four fictional modern conflicts, one operation each, eras staggered 2027-2034 for the
+        // atlas year scrubber. List index == id, mirroring Rust's ConflictId(i)/OperationId(i).
+        assertEquals(4, campaignConflicts.size)
+        assertEquals(
+            listOf("The Channel Crisis", "The Meridian Crisis", "The Gotland Winter", "The Santo Crisis"),
+            campaignConflicts.map { it.name },
+        )
+        assertEquals(
+            listOf(2027 to 2028, 2029 to 2030, 2031 to 2032, 2033 to 2034),
+            campaignConflicts.map { it.startYear to it.endYear },
+        )
+        campaignConflicts.forEachIndexed { i, conflict ->
+            assertEquals(i, conflict.id)
+            assertTrue("year span is not inverted", conflict.startYear <= conflict.endYear)
+        }
 
-        assertEquals(1, campaignOperations.size)
-        val op = campaignOperations[0]
-        assertEquals(0, op.id)
-        assertEquals(0, op.conflict)
-        assertEquals("Operation First Light", op.name)
+        assertEquals(4, campaignOperations.size)
+        assertEquals(
+            listOf(
+                "Operation First Light",
+                "Operation Dry Season",
+                "Operation Frostline",
+                "Operation Trade Wind",
+            ),
+            campaignOperations.map { it.name },
+        )
+        campaignOperations.forEachIndexed { i, op ->
+            assertEquals(i, op.id)
+            assertEquals("operations link to their conflicts in order", i, op.conflict)
+        }
 
-        // Every shipped node sits in the shipped operation — the grouping is total today.
-        assertTrue(campaignNodes.all { it.operation == 0 })
+        // Every shipped node sits in its conflict's operation — the grouping is total, three
+        // battles per operation (node id / 3 == operation id).
+        campaignNodes.forEachIndexed { i, node -> assertEquals(i / 3, node.operation) }
+    }
+
+    @Test
+    fun a_new_conflict_node_mirrors_the_rust_source_verbatim() {
+        // Spot-pin for the D105 inline-authored copy (nodes 3-11 have no Rust briefing const to
+        // diff against, so this guards the hand-mirrored strings the same way the MISSION_*
+        // pins do): the Meridian root's title + situation, byte-for-byte.
+        val fuelYard = campaignNodes[3]
+        assertEquals("Take the Fuel Yard", fuelYard.name)
+        assertEquals(
+            "The port runs on one fuel yard, and their garrison is sitting on it. Ten of " +
+                "yours to take it. Command the assault from above — or go dark and breach the wire " +
+                "yourself. The dust hides them; it hides you too.",
+            fuelYard.briefing,
+        )
     }
 
     @Test
