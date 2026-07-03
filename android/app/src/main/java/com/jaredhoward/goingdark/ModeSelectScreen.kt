@@ -25,11 +25,15 @@ import androidx.compose.ui.unit.sp
 import com.jaredhoward.goingdark.ui.theme.GoingDarkTheme
 
 /**
- * The Pve/Pvp **mode / map select** screen (D81) — the lightweight picker a play-mode tap now opens
- * instead of the gunsmith. Pure presentation, modelled on [MissionSelectScreen]: it renders the
- * immutable [shellGameModes] as a titled list of tiles and reports a pick through [onPick]; the host
- * ([MainActivity]'s `Shell`) turns that into a Deploy with the mode's scene token + the persisted
- * loadout. Carries no game state and never touches the sim.
+ * The **skirmish battlefield picker** (D81/D101) — the title's SKIRMISH door. Since the three
+ * front doors split (`modes.md` §1; PvP has its own staging screen, [PvpScreen]), this picker
+ * serves skirmish alone. It is the interim `modes.md` §3 surface: battlefield pick only — the
+ * full setup twin (both armies + opponent tier, mirroring desktop `app/src/shell/skirmish.rs`)
+ * is the open parity item (`compose-shell-parity.md` §12 item 6). Pure presentation, modelled on
+ * [MissionSelectScreen]: it renders the immutable [shellGameModes] as a titled list of tiles and
+ * reports a pick through [onPick]; the host ([MainActivity]'s `Shell`) turns that into a Deploy
+ * with the mode's scene token + the persisted loadout. Carries no game state and never touches
+ * the sim.
  *
  * Stateless / hoisted, like the sibling shell screens — every action is a callback, so it is
  * device-agnostic and previewable without an Activity.
@@ -50,7 +54,7 @@ fun ModeSelectScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = "SELECT MODE",
+                text = "SKIRMISH",
                 color = MaterialTheme.colorScheme.onBackground,
                 fontSize = 30.sp,
                 letterSpacing = 8.sp,

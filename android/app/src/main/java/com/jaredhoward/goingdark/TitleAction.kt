@@ -19,9 +19,10 @@ package com.jaredhoward.goingdark
 
 /**
  * A top-level action the player can pick on the title screen — the Kotlin mirror of the Rust
- * `app::shell::TitleAction`. `Campaign` opens the Operations hub; `Pve`/`Pvp` open a mode/map select
- * that then deploys the match. The loadout **gunsmith is no longer a play gate** — it lives behind
- * Settings now (D81) — so no title action routes to it (see [resolveTitleAction]).
+ * `app::shell::TitleAction`. Each play mode opens its own front door (`modes.md` §1): `Campaign`
+ * the Operations hub, `Pve` the skirmish battlefield picker, `Pvp` the staging screen (D101). The
+ * loadout **gunsmith is no longer a play gate** — it lives behind Settings now (D81) — so no title
+ * action routes to it (see [resolveTitleAction]).
  *
  * `About` (the FIELD MANUAL button) has no Rust `TitleAction` counterpart — on desktop the About
  * screen is reached *from* Settings — but the Compose title surfaces it directly, so it gets its own
@@ -34,7 +35,7 @@ enum class TitleAction {
     /** A standalone PvE skirmish against the scripted enemy commander. */
     Pve,
 
-    /** Player-vs-player — the lockstep-netcode match (match setup is Q5/Phase-3-blocked). */
+    /** Player-vs-player — the lockstep-netcode match (queues are Phase-3-blocked; D101 staging). */
     Pvp,
 
     /** Open settings (audio / video / controls preferences). */
@@ -62,8 +63,11 @@ enum class TitleRoute {
     /** The Operations-hub mission-select screen — the PvE campaign entry (mirrors `OpenMissionSelect`). */
     MissionSelect,
 
-    /** The mode/map select shown for a Pve/Pvp play mode, which then deploys the match (D81). */
+    /** The skirmish battlefield picker (SKIRMISH's door, D81/D101), which then deploys the match. */
     ModeSelect,
+
+    /** The PvP staging screen (D101) — queues in build order, nothing joinable pre-net. */
+    Pvp,
 
     /** The Settings screen (mirrors `OpenSettings`). */
     Settings,
@@ -82,11 +86,13 @@ enum class TitleRoute {
 }
 
 /**
- * Map a title action to the route it triggers — the pure nav decision (D81):
+ * Map a title action to the route it triggers — the pure nav decision (D81/D101, `modes.md` §1:
+ * three distinct front doors, none sharing another's surface):
  *
  *  - `Campaign` opens the Operations-hub mission-select (the PvE pillar, D58);
- *  - `Pve` / `Pvp` open the mode/map select, which deploys the chosen scene — the gunsmith no longer
- *    gates play (it moved behind Settings); PvE and PvP share the picker until PvP match-setup lands;
+ *  - `Pve` opens the skirmish battlefield picker, which deploys the chosen scene — the gunsmith no
+ *    longer gates play (it moved behind Settings, D81);
+ *  - `Pvp` opens the staging screen (D101) — honest pre-net chrome, nothing joinable;
  *  - `Settings` / `Profile` / `About` open their like-named screens;
  *  - `Quit` exits.
  *
@@ -97,7 +103,8 @@ enum class TitleRoute {
 fun resolveTitleAction(action: TitleAction): TitleRoute =
     when (action) {
         TitleAction.Campaign -> TitleRoute.MissionSelect
-        TitleAction.Pve, TitleAction.Pvp -> TitleRoute.ModeSelect
+        TitleAction.Pve -> TitleRoute.ModeSelect
+        TitleAction.Pvp -> TitleRoute.Pvp
         TitleAction.Settings -> TitleRoute.Settings
         TitleAction.Profile -> TitleRoute.Profile
         TitleAction.Army -> TitleRoute.ArmySelect

@@ -110,7 +110,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Which out-of-match shell surface is up — the Compose twin of the desktop host's `Screen` enum. */
-private enum class ShellRoute { Title, ModeSelect, Settings, Profile, ArmySelect, About, MissionSelect, Briefing, Gunsmith }
+private enum class ShellRoute { Title, ModeSelect, Pvp, Settings, Profile, ArmySelect, About, MissionSelect, Briefing, Gunsmith }
 
 /**
  * The out-of-match shell navigator: a flat `when` over [ShellRoute] holding the player's prefs,
@@ -153,6 +153,7 @@ private fun Shell(
         when (resolveTitleAction(action)) {
             TitleRoute.MissionSelect -> route = ShellRoute.MissionSelect
             TitleRoute.ModeSelect -> route = ShellRoute.ModeSelect
+            TitleRoute.Pvp -> route = ShellRoute.Pvp
             TitleRoute.Settings -> route = ShellRoute.Settings
             TitleRoute.Profile -> route = ShellRoute.Profile
             TitleRoute.ArmySelect -> route = ShellRoute.ArmySelect
@@ -175,9 +176,15 @@ private fun Shell(
         )
         ShellRoute.ModeSelect -> ModeSelectScreen(
             modes = shellGameModes,
-            // Pick a mode → Deploy straight into its scene with the persisted loadout + army (no
-            // gunsmith). Non-campaign, so `node` stays 0 (inert for these scenes).
+            // Pick a battlefield → Deploy straight into its scene with the persisted loadout + army
+            // (no gunsmith). Non-campaign, so `node` stays 0 (inert for these scenes).
             onPick = { onDeploy(launchConfigOf(it.sceneToken, settings, loadout, army)) },
+            onBack = { route = ShellRoute.Title },
+        )
+        // The PvP staging door (D101): read-only pre-net chrome — the queues in build order plus
+        // the §4a identity line. Nothing deploys from here until the Phase 3 net layer lands.
+        ShellRoute.Pvp -> PvpScreen(
+            playerArmy = army,
             onBack = { route = ShellRoute.Title },
         )
         ShellRoute.Settings -> SettingsScreen(

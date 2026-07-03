@@ -16,14 +16,18 @@ class TitleActionTest {
     }
 
     @Test
-    fun pve_opens_the_mode_select() {
-        // D81: PvE no longer dead-ends on the gunsmith — it opens the mode/map picker.
+    fun pve_opens_the_skirmish_battlefield_picker() {
+        // D81: PvE no longer dead-ends on the gunsmith — it opens the battlefield picker (the
+        // skirmish door, D101).
         assertEquals(TitleRoute.ModeSelect, resolveTitleAction(TitleAction.Pve))
     }
 
     @Test
-    fun pvp_opens_the_mode_select() {
-        assertEquals(TitleRoute.ModeSelect, resolveTitleAction(TitleAction.Pvp))
+    fun pvp_opens_its_own_staging_door() {
+        // D101: PvP no longer shares skirmish's picker — it opens the staging screen (queues in
+        // modes.md §5 build order, nothing joinable pre-net). Mirrors the desktop
+        // `TitleAction::Pvp -> HostTransition::OpenPvp`.
+        assertEquals(TitleRoute.Pvp, resolveTitleAction(TitleAction.Pvp))
     }
 
     @Test
@@ -53,12 +57,12 @@ class TitleActionTest {
     }
 
     @Test
-    fun every_action_routes_and_only_pve_pvp_share_the_mode_select() {
-        // Exhaustive sweep: every action maps, and only Pve/Pvp share a destination (the mode select),
-        // matching the design where those two fold together until PvP match-setup diverges (Q5).
+    fun every_action_routes_and_no_two_play_modes_share_a_door() {
+        // Exhaustive sweep: every action maps, and the three play modes each own a distinct
+        // destination (`modes.md` §1, D101) — the old Pve/Pvp shared picker is retired.
         val routes = TitleAction.entries.associateWith { resolveTitleAction(it) }
-        assertEquals(TitleRoute.ModeSelect, routes[TitleAction.Pve])
-        assertEquals(TitleRoute.ModeSelect, routes[TitleAction.Pvp])
+        val playDoors = listOf(TitleAction.Campaign, TitleAction.Pve, TitleAction.Pvp).map { routes[it] }
+        assertEquals(playDoors.size, playDoors.toSet().size)
         // No title action routes to the gunsmith any more — it lives behind Settings now (D81), and
         // TitleRoute has no Loadout member, so that's guaranteed at compile time.
         // Every action produces a route (no action left unmapped — `when` is exhaustive, but this
