@@ -722,20 +722,24 @@ surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.m
 
 ---
 
-## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md) data; [D104](decisions.md) fork 2 resolved for desktop; roster/selection forks open) <a id="q28--conflict-atlas"></a>
+## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md) data; [D104](decisions.md) fork 2 resolved for desktop; [D105](decisions.md) grows the atlas to four wars; roster/selection forks open) <a id="q28--conflict-atlas"></a>
 
 > **Structural half resolved in [D98](decisions.md):** the conflict → operation → battle hierarchy
 > now exists as static authored data in `core::campaign` (`Conflict`/`Operation` + node tags +
-> derived `GroupProgress` rollups), and `default_campaign()` ships grouped under a placeholder
-> modern conflict. **A presentation *increment* landed in [D103](decisions.md):** the desktop hub
-> draws over a live engine-rendered **atlas globe** (Natural Earth land, one pin per conflict at
-> authored `lat_x10`/`lon_x10` anchors, settled on the conflict being fought) — the backdrop step
-> of the "grow list → map/globe without rework" path. **[D104](decisions.md) then closed fork 2
-> for the desktop as (a), the full navigable globe**: drag/zoom, a year scrubber (out-of-era
-> conflicts dim), pin-click → the conflict's filtered hub. Forks 1 (per-conflict factions) and
-> 3 (conflict-selection policy) are **still open**, as is Android's presentation (deliberately
-> the grouped list until the Compose shell earns an engine surface or a 2.5D map — the D103/D104
-> recorded fork); the leans on the open forks stand.
+> derived `GroupProgress` rollups). **A presentation *increment* landed in [D103](decisions.md):**
+> the desktop hub draws over a live engine-rendered **atlas globe** (Natural Earth land, one pin
+> per conflict at authored `lat_x10`/`lon_x10` anchors, settled on the conflict being fought) —
+> the backdrop step of the "grow list → map/globe without rework" path. **[D104](decisions.md)
+> then closed fork 2 for the desktop as (a), the full navigable globe**: drag/zoom, a year
+> scrubber (out-of-era conflicts dim), pin-click → the conflict's filtered hub. **[D105](decisions.md)
+> then gave the scrubber something to scrub:** `default_campaign()` grew from one conflict to
+> **four** (*The Channel Crisis*, *The Meridian Crisis*, *The Gotland Winter*, *The Santo
+> Crisis* — 12 nodes, each conflict a self-contained Seize → Hold → Push chain). All four stay
+> inside the fork-1(c) lean (fictional, modern, plausibly covered by the shipped US/FR roster),
+> so **forks 1 (per-conflict factions) and 3 (conflict-selection policy) did not need deciding
+> to ship this — they still gate the first *historical* conflict**, and Android's presentation
+> is still the recorded deliberate fork (deliberately the grouped list until the Compose shell
+> earns an engine surface or a 2.5D map); the leans on the open forks stand.
 
 Proposal (2026-07-03): the campaign presents as a **navigable world map with a time axis** — pick a
 year, see that era's conflicts on the globe, zoom into one, and play its battles. Era-agnostic by
@@ -781,11 +785,12 @@ campaign *data* early is cheap; the presentation can then grow list → regional
 rework.
 
 **Current lean (updated post-D104):** the data grouping (D98) and the desktop presentation
-(D104: the full navigable globe) are **decided and shipped**. What remains: first shippable
-conflict stays a **modern** one the shipped US/FR roster plausibly covers (fork 1(c)); **Android's
-presentation** keeps the grouped list until its own call (an engine surface in the Compose shell
-vs. a native 2.5D regional map — the phone half of the old fork 2); per-conflict rosters and the
-conflict-selection policy must be decided **before a second, historical conflict ships**.
+(D104: the full navigable globe) are **decided and shipped**. What remains: shipped conflicts
+stay **modern** ones the shipped US/FR roster plausibly covers (fork 1(c) — four such wars ship
+as of [D105](decisions.md)); **Android's presentation** keeps the grouped list until its own
+call (an engine surface in the Compose shell vs. a native 2.5D regional map — the phone half of
+the old fork 2); per-conflict rosters and the conflict-selection policy must be decided
+**before the first historical conflict ships**.
 Cross-link: [D58](decisions.md)/[D59](decisions.md), [D68](decisions.md)/[D71](decisions.md),
 [D32](decisions.md), [D76](decisions.md), [D80](decisions.md),
 [Q16](#q16--narrative-depth).

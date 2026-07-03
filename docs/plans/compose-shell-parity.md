@@ -154,8 +154,9 @@ the JNI reader.
 > shown/carried but not applied; **both now are**. **Persistence:** Settings/Profile/loadout now
 > survive restarts via `ShellPrefs` (SharedPreferences) — since extended to the army pick + the
 > campaign cleared set (`ShellPrefsCodec.KEY_ARMY`/`KEY_CAMPAIGN`), and desktop has since landed its
-> own twin (§12 item 2). **Update:** the shipped campaign is now the **three-node chain** *Seize* →
-> *Hold* → *Push* on both the shared model (`engine::default_campaign()`) and the Android
+> own twin (§12 item 2). **Update:** the shipped campaign is now a **12-node graph** — four
+> conflicts, each a self-contained *Seize* → *Hold* → *Push* chain ([D105](../decisions.md)) —
+> on both the shared model (`engine::default_campaign()`) and the Android
 > `CampaignModel` mirror, with the node→scene launch mapping (`Scene::for_mission`) wired through
 > the backend, and the Compose mission-select tiles now render **and launch every playable node**
 > (§12 item 1, closed 2026-07-03 via the pure `missionLaunchConfig` seam). Still pending: PvP
@@ -295,8 +296,10 @@ staging door, the D98 atlas-grouped hub) — all three closed with same-day Comp
 1. **Campaign progress model — ✅ CLOSED (2026-07-03).** `CampaignModel.kt` carries the full
    `CampaignProgress`/`NodeProgress` (Locked/Available/Cleared) derivation, the clear gate,
    best-tier tracking, and the persistence codec — the JVM-testable twin of desktop's `Campaign`.
-   **The shipped campaign is the three-node chain** *Seize* → *Hold* → *Push* (`engine::default_campaign()`),
-   and `campaignNodes` mirrors it (Hold `prerequisites = [0]`, gated behind Seize); the node→scene
+   **The shipped campaign is a 12-node graph** — four conflicts, each a self-contained *Seize* →
+   *Hold* → *Push* chain ([D105](../decisions.md)) — via `engine::default_campaign()`,
+   and `campaignNodes` mirrors it in lock-step (each conflict's Hold `prerequisites` the Seize
+   before it, gating within a war only); the node→scene
    launch mapping (`Scene::for_mission`) is wired on both hosts, and the
    `CampaignModelTest`/`CampaignProgressTest` pin the chain structure + the Hold briefing verbatim.
    The last open piece — the Compose chrome launching only the root node — is now closed too: the

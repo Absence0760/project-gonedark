@@ -4699,3 +4699,55 @@ screenshot harness (`atlas.png`) so a shader/layout regression fails in a test r
 desktop), [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)
 (still unstrained), `app/src/shell/atlas.rs`, `render/src/globe_backdrop.rs`
 (`GlobeView`/`project_pin`), `app/src/shell/mission_select.rs` (`hub_sections_for`).
+
+## D105 — The atlas gets its wars: four fictional modern conflicts, each a self-contained campaign chain
+
+**Status: landed.** `default_campaign()` grows from one conflict to **four**, and the D104
+scrubber/pin machinery finally has something to scrub: *The Channel Crisis* (2027–2028, the
+D98 original, unchanged) is joined by *The Meridian Crisis* (2029–2030, Gulf of Guinea —
+rival stabilization mandates collide over a deepwater port and the trans-Sahel corridor),
+*The Gotland Winter* (2031–2032, central Baltic — the war for the sea lanes fought on the
+frozen island that commands them), and *The Santo Crisis* (2033–2034, Melanesia — two task
+forces sent to secure a collapsed state's port end up fighting each other for it). Eras are
+deliberately staggered (2027–2034, no overlap) so the year scrubber reads as a timeline;
+pins sit at real coordinates (mid-Channel, coastal Gulf of Guinea, Visby, Luganville) so
+the globe reads as a world.
+
+**Each conflict is one operation holding a self-contained Seize → Hold → Push chain** (12
+nodes total) that **reuses the three shipped mission seeders** under per-node titles and
+briefing copy authored in the shipped voice — every situation restates the going-dark cost
+in its own terrain (invariant #6's framing does the campaign's narrative work). Every
+conflict's root is open from the start — the atlas's "pick a war" freedom is real, gating
+runs only within a war — which deliberately does **not** decide the Q28 fork-3 selection/
+sequencing policy; it is the cheapest policy-neutral default. Zero new engine surface: no
+new scenes, seeders, objectives, or checksummed state (invariants #1/#7 untouched); the
+Android `CampaignModel` mirror moved in the same commit (D79 lock-step), so the phone's
+grouped list now shows four headed sections.
+
+**What this is and is not.** It is content — the first real exercise of the D98 "each
+conflict is a self-contained drop" model and of D104's navigation at n>1 — inside the Q28
+fork-1(c) lean: all four wars are **fictional, modern, and plausibly covered by the shipped
+US/FR roster**. It does *not* reopen or resolve Q28's remaining forks: per-conflict rosters
+and the conflict-selection editorial policy still gate the first **historical** conflict,
+and Android's atlas presentation remains the recorded deliberate fork. Mission bodies being
+shared across wars is the honest current state (three archetypes, twelve framings); distinct
+per-conflict missions arrive with the D76 RON content path, not by blocking atlas growth on
+them.
+
+**One deliberate cost: pre-D105 campaign saves reset.** The progress blob encodes the node
+count, and `apply_progress` rejects a topology-skewed blob **cleanly** (`CorruptState` → a
+fresh-progress boot, never corruption or a partial apply). D98's byte-identity promise was
+always *per node set* — grouping metadata still cannot invalidate a save, but growing 3 → 12
+nodes retires old blobs by design. Acceptable now (a dev-stage, three-mission save at most);
+a real migration story (id-keyed clears, like the Android mirror's tolerant `decodeCleared`)
+is the recorded price of the *next* node-count change if saves ever matter — deciding that
+is deferred, not forgotten.
+
+**Cross-link:** [Q28](open-questions.md#q28--conflict-atlas) (forks 1/3 + Android
+presentation stay open),
+[D98](#d98--the-campaign-carries-a-conflict-atlas-conflict--operation--battle-grouping-as-data-q28s-structural-half)
+(the data model this fills), [D104](#d104--the-campaigns-front-door-is-the-navigable-conflict-atlas-drag-the-earth-scrub-the-years-pick-a-war-closes-q28-fork-2-on-desktop)
+(the navigation this feeds), [D83](#d83--campaign-replay-difficulty-reshapes-the-situation-not-a-4th-commander-band-resolves-q21)
+(replay tiers apply per-node, unchanged), [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)
+(where distinct per-war missions come from), `engine/src/mission_registry.rs`
+(`default_campaign`), `android/.../CampaignModel.kt` (the D79 mirror).

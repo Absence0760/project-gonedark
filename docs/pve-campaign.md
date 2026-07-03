@@ -61,8 +61,12 @@ Borrowed from **Company of Heroes**' meta-campaign map and **Delta Force**'s rep
   The structure supports growing into one without rework.
 - **The conflict-atlas grouping is now data over this graph** ([D98](decisions.md)): nodes group
   into conflict → operation → battle (`core::campaign::{Conflict, Operation}` + per-node tags and
-  derived rollups), with the shipped chain sitting in a placeholder modern conflict. On desktop
-  the atlas *presentation* has since shipped in two steps ([D103](decisions.md) → [D104](decisions.md)):
+  derived rollups). **[D105](decisions.md) grew the shipped campaign from one placeholder conflict
+  to four** — *The Channel Crisis*, *The Meridian Crisis*, *The Gotland Winter*, and *The Santo
+  Crisis* (12 nodes total, each conflict its own self-contained Seize → Hold → Push chain reusing
+  the three shipped seeders) — all fictional/modern/roster-plausible per the Q28 fork-1(c) lean.
+  On desktop the atlas *presentation* has since shipped in two steps ([D103](decisions.md) →
+  [D104](decisions.md)):
   CAMPAIGN opens a **navigable earth** — drag/zoom, a year scrubber, one glowing pin per conflict
   at its authored `lat/lon` anchor — and picking a war opens **that conflict's** hub (the tile
   list above, filtered per-conflict; escape unwinds briefing → hub → atlas → title, and the

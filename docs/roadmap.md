@@ -368,12 +368,13 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 > [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). WS-A, WS-C, WS-D, and WS-E have landed;
 > WS-B is functionally complete on both platforms — the Android progress/unlock model + gated-node
 > launch wire have since closed ([`compose-shell-parity.md`](plans/compose-shell-parity.md) §12);
-> remaining is more mission *content* (data — see the plan for per-WS status). WS-A now ships **three** missions —
-> *Seize* (mission 1), the *Hold* archetype's *Hold the Line* (mission 2,
+> remaining is more mission *content* (data — see the plan for per-WS status). WS-A now ships **three**
+> mission seeders — *Seize* (mission 1), the *Hold* archetype's *Hold the Line* (mission 2,
 > `core::scenario::seed_hold_mission`), and the *Push* archetype's *Break the Line* (mission 3,
-> `core::scenario::seed_push_mission`) — all **placed as nodes** in the shipped campaign graph: a
-> three-node chain *Seize* → *Hold* → *Push* (each unlocks once the one before is cleared), with
-> the Android `CampaignModel` mirror moved in lock-step (see WS-B).
+> `core::scenario::seed_push_mission`) — and [D105](decisions.md) **reuses all three under four
+> conflicts**: the shipped campaign graph is now **12 nodes**, one self-contained *Seize* →
+> *Hold* → *Push* chain per conflict (each node unlocks once the one before is cleared, gating
+> stays within a war), with the Android `CampaignModel` mirror moved in lock-step (see WS-B).
 
 - [x] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
   stream (generalizes [D38](decisions.md)'s `evaluate_outcome`); zero checksum surface; ships with
@@ -384,17 +385,20 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 - [x] **Mission 2 — *Hold the Line*** (the *Hold* archetype — a dug-in firing line survives a
   scripted assault force for a fixed tick window) (code landed — `core::scenario::seed_hold_mission`,
   `ObjectiveSet::mission_hold`; directly playable via `Scene::Mission2`/`--scene hold`; now **placed
-  as the second campaign node**, gated behind *Seize* — see WS-B)
+  as the second node in every conflict's chain**, gated behind that conflict's *Seize* — see WS-B)
 - [x] **Mission 3 — *Break the Line*** (the *Push* archetype — capture a lane of three guarded
   control points in order, the territory-capture teach) (code landed —
   `core::scenario::seed_push_mission`, `ObjectiveSet::mission_push`; directly playable via
-  `Scene::Mission3`/`--scene push`; **placed as the third campaign node**, gated behind *Hold*,
-  inside the D98 atlas's *Operation First Light*)
+  `Scene::Mission3`/`--scene push`; **placed as the third node in every conflict's chain**,
+  gated behind that conflict's *Hold* — [D105](decisions.md) reuses this seeder under all four
+  operations, incl. the original *Operation First Light*)
 - [~] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
   briefing (native shell, [D32](decisions.md)). **Functionally complete on both platforms:** the
   host model `core/src/campaign.rs` + persistence, the `MissionId→mission` registry
-  (`engine/src/mission_registry.rs`, holding *Seize*, *Hold*, and *Push*), the shipped **three-node
-  chain** *Seize* → *Hold* → *Push* (`default_campaign()`) with the node→scene launch mapping
+  (`engine/src/mission_registry.rs`, holding *Seize*, *Hold*, and *Push*), the shipped
+  **12-node graph** (`default_campaign()`) — four conflicts, each a self-contained *Seize* →
+  *Hold* → *Push* chain ([D105](decisions.md): *The Channel Crisis*, *The Meridian Crisis*,
+  *The Gotland Winter*, *The Santo Crisis*) — with the node→scene launch mapping
   (`Scene::for_mission`) wired on desktop + Android, the egui mission-select/briefing hub (reaches
   every node, now **grouped by conflict/operation** with D98 atlas rollup headers and — on
   desktop — fronted by the **navigable conflict atlas** (D103 → D104: the earth, a year scrubber,
