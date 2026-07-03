@@ -4,10 +4,12 @@
 //! `core` never sees them. Keep this seam *thin* — only what genuinely differs per
 //! platform crosses it. Floats are fine here: this is the platform side, not the sim.
 //!
-//! [`mix`] is the one piece of *shared* logic in this crate: the per-voice audio render math
-//! (pan/gain/muffle/sum) every backend mixes through — pure, float-only, host-testable, and
-//! pulling no platform deps (see its module docs).
+//! [`mix`] and [`bank`] are the *shared* logic in this crate: the per-voice audio render math
+//! (pan/gain/muffle/sum) every backend mixes through, and the designed SFX bank (the committed
+//! CP-6 cue assets, decoded + resampled at stream-open) every backend plays from — pure,
+//! float-only, host-testable, and pulling no platform deps (see their module docs).
 
+pub mod bank;
 pub mod mix;
 
 /// Monotonic clock for the run loop's frame timing.

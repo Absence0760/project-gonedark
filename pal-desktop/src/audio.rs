@@ -5,10 +5,10 @@
 //!
 //! Output is behind the opt-in `audio` feature (default OFF) so a bare build needs no system
 //! audio dev headers (invariant #8 — clone-and-run). With the feature on, this opens a `cpal`
-//! output stream and synthesizes a short procedural cue per [`SoundId`] (no audio assets yet),
-//! pans it by `azimuth`, scales it by `gain`, and low-passes `muffled` (off-map) cues. Audio is
-//! never load-bearing for the sim, so any device/stream failure degrades to a silent no-op
-//! rather than panicking.
+//! output stream and decodes the designed cue bank (`gonedark_pal::bank`, the committed CP-6
+//! assets) at the negotiated rate, pans each cue by `azimuth`, scales it by `gain`, and
+//! low-passes `muffled` (off-map) cues. Audio is never load-bearing for the sim, so any
+//! device/stream failure degrades to a silent no-op rather than panicking.
 
 #[cfg(not(feature = "audio"))]
 mod backend {
@@ -44,13 +44,12 @@ mod backend {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{FromSample, SizedSample};
-    use gonedark_pal::mix::{
-        oneshot_sound, scaled_gain, synth_bank, synth_music, voice_from_cue, Mixer,
-    };
+    use gonedark_pal::bank::sample_bank;
+    use gonedark_pal::mix::{oneshot_sound, scaled_gain, synth_music, voice_from_cue, Mixer};
     use gonedark_pal::{Audio, AudioCue, SoundId};
 
     /// Active output: the live stream (kept alive by ownership), the shared mixer, and the
-    /// synthesized cue bank. The per-voice render math (pan/gain/muffle/sum/eviction) lives in the
+    /// decoded designed cue bank. The per-voice render math (pan/gain/muffle/sum/eviction) lives in the
     /// shared, host-tested `gonedark_pal::mix` seam — this backend only owns the cpal stream glue.
     struct Active {
         _stream: cpal::Stream,
@@ -158,7 +157,7 @@ mod backend {
             let channels = config.channels as usize;
 
             let mixer = Arc::new(Mutex::new(Mixer::default()));
-            let bank = synth_bank(sample_rate);
+            let bank = sample_bank(sample_rate);
             // Install the looping music bed once; it stays muted (gain 0) until the host pushes a
             // music-bus level via `set_music_gain`, so a host that never touches music is silent.
             if let Ok(mut m) = mixer.lock() {
