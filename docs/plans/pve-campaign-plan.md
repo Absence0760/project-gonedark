@@ -1,10 +1,11 @@
 # PvE campaign plan — the first shippable product
 
 > **Status: IN PROGRESS — WS-A, WS-D, WS-E shipped; WS-C live-wired on both platforms; WS-B
-> functionally complete on both platforms — more mission content + an Android progress/unlock model
-> remain (D32's native-shell approach is settled, not a blocker).** WS-A
-> (mission/objective core — `engine/src/objectives.rs`,
-> `core::scenario::seed_seize_mission`/`seed_hold_mission`, `render::objective_hud`) and WS-D
+> functionally complete on both platforms — more mission content remains (the Android
+> progress/unlock model + gated-node launch wire have closed; D32's native-shell approach is
+> settled, not a blocker).** WS-A (mission/objective core — `engine/src/objectives.rs`,
+> `core::scenario::seed_seize_mission`/`seed_hold_mission`/`seed_push_mission`,
+> `render::objective_hud`) and WS-D
 > (HUD layout editor — `engine/src/hud_layout.rs`) are built, tested, and wired into the live
 > host. WS-E (difficulty / modifiers / briefing — `core/src/mission_tuning.rs`) is built and
 > threaded into `core::commander`. **WS-C is now live-wired on both platforms:** the gunsmith sim
@@ -20,21 +21,23 @@
 > persistence (`core/src/campaign.rs`, via `core::shell`) is built and tested, and the
 > **`MissionId→mission` registry now landed** (`engine/src/mission_registry.rs` —
 > `MissionDef`/`MissionRegistry` mapping each unlock-graph node to a runnable seeder + WS-E briefing,
-> host-side / zero new checksum surface, `default_registry()` now ships **two** WS-A missions —
-> *Seize* and the new *Hold the Line* (`core::scenario::seed_hold_mission`,
-> `ObjectiveSet::mission_hold`) — tests green dev+release). **Both are now placed as nodes** in
-> `default_campaign()`: a **two-node chain** *Seize* → *Hold* (Hold `.requires([NodeId(0)])`, so it
-> unlocks once Seize is cleared), with the node→scene launch mapping (`Scene::for_mission`:
-> Seize → `Mission1`, Hold → `Mission2`) wired into the desktop shell and the Android backend, and
+> host-side / zero new checksum surface, `default_registry()` now ships **three** WS-A missions —
+> *Seize*, *Hold the Line* (`core::scenario::seed_hold_mission`, `ObjectiveSet::mission_hold`), and
+> *Break the Line* (`core::scenario::seed_push_mission`, `ObjectiveSet::mission_push`) — tests
+> green dev+release). **All three are placed as nodes** in `default_campaign()`: a **three-node
+> chain** *Seize* → *Hold* → *Push* (each `.requires` the one before, so it unlocks the moment its
+> predecessor is cleared), grouped under the D98 conflict atlas (*The Channel Crisis* / *Operation
+> First Light*), with the node→scene launch mapping (`Scene::for_mission`: Seize → `Mission1`,
+> Hold → `Mission2`, Push → `Mission3`) wired into the desktop shell and the Android backend, and
 > the hand-maintained Android `CampaignModel` mirror moved in lock-step. The egui
-> mission-select/briefing hub reaches both nodes; the **native (Compose) mission-select/briefing
-> chrome has also landed** (`MissionSelectScreen.kt`/`BriefingScreen.kt`, per
-> [`compose-shell-parity.md`](compose-shell-parity.md) Tier 2), though its mission-select tiles
-> still render/launch only the root node until the gated second node is threaded through the
-> launch wire (§12 there). **What remains for WS-B is more mission content (data, not engine), an
-> Android campaign progress/unlock model, and threading the gated non-root node through the Compose
-> launch wire. [D32](../decisions.md)'s native-per-platform-shell approach is already settled — the
-> Compose hub is the decided answer, not a pending decision.**
+> mission-select/briefing hub reaches every node — now **grouped by conflict/operation** with D98
+> rollup headers (the first, list-shaped increment of the Q28 presentation; the map/globe forks
+> stay open) — and the **native (Compose) mission-select/briefing chrome renders and launches every
+> playable node** (`MissionSelectScreen.kt`/`BriefingScreen.kt` + the pure `missionLaunchConfig`
+> seam; gated-node launch wire closed 2026-07-03, [`compose-shell-parity.md`](compose-shell-parity.md)
+> §12). **What remains for WS-B is more mission content (data, not engine).
+> [D32](../decisions.md)'s native-per-platform-shell approach is already settled — the Compose hub
+> is the decided answer, not a pending decision.**
 > *(Replay-tier → combat-tuning scaling is **resolved + implemented** by
 > [D83](../decisions.md#d83--campaign-replay-difficulty-reshapes-the-situation-not-a-4th-commander-band-resolves-q21):
 > the chosen replay tier drives both the 4→3 enemy-commander band and the `ScenarioModifiers`
@@ -112,6 +115,11 @@ The first playable mission proves the loop. Everything else wraps this.
   against a scripted assault force; objective = `Survive(HOLD_TICKS)`
   (`ObjectiveSet::mission_hold`); fail = the line is wiped before the clock runs out. Exercises the
   `Survive` evaluator kind the WS-A design already specified.
+- **The *Push* archetype + mission 3** ("Break the Line"): a lane-capture scenario
+  (`core::scenario::seed_push_mission`) — a fixed squad against three control points, each guarded
+  by a dug-in fire team; objective = one `Capture` per post (`ObjectiveSet::mission_push`); fail =
+  the squad is wiped. The territory-capture teach, and the `Capture` evaluator's first
+  multi-objective mission.
 - **In-match objective HUD:** a thin presentation surface showing the current objective + progress
   (reuses the in-match text pass from the playability push).
 
@@ -122,13 +130,13 @@ the `determinism.yml` cross-arch matrix stays green (the objective layer is host
 checksum surface — confirm the sim it observes is unchanged). This is the WS that most needs
 [`/check`](../../.claude/commands) + the test-gap-checker before commit.
 
-### WS-B — Operations hub — **FUNCTIONALLY COMPLETE on both platforms (host model + 2-node graph + node→scene launch + native Compose mission-select/briefing chrome all landed; more content + an Android progress/unlock model + non-root-node launch threading remain — [D32](../decisions.md)'s native-shell approach is settled, see status block above)**
+### WS-B — Operations hub — **FUNCTIONALLY COMPLETE on both platforms (host model + 3-node atlas-grouped graph + node→scene launch + native Compose mission-select/briefing chrome incl. gated-node launch all landed; more content remains — [D32](../decisions.md)'s native-shell approach is settled, see status block above)**
 
 - Node-graph meta-progression: a `Campaign`/`OperationNode` model (host/shell-side), unlock state
   (clearing a node opens successors), replay-at-higher-difficulty. **The shipped graph is now the
-  two-node chain** *Seize* → *Hold* (`engine::mission_registry::default_campaign()`; Hold gated
-  behind Seize), resolved to runnable missions by `default_registry()` and launched into the right
-  scene by `Scene::for_mission` (Seize → `Mission1`, Hold → `Mission2`) — wired on both the desktop
+  three-node chain** *Seize* → *Hold* → *Push* (`engine::mission_registry::default_campaign()`;
+  each gated behind the one before), resolved to runnable missions by `default_registry()` and launched into the right
+  scene by `Scene::for_mission` (Seize → `Mission1`, Hold → `Mission2`, Push → `Mission3`) — wired on both the desktop
   shell (`app/src/main.rs`) and the Android backend (`pal-android/src/android_backend.rs`), with the
   Android `CampaignModel` Kotlin mirror kept in lock-step. **The graph now also carries the Q28
   conflict-atlas grouping** ([D98](../decisions.md)): `Conflict`/`Operation` structs + per-node tags
@@ -139,17 +147,20 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
 - Mission-select + briefing surface in the **native shell** ([D32](../decisions.md)) reached through
   the `core::shell` seam ([D34](../decisions.md)); progress persisted **outside** the checksum fold as
   **a separate host file** (campaign metadata, not sim state) — the host-side content model
-  [D76](../decisions.md) locks in. *(The **egui** hub reaches both nodes end-to-end; the native
-  Android **Compose** chrome — `MissionSelectScreen.kt`/`BriefingScreen.kt` — has also landed
-  ([`compose-shell-parity.md`](compose-shell-parity.md) Tier 2), though its tiles still
-  render/launch only the root node until the gated second node is threaded through the launch
-  wire — see §12 there.)*
+  [D76](../decisions.md) locks in. *(The **egui** hub reaches every node end-to-end — grouped by
+  conflict/operation with D98 rollup headers, the first list-shaped increment of the Q28
+  presentation — and the native Android **Compose** chrome — `MissionSelectScreen.kt`/
+  `BriefingScreen.kt` + the pure `missionLaunchConfig` seam — renders **and launches every playable
+  node**; the gated-node launch wire closed 2026-07-03, see
+  [`compose-shell-parity.md`](compose-shell-parity.md) §12.)*
 
 **Tests:** unlock-graph transitions (both the synthetic chain and the shipped `default_campaign()`
-2-node graph — Hold locked until Seize clears, then available/replayable); `covers` + `resolve_node`
-on node 1 resolves to `MISSION_HOLD`; the `MissionId→Scene` mapping (`Scene::for_mission`);
-persistence round-trip of campaign progress over the 2-node topology. Kotlin: the `CampaignModel`
-mirror + progress tests assert the same 2-node chain.
+3-node graph — each gated node locked until its predecessor clears, then available/replayable);
+`covers` + `resolve_node` on the gated nodes resolve to `MISSION_HOLD`/`MISSION_PUSH`; the
+`MissionId→Scene` mapping (`Scene::for_mission`); the D98 atlas grouping + rollups + blob-parity;
+persistence round-trip of campaign progress over the 3-node topology. Kotlin: the `CampaignModel`
+mirror + progress tests assert the same 3-node chain, the atlas mirror, and (via
+`MissionLaunchTest`) that every playable node resolves to its own scene/index on the launch wire.
 
 ### WS-C — Gunsmith loadout — **DONE on both platforms (sim model + UI seam + match-start application; egui gunsmith screen on desktop, Compose `GunsmithScreen.kt` on Android per [`compose-shell-parity.md`](compose-shell-parity.md) Tier 2)**
 

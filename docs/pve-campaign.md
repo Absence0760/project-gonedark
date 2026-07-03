@@ -76,7 +76,7 @@ Each archetype is a **parameterized scenario** (a starting world) plus an **obje
 | **Hold** | Defend a point against escalating waves for N ticks (a Halo set-piece). | `territory_system` ownership + a survive-to-timeout objective |
 | **Hold — *shipped* (mission 2)** | *"Hold your dug-in line."* A first, **narrower** instance of the Hold verb: a fixed defensive line in `Light` cover vs. **one** scripted assault (a baked-in `AttackMove`), no escalating waves and no territory ownership yet — the cover, used, is the edge. | `core::scenario::seed_hold_mission` + a `Survive(HOLD_TICKS)` objective (`ObjectiveSet::mission_hold`) |
 | **Assassinate / Extract** | Eliminate a specific enemy VIP, or escort a friendly one off the map alive. | a `SimEvent::Killed` listener keyed to one entity |
-| **Push** | Capture a chain of control points down a lane, CoH-style. | sequential `territory_system` captures |
+| **Push — *shipped* (mission 3)** | *"Break the Line."* Capture a lane of three guarded posts in order — the territory-capture teach. | `core::scenario::seed_push_mission` + per-post `Capture` objectives (`ObjectiveSet::mission_push`) |
 
 The list is open — new verbs are new objective evaluators, not new subsystems.
 

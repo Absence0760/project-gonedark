@@ -366,13 +366,14 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 > Net-new content pillar ([D58](decisions.md)–[D61](decisions.md)); design in
 > [`pve-campaign.md`](pve-campaign.md)/[`customization.md`](customization.md), build sequencing in
 > [`pve-campaign-plan.md`](plans/pve-campaign-plan.md). WS-A, WS-C, WS-D, and WS-E have landed;
-> WS-B is functionally complete on both platforms — remaining is more mission *content* (data)
-> plus an Android campaign progress/unlock model + threading the gated non-root Compose node
-> through the launch wire (see the plan for per-WS status). WS-A now ships **two** missions —
-> *Seize* (mission 1) and the *Hold* archetype's *Hold the Line* (mission 2,
-> `core::scenario::seed_hold_mission`) — and both are now **placed as nodes** in the shipped
-> campaign graph: a two-node chain *Seize* → *Hold* (Hold unlocks once Seize is cleared), with the
-> Android `CampaignModel` mirror moved in lock-step (see WS-B).
+> WS-B is functionally complete on both platforms — the Android progress/unlock model + gated-node
+> launch wire have since closed ([`compose-shell-parity.md`](plans/compose-shell-parity.md) §12);
+> remaining is more mission *content* (data — see the plan for per-WS status). WS-A now ships **three** missions —
+> *Seize* (mission 1), the *Hold* archetype's *Hold the Line* (mission 2,
+> `core::scenario::seed_hold_mission`), and the *Push* archetype's *Break the Line* (mission 3,
+> `core::scenario::seed_push_mission`) — all **placed as nodes** in the shipped campaign graph: a
+> three-node chain *Seize* → *Hold* → *Push* (each unlocks once the one before is cleared), with
+> the Android `CampaignModel` mirror moved in lock-step (see WS-B).
 
 - [x] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
   stream (generalizes [D38](decisions.md)'s `evaluate_outcome`); zero checksum surface; ships with
@@ -384,22 +385,28 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   scripted assault force for a fixed tick window) (code landed — `core::scenario::seed_hold_mission`,
   `ObjectiveSet::mission_hold`; directly playable via `Scene::Mission2`/`--scene hold`; now **placed
   as the second campaign node**, gated behind *Seize* — see WS-B)
+- [x] **Mission 3 — *Break the Line*** (the *Push* archetype — capture a lane of three guarded
+  control points in order, the territory-capture teach) (code landed —
+  `core::scenario::seed_push_mission`, `ObjectiveSet::mission_push`; directly playable via
+  `Scene::Mission3`/`--scene push`; **placed as the third campaign node**, gated behind *Hold*,
+  inside the D98 atlas's *Operation First Light*)
 - [~] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
   briefing (native shell, [D32](decisions.md)). **Functionally complete on both platforms:** the
   host model `core/src/campaign.rs` + persistence, the `MissionId→mission` registry
-  (`engine/src/mission_registry.rs`, holding both *Seize* and *Hold*), the shipped **two-node
-  chain** *Seize* → *Hold* (`default_campaign()`) with the node→scene launch mapping
+  (`engine/src/mission_registry.rs`, holding *Seize*, *Hold*, and *Push*), the shipped **three-node
+  chain** *Seize* → *Hold* → *Push* (`default_campaign()`) with the node→scene launch mapping
   (`Scene::for_mission`) wired on desktop + Android, the egui mission-select/briefing hub (reaches
-  both nodes), and the **native** Android Compose mission-select/briefing chrome
+  every node, now **grouped by conflict/operation** with D98 atlas rollup headers — the first,
+  list-shaped increment of the [Q28](open-questions.md) presentation, the map/globe forks still
+  open), and the **native** Android Compose mission-select/briefing chrome
   (`MissionSelectScreen.kt`/`BriefingScreen.kt`, landed per
   [`compose-shell-parity.md`](plans/compose-shell-parity.md) Tier 2) — plus the `CampaignModel`
   mirror moved in lock-step for record-on-win + persistence parity. The graph engine already
   supports diamonds/multi-prereq, so growing the campaign from here is **data work, not code
-  work**. *(Compose's mission-select tiles still render/launch only the root node today — threading
-  the gated second node through the launch wire is the one remaining chrome task, tracked in
+  work**. *(The Compose mission-select now renders **and launches every playable node** — the
+  gated-node launch wire closed 2026-07-03 via the pure `missionLaunchConfig` seam,
   [`compose-shell-parity.md`](plans/compose-shell-parity.md) §12.)* **Owed:** more mission content
-  (data, not engine) + an Android campaign progress/unlock model and threading the gated non-root
-  node through the Compose launch wire. *(The native-shell approach itself is settled — [D32](decisions.md)
+  (data, not engine). *(The native-shell approach itself is settled — [D32](decisions.md)
   resolved out-of-match chrome as native per-platform; the Compose hub is the decided answer, not interim.)*
 - [x] **Gunsmith loadout (WS-C)** — fixed-point sidegrade attachment model, checksum-folded, +
   pre-match loadout UI ([D60](decisions.md)) (sim model `core/src/gunsmith.rs` + UI seam
