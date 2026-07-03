@@ -20,7 +20,7 @@ package com.jaredhoward.goingdark
 /**
  * A top-level action the player can pick on the title screen — the Kotlin mirror of the Rust
  * `app::shell::TitleAction`. Each play mode opens its own front door (`modes.md` §1): `Campaign`
- * the Operations hub, `Pve` the skirmish battlefield picker, `Pvp` the staging screen (D101). The
+ * the Operations hub, `Pve` the skirmish match-setup, `Pvp` the staging screen (D101). The
  * loadout **gunsmith is no longer a play gate** — it lives behind Settings now (D81) — so no title
  * action routes to it (see [resolveTitleAction]).
  *
@@ -63,8 +63,8 @@ enum class TitleRoute {
     /** The Operations-hub mission-select screen — the PvE campaign entry (mirrors `OpenMissionSelect`). */
     MissionSelect,
 
-    /** The skirmish battlefield picker (SKIRMISH's door, D81/D101), which then deploys the match. */
-    ModeSelect,
+    /** The skirmish match-setup screen (SKIRMISH's door — `modes.md` §3: battlefield, both armies, tier). */
+    SkirmishSetup,
 
     /** The PvP staging screen (D101) — queues in build order, nothing joinable pre-net. */
     Pvp,
@@ -90,8 +90,8 @@ enum class TitleRoute {
  * three distinct front doors, none sharing another's surface):
  *
  *  - `Campaign` opens the Operations-hub mission-select (the PvE pillar, D58);
- *  - `Pve` opens the skirmish battlefield picker, which deploys the chosen scene — the gunsmith no
- *    longer gates play (it moved behind Settings, D81);
+ *  - `Pve` opens the skirmish match-setup (`modes.md` §3: battlefield, both armies, opponent tier),
+ *    which deploys the configured match — the gunsmith no longer gates play (behind Settings, D81);
  *  - `Pvp` opens the staging screen (D101) — honest pre-net chrome, nothing joinable;
  *  - `Settings` / `Profile` / `About` open their like-named screens;
  *  - `Quit` exits.
@@ -103,7 +103,7 @@ enum class TitleRoute {
 fun resolveTitleAction(action: TitleAction): TitleRoute =
     when (action) {
         TitleAction.Campaign -> TitleRoute.MissionSelect
-        TitleAction.Pve -> TitleRoute.ModeSelect
+        TitleAction.Pve -> TitleRoute.SkirmishSetup
         TitleAction.Pvp -> TitleRoute.Pvp
         TitleAction.Settings -> TitleRoute.Settings
         TitleAction.Profile -> TitleRoute.Profile

@@ -110,7 +110,7 @@ class MainActivity : ComponentActivity() {
 }
 
 /** Which out-of-match shell surface is up — the Compose twin of the desktop host's `Screen` enum. */
-private enum class ShellRoute { Title, ModeSelect, Pvp, Settings, Profile, ArmySelect, About, MissionSelect, Briefing, Gunsmith }
+private enum class ShellRoute { Title, SkirmishSetup, Pvp, Settings, Profile, ArmySelect, About, MissionSelect, Briefing, Gunsmith }
 
 /**
  * The out-of-match shell navigator: a flat `when` over [ShellRoute] holding the player's prefs,
@@ -142,6 +142,10 @@ private fun Shell(
     // scene token straight into the pure launch-resolution seam (`MissionLaunch.kt`).
     var briefedNode by remember { mutableStateOf(campaignNodes.first()) }
     var difficulty by remember { mutableStateOf(Difficulty.Recruit) }
+    // Skirmish match-setup config (`modes.md` §3), session-only like `difficulty` (never a
+    // persisted pref): the player side re-seeds from the persisted army pick each time the screen
+    // opens — the twin of the desktop `App::skirmish`.
+    var skirmish by remember { mutableStateOf(SkirmishSetup()) }
 
     // Persist keeps the current (hoisted) campaign so a Settings/Profile/Loadout save never clobbers
     // the campaign key back to empty.
@@ -152,7 +156,12 @@ private fun Shell(
     fun applyTitle(action: TitleAction) {
         when (resolveTitleAction(action)) {
             TitleRoute.MissionSelect -> route = ShellRoute.MissionSelect
-            TitleRoute.ModeSelect -> route = ShellRoute.ModeSelect
+            // SKIRMISH re-seeds the player side from the persisted identity pick on open, so the
+            // setup always starts from the army the player declared they field (desktop parity).
+            TitleRoute.SkirmishSetup -> {
+                skirmish = skirmish.reseedPlayerArmy(army)
+                route = ShellRoute.SkirmishSetup
+            }
             TitleRoute.Pvp -> route = ShellRoute.Pvp
             TitleRoute.Settings -> route = ShellRoute.Settings
             TitleRoute.Profile -> route = ShellRoute.Profile
@@ -174,11 +183,16 @@ private fun Shell(
             onAbout = { applyTitle(TitleAction.About) },
             onQuit = { applyTitle(TitleAction.Quit) },
         )
-        ShellRoute.ModeSelect -> ModeSelectScreen(
-            modes = shellGameModes,
-            // Pick a battlefield → Deploy straight into its scene with the persisted loadout + army
-            // (no gunsmith). Non-campaign, so `node` stays 0 (inert for these scenes).
-            onPick = { onDeploy(launchConfigOf(it.sceneToken, settings, loadout, army)) },
+        // The skirmish match-setup (`modes.md` §3): config edits cycle in place through the pure
+        // seam; DEPLOY boots the configured match (battlefield + both armies + tier, `skirm=1` so
+        // a win never records a campaign clear — skirmish is the no-stakes sandbox).
+        ShellRoute.SkirmishSetup -> SkirmishSetupScreen(
+            setup = skirmish,
+            onChooseBattlefield = { skirmish = skirmish.copy(battlefield = clampBattlefield(it)) },
+            onCyclePlayerArmy = { skirmish = skirmish.copy(playerArmy = nextArmy(skirmish.playerArmy)) },
+            onCycleEnemyArmy = { skirmish = skirmish.copy(enemyArmy = nextArmy(skirmish.enemyArmy)) },
+            onCycleDifficulty = { skirmish = skirmish.copy(difficulty = skirmish.difficulty.next()) },
+            onDeploy = { onDeploy(skirmishLaunchConfig(skirmish, settings, loadout)) },
             onBack = { route = ShellRoute.Title },
         )
         // The PvP staging door (D101): read-only pre-net chrome — the queues in build order plus

@@ -102,13 +102,15 @@ class MissionLaunchTest {
     // ---- the non-campaign path stays inert ------------------------------------------------------
 
     @Test
-    fun mode_select_deploys_keep_diff_and_node_at_the_inert_root_defaults() {
-        // The ModeSelect path (launchConfigOf without diff/node) must keep its prior behaviour:
-        // diff=0/node=0, inert for non-campaign scenes.
+    fun bare_deploys_keep_diff_node_and_the_skirmish_keys_at_their_inert_defaults() {
+        // A bare launchConfigOf (no diff/node) keeps the inert defaults — and never reads as a
+        // configured skirmish (that path is skirmishLaunchConfig, which sets earmy/skirm itself).
         val cfg = launchConfigOf("skirmish", settings, loadout, Army.Us)
         assertEquals("skirmish", cfg.scene)
         assertEquals(0, cfg.diff)
         assertEquals(0, cfg.node)
+        assertEquals(LaunchConfig.ENEMY_ARMY_UNSET, cfg.enemyArmy)
+        assertEquals(false, cfg.skirmish)
     }
 
     // ---- launch → win → record round trip (the full non-root loop) ------------------------------

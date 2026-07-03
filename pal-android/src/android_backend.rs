@@ -574,6 +574,24 @@ fn build_match_game(
         launch.visual_sound_cues,
         gonedark_engine::PaletteMode::Off,
     );
+    // Configured-skirmish launch (`skirm=1`, `modes.md` §3): field the opponent tier and the picked
+    // enemy army through the SAME shared seams the desktop skirmish deploy uses (`apply_campaign_tuning`
+    // + `select_army(Faction::Enemy, ..)`), and return **no campaign launch** — skirmish is the
+    // no-stakes sandbox, so a win must never record a clear, even on a battlefield that reuses a
+    // campaign scene (Seize Ground → Mission1). Mirrors the desktop `pending_skirmish` branch.
+    if launch.skirmish {
+        let tier = Difficulty::from_tier(launch.diff).unwrap_or(Difficulty::Regular);
+        game.apply_campaign_tuning(tier);
+        // `earmy=0` means no explicit pick — the scenario's authored enemy army stands.
+        if let Some(enemy) = Army::ALL
+            .get(launch.enemy_army as usize)
+            .copied()
+            .filter(|a| *a != Army::Neutral)
+        {
+            game.select_army(Faction::Enemy, enemy);
+        }
+        return (game, None);
+    }
     // Campaign-launch path (Compose parity C4): resolve the node through the SHARED registry seam and
     // apply the chosen replay tier's combat tuning via the SHARED `apply_campaign_tuning` (D83 — both
     // the 4→3 commander band and the situation modifiers), exactly as the desktop host does. Every

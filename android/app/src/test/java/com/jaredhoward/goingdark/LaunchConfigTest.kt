@@ -30,6 +30,25 @@ class LaunchConfigTest {
         assertEquals(LaunchConfig.ARMY_DEFAULT, d.army) // US Army — Neutral is never a player pick
         assertFalse(d.colorblindCues) // accessibility cues opt-in, default OFF
         assertFalse(d.visualSoundCues)
+        assertEquals(LaunchConfig.ENEMY_ARMY_UNSET, d.enemyArmy) // no explicit enemy pick
+        assertFalse(d.skirmish) // not a configured-skirmish launch
+    }
+
+    @Test
+    fun enemy_army_and_skirmish_flag_round_trip_and_degrade_to_unset() {
+        // The configured-skirmish keys (mirrors launch.rs): explicit picks round-trip…
+        val cfg = LaunchConfig(scene = "seize", diff = 3, army = 2, enemyArmy = 1, skirmish = true)
+        val decoded = LaunchConfig.decode(cfg.encode())
+        assertEquals(1, decoded.enemyArmy)
+        assertTrue(decoded.skirmish)
+        // …a bad enemy ordinal means "no explicit pick" (the scenario default stands — unlike the
+        // player key's forced-US fallback), and an old wire without the keys behaves as before.
+        assertEquals(LaunchConfig.ENEMY_ARMY_UNSET, LaunchConfig.decode("earmy=0").enemyArmy)
+        assertEquals(LaunchConfig.ENEMY_ARMY_UNSET, LaunchConfig.decode("earmy=7").enemyArmy)
+        assertEquals(2, LaunchConfig.decode("earmy=2").enemyArmy)
+        val old = LaunchConfig.decode("v=1;scene=skirmish;army=1")
+        assertEquals(LaunchConfig.ENEMY_ARMY_UNSET, old.enemyArmy)
+        assertFalse(old.skirmish)
     }
 
     @Test
@@ -213,9 +232,10 @@ class LaunchConfigTest {
         val emitted = LaunchConfig(scene = "skirmish").encode()
         assertEquals(LaunchConfig(scene = "skirmish"), LaunchConfig.decode(emitted))
         // And it is the documented v1 shape (now carrying the D85 `stk`/`muz` slots, the campaign
-        // `diff`/`node`, the `army` pick, and the accessibility `cvd`/`snd` cues — all at defaults).
+        // `diff`/`node`, the `army` pick, the accessibility `cvd`/`snd` cues, and the skirmish
+        // `earmy`/`skirm` pair — all at defaults).
         assertEquals(
-            "v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0",
+            "v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0;earmy=0;skirm=0",
             emitted,
         )
     }

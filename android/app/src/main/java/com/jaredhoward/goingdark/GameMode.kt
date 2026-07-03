@@ -1,15 +1,17 @@
 package com.jaredhoward.goingdark
 
 /**
- * The pure model behind the Skirmish/PvP **mode / map select** (D81) — the lightweight picker the player
- * lands on after tapping SKIRMISH or PvP, replacing the old "funnel every play mode through the gunsmith"
- * flow. Each entry names a launchable battle and carries the engine [sceneToken] `Scene::parse`
- * resolves (`engine::lib::Scene::parse`): picking one deploys straight into that scene with the
- * player's persisted loadout — no gunsmith gate.
+ * The **standing-battle table** (D81) — the launchable free-pick battles the skirmish setup lists
+ * as its battlefields, the Kotlin mirror of `engine::shell_modes::SHELL_GAME_MODES`. Born as the
+ * shared Pve/Pvp "mode / map select"; with the three front doors distinct (`modes.md` §1, D101),
+ * it backs the SKIRMISH door's battlefield picker alone. Each entry names a launchable battle and
+ * carries the engine [sceneToken] `Scene::parse` resolves; a Deploy boots straight into that scene
+ * with the player's persisted loadout — no gunsmith gate. It grows into the `modes.md` §3
+ * map-library manifest when the D34 listing seam lands.
  *
  * **No Android imports** on purpose: this is the testable seam (the `CampaignModel.kt` / D79 pattern)
- * that the device-gated [ModeSelectScreen] composable renders. The one bit of real logic here — that
- * every mode's [sceneToken] is one the engine actually understands — is pinned in `GameModeTest.kt`.
+ * that the device-gated [SkirmishSetupScreen] composable renders. The one bit of real logic here —
+ * that every mode's [sceneToken] is one the engine actually understands — is pinned in `GameModeTest.kt`.
  */
 data class GameMode(
     /** Stable id (also the tap key). */
@@ -39,9 +41,10 @@ val KNOWN_SCENE_TOKENS = setOf(
 )
 
 /**
- * The modes offered on the Skirmish/PvP picker today: the two standing battle scenes. Skirmish is the open
- * fight against the scripted enemy commander; Seize is the take-and-hold objective map. The list grows
- * as more scenes land (and splits per-mode once PvP match-setup exists — Q5).
+ * The standing battles the skirmish battlefield picker offers today. Skirmish is the open fight
+ * against the scripted enemy commander; Seize is the take-and-hold objective map (the same
+ * battlefield campaign mission 1 is authored on — content is mode-agnostic, D76). The list grows
+ * as more scenes land, and becomes the map-library manifest when the D34 listing seam does.
  */
 val shellGameModes = listOf(
     GameMode(

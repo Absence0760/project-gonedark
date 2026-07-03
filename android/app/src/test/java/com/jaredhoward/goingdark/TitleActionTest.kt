@@ -16,10 +16,11 @@ class TitleActionTest {
     }
 
     @Test
-    fun pve_opens_the_skirmish_battlefield_picker() {
-        // D81: PvE no longer dead-ends on the gunsmith — it opens the battlefield picker (the
-        // skirmish door, D101).
-        assertEquals(TitleRoute.ModeSelect, resolveTitleAction(TitleAction.Pve))
+    fun pve_opens_the_skirmish_match_setup() {
+        // The SKIRMISH door opens the full `modes.md` §3 setup (battlefield, both armies, tier) —
+        // the Compose twin of the desktop `TitleAction::Pve -> OpenSkirmishSetup` (parity §12
+        // item 6); the gunsmith stays customization-only behind Settings (D81).
+        assertEquals(TitleRoute.SkirmishSetup, resolveTitleAction(TitleAction.Pve))
     }
 
     @Test

@@ -69,6 +69,21 @@ data class LaunchConfig(
      * `launch.rs`'s `snd` key (the desktop `soundcues` pref). Presentation only — never the sim.
      */
     val visualSoundCues: Boolean = false,
+    /**
+     * Enemy **army** ordinal — `0` = no explicit pick ([ENEMY_ARMY_UNSET]: the scenario's authored
+     * enemy army stands), `1` = US, `2` = French. Set only by a configured-skirmish Deploy
+     * (`modes.md` §3 "Pick the enemy's army too"). Mirrors `launch.rs`'s `earmy` key; fielded via
+     * `Game::select_army(Faction::Enemy, ..)` — the desktop `SkirmishConfig::enemy_army` twin.
+     */
+    val enemyArmy: Int = ENEMY_ARMY_UNSET,
+    /**
+     * Whether this is a **configured skirmish** launch (the skirmish setup's Deploy) — the wire
+     * twin of the desktop's `pending_skirmish`-vs-`pending_launch` distinction. When set the engine
+     * applies the [diff] tier + [enemyArmy] pick and **never** records a campaign clear (skirmish
+     * is the no-stakes sandbox — even on a battlefield reusing a campaign scene, Seize Ground →
+     * `mission1`). Mirrors `launch.rs`'s `skirm` key; default `false` keeps old wires unchanged.
+     */
+    val skirmish: Boolean = false,
 ) {
     /** Encode to the v1 wire string (clamping every field into range first). */
     fun encode(): String = buildString {
@@ -88,6 +103,8 @@ data class LaunchConfig(
         append(";army=").append(clampArmy(army.toString(), ARMY_DEFAULT))
         append(";cvd=").append(if (colorblindCues) 1 else 0)
         append(";snd=").append(if (visualSoundCues) 1 else 0)
+        append(";earmy=").append(clampEnemyArmy(enemyArmy.toString(), ENEMY_ARMY_UNSET))
+        append(";skirm=").append(if (skirmish) 1 else 0)
     }
 
     companion object {
@@ -107,6 +124,13 @@ data class LaunchConfig(
          */
         const val ARMY_MAX = 2
         const val ARMY_DEFAULT = 1
+
+        /**
+         * The `earmy` "no explicit enemy pick" value (also its absent-key default). Unlike the
+         * player key, the enemy side has an authored scenario default to fall back to, so garbage
+         * degrades to *unset*, never a substituted army. Mirrors `launch.rs::ENEMY_ARMY_UNSET`.
+         */
+        const val ENEMY_ARMY_UNSET = 0
 
         /** Tolerantly decode the v1 wire string. Null/empty/garbage → a default [LaunchConfig]. */
         fun decode(raw: String?): LaunchConfig {
@@ -134,6 +158,8 @@ data class LaunchConfig(
                     "diff" -> cfg.copy(diff = clampInt(value, 0, DIFF_MAX, cfg.diff))
                     "node" -> cfg.copy(node = clampInt(value, 0, Int.MAX_VALUE, cfg.node))
                     "army" -> cfg.copy(army = clampArmy(value, cfg.army))
+                    "earmy" -> cfg.copy(enemyArmy = clampEnemyArmy(value, cfg.enemyArmy))
+                    "skirm" -> cfg.copy(skirmish = parseBool(value, cfg.skirmish))
                     "cvd" -> cfg.copy(colorblindCues = parseBool(value, cfg.colorblindCues))
                     "snd" -> cfg.copy(visualSoundCues = parseBool(value, cfg.visualSoundCues))
                     else -> cfg // unknown key — ignore (forward-compat)
@@ -157,6 +183,19 @@ data class LaunchConfig(
             2L -> 2 // French Army
             null -> fallback // unparseable — keep the current value (defaults to US)
             else -> ARMY_DEFAULT // Neutral (0) / out-of-range → US (never a player pick)
+        }
+
+        /**
+         * Parse the `earmy` ordinal. `1`/`2` are the explicit enemy picks; anything else parseable
+         * degrades to [ENEMY_ARMY_UNSET] (the scenario's authored enemy army stands — the enemy
+         * side has a real default, unlike [clampArmy]'s forced-US player fallback). Mirrors
+         * `launch.rs::clamp_enemy_army`.
+         */
+        private fun clampEnemyArmy(value: String, fallback: Int): Int = when (value.trim().toLongOrNull()) {
+            1L -> 1 // US Army
+            2L -> 2 // French Army
+            null -> fallback // unparseable — keep the current value (defaults to unset)
+            else -> ENEMY_ARMY_UNSET // Neutral (0) / out-of-range → no explicit pick
         }
 
         /** Wire bool: `1`/`true` → true, `0`/`false` → false, else `fallback`. */

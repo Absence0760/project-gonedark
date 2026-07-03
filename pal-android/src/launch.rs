@@ -21,7 +21,7 @@
 //!
 //! ## The wire format (v1) — a versioned, tolerant `key=value` string
 //!
-//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0`
+//! `v=1;scene=skirmish;opt=0;bar=0;mag=0;stk=0;muz=0;vol=80;sfx=80;sens=100;invy=0;diff=0;node=0;army=1;cvd=0;snd=0;earmy=0;skirm=0`
 //!
 //! - `;`-separated `key=value` pairs.
 //! - **Tolerant decode** (the forward-compat contract): unknown keys are ignored, missing keys take
@@ -70,6 +70,13 @@ pub const DIFF_MAX: u8 = 3;
 pub const ARMY_MAX: u8 = 2;
 /// See [`ARMY_MAX`] — the default player army ordinal (US Army), the non-Neutral fallback.
 pub const ARMY_DEFAULT: u8 = 1;
+
+/// The **enemy**-army wire ordinal's "no explicit pick" value (`earmy=0`, also its default when the
+/// key is absent — every pre-skirmish-setup emitter). Unlike the player key, the enemy side has an
+/// **authored scenario default** to fall back to, so garbage degrades to *unset* (leave the seeded
+/// enemy army alone), never to a silently-substituted US/French. `1`/`2` are the explicit picks,
+/// same ordinals as [`ARMY_MAX`]. Only a configured skirmish (`skirm=1`) emits an explicit value.
+pub const ENEMY_ARMY_UNSET: u8 = 0;
 
 /// The parsed launch payload the Compose shell hands the engine across the Activity boundary.
 ///
@@ -122,6 +129,18 @@ pub struct LaunchConfig {
     /// Accessibility: draw the hard-of-hearing visual echoes of the audio-only signals. Default OFF.
     /// The desktop twin is the `soundcues` shell pref. Host / presentation only — never the sim.
     pub visual_sound_cues: bool,
+    /// Enemy **army** ordinal — `0` = no explicit pick (keep the scenario's seeded enemy army;
+    /// see [`ENEMY_ARMY_UNSET`]), `1` = US, `2` = French. Set only by a configured-skirmish launch
+    /// (`modes.md` §3 "Pick the enemy's army too"); fielded via the shared
+    /// `Game::select_army(Faction::Enemy, ..)`, the desktop `SkirmishConfig::enemy_army` twin.
+    pub enemy_army: u8,
+    /// Whether this is a **configured skirmish** launch (the skirmish setup screen's Deploy,
+    /// `modes.md` §3) — the wire twin of the desktop's `pending_skirmish`-vs-`pending_launch`
+    /// distinction. When set, the glue applies the `diff` tier's combat tuning + the enemy-army
+    /// pick, and **never** treats the launch as a campaign one — a skirmish win records no clear
+    /// (skirmish is the no-stakes sandbox), even on a battlefield that reuses a campaign scene
+    /// (Seize Ground → `Mission1`). Default `false`: an older wire behaves exactly as before.
+    pub skirmish: bool,
 }
 
 impl Default for LaunchConfig {
@@ -145,6 +164,8 @@ impl Default for LaunchConfig {
             army: ARMY_DEFAULT,
             colorblind_cues: false,
             visual_sound_cues: false,
+            enemy_army: ENEMY_ARMY_UNSET,
+            skirmish: false,
         }
     }
 }
@@ -189,6 +210,8 @@ pub fn parse_launch_config(raw: &str) -> LaunchConfig {
             "diff" => cfg.diff = clamp_u8(value, DIFF_MAX, cfg.diff),
             "node" => cfg.node = clamp_u32(value, cfg.node),
             "army" => cfg.army = clamp_army(value, cfg.army),
+            "earmy" => cfg.enemy_army = clamp_enemy_army(value, cfg.enemy_army),
+            "skirm" => cfg.skirmish = parse_bool(value, cfg.skirmish),
             "cvd" => cfg.colorblind_cues = parse_bool(value, cfg.colorblind_cues),
             "snd" => cfg.visual_sound_cues = parse_bool(value, cfg.visual_sound_cues),
             _ => {} // unknown key — ignore (forward-compat)
@@ -234,6 +257,19 @@ fn clamp_army(value: &str, fallback: u8) -> u8 {
         Ok(1) => 1, // US Army
         Ok(2) => 2, // French Army
         Ok(_) => ARMY_DEFAULT, // Neutral (0) / out-of-range → US (never a player pick)
+        Err(_) => fallback,
+    }
+}
+
+/// Parse the `earmy` wire ordinal. `1`/`2` are the explicit enemy picks; anything else parseable
+/// degrades to [`ENEMY_ARMY_UNSET`] (keep the scenario's authored enemy army — the enemy side has a
+/// real default to fall back to, unlike the player's [`clamp_army`] which must substitute US).
+/// Unparseable keeps `fallback`, like every other key.
+fn clamp_enemy_army(value: &str, fallback: u8) -> u8 {
+    match value.parse::<i64>() {
+        Ok(1) => 1, // US Army
+        Ok(2) => 2, // French Army
+        Ok(_) => ENEMY_ARMY_UNSET, // Neutral (0) / out-of-range → no explicit pick
         Err(_) => fallback,
     }
 }
@@ -321,6 +357,35 @@ mod tests {
         assert_eq!(d.army, ARMY_DEFAULT); // US Army — Neutral is never a player pick
         assert!(!d.colorblind_cues); // accessibility cues opt-in, default OFF
         assert!(!d.visual_sound_cues);
+        assert_eq!(d.enemy_army, ENEMY_ARMY_UNSET); // no explicit enemy pick — scenario default
+        assert!(!d.skirmish); // not a configured-skirmish launch
+    }
+
+    #[test]
+    fn skirmish_wire_carries_the_enemy_pick_and_the_no_stakes_flag() {
+        // The configured-skirmish Deploy (`modes.md` §3): the enemy army rides `earmy` and the
+        // `skirm` flag marks the launch so the glue never records a campaign clear for it.
+        let cfg = parse_launch_config("v=1;scene=seize;diff=3;army=2;earmy=1;skirm=1");
+        assert_eq!(cfg.scene, "seize");
+        assert_eq!(cfg.diff, 3); // Elite opponent tier
+        assert_eq!(cfg.army, 2); // player fields French
+        assert_eq!(cfg.enemy_army, 1); // enemy fields US
+        assert!(cfg.skirmish);
+    }
+
+    #[test]
+    fn enemy_army_degrades_to_unset_never_to_a_substituted_pick() {
+        // Unlike the player key (garbage → US), a bad enemy ordinal means "no explicit pick" —
+        // the scenario's authored enemy army stands (the enemy side has a real default).
+        assert_eq!(parse_launch_config("earmy=0").enemy_army, ENEMY_ARMY_UNSET);
+        assert_eq!(parse_launch_config("earmy=7").enemy_army, ENEMY_ARMY_UNSET);
+        assert_eq!(parse_launch_config("earmy=-1").enemy_army, ENEMY_ARMY_UNSET);
+        assert_eq!(parse_launch_config("earmy=junk").enemy_army, ENEMY_ARMY_UNSET); // unparseable → default (unset)
+        assert_eq!(parse_launch_config("earmy=2").enemy_army, 2);
+        // An old emitter that never writes the keys behaves exactly as before.
+        let old = parse_launch_config("v=1;scene=skirmish;army=1");
+        assert_eq!(old.enemy_army, ENEMY_ARMY_UNSET);
+        assert!(!old.skirmish);
     }
 
     #[test]
