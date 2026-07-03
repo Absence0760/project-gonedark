@@ -129,6 +129,7 @@ fn vs_pin(
     @builtin(vertex_index) vi: u32,
     @location(0) unit: vec3<f32>,
     @location(1) focused: f32,
+    @location(2) era: f32,
 ) -> PinOut {
     var corners = array<vec2<f32>, 6>(
         vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
@@ -141,7 +142,9 @@ fn vs_pin(
     // Screen-space billboard: constant on-screen size, focused pins pulse gently.
     let t = u.eye.w;
     let pulse = select(0.0, (sin(t * 2.4) * 0.5 + 0.5) * 0.35, focused > 0.5);
-    let size = (0.011 + 0.008 * focused + 0.006 * pulse) * clip.w;
+    // An out-of-era pin (the atlas year scrubber, D104) shrinks and dims but stays locatable.
+    let era_size = mix(0.55, 1.0, era);
+    let size = (0.011 + 0.008 * focused + 0.006 * pulse) * era_size * clip.w;
     let c = corners[vi];
     clip.x += c.x * size / max(u.misc.x, 0.05);
     clip.y += c.y * size;
@@ -152,7 +155,7 @@ fn vs_pin(
     var out: PinOut;
     out.pos = clip;
     out.corner = c;
-    out.glow = clamp(facing * 3.0, 0.0, 1.0) * (0.55 + 0.45 * focused + pulse);
+    out.glow = clamp(facing * 3.0, 0.0, 1.0) * (0.55 + 0.45 * focused + pulse) * mix(0.22, 1.0, era);
     return out;
 }
 

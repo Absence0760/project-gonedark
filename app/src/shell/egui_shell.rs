@@ -8,6 +8,7 @@ use crate::shell::about::about_ui;
 use crate::shell::army::{army_label, army_select_ui, ArmySelectAction, ArmySelectState};
 use crate::shell::briefing::{briefing_ui, BriefingAction};
 use crate::shell::loadout::{loadout_ui, LoadoutAction};
+use crate::shell::atlas::{atlas_pins_for, atlas_ui, AtlasAction, AtlasState};
 use crate::shell::mission_select::{atlas_pins, mission_select_ui, MissionSelectAction, NextOperation};
 use crate::shell::profile::win_rate_pct;
 use crate::shell::pvp::{pvp_ui, PvpAction};
@@ -19,11 +20,11 @@ use crate::shell::transitions::TitleAction;
 use crate::shell::util::pointer_to_ndc;
 use crate::shell::widgets::*;
 
-use gonedark_core::campaign::{Campaign, Difficulty, NodeId};
+use gonedark_core::campaign::{Campaign, ConflictId, Difficulty, NodeId};
 use gonedark_engine::keybind::GameAction;
 use gonedark_engine::loadout_ui::LoadoutEditor;
 use gonedark_pal_desktop::DesktopRenderSurface;
-use gonedark_render::globe_backdrop::{GlobeBackdrop, GlobePin};
+use gonedark_render::globe_backdrop::{GlobeBackdrop, GlobePin, GlobeView};
 use gonedark_render::title_backdrop::TitleBackdrop;
 
 use winit::window::Window;
@@ -35,8 +36,10 @@ use winit::window::Window;
 pub(crate) enum ShellBackdrop<'a> {
     /// The title diorama (the shipped default for every out-of-match screen).
     Diorama,
-    /// The campaign atlas globe, with one pin per conflict.
-    Globe(&'a [GlobePin]),
+    /// The campaign atlas globe, with one pin per conflict. `None` view = the settled backdrop
+    /// framing (auto-facing the focused pin, swaying with `run_and_paint`'s clock); `Some` = the
+    /// atlas screen's drag-driven view (D104).
+    Globe(Option<GlobeView>, &'a [GlobePin]),
 }
 
 /// The egui-backed title screen: an egui context, the winit→egui input bridge, and the egui-wgpu
@@ -254,11 +257,31 @@ impl EguiShell {
         &mut self,
         surface: &mut DesktopRenderSurface,
         campaign: &Campaign,
+        only: Option<ConflictId>,
     ) -> Option<MissionSelectAction> {
         // The campaign door swaps the diorama for the atlas globe (D103), pinned per conflict
-        // and settled on the one the player is fighting (the pure `atlas_pins` seam).
+        // and settled on the one the player is fighting (the pure `atlas_pins` seam). `only`
+        // filters the hub to the atlas-selected conflict (D104).
         let pins = atlas_pins(campaign);
-        self.run_and_paint(surface, ShellBackdrop::Globe(&pins), |ui| mission_select_ui(ui, campaign))
+        self.run_and_paint(surface, ShellBackdrop::Globe(None, &pins), |ui| {
+            mission_select_ui(ui, campaign, only)
+        })
+    }
+
+    /// Draw the **conflict atlas** (D104) for one frame and return the [`AtlasAction`] gestured,
+    /// if any. The globe renders at the host's drag-driven [`AtlasState::view`] with the
+    /// year-scrubbed pin set (the pure [`atlas_pins_for`] seam); the egui layer on top is the
+    /// scrubber + the selected conflict's card. Glue — every decision lives in `shell::atlas`.
+    pub(crate) fn draw_atlas(
+        &mut self,
+        surface: &mut DesktopRenderSurface,
+        campaign: &Campaign,
+        state: &AtlasState,
+    ) -> Option<AtlasAction> {
+        let pins = atlas_pins_for(campaign, state);
+        self.run_and_paint(surface, ShellBackdrop::Globe(Some(state.view), &pins), |ui| {
+            atlas_ui(ui, campaign, state)
+        })
     }
 
     /// Draw the **briefing** screen for `node` for one frame and return the [`BriefingAction`] used,
@@ -275,7 +298,7 @@ impl EguiShell {
     ) -> Option<BriefingAction> {
         // The briefing stays under the atlas globe — the whole campaign flow shares one sky.
         let pins = atlas_pins(campaign);
-        self.run_and_paint(surface, ShellBackdrop::Globe(&pins), |ui| briefing_ui(ui, campaign, node, selected))
+        self.run_and_paint(surface, ShellBackdrop::Globe(None, &pins), |ui| briefing_ui(ui, campaign, node, selected))
     }
 
     /// Run one egui frame (`build` lays out the UI and returns this frame's action) and paint the
@@ -364,9 +387,19 @@ impl EguiShell {
                 }
                 self.backdrop.is_some()
             }
-            ShellBackdrop::Globe(pins) => {
+            ShellBackdrop::Globe(globe_view, pins) => {
                 if let Some(gb) = self.globe.as_mut() {
-                    gb.render(device, queue, &view, (w, h), time, cursor, pins);
+                    // No explicit view (hub/briefing) → settle on the focused pin's longitude,
+                    // swaying with the frame clock — the D103 backdrop framing.
+                    let gv = globe_view.unwrap_or_else(|| {
+                        let focus = pins
+                            .iter()
+                            .find(|p| p.focused)
+                            .or_else(|| pins.first())
+                            .map_or(0.0, |p| p.lon_deg);
+                        GlobeView::settled(focus, time)
+                    });
+                    gb.render(device, queue, &view, (w, h), time, cursor, gv, pins);
                 }
                 self.globe.is_some()
             }

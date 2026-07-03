@@ -18,7 +18,7 @@
 //!  - [`theme`] — colour ramp, type scale, the cohesive [`shell_style`];
 //!  - [`widgets`] — the reusable egui component library + shared layout constants;
 //!  - [`transitions`] — the title action → host-transition decision surface;
-//!  - [`settings`], [`loadout`], [`profile`], [`army`], [`about`], [`pvp`],
+//!  - [`settings`], [`loadout`], [`profile`], [`army`], [`about`], [`pvp`], [`atlas`],
 //!    [`mission_select`], [`briefing`], [`skirmish`] — one out-of-match screen each (model + seam
 //!    + builder);
 //!  - [`persist`] — the tolerant shell-prefs `key=value` codec;
@@ -27,6 +27,7 @@
 
 mod about;
 mod army;
+mod atlas;
 mod briefing;
 mod egui_shell;
 mod loadout;
@@ -47,6 +48,7 @@ mod widgets;
 // place — exactly as it did before the split. Item names are unique across submodules, so the globs
 // don't collide.
 pub(crate) use army::*;
+pub(crate) use atlas::*;
 pub(crate) use briefing::*;
 pub(crate) use egui_shell::*;
 pub(crate) use loadout::*;

@@ -72,8 +72,13 @@ pub(crate) enum HostTransition {
     /// config is also remembered across the match (`App::active_skirmish`) so REMATCH re-boots the
     /// same fight.
     LaunchSkirmish(SkirmishConfig),
-    /// Switch the host to the **Operations-hub mission-select** screen — the PvE campaign entry
-    /// (`docs/pve-campaign.md`, D58). Reached from the title's CAMPAIGN button; the player picks a
+    /// Switch the host to the **conflict atlas** — the navigable globe + year scrubber (D104),
+    /// the campaign's front door behind the title's CAMPAIGN button. Picking a conflict there
+    /// opens its Operations hub ([`OpenMissionSelect`](HostTransition::OpenMissionSelect)). The
+    /// atlas re-opens settled on the conflict currently being fought.
+    OpenAtlas,
+    /// Switch the host to the **Operations-hub mission-select** screen for the atlas-selected
+    /// conflict (`docs/pve-campaign.md`, D58). Reached from the atlas (D104); the player picks a
     /// node tile there, which opens its [`OpenBriefing`](HostTransition::OpenBriefing).
     OpenMissionSelect,
     /// Switch the host to the **briefing** screen for a campaign node (the "launch this mission"
@@ -116,10 +121,10 @@ pub(crate) enum HostTransition {
 /// Map a title action to the host transition it triggers (the pure run-loop decision).
 pub(crate) fn resolve_title_action(action: TitleAction) -> HostTransition {
     match action {
-        // CAMPAIGN opens the Operations-hub mission-select (the PvE pillar, D58) — the player picks a
-        // node, reads its briefing, and launches it. Each play mode has its own door (`modes.md` §1);
-        // the gunsmith is customization-only behind Settings, no longer a play gate (D81).
-        TitleAction::Campaign => HostTransition::OpenMissionSelect,
+        // CAMPAIGN opens the conflict atlas (D104) — the navigable globe; picking a conflict there
+        // opens its Operations hub, then a node's briefing launches it. Each play mode has its own
+        // door (`modes.md` §1); the gunsmith is customization-only behind Settings (D81).
+        TitleAction::Campaign => HostTransition::OpenAtlas,
         // CONTINUE deep-links into the next operation's briefing — the same flow the hub reaches,
         // one hop shorter. Reusing OpenBriefing wholesale (same difficulty seeding, same BACK
         // target) means the shortcut can never diverge from the canonical hub path.

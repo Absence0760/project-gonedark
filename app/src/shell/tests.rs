@@ -42,13 +42,10 @@ use gonedark_render::tiers::QualityTier;
     }
 
     #[test]
-    fn campaign_opens_the_operations_hub() {
-        // CAMPAIGN now routes to the Operations-hub mission-select (the PvE pillar, D58), not
-        // straight to the gunsmith.
-        assert_eq!(
-            resolve_title_action(TitleAction::Campaign),
-            HostTransition::OpenMissionSelect
-        );
+    fn campaign_opens_the_conflict_atlas() {
+        // CAMPAIGN routes to the conflict atlas (the navigable globe, D104); the Operations hub
+        // is reached from there by picking a conflict.
+        assert_eq!(resolve_title_action(TitleAction::Campaign), HostTransition::OpenAtlas);
     }
 
     #[test]
@@ -1025,12 +1022,15 @@ use gonedark_render::tiers::QualityTier;
     }
 
     #[test]
-    fn campaign_routes_through_the_mission_select_then_briefing() {
-        // The full title -> hub -> briefing wiring at the seam level: CAMPAIGN opens the hub, a hub
-        // tile opens a briefing for that node.
+    fn campaign_routes_through_the_atlas_then_hub_then_briefing() {
+        // The full title -> atlas -> hub -> briefing wiring at the seam level (D104): CAMPAIGN
+        // opens the atlas; picking a conflict there Enters its hub; a hub tile opens a briefing.
+        assert_eq!(resolve_title_action(TitleAction::Campaign), HostTransition::OpenAtlas);
+        let campaign = atlas_campaign();
+        let mut state = AtlasState::opened(&campaign);
         assert_eq!(
-            resolve_title_action(TitleAction::Campaign),
-            HostTransition::OpenMissionSelect
+            apply_atlas_action(AtlasAction::Enter, &mut state, &campaign),
+            AtlasStep::Enter(state.selected)
         );
     }
 
@@ -1227,6 +1227,178 @@ use gonedark_render::tiers::QualityTier;
         }
         assert_eq!(focused_conflict(&campaign), 1);
         assert!(atlas_pins(&campaign)[1].focused);
+    }
+
+    // ---- atlas: the navigable globe + year scrubber (D104) -------------------------------------
+
+    #[test]
+    fn the_atlas_opens_settled_on_the_fought_conflict_at_its_opening_year() {
+        let campaign = atlas_campaign();
+        let state = AtlasState::opened(&campaign);
+        assert_eq!(state.selected, focused_conflict(&campaign));
+        assert_eq!(state.year, 2027, "opens scrubbed to the fought conflict's first year");
+        // The opened yaw faces the selected conflict's longitude (the D103 settle, sway-free).
+        assert!((state.view.yaw - (1.5f32).to_radians()).abs() < 1e-5);
+        assert_eq!(state.view.zoom, 1.0);
+    }
+
+    #[test]
+    fn atlas_navigation_clamps_but_never_blocks() {
+        let campaign = atlas_campaign();
+        let mut state = AtlasState::opened(&campaign);
+        // A drag turns the globe…
+        let before = state.view;
+        assert_eq!(
+            apply_atlas_action(AtlasAction::Drag(120.0, -40.0), &mut state, &campaign),
+            AtlasStep::Stay
+        );
+        // …with the documented feel pinned by sign: dragging right (+dx) pulls yaw up, dragging
+        // up (−dy) tips north away (pitch down) — an inverted-drag refactor fails here.
+        assert!(state.view.yaw > before.yaw, "+dx drags yaw up");
+        assert!(state.view.pitch < before.pitch, "-dy tips pitch down");
+        // …a wild drag can never flip the globe past the pitch limit…
+        apply_atlas_action(AtlasAction::Drag(0.0, 1_000_000.0), &mut state, &campaign);
+        assert!(state.view.pitch <= gonedark_render::globe_backdrop::GlobeView::PITCH_LIMIT);
+        // …and zoom clamps at both ends (scroll-up in, scroll-down out).
+        apply_atlas_action(AtlasAction::Zoom(1_000.0), &mut state, &campaign);
+        assert_eq!(state.view.zoom, gonedark_render::globe_backdrop::GlobeView::ZOOM_MAX);
+        apply_atlas_action(AtlasAction::Zoom(-1_000.0), &mut state, &campaign);
+        assert_eq!(state.view.zoom, gonedark_render::globe_backdrop::GlobeView::ZOOM_MIN);
+        // Zoomed-in drags are finer than zoomed-out ones (the region under the cursor tracks).
+        let mut zoomed = AtlasState::opened(&campaign);
+        apply_atlas_action(AtlasAction::Zoom(1_000.0), &mut zoomed, &campaign);
+        let y0 = zoomed.view.yaw;
+        apply_atlas_action(AtlasAction::Drag(100.0, 0.0), &mut zoomed, &campaign);
+        let fine = zoomed.view.yaw - y0;
+        let mut wide = AtlasState::opened(&campaign);
+        let y0 = wide.view.yaw;
+        apply_atlas_action(AtlasAction::Drag(100.0, 0.0), &mut wide, &campaign);
+        assert!((wide.view.yaw - y0).abs() > fine.abs());
+    }
+
+    #[test]
+    fn the_scrubber_spans_the_authored_wars_and_dims_the_out_of_era() {
+        let campaign = atlas_campaign(); // Channel Crisis 2027-2028 + Normandy 1944
+        assert_eq!(year_domain(&campaign), (1944, 2028));
+        let mut state = AtlasState::opened(&campaign);
+        // Scrubbed to 2027: the Channel Crisis is live, Normandy is out of era (dim).
+        let pins = atlas_pins_for(&campaign, &state);
+        assert!(pins[0].active && !pins[1].active);
+        // Scrub to 1944: the eras flip; the selection (and focus) is unchanged by scrubbing.
+        apply_atlas_action(AtlasAction::SetYear(1944), &mut state, &campaign);
+        let pins = atlas_pins_for(&campaign, &state);
+        assert!(!pins[0].active && pins[1].active);
+        assert!(pins[0].focused, "scrubbing never steals the selection");
+        // The scrub clamps into the authored domain (a stale slider value can't escape).
+        apply_atlas_action(AtlasAction::SetYear(1200), &mut state, &campaign);
+        assert_eq!(state.year, 1944);
+        apply_atlas_action(AtlasAction::SetYear(3000), &mut state, &campaign);
+        assert_eq!(state.year, 2028);
+    }
+
+    #[test]
+    fn selecting_and_entering_carry_the_picked_conflict() {
+        let campaign = atlas_campaign();
+        let mut state = AtlasState::opened(&campaign);
+        assert_eq!(
+            apply_atlas_action(AtlasAction::SelectConflict(1), &mut state, &campaign),
+            AtlasStep::Stay
+        );
+        assert_eq!(state.selected, 1);
+        assert!(atlas_pins_for(&campaign, &state)[1].focused);
+        // An out-of-range select (stale index) is ignored, never a panic.
+        apply_atlas_action(AtlasAction::SelectConflict(99), &mut state, &campaign);
+        assert_eq!(state.selected, 1);
+        assert_eq!(
+            apply_atlas_action(AtlasAction::Enter, &mut state, &campaign),
+            AtlasStep::Enter(1)
+        );
+        assert_eq!(
+            apply_atlas_action(AtlasAction::Back, &mut state, &campaign),
+            AtlasStep::Back
+        );
+    }
+
+    #[test]
+    fn clicking_the_focused_pin_picks_it_and_empty_ocean_picks_nothing() {
+        let campaign = atlas_campaign();
+        let state = AtlasState::opened(&campaign);
+        let aspect = 1.6;
+        // Project the selected conflict's pin with the SAME seam the picker uses, then "click" it.
+        let c = &campaign.conflicts()[state.selected];
+        let p = gonedark_render::globe_backdrop::project_pin(
+            state.view,
+            aspect,
+            c.lat_x10 as f32 / 10.0,
+            c.lon_x10 as f32 / 10.0,
+        )
+        .expect("the opened view faces the selected conflict");
+        assert_eq!(pick_conflict(&campaign, &state, aspect, p), Some(state.selected));
+        // A click far from any pin selects nothing (the empty-ocean guard).
+        assert_eq!(pick_conflict(&campaign, &state, aspect, [0.9, -0.9]), None);
+    }
+
+    #[test]
+    fn a_continue_deep_link_resolves_its_node_to_the_right_conflict() {
+        // The CONTINUE resync seam (the code-review finding): a node reached without passing
+        // through the atlas must still resolve to its own conflict, so the hub the briefing
+        // escapes to is filtered to the war actually being played — never a stale selection.
+        let campaign = atlas_campaign();
+        // Every grouped node resolves to the conflict that owns its operation.
+        for node in 0..campaign.len() as u32 {
+            let node = NodeId(node);
+            if let Some(i) = conflict_index_of(&campaign, node) {
+                let op = campaign.node(node).unwrap().operation.unwrap();
+                assert_eq!(campaign.operation(op).unwrap().conflict, campaign.conflicts()[i].id);
+            } else {
+                // Only an ungrouped node resolves to nothing.
+                assert!(campaign.node(node).unwrap().operation.is_none());
+            }
+        }
+        // The fixture's grouped nodes all resolve (to conflict 0 — its second conflict is
+        // deliberately content-pending) and the ungrouped tail resolves to nothing, so the
+        // resync leaves a stale selection alone only when the node genuinely has no conflict.
+        let indices: Vec<Option<usize>> = (0..campaign.len() as u32)
+            .map(|n| conflict_index_of(&campaign, NodeId(n)))
+            .collect();
+        assert!(indices.contains(&Some(0)) && indices.contains(&None));
+        // And the SHIPPED campaign resolves every node (fully grouped — no CONTINUE deep-link
+        // can ever land on an unresolvable node in the real game).
+        let shipped = gonedark_engine::mission_registry::default_campaign();
+        for node in 0..shipped.len() as u32 {
+            assert!(conflict_index_of(&shipped, NodeId(node)).is_some());
+        }
+    }
+
+    #[test]
+    fn the_atlas_card_line_formats_both_year_shapes() {
+        let campaign = atlas_campaign();
+        // Multi-year span + rollup…
+        assert_eq!(
+            atlas_card_line(&campaign.conflicts()[0], 0, 3),
+            "2027-2028 \u{00B7} 0/3 OPERATIONS CLEARED"
+        );
+        // …and a single-year conflict collapses the span (the hub header rule).
+        assert_eq!(
+            atlas_card_line(&campaign.conflicts()[1], 1, 2),
+            "1944 \u{00B7} 1/2 OPERATIONS CLEARED"
+        );
+    }
+
+    #[test]
+    fn the_hub_filtered_to_a_conflict_shows_only_its_operations() {
+        let campaign = atlas_campaign();
+        // Unfiltered = the full pre-D104 hub.
+        assert_eq!(hub_sections_for(&campaign, None), hub_sections(&campaign));
+        // Filtered to conflict 0: every section resolves to conflict 0, none to the other, and
+        // the ungrouped tail is excluded (a filtered hub can't leak unowned tiles).
+        let only = hub_sections_for(&campaign, Some(ConflictId(0)));
+        assert!(!only.is_empty());
+        for s in &only {
+            let (op, _) = s.operation.expect("filtered sections are always operation-backed");
+            assert_eq!(campaign.operation(op).unwrap().conflict, ConflictId(0));
+        }
+        assert!(only.len() < hub_sections(&campaign).len());
     }
 
     #[test]

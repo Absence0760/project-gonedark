@@ -46,7 +46,9 @@ mod shell;
 use shell::{
     apply_army_select_action, apply_briefing_action, apply_loadout_action, apply_profile_action,
     apply_settings_action, apply_skirmish_setup_action, build_channel, build_stamp,
-    resolve_title_action, AboutReturn, ArmySelectState, ArmySelectStep, BattlefieldPick,
+    apply_atlas_action, conflict_index_of, resolve_title_action, AboutReturn, ArmySelectState,
+    ArmySelectStep,
+    AtlasState, AtlasStep, BattlefieldPick,
     BriefingOutcome, EguiShell, HostTransition, LoadoutStep, MissionSelectAction, ProfileState,
     ProfileStep, PvpAction, SettingsState, SettingsStep, SkirmishConfig, SkirmishSetupState,
     SkirmishSetupStep,
@@ -78,8 +80,11 @@ enum Screen {
     /// the title's SKIRMISH button: battlefield, both armies, opponent tier. State lives on
     /// [`App::skirmish`]; carries no data of its own.
     SkirmishSetup,
-    /// The Operations-hub **mission-select** screen (PvE campaign, D58). Reads [`App::campaign`];
-    /// carries no data of its own.
+    /// The **conflict atlas** (D104) — the navigable globe + year scrubber, the campaign's front
+    /// door. State lives on [`App::atlas`]; carries no data of its own.
+    Atlas,
+    /// The Operations-hub **mission-select** screen for the atlas-selected conflict (PvE campaign,
+    /// D58/D104). Reads [`App::campaign`] + [`App::atlas`]; carries no data of its own.
     MissionSelect,
     /// The **briefing** screen for one campaign node. Carries the [`NodeId`] whose briefing it shows;
     /// the replay-tier selector lives on [`App::briefing_difficulty`].
@@ -159,6 +164,10 @@ struct App {
     /// through the landed pre-tick launch seams at match start — never sim state itself.
     skirmish: SkirmishSetupState,
 
+    /// The conflict atlas screen's host state (D104): the navigable globe view, the scrubbed year,
+    /// and the selected conflict. Session presentation state — re-seeded (settled on the conflict
+    /// being fought) each time the atlas opens; never persisted, never sim state.
+    atlas: AtlasState,
     /// The Operations-hub campaign model (PvE WS-B, D58) the mission-select / briefing screens read
     /// and a win advances. **Host-side meta-progression — never sim state, never in the per-tick
     /// checksum** (invariants #1/#7): its progress persists to its own host blob
@@ -236,6 +245,8 @@ impl App {
             // The skirmish setup opens re-seeded from the persisted army pick (`OpenSkirmishSetup`),
             // so the boot value only needs sensible defaults.
             skirmish: SkirmishSetupState::default(),
+            // The atlas re-seeds on every open (`OpenAtlas`), so the boot value is just sensible.
+            atlas: AtlasState::opened(&campaign),
             campaign,
             registry: default_registry(),
             briefing_difficulty: Difficulty::default(),
@@ -583,16 +594,37 @@ impl App {
                     }
                 }
             }
+            Screen::Atlas => {
+                if let Some(sh) = self.shell.as_mut() {
+                    if let Some(action) = sh.draw_atlas(surface, &self.campaign, &self.atlas) {
+                        // Navigation/selection edits (drag, zoom, scrub, pin pick) mutate the
+                        // atlas state in place; ENTER opens the selected conflict's hub.
+                        transition =
+                            match apply_atlas_action(action, &mut self.atlas, &self.campaign) {
+                                AtlasStep::Stay => None,
+                                AtlasStep::Enter(_) => Some(HostTransition::OpenMissionSelect),
+                                AtlasStep::Back => Some(HostTransition::ExitToTitle),
+                            };
+                    }
+                }
+            }
             Screen::MissionSelect => {
                 if let Some(sh) = self.shell.as_mut() {
-                    if let Some(action) = sh.draw_mission_select(surface, &self.campaign) {
+                    // The hub shows the atlas-selected conflict's operations (D104).
+                    let only = self
+                        .campaign
+                        .conflicts()
+                        .get(self.atlas.selected)
+                        .map(|c| c.id);
+                    if let Some(action) = sh.draw_mission_select(surface, &self.campaign, only) {
                         transition = match action {
                             // A playable tile → open that node's briefing (the click was already
                             // gated to playable nodes by the pure `playable_node` seam).
                             MissionSelectAction::OpenNode(node) => {
                                 Some(HostTransition::OpenBriefing(node))
                             }
-                            MissionSelectAction::Back => Some(HostTransition::ExitToTitle),
+                            // The hub backs out to the atlas it was entered from (D104).
+                            MissionSelectAction::Back => Some(HostTransition::OpenAtlas),
                         };
                     }
                 }
@@ -808,7 +840,15 @@ impl App {
                 self.pending_skirmish = Some(cfg);
                 self.enter_match();
             }
-            // CAMPAIGN → the Operations-hub mission-select (PvE pillar, D58).
+            // CAMPAIGN → the conflict atlas (D104), re-seeded settled on the conflict being
+            // fought (predictable on every open; the player's in-screen navigation is session
+            // gesture state, not a persisted camera).
+            Some(HostTransition::OpenAtlas) => {
+                self.atlas = AtlasState::opened(&self.campaign);
+                self.screen = Screen::Atlas;
+                self.last_frame = Instant::now();
+            }
+            // The atlas's ENTER → the selected conflict's Operations hub (PvE pillar, D58/D104).
             Some(HostTransition::OpenMissionSelect) => {
                 self.screen = Screen::MissionSelect;
                 self.last_frame = Instant::now();
@@ -817,6 +857,13 @@ impl App {
             // the node offers (its briefing lists `available_difficulties` lowest-first); fall back to
             // the default for a (defensive) out-of-range node.
             Some(HostTransition::OpenBriefing(node)) => {
+                // Resync the atlas selection to the briefed node's conflict (D104): CONTINUE
+                // deep-links here without passing through the atlas, and the hub this briefing
+                // escapes back to is filtered by that selection — a stale one would hide the
+                // conflict the player is actually playing. An ungrouped node leaves it alone.
+                if let Some(i) = conflict_index_of(&self.campaign, node) {
+                    self.atlas.selected = i;
+                }
                 self.briefing_difficulty = self
                     .campaign
                     .briefing(node)
@@ -928,8 +975,9 @@ fn escape_transition(screen: &Screen) -> Option<HostTransition> {
         | Screen::ArmySelect
         | Screen::Pvp
         | Screen::SkirmishSetup
-        | Screen::MissionSelect => Some(HostTransition::ExitToTitle),
-        // A briefing backs out to its mission list (its own BACK target).
+        | Screen::Atlas => Some(HostTransition::ExitToTitle),
+        // The hub backs out to the atlas it was entered from (D104); a briefing to its hub.
+        Screen::MissionSelect => Some(HostTransition::OpenAtlas),
         Screen::Briefing(_) => Some(HostTransition::OpenMissionSelect),
         // About returns wherever it was opened from (title or Settings).
         Screen::About(ret) => Some(match ret {
@@ -1010,6 +1058,7 @@ impl ApplicationHandler for App {
             | Screen::ArmySelect
             | Screen::Pvp
             | Screen::SkirmishSetup
+            | Screen::Atlas
             | Screen::MissionSelect
             | Screen::Briefing(_)
             | Screen::About(_) => {
@@ -1299,11 +1348,15 @@ mod escape_nav_tests {
             Screen::ArmySelect,
             Screen::Pvp,
             Screen::SkirmishSetup,
-            Screen::MissionSelect,
+            Screen::Atlas,
         ] {
             assert_eq!(escape_transition(&s), Some(HostTransition::ExitToTitle));
         }
-        // A briefing backs out to its mission list.
+        // The campaign flow unwinds one layer at a time (D104): hub → atlas, briefing → hub.
+        assert_eq!(
+            escape_transition(&Screen::MissionSelect),
+            Some(HostTransition::OpenAtlas)
+        );
         assert_eq!(
             escape_transition(&Screen::Briefing(NodeId(0))),
             Some(HostTransition::OpenMissionSelect)

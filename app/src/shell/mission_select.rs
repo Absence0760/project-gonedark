@@ -23,7 +23,7 @@ use gonedark_render::globe_backdrop::GlobePin;
 pub(crate) enum MissionSelectAction {
     /// Open the briefing for the clicked node (only ever a *playable* node — see [`playable_node`]).
     OpenNode(NodeId),
-    /// Return to the title screen.
+    /// Back out of the hub (to the conflict atlas, D104).
     Back,
 }
 
@@ -99,6 +99,24 @@ pub(crate) struct HubSection {
 /// nothing — no header scaffolding without tiles — and a conflict whose operations are all empty
 /// therefore contributes no section at all. Pure — the grouping decision behind the egui glue,
 /// unit-tested without a GPU (repo testing rule).
+/// [`hub_sections`] filtered to one conflict (D104: the hub entered from the atlas shows the
+/// selected war's operations alone; the ungrouped tail only renders in the unfiltered view, so a
+/// filtered hub can never leak another conflict's — or no conflict's — tiles). `None` = the full
+/// pre-D104 hub. Pure — unit-tested.
+pub(crate) fn hub_sections_for(campaign: &Campaign, only: Option<ConflictId>) -> Vec<HubSection> {
+    let mut sections = hub_sections(campaign);
+    if let Some(id) = only {
+        // A section belongs to `id` if its operation resolves to that conflict (the conflict
+        // header, when present, always matches its own operation's conflict by construction).
+        sections.retain(|s| {
+            s.operation
+                .and_then(|(op, _)| campaign.operation(op))
+                .is_some_and(|op| op.conflict == id)
+        });
+    }
+    sections
+}
+
 pub(crate) fn hub_sections(campaign: &Campaign) -> Vec<HubSection> {
     let mut sections = Vec::new();
     for conflict in campaign.conflicts() {
@@ -182,6 +200,8 @@ pub(crate) fn atlas_pins(campaign: &Campaign) -> Vec<GlobePin> {
             lat_deg: c.lat_x10 as f32 / 10.0,
             lon_deg: c.lon_x10 as f32 / 10.0,
             focused: i == focus,
+            // The hub/briefing backdrop has no year scrubber — every conflict reads in-era.
+            active: true,
         })
         .collect()
 }
@@ -241,7 +261,11 @@ pub(crate) fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Opt
 /// status-coded tiles in a card over the backdrop, then BACK. Reads
 /// [`Campaign::mission_select`] (host-side, never the sim); each tile's launchability + the click
 /// routing go through the pure [`playable_node`] seam. Glue.
-pub(crate) fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Option<MissionSelectAction> {
+pub(crate) fn mission_select_ui(
+    ui: &mut egui::Ui,
+    campaign: &Campaign,
+    only: Option<ConflictId>,
+) -> Option<MissionSelectAction> {
     use egui::RichText;
     let mut action = None;
 
@@ -265,7 +289,7 @@ pub(crate) fn mission_select_ui(ui: &mut egui::Ui, campaign: &Campaign) -> Optio
         // `mission_select()` returns one entry per node in `NodeId` order, so `entries[node.0]` is
         // that node's tile — same entry, same [`mission_tile`], so launch behavior is unchanged.
         let entries = campaign.mission_select();
-        let sections = hub_sections(campaign);
+        let sections = hub_sections_for(campaign, only);
         egui::ScrollArea::vertical()
             .max_height(list_viewport_cap(ui.available_height()))
             .auto_shrink([false, true])

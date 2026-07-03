@@ -58,13 +58,56 @@ const SPHERE_SEGS: u32 = 96;
 // ---- pure math seam (unit-tested, no GPU) ------------------------------------------------------
 
 /// A conflict pin for the globe: authored anchor in **degrees** (the shell converts the campaign's
-/// integer tenth-degrees at this boundary) plus whether it is the focused conflict (brighter,
-/// pulsing, and the yaw target).
+/// integer tenth-degrees at this boundary), whether it is the focused conflict (brighter, pulsing,
+/// and the settled-yaw target), and whether it is **active** under the atlas year scrubber (an
+/// out-of-era conflict stays visible but dims — D104).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct GlobePin {
     pub lat_deg: f32,
     pub lon_deg: f32,
     pub focused: bool,
+    pub active: bool,
+}
+
+/// The navigable globe camera/orientation (D104): the player's yaw/pitch (radians) and zoom.
+/// The hub/briefing *backdrop* uses [`GlobeView::settled`] (auto-facing the focused conflict);
+/// the atlas screen drives it from drag/scroll input through the pure clamps here — the render
+/// side never invents state (invariant #4: presentation reads, the host owns).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct GlobeView {
+    /// Rotation about +Y (radians). Unbounded (wraps naturally).
+    pub yaw: f32,
+    /// Tilt about the view X axis (radians), clamped to [`GlobeView::PITCH_LIMIT`] — the poles
+    /// stay poles, the globe can never be flipped upside-down mid-drag.
+    pub pitch: f32,
+    /// Camera zoom: `1.0` = the backdrop framing; larger = closer. Clamped to
+    /// [`GlobeView::ZOOM_MIN`]`..=`[`GlobeView::ZOOM_MAX`].
+    pub zoom: f32,
+}
+
+impl GlobeView {
+    /// Maximum |pitch| (radians, ~72°).
+    pub const PITCH_LIMIT: f32 = 1.26;
+    /// Zoom bounds — far enough out to keep the whole disc, close enough in to read a region.
+    pub const ZOOM_MIN: f32 = 0.8;
+    /// See [`GlobeView::ZOOM_MIN`].
+    pub const ZOOM_MAX: f32 = 2.6;
+
+    /// The backdrop's automatic view: settled on the focused conflict ([`globe_yaw`]) with a
+    /// gentle sway, a slight fixed tilt, no zoom — exactly the pre-D104 framing.
+    pub fn settled(focus_lon_deg: f32, time: f32) -> Self {
+        GlobeView { yaw: globe_yaw(focus_lon_deg, time), pitch: 0.0, zoom: 1.0 }
+    }
+
+    /// This view with pitch/zoom clamped into their legal ranges (yaw wraps free). Pure — the
+    /// atlas drag/scroll seams funnel through this so no input path can escape the bounds.
+    pub fn clamped(self) -> Self {
+        GlobeView {
+            yaw: self.yaw,
+            pitch: self.pitch.clamp(-Self::PITCH_LIMIT, Self::PITCH_LIMIT),
+            zoom: self.zoom.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX),
+        }
+    }
 }
 
 /// Map latitude/longitude (degrees) to the earth-fixed **unit sphere** position the mesh, pins,
@@ -103,18 +146,65 @@ pub fn rotate_y(p: [f32; 3], yaw: f32) -> [f32; 3] {
     [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]
 }
 
-/// The globe's model matrix for a yaw: rotate about `+Y`, scale to [`GLOBE_RADIUS`], translate to
-/// [`GLOBE_CENTER`] — column-major, matching the hand-rolled `title_backdrop` matrix layout. Pure.
-fn globe_model(yaw: f32) -> [[f32; 4]; 4] {
-    let (s, c) = yaw.sin_cos();
+/// The globe's model matrix for a view: rotate about `+Y` by yaw, tilt about `+X` by pitch
+/// (view-aligned, applied after yaw so dragging up always tips the visible face toward you),
+/// scale to [`GLOBE_RADIUS`], translate to [`GLOBE_CENTER`] — column-major, matching the
+/// hand-rolled `title_backdrop` matrix layout. Pure.
+fn globe_model(view: GlobeView) -> [[f32; 4]; 4] {
+    let (sy, cy) = view.yaw.sin_cos();
+    let (sp, cp) = view.pitch.sin_cos();
     let r = GLOBE_RADIUS;
-    // Column-major: columns are the rotated+scaled basis vectors, then the translation.
+    // R = R_x(pitch) * R_y(yaw), then uniform scale; columns are the transformed basis vectors.
     [
-        [c * r, 0.0, -s * r, 0.0],
-        [0.0, r, 0.0, 0.0],
-        [s * r, 0.0, c * r, 0.0],
+        [cy * r, sy * sp * r, -sy * cp * r, 0.0],
+        [0.0, cp * r, sp * r, 0.0],
+        [sy * r, -cy * sp * r, cy * cp * r, 0.0],
         [GLOBE_CENTER[0], GLOBE_CENTER[1], GLOBE_CENTER[2], 1.0],
     ]
+}
+
+/// The camera eye for a view: the fixed backdrop eye pulled in/out by zoom (plus the caller's
+/// parallax nudge). Pure — shared by [`GlobeBackdrop::render`] and [`project_pin`] so picking can
+/// never disagree with drawing.
+fn view_eye(view: GlobeView, parallax: [f32; 2]) -> [f32; 3] {
+    let k = 1.0 / view.zoom;
+    [EYE[0] * k - parallax[0], EYE[1] * k + parallax[1] * 0.6, EYE[2] * k]
+}
+
+/// Apply a column-major mat4 to a point (w = 1), returning the transformed `[x, y, z, w]`. Pure.
+fn mat4_apply(m: [[f32; 4]; 4], p: [f32; 3]) -> [f32; 4] {
+    let mut out = [0.0f32; 4];
+    for (row, o) in out.iter_mut().enumerate() {
+        *o = m[0][row] * p[0] + m[1][row] * p[1] + m[2][row] * p[2] + m[3][row];
+    }
+    out
+}
+
+/// Project a latitude/longitude to **NDC** (`[-1,1]²`, x right / y up) under a view + aspect —
+/// `None` when the point faces away from the camera (on the far side of the globe) or lands
+/// behind the near plane. The CPU twin of the pin vertex shader, built from the SAME matrices the
+/// renderer uploads, so the atlas screen's click-picking can never disagree with what was drawn.
+/// Pure + GPU-free, unit-tested.
+pub fn project_pin(view: GlobeView, aspect: f32, lat_deg: f32, lon_deg: f32) -> Option<[f32; 2]> {
+    let unit = latlon_to_unit(lat_deg, lon_deg);
+    let model = globe_model(view);
+    let world = mat4_apply(model, unit);
+    let eye = view_eye(view, [0.0, 0.0]);
+    // Facing test — the world-space surface normal against the eye ray (the shader's fade gate).
+    let wn = [world[0] - GLOBE_CENTER[0], world[1] - GLOBE_CENTER[1], world[2] - GLOBE_CENTER[2]];
+    let to_eye = [eye[0] - world[0], eye[1] - world[1], eye[2] - world[2]];
+    if wn[0] * to_eye[0] + wn[1] * to_eye[1] + wn[2] * to_eye[2] <= 0.0 {
+        return None;
+    }
+    let aspect = if aspect.is_finite() && aspect > 1e-3 { aspect } else { 1.0 };
+    let proj = perspective_rh_zo(FOVY, aspect, NEAR, FAR);
+    let view_mat = look_at_rh(eye, TARGET, [0.0, 1.0, 0.0]);
+    let vp = mat4_mul(proj, view_mat);
+    let clip = mat4_apply(vp, [world[0], world[1], world[2]]);
+    if clip[3] <= 1e-4 {
+        return None;
+    }
+    Some([clip[0] / clip[3], clip[1] / clip[3]])
 }
 
 /// Generate a UV-sphere as `(positions, indices)` — positions are unit vectors (the mesh IS its
@@ -168,6 +258,7 @@ struct SphereVertex {
 struct PinInstance {
     unit: [f32; 3],
     focused: f32,
+    active: f32,
 }
 
 /// The self-contained globe renderer — same lifecycle as [`crate::title_backdrop::TitleBackdrop`]:
@@ -373,7 +464,7 @@ impl GlobeBackdrop {
         let pin_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<PinInstance>() as u64,
             step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32],
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32, 2 => Float32],
         };
         let pin_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("gonedark.globe_backdrop_pin"),
@@ -463,9 +554,10 @@ impl GlobeBackdrop {
         }
     }
 
-    /// Draw the globe backdrop into `view`, CLEARING it. `pins` are the conflicts (degrees; see
-    /// [`GlobePin`]); the focused pin steers [`globe_yaw`]. `time`/`cursor` as in the diorama's
-    /// `render`. Submits its own encoder.
+    /// Draw the globe backdrop into `view`, CLEARING it. `globe_view` is the orientation/zoom —
+    /// [`GlobeView::settled`] for the hub/briefing backdrop, the host's drag-driven state on the
+    /// atlas (D104). `pins` are the conflicts (degrees; see [`GlobePin`]). `time`/`cursor` as in
+    /// the diorama's `render`. Submits its own encoder.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -475,6 +567,7 @@ impl GlobeBackdrop {
         viewport: (u32, u32),
         time: f32,
         cursor: Option<[f32; 2]>,
+        globe_view: GlobeView,
         pins: &[GlobePin],
     ) {
         // One-time land-mask upload (the embedded bytes are tightly packed R8 rows).
@@ -505,18 +598,14 @@ impl GlobeBackdrop {
         let aspect = w as f32 / h as f32;
         let cur = cursor.unwrap_or([0.0, 0.0]);
         let par = parallax_offset(cur, PARALLAX_STRENGTH);
-        let eye = [EYE[0] - par[0], EYE[1] + par[1] * 0.6, EYE[2]];
+        let gv = globe_view.clamped();
+        let eye = view_eye(gv, par);
 
-        let focus_lon = pins
-            .iter()
-            .find(|p| p.focused)
-            .or_else(|| pins.first())
-            .map_or(0.0, |p| p.lon_deg);
         let proj = perspective_rh_zo(FOVY, if aspect > 1e-3 { aspect } else { 1.0 }, NEAR, FAR);
         let view_mat = look_at_rh(eye, TARGET, [0.0, 1.0, 0.0]);
         let uniform = GlobeUniform {
             view_proj: mat4_mul(proj, view_mat),
-            model: globe_model(globe_yaw(focus_lon, time)),
+            model: globe_model(gv),
             eye: [eye[0], eye[1], eye[2], time],
             misc: [aspect, 0.0, 0.0, 0.0],
         };
@@ -528,6 +617,7 @@ impl GlobeBackdrop {
             .map(|p| PinInstance {
                 unit: latlon_to_unit(p.lat_deg, p.lon_deg),
                 focused: if p.focused { 1.0 } else { 0.0 },
+                active: if p.active { 1.0 } else { 0.0 },
             })
             .collect();
         if !instances.is_empty() {
@@ -677,6 +767,40 @@ mod tests {
             assert!(p[0].abs() < 1e-4, "lon {lon}: x should vanish, got {}", p[0]);
             assert!(p[2] > 0.6, "lon {lon}: focus should face +Z, got z={}", p[2]);
         }
+    }
+
+    #[test]
+    fn the_view_clamps_pitch_and_zoom_but_lets_yaw_wrap() {
+        let v = GlobeView { yaw: 27.3, pitch: 9.9, zoom: 100.0 }.clamped();
+        assert_eq!(v.yaw, 27.3, "yaw wraps free");
+        assert_eq!(v.pitch, GlobeView::PITCH_LIMIT);
+        assert_eq!(v.zoom, GlobeView::ZOOM_MAX);
+        let v = GlobeView { yaw: -3.0, pitch: -9.9, zoom: 0.0 }.clamped();
+        assert_eq!(v.pitch, -GlobeView::PITCH_LIMIT);
+        assert_eq!(v.zoom, GlobeView::ZOOM_MIN);
+    }
+
+    #[test]
+    fn projection_puts_the_settled_focus_on_screen_and_hides_the_far_side() {
+        // The pin the view settled on projects onto the visible face, roughly centred in x…
+        let view = GlobeView::settled(-1.5, 0.0);
+        let p = project_pin(view, 1.6, 50.0, -1.5).expect("the settled focus is visible");
+        assert!(p[0].abs() < 0.30, "focus x should be near centre, got {}", p[0]);
+        assert!(p[1].abs() <= 1.0, "focus y should be on screen, got {}", p[1]);
+        // …the far side of the globe hides (the click-picking gate) — the equatorial point
+        // opposite the focus is fully back-facing under the settled view.
+        assert!(project_pin(view, 1.6, 0.0, 178.5).is_none());
+        // Yaw the globe half a turn: the focus rotates away and hides; the far point appears.
+        let away = GlobeView { yaw: view.yaw + std::f32::consts::PI, ..view };
+        assert!(project_pin(away, 1.6, 50.0, -1.5).is_none());
+        assert!(project_pin(away, 1.6, 0.0, 178.5).is_some());
+        // A positive pitch tips the northern hemisphere toward the viewer (the drag-down feel):
+        // the lat-50 focus pin stays visible/pickable and its projected y drops toward centre.
+        // This exercises the pitch terms of `globe_model` — a sign/axis slip here would silently
+        // break click-picking the moment a player drags vertically.
+        let tipped = GlobeView { pitch: 0.3, ..view };
+        let pt = project_pin(tipped, 1.6, 50.0, -1.5).expect("a tipped focus stays visible");
+        assert!(pt[1] < p[1], "positive pitch must lower the northern pin (got {} vs {})", pt[1], p[1]);
     }
 
     #[test]

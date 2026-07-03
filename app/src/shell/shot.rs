@@ -11,7 +11,7 @@
 
 use super::*;
 use gonedark_core::campaign::{Difficulty, NodeId};
-use gonedark_render::globe_backdrop::{GlobeBackdrop, GlobePin};
+use gonedark_render::globe_backdrop::{GlobeBackdrop, GlobePin, GlobeView};
 
 const W: u32 = 1600;
 const H: u32 = 1000;
@@ -126,7 +126,8 @@ fn shoot_impl(
     // egui pass LOADs over it — the same compositing order as `run_and_paint`.
     if let Some(pins) = globe_pins {
         let mut globe = GlobeBackdrop::new(device, FORMAT);
-        globe.render(device, queue, &view, (W, H), 1.0, None, pins);
+        let focus = pins.iter().find(|p| p.focused).map_or(0.0, |p| p.lon_deg);
+        globe.render(device, queue, &view, (W, H), 1.0, None, GlobeView::settled(focus, 1.0), pins);
     }
     let user_cmds = renderer.update_buffers(device, queue, &mut enc, &jobs, &screen);
     {
@@ -271,12 +272,18 @@ fn shell_screens_to_png() {
         loadout_ui(ui, &loadout);
     });
     shoot(&device, &queue, &format!("{dir}/operations.png"), |ui| {
-        mission_select_ui(ui, &campaign);
+        mission_select_ui(ui, &campaign, None);
     });
     // The hub over the LIVE atlas globe (D103) — exercises the real globe WGSL headlessly.
     let pins = atlas_pins(&campaign);
     shoot_over_globe(&device, &queue, &format!("{dir}/operations_globe.png"), &pins, |ui| {
-        mission_select_ui(ui, &campaign);
+        mission_select_ui(ui, &campaign, None);
+    });
+    // The navigable conflict atlas (D104), over the live globe at its opened view.
+    let atlas = AtlasState::opened(&campaign);
+    let atlas_pins_now = atlas_pins_for(&campaign, &atlas);
+    shoot_over_globe(&device, &queue, &format!("{dir}/atlas.png"), &atlas_pins_now, |ui| {
+        atlas_ui(ui, &campaign, &atlas);
     });
     shoot(&device, &queue, &format!("{dir}/settings.png"), |ui| {
         settings_ui(ui, &mut settings, false, &mut rebinding, &mut conflict);
