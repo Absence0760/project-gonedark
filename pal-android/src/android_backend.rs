@@ -186,14 +186,15 @@ fn android_main(app: AndroidApp) {
     // ONCE here (density is a display property, not a per-tick value); host/presentation only, never
     // the sim (invariants #1/#2 — it never enters `InputFrame` or the checksum).
     //
-    // TODO(integrator): thread `ui_scale` into the shared engine, exactly as the desktop host threads
-    //   `DesktopRenderSurface::ui_scale()`. The engine `Game` should, each frame, (a) call
-    //   `renderer.set_ui_scale(ui_scale)` on the text + icon chrome passes and (b) build the embodied
-    //   touch layout via `TouchLayout::with_density(w, h, ui_scale)` (physical-mm touch-target floor)
-    //   instead of the density-less `TouchLayout::new`. Left un-wired into `game.frame(...)` here to
-    //   respect one-workstream-per-commit + this task's file ownership (engine/lib.rs is out of scope).
+    // This is threaded into the shared engine each frame below via `game.set_ui_scale(ui_scale)`
+    // (the Android twin of the desktop host threading `DesktopRenderSurface::ui_scale()`): the engine
+    // then pushes it onto the renderer's chrome passes (`renderer.set_ui_scale`, gated through
+    // `Game::render_ui_scale`) and the embodied touch layout, so HUD glyphs/icons and touch targets
+    // hold a constant physical size across densities. Read ONCE here (density is a display property,
+    // not a per-tick value); host/presentation only, never the sim (invariants #1/#2 — it never
+    // enters `InputFrame` or the checksum).
     let ui_scale = read_ui_scale(&app);
-    info!("ui_scale: display-density UI scale = {ui_scale:.3} (owed: thread into renderer + TouchLayout)");
+    info!("ui_scale: display-density UI scale = {ui_scale:.3}");
 
     // Android drives the SAME platform-agnostic loop the desktop host does: `engine::Game`
     // owns the deterministic sim + renderer + fixed-tick + cameras. Here we only own the
@@ -291,13 +292,15 @@ fn android_main(app: AndroidApp) {
                     window.destroy_requested = true;
                 }
                 MainEvent::SaveState { .. } => {
-                    // TODO(phase2): persist a resume snapshot across process death. BLOCKED on two
-                    // landings, deliberately NOT done here (one-commit-one-workstream): (1)
-                    // `AndroidStorage::{read,write}` must be real — they are still stubs below; and
-                    // (2) the sim serialize/restore path (D28's `core::persist` — the snapshot
-                    // format is decided, code pending). Once both exist: serialize the `Game`'s sim
-                    // state via D28's `Sim::serialize` and write the bytes through `AndroidStorage`,
-                    // restoring on the next `InitWindow`. Gating on Storage first.
+                    // TODO(phase2): persist a resume snapshot across process death. The Storage half
+                    // is now UNBLOCKED — `AndroidStorage::{read,write}` are real (internal files dir),
+                    // so the bytes have somewhere to go. What REMAINS is the sim serialize/restore
+                    // path: the engine `Game` exposes no snapshot serializer yet (D28's snapshot
+                    // format is decided, code pending; there is no `core::persist` to call). Once the
+                    // engine grows a `Game`-level serialize, this becomes: serialize the sim state and
+                    // `AndroidStorage::write` it under a resume key (e.g. `"resume/session"`),
+                    // restoring on the next `InitWindow`. Deliberately NOT faked here (that seam is
+                    // engine/core work, out of this crate's file ownership).
                 }
                 MainEvent::LowMemory => warn!("MainEvent::LowMemory"),
                 _ => {}
@@ -1030,13 +1033,21 @@ impl AndroidInput {
         // `move_axis`/`look_axis`/`fire` + the Crouch/Reload/Surface button edges (the seam lives in
         // `engine`, not here, because an Android `MotionEvent` can't be unit-tested).
         // TODO(phase3+): gyro (ndk Sensor API) -> look_axis as an optional aim aid.
-        // TODO(phase2+): the command-view PRODUCTION intents — `building_slot` (place a Camp at the
-        //   tapped point), `train_slot` (queue a unit at the active camp), `upgrade_pressed` (upgrade
-        //   it) — join that deferred on-screen-UI slice: each is an on-screen palette/panel button +
-        //   hit-test latched onto the matching InputFrame edge, exactly as desktop binds B/R/H/U. The
-        //   engine already consumes these (`engine::{build_ui,train_ui,upgrade_ui}`); until the touch
-        //   buttons exist they stay default (`None`/`false`), so Android simply doesn't build/train/
-        //   upgrade yet — like `command_slot`, which is likewise unset here pending the radial UI.
+        //
+        // Command-view PRODUCTION intents (`train_slot` / `upgrade_pressed`) are ALREADY driven on
+        // mobile — but NOT from a fork here. The shared engine owns the touch affordance: its pure,
+        // host-tested `engine::command_touch::CommandBarLayout` lays out the RIFLE/HEAVY/UPGRADE
+        // buttons, and `Game::frame` hit-tests THIS backend's ordinary command-view taps (the
+        // `pointer` / `pointer_up` we already forward) against that bar, arming `train_slot` /
+        // `upgrade_pressed`. So Android trains/upgrades through the same seam the renderer draws from
+        // (no per-platform game logic — invariant #2); this backend just supplies the raw pointer.
+        //
+        // Still owed (engine/render work, out of THIS crate): `building_slot` (place a Camp at the
+        // tapped point — `engine::build_ui` already consumes it, but the command bar has no Build
+        // button yet, so there is no touch affordance to arm it) and `command_slot` (the radial order
+        // UI). Both stay default (`None`) here until the engine grows the rendered button; wiring them
+        // from pal-android alone would either fork the shared hit-test (invariant #2) or arm a phantom
+        // button the renderer never draws — so it is deliberately left to the engine seam.
     }
 
     /// Translate one key event into intents. The **system back** key routes to the host-side
@@ -1382,7 +1393,7 @@ impl AndroidRhi {
 }
 
 // ---------------------------------------------------------------------------------------
-// Audio (real, oboe/AAudio — D29) + Storage (still a stub).
+// Audio (real, oboe/AAudio — D29) + Storage (real, internal files dir + AAssetManager).
 // ---------------------------------------------------------------------------------------
 
 /// [`Audio`] backed by a low-latency **AAudio** stream via `oboe` (platforms.md §2, D29).
@@ -1688,9 +1699,25 @@ impl AndroidHaptics {
     }
 }
 
-/// [`Storage`] stub. Real impl reads bundled assets via **AAssetManager** (from
-/// `app.asset_manager()`) and writes user data under the app's files dir (POSIX +
-/// AAsset, platforms.md §2).
+/// [`Storage`] backed by the app's **internal files dir** (user data) + the **AAssetManager**
+/// (bundled read-only assets), platforms.md §2.
+///
+/// The Android mirror of the desktop file-backed storage: [`read`](Self::read) resolves a key first
+/// against user data written by [`write`](Self::write) under the app's private internal files dir,
+/// then falls back to a bundled read-only asset in the APK; [`write`](Self::write) always targets
+/// user data (assets are read-only). Both go through the pure, host-tested [`crate::storage`] path
+/// seam — so the load-bearing path-traversal guard (invariant #8: internal-storage paths only) is
+/// covered off-device, and the only android-un-testable part here is the `std::fs` / `AAssetManager`
+/// I/O itself.
+///
+/// **Best-effort and never fatal** (the same discipline as the rest of this backend): a missing
+/// files dir, an unsafe key, an I/O error, or an absent asset all degrade to `None` / a dropped
+/// write with a `log::warn!`, never a panic — a device that can't persist settings still plays.
+///
+/// # NOT device-verified
+/// The `internal_data_path` / `asset_manager` calls are written against the pinned android-activity
+/// 0.6 / ndk 0.9 APIs; the actual on-device files-dir writability + the baked-asset layout are a
+/// device-shakeout item like the rest of this module (the pure path logic is host-tested).
 pub struct AndroidStorage {
     app: AndroidApp,
 }
@@ -1703,17 +1730,62 @@ impl AndroidStorage {
 
 impl Storage for AndroidStorage {
     fn read(&self, key: &str) -> Option<Vec<u8>> {
-        // TODO(phase1-step6): resolve `key` against `self.app.asset_manager()` for bundled
-        //   read-only assets, and against the internal files dir for user data. The
-        //   AAssetManager handle is reachable via `self.app`.
-        let _ = (&self.app, key);
-        None
+        // 1. User data (settings, resume snapshots, replays) written by `write` to the app's private
+        //    internal files dir takes precedence — a saved value shadows the bundled default.
+        if let Some(files_dir) = self.app.internal_data_path() {
+            if let Some(path) = crate::storage::user_data_path(&files_dir, key) {
+                match std::fs::read(&path) {
+                    Ok(bytes) => return Some(bytes),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // fall through to assets
+                    Err(e) => warn!("[storage] read('{key}') from files dir failed: {e}"),
+                }
+            }
+        }
+        // 2. Fall back to a bundled read-only asset in the APK, via the NDK AAssetManager. An unsafe
+        //    key, a key with an interior NUL, or an absent asset all yield `None`.
+        let rel = crate::storage::asset_relative_path(key)?;
+        let cpath = std::ffi::CString::new(rel).ok()?;
+        let manager = self.app.asset_manager();
+        let mut asset = manager.open(&cpath)?;
+        let mut buf = Vec::new();
+        use std::io::Read;
+        match asset.read_to_end(&mut buf) {
+            Ok(_) => Some(buf),
+            Err(e) => {
+                warn!("[storage] read('{key}') from asset failed: {e}");
+                None
+            }
+        }
     }
 
     fn write(&mut self, key: &str, bytes: &[u8]) {
-        // TODO(phase1-step6): write to the app's internal storage (files dir). Assets are
-        //   read-only, so user writes go to the private data dir.
-        let _ = (&self.app, key, bytes);
+        // User writes only ever target the private internal files dir — assets are read-only.
+        let Some(files_dir) = self.app.internal_data_path() else {
+            warn!("[storage] no internal_data_path; write('{key}') dropped");
+            return;
+        };
+        let Some(path) = crate::storage::user_data_path(&files_dir, key) else {
+            warn!("[storage] unsafe key '{key}'; write dropped (invariant #8)");
+            return;
+        };
+        if let Some(parent) = path.parent() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                warn!("[storage] create_dir_all for '{key}' failed: {e}");
+                return;
+            }
+        }
+        // Atomic-ish: stage into a sibling temp file, then rename onto the target, so a crash /
+        // low-memory kill mid-write can't leave a torn (unparseable) settings / resume file. The
+        // temp path is derived by the host-tested `crate::storage::write_temp_path`.
+        let tmp = crate::storage::write_temp_path(&path);
+        if let Err(e) = std::fs::write(&tmp, bytes) {
+            warn!("[storage] staging write('{key}') failed: {e}");
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            warn!("[storage] commit rename for '{key}' failed: {e}");
+            let _ = std::fs::remove_file(&tmp); // don't leave the staging file behind
+        }
     }
 }
 
