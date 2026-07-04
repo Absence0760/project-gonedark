@@ -25,6 +25,10 @@
 //! pattern. [`TerrainRenderer::render`] is the only GPU-touching code and is exercised by the
 //! offscreen `viz-runner`, not the no-GPU CI matrix.
 
+use gonedark_core::flow_field::GRID;
+use gonedark_core::obstacles::{Obstacle, ObstacleKind};
+use gonedark_core::terrain::{Cover, Terrain};
+use std::f32::consts::FRAC_PI_4;
 use wgpu::util::DeviceExt;
 
 /// How far (in world units) the grid extends from the origin on each axis. The top-down camera
@@ -262,6 +266,138 @@ pub fn hillshade(x: f32, y: f32) -> f32 {
     0.90 + t * (1.14 - 0.90)
 }
 
+// ---- Map overlay: cover tint + prop markers (command view only) ---------------------------------
+//
+// The grid + procedural ground above are MAP-AGNOSTIC — identical every match. These two layers make
+// the command view show the *real* map: (1) a translucent per-cell wash keyed off the sim's actual
+// [`Cover`] grid, so different battlefields look different and cover is tactically legible top-down,
+// and (2) a top-down marker per static [`Obstacle`], so the props the embodied view draws as 3-D
+// meshes also read on the strategic map. Both are drawn INSIDE the terrain pass (under the units), so
+// they read as ground/terrain structure, and ONLY in the command view — the terrain pass never runs
+// under the dark embodied frame (invariant #6). Pure render derivations (core → render, the allowed
+// direction): they READ the sim's static map data and never mutate it, and carry no floats into
+// `core`. `render` is the float boundary (invariant #1), so `f32` here is fair game.
+
+/// World half-extent of the sim cover grid as `f32` — mirrors `debug::GRID_HALF` and
+/// `core::flow_field::HALF_EXTENT` (`GRID/2`, with `CELL_SIZE == 1`). Cell `(cx,cy)` spans world
+/// `[-COVER_GRID_HALF + cx, -COVER_GRID_HALF + cx + 1)`, so an overlay quad lands exactly on the sim
+/// cell the flow field / line-of-sight read.
+const COVER_GRID_HALF: f32 = (GRID / 2) as f32;
+
+/// Cover-wash fill colours (RGBA). Hue mirrors the `debug` cover-outline palette (Light amber, Heavy
+/// steel-blue, Impassable hot red-orange) so the two map-diagnostic views agree; alpha rises with the
+/// tier so a movement-blocking `Impassable` cell reads strongest, `Light` concealment faintest — the
+/// wash tints the ground+grid without ever hiding a unit token drawn on top.
+const COVER_FILL_LIGHT: [f32; 4] = [0.85, 0.70, 0.25, 0.16];
+const COVER_FILL_HEAVY: [f32; 4] = [0.42, 0.55, 0.72, 0.22];
+const COVER_FILL_IMPASSABLE: [f32; 4] = [0.90, 0.35, 0.20, 0.30];
+
+/// Opacity of a top-down prop marker — near-opaque so a discrete diamond reads as a placed object,
+/// clearly distinct from the translucent per-cell cover wash beneath it.
+const PROP_MARKER_ALPHA: f32 = 0.90;
+
+/// One filled, world-space overlay quad (cover-wash cell or prop marker): centre + half-extents +
+/// RGBA + a rotation (0 for the axis-aligned cover cells, `π/4` for the diamond prop markers). Pure
+/// CPU data produced by [`cover_fill_quads`] / [`prop_markers`]; uploaded straight to the GPU as the
+/// per-instance stream of the overlay pipeline. `repr(C)` + `Pod`; the field order MUST match
+/// `terrain.wgsl`'s `vs_overlay` instance attributes and the `vertex_attr_array` below. The trailing
+/// `_pad` keeps the stride a multiple of 8 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct OverlayQuad {
+    /// Quad centre in world space.
+    pub cx: f32,
+    pub cy: f32,
+    /// Half-extent in world units on each local axis (before rotation).
+    pub hw: f32,
+    pub hh: f32,
+    /// Fill colour, straight sRGB `[0,1]`, with a translucency alpha (the layer is alpha-blended).
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+    /// Rotation (radians) applied to the quad about its centre — `0` = axis-aligned square (cover
+    /// cell), `π/4` = diamond (prop marker).
+    pub rot: f32,
+    _pad: f32,
+}
+
+/// Build the translucent cover-wash quads for the command view: one filled cell-sized square per
+/// non-open [`Cover`] cell of `terrain`, coloured by tier ([`COVER_FILL_LIGHT`]/`HEAVY`/`IMPASSABLE`).
+/// `Cover::None` cells draw nothing (an open map ⇒ no quads). Each quad sits on the cell CENTRE with a
+/// `0.5` half-extent, so it exactly fills the sim cell — the same mapping `core::terrain` uses. Pure
+/// (no GPU) — the testable seam, mirroring [`crate::debug::covergrid_lines`].
+pub fn cover_fill_quads(terrain: &Terrain) -> Vec<OverlayQuad> {
+    let mut out = Vec::new();
+    for cy in 0..GRID as i32 {
+        for cx in 0..GRID as i32 {
+            let [r, g, b, a] = match terrain.cover_at_cell(cx, cy) {
+                Cover::None => continue,
+                Cover::Light => COVER_FILL_LIGHT,
+                Cover::Heavy => COVER_FILL_HEAVY,
+                Cover::Impassable => COVER_FILL_IMPASSABLE,
+            };
+            out.push(OverlayQuad {
+                cx: -COVER_GRID_HALF + cx as f32 + 0.5,
+                cy: -COVER_GRID_HALF + cy as f32 + 0.5,
+                hw: 0.5,
+                hh: 0.5,
+                r,
+                g,
+                b,
+                a,
+                rot: 0.0,
+                _pad: 0.0,
+            });
+        }
+    }
+    out
+}
+
+/// The top-down marker colour for a prop kind — chosen to be distinct from the cover-wash hues
+/// (amber/steel/red-orange) AND from each other: trees green, rocks grey, crates tan, barricades
+/// khaki, and the two turret emplacements their owning faction's cool tone. Pure — the kind → colour
+/// mapping, unit-tested off-GPU.
+fn prop_marker_color(kind: ObstacleKind) -> [f32; 3] {
+    match kind {
+        ObstacleKind::Tree => [0.28, 0.55, 0.30],
+        ObstacleKind::Rock => [0.56, 0.57, 0.61],
+        ObstacleKind::Crate => [0.72, 0.52, 0.24],
+        ObstacleKind::Barricade => [0.60, 0.58, 0.36],
+        ObstacleKind::TurretUs => [0.30, 0.55, 0.86],
+        ObstacleKind::TurretFr => [0.38, 0.72, 0.72],
+    }
+}
+
+/// Build the top-down prop markers for the command view: one diamond per static [`Obstacle`], centred
+/// on the prop's world position, sized to its sim collision footprint
+/// ([`ObstacleKind::footprint_radius`]) so a wide barricade reads bigger than a slim tree, and tinted
+/// per kind ([`prop_marker_color`]). The embodied view already draws these as 3-D meshes
+/// ([`crate::prop_draw_plan`]); this is the strategic-map read of the SAME sim list (core → render).
+/// Pure (no GPU) — the testable seam. `_pad`/`rot` mark the quad a rotated diamond so it reads as a
+/// placed object over the axis-aligned cover wash.
+pub fn prop_markers(obstacles: &[Obstacle]) -> Vec<OverlayQuad> {
+    obstacles
+        .iter()
+        .map(|o| {
+            let [r, g, b] = prop_marker_color(o.kind);
+            let footprint = crate::fixed_to_f32(o.kind.footprint_radius());
+            OverlayQuad {
+                cx: crate::fixed_to_f32(o.pos.x),
+                cy: crate::fixed_to_f32(o.pos.y),
+                hw: footprint,
+                hh: footprint,
+                r,
+                g,
+                b,
+                a: PROP_MARKER_ALPHA,
+                rot: FRAC_PI_4,
+                _pad: 0.0,
+            }
+        })
+        .collect()
+}
+
 /// A unit-quad corner in [-1, 1]^2 (the shader scales it by the per-line half-size).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -324,6 +460,15 @@ pub struct TerrainRenderer {
     /// terrain under the grid. Shares the unit pass's camera bind group (group 0), like the lines.
     ground_pipeline: wgpu::RenderPipeline,
     ground_buf: wgpu::Buffer,
+    /// Map-overlay pass (cover wash + prop markers): an ALPHA-BLENDED instanced pipeline
+    /// (`vs_overlay`/`fs_overlay`) drawn AFTER the grid, so the translucent cover tint + the prop
+    /// diamonds composite over the ground+grid but still sit UNDER the units (invariant #6: command
+    /// view only — this whole pass never runs under the dark embodied frame). The instances are the
+    /// real map (`cover_fill_quads` + `prop_markers`), uploaded once via [`Self::set_map_overlay`];
+    /// `overlay_count == 0` (an open, prop-less map) draws nothing.
+    overlay_pipeline: wgpu::RenderPipeline,
+    overlay_buf: wgpu::Buffer,
+    overlay_count: usize,
 }
 
 impl TerrainRenderer {
@@ -428,6 +573,56 @@ impl TerrainRenderer {
             cache: None,
         });
 
+        // Map-overlay pipeline: same camera layout (group 0), the shared unit-quad corner stream
+        // (vertex buffer 0) + a per-instance `OverlayQuad`, drawn with ALPHA_BLENDING so the cover
+        // wash is translucent (the ground/grid read through) and prop diamonds layer cleanly.
+        // A fresh corner-vertex layout (the earlier `quad_layout` was moved into the grid pipeline).
+        let overlay_quad_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<QuadVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x2],
+        };
+        let overlay_instance_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<OverlayQuad>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            // 1=center(vec2), 2=half(vec2), 3=color(vec4), 4=rot(f32). Trailing `_pad` is not bound.
+            attributes: &wgpu::vertex_attr_array![
+                1 => Float32x2,
+                2 => Float32x2,
+                3 => Float32x4,
+                4 => Float32
+            ],
+        };
+        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("gonedark.terrain_overlay_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_overlay"),
+                buffers: &[overlay_quad_layout, overlay_instance_layout],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_overlay"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    // Translucent tint over the opaque ground+grid drawn first this pass.
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let quad_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("gonedark.terrain_quad_vbo"),
             contents: bytemuck::cast_slice(&QUAD_VERTS),
@@ -451,6 +646,15 @@ impl TerrainRenderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
+        // A 1-instance placeholder overlay buffer (a zeroed, never-drawn quad) so the field is always
+        // a valid non-empty buffer; `set_map_overlay` replaces it with the real map data and bumps
+        // `overlay_count`. `overlay_count == 0` until then, so the placeholder is never drawn.
+        let overlay_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gonedark.terrain_overlay_vbo"),
+            contents: bytemuck::cast_slice(&[<OverlayQuad as bytemuck::Zeroable>::zeroed()]),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
         TerrainRenderer {
             pipeline,
             quad_buf,
@@ -459,7 +663,31 @@ impl TerrainRenderer {
             lines,
             ground_pipeline,
             ground_buf,
+            overlay_pipeline,
+            overlay_buf,
+            overlay_count: 0,
         }
+    }
+
+    /// Upload the command-view **map overlay** — the translucent cover wash ([`cover_fill_quads`])
+    /// plus the top-down prop markers ([`prop_markers`]) — built from the sim's static map data. The
+    /// cover grid + obstacle list are static (placed at scenario build, never mutated per tick), so
+    /// this is called ONCE at match boot rather than per frame. Reads `core` map data and writes only
+    /// GPU render state (core → render; never the reverse — invariant #4). A no-op-to-draw when the
+    /// map is open with no props (`overlay_count` stays 0). `create_buffer_init` uploads through the
+    /// `device` alone, so this needs no `&Queue`.
+    pub fn set_map_overlay(&mut self, device: &wgpu::Device, terrain: &Terrain, obstacles: &[Obstacle]) {
+        let mut quads = cover_fill_quads(terrain);
+        quads.extend(prop_markers(obstacles));
+        self.overlay_count = quads.len();
+        if quads.is_empty() {
+            return; // keep the placeholder buffer; nothing to draw
+        }
+        self.overlay_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("gonedark.terrain_overlay_vbo"),
+            contents: bytemuck::cast_slice(&quads),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
     }
 
     /// Draw the ground (procedural fill, then the grid lines on top) into the existing command-view
@@ -480,14 +708,24 @@ impl TerrainRenderer {
         pass.draw(0..GROUND_VERTS.len() as u32, 0..1);
 
         // Grid lines on top of the fill.
-        if self.lines.is_empty() {
-            return;
+        if !self.lines.is_empty() {
+            debug_assert!(self.lines.len() <= self.instance_cap);
+            pass.set_pipeline(&self.pipeline);
+            pass.set_vertex_buffer(0, self.quad_buf.slice(..));
+            pass.set_vertex_buffer(1, self.instance_buf.slice(..));
+            pass.draw(0..QUAD_VERTS.len() as u32, 0..self.lines.len() as u32);
         }
-        debug_assert!(self.lines.len() <= self.instance_cap);
-        pass.set_pipeline(&self.pipeline);
-        pass.set_vertex_buffer(0, self.quad_buf.slice(..));
-        pass.set_vertex_buffer(1, self.instance_buf.slice(..));
-        pass.draw(0..QUAD_VERTS.len() as u32, 0..self.lines.len() as u32);
+
+        // Map overlay LAST within the pass (still under the units, drawn in a later pass): the
+        // translucent cover wash + prop-marker diamonds, alpha-blended over the ground+grid so the
+        // real map reads top-down. `set_map_overlay` (called once at boot) fills the buffer; an open,
+        // prop-less map leaves `overlay_count == 0` and this is skipped.
+        if self.overlay_count > 0 {
+            pass.set_pipeline(&self.overlay_pipeline);
+            pass.set_vertex_buffer(0, self.quad_buf.slice(..));
+            pass.set_vertex_buffer(1, self.overlay_buf.slice(..));
+            pass.draw(0..QUAD_VERTS.len() as u32, 0..self.overlay_count as u32);
+        }
     }
 }
 
@@ -752,6 +990,137 @@ mod tests {
             max = max.max(h);
         }
         assert!(max - min > 0.05, "hillshade must vary with the slope, spread {}", max - min);
+    }
+
+    // ---- map overlay: cover wash + prop markers ----
+
+    use gonedark_core::components::Vec2;
+    use gonedark_core::fixed::Fixed;
+
+    #[test]
+    fn cover_fill_open_field_draws_nothing() {
+        assert!(cover_fill_quads(&Terrain::open()).is_empty(), "an open map washes nothing");
+    }
+
+    #[test]
+    fn cover_fill_one_cell_lands_on_the_right_world_square() {
+        let mut t = Terrain::open();
+        t.set_cover(0, 0, Cover::Heavy); // south-west corner cell
+        let q = cover_fill_quads(&t);
+        assert_eq!(q.len(), 1, "one covered cell = one quad");
+        let c = q[0];
+        // Cell (0,0) centre is (-COVER_GRID_HALF + 0.5) on each axis, filled with a 0.5 half-extent.
+        assert!((c.cx - (-COVER_GRID_HALF + 0.5)).abs() < EPS);
+        assert!((c.cy - (-COVER_GRID_HALF + 0.5)).abs() < EPS);
+        assert!((c.hw - 0.5).abs() < EPS && (c.hh - 0.5).abs() < EPS, "quad exactly fills the cell");
+        assert_eq!(c.rot, 0.0, "cover cells are axis-aligned, not diamonds");
+        assert_eq!([c.r, c.g, c.b, c.a], COVER_FILL_HEAVY, "heavy tier tint");
+    }
+
+    #[test]
+    fn cover_fill_colours_by_tier_and_skips_open() {
+        let mut t = Terrain::open();
+        t.set_cover(3, 4, Cover::Light);
+        t.set_cover(5, 6, Cover::Heavy);
+        t.set_cover(7, 8, Cover::Impassable);
+        let q = cover_fill_quads(&t);
+        assert_eq!(q.len(), 3, "three covered cells (open cells skipped)");
+        let rgba = |x: &OverlayQuad| [x.r, x.g, x.b, x.a];
+        assert_eq!(q.iter().filter(|x| rgba(x) == COVER_FILL_LIGHT).count(), 1);
+        assert_eq!(q.iter().filter(|x| rgba(x) == COVER_FILL_HEAVY).count(), 1);
+        assert_eq!(q.iter().filter(|x| rgba(x) == COVER_FILL_IMPASSABLE).count(), 1);
+        // Alpha rises with the tier so a blocking cell reads strongest, light concealment faintest.
+        assert!(COVER_FILL_LIGHT[3] < COVER_FILL_HEAVY[3]);
+        assert!(COVER_FILL_HEAVY[3] < COVER_FILL_IMPASSABLE[3]);
+        // The wash stays translucent (never hides a unit token drawn on top).
+        for x in &q {
+            assert!((0.0..1.0).contains(&x.a), "cover wash is translucent, alpha {}", x.a);
+        }
+    }
+
+    #[test]
+    fn cover_fill_count_matches_a_baked_map() {
+        // A real baked map yields one quad per non-open cell — the overlay tracks the real cover grid.
+        let t = Terrain::from_map_id(Terrain::POINTE_DU_HOC_MAP_ID).unwrap();
+        let covered = (0..GRID as i32)
+            .flat_map(|cy| (0..GRID as i32).map(move |cx| (cx, cy)))
+            .filter(|&(cx, cy)| t.cover_at_cell(cx, cy) != Cover::None)
+            .count();
+        assert_eq!(cover_fill_quads(&t).len(), covered);
+        assert!(covered > 0, "a baked map has cover to wash");
+    }
+
+    #[test]
+    fn prop_markers_map_position_kind_and_footprint() {
+        // One obstacle of each kind at a known world position.
+        let obstacles: Vec<Obstacle> = [
+            (ObstacleKind::Tree, 3, -4),
+            (ObstacleKind::Rock, -7, 2),
+            (ObstacleKind::Crate, 5, 5),
+            (ObstacleKind::Barricade, -2, -6),
+            (ObstacleKind::TurretUs, 8, 1),
+            (ObstacleKind::TurretFr, -8, 1),
+        ]
+        .iter()
+        .map(|&(kind, x, y)| Obstacle {
+            kind,
+            pos: Vec2::new(Fixed::from_int(x), Fixed::from_int(y)),
+        })
+        .collect();
+
+        let m = prop_markers(&obstacles);
+        assert_eq!(m.len(), obstacles.len(), "one marker per obstacle");
+        for (o, q) in obstacles.iter().zip(&m) {
+            // Position mirrors the obstacle's world centre through the render float boundary.
+            assert!((q.cx - crate::fixed_to_f32(o.pos.x)).abs() < EPS);
+            assert!((q.cy - crate::fixed_to_f32(o.pos.y)).abs() < EPS);
+            // Kind tint + a diamond (rotated) marker sized to the sim footprint.
+            assert_eq!([q.r, q.g, q.b], prop_marker_color(o.kind));
+            assert_eq!(q.a, PROP_MARKER_ALPHA);
+            assert_eq!(q.rot, FRAC_PI_4, "prop markers are diamonds");
+            let fr = crate::fixed_to_f32(o.kind.footprint_radius());
+            assert!((q.hw - fr).abs() < EPS && (q.hh - fr).abs() < EPS);
+        }
+    }
+
+    #[test]
+    fn prop_markers_barricade_is_bigger_than_a_tree() {
+        // The marker size tracks the sim collision footprint — a wide berm reads bigger than a tree.
+        let tree = [Obstacle { kind: ObstacleKind::Tree, pos: Vec2::new(Fixed::ZERO, Fixed::ZERO) }];
+        let berm = [Obstacle { kind: ObstacleKind::Barricade, pos: Vec2::new(Fixed::ZERO, Fixed::ZERO) }];
+        assert!(prop_markers(&berm)[0].hw > prop_markers(&tree)[0].hw);
+    }
+
+    #[test]
+    fn prop_marker_colours_are_distinct_per_kind() {
+        // Each prop kind gets a distinguishable top-down tint (so composition reads at a glance).
+        let kinds = [
+            ObstacleKind::Tree,
+            ObstacleKind::Rock,
+            ObstacleKind::Crate,
+            ObstacleKind::Barricade,
+            ObstacleKind::TurretUs,
+            ObstacleKind::TurretFr,
+        ];
+        for i in 0..kinds.len() {
+            for j in (i + 1)..kinds.len() {
+                let a = prop_marker_color(kinds[i]);
+                let b = prop_marker_color(kinds[j]);
+                let d2: f32 = (0..3).map(|k| (a[k] - b[k]).powi(2)).sum();
+                assert!(d2 > 0.01, "{:?} vs {:?} too close", kinds[i], kinds[j]);
+            }
+        }
+        // All colour channels stay in range (an out-of-range channel clips on the way to the swapchain).
+        for k in kinds {
+            for ch in prop_marker_color(k) {
+                assert!((0.0..=1.0).contains(&ch));
+            }
+        }
+    }
+
+    #[test]
+    fn prop_markers_empty_when_no_obstacles() {
+        assert!(prop_markers(&[]).is_empty(), "a prop-less map draws no markers");
     }
 
     #[test]

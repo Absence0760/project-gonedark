@@ -1361,6 +1361,24 @@ impl Renderer {
         self.icon.set_ui_scale(self.ui_scale);
     }
 
+    /// Upload the command-view **map overlay** — the sim's static [`Terrain`](gonedark_core::terrain::Terrain)
+    /// cover grid as a translucent per-cell wash, and the static
+    /// [`Obstacle`](gonedark_core::obstacles::Obstacle) list as top-down prop markers — into the
+    /// ground pass, so the top-down view shows the REAL map (different battlefields look different;
+    /// cover is legible) instead of the map-agnostic procedural ground. The map data is static (placed
+    /// at scenario build, never mutated per tick), so the host calls this ONCE at match boot. Reads
+    /// `core` map data and writes only GPU render state (core → render — invariant #4); the overlay
+    /// draws in the command view only (the terrain pass never runs under the dark embodied frame,
+    /// invariant #6). Presentation only — never a sim input (invariant #1).
+    pub fn set_map_overlay(
+        &mut self,
+        device: &wgpu::Device,
+        terrain: &gonedark_core::terrain::Terrain,
+        obstacles: &[gonedark_core::obstacles::Obstacle],
+    ) {
+        self.terrain.set_map_overlay(device, terrain, obstacles);
+    }
+
     /// Ensure the mesh-pass depth buffer matches `(width, height)`, recreating it only when the
     /// surface size changes. Cheap — a no-op on an unchanged size.
     fn ensure_depth(&mut self, device: &wgpu::Device, width: u32, height: u32) {
