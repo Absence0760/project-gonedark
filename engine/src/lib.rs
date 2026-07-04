@@ -36,7 +36,7 @@ use gonedark_core::gunsmith::Loadout;
 use gonedark_core::lockstep::Lockstep;
 use gonedark_core::rng::Rng;
 use gonedark_core::shell::{
-    resolve_intent, ConnectionStatus, LinkState, MatchOutcome, ResolvedIntent, ShellIntent,
+    resolve_intent, ConnectionStatus, EndReason, LinkState, MatchOutcome, ResolvedIntent, ShellIntent,
 };
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
@@ -48,9 +48,7 @@ use gonedark_render::radial::RadialMenu;
 use gonedark_render::{fixed_to_f32, Camera, Renderer};
 
 use selection::{GestureScale, Selection};
-use session_shell::{
-    evaluate_outcome, EndStateRead, FactionForces, InSessionShell, ShellSurface,
-};
+use session_shell::{EndStateRead, FactionForces, InSessionShell, ShellSurface};
 
 /// Embodied audio mix (worker 3). Owns `mix_cues`: events + listener pose → positioned cues.
 mod audio;
@@ -2156,7 +2154,11 @@ fn seed_scene_with_loadout(
         }
         Scene::Skirmish => {
             let (p, e) = seed_skirmish_scene(sim, player_loadout);
-            (p, e, objectives::ObjectiveSet::default())
+            // The skirmish front door gets the canonical two-base victory objective (defeat all
+            // enemy forces), keyed to the enemy's just-seeded strength — so skirmish shows a live
+            // objective on the HUD and ends with an objective-shaped summary, not just silently on
+            // elimination.
+            (p, e, objectives::skirmish_objectives(sim))
         }
         Scene::Duel => {
             let (p, e) = seed_duel_scene(sim);
@@ -2448,6 +2450,9 @@ impl Game {
         let spec = map_library::library_spec(map_id)?;
         let mut sim = Sim::new(seed);
         let s = map_library::seed_map_skirmish(&mut sim, &spec, player_loadout)?;
+        // Same skirmish victory objective as the code-seeded skirmish, keyed to the strength the
+        // map's recipe just spawned into the enemy zone.
+        let objectives = objectives::skirmish_objectives(&sim);
         Some(Self::from_seeded_sim(
             device,
             surface_format,
@@ -2456,7 +2461,7 @@ impl Game {
             sim,
             s.player_troop,
             false,
-            objectives::ObjectiveSet::default(),
+            objectives,
         ))
     }
 
@@ -2794,14 +2799,19 @@ impl Game {
         self.objectives.status()
     }
 
-    /// The match outcome *right now*, or `None` while the match is still ongoing. A pure host-side
-    /// read: derives each combatant's [`FactionForces`] from checksummed sim state and hands them to
-    /// the unit-tested [`evaluate_outcome`] (elimination, then a territory/resource timeout
-    /// tiebreak). No sim mutation, nothing folded — it cannot desync (invariants #1/#7).
-    fn match_outcome(&self) -> Option<MatchOutcome> {
-        evaluate_outcome(
+    /// The decided match end *right now* — `(outcome, reason)` — or `None` while the match is still
+    /// ongoing. A pure host-side read: derives each combatant's [`FactionForces`] from checksummed
+    /// sim state, folds in the objective layer's own verdict
+    /// ([`ObjectiveSet::decided`](objectives::ObjectiveSet::decided) — `None` for a scene with no
+    /// objectives or a still-live mission), and hands them to the unit-tested
+    /// [`decide_match_end`](session_shell::decide_match_end) (elimination, then the mission verdict,
+    /// then the territory/resource timeout tiebreak). No sim mutation, nothing folded — it cannot
+    /// desync (invariants #1/#7).
+    fn match_decision(&self) -> Option<(MatchOutcome, EndReason)> {
+        session_shell::decide_match_end(
             self.faction_forces(Faction::Player),
             self.faction_forces(Faction::Enemy),
+            self.objectives.decided(),
             self.sim.tick_count(),
             MATCH_TIMEOUT_TICKS,
         )
@@ -2809,10 +2819,11 @@ impl Game {
 
     /// Build the post-match [`MatchSummary`](gonedark_core::shell::MatchSummary) from the match's
     /// accumulated events + end-of-match reads of checksummed sim state (territory held, resource
-    /// purse), stamped with the real [`MatchOutcome`] from [`Self::match_outcome`] (elimination /
-    /// timeout tiebreak; D34 keeps the evaluator host-side, not in `core`). Float-free, host-side;
-    /// the assembler and the evaluator are each unit-tested in `session_shell`. `outcome` falls back
-    /// to `Draw` only on a surrender before either side is eliminated (the match was not won).
+    /// purse), stamped with the real `(outcome, reason)` from [`Self::match_decision`] (elimination
+    /// / mission verdict / timeout tiebreak; D34 keeps the evaluator host-side, not in `core`).
+    /// Float-free, host-side; the assembler and the decision are each unit-tested in
+    /// `session_shell`. The `(Draw, Surrender)` fallback applies only when the summary is assembled
+    /// before the match is decided — i.e. a surrender/leave (the match was not won).
     fn assemble_summary(&self) -> gonedark_core::shell::MatchSummary {
         let mut reads: [EndStateRead; gonedark_core::components::FACTION_COUNT] =
             Default::default();
@@ -2830,11 +2841,14 @@ impl Game {
                 resources_total: self.sim.resources.get(f),
             };
         }
-        let outcome = self.match_outcome().unwrap_or(MatchOutcome::Draw);
+        let (outcome, reason) = self
+            .match_decision()
+            .unwrap_or((MatchOutcome::Draw, EndReason::Surrender));
         session_shell::assemble_summary(
             &self.match_events,
             self.sim.tick_count(),
             outcome,
+            reason,
             &reads,
         )
     }
@@ -3965,7 +3979,17 @@ impl Game {
         // no-op for scenes with no objectives (skirmish/sandbox). The HUD reads the updated set below.
         if !self.objectives.is_empty() {
             let forces = objectives::faction_forces_all(&self.sim);
-            let ctx = objectives::ObserveCtx::new(&frame_events, &forces, self.sim.tick_count());
+            // Reach/Escort objectives need this frame's live positions of the entities they track;
+            // gathered read-only from the sim (empty for the Seize/Hold/Push/skirmish sets, which
+            // track none). Without this the host handed an empty slice and those objectives could
+            // never complete live.
+            let tracked = objectives::tracked_positions(&self.sim, &self.objectives);
+            let ctx = objectives::ObserveCtx {
+                events: &frame_events,
+                forces: &forces,
+                elapsed_ticks: self.sim.tick_count(),
+                tracked: &tracked,
+            };
             self.objectives.observe(&ctx);
         }
 
@@ -3982,13 +4006,15 @@ impl Game {
         });
 
         // Evaluate the win/lose condition from the (already-checksummed) end-state this frame and,
-        // once it is decided, end the match into the post-match summary surface. `match_outcome` is
-        // a pure read — derives each combatant's forces and runs the unit-tested `evaluate_outcome`
-        // (elimination, then a territory/resource timeout tiebreak); it folds nothing and so cannot
-        // desync (invariants #1/#7). `end_match` is idempotent, so the first decided outcome sticks
-        // (a later tick can't overwrite the summary), and it is skipped once any overlay has already
-        // ended the match (e.g. a surrender).
-        if !self.shell.is_ended() && self.match_outcome().is_some() {
+        // once it is decided, end the match into the post-match summary surface. `match_decision`
+        // is a pure read — derives each combatant's forces, folds in the objective layer's verdict
+        // (so a mission/skirmish objective going Won/Lost ends the match the tick it decides, with
+        // the objective-shaped summary reason), and runs the unit-tested `decide_match_end`
+        // (elimination, then the mission verdict, then a territory/resource timeout tiebreak); it
+        // folds nothing and so cannot desync (invariants #1/#7). `end_match` is idempotent, so the
+        // first decided outcome sticks (a later tick can't overwrite the summary), and it is
+        // skipped once any overlay has already ended the match (e.g. a surrender).
+        if !self.shell.is_ended() && self.match_decision().is_some() {
             let summary = self.assemble_summary();
             self.shell.end_match(summary);
         }
@@ -7647,7 +7673,7 @@ mod tests {
 
     // --- in-session shell overlay mapping (Phase 4 WS-B) ---
 
-    use gonedark_core::shell::{MatchOutcome, SessionAction};
+    use gonedark_core::shell::{EndReason, MatchOutcome, SessionAction};
     use session_shell::{assemble_summary, EndStateRead};
 
     fn empty_reads() -> [EndStateRead; gonedark_core::components::FACTION_COUNT] {
@@ -7695,7 +7721,7 @@ mod tests {
             "the pause key closes the menu while paused"
         );
         // An ended match: its summary owns the screen (Dismiss-only), never re-pausable.
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         assert_eq!(pause_toggle_action(&ShellSurface::Ended(summary)), None);
         // A reconnect prompt is dismissed by its own Resume/leave buttons, not the pause key.
         assert_eq!(
@@ -7717,13 +7743,13 @@ mod tests {
         assert!(overlay_active(&ShellSurface::Paused));
         assert!(overlay_active(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting)));
         assert!(overlay_active(&ShellSurface::ReconnectPrompt(LinkState::Desynced)));
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         assert!(overlay_active(&ShellSurface::Ended(summary)));
     }
 
     #[test]
     fn overlay_for_surface_ended_carries_the_summary() {
-        let summary = assemble_summary(&[], 1234, MatchOutcome::Draw, &empty_reads());
+        let summary = assemble_summary(&[], 1234, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         match overlay_for_surface(&ShellSurface::Ended(summary.clone()), true) {
             Overlay::Summary(s) => assert_eq!(s, summary),
             other => panic!("Ended must map to Overlay::Summary, got {other:?}"),
@@ -7735,7 +7761,7 @@ mod tests {
     /// result, never `None` (the reported "dismiss button does nothing" path).
     #[test]
     fn overlay_click_action_maps_each_slot() {
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         // Pause: slot 0 resumes, slot 1 surrenders (single-player flag is irrelevant to the action).
         assert_eq!(
             overlay_click_action(&Overlay::Paused { single_player: true }, 0),
@@ -7778,7 +7804,7 @@ mod tests {
     /// slot 0) and the secondary (HUB/leave, slot 1).
     #[test]
     fn overlay_click_resolves_summary_buttons_at_their_centers() {
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         let overlay = overlay_for_surface(&ShellSurface::Ended(summary), true);
         // The primary (REMATCH) button's center, taken from the renderer's own layout.
         let primary = gonedark_render::overlay::overlay_quads(&overlay)
@@ -7837,7 +7863,7 @@ mod tests {
     #[test]
     fn pixel_tap_on_hub_resolves_to_dismiss() {
         let (w, h) = (1280u32, 720u32);
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         let overlay = overlay_for_surface(&ShellSurface::Ended(summary), true);
         // The drawn HUB (secondary) button center in NDC, mapped back to a pixel tap — that's the
         // leave-to-title action now (the primary button is REMATCH).
@@ -7872,7 +7898,7 @@ mod tests {
         let mut shell = InSessionShell::new(/* single_player = */ false);
         shell.apply(
             SessionAction::Pause,
-            &assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads()),
+            &assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads()),
         );
         assert!(shell.is_paused());
 
@@ -7930,7 +7956,7 @@ mod tests {
                         EndStateRead::default(),
                     ];
                     let summary =
-                        assemble_summary(&events, sim.tick_count(), MatchOutcome::Draw, &reads);
+                        assemble_summary(&events, sim.tick_count(), MatchOutcome::Draw, EndReason::Surrender, &reads);
                     // Toggle pause/resume to walk transitions; surrender near the end.
                     if t == 10 {
                         shell.apply(SessionAction::Pause, &summary);

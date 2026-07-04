@@ -36,6 +36,8 @@ use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::sim::Sim;
 
+use gonedark_core::shell::{EndReason, MatchOutcome};
+
 use crate::session_shell::FactionForces;
 use gonedark_render::objective_hud::{ObjectiveHudView, ObjectiveStateView};
 
@@ -381,6 +383,24 @@ impl ObjectiveSet {
         ObjectiveSet::new(vec![Objective::reach(who, runner, dest, radius, "Reach the extraction point")])
     }
 
+    /// The default **skirmish** victory: defeat every enemy combatant. One required
+    /// [`Eliminate(Faction)`](EliminateTarget::Faction) objective — WON when the Enemy faction is
+    /// wiped (units + camp), FAILS when the Player is wiped (the universal owner-eliminated rule).
+    /// This is the canonical two-base RTS win condition; unlike the campaign missions it invents no
+    /// bespoke goal, it just makes the skirmish's *existing* end (elimination) legible: it puts a
+    /// live objective on the HUD ("Defeat all enemy forces", with a progress bar) and stamps the
+    /// summary reason. `enemy_strength` is the Enemy's starting destroyable count for the bar —
+    /// derive it from the freshly-seeded sim with [`skirmish_objectives`]. Pure composition of the
+    /// existing faction-elimination evaluator — **no new sim** (invariants #1/#7).
+    pub fn skirmish_eliminate(enemy_strength: u32) -> Self {
+        ObjectiveSet::new(vec![Objective::eliminate_faction(
+            Faction::Player,
+            Faction::Enemy,
+            "Defeat all enemy forces",
+            enemy_strength,
+        )])
+    }
+
     /// Fold one tick into every active objective, returning the transitions that fired this tick (in
     /// objective order) for the host to surface (summary log / HUD flash).
     pub fn observe(&mut self, ctx: &ObserveCtx) -> Vec<ObjectiveEvent> {
@@ -416,6 +436,37 @@ impl ObjectiveSet {
         }
     }
 
+    /// The objective layer's **match verdict**: `None` while the mission is in progress (or the set
+    /// is empty — a scene with no objectives never decides a match), else the `(outcome, reason)`
+    /// the match should end with. A `Won` mission is a victory for the required objectives' owner;
+    /// a `Lost` mission is a victory for the opposing combatant, carrying the failed objective's own
+    /// label so the summary names *what* went wrong ("OBJECTIVE FAILED — HOLD THE LINE": the honest
+    /// "I stayed too long" read, invariant #6). The host feeds this into
+    /// [`decide_match_end`](crate::session_shell::decide_match_end); elimination still outranks it
+    /// there. Pure read of host-side state — never touches the sim (invariants #1/#7).
+    pub fn decided(&self) -> Option<(MatchOutcome, EndReason)> {
+        match self.status() {
+            MissionStatus::Active => None,
+            MissionStatus::Won => {
+                // `status() == Won` guarantees at least one required objective; its owner is the
+                // pursuing faction the mission was authored for (all required objectives in a set
+                // share the pursuing side today — a mixed-owner set would be a design fork).
+                let owner = self.objectives.iter().find(|o| o.required)?.owner;
+                Some((MatchOutcome::Victory(owner), EndReason::ObjectivesComplete))
+            }
+            MissionStatus::Lost => {
+                let failed = self
+                    .objectives
+                    .iter()
+                    .find(|o| o.required && o.state == ObjectiveState::Failed)?;
+                Some((
+                    MatchOutcome::Victory(opposing(failed.owner)),
+                    EndReason::ObjectiveFailed(failed.label.clone()),
+                ))
+            }
+        }
+    }
+
     /// The PRIMARY objective for the HUD: the first still-active required objective, else the first
     /// objective (so a finished mission still shows its terminal state). `None` for an empty set.
     pub fn current(&self) -> Option<&Objective> {
@@ -424,6 +475,47 @@ impl ObjectiveSet {
             .find(|o| o.required && o.state == ObjectiveState::Active)
             .or_else(|| self.objectives.first())
     }
+}
+
+/// The opposing combatant of `f` in the shipped two-combatant match (Player ↔ Enemy). A mission
+/// objective is always owned by a combatant, so the Neutral arm is defensive only (Neutral holds
+/// no army and never wins or loses — the same rule `evaluate_outcome` follows).
+fn opposing(f: Faction) -> Faction {
+    match f {
+        Faction::Player => Faction::Enemy,
+        Faction::Enemy => Faction::Player,
+        Faction::Neutral => Faction::Neutral,
+    }
+}
+
+/// Build the default skirmish [`ObjectiveSet`] from a freshly-seeded `sim`: eliminate the Enemy
+/// faction, with the HUD progress bar keyed to the Enemy's current destroyable strength (units +
+/// camp). Call this right after seeding, before the match runs a tick, so the bar's goal is the
+/// starting force. A read-only sim scan (via [`faction_forces`]); folds nothing (invariants #1/#7).
+pub fn skirmish_objectives(sim: &Sim) -> ObjectiveSet {
+    let enemy = faction_forces(sim, Faction::Enemy);
+    ObjectiveSet::skirmish_eliminate(enemy.alive_units + enemy.buildings)
+}
+
+/// Gather the live positions of every entity a [`Reach`](ObjectiveKind::Reach)/
+/// [`Escort`](ObjectiveKind::Escort) objective in `set` tracks, for the host to hand to
+/// [`ObserveCtx::tracked`]. A dead or stale-handle entity is simply omitted — its objective then
+/// reads as "not there yet", the same fair rule [`within`] follows (never a spurious completion).
+/// Empty for a set with no Reach/Escort objective (the common case — Seize/Hold/Push/skirmish use
+/// none), so those missions pay nothing. Read-only sim scan; folds nothing (invariants #1/#7).
+pub fn tracked_positions(sim: &Sim, set: &ObjectiveSet) -> Vec<(Entity, Vec2)> {
+    let mut out = Vec::new();
+    for o in &set.objectives {
+        let who = match o.kind {
+            ObjectiveKind::Reach { who, .. } => who,
+            ObjectiveKind::Escort { vip, .. } => vip,
+            _ => continue,
+        };
+        if sim.world.is_alive(who) {
+            out.push((who, sim.world.pos[who.index as usize]));
+        }
+    }
+    out
 }
 
 /// Derive one faction's standing [`FactionForces`] from a [`Sim`] — alive units/buildings +
@@ -869,5 +961,85 @@ mod tests {
         // Owner wiped while the runner is still short of the LZ → LOST.
         set.observe(&ObserveCtx { events: &[], forces: &forces(wiped(), alive(1, 0)), elapsed_ticks: 30, tracked: &[(runner, at(0, 0))] });
         assert_eq!(set.status(), MissionStatus::Lost, "owner wiped before extraction");
+    }
+
+    // --- Skirmish victory (defeat all enemy forces) ---------------------------------------------
+
+    #[test]
+    fn skirmish_eliminate_wins_on_enemy_wipe_loses_on_player_wipe() {
+        let mut win = ObjectiveSet::skirmish_eliminate(5);
+        win.observe(&ObserveCtx::new(&[], &forces(alive(8, 1), wiped()), 10));
+        assert_eq!(win.status(), MissionStatus::Won, "enemy wiped → skirmish won");
+
+        let mut lose = ObjectiveSet::skirmish_eliminate(5);
+        lose.observe(&ObserveCtx::new(&[], &forces(wiped(), alive(3, 1)), 10));
+        assert_eq!(lose.status(), MissionStatus::Lost, "player wiped → skirmish lost");
+    }
+
+    #[test]
+    fn skirmish_objectives_key_the_bar_to_the_seeded_enemy_strength() {
+        // Seed a real force layout and confirm the builder reads the enemy's live destroyable
+        // strength (units + buildings) into the HUD progress goal — not a hardcoded number.
+        let mut sim = Sim::new(0x5C1);
+        gonedark_core::scenario::seed_seize_mission(&mut sim);
+        let enemy = faction_forces(&sim, Faction::Enemy);
+        let expected = enemy.alive_units + enemy.buildings;
+        assert!(expected > 0, "the seed must place an enemy force");
+
+        let set = skirmish_objectives(&sim);
+        let hud = objective_hud_view(&set);
+        assert_eq!(hud.objective, "Defeat all enemy forces");
+        assert_eq!(hud.progress, Some((0, expected)), "bar goal == seeded enemy strength");
+    }
+
+    // --- tracked_positions: the Reach/Escort live-position feed ---------------------------------
+
+    #[test]
+    fn tracked_positions_reads_live_entities_and_omits_the_dead() {
+        let mut sim = Sim::new(0x7AC);
+        let m = gonedark_core::scenario::seed_seize_mission(&mut sim);
+        let runner = m.troops[0];
+        let want = sim.world.pos[runner.index as usize];
+
+        // A Reach set for a live entity yields its live position.
+        let reach = ObjectiveSet::new(vec![Objective::reach(
+            Faction::Player, runner, at(50, 50), Fixed::from_int(2), "Reach",
+        )]);
+        assert_eq!(tracked_positions(&sim, &reach), vec![(runner, want)]);
+
+        // A stale handle (never alive) is omitted, not defaulted to the origin.
+        let ghost = ent(9999);
+        assert!(!sim.world.is_alive(ghost));
+        let stale = ObjectiveSet::new(vec![Objective::reach(
+            Faction::Player, ghost, at(50, 50), Fixed::from_int(2), "Reach",
+        )]);
+        assert!(tracked_positions(&sim, &stale).is_empty());
+
+        // A Seize set tracks nothing (no Reach/Escort) → empty, so those missions pay nothing.
+        assert!(tracked_positions(&sim, &ObjectiveSet::mission_one(5)).is_empty());
+    }
+
+    #[test]
+    fn reach_completes_live_from_the_sim_fed_tracked_positions() {
+        // The live-loop shape: build the tracked slice from the sim (as `Game::update` now does)
+        // rather than a hand-authored one, and prove a Reach objective completes through it.
+        let mut sim = Sim::new(0x4EA);
+        let m = gonedark_core::scenario::seed_seize_mission(&mut sim);
+        let runner = m.troops[0];
+        let here = sim.world.pos[runner.index as usize];
+
+        // Destination = the runner's own current cell, generous radius → it is "there" immediately.
+        let mut set = ObjectiveSet::new(vec![Objective::reach(
+            Faction::Player, runner, here, Fixed::from_int(4), "Reach the marker",
+        )]);
+        let forces = faction_forces_all(&sim);
+        let tracked = tracked_positions(&sim, &set);
+        set.observe(&ObserveCtx {
+            events: sim.events(),
+            forces: &forces,
+            elapsed_ticks: sim.tick_count(),
+            tracked: &tracked,
+        });
+        assert_eq!(set.status(), MissionStatus::Won, "runner already at the marker");
     }
 }

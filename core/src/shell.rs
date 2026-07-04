@@ -170,11 +170,35 @@ impl From<FactionTag> for Faction {
     }
 }
 
+/// **Why** the match ended — the readable reason line the post-match summary draws under its
+/// outcome title. The seam defines the *shape*; the host decides which arm applies (the host owns
+/// the win-condition evaluator and the objective layer — D34). Fairness (invariant #6): every loss
+/// must read as *"I stayed too long"*, never *"the game robbed me"* — so an objective loss carries
+/// the failed objective's own HUD label, and the shell can always say in words what decided the
+/// match. Presentation data only (a `String` label, no float, never sim state).
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub enum EndReason {
+    /// A combatant lost every unit **and** building (the elimination rule).
+    #[default]
+    Elimination,
+    /// The match clock expired; territory then resources decided the score.
+    Timeout,
+    /// The local player surrendered / left before the match was decided.
+    Surrender,
+    /// Every required mission objective was completed (the objective-layer win).
+    ObjectivesComplete,
+    /// A required mission objective failed; carries that objective's HUD label so the summary can
+    /// name it ("OBJECTIVE FAILED — HOLD THE LINE").
+    ObjectiveFailed(String),
+}
+
 /// The post-match summary the in-engine end-screen renders and (a digest of) the native shell
 /// shows in the profile/history. All numerics are integer/`Fixed` (invariant #1).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct MatchSummary {
     pub outcome: MatchOutcome,
+    /// Why the match ended (the summary's reason line under the outcome title).
+    pub reason: EndReason,
     /// The tick the match ended on (its length).
     pub end_tick: u64,
     /// Per-faction stats in fixed [`Faction::ALL`] order — a fixed-size array, so it is
@@ -879,6 +903,7 @@ mod tests {
         }
         let summary = MatchSummary {
             outcome: MatchOutcome::Victory(Faction::Player),
+            reason: EndReason::Elimination,
             end_tick: 3600,
             per_faction,
         };
