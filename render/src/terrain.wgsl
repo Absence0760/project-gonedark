@@ -160,3 +160,42 @@ fn fs_ground(in: GroundOut) -> @location(0) vec4<f32> {
     col = max(col, vec3<f32>(0.013, 0.018, 0.027));
     return vec4<f32>(col, 1.0);
 }
+
+// ---- map overlay (cover wash + prop markers, command view only) --------------------------------
+//
+// A per-instance filled quad, alpha-blended OVER the ground+grid but UNDER the units, so the command
+// view shows the REAL map: a translucent tint per non-open cover cell + a rotated diamond per static
+// prop. The instance carries world centre, half-extents, an RGBA fill, and a rotation (0 = axis-
+// aligned cover cell, π/4 = diamond prop marker). Pure render derivation of the sim's static map data
+// (invariant #6: command view only — this pass never runs under the dark embodied frame). Mirrors the
+// CPU-side `repr(C)` `OverlayQuad`; built + range-tested on the CPU by `terrain::cover_fill_quads` /
+// `terrain::prop_markers`.
+
+struct OverlayOut {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) color: vec4<f32>,
+};
+
+@vertex
+fn vs_overlay(
+    @location(0) corner: vec2<f32>,
+    @location(1) center: vec2<f32>,
+    @location(2) hext: vec2<f32>,
+    @location(3) color: vec4<f32>,
+    @location(4) rot: f32,
+) -> OverlayOut {
+    // Scale the unit corner by the half-extents, rotate about the centre, then place in the world.
+    let local = vec2<f32>(corner.x * hext.x, corner.y * hext.y);
+    let c = cos(rot);
+    let s = sin(rot);
+    let world = center + vec2<f32>(local.x * c - local.y * s, local.x * s + local.y * c);
+    var out: OverlayOut;
+    out.clip_pos = camera.view_proj * vec4<f32>(world.x, world.y, 0.0, 1.0);
+    out.color = color;
+    return out;
+}
+
+@fragment
+fn fs_overlay(in: OverlayOut) -> @location(0) vec4<f32> {
+    return in.color;
+}
