@@ -5002,3 +5002,78 @@ Android fork, unchanged). Files: `app/src/shell/mission_select.rs` (overlay seam
 look-around), `app/src/shell/atlas.rs` (surface-following drag), `app/src/shell/util.rs`
 (`ndc_to_pointer`), `app/src/main.rs` (`hub_look` state), `render/src/globe_backdrop.rs`
 (`eye_elevation` export), `app/src/shell/tests.rs` + render tests (the pins).
+
+## D111 — The objective layer decides the match (and skirmish finally has one)
+
+**Status: landed.** The `ObjectiveSet` was built, unit-tested, and observed every tick — but
+it never *decided* a match. The only win-condition evaluator was `evaluate_outcome`
+(elimination, then a territory/resource timeout tiebreak), so a Hold/Push/Reach objective was
+cosmetic (it could complete or fail while the match ran on to elimination), and skirmish shipped
+an **empty** objective set. Three changes close it:
+
+1. **Objective outcomes end the match.** `ObjectiveSet::decided()` maps a `Won`/`Lost` mission
+   to `(MatchOutcome, EndReason)`; `session_shell::decide_match_end` folds it between elimination
+   (which still **outranks** it — a wipe reads as "your forces were eliminated", not the
+   objective it incidentally failed) and the timeout tiebreak. `MatchSummary` gains an
+   `EndReason` the post-match overlay draws as a readable reason line; a failed objective names
+   itself ("OBJECTIVE FAILED — HOLD THE LINE"), so every loss is honest (invariant #6).
+2. **Skirmish gets the canonical objective.** Both skirmish boot paths (code-seeded and library
+   map) now field `skirmish_eliminate` — defeat all enemy forces, keyed to the seeded enemy
+   strength — so the objective HUD shows a live goal and the match ends objective-shaped instead
+   of silently on elimination.
+3. **Reach/Escort can complete live.** The live `ObserveCtx` now feeds tracked entity positions
+   from the sim (`tracked_positions`); it was handed an empty slice, so those objectives could
+   never fire.
+
+**Why:** the objective system existed but wasn't wired to the thing that matters (who wins),
+and skirmish had no stated goal at all. All host-side (D34 keeps the evaluator out of `core`);
+the sim is untouched, so no checksum surface (invariants #1/#7). Files: `engine/src/objectives.rs`,
+`engine/src/session_shell.rs`, `engine/src/lib.rs`, `render/src/overlay.rs`, `core/src/shell.rs`
+(the `EndReason` presentation enum).
+
+## D112 — The sim owns the prop list; both views draw the real battlefield's props
+
+**Status: landed.** Props (crates, trees, rocks, barricades, turrets) were a render-side
+hardcoded `skirmish_obstacles()` call, drawn identically regardless of the loaded map, and a
+`MapSpec`'s authored `cover_props` fed only the sim cover grid — never drawn. Now the sim owns a
+static `obstacles` list (seeded once, outside the per-tick fold — like terrain), and the renderer
+*reads* it:
+
+- `MapSpec::apply` registers every authored `cover_prop` as a sim obstacle and paints the **solid**
+  (Heavy-tier) kinds `Impassable` under their footprint (Q24: you stop at the body you see), while
+  Light props stay passable concealment.
+- The embodied prop draw plan (`prop_draw_plan`/`render_world_meshes`) takes the obstacle list the
+  host hands in, so a library map's props draw exactly where the sim placed them.
+- The three fixed-force missions register the shared scenery set **draw-only** (no new impassable
+  cells) so their embodied views stay dressed without touching mission balance.
+
+**Why:** one sim-owned source means a prop can never again be visible-but-passable (or drawn where
+it isn't), and library maps finally look like themselves in first person. The list is static map
+data outside the checksum (invariants #1/#7). **Deferred:** the top-down command view still draws a
+map-agnostic procedural ground and no prop markers — cover-grid-driven ground shading and top-down
+props are the next visual pass. Files: `core/src/sim.rs`, `core/src/scenario.rs`,
+`engine/src/map_format.rs`, `render/src/lib.rs`, `engine/src/lib.rs`.
+
+## D113 — Per-node campaign battles: distinct seeds now, per-node force setups seamed
+
+**Status: landed (seeds + seams); per-node setup assignment owed.** The 12 campaign nodes (4
+conflicts × Seize/Hold/Push) all booted the same three scene seeders from the one `DEFAULT_SEED`,
+so archetype-sharing nodes ran the byte-identical battle — same spawns, same RNG, same replay,
+differing only in briefing prose. Two pieces landed:
+
+1. **Per-node seed.** `campaign_match_seed(node_index)` (a splitmix64 mix of `DEFAULT_SEED` and
+   the node's stable index) seeds each campaign match, so every node is a distinct battle (the
+   RNG-driven commander decisions, combat rolls, and reinforcement timing all diverge) while any
+   single node stays perfectly replayable and identical across platforms — the seed is shared
+   match config, like the army pick (invariant #7).
+2. **Battle-variation seams.** `SeizeSetup`/`HoldSetup`/`PushSetup` + `seed_*_mission_with_setup`
+   seeders let a node vary force sizes (and the deploy layout) with authored, clamped **integer**
+   parameters; every `Default` is the byte-identical baseline, so a node that names no variation
+   plays the shipped mission unchanged.
+
+**Why:** the seed alone makes the 12 battles *play* differently today; the setups are the seam for
+the richer "different force sizes / different objectives (assassinate, extract) per node" variety.
+**Owed:** thread a per-node setup + objective-variant through `mission_registry`/boot so specific
+nodes field distinct forces — the seams and the unused `mission_assassinate`/`mission_extract`
+objective sets are ready for it. Enemy-commander per-mission *knobs* (config, never new AI — D3)
+are part of that owed step. Files: `core/src/scenario.rs`, `engine/src/lib.rs`, `app/src/main.rs`.
