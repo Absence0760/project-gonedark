@@ -73,104 +73,12 @@ fn init_gpu() -> Option<Gpu> {
     Some(Gpu { device, queue })
 }
 
+// --- offscreen target / readback / png ----------------------------------------------------
+// Parameterized over `(w, h)`; every call site below passes the module's own `W`/`H` except the
+// 16:9 title-backdrop scene, which needs its own dimensions (the project memo: "viz is square so
+// render 16:9 to catch it"). One trio serves both instead of a fixed-size copy of each.
+
 /// An offscreen color target the renderer draws into, plus its view.
-fn make_target(device: &wgpu::Device) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("viz.target"),
-        size: wgpu::Extent3d {
-            width: W,
-            height: H,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    (texture, view)
-}
-
-/// Copy the target texture to a mappable buffer and read it back as tightly-packed RGBA8.
-fn read_pixels(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
-    let bpp = 4u32;
-    let unpadded = W * bpp;
-    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    let padded = unpadded.div_ceil(align) * align;
-
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("viz.readback"),
-        size: (padded * H) as u64,
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-
-    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("viz.readback_encoder"),
-    });
-    enc.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(padded),
-                rows_per_image: Some(H),
-            },
-        },
-        wgpu::Extent3d {
-            width: W,
-            height: H,
-            depth_or_array_layers: 1,
-        },
-    );
-    queue.submit(Some(enc.finish()));
-
-    let slice = buffer.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |r| {
-        let _ = tx.send(r);
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("poll the device for the readback map");
-    rx.recv().expect("map_async result").expect("buffer map ok");
-
-    let data = slice.get_mapped_range();
-    let mut out = Vec::with_capacity((unpadded * H) as usize);
-    for row in 0..H {
-        let start = (row * padded) as usize;
-        out.extend_from_slice(&data[start..start + unpadded as usize]);
-    }
-    drop(data);
-    buffer.unmap();
-    out
-}
-
-fn save_png(path: &str, rgba: &[u8]) {
-    let file = std::fs::File::create(path).expect("create png");
-    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), W, H);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    encoder
-        .write_header()
-        .expect("png header")
-        .write_image_data(rgba)
-        .expect("png data");
-}
-
-// --- arbitrary-size target / readback / png (for the 16:9 title-backdrop scene) -----------------
-// The default helpers above bake in the square 512² (`W`/`H`); the title backdrop is rendered at a
-// wide 16:9 so a viewport-stretch bug would show (the project memo: "viz is square so render 16:9 to
-// catch it"). These mirror `make_target`/`read_pixels`/`save_png` with explicit dimensions.
-
 fn make_target_sized(device: &wgpu::Device, w: u32, h: u32) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("viz.target.sized"),
@@ -618,7 +526,7 @@ fn spectator_scene(gpu: &Gpu, target: &wgpu::Texture, view: &wgpu::TextureView, 
             g.spectate_frame(&replay.merged_for(t), (W, H), &gpu.device, &gpu.queue, view);
             stream.push(g.checksum());
             if capture_at.contains(&t) {
-                frames.push((t, read_pixels(&gpu.device, &gpu.queue, target)));
+                frames.push((t, read_pixels_sized(&gpu.device, &gpu.queue, target, W, H)));
             }
         }
         (stream, frames)
@@ -629,7 +537,7 @@ fn spectator_scene(gpu: &Gpu, target: &wgpu::Texture, view: &wgpu::TextureView, 
     let (rendered_stream_2, _) = run(&replay);
 
     for (t, rgba) in &frames {
-        save_png(&format!("target/viz/spectator/tick_{t:03}.png"), rgba);
+        save_png_sized(&format!("target/viz/spectator/tick_{t:03}.png"), rgba, W, H);
     }
 
     // (a) Faithfulness: the rendered playback's per-tick checksum stream is bit-identical to the
@@ -715,7 +623,7 @@ fn main() {
         return; // exit 0: a missing GPU is not a visual failure.
     };
     std::fs::create_dir_all("target/viz").expect("create target/viz");
-    let (target, view) = make_target(&gpu.device);
+    let (target, view) = make_target_sized(&gpu.device, W, H);
 
     // PC-3 rendered spectator mode (`--spectator`, `pnpm desktop:viz:spectator`): play a recorded
     // replay back through the real render path. Runs ONLY the spectator scene, then reports.
@@ -740,8 +648,8 @@ fn main() {
     println!("[command] top-down view should draw player + enemy units on the lit field");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     advance(&mut g, 40, InputFrame::default(), &gpu, &view);
-    let cmd = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/command.png", &cmd);
+    let cmd = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/command.png", &cmd, W, H);
     let (blue, red, dark) = (
         count(&cmd, is_player_blue),
         count(&cmd, is_enemy_red),
@@ -824,8 +732,8 @@ fn main() {
     );
     // Settle a few frames so the highlighted units render steadily, then read back.
     advance(&mut g, 4, InputFrame::default(), &gpu, &view);
-    let sel = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/selected.png", &sel);
+    let sel = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/selected.png", &sel, W, H);
     let sel_rim = count(&sel, is_select_rim);
     check(
         &mut failures,
@@ -863,7 +771,7 @@ fn main() {
     );
     advance(&mut g, 2, InputFrame::default(), &gpu, &view);
     // Baseline: the selection is up but no long-press → no radial chrome on the frame.
-    let pre_menu = read_pixels(&gpu.device, &gpu.queue, &target);
+    let pre_menu = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let pre_wedge = count(&pre_menu, is_radial_wedge);
     // Hold a long-press anchored at the screen center (a pointer, no down/up edge so the selection
     // is untouched; no command_slot so it is a Preview, not a Commit) → the menu opens.
@@ -882,8 +790,8 @@ fn main() {
         &mut NullAudio,
         &NullThermal,
     );
-    let radial = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/radial.png", &radial);
+    let radial = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/radial.png", &radial, W, H);
     let radial_wedge = count(&radial, is_radial_wedge);
     check(
         &mut failures,
@@ -904,7 +812,7 @@ fn main() {
     println!("[marquee] a band-drag in progress draws the selection box (command-view affordance)");
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     advance(&mut g, 2, InputFrame::default(), &gpu, &view);
-    let pre_drag = read_pixels(&gpu.device, &gpu.queue, &target);
+    let pre_drag = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let pre_rim = count_rect(&pre_drag, 150, 150, 380, 380, is_marquee_rim); // no box yet → ~0
                                                    // Press at one corner, then a second frame still HELD at the opposite corner (no pointer_up).
     let press = InputFrame {
@@ -937,8 +845,8 @@ fn main() {
         &mut NullAudio,
         &NullThermal,
     );
-    let drag = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/marquee.png", &drag);
+    let drag = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/marquee.png", &drag, W, H);
     let drag_rim = count_rect(&drag, 150, 150, 380, 380, is_marquee_rim);
     check(
         &mut failures,
@@ -977,8 +885,8 @@ fn main() {
         &NullThermal,
     );
     advance(&mut g, 2, InputFrame::default(), &gpu, &view); // settle, before combat raises alerts
-    let dark_frame = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/embodied_dark.png", &dark_frame);
+    let dark_frame = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/embodied_dark.png", &dark_frame, W, H);
     let dark_dk = dark_fraction(&dark_frame);
     let dark_nondark = (dark_frame.len() / 4) - count(&dark_frame, is_dark);
     let embodied_blue = count(&dark_frame, is_player_blue);
@@ -1037,7 +945,7 @@ fn main() {
     );
     // Capture a no-alert baseline of the SAME embodied scene first (the world + avatar, before any
     // alerts), so the marker delta isolates the HUD overlay rather than the world itself.
-    let pre_alert = read_pixels(&gpu.device, &gpu.queue, &target);
+    let pre_alert = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let pre_marker = count(&pre_alert, is_alert_marker);
     // Drive combat, re-possessing a live unit after every avatar death so the fight is fought (and
     // asserted) in first person, and keep the embodied frame with the most alert markers. Combat
@@ -1067,7 +975,7 @@ fn main() {
         // Only a frame that is embodied AND has no shell overlay (pause / post-match summary) up is
         // a valid sample of the dark first-person combat view.
         if g.is_embodied() && !g.shell_overlay_active() {
-            let f = read_pixels(&gpu.device, &gpu.queue, &target);
+            let f = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
             let m = count(&f, is_alert_marker);
             if !captured_embodied || m >= hud_marker {
                 hud_marker = m;
@@ -1076,7 +984,7 @@ fn main() {
             }
         }
     }
-    save_png("target/viz/embodied_hud.png", &hud_frame);
+    save_png_sized("target/viz/embodied_hud.png", &hud_frame, W, H);
     // Guard: we must have actually held a genuinely embodied combat frame. If we never could (every
     // player unit died before we re-possessed), the scenario proves nothing — fail loudly rather
     // than assert against a stale/command frame (the exact trap the old version fell into).
@@ -1133,8 +1041,8 @@ fn main() {
     // predicate can key on, unlike the red-green ramp whose blue/orange sit adjacent to the defaults.
     g.set_accessibility_prefs(true, true, PaletteMode::Tritanopia);
     advance(&mut g, 40, InputFrame::default(), &gpu, &view);
-    let cmd_cvd = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/command_cvd.png", &cmd_cvd);
+    let cmd_cvd = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/command_cvd.png", &cmd_cvd, W, H);
     check(
         &mut failures,
         "cvd_command_not_dark",
@@ -1158,7 +1066,7 @@ fn main() {
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     g.set_accessibility_prefs(true, true, PaletteMode::Deuteranopia);
     g.frame(&embody, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio, &NullThermal);
-    let a11y_pre = read_pixels(&gpu.device, &gpu.queue, &target);
+    let a11y_pre = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let a11y_pre_marker = count(&a11y_pre, is_alert_marker);
     let mut a11y_marker = 0usize;
     let mut a11y_frame: Vec<u8> = Vec::new();
@@ -1171,7 +1079,7 @@ fn main() {
         };
         g.frame(&input, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio, &NullThermal);
         if g.is_embodied() && !g.shell_overlay_active() {
-            let f = read_pixels(&gpu.device, &gpu.queue, &target);
+            let f = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
             let m = count(&f, is_alert_marker);
             if !a11y_captured || m >= a11y_marker {
                 a11y_marker = m;
@@ -1180,7 +1088,7 @@ fn main() {
             }
         }
     }
-    save_png("target/viz/embodied_a11y.png", &a11y_frame);
+    save_png_sized("target/viz/embodied_a11y.png", &a11y_frame, W, H);
     check(
         &mut failures,
         "a11y_embodied_frame_captured",
@@ -1210,7 +1118,7 @@ fn main() {
     // drawn, but no shot has fired — so the muzzle-flash count must be ~0 here. This makes the check
     // a real delta and proves the predicate isn't just catching static overlay chrome.
     advance(&mut g, 8, InputFrame::default(), &gpu, &view);
-    let pre = read_pixels(&gpu.device, &gpu.queue, &target);
+    let pre = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let pre_muzzle = count(&pre, is_muzzle_flash);
     // A flash lasts MUZZLE_FLASH_TICKS (8) per shot on a ~30-tick cooldown, so any single frame may
     // fall in a cooldown gap. Sample the whole engagement (the squads close, trade, and die out) and
@@ -1219,14 +1127,14 @@ fn main() {
     let mut muzzle_frame: Vec<u8> = Vec::new();
     for _ in 0..220 {
         advance(&mut g, 1, InputFrame::default(), &gpu, &view);
-        let f = read_pixels(&gpu.device, &gpu.queue, &target);
+        let f = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
         let m = count(&f, is_muzzle_flash);
         if m >= best_muzzle {
             best_muzzle = m;
             muzzle_frame = f;
         }
     }
-    save_png("target/viz/combat_muzzle.png", &muzzle_frame);
+    save_png_sized("target/viz/combat_muzzle.png", &muzzle_frame, W, H);
     check(
         &mut failures,
         "command_muzzle_flash_drawn",
@@ -1243,8 +1151,8 @@ fn main() {
     println!("[embodied_kill] holding fire while embodied kills the enemies under the crosshair");
     let mut g = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Infantry);
     advance(&mut g, 4, InputFrame::default(), &gpu, &view); // settle the camera/world
-    let before = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/embodied_kill_before.png", &before);
+    let before = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/embodied_kill_before.png", &before, W, H);
     // WS-4 baseline: BEFORE any shot connects there is no hitmarker, so the center crop holds no
     // bright near-white. (The embodied world center is the muted blue-grey horizon.) This makes the
     // hitmarker check below a real delta — the "X" appears where ~zero was.
@@ -1265,14 +1173,14 @@ fn main() {
     let mut hit_frame: Vec<u8> = before.clone();
     for _ in 0..160 {
         advance_holding(&mut g, 1, fire.clone(), &gpu, &view);
-        let f = read_pixels(&gpu.device, &gpu.queue, &target);
+        let f = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
         let c = count_center(&f, 48, is_hitmarker);
         if c >= best_hit_center {
             best_hit_center = c;
             hit_frame = f;
         }
     }
-    save_png("target/viz/embodied_kill_after.png", &hit_frame);
+    save_png_sized("target/viz/embodied_kill_after.png", &hit_frame, W, H);
     let enemies_after = g.alive_unit_count(Faction::Enemy);
     check(
         &mut failures,
@@ -1300,12 +1208,12 @@ fn main() {
     println!("[map_inspect] the baked Pointe du Hoc map draws its cover grid in the debug overlay");
     let mut g = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::MapInspect);
     advance(&mut g, 2, InputFrame::default(), &gpu, &view); // settle the camera on the command view
-    let overlay_on = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/map_inspect.png", &overlay_on);
+    let overlay_on = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/map_inspect.png", &overlay_on, W, H);
     g.toggle_debug_hitboxes(); // F3: cover overlay OFF
     advance(&mut g, 1, InputFrame::default(), &gpu, &view);
-    let overlay_off = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/map_inspect_no_overlay.png", &overlay_off);
+    let overlay_off = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/map_inspect_no_overlay.png", &overlay_off, W, H);
     let changed = overlay_on
         .chunks_exact(4)
         .zip(overlay_off.chunks_exact(4))
@@ -1353,14 +1261,14 @@ fn main() {
 
     let mut teach = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Mission1);
     advance(&mut teach, 1, embody.clone(), &gpu, &view); // one embody frame → go dark → WentDark fires
-    let teach_frame = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/teach_prompt.png", &teach_frame);
+    let teach_frame = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/teach_prompt.png", &teach_frame, W, H);
     let teach_embodied = teach.is_embodied();
     let teach_ink = card_band_ink(&teach_frame);
 
     let mut control = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Default);
     advance(&mut control, 1, embody.clone(), &gpu, &view); // same embodied view, no teach
-    let control_frame = read_pixels(&gpu.device, &gpu.queue, &target);
+    let control_frame = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let control_embodied = control.is_embodied();
     let control_ink = card_band_ink(&control_frame);
 
@@ -1392,12 +1300,12 @@ fn main() {
     g.set_base_fov(gonedark_engine::EMBODIED_FOV_MIN_DEG); // 60° — the narrow floor
     advance(&mut g, 3, InputFrame::default(), &gpu, &view);
     let fov_embodied = g.is_embodied();
-    let narrow = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/fov_narrow.png", &narrow);
+    let narrow = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/fov_narrow.png", &narrow, W, H);
     g.set_base_fov(gonedark_engine::EMBODIED_FOV_MAX_DEG); // 110° — the wide ceiling
     advance(&mut g, 1, InputFrame::default(), &gpu, &view);
-    let wide = read_pixels(&gpu.device, &gpu.queue, &target);
-    save_png("target/viz/fov_wide.png", &wide);
+    let wide = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
+    save_png_sized("target/viz/fov_wide.png", &wide, W, H);
     let fov_changed = narrow
         .chunks_exact(4)
         .zip(wide.chunks_exact(4))
