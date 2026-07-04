@@ -503,7 +503,8 @@ mod tests {
 
     #[test]
     fn scenario_tag_and_token_roundtrip() {
-        for s in [Scenario::SkirmishScript] {
+        {
+            let s = Scenario::SkirmishScript;
             assert_eq!(Scenario::from_tag(s.tag()), Some(s));
             assert_eq!(Scenario::parse(s.token()), Some(s));
         }
@@ -729,7 +730,7 @@ mod tests {
             SEED,
             5,
             2,
-            [(1u64, 1 as PeerId, vec![b.clone()]), (1u64, 0 as PeerId, vec![a.clone()])],
+            [(1u64, 1 as PeerId, vec![b]), (1u64, 0 as PeerId, vec![a])],
         );
         let merged = replay.merged_for(1);
         let mut got = Vec::new();
