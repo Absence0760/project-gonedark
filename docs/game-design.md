@@ -244,5 +244,7 @@ same footing as the win/lose evaluator, fog, and alerts). Full design:
 [`pve-campaign.md`](pve-campaign.md); build sequencing: [`pve-campaign-plan.md`](plans/pve-campaign-plan.md).
 What sits beside the campaign — free-pick Skirmish and the PvP meta (army select, map
 pools, ranking) — is the mode taxonomy in [`modes.md`](modes.md); the campaign's world-map/
-timeline presentation shipped on desktop as the navigable conflict atlas (D104), with the
-remaining forks in [Q28](open-questions.md#q28--conflict-atlas).
+timeline presentation shipped on desktop as the navigable conflict atlas (D104), which now
+opens each war onto its **battlefield overview** — the globe zoomed to that war's ground,
+one progress-toned pin per battle (D106) — with the remaining forks in
+[Q28](open-questions.md#q28--conflict-atlas).

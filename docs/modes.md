@@ -4,7 +4,8 @@
 > **match-setup surfaces** the roadmap scopes as Phase 4 "Match setup" and "Lobby &
 > matchmaking" ([`roadmap.md`](roadmap.md)). The campaign's own design lives in
 > [`pve-campaign.md`](pve-campaign.md) (+ the conflict atlas — desktop ships the D104
-> navigable globe; remaining forks in [Q28](open-questions.md#q28--conflict-atlas)); this doc covers what sits *beside* it:
+> navigable globe, opening each war onto its D106 battlefield overview; remaining forks in
+> [Q28](open-questions.md#q28--conflict-atlas)); this doc covers what sits *beside* it:
 > free-pick **Skirmish**, and the PvP meta — army selection, map selection, and ranking.
 > PvP timing is locked by [D58](decisions.md): **PvE-first, PvP fast-follow**; nothing here
 > reorders that.
@@ -59,7 +60,8 @@ own persistence; none leaks its rules into the others.
 
 Fully designed elsewhere: the Operations hub node graph ([`pve-campaign.md`](pve-campaign.md),
 [D58](decisions.md)/[D59](decisions.md)), difficulty/replay ([D83](decisions.md)), and the
-conflict-atlas presentation (desktop: the D104 navigable globe; [Q28](open-questions.md#q28--conflict-atlas)). The one
+conflict-atlas presentation (desktop: the D104 navigable globe opening onto the D106
+per-battle battlefield overview; [Q28](open-questions.md#q28--conflict-atlas)). The one
 rule this doc adds: **the campaign never grows a map picker or an opponent picker** — a
 mission's map, factions, and commander tier are authored content. If a player wants to
 choose, that's what the other two doors are for.
@@ -182,9 +184,9 @@ The competitive spine, and the only part of PvP that is genuinely *new* system d
   [Q29](open-questions.md#q29--pvp-rating--ranked-season-design), lean **Glicko-2** (1v1,
   rating deviation handles sparse mobile play patterns). Leaderboards ride the Postgres
   schema already scoped in [`infrastructure.md`](infrastructure.md).
-- **Seasons.** Align season turnover with content drops — if the conflict atlas
-  ([Q28](open-questions.md#q28--conflict-atlas)) lands, a season and a conflict drop are
-  naturally the same beat (new maps → new ranked pool → soft reset).
+- **Seasons.** Align season turnover with content drops — the conflict atlas is live
+  (D104–D106) and conflicts ship as self-contained drops (D105), so a season and a
+  conflict drop are naturally the same beat (new maps → new ranked pool → soft reset).
 - **Rewards are cosmetic-only.** Rank rewards obey [D13](decisions.md) exactly as the
   store does — titles, skins, calling-card cosmetics; never power, never gunsmith
   exclusives with sim effect.
