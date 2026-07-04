@@ -218,12 +218,24 @@ pub enum ModelKind {
     TankTiger,
     /// German WW2 heavy turret (big boxy turret + long 88mm gun), yawed by `turret_yaw` (P7).
     TankTurretTiger,
+    // --- WW2 per-army infantry + weapon silhouettes (D122). Presentation-only per-army WW2 troopers
+    // and first-person rifle viewmodels, resolved by [`crate::model_for_unit`] / [`crate::weapon_model_for`]
+    // for [`Army::UsWw2`]/[`Army::Germany`]. They never reach `core` (no checksum surface). Appended so
+    // the existing discriminants stay put. ---
+    /// US WW2 GI infantry silhouette (M1 steel pot + horseshoe blanket roll, M1928 haversack, leggings).
+    TrooperUsWw2,
+    /// German WW2 Wehrmacht infantry silhouette (M1935 Stahlhelm, jackboots, gas-mask canister).
+    TrooperGermany,
+    /// US M1 Garand first-person viewmodel (full-length wood stock, op-rod tube, en-bloc mag).
+    WeaponRifleUsWw2,
+    /// German Kar98k first-person viewmodel (bolt-action, long upper handguard, turned-down bolt).
+    WeaponRifleGermany,
 }
 
 impl ModelKind {
     /// Every kind, in canonical (enum-discriminant) order. Faction silhouettes (WS-C) are appended
     /// after the shared kinds so existing discriminants stay put.
-    pub const ALL: [ModelKind; 27] = [
+    pub const ALL: [ModelKind; 31] = [
         ModelKind::Trooper,
         ModelKind::Tank,
         ModelKind::TankTurret,
@@ -251,6 +263,10 @@ impl ModelKind {
         ModelKind::TankTurretSherman,
         ModelKind::TankTiger,
         ModelKind::TankTurretTiger,
+        ModelKind::TrooperUsWw2,
+        ModelKind::TrooperGermany,
+        ModelKind::WeaponRifleUsWw2,
+        ModelKind::WeaponRifleGermany,
     ];
 
     /// The cooked `.mesh` bytes for every LOD tier, embedded at build time so they ride into the
@@ -397,6 +413,27 @@ impl ModelKind {
                 include_bytes!("../../assets/models/units/tiger_turret.lod1.mesh"),
                 include_bytes!("../../assets/models/units/tiger_turret.lod2.mesh"),
             ],
+            // --- WW2 per-army infantry + weapon silhouettes (D122) ---
+            ModelKind::TrooperUsWw2 => [
+                include_bytes!("../../assets/models/units/trooper_us_ww2.mesh"),
+                include_bytes!("../../assets/models/units/trooper_us_ww2.lod1.mesh"),
+                include_bytes!("../../assets/models/units/trooper_us_ww2.lod2.mesh"),
+            ],
+            ModelKind::TrooperGermany => [
+                include_bytes!("../../assets/models/units/trooper_germany.mesh"),
+                include_bytes!("../../assets/models/units/trooper_germany.lod1.mesh"),
+                include_bytes!("../../assets/models/units/trooper_germany.lod2.mesh"),
+            ],
+            ModelKind::WeaponRifleUsWw2 => [
+                include_bytes!("../../assets/models/weapons/weapon_rifle_us_ww2.mesh"),
+                include_bytes!("../../assets/models/weapons/weapon_rifle_us_ww2.lod1.mesh"),
+                include_bytes!("../../assets/models/weapons/weapon_rifle_us_ww2.lod2.mesh"),
+            ],
+            ModelKind::WeaponRifleGermany => [
+                include_bytes!("../../assets/models/weapons/weapon_rifle_germany.mesh"),
+                include_bytes!("../../assets/models/weapons/weapon_rifle_germany.lod1.mesh"),
+                include_bytes!("../../assets/models/weapons/weapon_rifle_germany.lod2.mesh"),
+            ],
         }
     }
 
@@ -444,6 +481,14 @@ impl ModelKind {
             ModelKind::TankTurretSherman => [0.24, 0.27, 0.16], // matches the Sherman hull
             ModelKind::TankTiger => [0.22, 0.23, 0.20],
             ModelKind::TankTurretTiger => [0.22, 0.23, 0.20], // matches the German hull
+            // WW2 per-army infantry + weapons (D122). Mirrors COLORS in gen_models.py — US WW2 olive
+            // drab, DE feldgrau; the wood rifles read warm. A unit token's faction tint overrides the
+            // trooper tint at draw time; these are the greybox fallbacks (the rifles are mask-0 multi-
+            // material, so the viewmodel renders their own wood/steel albedo, not this fallback).
+            ModelKind::TrooperUsWw2 => [0.24, 0.27, 0.16],
+            ModelKind::TrooperGermany => [0.26, 0.27, 0.22],
+            ModelKind::WeaponRifleUsWw2 => [0.20, 0.13, 0.08],
+            ModelKind::WeaponRifleGermany => [0.17, 0.11, 0.07],
         }
     }
 }

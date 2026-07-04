@@ -1513,6 +1513,230 @@
           "cooked_sha256": "06710e2a3a5eb1ecaf57848a269b5f49d12297e60ff38977bb70c3cdc26aeefd"
         }
       ]
+    },
+    {
+      "name": "trooper_us_ww2",
+      "category": "units",
+      "file": "units/trooper_us_ww2.glb",
+      "cooked": "units/trooper_us_ww2.mesh",
+      "description": "US WW2 GI \u2014 skinned infantryman under an M1 steel pot with the iconic horseshoe blanket roll, M1928 haversack and canvas leggings (D122).",
+      "base_color": [
+        0.24,
+        0.27,
+        0.16
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 22196,
+      "sha256": "e15f1bd47aa4fe673c535fb717d13cd3139040755817583c6d5ab7ec5ad87e56",
+      "cooked_bytes": 184020,
+      "cooked_sha256": "dc4879ecfa5ec8967f626fdf4f219db7f54e9074f60dabc4361a8adb47c34ff6",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/trooper_us_ww2.glb",
+          "cooked": "units/trooper_us_ww2.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 1394,
+          "bytes": 22196,
+          "sha256": "e15f1bd47aa4fe673c535fb717d13cd3139040755817583c6d5ab7ec5ad87e56",
+          "cooked_bytes": 184020,
+          "cooked_sha256": "dc4879ecfa5ec8967f626fdf4f219db7f54e9074f60dabc4361a8adb47c34ff6"
+        },
+        {
+          "level": 1,
+          "file": "units/trooper_us_ww2.lod1.glb",
+          "cooked": "units/trooper_us_ww2.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 821,
+          "bytes": 14104,
+          "sha256": "700a6b86ff1ddf2f3d0733542a172d04baeb52c9611b58517cd4e8f26ea2a9e6",
+          "cooked_bytes": 108384,
+          "cooked_sha256": "d3373e1859335225a73fced4c0d34e9e8c783933fc8a487e829bc0cf78789f3d"
+        },
+        {
+          "level": 2,
+          "file": "units/trooper_us_ww2.lod2.glb",
+          "cooked": "units/trooper_us_ww2.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 585,
+          "bytes": 11224,
+          "sha256": "9c655b9fb582641c032d36ec15ed2479cdb330bd8ad9ca1eeae364f9424ea52e",
+          "cooked_bytes": 77232,
+          "cooked_sha256": "e0d07d11251a480357fb4826037b7cd8b62adb77114a468e85f853bc298c34ca"
+        }
+      ]
+    },
+    {
+      "name": "trooper_germany",
+      "category": "units",
+      "file": "units/trooper_germany.glb",
+      "cooked": "units/trooper_germany.mesh",
+      "description": "German WW2 rifleman \u2014 skinned infantryman under an M1935 Stahlhelm with jackboots, a slung gas-mask canister, bread bag and small pack (D122).",
+      "base_color": [
+        0.26,
+        0.27,
+        0.22
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 22140,
+      "sha256": "21a167d43eeb7ea0d4c4768da1c97e4f933d60c694efff76d49512970d8c5df1",
+      "cooked_bytes": 187320,
+      "cooked_sha256": "7920c46042f30a71875a38e09645b11fc15c9b9c60cc1a1bd9c1ee5e7554bf44",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/trooper_germany.glb",
+          "cooked": "units/trooper_germany.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 1419,
+          "bytes": 22140,
+          "sha256": "21a167d43eeb7ea0d4c4768da1c97e4f933d60c694efff76d49512970d8c5df1",
+          "cooked_bytes": 187320,
+          "cooked_sha256": "7920c46042f30a71875a38e09645b11fc15c9b9c60cc1a1bd9c1ee5e7554bf44"
+        },
+        {
+          "level": 1,
+          "file": "units/trooper_germany.lod1.glb",
+          "cooked": "units/trooper_germany.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 827,
+          "bytes": 14204,
+          "sha256": "6c59de3cb8f323e929bacb865b138a31cfcd9483eeb29c79c47f4a8fe93371b7",
+          "cooked_bytes": 109176,
+          "cooked_sha256": "e2812cfce2fafd839786e1d5c4f0a3f7279028ca96f626579070ca37050f3956"
+        },
+        {
+          "level": 2,
+          "file": "units/trooper_germany.lod2.glb",
+          "cooked": "units/trooper_germany.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 590,
+          "bytes": 11328,
+          "sha256": "ee27e70d621ce17767552404a043dd70d756be49a150ff0d2f9c85d44e78b267",
+          "cooked_bytes": 77892,
+          "cooked_sha256": "94ec50a6549b80fafab2a4da9172a07bad95b122a500eaec6ffc0f7ed4ed3899"
+        }
+      ]
+    },
+    {
+      "name": "weapon_rifle_us_ww2",
+      "category": "weapons",
+      "file": "weapons/weapon_rifle_us_ww2.glb",
+      "cooked": "weapons/weapon_rifle_us_ww2.mesh",
+      "description": "US M1 Garand viewmodel \u2014 a full-length wood-stock semi-auto with the op-rod/gas tube under the barrel and an internal en-bloc magazine (D122).",
+      "base_color": [
+        0.2,
+        0.13,
+        0.08
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 9032,
+      "sha256": "0f678d56b1b79354cb745d4f8a4d9908e757e406b65f8f88739b551e8e98b607",
+      "cooked_bytes": 78684,
+      "cooked_sha256": "acd5da07510a918bf7a2e4e9bcacacbdf1b2b856e8384010e4d4e78a38a0f68d",
+      "lods": [
+        {
+          "level": 0,
+          "file": "weapons/weapon_rifle_us_ww2.glb",
+          "cooked": "weapons/weapon_rifle_us_ww2.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 596,
+          "bytes": 9032,
+          "sha256": "0f678d56b1b79354cb745d4f8a4d9908e757e406b65f8f88739b551e8e98b607",
+          "cooked_bytes": 78684,
+          "cooked_sha256": "acd5da07510a918bf7a2e4e9bcacacbdf1b2b856e8384010e4d4e78a38a0f68d"
+        },
+        {
+          "level": 1,
+          "file": "weapons/weapon_rifle_us_ww2.lod1.glb",
+          "cooked": "weapons/weapon_rifle_us_ww2.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 298,
+          "bytes": 5204,
+          "sha256": "42740aca574021c1ee3f9f853c3abc0a388b22a29847e4c08916ceb211fcc20c",
+          "cooked_bytes": 39348,
+          "cooked_sha256": "5b16e2380f6db6989460e8ec2e6789256dae7ab97152b9853a94589bff6d4639"
+        },
+        {
+          "level": 2,
+          "file": "weapons/weapon_rifle_us_ww2.lod2.glb",
+          "cooked": "weapons/weapon_rifle_us_ww2.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 144,
+          "bytes": 3356,
+          "sha256": "b22b0f0854ff3f39a29eae00d9fe2d8505cafe2dcb75506cc1ff91bc5d2f13ce",
+          "cooked_bytes": 19020,
+          "cooked_sha256": "d738c9a889c901a58b361fea1d6b6e043e7012536cf3e4342d6c7998770e57ba"
+        }
+      ]
+    },
+    {
+      "name": "weapon_rifle_germany",
+      "category": "weapons",
+      "file": "weapons/weapon_rifle_germany.glb",
+      "cooked": "weapons/weapon_rifle_germany.mesh",
+      "description": "German Kar98k viewmodel \u2014 a bolt-action rifle with a near-full-length wood stock, long upper handguard, and the turned-down bolt handle (D122).",
+      "base_color": [
+        0.17,
+        0.11,
+        0.07
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 9584,
+      "sha256": "eddad83592674975a57a2aa845d2c3ca5dd06aaa25e382fcf42a7d05c01a61cf",
+      "cooked_bytes": 84492,
+      "cooked_sha256": "81ca1db61c1022b53f7bc8c17e1b47c0b47149abde899f6aef6b9159ac6107b1",
+      "lods": [
+        {
+          "level": 0,
+          "file": "weapons/weapon_rifle_germany.glb",
+          "cooked": "weapons/weapon_rifle_germany.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 640,
+          "bytes": 9584,
+          "sha256": "eddad83592674975a57a2aa845d2c3ca5dd06aaa25e382fcf42a7d05c01a61cf",
+          "cooked_bytes": 84492,
+          "cooked_sha256": "81ca1db61c1022b53f7bc8c17e1b47c0b47149abde899f6aef6b9159ac6107b1"
+        },
+        {
+          "level": 1,
+          "file": "weapons/weapon_rifle_germany.lod1.glb",
+          "cooked": "weapons/weapon_rifle_germany.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 316,
+          "bytes": 5436,
+          "sha256": "c076a6bec2d4a5479e03e5b29419e7ecb2d7eea0f49210f3dc4db7ad3244f74f",
+          "cooked_bytes": 41724,
+          "cooked_sha256": "e80c6ae07c360f5058c927a62b95ebf5e4f228c29c4cfee7a8cd2d6ca926a355"
+        },
+        {
+          "level": 2,
+          "file": "weapons/weapon_rifle_germany.lod2.glb",
+          "cooked": "weapons/weapon_rifle_germany.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 152,
+          "bytes": 3440,
+          "sha256": "5e3c388e1d142b622d4f5034b8eb7d4f531ead9b5010e70bab77876dc19f825c",
+          "cooked_bytes": 20076,
+          "cooked_sha256": "770cd17638bea43ff556d7bc0cfcc3f00bcb00e7c823fc02ded7baf834c737e9"
+        }
+      ]
     }
   ]
 }
