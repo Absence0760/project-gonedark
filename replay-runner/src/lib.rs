@@ -102,8 +102,9 @@ impl Replay {
         if version != FORMAT_VERSION {
             return Err(ReplayError::BadVersion(version));
         }
-        let scenario = Scenario::from_tag(r.u8()?)
-            .ok_or(ReplayError::BadTag { what: "scenario", tag: 0xFF })?;
+        let tag = r.u8()?;
+        let scenario =
+            Scenario::from_tag(tag).ok_or(ReplayError::BadTag { what: "scenario", tag })?;
         let seed = r.u64()?;
         let ticks = r.u64()?;
         let entries = r.u32()?;
@@ -607,6 +608,24 @@ mod tests {
         let mut extra = bytes.clone();
         extra.push(0xAB);
         assert_eq!(Replay::decode(&extra).unwrap_err(), ReplayError::TrailingBytes);
+    }
+
+    #[test]
+    fn decode_reports_the_actual_bad_scenario_tag() {
+        // The error must carry the byte actually read from the stream, not a hardcoded
+        // placeholder — so we deliberately feed tags that are NOT 0xFF (the old hardcode)
+        // and assert the reported tag round-trips the fed byte.
+        for bad_tag in [0x01u8, 0x7C, 0xFF] {
+            assert_eq!(Scenario::from_tag(bad_tag), None, "test needs an unknown tag");
+            let mut bytes = MAGIC.to_vec();
+            bytes.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+            bytes.push(bad_tag);
+            assert_eq!(
+                Replay::decode(&bytes).unwrap_err(),
+                ReplayError::BadTag { what: "scenario", tag: bad_tag },
+                "decode must report the scenario tag it actually read ({bad_tag:#04x})"
+            );
+        }
     }
 
     // ===================================================================

@@ -49,6 +49,7 @@ fn spawn(sim: &mut Sim, x: i32, y: i32, faction: Faction, kind: UnitKind) {
     let e = sim.world.spawn();
     let i = e.index as usize;
     sim.world.kind[i] = EntityKind::Unit;
+    sim.world.unit_kind[i] = kind;
     sim.world.faction[i] = faction;
     sim.world.pos[i] = v(x, y);
     sim.world.health[i] = health;
@@ -221,7 +222,7 @@ pub fn equal_cost_outcome(budget: i64, sep: i32) -> (u64, u32, u32) {
 
 /// Spawn a unit with its FULL produced loadout — `unit_stats` health+weapon, the `unit_armor`
 /// directional plate, and an explicit `hull_heading` — exactly as the real production path
-/// (`economy::economy_system`) spawns it. The base [`spawn`] helper omits `unit_kind`/`armor`
+/// (`economy::economy_system`) spawns it. The base [`spawn`] helper omits `armor`/`hull_heading`
 /// (harmless for the unarmoured infantry it was written for, where armour is the no-op default);
 /// measuring the armoured Tank REQUIRES them, or the tank would (wrongly) take full damage from
 /// penetration-0 fire and resolve no facets. Float-free.
@@ -321,6 +322,7 @@ fn spawn_army(sim: &mut Sim, x: i32, y: i32, faction: Faction, army: Army, kind:
     let e = sim.world.spawn();
     let i = e.index as usize;
     sim.world.kind[i] = EntityKind::Unit;
+    sim.world.unit_kind[i] = kind;
     sim.world.faction[i] = faction;
     sim.world.pos[i] = v(x, y);
     sim.world.health[i] = health;
@@ -740,6 +742,40 @@ mod tests {
         // The Medic is shared across every army (no fair combat surface to tilt — see economy.rs).
         for army in [Army::Neutral, Army::Us, Army::Fr] {
             assert_eq!(economy::unit_stats_for(army, UnitKind::Medic), economy::unit_stats(UnitKind::Medic));
+        }
+    }
+
+    /// Regression: the [`spawn`] / [`spawn_army`] helpers must tag `world.unit_kind` with the
+    /// *requested* kind. They used to omit the write, so a spawned Heavy was silently left at the
+    /// slot default (`Rifleman`) — harmless to combat (health/weapon carry the stats) but a lie to
+    /// every `unit_kind` reader (the Medic heal check, snapshot/render metadata).
+    #[test]
+    fn spawn_helpers_tag_the_requested_unit_kind() {
+        let mut sim = Sim::new(0x5EED_71ED);
+        // Distinguish the spawns by position; each row gets a different requested kind.
+        spawn(&mut sim, 0, 0, Faction::Player, UnitKind::Heavy);
+        spawn(&mut sim, 0, 1, Faction::Enemy, UnitKind::Medic);
+        spawn_army(&mut sim, 0, 2, Faction::Player, Army::Us, UnitKind::Tank);
+        spawn_army(&mut sim, 0, 3, Faction::Enemy, Army::Fr, UnitKind::Heavy);
+        let expected = [
+            (v(0, 0), UnitKind::Heavy),
+            (v(0, 1), UnitKind::Medic),
+            (v(0, 2), UnitKind::Tank),
+            (v(0, 3), UnitKind::Heavy),
+        ];
+        for (pos, kind) in expected {
+            let i = (0..sim.world.capacity())
+                .find(|&i| {
+                    sim.world.is_index_alive(i)
+                        && sim.world.kind[i] == EntityKind::Unit
+                        && sim.world.pos[i] == pos
+                })
+                .expect("spawned unit found at its spawn position");
+            assert_eq!(
+                sim.world.unit_kind[i], kind,
+                "spawn helper must tag the requested unit_kind (got {:?}, want {kind:?})",
+                sim.world.unit_kind[i]
+            );
         }
     }
 
