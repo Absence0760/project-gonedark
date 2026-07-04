@@ -505,15 +505,19 @@ pub struct GunsmithPool {
 ///   US logistics rhythm of WS-B/D71, now on the weapon bench.
 /// - [`Army::Fr`] gunsmiths in **lighter, snappier** steps (smaller magnitudes, quicker handling) —
 ///   the French rhythm. Same slots, same trade *axes*, different feel.
+/// - [`Army::UsWw2`] gunsmiths on the **M1 Garand** rhythm — a full-power semi-auto: deep reach and
+///   the hardest per-shot damage swing here, but a *shallow* magazine trade with a snappy en-bloc
+///   reload (the "ping" clip), and a heavy wooden-stock steadiness swing.
+/// - [`Army::Germany`] gunsmiths on the **Kar98k** rhythm — a bolt-action marksman's rifle: the
+///   deepest range↔fire-rate and steadiness swings of any pool (the sharpshooter's reach and precise
+///   cone), paid for with the slowest tempo. Same slots, same trade *axes*, a distinct WW2 feel.
 ///
-/// All three obey the per-pool sidegrade rule by construction (each option a pure trade on its
+/// All five obey the per-pool sidegrade rule by construction (each option a pure trade on its
 /// slot's disjoint axis pair); the property is proven exhaustively per army in [`tests`].
 pub const fn pool_for(army: Army) -> GunsmithPool {
     match army {
         // The baseline pool IS the slot enums' own deltas — zero behavioural change off-faction.
-        // The WW2 cost-vs-power armies (D120) share the baseline gunsmith pool for now — their
-        // identity is the cost-vs-power tank, not a bespoke gunsmith bench (content stage, deferred).
-        Army::Neutral | Army::UsWw2 | Army::Germany => GunsmithPool {
+        Army::Neutral => GunsmithPool {
             marksman: Optic::Marksman.delta(),
             close_quarters: Optic::CloseQuarters.delta(),
             heavy: Barrel::Heavy.delta(),
@@ -553,6 +557,41 @@ pub const fn pool_for(army: Army) -> GunsmithPool {
             stock_marksman: stock_delta(Fixed::from_ratio(-1, 64), Fixed::from_ratio(1, 64)),
             brake: muzzle_delta(Fixed::from_ratio(1, 64), Fixed::from_ratio(1, 16)),
             suppressor: muzzle_delta(Fixed::from_ratio(-1, 64), Fixed::from_ratio(-1, 16)),
+        },
+        // US WW2 (D122) — the M1 Garand bench: a full-power semi-auto. Deep reach and the HARDEST
+        // per-shot damage swing of any pool (the .30-06), but only a SHALLOW magazine capacity trade
+        // paid off by the fastest reload swing (the en-bloc clip), and a heavy wooden-stock steadiness
+        // swing. (range±3, cooldown±6; damage±9, reserve±70; mag±6, reload±14; move±1/16, cone±1/16;
+        // supp±1/16, falloff±1/4.) Every option still touches ONLY its slot's disjoint axis pair, so
+        // the per-pool no-strict-domination proof holds unchanged.
+        Army::UsWw2 => GunsmithPool {
+            marksman: delta(fx(3), Fixed::ZERO, 6, 0, 0, 0),
+            close_quarters: delta(fx(-3), Fixed::ZERO, -6, 0, 0, 0),
+            heavy: delta(Fixed::ZERO, fx(9), 0, 0, 0, -70),
+            light: delta(Fixed::ZERO, fx(-9), 0, 0, 0, 70),
+            extended: delta(Fixed::ZERO, Fixed::ZERO, 0, 6, 14, 0),
+            quickdraw: delta(Fixed::ZERO, Fixed::ZERO, 0, -6, -14, 0),
+            agile: stock_delta(Fixed::from_ratio(1, 16), Fixed::from_ratio(-1, 16)),
+            stock_marksman: stock_delta(Fixed::from_ratio(-1, 16), Fixed::from_ratio(1, 16)),
+            brake: muzzle_delta(Fixed::from_ratio(1, 16), Fixed::from_ratio(1, 4)),
+            suppressor: muzzle_delta(Fixed::from_ratio(-1, 16), Fixed::from_ratio(-1, 4)),
+        },
+        // Germany WW2 (D122) — the Kar98k bench: a bolt-action marksman's rifle. The DEEPEST range↔
+        // fire-rate swing (the sniper's reach) and the DEEPEST steadiness/cone swing (a precise
+        // shooter's platform) of any pool, a solid damage/reserve trade, and a moderate stripper-clip
+        // magazine. (range±4, cooldown±8; damage±8, reserve±60; mag±9, reload±22; move±5/64, cone±5/64;
+        // supp±5/64, falloff±5/16.) Disjoint axis pairs unchanged → the sidegrade proof still holds.
+        Army::Germany => GunsmithPool {
+            marksman: delta(fx(4), Fixed::ZERO, 8, 0, 0, 0),
+            close_quarters: delta(fx(-4), Fixed::ZERO, -8, 0, 0, 0),
+            heavy: delta(Fixed::ZERO, fx(8), 0, 0, 0, -60),
+            light: delta(Fixed::ZERO, fx(-8), 0, 0, 0, 60),
+            extended: delta(Fixed::ZERO, Fixed::ZERO, 0, 9, 22, 0),
+            quickdraw: delta(Fixed::ZERO, Fixed::ZERO, 0, -9, -22, 0),
+            agile: stock_delta(Fixed::from_ratio(5, 64), Fixed::from_ratio(-5, 64)),
+            stock_marksman: stock_delta(Fixed::from_ratio(-5, 64), Fixed::from_ratio(5, 64)),
+            brake: muzzle_delta(Fixed::from_ratio(5, 64), Fixed::from_ratio(5, 16)),
+            suppressor: muzzle_delta(Fixed::from_ratio(-5, 64), Fixed::from_ratio(-5, 16)),
         },
     }
 }
@@ -1185,8 +1224,16 @@ mod tests {
 
     // ---- factions WS-E: per-faction gunsmith pools ------------------------------------------------
 
-    /// The three armies whose pools WS-E ships.
-    const ARMIES: [Army; 3] = [Army::Neutral, Army::Us, Army::Fr];
+    /// Every army with a shipping gunsmith pool: the WS-E modern trio (Neutral/US/FR) plus the two
+    /// WW2 benches (D122). The per-pool fairness/disjointness/checksum tests below iterate this, so
+    /// adding the WW2 pools automatically extends the no-strict-domination proof to cover them.
+    const ARMIES: [Army; 5] = [
+        Army::Neutral,
+        Army::Us,
+        Army::Fr,
+        Army::UsWw2,
+        Army::Germany,
+    ];
 
     /// Every build in a given army's pool (3 slots × 3 options = 27), as summed [`StatDelta`]s.
     fn pool_builds(army: Army) -> Vec<StatDelta> {
@@ -1314,16 +1361,21 @@ mod tests {
         }
     }
 
-    /// The pools are genuinely **distinct** — WS-E is identity, so US, FR, and Neutral must not be
-    /// the same table. For at least one slot option the three armies' deltas differ.
+    /// The pools are genuinely **distinct** — a pool is identity, so every army must ship its own
+    /// table (the WS-E modern trio plus the two WW2 benches, D122). No two of the five pools are the
+    /// same, so army identity is observable on the weapon bench.
     #[test]
     fn pools_differ_between_armies() {
-        let n = pool_for(Army::Neutral);
-        let us = pool_for(Army::Us);
-        let fr = pool_for(Army::Fr);
-        assert_ne!(us, n, "US pool must differ from the baseline");
-        assert_ne!(fr, n, "FR pool must differ from the baseline");
-        assert_ne!(us, fr, "US and FR pools must differ from each other");
+        // Compare every pair of shipping pools — all must differ.
+        for (i, &a) in ARMIES.iter().enumerate() {
+            for &b in &ARMIES[i + 1..] {
+                assert_ne!(
+                    pool_for(a),
+                    pool_for(b),
+                    "{a:?} and {b:?} pools must be distinct tables (identity, not a shared pool)"
+                );
+            }
+        }
     }
 
     /// Build a deterministic fight where the shooter's Rifleman carries `loadout` drawn from
@@ -1432,6 +1484,44 @@ mod tests {
         let mut wn = base;
         lo.apply_to_weapon(&mut wn);
         assert_ne!(w, wn, "US pool must differ from the Neutral baseline apply");
+    }
+
+    /// Applying the two WW2 pools (D122) moves the Rifleman by their OWN magnitudes (the M1 Garand
+    /// and Kar98k benches), never trips a floor, and differs from the baseline apply — the WW2
+    /// benches are wired and their identity is observable.
+    #[test]
+    fn apply_ww2_pools_use_their_own_magnitudes() {
+        let (_, base) = unit_stats(UnitKind::Rifleman);
+        let lo = Loadout {
+            optic: Optic::Marksman,
+            barrel: Barrel::Heavy,
+            magazine: Magazine::Extended,
+            ..Loadout::STANDARD
+        };
+        // US WW2 (M1 Garand): range +3, cooldown +6; damage +9, reserve -70; mag +6, reload +14.
+        let mut us_ww2 = base;
+        lo.apply_to_weapon_for(Army::UsWw2, &mut us_ww2);
+        assert_eq!(us_ww2.range, base.range + fx(3));
+        assert_eq!(us_ww2.damage, base.damage + fx(9));
+        assert_eq!(us_ww2.cooldown_ticks, base.cooldown_ticks + 6);
+        assert_eq!(us_ww2.mag_size, base.mag_size + 6);
+        assert_eq!(us_ww2.reload_ticks, base.reload_ticks + 14);
+        assert_eq!(us_ww2.reserve, base.reserve - 70);
+        // Germany (Kar98k): range +4, cooldown +8; damage +8, reserve -60; mag +9, reload +22.
+        let mut de = base;
+        lo.apply_to_weapon_for(Army::Germany, &mut de);
+        assert_eq!(de.range, base.range + fx(4));
+        assert_eq!(de.damage, base.damage + fx(8));
+        assert_eq!(de.cooldown_ticks, base.cooldown_ticks + 8);
+        assert_eq!(de.mag_size, base.mag_size + 9);
+        assert_eq!(de.reload_ticks, base.reload_ticks + 22);
+        assert_eq!(de.reserve, base.reserve - 60);
+        // Each WW2 bench differs from the Neutral baseline apply AND from the other — observable identity.
+        let mut wn = base;
+        lo.apply_to_weapon(&mut wn);
+        assert_ne!(us_ww2, wn, "US WW2 pool must differ from the Neutral baseline apply");
+        assert_ne!(de, wn, "Germany pool must differ from the Neutral baseline apply");
+        assert_ne!(us_ww2, de, "the two WW2 pools must differ from each other");
     }
 
     // ---- gunsmith breadth (CP-1, D85): Stock + Muzzle apply / byte-neutral / checksum ----------
