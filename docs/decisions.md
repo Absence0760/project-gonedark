@@ -4850,3 +4850,55 @@ presentation fork untouched — no flight to mirror until the phone has a globe)
 `render/src/globe_backdrop.rs` (`GlobeFlight`), `app/src/shell/atlas.rs`
 (`opened_from`/`tick_atlas_flight`), `app/src/shell/mission_select.rs` (`hub_backdrop_view`),
 `app/src/main.rs` (`hub_flight` + the transition wiring).
+
+## D108 — The trig LUTs are checked-in integer source, not build-time output (host libm leaves the trust chain)
+
+**Status: landed.** The Q16.16 sine and arctangent tables the sim reads (`core::trig`) now
+live as **committed source** — `core/src/lut_data.rs`, 4096 + 1024 `i32` entries — instead of
+being baked into `OUT_DIR` by a Cargo build script at compile time. `core` has **no build
+script** anymore; `trig.rs` does a plain `include!("lut_data.rs")`. The checked-in file was
+captured **byte-for-byte** from what this machine's build actually produced (sha256
+`c7270620e20df1068c2298f00df847249ef211c3c86cac5b69a69b7a93ca4b1b`, identical across the
+desktop and cargo-ndk Android `OUT_DIR` copies), so every recorded checksum baseline stays
+valid — the 300-tick sim-runner stream was diffed pre/post and is bit-identical.
+
+**Why.** A determinism audit rated the old pattern a medium-high lockstep hazard. The
+D17-era rule — *"the build script that bakes the LUT may use host `f64` at compile time"* —
+was sound about the **sim** (the output is pure integer data; no float ever executes in it)
+but silently trusted the **build host's libm**: `f64::sin()`/`f64::atan()` are not specified
+to be bit-identical across platforms/libc versions, so two build hosts could bake *different
+constant tables* into their binaries. That is a lockstep desync with no code diff — exactly
+the failure class invariant #1 exists to kill — and the CI checksum matrix (invariant #7)
+can't fully prove it away for the cargo-ndk Android packaging pipeline, whose builds don't
+all originate on CI hosts. Checking the table in removes host libm from the trust chain
+entirely: every build of every target compiles the identical committed integers. **This
+supersedes D17's build-script allowance** — D17's type-level "no floats in the sim"
+architecture is untouched; only where the constants come from changed.
+
+**The table is now lockstep-affecting data, and it is locked.** `core::trig` grew a
+float-free test battery pinning it: `lut_table_hash_is_locked` folds both tables (length +
+every entry) through an integer FNV-1a 64 and asserts the captured constant
+**`0x31ef_3849_facc_6dbb`** — one changed entry fails the suite on every arch in the
+determinism matrix — plus structural checks (exact cardinal entries `0/±65536`, `atan(1)` =
+exactly an eighth turn, quarter-wave mirror + half-wave antisymmetry, monotonicity, `[-1, 1]`
+bounds). Changing the table now requires a deliberate hash update and a new decision entry,
+not a quiet rebuild on a different machine.
+
+**The generator stays, per the committed-generator convention.** `core/build/lut.rs` is
+retained as a documented **offline regeneration tool** (same pattern as
+`tools/fonts/gen_hud_font.py` et al. — commit the script, commit its output): it still uses
+host `f64` freely, now emits to stdout
+(`rustc --edition 2021 core/build/lut.rs -o /tmp/gen_lut && /tmp/gen_lut > core/src/lut_data.rs`),
+and its regenerated output was verified byte-identical to the committed file on this machine.
+Its doc header spells out the rule: a data diff on an unchanged table *shape* means your host
+libm disagrees with the committed table — keep the committed bytes; they are the
+recorded-checksum baseline.
+
+**Cross-link:** [D17](#d17--fixed-point-sim-scalar-a-hand-rolled-q1616-fixed-newtype) (the
+superseded build-script allowance; everything else in it stands),
+[D22](#d22--phase-1-vertical-slice-passed-on-real-arm64-custom-rust-engine-validated-fallback-retired)
+(the recorded device-checksum
+baseline this preserves), `architecture.md` determinism checklist (the "deterministic
+transcendentals" line now names the checked-in table), `core/src/lut_data.rs` (the data),
+`core/src/trig.rs` (`lut_table_hash_is_locked` + structural tests), `core/build/lut.rs` (the
+offline regeneration tool).

@@ -138,7 +138,10 @@ render(lerp(prevState, curState, alpha));
 
 - **No floats in the sim** — fixed-point only; floats live only in rendering.
 - **Deterministic transcendentals** — sin/cos/sqrt via fixed-point or LUTs, never
-  `libm`. Disable fast-math.
+  `libm`. Disable fast-math. The LUT data is **checked-in integer source**
+  (`core/src/lut_data.rs`, hash-locked by test — D108), never baked at build time:
+  host libm is not bit-identical across build hosts, so build-time baking can embed
+  different tables per host.
 - **Stable iteration order** — never iterate by hash-map order; arrays or sorted keys.
 - **Seeded lockstep RNG** — identical seed and call sequence on every peer.
 - **No uninitialized reads, no raw pointers in state.**

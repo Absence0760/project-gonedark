@@ -1,12 +1,16 @@
 //! Fixed-point trig + sqrt via an integer LUT and integer algorithms (invariant #1).
-//! No std/libm transcendentals: the sine table is baked at build time (see
-//! `build/lut.rs`) and `sqrt` is an integer isqrt. Angles use "binary radians" so a full
-//! turn is a power of two and wrapping is a mask — angle math never drifts.
+//! No std/libm transcendentals: the sine/atan tables are **checked-in integer source**
+//! (`lut_data.rs`, regenerated offline by `build/lut.rs` — see D108: build-time baking
+//! trusted host libm, which is not bit-identical across build hosts) and `sqrt` is an
+//! integer isqrt. Angles use "binary radians" so a full turn is a power of two and
+//! wrapping is a mask — angle math never drifts.
 
 use crate::fixed::Fixed;
 
-// Brings `SIN_LUT_LEN` (usize) and `SIN_LUT` ([i32; SIN_LUT_LEN], Q16.16 bits) into scope.
-include!(concat!(env!("OUT_DIR"), "/lut_generated.rs"));
+// Brings `SIN_LUT_LEN`/`ATAN_LUT_LEN` (usize) and `SIN_LUT`/`ATAN_LUT` ([i32; N], Q16.16
+// bits / angle-units) into scope. Committed data, not build output — the
+// `lut_table_hash_is_locked` test below pins every entry (D108).
+include!("lut_data.rs");
 
 /// Bits of angle resolution. Full turn = `1 << ANGLE_BITS`.
 pub const ANGLE_BITS: u32 = 16;
@@ -261,5 +265,85 @@ mod tests {
         assert_eq!(cur, target, "reaches the target");
         // And holds once arrived.
         assert_eq!(rotate_toward(cur, target, step), target);
+    }
+
+    // --- LUT lock (D108) -----------------------------------------------------------------
+    // The tables in `lut_data.rs` are checked-in source, not build output. They are
+    // lockstep-affecting data: change one entry and every recorded checksum stream is
+    // invalid. These tests pin the exact bytes (via an integer hash) plus the structural
+    // shape, all in pure integer math (invariant #1 — no floats, even in tests).
+
+    /// One FNV-1a 64 fold step (integer-only).
+    fn fnv_fold(h: u64, v: u64) -> u64 {
+        (h ^ v).wrapping_mul(0x100_0000_01b3)
+    }
+
+    #[test]
+    fn lut_table_hash_is_locked() {
+        // FNV-1a 64 over each table's length then every entry (i32 bits zero-extended),
+        // SIN_LUT first, then ATAN_LUT. The constant was captured from the exact table the
+        // D17-era build script baked on the machine that produced the recorded Phase-1
+        // checksums (D22's `4c34c6b5951edf57` stream). If this fails, the committed table
+        // changed — that is a lockstep-facing data change and needs a decision entry, a
+        // deliberate hash update, and re-recorded checksum baselines (D108).
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        h = fnv_fold(h, SIN_LUT_LEN as u64);
+        for v in SIN_LUT.iter() {
+            h = fnv_fold(h, *v as u32 as u64);
+        }
+        h = fnv_fold(h, ATAN_LUT_LEN as u64);
+        for v in ATAN_LUT.iter() {
+            h = fnv_fold(h, *v as u32 as u64);
+        }
+        assert_eq!(
+            h, 0x31ef_3849_facc_6dbb,
+            "checked-in trig LUT data changed — lockstep-affecting; see D108 before touching"
+        );
+    }
+
+    #[test]
+    fn sin_lut_cardinal_entries_are_exact() {
+        let one = 1i32 << Fixed::FRAC_BITS; // Q16.16 one
+        assert_eq!(SIN_LUT[0], 0, "sin(0) = 0");
+        assert_eq!(SIN_LUT[SIN_LUT_LEN / 4], one, "sin(quarter turn) = 1");
+        assert_eq!(SIN_LUT[SIN_LUT_LEN / 2], 0, "sin(half turn) = 0");
+        assert_eq!(SIN_LUT[3 * SIN_LUT_LEN / 4], -one, "sin(three-quarter turn) = -1");
+    }
+
+    #[test]
+    fn sin_lut_is_bounded_by_one() {
+        let one = 1i32 << Fixed::FRAC_BITS;
+        for v in SIN_LUT.iter() {
+            assert!(-one <= *v && *v <= one, "entry {v} outside [-1, 1]");
+        }
+    }
+
+    #[test]
+    fn sin_lut_quarter_wave_symmetry() {
+        // sin(half − x) = sin(x): the second quarter mirrors the first.
+        for i in 0..=SIN_LUT_LEN / 4 {
+            assert_eq!(SIN_LUT[SIN_LUT_LEN / 2 - i], SIN_LUT[i], "mirror broken at {i}");
+        }
+        // sin(x + half) = −sin(x): the back half is the front half negated.
+        for i in 0..SIN_LUT_LEN / 2 {
+            assert_eq!(SIN_LUT[i + SIN_LUT_LEN / 2], -SIN_LUT[i], "antisymmetry broken at {i}");
+        }
+    }
+
+    #[test]
+    fn sin_lut_first_quarter_is_monotonic() {
+        for i in 0..SIN_LUT_LEN / 4 {
+            assert!(SIN_LUT[i + 1] >= SIN_LUT[i], "sin not non-decreasing at {i}");
+        }
+    }
+
+    #[test]
+    fn atan_lut_endpoints_and_monotonicity() {
+        assert_eq!(ATAN_LUT[0], 0, "atan(0) = 0");
+        // atan(1) = 45° = an exact eighth of a turn — what makes the diagonal tests exact.
+        assert_eq!(ATAN_LUT[ATAN_LUT_LEN - 1], ANGLE_FULL / 8, "atan(1) = eighth turn");
+        for i in 0..ATAN_LUT_LEN - 1 {
+            assert!(ATAN_LUT[i + 1] >= ATAN_LUT[i], "atan not non-decreasing at {i}");
+        }
     }
 }
