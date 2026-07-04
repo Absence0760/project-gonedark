@@ -561,6 +561,16 @@ fn build_match_game(
     // `*.map.ron` through the same engine constructor the desktop uses; an unknown/invalid id
     // (forbidden for shipped entries by the engine's library tests) degrades to the standing open
     // skirmish the `scene=` key already carries — never a failed launch.
+    // Resolve a campaign-node launch up front (a non-skirmish campaign scene: Seize/Hold/Push): its
+    // per-node BattleSpec (authored forces + objective variant + commander flavor) and its own
+    // per-node seed, so the SELECTED node boots its own distinct battle — the SAME per-node
+    // battle-variation seam the desktop host uses (never a per-platform fork, invariant #2), instead
+    // of the archetype default on the shared DEFAULT_SEED.
+    let campaign = gonedark_engine::mission_registry::default_campaign();
+    let campaign_node = (!launch.skirmish && scene.is_campaign_mission()).then(|| NodeId(launch.node));
+    let campaign_spec = campaign_node
+        .and_then(|node| gonedark_engine::mission_registry::resolve_battle_spec(&campaign, node));
+
     let mut game = if launch.skirmish && !launch.map.is_empty() {
         Game::new_map_skirmish_with_loadout(rhi.device(), rhi.format(), DEFAULT_SEED, &launch.map, loadout)
             .unwrap_or_else(|| {
@@ -572,6 +582,14 @@ fn build_match_game(
                     loadout,
                 )
             })
+    } else if let (Some(node), Some(spec)) = (campaign_node, campaign_spec) {
+        Game::new_battle(
+            rhi.device(),
+            rhi.format(),
+            gonedark_engine::campaign_match_seed(node.0),
+            spec,
+            loadout,
+        )
     } else {
         Game::new_scene_with_loadout(rhi.device(), rhi.format(), DEFAULT_SEED, scene, loadout)
     };
@@ -615,13 +633,16 @@ fn build_match_game(
     // the gate is the host-tested `Scene::is_campaign_mission`, not a hand-kept match (the old
     // `Mission1 | Mission2` match silently dropped Mission3's clear recording when Push shipped).
     let mut campaign_launch = None;
-    if scene.is_campaign_mission() {
-        let node = NodeId(launch.node);
-        let campaign = gonedark_engine::mission_registry::default_campaign();
+    if let Some(node) = campaign_node {
         let registry = gonedark_engine::mission_registry::default_registry();
         if registry.resolve_node(&campaign, node).is_some() {
             let tier = Difficulty::from_tier(launch.diff).unwrap_or(Difficulty::Recruit);
             game.apply_campaign_tuning(tier);
+            // The node's commander flavor (hunt / band / cadence knobs — config only, D3), applied
+            // AFTER tuning so a per-node override wins over the replay-tier band. Mirrors desktop.
+            if let Some(spec) = campaign_spec {
+                spec.commander.apply_to(&mut game);
+            }
         }
         campaign_launch = Some((launch.node, launch.diff));
     }
