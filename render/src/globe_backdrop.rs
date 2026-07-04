@@ -6,8 +6,9 @@
 //!
 //! ## The scene
 //! A slowly turning stylized earth — land/sea from the equirectangular [`LANDMASK`] (Natural
-//! Earth 1:110m, public domain; regenerable via `tools/earth/gen_landmask.py`, provenance in
-//! `assets/earth/manifest.json`), a faint 30° graticule, an amber fresnel rim — with one glowing
+//! Earth 1:50m since D106, public domain; regenerable via `tools/earth/gen_landmask.py`,
+//! provenance in `assets/earth/manifest.json`), a faint 30° graticule, an amber fresnel rim —
+//! with one glowing
 //! **pin per conflict** ([`GlobePin`], authored `Conflict::lat_x10/lon_x10`). The globe settles
 //! with the *focused* conflict facing the camera ([`globe_yaw`]) and sways gently; the cursor
 //! parallax reuses [`title_backdrop::parallax_offset`] so the two backdrops feel like one family.
