@@ -728,8 +728,12 @@ pub fn interpolate_projectiles(prev: &Snapshot, alpha: f32) -> Vec<mesh::MeshIns
 }
 
 /// Build render instances from two sim snapshots interpolated by `alpha` in `[0,1]` (invariant
-/// #4 — interpolation lives in the renderer, not the sim). Units are matched by index (the
-/// shorter snapshot wins, so a mismatched count never panics); positions cross the float
+/// #4 — interpolation lives in the renderer, not the sim). Units are matched between the two
+/// snapshots by their stable `entity_index`, **not** by array position: [`core::snapshot`]'s
+/// `Snapshot::capture` compacts dead ECS slots out of `units` every tick, so pairing by index
+/// would blend a *different* (or just-despawned) entity's stale pose into a live unit for one
+/// frame on every casualty. A unit present only in `curr` (freshly spawned) snaps to its
+/// current pose rather than tweening from a stranger. positions cross the float
 /// boundary via [`fixed_to_f32`] and are lerped, while faction/health/embodied are read from
 /// the *current* snapshot. Control points are appended from the current snapshot (they are
 /// static, so they are not interpolated). `selected` is the set of currently-selected world
@@ -745,12 +749,26 @@ pub fn interpolate_instances(
     selected: &[u32],
     palette: &theme::Palette,
 ) -> Vec<UnitInstance> {
-    let n = prev.units.len().min(curr.units.len());
-    let mut out = Vec::with_capacity(n + curr.control_points.len());
+    let mut out = Vec::with_capacity(curr.units.len() + curr.control_points.len());
 
-    for i in 0..n {
-        let a = &prev.units[i];
-        let b = &curr.units[i];
+    // Match `prev`↔`curr` by stable `entity_index`, not array position. `Snapshot::capture`
+    // (core::snapshot) walks `0..capacity` and pushes only live units, so both vecs are dense
+    // yet strictly ascending by `entity_index` — a mid-tick death simply omits a slot, shifting
+    // every later unit's *array* index while its `entity_index` stays true. A two-pointer merge
+    // over the two ascending sequences joins them in O(n) without a map. A `curr` unit with no
+    // `prev` twin (spawned this tick) uses itself as `a`, so it snaps to its current pose (no
+    // interpolation) — mirroring interpolate_projectiles' spawn handling. Deaths (in `prev` but
+    // not `curr`) are dropped here; `death_linger` owns the fade-out for those.
+    let mut p = 0usize;
+    for b in &curr.units {
+        while p < prev.units.len() && prev.units[p].entity_index < b.entity_index {
+            p += 1;
+        }
+        let a = if p < prev.units.len() && prev.units[p].entity_index == b.entity_index {
+            &prev.units[p]
+        } else {
+            b
+        };
         let (ax, ay) = (fixed_to_f32(a.pos.x), fixed_to_f32(a.pos.y));
         let (bx, by) = (fixed_to_f32(b.pos.x), fixed_to_f32(b.pos.y));
 
@@ -2614,6 +2632,59 @@ mod tests {
         let out = interpolate_instances(&prev, &curr, 1.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out.len(), 1);
         assert!((out[0].x - 10.0).abs() < EPS);
+    }
+
+    // Regression (H1): a mid-list death compacts `curr.units`, shifting the array index of every
+    // later unit while its `entity_index` stays true. Interpolation must pair by `entity_index`,
+    // NOT array position — else a survivor blends the dead unit's stale pose for one frame.
+    #[test]
+    fn interpolate_pairs_by_entity_index_not_array_position_across_a_death() {
+        // prev: three live units at distinct spots; the middle one (index 1) is about to die.
+        let prev = snapshot(
+            0,
+            vec![
+                unit_at(0, Fixed::ZERO, Fixed::ZERO),
+                unit_at(1, Fixed::from_int(100), Fixed::from_int(100)), // dies this tick
+                unit_at(2, Fixed::from_int(200), Fixed::from_int(200)),
+            ],
+        );
+        // curr: index 1 despawned and was compacted out, so the survivor index 2 slides from
+        // array slot 2 → slot 1 — exactly the shift that made the old index-pairing wrong.
+        let curr = snapshot(
+            1,
+            vec![
+                unit_at(0, Fixed::from_int(10), Fixed::from_int(10)),
+                unit_at(2, Fixed::from_int(210), Fixed::from_int(210)),
+            ],
+        );
+        // alpha=0 should render each survivor at ITS OWN prev pose. The old index-pairing bug
+        // put curr[1] (entity 2) against prev[1] (entity 1 @ 100), drawing entity 2 at (100,100).
+        let out = interpolate_instances(&prev, &curr, 0.0, &[], &theme::Palette::DEFAULT);
+        assert_eq!(out.len(), 2, "only the two survivors are drawn (linger owns the corpse)");
+        assert!((out[0].x - 0.0).abs() < EPS, "entity 0 at its own prev x");
+        assert!(
+            (out[1].x - 200.0).abs() < EPS,
+            "entity 2 tweens from its OWN prev pose (200), never the dead entity 1's (100)"
+        );
+        assert!((out[1].y - 200.0).abs() < EPS);
+    }
+
+    // A unit present only in `curr` (spawned this tick) has no prev twin, so it snaps to its
+    // current pose instead of tweening from whatever unrelated unit shared its array slot.
+    #[test]
+    fn interpolate_freshly_spawned_unit_snaps_to_current_pose() {
+        let prev = snapshot(0, vec![unit_at(0, Fixed::ZERO, Fixed::ZERO)]);
+        let curr = snapshot(
+            1,
+            vec![
+                unit_at(0, Fixed::from_int(5), Fixed::from_int(5)),
+                unit_at(1, Fixed::from_int(90), Fixed::from_int(90)), // brand new
+            ],
+        );
+        let out = interpolate_instances(&prev, &curr, 0.5, &[], &theme::Palette::DEFAULT);
+        assert_eq!(out.len(), 2);
+        assert!((out[1].x - 90.0).abs() < EPS, "spawned unit snaps to curr, no half-lerp");
+        assert!((out[1].y - 90.0).abs() < EPS);
     }
 
     // ---- faction color + embodied + flags ----
