@@ -37,6 +37,7 @@ use std::fmt;
 use gonedark_core::components::Vec2;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::flow_field::GRID;
+use gonedark_core::obstacles::{paint_impassable, Obstacle, ObstacleKind};
 use gonedark_core::scenario::ScenarioBuilder;
 use gonedark_core::terrain::{Cover, MapId, Terrain};
 
@@ -97,6 +98,36 @@ impl CoverPropKind {
             CoverPropKind::Crate | CoverPropKind::Tree => Cover::Light,
             CoverPropKind::Rock | CoverPropKind::Barricade | CoverPropKind::Turret => Cover::Heavy,
         }
+    }
+
+    /// The sim [`ObstacleKind`] this prop registers on [`Sim::obstacles`] — the sim-owned list the
+    /// renderer draws the map's props from (both views), Q24/D50. The generic authored `Turret`
+    /// draws the US emplacement greybox until a faction-neutral turret mesh exists (its sim
+    /// footprint is identical across the two turret meshes, so the choice is cosmetic only).
+    ///
+    /// [`Sim::obstacles`]: gonedark_core::sim::Sim
+    #[inline]
+    pub fn obstacle_kind(self) -> ObstacleKind {
+        match self {
+            CoverPropKind::Crate => ObstacleKind::Crate,
+            CoverPropKind::Tree => ObstacleKind::Tree,
+            CoverPropKind::Rock => ObstacleKind::Rock,
+            CoverPropKind::Barricade => ObstacleKind::Barricade,
+            CoverPropKind::Turret => ObstacleKind::TurretUs,
+        }
+    }
+
+    /// Is this prop a **solid body** the player must collide with? Derived from the authored cover
+    /// tier: the `Heavy` kinds (rock / barricade / turret) already block sight and take the full
+    /// mitigation, so upgrading their footprint to [`Cover::Impassable`] adds *only* collision —
+    /// the Q24 "you stop where you see an object", with the authored fire/sight semantics
+    /// byte-preserved (`Heavy` and `Impassable` share the damage multiplier and `blocks_sight`).
+    /// `Light` props (crate / tree scrub) stay passable concealment you fight FROM — occupying
+    /// them is their authored point (e.g. `seize_outpost.map.ron` relies on nothing blocking the
+    /// assault's own fire), so they are drawn but never solidified.
+    #[inline]
+    pub fn is_solid(self) -> bool {
+        self.cover().blocks_sight()
     }
 }
 
@@ -323,6 +354,33 @@ impl MapSpec {
                 .terrain
                 .set_cover(prop.cell.x, prop.cell.y, prop.kind.cover());
         }
+
+        // Then make the props *visible and honest* (Q24/D50): every prop registers on the sim's
+        // obstacle list (the one source both the command view and the embodied view draw props
+        // from), and the SOLID kinds (the `Heavy` tier — see [`CoverPropKind::is_solid`]) get
+        // `Cover::Impassable` painted under their footprint through the same shared primitive the
+        // skirmish uses, so the player stops exactly at the body they see. Sight/damage semantics
+        // of the authored map are preserved: `Heavy → Impassable` changes only movement, and the
+        // `Light` props are never solidified. All integer/fixed-point and order-stable (file
+        // order), so two applies register bit-identical lists on every platform (invariant #1/#7);
+        // like the cover itself, the list is static map data outside the per-tick checksum.
+        let props: Vec<Obstacle> = self
+            .cover_props
+            .iter()
+            .map(|p| Obstacle {
+                kind: p.kind.obstacle_kind(),
+                pos: p.cell.to_world_center(),
+            })
+            .collect();
+        let solids: Vec<Obstacle> = self
+            .cover_props
+            .iter()
+            .zip(&props)
+            .filter(|(spec, _)| spec.kind.is_solid())
+            .map(|(_, o)| *o)
+            .collect();
+        paint_impassable(&mut builder.sim_mut().terrain, &solids);
+        builder.sim_mut().obstacles.extend(props);
     }
 }
 
@@ -342,8 +400,8 @@ MapSpec(
     ],
     cover_props: [
         CoverPropSpec(kind: Crate,     cell: CellRef(x: 40, y: 40)),
-        CoverPropSpec(kind: Barricade, cell: CellRef(x: 41, y: 40)),
-        CoverPropSpec(kind: Tree,      cell: CellRef(x: 42, y: 40)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 45, y: 40)),
+        CoverPropSpec(kind: Tree,      cell: CellRef(x: 50, y: 40)),
     ],
     spawn_zones: [
         SpawnZoneSpec(name: "player", min: CellRef(x: 10, y: 10), max: CellRef(x: 14, y: 14)),
@@ -399,11 +457,13 @@ MapSpec(
             assert_eq!(sim.terrain.cell_of(cp.pos), (authored.x, authored.y));
         }
 
-        // Cover props landed at exactly their authored cells, with the mapped cover.
+        // Cover props landed at exactly their authored cells: light kinds lay their authored
+        // cover; solid kinds are upgraded to the collision tier under the visible body (Q24).
         for prop in &m.cover_props {
+            let expected = if prop.kind.is_solid() { Cover::Impassable } else { prop.kind.cover() };
             assert_eq!(
                 sim.terrain.cover_at_cell(prop.cell.x, prop.cell.y),
-                prop.kind.cover(),
+                expected,
                 "prop {:?} at ({}, {})",
                 prop.kind,
                 prop.cell.x,
@@ -412,6 +472,76 @@ MapSpec(
         }
         // `apply` asserts `load_map(terrain)` succeeded, so reaching here proves the referenced
         // terrain was loaded (a bad id would have panicked at apply time).
+    }
+
+    #[test]
+    fn cover_props_register_obstacles_the_renderer_draws() {
+        // Every authored prop becomes a sim obstacle (the one list both views draw from), with the
+        // mapped mesh kind, standing at its authored cell's centre.
+        let m = MapSpec::load(SAMPLE).unwrap();
+        let mut sim = Sim::new(1);
+        {
+            let mut b = ScenarioBuilder::new(&mut sim);
+            m.apply(&mut b);
+        }
+        assert_eq!(sim.obstacles.len(), m.cover_props.len());
+        for (o, prop) in sim.obstacles.iter().zip(&m.cover_props) {
+            assert_eq!(o.kind, prop.kind.obstacle_kind());
+            assert_eq!(sim.terrain.cell_of(o.pos), (prop.cell.x, prop.cell.y));
+        }
+    }
+
+    #[test]
+    fn solid_props_collide_while_light_props_stay_authored_concealment() {
+        // The Q24 split: a Heavy-tier prop's cell becomes a solid the player stops at — with the
+        // authored fire/sight semantics preserved (Heavy and Impassable share blocks_sight and the
+        // damage multiplier) — while a Light prop keeps its authored passable, sight-passing cover
+        // (the seize map's "nothing blocks the assault's own fire" design).
+        let ron = r#"MapSpec(terrain: 0, cover_props: [
+            CoverPropSpec(kind: Crate,     cell: CellRef(x: 20, y: 20)),
+            CoverPropSpec(kind: Tree,      cell: CellRef(x: 30, y: 30)),
+            CoverPropSpec(kind: Rock,      cell: CellRef(x: 40, y: 40)),
+            CoverPropSpec(kind: Barricade, cell: CellRef(x: 50, y: 50)),
+            CoverPropSpec(kind: Turret,    cell: CellRef(x: 60, y: 60)),
+        ])"#;
+        let m = MapSpec::load(ron).unwrap();
+        let mut sim = Sim::new(1);
+        {
+            let mut b = ScenarioBuilder::new(&mut sim);
+            m.apply(&mut b);
+        }
+        for prop in &m.cover_props {
+            let c = sim.terrain.cover_at_cell(prop.cell.x, prop.cell.y);
+            if prop.kind.is_solid() {
+                assert!(c.blocks_movement(), "{:?} must be solid", prop.kind);
+                // Semantics-preserving upgrade: the authored Heavy already blocked sight and took
+                // the same mitigation, so only movement changed.
+                assert_eq!(c.blocks_sight(), prop.kind.cover().blocks_sight());
+                assert_eq!(c.damage_multiplier(), prop.kind.cover().damage_multiplier());
+            } else {
+                assert_eq!(c, Cover::Light, "{:?} stays authored concealment", prop.kind);
+                assert!(!c.blocks_movement());
+                assert!(!c.blocks_sight());
+            }
+        }
+    }
+
+    #[test]
+    fn solidity_follows_the_authored_cover_tier_and_kinds_map_to_meshes() {
+        for kind in [
+            CoverPropKind::Crate,
+            CoverPropKind::Tree,
+            CoverPropKind::Rock,
+            CoverPropKind::Barricade,
+            CoverPropKind::Turret,
+        ] {
+            assert_eq!(kind.is_solid(), kind.cover().blocks_sight());
+        }
+        assert_eq!(CoverPropKind::Crate.obstacle_kind(), ObstacleKind::Crate);
+        assert_eq!(CoverPropKind::Tree.obstacle_kind(), ObstacleKind::Tree);
+        assert_eq!(CoverPropKind::Rock.obstacle_kind(), ObstacleKind::Rock);
+        assert_eq!(CoverPropKind::Barricade.obstacle_kind(), ObstacleKind::Barricade);
+        assert_eq!(CoverPropKind::Turret.obstacle_kind(), ObstacleKind::TurretUs);
     }
 
     #[test]
@@ -442,6 +572,14 @@ MapSpec(
                 );
             }
         }
+
+        // The registered prop list (static map data, like terrain) is bit-identical too — and
+        // provably outside the fold: clearing it moves nothing.
+        assert_eq!(s1.obstacles, s2.obstacles);
+        let mut s3 = build();
+        let before = s3.checksum();
+        s3.obstacles.clear();
+        assert_eq!(s3.checksum(), before, "obstacles never enter the checksum");
     }
 
     #[test]
@@ -550,11 +688,11 @@ MapSpec(
         }
         assert_eq!(sim.territory.points.len(), 3);
         for prop in &m.cover_props {
-            assert_eq!(
-                sim.terrain.cover_at_cell(prop.cell.x, prop.cell.y),
-                prop.kind.cover()
-            );
+            let expected = if prop.kind.is_solid() { Cover::Impassable } else { prop.kind.cover() };
+            assert_eq!(sim.terrain.cover_at_cell(prop.cell.x, prop.cell.y), expected);
         }
+        // And the shipped map's props all registered for drawing.
+        assert_eq!(sim.obstacles.len(), m.cover_props.len());
     }
 
     #[test]

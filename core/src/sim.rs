@@ -159,6 +159,16 @@ pub struct Sim {
     /// embodied tank firing (every `muzzle_vel == 0` weapon stays hitscan), so it costs the
     /// existing checksum stream nothing.
     pub projectiles: Vec<Projectile>,
+    /// The static battlefield props (trees / rocks / crates / barricades / turrets) standing on
+    /// this map — the sim-owned list the renderer reads to DRAW the props (core → render, the
+    /// allowed direction; see [`crate::obstacles`], Q24/D50). Populated at scenario build (the
+    /// skirmish's [`crate::obstacles::skirmish_obstacles`] layout, or a `MapSpec`'s authored
+    /// cover props host-side); collision is painted onto [`terrain`](Self::terrain) separately at
+    /// seed time. **Static map data exactly like `terrain`**: placed once, never mutated by a
+    /// system, so it is NOT folded into the per-tick checksum and — like the cover overlays laid
+    /// over the base map — NOT serialized in the snapshot wrapper (the host re-seeds the scenario
+    /// on resume, which re-lays both). All positions are fixed-point (invariant #1).
+    pub obstacles: Vec<crate::obstacles::Obstacle>,
     /// Which static map this sim is on. Terrain is static map data (not per-tick state, not
     /// checksummed), so the authoritative snapshot (D28) serializes this small id and re-derives
     /// `terrain` from it on resume, never the `GRID×GRID` grid. The scene is map id 0.
@@ -195,6 +205,7 @@ impl Sim {
             territory: Territory::empty(),
             events: Vec::new(),
             projectiles: Vec::new(),
+            obstacles: Vec::new(),
             map_id: Terrain::SCENE_MAP_ID,
             // Default full rate (accrue every tick) — identical income to before this lever existed,
             // so every existing scene's resources (and thus checksum) are byte-unchanged.
@@ -940,6 +951,9 @@ impl Sim {
             territory,
             events: Vec::new(),
             projectiles,
+            // Static map data, like the cover overlays: not in the snapshot — the host re-seeds
+            // the scenario (which re-lays cover AND re-registers the props) on resume.
+            obstacles: Vec::new(),
             map_id,
             income_period,
             armies,
@@ -1302,6 +1316,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn snapshot_roundtrip_leaves_static_props_to_the_reseeding_host() {
+        // `Sim::obstacles` is static map data exactly like the cover overlays laid over the base
+        // map: NOT in the snapshot wrapper. The policy pinned here: a restored sim comes back with
+        // an empty prop list (the host that re-seeds the scenario re-registers them, the same path
+        // that re-lays scenario cover). If serialization ever gains the list, update this + D28.
+        let mut sim = Sim::new(0);
+        crate::scenario::seed_skirmish(&mut sim);
+        assert!(!sim.obstacles.is_empty(), "the skirmish registers props");
+        let restored = Sim::deserialize(&sim.serialize()).expect("round-trips");
+        assert!(restored.obstacles.is_empty(), "props are re-seeded host-side, not serialized");
+        // And the list never enters the serialized bytes / fold: byte-identical with it cleared.
+        let with = sim.serialize();
+        sim.obstacles.clear();
+        assert_eq!(sim.serialize(), with, "obstacles are outside the serialize/fold surface");
     }
 
     #[test]

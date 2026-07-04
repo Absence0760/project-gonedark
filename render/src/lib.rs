@@ -587,14 +587,19 @@ fn prop_scale(kind: gonedark_core::obstacles::ObstacleKind) -> f32 {
 }
 
 /// Build the first-person world-dressing draw plan from the sim's static obstacle list
-/// ([`gonedark_core::obstacles::skirmish_obstacles`]): each prop's kind, the LOD tier
-/// [`mesh::select_lod`] picks from its eye distance, and its world-space mesh instance (greybox base
-/// tint, no flash). The props sit exactly where the sim painted impassable cells, so the player stops
-/// where they see an object (Q24). Cosmetic yaw varies per prop (a stable function of its index) so a
-/// mirrored layout doesn't look rubber-stamped; it never affects the sim footprint. Pure + GPU-free,
-/// so it is unit-tested without a device; [`Renderer::render_world_meshes`] groups it into batches.
-fn prop_draw_plan(eye: [f32; 3]) -> Vec<(mesh::ModelKind, usize, mesh::MeshInstance)> {
-    gonedark_core::obstacles::skirmish_obstacles()
+/// (`Sim::obstacles`, whatever the active scene/map seeded — Q24/D50): each prop's kind, the LOD
+/// tier [`mesh::select_lod`] picks from its eye distance, and its world-space mesh instance (greybox
+/// base tint, no flash). The props sit exactly where the sim painted impassable cells, so the player
+/// stops where they see an object (Q24). Cosmetic yaw varies per prop (a stable function of its
+/// index) so a mirrored layout doesn't look rubber-stamped; it never affects the sim footprint.
+/// Pure and GPU-free, so it is unit-tested without a device; [`Renderer::render_world_meshes`]
+/// groups it into batches. Reads the list the host hands in — the renderer never re-derives the
+/// layout, so a library map's props draw exactly where the sim placed them.
+fn prop_draw_plan(
+    eye: [f32; 3],
+    obstacles: &[gonedark_core::obstacles::Obstacle],
+) -> Vec<(mesh::ModelKind, usize, mesh::MeshInstance)> {
+    obstacles
         .iter()
         .enumerate()
         .map(|(i, o)| {
@@ -2318,14 +2323,16 @@ impl Renderer {
         view_proj: &[[f32; 4]; 4],
         eye: [f32; 3],
         fog: &Visibility,
+        obstacles: &[gonedark_core::obstacles::Obstacle],
         width: u32,
         height: u32,
     ) {
         self.ensure_depth(device, width, height);
         // Static scenery + the avatar-visible dynamic units, in one combined LOD plan. The fog filter
         // (avatar-only mask, world_dark = true) keeps only units the avatar can see; the avatar's own
-        // body is dropped inside `unit_draw_plan`.
-        let mut plan = prop_draw_plan(eye);
+        // body is dropped inside `unit_draw_plan`. The props come from the sim's own obstacle list
+        // (whatever the active scene/map seeded), so the embodied view dresses the real battlefield.
+        let mut plan = prop_draw_plan(eye, obstacles);
         let visible = fog::visible_instances(&self.instances, fog, true);
         plan.extend(unit_draw_plan(&visible, eye));
         // One batch per (kind, lod) actually used, so each draws its own decimated mesh tier; the
@@ -2910,7 +2917,7 @@ mod tests {
     #[test]
     fn prop_layout_places_both_faction_turrets() {
         use mesh::ModelKind as M;
-        let plan = prop_draw_plan([0.0, 0.0, 1.5]);
+        let plan = prop_draw_plan([0.0, 0.0, 1.5], &gonedark_core::obstacles::skirmish_obstacles());
         let kinds: Vec<M> = plan.iter().map(|&(k, _, _)| k).collect();
         assert!(kinds.contains(&M::TurretUs), "US emplacement is drawn");
         assert!(kinds.contains(&M::TurretFr), "FR emplacement is drawn");
@@ -3312,7 +3319,7 @@ mod tests {
         let obstacles = gonedark_core::obstacles::skirmish_obstacles();
         let first = obstacles[0].pos;
         let eye = [fixed_to_f32(first.x), fixed_to_f32(first.y), 1.5];
-        let plan = prop_draw_plan(eye);
+        let plan = prop_draw_plan(eye, &obstacles);
         assert_eq!(plan.len(), obstacles.len(), "every prop is planned");
         for (_, lod, _) in &plan {
             assert!(*lod < mesh::LOD_COUNT, "lod is a valid library index");

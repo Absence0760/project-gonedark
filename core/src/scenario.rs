@@ -614,8 +614,24 @@ fn build_skirmish_terrain(sim: &mut Sim) {
     //    at and path around (Q24). The list lives in `core::obstacles` so the sim owns it and the
     //    renderer reads it — one source, so a prop can never again be visible-but-passable. Scattered
     //    mid-field, clear of the bases (±30,0), spawns and the three capture posts, so it never walls
-    //    off the base-to-base lane or traps a post.
-    crate::obstacles::paint_impassable(&mut sim.terrain, &crate::obstacles::skirmish_obstacles());
+    //    off the base-to-base lane or traps a post. The list is also REGISTERED on the sim
+    //    (`Sim::obstacles`) so the renderer draws exactly the props the sim collides with — the
+    //    sim-owned source both views read (Q24), instead of a render-side hardcoded layout.
+    let props = crate::obstacles::skirmish_obstacles();
+    crate::obstacles::paint_impassable(&mut sim.terrain, &props);
+    sim.obstacles.extend(props);
+}
+
+/// Register the shared scenery prop set on [`Sim::obstacles`] so the renderer can dress the embodied
+/// view from the one sim-owned source (Q24/D50), for the fixed-force **mission** scenes. Unlike
+/// [`build_skirmish_terrain`] this is **draw-only** — it does NOT paint the props impassable, so a
+/// mission's authored cover bars and assault lanes are left exactly as balanced (these props were
+/// passable set-dressing before the layout moved into the sim, and stay passable here). Adds no
+/// entities, so it never perturbs spawn order, and the obstacle list is static map data outside the
+/// per-tick fold, so it never moves the checksum (invariants #1/#7). Per-mission bespoke prop layouts
+/// are future campaign work; this preserves the pre-existing embodied dressing.
+fn register_scenery(sim: &mut Sim) {
+    sim.obstacles.extend(crate::obstacles::skirmish_obstacles());
 }
 
 /// Seed `sim` with the two-base skirmish and return the [`Skirmish`] handles: two operational base
@@ -940,6 +956,8 @@ fn build_seize_terrain(sim: &mut Sim) {
     bar(-12, 3); // first bound out of the deploy line
     bar(-2, 4); //  the midfield sandbag wall
     bar(8, 3); //   the last cover before the base's open ground
+
+    register_scenery(sim);
 }
 
 pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> SeizeMission {
@@ -1160,6 +1178,8 @@ fn build_hold_terrain(sim: &mut Sim, defender_cols: i32) {
     let (cx0, cy0) = sim.terrain.cell_of(at((west, -5)));
     let (cx1, cy1) = sim.terrain.cell_of(at((HOLD_DEFENDER_X + 2, 5)));
     sim.terrain.fill_rect(cx0, cy0, cx1, cy1, Cover::Light);
+
+    register_scenery(sim);
 }
 
 /// Seed `sim` with Mission 2 — *Hold the Line* — and return its [`HoldMission`] handles. See the
@@ -1333,6 +1353,8 @@ fn build_push_terrain(sim: &mut Sim) {
         let (cx1, cy1) = sim.terrain.cell_of(at((px - 3, 2)));
         sim.terrain.fill_rect(cx0, cy0, cx1, cy1, Cover::Light);
     }
+
+    register_scenery(sim);
 }
 
 /// Seed `sim` with Mission 3 — the *Push* — and return its [`PushMission`] handles. See the module
@@ -1847,6 +1869,52 @@ mod tests {
                 assert_eq!(a.terrain.cover_at_cell(cx, cy), b.terrain.cover_at_cell(cx, cy));
             }
         }
+    }
+
+    #[test]
+    fn skirmish_registers_its_props_on_the_sim() {
+        // The renderer draws `Sim::obstacles` (the sim-owned source, Q24) — so the skirmish seed
+        // must register exactly the layout it painted collision under, deterministically, and each
+        // registered prop must stand on the solid cell its footprint painted (visible == collides).
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        assert_eq!(
+            sim.obstacles,
+            crate::obstacles::skirmish_obstacles(),
+            "the registered props are the painted layout"
+        );
+        assert!(!sim.obstacles.is_empty());
+        for o in &sim.obstacles {
+            assert!(
+                sim.terrain.cover_at(o.pos).blocks_movement(),
+                "prop {:?} at {:?} is registered but not solid",
+                o.kind,
+                o.pos,
+            );
+        }
+        // Static map data, never folded: clearing the list must not move the per-tick checksum
+        // (its gameplay effect — the painted terrain — is not per-tick state either).
+        let before = sim.checksum();
+        sim.obstacles.clear();
+        assert_eq!(sim.checksum(), before, "obstacles must not enter the checksum");
+    }
+
+    #[test]
+    fn missions_register_scenery_for_the_embodied_view() {
+        // Each fixed-force mission must dress its embodied view (the renderer draws `Sim::obstacles`),
+        // so none boots with an empty prop list. The scenery is draw-only — the mission's authored
+        // cover decides balance — so this asserts presence, not solidity (see `register_scenery`).
+        let mut seize = fresh();
+        seed_seize_mission(&mut seize);
+        assert!(!seize.obstacles.is_empty(), "seize dresses the embodied view");
+
+        let mut hold = fresh();
+        seed_hold_mission(&mut hold);
+        assert!(!hold.obstacles.is_empty(), "hold dresses the embodied view");
+
+        let mut push = fresh();
+        seed_push_mission(&mut push);
+        assert!(!push.obstacles.is_empty(), "push dresses the embodied view");
     }
 
     /// End-to-end: the skirmish is a **live, evolving match**, not an inert tableau. Drive it the

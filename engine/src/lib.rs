@@ -4175,6 +4175,7 @@ impl Game {
                 &view_proj.to_cols_array_2d(),
                 eye,
                 &visibility,
+                &self.sim.obstacles,
                 sw,
                 sh,
             );
