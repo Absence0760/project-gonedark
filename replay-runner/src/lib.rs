@@ -46,6 +46,11 @@ use gonedark_core::sim::{Command, Sim};
 pub use codec::{ReplayError, FORMAT_VERSION, MAGIC, MAGIC_MULTI};
 pub use scenario::Scenario;
 
+/// The canonical replay seed — "goned-da47". Shared by this crate's own tests, `replay-runner`'s
+/// CLI (`main.rs`), and `viz-runner`'s spectate smoke test, so there is exactly one place that
+/// decides it instead of three independently-typed copies of the same literal.
+pub const CANONICAL_SEED: u64 = 0x60ED_DA47;
+
 /// A recorded match: which scenario, the seed, the tick count, and the captured per-tick command
 /// log. This IS the replay artifact — encode it to bytes ([`Replay::encode`]) to persist it.
 #[derive(Clone, Debug)]
@@ -494,7 +499,7 @@ mod tests {
     use super::*;
     use gonedark_core::ecs::Entity;
 
-    const SEED: u64 = 0x60ED_DA47; // "goned-da47" — the replay-runner's canonical seed.
+    const SEED: u64 = CANONICAL_SEED;
 
     #[test]
     fn scenario_tag_and_token_roundtrip() {

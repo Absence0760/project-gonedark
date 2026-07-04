@@ -20,7 +20,7 @@
 use std::process::ExitCode;
 
 use gonedark_replay_runner::{
-    playback, playback_multi, record, record_multi, MultiReplay, Replay, Scenario,
+    playback, playback_multi, record, record_multi, MultiReplay, Replay, Scenario, CANONICAL_SEED,
 };
 
 fn main() -> ExitCode {
@@ -61,8 +61,7 @@ fn main() -> ExitCode {
         .map(|s| Scenario::parse(s).unwrap_or_else(|| fatal_scenario(s)))
         .unwrap_or(Scenario::DEFAULT);
 
-    // Canonical seed (matches the lib tests).
-    let seed: u64 = 0x60ED_DA47;
+    let seed: u64 = CANONICAL_SEED;
 
     if multi {
         return run_multi(scenario, seed, ticks, out_path, keep);

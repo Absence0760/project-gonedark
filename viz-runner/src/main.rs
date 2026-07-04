@@ -584,13 +584,13 @@ fn spectate_capture_ticks(total: u64, samples: usize) -> Vec<u64> {
 /// ascending-peer-id** command stream (D93 `merged_for`), so the spectate is faithful to what
 /// lockstep produced.
 fn spectator_scene(gpu: &Gpu, target: &wgpu::Texture, view: &wgpu::TextureView, failures: &mut u32) {
-    use gonedark_replay_runner::{round_trip_multi, MultiReplay, Scenario};
+    use gonedark_replay_runner::{round_trip_multi, MultiReplay, Scenario, CANONICAL_SEED};
 
     // The replay-runner's canonical seed. `Game::new_scene(Scene::Skirmish, SEED)` seeds the sim
     // through `seed_skirmish_with_loadout(_, STANDARD)`, a proven no-op over `core::scenario::
     // seed_skirmish` — the SAME seeded world the replay scenario builds — so the two step from a
     // byte-identical tick-0 state and their checksum streams line up (invariants #1/#7).
-    const SEED: u64 = 0x60ED_DA47;
+    const SEED: u64 = CANONICAL_SEED;
     const TICKS: u64 = 300;
 
     println!(
