@@ -84,6 +84,11 @@ pub struct CommandGestureOutput {
 /// The in-flight two-finger gesture's running state (centroid/spread history + tap qualifiers).
 #[derive(Clone, Copy, Debug)]
 struct Tracking {
+    /// The two finger ids the gesture is anchored to. The pair is looked up **by id** each frame —
+    /// never by array position, because the Android backend rebuilds the touch slice index-compacted
+    /// every event, so positions silently re-shuffle when a finger joins or lifts (the exact bug
+    /// `touch_controls` already avoids by owning fingers by id).
+    ids: (u64, u64),
     /// Monotonic ms the gesture began (second finger landed) — the tap-duration clock.
     start_ms: u64,
     /// Previous frame's two-finger centroid (px), for the pan delta.
@@ -110,20 +115,25 @@ impl CommandGesture {
 
     /// Advance the gesture state machine one frame from this frame's currently-down `touches` and a
     /// monotonic `now_ms`, returning the pan / zoom / embody intents. The backend passes the SAME
-    /// touch set it puts on `InputFrame::touches`; only the first two fingers matter (a 3rd+ finger is
-    /// ignored for the deltas and disqualifies the embody tap).
+    /// touch set it puts on `InputFrame::touches`; the gesture anchors to two fingers and tracks that
+    /// pair **by id** thereafter (a 3rd+ finger is ignored for the deltas and disqualifies the embody
+    /// tap).
     ///
     /// Contract: on the frame the second finger first lands there is NO delta (a capture frame, so the
-    /// camera never jumps to the initial contact); on the frame the gesture drops below two fingers the
-    /// pan/zoom are zero and `embody` reflects whether it qualified as a tap.
+    /// camera never jumps to the initial contact); when the pair composition changes with two-plus
+    /// fingers still down (a tracked finger lifted, a survivor + another remain) the gesture
+    /// re-anchors to the current fingers with the same no-delta capture-frame contract; on the frame
+    /// the gesture drops below two fingers the pan/zoom are zero and `embody` reflects whether it
+    /// qualified as a tap.
     pub fn update(&mut self, touches: &[TouchSample], now_ms: u64) -> CommandGestureOutput {
         let n = touches.len();
         if n >= 2 {
-            let (centroid, spread) = centroid_spread(touches[0], touches[1]);
             match self.tracking.as_mut() {
                 None => {
                     // Second finger just landed: begin tracking, emit no delta this capture frame.
+                    let (centroid, spread) = centroid_spread(touches[0], touches[1]);
                     self.tracking = Some(Tracking {
+                        ids: (touches[0].id, touches[1].id),
                         start_ms: now_ms,
                         prev_centroid: centroid,
                         prev_spread: spread,
@@ -134,16 +144,32 @@ impl CommandGesture {
                 }
                 Some(tr) => {
                     tr.max_pointers = tr.max_pointers.max(n);
-                    let dcx = centroid.0 - tr.prev_centroid.0;
-                    let dcy = centroid.1 - tr.prev_centroid.1;
-                    let dspread = spread - tr.prev_spread;
-                    tr.prev_centroid = centroid;
-                    tr.prev_spread = spread;
-                    tr.moved += (dcx * dcx + dcy * dcy).sqrt() + dspread.abs();
-                    CommandGestureOutput {
-                        move_axis: pan_axis(dcx, dcy),
-                        scroll: pinch_scroll(dspread),
-                        embody: false,
+                    match find_pair(touches, tr.ids) {
+                        Some((a, b)) => {
+                            let (centroid, spread) = centroid_spread(a, b);
+                            let dcx = centroid.0 - tr.prev_centroid.0;
+                            let dcy = centroid.1 - tr.prev_centroid.1;
+                            let dspread = spread - tr.prev_spread;
+                            tr.prev_centroid = centroid;
+                            tr.prev_spread = spread;
+                            tr.moved += (dcx * dcx + dcy * dcy).sqrt() + dspread.abs();
+                            CommandGestureOutput {
+                                move_axis: pan_axis(dcx, dcy),
+                                scroll: pinch_scroll(dspread),
+                                embody: false,
+                            }
+                        }
+                        None => {
+                            // A tracked finger lifted while two-plus remain: the pair composition
+                            // changed, so re-anchor to the current fingers and emit NO delta — the
+                            // capture-frame contract again, so the identity swap can never jerk the
+                            // camera with a spurious pan/zoom.
+                            let (centroid, spread) = centroid_spread(touches[0], touches[1]);
+                            tr.ids = (touches[0].id, touches[1].id);
+                            tr.prev_centroid = centroid;
+                            tr.prev_spread = spread;
+                            CommandGestureOutput::default()
+                        }
                     }
                 }
             }
@@ -164,6 +190,16 @@ impl CommandGesture {
             }
         }
     }
+}
+
+/// Look the tracked finger pair up **by id** in this frame's touch slice, in tracked order. `None`
+/// when either finger is gone — array positions are meaningless (the Android backend index-compacts
+/// the slice on every event), so this lookup is what keeps the pair's identity stable.
+#[inline]
+fn find_pair(touches: &[TouchSample], ids: (u64, u64)) -> Option<(TouchSample, TouchSample)> {
+    let a = touches.iter().find(|t| t.id == ids.0)?;
+    let b = touches.iter().find(|t| t.id == ids.1)?;
+    Some((*a, *b))
 }
 
 /// The centroid (midpoint) and spread (distance) of two touch points, in px.
@@ -319,6 +355,57 @@ mod tests {
         assert_eq!(out, CommandGestureOutput::default(), "a one-finger drag is not a command gesture");
         let out = g.update(&[], 32);
         assert!(!out.embody, "lifting a single finger never embodies");
+    }
+
+    /// REGRESSION (id-tracking): a 3rd finger joins, then an ORIGINAL finger lifts — the backend
+    /// index-compacts the slice, so positions `[0]`/`[1]` now name a different pair. Tracking by id,
+    /// the frame the pair composition changes is a re-anchor frame with NO spurious pan/zoom delta
+    /// (the by-position bug jerked the camera here), and the new pair drives the gesture normally
+    /// from the next frame.
+    #[test]
+    fn original_finger_lifting_under_a_third_re_anchors_without_a_delta() {
+        let mut g = CommandGesture::new();
+        // Pair (1, 2) lands.
+        g.update(&[t(1, 100.0, 100.0), t(2, 200.0, 100.0)], 0);
+        // A 3rd finger joins far away; the tracked pair is motionless → no delta.
+        let out = g.update(
+            &[t(1, 100.0, 100.0), t(2, 200.0, 100.0), t(3, 500.0, 400.0)],
+            16,
+        );
+        assert_eq!(out.move_axis, (0.0, 0.0), "a joining 3rd finger must not pan");
+        assert_eq!(out.scroll, 0.0, "a joining 3rd finger must not zoom");
+        // Finger 1 lifts; the compacted slice is [2, 3], whose centroid/spread differ wildly from
+        // (1, 2)'s. Pair composition changed → re-anchor, NO delta this frame.
+        let out = g.update(&[t(2, 200.0, 100.0), t(3, 500.0, 400.0)], 32);
+        assert_eq!(out, CommandGestureOutput::default(), "pair change re-anchors without a delta");
+        // From the next frame the re-anchored pair (2, 3) drives pan/zoom normally.
+        let out = g.update(&[t(2, 248.0, 100.0), t(3, 548.0, 400.0)], 48);
+        assert_eq!(out.move_axis.0, 1.0, "the new pair pans after the re-anchor frame");
+        assert_eq!(out.scroll, 0.0, "a rigid translation of the new pair must not zoom");
+    }
+
+    /// REGRESSION (id-tracking): the tracked pair is found BY ID, not by slice position — a 3rd
+    /// finger landing at index 0 (the identity-swap the by-position bug produced) neither jerks the
+    /// camera while the true pair is still, nor pollutes the true pair's deltas when it moves.
+    #[test]
+    fn tracked_pair_is_found_by_id_regardless_of_slice_order() {
+        let mut g = CommandGesture::new();
+        g.update(&[t(1, 100.0, 100.0), t(2, 200.0, 100.0)], 0);
+        // The slice is handed over re-ordered with an interloper first: touches[0]/[1] = (3, 1),
+        // which the by-position code would have read as a huge spurious pan + pinch.
+        let out = g.update(
+            &[t(3, 500.0, 400.0), t(1, 100.0, 100.0), t(2, 200.0, 100.0)],
+            16,
+        );
+        assert_eq!(out.move_axis, (0.0, 0.0), "a still tracked pair must not pan on re-order");
+        assert_eq!(out.scroll, 0.0, "a still tracked pair must not zoom on re-order");
+        // The true pair sliding +48 px still saturates the pan, unaffected by the interloper.
+        let out = g.update(
+            &[t(3, 500.0, 400.0), t(1, 148.0, 100.0), t(2, 248.0, 100.0)],
+            32,
+        );
+        assert_eq!(out.move_axis, (1.0, 0.0), "the tracked pair's motion drives the pan");
+        assert_eq!(out.scroll, 0.0, "the tracked pair's rigid translation must not zoom");
     }
 
     /// Sub-deadzone jitter on a held two-finger contact produces neither pan nor zoom (so a resting
