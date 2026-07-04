@@ -3740,7 +3740,7 @@ Kotlin tables carried (the inline `when` was untested).
 un-launchable tile. PvE and PvP share the picker until PvP match-setup exists
 ([Q5](open-questions.md#q5--single-player-multiplayer-or-both--and-in-what-order--resolved-d58-pve-first)-blocked); their divergence stays future work.
 
-**Owed — desktop parity ([D79](#d79--compose-shell-parity-is-hand-mirrored-not-jni-single-sourced)).**
+**Owed — desktop parity ([D79](#d79--android-shells-pure-decisionvalidation-seams-are-re-implemented-in-kotlin-with-tests-not-single-sourced-over-jni)).**
 This landed on the **Android Compose shell** (the reported platform). The desktop egui shell
 (`app/src/shell.rs::resolve_title_action`, `app/src/main.rs`) still routes Pve/Pvp through
 `OpenLoadout` — reconciling it (add an `OpenModeSelect`/`Screen::ModeSelect`, move the loadout behind
@@ -4571,7 +4571,7 @@ used for the Pointe du Hoc covergrid: committed git-diffable text compiled into 
 binary/APK, so the identical library exists on every platform with no filesystem, AAsset,
 or distribution story yet. The D94/CT-D content-directory loader is the intended
 replacement — it landed for *missions* but scans directories, which does not solve
-Android's in-APK delivery; when the [D77](#d77--content-addressed-terrain-resolves-q22)
+Android's in-APK delivery; when the [D77](#d77--content-addressed-terrain-maps-carry-the-grid-persist-serializes-a-content-hash-id-resolves-q22)
 content-hash loader lands, both bridges (this one and D80's) retire together. v1 ships
 **one authored map (Crossroads)**; baked (D80) and generated (CT-G) maps stay out until
 D77 replaces `Terrain::from_map_id` (their grids are unreachable through the `u16`
@@ -4600,7 +4600,7 @@ Nothing here adds a per-tick checksum surface (map content stays out of the fold
 invariant #7); the shells' tables are read-only presentation data (the D34 rules).
 
 **Cross-link:** [D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out)
-(the seam this closes), [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)/[D77](#d77--content-addressed-terrain-resolves-q22)/[D80](#d80--real-world-battlefield-maps-a-scripted-gis-ingestbakelint-pipeline-faithful-then-balance-passed)
+(the seam this closes), [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)/[D77](#d77--content-addressed-terrain-maps-carry-the-grid-persist-serializes-a-content-hash-id-resolves-q22)/[D80](#d80--real-world-battlefield-maps-a-scripted-gis-ingestbakelint-pipeline-faithful-then-balance-passed)
 (format / target identity / the sibling bridge),
 [D101](#d101--three-distinct-front-doors-in-the-shells-pvp-gets-an-honest-staging-screen-the-shared-mode-picker-retires)
 (the table this unifies away), [`modes.md`](modes.md) §3, `engine/src/map_library.rs`,
@@ -4902,3 +4902,47 @@ baseline this preserves), `architecture.md` determinism checklist (the "determin
 transcendentals" line now names the checked-in table), `core/src/lut_data.rs` (the data),
 `core/src/trig.rs` (`lut_table_hash_is_locked` + structural tests), `core/build/lut.rs` (the
 offline regeneration tool).
+
+## D109 — The skirmish picker grows a map card: MapSpec-derived preview + metrics on both shells (the D102 remainder, first half)
+
+**Status: landed.** The battlefield picker's selected `LibraryMap` tile now carries a **map
+card**: a 2D sketch of the map plus integer metrics, derived at runtime from the `MapSpec`
+the picker already embeds. The derivation is `engine::map_card::MapCard::derive(&MapSpec)` —
+integer-only presentation data (D34-safe): control-point count, per-kind cover-prop counts,
+deduplicated covered cells with permille density and a per-quadrant breakdown (split at cell
+64), and per-zone spawn extents. Desktop renders it as a painter-primitive panel in
+`app/src/shell/skirmish.rs` (grid bounds, player/enemy zone outlines, kind-coloured prop
+cells, control-point markers, metric lines — pure seams tested); Android hand-mirrors it per
+the D79 convention (`MapCard.kt` + a Compose Canvas panel), with drift-guard tests that
+**re-derive the pinned metrics from the mirrored geometry** using the engine's integer math,
+and metric lines pinned character-identical to the desktop strings. Scene-kind entries show a
+one-line "code-seeded scene — no map card" note.
+
+**Why.** D102 shipped the picker and named its missing preview/metrics "deferred
+presentation, not a changed design." The *full* target model — the lint preview PNG + the
+baker's manifest balance metrics — is stuck behind the D77 content-hash loader, because
+those artifacts exist only for baked maps, and baked maps aren't in the library yet. But the
+`MapSpec` already in the binary carries enough to tell a player what they're getting into,
+at zero new asset plumbing and with no float anywhere near the data. When D77 lands and
+baked maps join the library, the baker's manifest metrics and preview PNG **augment or
+replace** the derived card — that remains the target-model half this decision does *not*
+close.
+
+**Honest caveats.** Crossroads' six props round to 0‰ of the 16 384-cell field, so the card
+also shows raw covered-cell counts to stay informative (a coarser unit would be a spec
+change, not picked silently here). And the panel has been proven by seam tests + review, not
+by eye — no headless shell capture exists (viz-runner drives in-match scenes only), so the
+first visual pass rides the next desktop/device session.
+
+**Cross-link:** [D102](#d102--the-map-library-lands-as-an-embedded-battlefield-table-one-picker-list-a-map-driven-skirmish-boot-a-second-interim-bridge)
+(the picker this card completes the first half of),
+[D77](#d77--content-addressed-terrain-maps-carry-the-grid-persist-serializes-a-content-hash-id-resolves-q22)
+(the loader still gating the baker's PNG/manifest metrics),
+[D79](#d79--android-shells-pure-decisionvalidation-seams-are-re-implemented-in-kotlin-with-tests-not-single-sourced-over-jni)
+(the hand-mirror convention the Kotlin card follows),
+[D34](#d34--the-shellsim-seam-a-gpu-free-logic-free-coreshell-façade-intent-in-view-out) (the
+presentation-safe boundary the card's integer-only data respects). Files:
+`engine/src/map_card.rs` (the derivation + pins), `app/src/shell/skirmish.rs` +
+`app/src/shell/tests.rs` (the desktop panel + seams), `android/.../MapCard.kt` +
+`SkirmishSetupScreen.kt` + `MapCardTest.kt` (the mirror + drift guards), `docs/modes.md` /
+`docs/roadmap.md` / `docs/plans/phase-4-plan.md` (shipped-vs-target updates).

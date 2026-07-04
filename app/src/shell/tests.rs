@@ -1905,6 +1905,94 @@ use gonedark_render::tiers::QualityTier;
         assert_eq!(state, before, "Back never edits the configuration");
     }
 
+    // ---- The skirmish map card (modes.md §3 picker preview, shipped v1) --------------------------
+
+    use gonedark_engine::map_card::{MapCard, COVER_KINDS};
+    use gonedark_engine::map_format::MapSpec;
+    use gonedark_engine::map_library::library_spec;
+
+    #[test]
+    fn sketch_cell_mapping_covers_the_panel_exactly() {
+        // The 128-cell grid tiles the panel edge to edge: cell (0,0) starts at the panel's min
+        // corner, the last cell ends at its max, and each cell is an even 1/128 slice.
+        let panel = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(256.0, 256.0));
+        let first = cell_sketch_rect(panel, 0, 0);
+        assert_eq!(first.min, panel.min);
+        assert_eq!(first.size(), egui::vec2(2.0, 2.0));
+        let last = cell_sketch_rect(panel, 127, 127);
+        assert_eq!(last.max, panel.max);
+    }
+
+    #[test]
+    fn sketch_centre_cell_starts_at_the_panel_midpoint() {
+        // Cell (64, 64) — the playfield centre cell — begins exactly at the panel's midpoint
+        // (the grid splits at GRID/2, same as the card's quadrants).
+        let panel = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(256.0, 256.0));
+        assert_eq!(cell_sketch_rect(panel, 64, 64).min, egui::pos2(128.0, 128.0));
+    }
+
+    #[test]
+    fn sketch_mapping_scales_each_axis_of_a_non_square_panel() {
+        // Each axis scales independently — a 128x64 panel offset from the origin stretches the
+        // field, it never letterboxes or clips.
+        let panel = egui::Rect::from_min_max(egui::pos2(10.0, 20.0), egui::pos2(138.0, 84.0));
+        let r = cell_sketch_rect(panel, 1, 1);
+        assert_eq!(r.min, egui::pos2(11.0, 20.5));
+        assert_eq!(r.size(), egui::vec2(1.0, 0.5));
+        assert_eq!(cell_sketch_rect(panel, 127, 127).max, panel.max);
+    }
+
+    #[test]
+    fn prop_kind_swatches_are_pairwise_distinct() {
+        // Five kinds, five distinguishable swatches — the sketch's colour key is only honest if
+        // no two kinds share a colour.
+        for (i, &a) in COVER_KINDS.iter().enumerate() {
+            for &b in &COVER_KINDS[i + 1..] {
+                assert_ne!(prop_kind_color(a), prop_kind_color(b), "{a:?} vs {b:?}");
+            }
+            assert!(!prop_kind_label(a).is_empty());
+            assert!(prop_kind_label(a).is_ascii());
+        }
+    }
+
+    #[test]
+    fn zone_outlines_wear_the_faction_hues() {
+        // The player/enemy deploy zones read in the same faction blue/red as everywhere else in
+        // the game; any other authored zone name falls back to ash.
+        assert_eq!(zone_outline_color("player"), rgb8(gonedark_render::theme::PLAYER));
+        assert_eq!(zone_outline_color("enemy"), rgb8(gonedark_render::theme::ENEMY));
+        assert_eq!(zone_outline_color("flank"), ASH);
+        assert_ne!(zone_outline_color("player"), zone_outline_color("enemy"));
+    }
+
+    #[test]
+    fn crossroads_metric_lines_read_the_pinned_card() {
+        // The full formatted card for the one shipped library map — pinned verbatim (the values
+        // are the engine's pinned crossroads card; the Kotlin twin mirrors the same numbers).
+        let spec = library_spec("crossroads").expect("shipped library map");
+        let card = MapCard::derive(&spec);
+        assert_eq!(
+            map_card_metric_lines(&card),
+            vec![
+                "Control points: 3",
+                "Cover: 6 props on 6 cells -- 0/1000 of the field",
+                "Cover by quadrant (cells): 1 / 2 / 1 / 2",
+                "Spawn zones: 2 -- player 7x9, enemy 7x9",
+            ]
+        );
+    }
+
+    #[test]
+    fn metric_lines_handle_a_zoneless_card() {
+        // A minimal map (terrain only) still formats a full card — the zone line says so
+        // explicitly rather than trailing an empty list.
+        let spec = MapSpec::load("MapSpec(terrain: 0)").unwrap();
+        let lines = map_card_metric_lines(&MapCard::derive(&spec));
+        assert_eq!(lines[0], "Control points: 0");
+        assert_eq!(lines[1], "Cover: 0 props on 0 cells -- 0/1000 of the field");
+        assert_eq!(lines[3], "Spawn zones: none");
+    }
+
     #[test]
     fn reseed_player_army_follows_the_identity_pick_and_bumps_a_colliding_enemy() {
         // Opening the screen re-seeds the player side from the persisted army-select pick…

@@ -176,6 +176,10 @@ pub use gonedark_pal::keybind;
 /// range-checked, fails loud; the applied `Sim` adds no checksum surface (invariants #4/#7).
 pub mod map_format;
 pub mod map_library;
+/// The picker's **map card** — preview metrics derived at runtime from a `MapSpec` (`modes.md` §3
+/// shipped v1; the baker's lint PNG / balance metrics stay deferred behind D77). Integer-only
+/// presentation data under the D34 rules: read-only, derived, never a checksum surface.
+pub mod map_card;
 
 pub use tuning::RenderTuning;
 /// The music-bus gain seam (D75 follow-up), re-exported so the desktop host can carry the Settings
