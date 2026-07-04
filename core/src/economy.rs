@@ -130,6 +130,49 @@ pub const TANK_COST: i64 = 360;
 /// Base ticks to produce a [`Tank`](UnitKind::Tank). 840 = 14 s — slow, deliberate armour.
 pub const TANK_BASE_TICKS: u16 = 840;
 
+// --- WW2 cost-vs-power armies (D120): the *quantity vs quality* fork. The two WW2 armies field the
+// SAME shared `UnitKind::Tank` archetype, but at per-army COST + POWER (`unit_cost_for` +
+// `faction_power_tilt`) tuned so a cost-equal Sherman mass trades ~evenly with the fewer, tougher
+// Panther/Tiger tanks. Fairness is measured at EQUAL BUDGET (not equal count) — see the
+// `equal_budget_quality_vs_quantity` harness in `sim-runner`. Every non-WW2 army (Neutral/Us/Fr)
+// keeps the shared `TANK_COST` (360) and shared HP, so the modern balance (D71) is byte-identical.
+// Integer/fixed-point only (invariant #1).
+//
+// The 2:1 count ratio the equal-budget fight rests on: at any budget the Sherman side fields twice
+// the tanks of the Panther side (240 vs 480). Under the Lanchester square law of a symmetric-gun
+// melee (both WW2 tanks fire the SHARED baseline gun — damage/cadence/range unchanged), a force's
+// combat power is ≈ count² · per-tank-HP, so balance needs the Panther's HP ≈ 4× the Sherman's. The
+// tuned block (Sherman 150 HP / Germany 660 HP) sits just above that point (660, not 600, to cancel
+// the cheap side's index-order first-mover edge); the metric harness confirms the trade resolves with
+// the winner — which FLIPS between the elite and the mass by budget/geometry — keeping ≤2 tanks (D120).
+
+/// Cost to produce the **WW2 US "Sherman"** [`Tank`](UnitKind::Tank) ([`Army::UsWw2`], D120). 240 =
+/// ⅔ of the shared [`TANK_COST`] (360): the CHEAP, mass-produced tank — an equal budget fields twice
+/// as many of these as the German tank (480).
+pub const USWW2_TANK_COST: i64 = 240;
+/// Cost to produce the **WW2 German "Panther/Tiger"** [`Tank`](UnitKind::Tank) ([`Army::Germany`],
+/// D120). 480 = 2× [`USWW2_TANK_COST`]: the PRICEY elite — an equal budget fields half as many.
+pub const GERMANY_TANK_COST: i64 = 480;
+
+/// HP of the WW2 US "Sherman" tank ([`Army::UsWw2`], D120): 150 — HALF the shared 300, the *weaker*
+/// end of the quantity-vs-quality fork. You field more of them, each dies faster.
+pub const USWW2_TANK_HP: i32 = 150;
+/// HP of the WW2 German "Panther/Tiger" tank ([`Army::Germany`], D120): 660 — 2.2× the shared 300,
+/// ≈4.4× the Sherman's 150. The *tougher* end: you field fewer, each is a wall. The Lanchester square
+/// law of a symmetric-gun melee predicts a ≈4:1 HP ratio to offset the 2:1 count disadvantage; the
+/// tuned value sits a touch above that (660, not 600) to cancel the cheap side's index-order
+/// first-mover edge, so the `equal_budget_quality_vs_quantity` harness resolves with the WINNER —
+/// which FLIPS between the elite and the mass by budget/geometry — keeping only ≤2 tanks (D120).
+pub const GERMANY_TANK_HP: i32 = 660;
+
+/// Armour penetration of the WW2 German tank's gun ([`Army::Germany`], D120): 20. Chosen so
+/// `2·20 = 40 ≥ TANK_ARMOR_FRONT` (40) — the Panther/Tiger gun CAN crack the shared frontal facet
+/// head-on, the *quality* half of the fork. (The Sherman keeps the shared baseline penetration of 18,
+/// which bounces the 40-front: `2·18 = 36 < 40`.) Penetration only bites against an *armoured* target;
+/// the equal-budget fairness harness spawns unarmoured tanks, so this is narrative/real-combat power,
+/// not a lever on the measured trade. `Fixed`, no float (invariant #1).
+pub const GERMANY_TANK_PENETRATION: Fixed = Fixed::from_int(20);
+
 // --- Produced-Tank directional armour (tank embodiment P9, the armour half — completes the D65
 // unarmoured-tank stopgap). The produced `UnitKind::Tank` is now a real armoured vehicle: thick
 // front, thinner side, thinnest rear, in the same `Fixed` units a `Weapon::penetration` is measured
@@ -210,15 +253,31 @@ pub const fn upgrade_cost(level: u8) -> i64 {
     200 * (level as i64 + 1)
 }
 
-/// Resource cost to produce one unit of `kind`.
+/// Resource cost to produce one unit of `kind` at the **shared baseline** — the army-agnostic price
+/// every non-WW2 army pays. Kept as the canonical entry point for every existing caller: it delegates
+/// to [`unit_cost_for`]`(Army::Neutral, kind)`, which returns the baseline table byte-for-byte, so no
+/// existing spend/affordability path moves (invariant #7).
 #[inline]
 pub const fn unit_cost(kind: UnitKind) -> i64 {
-    match kind {
-        UnitKind::Rifleman => RIFLEMAN_COST,
-        UnitKind::Heavy => HEAVY_COST,
-        UnitKind::Tank => TANK_COST,
-        UnitKind::Medic => MEDIC_COST,
-        UnitKind::AntiTank => ANTITANK_COST,
+    unit_cost_for(Army::Neutral, kind)
+}
+
+/// Resource cost to produce one unit of `kind` for the given `army` — the **army-aware** price (D120).
+/// Only the WW2 armies' [`Tank`](UnitKind::Tank) diverges from the shared table: the
+/// [`Army::UsWw2`] "Sherman" is CHEAPER ([`USWW2_TANK_COST`]) and the [`Army::Germany`]
+/// "Panther/Tiger" is PRICIER ([`GERMANY_TANK_COST`]) — the whole point of the quantity-vs-quality
+/// fork. Every other `(army, kind)` returns the shared baseline, so Neutral/Us/Fr and all infantry
+/// are byte-identical to before. Integer-only (invariant #1); `const` so it stays a compile-time table.
+#[inline]
+pub const fn unit_cost_for(army: Army, kind: UnitKind) -> i64 {
+    match (army, kind) {
+        (Army::UsWw2, UnitKind::Tank) => USWW2_TANK_COST,
+        (Army::Germany, UnitKind::Tank) => GERMANY_TANK_COST,
+        (_, UnitKind::Rifleman) => RIFLEMAN_COST,
+        (_, UnitKind::Heavy) => HEAVY_COST,
+        (_, UnitKind::Tank) => TANK_COST,
+        (_, UnitKind::Medic) => MEDIC_COST,
+        (_, UnitKind::AntiTank) => ANTITANK_COST,
     }
 }
 
@@ -620,18 +679,59 @@ const fn faction_logistics_tilt(army: Army, kind: UnitKind) -> Option<LogisticsT
         // (M1 Abrams, slower slew); FR the autoloader turret (Leclerc, quicker slew).
         (Army::Us, UnitKind::Tank) => Some(LogisticsTilt { mag_size: 6, reload_ticks: 240, reserve: 24, turret_speed: 160 }),
         (Army::Fr, UnitKind::Tank) => Some(LogisticsTilt { mag_size: 6, reload_ticks: 240, reserve: 24, turret_speed: 200 }),
+        // The WW2 armies (D120) carry NO logistics tilt — their identity is the cost-vs-power tank
+        // (`faction_power_tilt` + `unit_cost_for`), not the modern logistics rhythm. So their infantry
+        // AND their tank keep the shared baseline magazine/reload/reserve/turret.
+        (Army::UsWw2, _) | (Army::Germany, _) => None,
     }
 }
 
-/// Per-(army, archetype) combat stats a produced unit spawns with (factions-plan WS-B). The
-/// [`Army::Neutral`] baseline is exactly [`unit_stats`] (every legacy scene unchanged); `Us`/`Fr`
-/// apply the fairness-banded **logistics tilt** ([`faction_logistics_tilt`]) on top — magazine,
-/// reload, reserve, and turret only; the snowball-sensitive gun stats (damage/cooldown/range/HP)
-/// stay shared so the mirror trade stays fair (see the module note). Every army fields every
-/// archetype — there is no missing role. Determinism: the table is fixed-point and identical on
-/// every peer, so a given `(army, kind)` spawns the bit-identical unit everywhere (invariant #1/#7).
+/// A per-army **power tilt** over the shared [`unit_stats`] baseline — the WW2 cost-vs-power axis
+/// (D120): a replacement `Health` maximum and `Weapon::penetration` for an army's variant of an
+/// archetype. Unlike the modern [`LogisticsTilt`] (power-neutral by construction), this tilt DOES
+/// move combat power — it is paid for by the per-army [`unit_cost_for`] price so the trade balances at
+/// equal budget, not equal count. `None` ⇒ no power tilt (the shared baseline).
+#[derive(Clone, Copy)]
+struct PowerTilt {
+    hp: i32,
+    penetration: Fixed,
+}
+
+/// The per-army power tilt for an `(army, kind)`, or `None` for the shared baseline (D120). Only the
+/// two WW2 armies' [`Tank`](UnitKind::Tank) is tilted — the *quality-vs-quantity* showcase; every
+/// other `(army, kind)` (all infantry, all non-WW2 armies) returns `None` and keeps the shared
+/// [`unit_stats`] block byte-for-byte. Integer/fixed-point only (invariant #1).
+const fn faction_power_tilt(army: Army, kind: UnitKind) -> Option<PowerTilt> {
+    match (army, kind) {
+        // Sherman: weaker (half HP), baseline penetration (18 — bounces the shared 40-front). Cheaper
+        // to build (`USWW2_TANK_COST`), so an equal budget fields twice as many.
+        (Army::UsWw2, UnitKind::Tank) => Some(PowerTilt {
+            hp: USWW2_TANK_HP,
+            penetration: Fixed::from_int(18),
+        }),
+        // Panther/Tiger: tougher (double HP) and a gun that cracks the shared front (`2·20 ≥ 40`).
+        // Pricier to build (`GERMANY_TANK_COST`), so an equal budget fields half as many.
+        (Army::Germany, UnitKind::Tank) => Some(PowerTilt {
+            hp: GERMANY_TANK_HP,
+            penetration: GERMANY_TANK_PENETRATION,
+        }),
+        // Everything else — all infantry, and the modern Neutral/Us/Fr tanks — keeps the shared block.
+        _ => None,
+    }
+}
+
+/// Per-(army, archetype) combat stats a produced unit spawns with (factions-plan WS-B + the WW2
+/// cost-vs-power fork, D120). The [`Army::Neutral`] baseline is exactly [`unit_stats`] (every legacy
+/// scene unchanged); the modern `Us`/`Fr` apply the fairness-banded, power-NEUTRAL **logistics tilt**
+/// ([`faction_logistics_tilt`]) — magazine/reload/reserve/turret only, so the snowball-sensitive gun
+/// stats (damage/cooldown/range/HP) stay shared and the equal-COUNT mirror trade stays fair. The WW2
+/// `UsWw2`/`Germany` instead apply the **power tilt** ([`faction_power_tilt`]) to the shared tank —
+/// replacing HP + penetration — which is compensated by the per-army [`unit_cost_for`] price so the
+/// trade balances at equal BUDGET. Every army fields every archetype — no missing role. Determinism:
+/// the table is fixed-point and identical on every peer, so a given `(army, kind)` spawns the
+/// bit-identical unit everywhere (invariant #1/#7).
 pub fn unit_stats_for(army: Army, kind: UnitKind) -> (Health, Weapon) {
-    let (health, mut weapon) = unit_stats(kind);
+    let (mut health, mut weapon) = unit_stats(kind);
     if let Some(tilt) = faction_logistics_tilt(army, kind) {
         weapon.mag_size = tilt.mag_size;
         weapon.ammo = tilt.mag_size; // spawns with a full magazine (mirrors `unit_stats`)
@@ -639,6 +739,11 @@ pub fn unit_stats_for(army: Army, kind: UnitKind) -> (Health, Weapon) {
         weapon.reserve = tilt.reserve;
         weapon.reserve_max = tilt.reserve;
         weapon.turret_speed = tilt.turret_speed;
+    }
+    if let Some(tilt) = faction_power_tilt(army, kind) {
+        // The WW2 cost-vs-power tank (D120): replace HP + penetration; `unit_cost_for` pays for it.
+        health = Health::full(Fixed::from_int(tilt.hp));
+        weapon.penetration = tilt.penetration;
     }
     (health, weapon)
 }
@@ -729,12 +834,16 @@ pub fn upgrade(world: &mut World, resources: &mut Resources, camp: Entity) -> bo
 }
 
 /// Enqueue a `unit` for production at a built `camp`, spending its cost. Returns whether it
-/// was queued. STUB (worker 3).
+/// was queued. Charges the **producing faction's army price** ([`unit_cost_for`], D120): the per-side
+/// `armies` map decides whether a Tank costs the shared 360 (Neutral/Us/Fr) or the WW2 Sherman/Panther
+/// price — the spend half of the cost-vs-power fork. `armies` is `Army::Neutral` for every side in a
+/// legacy scene, so a non-WW2 match charges exactly the shared table (byte-identical to before).
 pub fn queue_production(
     world: &mut World,
     resources: &mut Resources,
     camp: Entity,
     unit: UnitKind,
+    armies: &[Army; FACTION_COUNT],
 ) -> bool {
     if !world.is_alive(camp) {
         return false;
@@ -748,7 +857,8 @@ pub fn queue_production(
     if !can_produce(world.building[i].kind, unit) {
         return false;
     }
-    if !resources.try_spend(world.faction[i], unit_cost(unit)) {
+    let faction = world.faction[i];
+    if !resources.try_spend(faction, unit_cost_for(armies[faction.index()], unit)) {
         return false;
     }
     let level = world.building[i].level;
@@ -1020,8 +1130,7 @@ mod tests {
             &mut world,
             &mut res,
             camp,
-            UnitKind::Rifleman
-        ));
+            UnitKind::Rifleman, &NEUTRAL_ARMIES));
         assert_eq!(
             res.get(Faction::Player),
             before - RIFLEMAN_COST,
@@ -1110,7 +1219,7 @@ mod tests {
         // Set a rally, then produce a rifleman.
         let rally = Vec2::new(Fixed::from_int(12), Fixed::from_int(8));
         assert!(set_camp_rally(&mut world, camp, rally));
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
         for _ in 0..prod_time(UnitKind::Rifleman, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1143,7 +1252,7 @@ mod tests {
         for _ in 0..CAMP_BUILD_TICKS {
             tick(&mut world, &mut res, &terr);
         }
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
         for _ in 0..prod_time(UnitKind::Rifleman, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1178,7 +1287,7 @@ mod tests {
         }
 
         // Produce a Rifleman, then verify the single spawned unit carries Rifleman.
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
         for _ in 0..prod_time(UnitKind::Rifleman, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1188,7 +1297,7 @@ mod tests {
         assert_eq!(world.unit_kind[rifle_idx], UnitKind::Rifleman);
 
         // Produce a Heavy, then verify the new unit carries Heavy (and the rifleman is untouched).
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Heavy));
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Heavy, &NEUTRAL_ARMIES));
         for _ in 0..prod_time(UnitKind::Heavy, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1284,8 +1393,7 @@ mod tests {
             &mut world,
             &mut res,
             camp,
-            UnitKind::Rifleman
-        ));
+            UnitKind::Rifleman, &NEUTRAL_ARMIES));
         let terr = empty_terr();
         for _ in 0..CAMP_BUILD_TICKS {
             tick(&mut world, &mut res, &terr);
@@ -1298,8 +1406,7 @@ mod tests {
             &mut world,
             &mut res,
             camp,
-            UnitKind::Heavy
-        ));
+            UnitKind::Heavy, &NEUTRAL_ARMIES));
         assert!(world.building[camp.index as usize].queue.is_empty());
     }
 
@@ -1528,18 +1635,18 @@ mod tests {
 
         let before = res.get(Faction::Player);
         assert!(
-            !queue_production(&mut world, &mut res, camp, UnitKind::Medic),
+            !queue_production(&mut world, &mut res, camp, UnitKind::Medic, &NEUTRAL_ARMIES),
             "a Camp cannot make a Medic"
         );
         assert!(
-            !queue_production(&mut world, &mut res, barracks, UnitKind::Tank),
+            !queue_production(&mut world, &mut res, barracks, UnitKind::Tank, &NEUTRAL_ARMIES),
             "a Barracks cannot make a Tank"
         );
         assert_eq!(res.get(Faction::Player), before, "a rejected queue never spends");
 
         // The valid routes succeed and spend exactly their cost.
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank));
-        assert!(queue_production(&mut world, &mut res, barracks, UnitKind::Medic));
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank, &NEUTRAL_ARMIES));
+        assert!(queue_production(&mut world, &mut res, barracks, UnitKind::Medic, &NEUTRAL_ARMIES));
         assert_eq!(res.get(Faction::Player), before - TANK_COST - MEDIC_COST);
     }
 
@@ -1559,7 +1666,7 @@ mod tests {
             tick(&mut world, &mut res, &terr);
         }
         assert_eq!(world.building[i].build_ticks_left, 0, "barracks finished constructing");
-        assert!(queue_production(&mut world, &mut res, bar, UnitKind::Medic));
+        assert!(queue_production(&mut world, &mut res, bar, UnitKind::Medic, &NEUTRAL_ARMIES));
         for _ in 0..prod_time(UnitKind::Medic, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1761,7 +1868,7 @@ mod tests {
             for _ in 0..CAMP_BUILD_TICKS {
                 tick_armies(&mut world, &mut res, &terr, &armies);
             }
-            assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+            assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
             for _ in 0..prod_time(UnitKind::Rifleman, 0) {
                 tick_armies(&mut world, &mut res, &terr, &armies);
             }
@@ -1775,6 +1882,103 @@ mod tests {
         assert_eq!(produce_for(Army::Neutral), unit_stats(UnitKind::Rifleman).1, "non-aligned camp fields the baseline");
         // The point of the roster: the US and FR produced units genuinely differ.
         assert_ne!(produce_for(Army::Us), produce_for(Army::Fr), "the two armies produce distinct units");
+    }
+
+    // --- WW2 cost-vs-power armies (D120) -----------------------------------------------------------
+
+    /// The WW2 cost tilt (D120): the Sherman [`Tank`](UnitKind::Tank) is CHEAPER than the shared 360,
+    /// the Panther PRICIER, at a 2:1 ratio (so an equal budget fields 2:1 counts). Every other
+    /// `(army, kind)` — all infantry, and the modern Neutral/Us/Fr tanks — keeps the shared table, so
+    /// `unit_cost` (== `unit_cost_for(Neutral, _)`) is byte-identical to before for every existing caller.
+    #[test]
+    fn ww2_tank_cost_tilt_only_touches_the_ww2_tank() {
+        assert_eq!(unit_cost_for(Army::UsWw2, UnitKind::Tank), USWW2_TANK_COST);
+        assert_eq!(unit_cost_for(Army::Germany, UnitKind::Tank), GERMANY_TANK_COST);
+        // Bind to locals so clippy doesn't flag the const comparison as a constant assertion (the
+        // `balance_baseline_reads_in_seconds` pattern).
+        let (sherman, panther, shared) = (USWW2_TANK_COST, GERMANY_TANK_COST, TANK_COST);
+        assert_eq!(sherman, 240, "Sherman is the cheap tank");
+        assert_eq!(panther, 480, "Panther is the pricey tank");
+        assert!(sherman < shared && panther > shared, "cheaper / pricier than shared");
+        assert_eq!(panther, 2 * sherman, "2:1 cost ratio → 2:1 counts at equal budget");
+        // unit_cost is the Neutral-baseline delegate: every existing caller is unchanged.
+        for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic, UnitKind::AntiTank] {
+            assert_eq!(unit_cost(kind), unit_cost_for(Army::Neutral, kind), "{kind:?}: unit_cost == Neutral");
+            // WW2 armies only tilt the TANK price; every other archetype keeps the shared cost.
+            for army in [Army::UsWw2, Army::Germany] {
+                if kind != UnitKind::Tank {
+                    assert_eq!(unit_cost_for(army, kind), unit_cost(kind), "{army:?}/{kind:?}: only the tank is tilted");
+                }
+            }
+        }
+        // The modern armies keep the shared tank price (their equal-COUNT balance, D71, is untouched).
+        for army in [Army::Neutral, Army::Us, Army::Fr] {
+            assert_eq!(unit_cost_for(army, UnitKind::Tank), TANK_COST, "{army:?} keeps TANK_COST=360");
+        }
+    }
+
+    /// The WW2 power tilt (D120): the Sherman tank is WEAKER (lower HP, shared penetration 18 — bounces
+    /// the 40-front), the Panther TOUGHER (higher HP, penetration ≥20 — cracks the 40-front). Everything
+    /// else — all WW2 infantry, and every modern/Neutral tank — keeps the shared `unit_stats` block, so
+    /// the D71 modern balance is byte-identical.
+    #[test]
+    fn ww2_tank_power_tilt_moves_hp_and_penetration_only() {
+        let base = unit_stats(UnitKind::Tank);
+        let (sh, sw) = unit_stats_for(Army::UsWw2, UnitKind::Tank);
+        let (gh, gw) = unit_stats_for(Army::Germany, UnitKind::Tank);
+
+        // HP: Sherman below the shared 300, Panther above; matches the tuned constants.
+        assert_eq!(sh, Health::full(Fixed::from_int(USWW2_TANK_HP)), "Sherman HP");
+        assert_eq!(gh, Health::full(Fixed::from_int(GERMANY_TANK_HP)), "Panther HP");
+        assert!(sh.max < base.0.max && base.0.max < gh.max, "Sherman weaker, Panther tougher than shared");
+
+        // Penetration: Sherman keeps the shared 18 (bounces 40-front); Panther 20 (2·20 ≥ 40 → cracks it).
+        assert_eq!(sw.penetration, base.1.penetration, "Sherman keeps the shared 18-pen gun");
+        assert_eq!(gw.penetration, GERMANY_TANK_PENETRATION);
+        assert!(gw.penetration >= Fixed::from_int(20), "Panther gun cracks the shared 40-front");
+        assert!(2 * gw.penetration.to_bits() >= TANK_ARMOR_FRONT.to_bits(), "2·pen ≥ TANK_ARMOR_FRONT");
+        assert!(2 * sw.penetration.to_bits() < TANK_ARMOR_FRONT.to_bits(), "Sherman bounces the front");
+
+        // Everything ELSE is the shared baseline: WW2 infantry untouched, gun damage/cadence/range shared.
+        for army in [Army::UsWw2, Army::Germany] {
+            for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Medic, UnitKind::AntiTank] {
+                assert_eq!(unit_stats_for(army, kind), unit_stats(kind), "{army:?}/{kind:?}: WW2 infantry is shared");
+            }
+            let w = unit_stats_for(army, UnitKind::Tank).1;
+            assert_eq!(w.damage, base.1.damage, "{army:?} tank keeps the shared gun damage");
+            assert_eq!(w.cooldown_ticks, base.1.cooldown_ticks, "{army:?} tank keeps the shared cadence");
+            assert_eq!(w.range, base.1.range, "{army:?} tank keeps the shared range");
+        }
+        // The modern Neutral/Us/Fr tanks carry NO power tilt (their HP + penetration stay shared).
+        for army in [Army::Neutral, Army::Us, Army::Fr] {
+            let (h, w) = unit_stats_for(army, UnitKind::Tank);
+            assert_eq!(h, base.0, "{army:?} tank HP is shared (no power tilt)");
+            assert_eq!(w.penetration, base.1.penetration, "{army:?} tank penetration is shared");
+        }
+    }
+
+    /// The army-aware spend path (D120): a WW2 camp charges its army's tank price through
+    /// [`queue_production`]. A Germany camp pays 480 for a Tank, a UsWw2 camp 240, a Neutral camp the
+    /// shared 360 — the cost half of the cost-vs-power fork, proven at the real spend site.
+    #[test]
+    fn queue_production_charges_the_producing_armys_tank_price() {
+        let charge_for = |army: Army| -> i64 {
+            let mut world = World::new();
+            let mut res = Resources::new(100_000);
+            let camp = build(&mut world, &mut res, Faction::Player, BuildingKind::Camp, Vec2::ZERO).unwrap();
+            world.building[camp.index as usize].build_ticks_left = 0;
+            let armies = {
+                let mut a = [Army::Neutral; FACTION_COUNT];
+                a[Faction::Player.index()] = army;
+                a
+            };
+            let before = res.get(Faction::Player);
+            assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank, &armies));
+            before - res.get(Faction::Player)
+        };
+        assert_eq!(charge_for(Army::UsWw2), USWW2_TANK_COST, "Sherman camp charges the cheap price");
+        assert_eq!(charge_for(Army::Germany), GERMANY_TANK_COST, "Panther camp charges the pricey price");
+        assert_eq!(charge_for(Army::Neutral), TANK_COST, "a non-WW2 camp charges the shared price");
     }
 
     // =======================================================================
@@ -1833,7 +2037,7 @@ mod tests {
         }
 
         // Produce a Tank → it spawns armoured.
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank));
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank, &NEUTRAL_ARMIES));
         for _ in 0..prod_time(UnitKind::Tank, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1849,7 +2053,7 @@ mod tests {
         assert!(!world.armor[tank_idx].is_unarmored());
 
         // Produce a Rifleman → it spawns unarmoured (no regression at the spawn site).
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman));
+        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
         for _ in 0..prod_time(UnitKind::Rifleman, 0) {
             tick(&mut world, &mut res, &terr);
         }

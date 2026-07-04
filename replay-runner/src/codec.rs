@@ -134,6 +134,9 @@ fn army_tag(a: Army) -> u8 {
         Army::Neutral => 0,
         Army::Us => 1,
         Army::Fr => 2,
+        // WW2 cost-vs-power armies (D120) — appended tags, matching core's `army_tag`/`Army::index`.
+        Army::UsWw2 => 3,
+        Army::Germany => 4,
     }
 }
 fn shell_tag(s: ShellKind) -> u8 {
@@ -362,6 +365,8 @@ impl<'a> Reader<'a> {
             0 => Ok(Army::Neutral),
             1 => Ok(Army::Us),
             2 => Ok(Army::Fr),
+            3 => Ok(Army::UsWw2),
+            4 => Ok(Army::Germany),
             tag => Err(ReplayError::BadTag { what: "army", tag }),
         }
     }

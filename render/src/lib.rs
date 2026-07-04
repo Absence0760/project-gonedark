@@ -378,9 +378,11 @@ pub(crate) fn model_for_unit(army: Army, building: bool, kind: UnitKind) -> mesh
         (Army::Us, false) => M::TrooperUs,
         (Army::Fr, true) => M::TankFr,
         (Army::Fr, false) => M::TrooperFr,
-        // Neutral / non-aligned → the original shared greybox (byte-identical pre-factions behaviour).
-        (Army::Neutral, true) => M::Tank,
-        (Army::Neutral, false) => M::Trooper,
+        // Neutral / non-aligned AND the WW2 cost-vs-power armies (D120) → the original shared greybox.
+        // The WW2 armies reuse the shared silhouettes for now; bespoke Sherman/Panther meshes are the
+        // content stage (deferred). Byte-identical pre-factions behaviour for the shared token.
+        (Army::Neutral | Army::UsWw2 | Army::Germany, true) => M::Tank,
+        (Army::Neutral | Army::UsWw2 | Army::Germany, false) => M::Trooper,
     }
 }
 
@@ -394,7 +396,9 @@ pub fn weapon_model_for(army: Army) -> mesh::ModelKind {
     match army {
         Army::Us => mesh::ModelKind::WeaponRifleUs,
         Army::Fr => mesh::ModelKind::WeaponRifleFr,
-        Army::Neutral => mesh::ModelKind::WeaponRifle,
+        // Neutral + the WW2 cost-vs-power armies (D120) keep the shared rifle viewmodel (content stage,
+        // deferred).
+        Army::Neutral | Army::UsWw2 | Army::Germany => mesh::ModelKind::WeaponRifle,
     }
 }
 
@@ -410,7 +414,8 @@ pub fn structure_turret_for(army: Army) -> mesh::ModelKind {
     match army {
         Army::Us => mesh::ModelKind::TurretUs,
         Army::Fr => mesh::ModelKind::TurretFr,
-        Army::Neutral => mesh::ModelKind::Turret,
+        // Neutral + the WW2 cost-vs-power armies (D120) keep the shared emplacement (content, deferred).
+        Army::Neutral | Army::UsWw2 | Army::Germany => mesh::ModelKind::Turret,
     }
 }
 
@@ -421,6 +426,9 @@ pub fn faction_name(army: Army) -> &'static str {
     match army {
         Army::Us => "US Army",
         Army::Fr => "French Army",
+        // WW2 cost-vs-power armies (D120): the quantity vs quality doctrines.
+        Army::UsWw2 => "US Army (WW2)",
+        Army::Germany => "German Army (WW2)",
         Army::Neutral => "Neutral",
     }
 }
@@ -3003,11 +3011,16 @@ mod tests {
         assert_eq!(structure_turret_for(Army::Us), M::TurretUs);
         assert_eq!(structure_turret_for(Army::Fr), M::TurretFr);
         assert_eq!(structure_turret_for(Army::Neutral), M::Turret);
-        let all: Vec<M> = Army::ALL.iter().map(|&a| structure_turret_for(a)).collect();
+        // The WW2 cost-vs-power armies (D120) reuse the shared emplacement for now (bespoke silhouettes
+        // are the content stage, deferred) — so distinctness is asserted over the MODERN armies only.
+        assert_eq!(structure_turret_for(Army::UsWw2), M::Turret, "WW2 armies reuse the shared emplacement");
+        assert_eq!(structure_turret_for(Army::Germany), M::Turret, "WW2 armies reuse the shared emplacement");
+        let modern = [Army::Neutral, Army::Us, Army::Fr];
+        let all: Vec<M> = modern.iter().map(|&a| structure_turret_for(a)).collect();
         for (i, a) in all.iter().enumerate() {
             assert!((*a as usize) < M::ALL.len(), "resolves to a registered mesh");
             for b in &all[i + 1..] {
-                assert_ne!(a, b, "each army's emplacement is a distinct mesh");
+                assert_ne!(a, b, "each modern army's emplacement is a distinct mesh");
             }
         }
     }
@@ -3035,11 +3048,15 @@ mod tests {
         assert_eq!(weapon_model_for(Army::Us), M::WeaponRifleUs);
         assert_eq!(weapon_model_for(Army::Fr), M::WeaponRifleFr);
         assert_eq!(weapon_model_for(Army::Neutral), M::WeaponRifle);
-        let all: Vec<M> = Army::ALL.iter().map(|&a| weapon_model_for(a)).collect();
+        // WW2 cost-vs-power armies (D120) reuse the shared rifle viewmodel for now (content deferred).
+        assert_eq!(weapon_model_for(Army::UsWw2), M::WeaponRifle, "WW2 armies reuse the shared viewmodel");
+        assert_eq!(weapon_model_for(Army::Germany), M::WeaponRifle, "WW2 armies reuse the shared viewmodel");
+        let modern = [Army::Neutral, Army::Us, Army::Fr];
+        let all: Vec<M> = modern.iter().map(|&a| weapon_model_for(a)).collect();
         for (i, a) in all.iter().enumerate() {
             assert!((*a as usize) < M::ALL.len());
             for b in &all[i + 1..] {
-                assert_ne!(a, b, "each army's viewmodel is a distinct mesh");
+                assert_ne!(a, b, "each modern army's viewmodel is a distinct mesh");
             }
         }
     }

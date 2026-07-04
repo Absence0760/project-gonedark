@@ -33,7 +33,7 @@
 //! mutating the world) keeps it a *pure planner* — the sim still applies every command through
 //! the one authoritative `Sim::apply` path.
 
-use crate::components::{EntityKind, Faction, Order, Stance, UnitKind, Vec2};
+use crate::components::{Army, EntityKind, Faction, Order, Stance, UnitKind, Vec2};
 use crate::detection::Tell;
 use crate::ecs::World;
 use crate::economy::{self, Resources};
@@ -253,6 +253,7 @@ pub fn commander_orders(
     config: &CommanderConfig,
     tells: &[Tell],
     faction: Faction,
+    army: Army,
     tick: u64,
 ) -> Vec<Command> {
     // Difficulty tier → the integer knobs that scale this plan (aggression / reserve / cadence),
@@ -306,7 +307,11 @@ pub fn commander_orders(
         } else {
             UnitKind::Rifleman
         };
-        let cost = economy::unit_cost(unit);
+        // Charge the faction's ARMY price (D120): the WW2 cost-vs-power armies price the same
+        // archetype differently, so a WW2-army commander plans its purse against its own costs. For
+        // every non-WW2 army (and for the Rifleman/Heavy this loop queues, which no army tilts) this
+        // is byte-identical to the shared `unit_cost`.
+        let cost = economy::unit_cost_for(army, unit);
         if purse >= cost {
             purse -= cost;
             commands.push(Command::QueueProduction { camp, unit });
@@ -687,9 +692,9 @@ mod tests {
         let res = Resources::new(500);
 
         let mut rng_a = Rng::new(123);
-        let a = commander_orders(&world, &terr, &res, &mut rng_a, &CommanderConfig::default(), &[], Faction::Enemy, 60);
+        let a = commander_orders(&world, &terr, &res, &mut rng_a, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
         let mut rng_b = Rng::new(123);
-        let b = commander_orders(&world, &terr, &res, &mut rng_b, &CommanderConfig::default(), &[], Faction::Enemy, 60);
+        let b = commander_orders(&world, &terr, &res, &mut rng_b, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
 
         assert_eq!(a.len(), b.len(), "same inputs → same number of commands");
         // Commands are Copy/Debug; compare their debug forms field-for-field.
@@ -713,7 +718,7 @@ mod tests {
         let res = Resources::new(0); // no money → no production noise
 
         let mut rng = Rng::new(1);
-        let cmds = commander_orders(&world, &terr, &res, &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
+        let cmds = commander_orders(&world, &terr, &res, &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
 
         let captured = cmds.iter().any(|c| {
             matches!(c, Command::AttackMove { entity, target }
@@ -754,7 +759,7 @@ mod tests {
         let res = Resources::new(0);
 
         let mut rng = Rng::new(1);
-        let cmds = commander_orders(&world, &terr, &res, &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
+        let cmds = commander_orders(&world, &terr, &res, &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
         let attacked_near = cmds.iter().any(|c| {
             matches!(c, Command::AttackMove { entity, target } if *entity == u && *target == near)
         });
@@ -802,6 +807,7 @@ mod tests {
             &CommanderConfig::default(),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -821,6 +827,7 @@ mod tests {
             &CommanderConfig::default(),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         let queued_rifle = afford.iter().any(|c| {
@@ -855,6 +862,7 @@ mod tests {
             &CommanderConfig::default(),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -881,6 +889,7 @@ mod tests {
             &CommanderConfig::default(),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -901,7 +910,7 @@ mod tests {
         };
         let mut rng = Rng::new(1);
         let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
+            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
         assert!(
             !cmds.iter().any(|c| matches!(c, Command::AttackMove { .. })),
             "a unit already on its capture point should be left alone: {cmds:?}"
@@ -919,7 +928,7 @@ mod tests {
         };
         let mut rng = Rng::new(1);
         let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
+            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
         assert!(
             !cmds
                 .iter()
@@ -938,7 +947,7 @@ mod tests {
         let terr = Territory::empty();
         let mut rng = Rng::new(1);
         let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, 60);
+            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
         assert!(
             cmds.iter().any(|c| matches!(c, Command::SetStance { entity, stance: Stance::FireAtWill }
                 if *entity == u)),
@@ -964,6 +973,7 @@ mod tests {
             &CommanderConfig::default(),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         for c in &cmds {
@@ -1040,6 +1050,7 @@ mod tests {
             &CommanderConfig::default(),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         // Same default (off) config, but now WITH a live tell present: must be ignored entirely.
@@ -1055,6 +1066,7 @@ mod tests {
             },
             &tells,
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert_eq!(
@@ -1100,6 +1112,7 @@ mod tests {
             },
             &tells,
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -1146,6 +1159,7 @@ mod tests {
             },
             &tells,
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -1190,6 +1204,7 @@ mod tests {
             },
             &tells,
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -1220,6 +1235,7 @@ mod tests {
             },
             &tells,
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -1241,7 +1257,7 @@ mod tests {
         };
         let run = || {
             let mut rng = Rng::new(99);
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &cfg, &tells, Faction::Enemy, 60)
+            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &cfg, &tells, Faction::Enemy, Army::Neutral, 60)
         };
         let a = run();
         let b = run();
@@ -1308,7 +1324,7 @@ mod tests {
 
         let run = |cfg: &CommanderConfig| {
             let mut rng = Rng::new(42);
-            commander_orders(&world, &terr, &res, &mut rng, cfg, &[], Faction::Enemy, 0)
+            commander_orders(&world, &terr, &res, &mut rng, cfg, &[], Faction::Enemy, Army::Neutral, 0)
         };
         let default = run(&CommanderConfig::default());
         let veteran = run(&tier_cfg(Difficulty::Veteran));
@@ -1331,7 +1347,7 @@ mod tests {
 
         let queued = |cfg: &CommanderConfig| -> Vec<UnitKind> {
             let mut rng = Rng::new(1);
-            commander_orders(&world, &terr, &Resources::new(purse), &mut rng, cfg, &[], Faction::Enemy, 0)
+            commander_orders(&world, &terr, &Resources::new(purse), &mut rng, cfg, &[], Faction::Enemy, Army::Neutral, 0)
                 .into_iter()
                 .filter_map(|c| match c {
                     Command::QueueProduction { camp: cc, unit } if cc == camp => Some(unit),
@@ -1375,6 +1391,7 @@ mod tests {
                 &tier_cfg(difficulty),
                 &[],
                 Faction::Enemy,
+                Army::Neutral,
                 0,
             )
             .iter()
@@ -1411,6 +1428,7 @@ mod tests {
                 &tier_cfg(difficulty),
                 &[],
                 Faction::Enemy,
+                Army::Neutral,
                 tick,
             )
             .iter()
@@ -1462,6 +1480,7 @@ mod tests {
                 &tier_cfg(difficulty),
                 &[],
                 Faction::Enemy,
+                Army::Neutral,
                 0,
             )
             .iter()
@@ -1540,6 +1559,7 @@ mod tests {
             &cfg,
             &[],
             Faction::Enemy,
+            Army::Neutral,
             0,
         );
         assert!(
@@ -1640,6 +1660,7 @@ mod tests {
                 &CommanderConfig::default(),
                 &[],
                 Faction::Enemy,
+                Army::Neutral,
                 60,
             )
             .iter()
@@ -1675,6 +1696,7 @@ mod tests {
             &CommanderConfig::default(),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -1710,6 +1732,7 @@ mod tests {
             &tier_cfg(Difficulty::Recruit),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             0,
         );
         assert!(
@@ -1738,6 +1761,7 @@ mod tests {
             &CommanderConfig::default(), // Veteran (would retreat if it could)
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -1774,6 +1798,7 @@ mod tests {
             &CommanderConfig::default(),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             60,
         );
         assert!(
@@ -1808,6 +1833,7 @@ mod tests {
             &tier_cfg(Difficulty::Recruit),
             &[],
             Faction::Enemy,
+            Army::Neutral,
             0,
         );
         // It presses the foe, not the held point (no defense at this tier).
@@ -1849,6 +1875,7 @@ mod tests {
                 cfg,
                 &[],
                 Faction::Enemy,
+                Army::Neutral,
                 0,
             )
         };

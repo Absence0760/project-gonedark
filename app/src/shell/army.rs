@@ -20,6 +20,10 @@ pub(crate) fn army_label(army: Army) -> &'static str {
     match army {
         Army::Us => "US Army",
         Army::Fr => "French Army",
+        // WW2 cost-vs-power armies (D120) — not offered on this modern army-select screen (they field
+        // in the WW2 campaign), but labelled for any HUD/post-match readout.
+        Army::UsWw2 => "US Army (WW2)",
+        Army::Germany => "German Army (WW2)",
         Army::Neutral => "Non-aligned",
     }
 }
@@ -32,6 +36,9 @@ pub(crate) fn army_flavor(army: Army) -> &'static str {
     match army {
         Army::Us => "M4 carbines, M1 Abrams armour, combat medics -- the US Army roster.",
         Army::Fr => "FAMAS rifles, Leclerc armour, auxiliaires sanitaires -- the French Army roster.",
+        // WW2 cost-vs-power doctrines (D120): cheap mass vs pricey elite armour.
+        Army::UsWw2 => "Cheap, mass-produced Shermans -- field MORE, each one lighter (WW2).",
+        Army::Germany => "Pricey Panther/Tiger armour -- field FEWER, each one a wall (WW2).",
         Army::Neutral => "No real-army identity -- the non-aligned default.",
     }
 }

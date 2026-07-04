@@ -25,7 +25,7 @@
 
 use gonedark_core::combat;
 use gonedark_core::components::{Army, EntityKind, Faction, Stance, UnitKind, Vec2};
-use gonedark_core::economy::{self, unit_cost, Resources, HEAVY_COST, RIFLEMAN_COST};
+use gonedark_core::economy::{self, unit_cost, unit_cost_for, Resources, HEAVY_COST, RIFLEMAN_COST};
 use gonedark_core::ecs::World;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::scenario::{v, ScenarioBuilder};
@@ -353,6 +353,51 @@ pub fn cross_faction_equal_cost(
     )
 }
 
+// --- WW2 cost-vs-power: equal-BUDGET quality-vs-quantity (D120) ----------------------------------
+
+/// The **equal-budget quality-vs-quantity** trade (D120), the fairness gate for the WW2 cost-vs-power
+/// armies. Unlike the modern [`cross_faction_equal_cost`] (which pits equal COUNTS because
+/// `unit_cost` is army-agnostic), this spawns each side at its own army's *price*: the same `budget`
+/// buys `budget / unit_cost_for(cheap_army, Tank)` cheap tanks (Player, more of them) vs
+/// `budget / unit_cost_for(elite_army, Tank)` elite tanks (Enemy, fewer), `sep` apart, run to a wipe
+/// (8000-tick cap). Returns `(end_tick, elite_survivors, cheap_survivors)`.
+///
+/// Fairness is defined at EQUAL BUDGET (not equal count): the fewer, tougher elite tanks must trade
+/// ~evenly with the cheaper mass. The tanks are spawned via [`spawn_army`], which sets HP + weapon
+/// from `unit_stats_for` but NOT armour — so the WW2 tanks are effectively unarmoured here, and
+/// penetration is a no-op against an unarmoured target (`facing_penetration_multiplier` ⇒ 1.0). That
+/// is intentional (D120): the equal-budget balance is decided by COST (→ count) and HP against the
+/// SHARED gun, exactly the Lanchester square-law axis the numbers were tuned on. All integer/`Fixed`.
+pub fn equal_budget_quality_vs_quantity(
+    budget: i64,
+    sep: i32,
+    elite_army: Army,
+    cheap_army: Army,
+) -> (u64, u32, u32) {
+    let mut sim = Sim::new(0x0B0D_0120);
+    let n_elite = (budget / unit_cost_for(elite_army, UnitKind::Tank)) as i32;
+    let n_cheap = (budget / unit_cost_for(cheap_army, UnitKind::Tank)) as i32;
+    for k in 0..n_cheap {
+        spawn_army(&mut sim, 0, k, Faction::Player, cheap_army, UnitKind::Tank);
+    }
+    for k in 0..n_elite {
+        spawn_army(&mut sim, sep, k, Faction::Enemy, elite_army, UnitKind::Tank);
+    }
+    for t in 1..=8000u64 {
+        sim.step(&[]);
+        let cheap = alive_units(&sim.world, Faction::Player);
+        let elite = alive_units(&sim.world, Faction::Enemy);
+        if cheap == 0 || elite == 0 {
+            return (t, elite, cheap);
+        }
+    }
+    (
+        8000,
+        alive_units(&sim.world, Faction::Enemy),
+        alive_units(&sim.world, Faction::Player),
+    )
+}
+
 /// Focus-fire suppression timing: `m` Riflemen firing into a tight enemy **cluster** (three
 /// Riflemen packed within [`combat::SUPPRESSION_RADIUS`]). Returns `(pin_tick, kill_tick)` —
 /// `pin_tick` is the first tick any *alive* cluster member reaches [`combat::SUPPRESSION_PIN`],
@@ -557,6 +602,75 @@ fn summary() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **MEASURED WW2 cost-vs-power fairness (D120).** The showcase of the quantity-vs-quality fork:
+    /// at an EQUAL BUDGET, the fewer, tougher German Panther/Tiger tanks trade ~evenly with the cheaper
+    /// Sherman mass. "Balanced" is defined concretely: the match RESOLVES (someone is wiped, never the
+    /// 8000-tick cap), and the WINNER keeps only a SMALL margin (≤2 of its stack) — neither side
+    /// free-wins. The load-bearing proof that the balance is genuine (not a one-sided sweep the cheap
+    /// side always takes): the winner FLIPS between the elite and the mass with budget/geometry — the
+    /// Germans win the small 4-vs-2 budget, the Shermans win the larger 6-vs-3. Exact ticks/survivors
+    /// pinned (deterministic dev==release) so a stray edit to the WW2 cost/HP block trips CI.
+    ///
+    /// The trade is decided by COST (→ count) and HP against the SHARED gun — the tanks are unarmoured
+    /// here (`spawn_army` sets no armour), so the German gun's higher penetration is a no-op (D120): it
+    /// is narrative/armoured-combat power, not a lever on this equal-budget metric.
+    #[test]
+    fn ww2_quality_vs_quantity_is_balanced_at_equal_budget() {
+        // budget 1440: 3 Panthers (480 ea) vs 6 Shermans (240 ea) — the MASS edges it, keeping 1 tank.
+        let mid = equal_budget_quality_vs_quantity(1440, 5, Army::Germany, Army::UsWw2);
+        assert_eq!(mid, (305, 0, 1), "budget 1440 sep5: Sherman mass wins by a single tank");
+        // budget 960: 2 Panthers vs 4 Shermans — the ELITE edges it, keeping 1 tank. The winner FLIPS,
+        // so neither doctrine free-wins — the fork is genuinely balanced, not a quantity landslide.
+        let small = equal_budget_quality_vs_quantity(960, 5, Army::Germany, Army::UsWw2);
+        assert_eq!(small, (229, 1, 0), "budget 960 sep5: fewer Panthers win by a single tank");
+
+        // The DEFINITION of balanced, asserted structurally (not just the pins) at a few real budgets:
+        // every trade resolves inside the cap, exactly one side is wiped, and the winner's surviving
+        // stack is ≤2 — a razor-thin trade, never a free win.
+        for &(budget, sep) in &[(960i64, 5i32), (1440, 5), (1440, 9), (2400, 5)] {
+            let (t, elite, cheap) = equal_budget_quality_vs_quantity(budget, sep, Army::Germany, Army::UsWw2);
+            assert!(t < 8000, "budget {budget} sep{sep}: the trade must RESOLVE (a wipe), not hit the cap");
+            assert!(
+                (elite == 0) ^ (cheap == 0),
+                "budget {budget} sep{sep}: exactly one side must be wiped (elite {elite}, cheap {cheap})",
+            );
+            let winner = elite.max(cheap);
+            assert!(
+                (1..=2).contains(&winner),
+                "budget {budget} sep{sep}: the winner must keep only a SMALL margin (≤2), got {winner}",
+            );
+        }
+    }
+
+    /// The cost + HP block the fairness above rests on (D120): the Sherman is CHEAPER + weaker, the
+    /// Panther PRICIER + tougher, and the 2:1 cost ratio is what makes an equal budget field 2:1 counts.
+    #[test]
+    fn ww2_cost_and_hp_tilt_is_wired() {
+        // Cost tilt: Sherman cheaper than the shared 360, Panther pricier; 2:1 to each other.
+        assert_eq!(unit_cost_for(Army::UsWw2, UnitKind::Tank), 240, "Sherman is the cheap tank");
+        assert_eq!(unit_cost_for(Army::Germany, UnitKind::Tank), 480, "Panther is the pricey tank");
+        assert!(unit_cost_for(Army::UsWw2, UnitKind::Tank) < unit_cost(UnitKind::Tank));
+        assert!(unit_cost_for(Army::Germany, UnitKind::Tank) > unit_cost(UnitKind::Tank));
+        assert_eq!(
+            unit_cost_for(Army::Germany, UnitKind::Tank),
+            2 * unit_cost_for(Army::UsWw2, UnitKind::Tank),
+            "an equal budget fields twice as many Shermans as Panthers",
+        );
+        // Non-WW2 armies keep the shared price (modern balance untouched).
+        for a in [Army::Neutral, Army::Us, Army::Fr] {
+            assert_eq!(unit_cost_for(a, UnitKind::Tank), unit_cost(UnitKind::Tank), "{a:?} keeps TANK_COST");
+        }
+        // Power tilt: Sherman weaker (lower HP), Panther tougher (higher HP), both vs the shared 300.
+        let (sh, _sw) = economy::unit_stats_for(Army::UsWw2, UnitKind::Tank);
+        let (gh, gw) = economy::unit_stats_for(Army::Germany, UnitKind::Tank);
+        let base = economy::unit_stats(UnitKind::Tank);
+        assert!(sh.max < base.0.max, "Sherman has less HP than the shared tank");
+        assert!(gh.max > base.0.max, "Panther has more HP than the shared tank");
+        // The German gun cracks the shared 40-front (2·pen ≥ 40); the Sherman keeps the shared 18.
+        assert!(gw.penetration >= Fixed::from_int(20), "Panther gun penetration ≥ 20 (cracks the 40-front)");
+        assert_eq!(economy::unit_stats_for(Army::UsWw2, UnitKind::Tank).1.penetration, base.1.penetration);
+    }
 
     /// Raw Q16.16 bits of one full-health produced Tank (300 HP) — the "took zero damage" yardstick.
     const TANK_FULL_HP_BITS: i64 = 300 * (Fixed::SCALE as i64);

@@ -193,29 +193,45 @@ pub enum Army {
     Us,
     /// The French Army roster ([D68](../docs/decisions.md)).
     Fr,
+    /// The **WW2 US "Sherman" doctrine** roster ([D120](../docs/decisions.md)) — the *quantity* side of
+    /// the cost-vs-power model: its `Tank` is CHEAPER and WEAKER (lower HP, baseline penetration that
+    /// bounces the shared front armour), so at an equal budget you field MORE of them. Appended AFTER
+    /// `Fr` (tag 3) so the pre-WW2 tags 0/1/2 are byte-unchanged (invariant #7).
+    UsWw2,
+    /// The **WW2 German "Panther/Tiger" doctrine** roster ([D120](../docs/decisions.md)) — the
+    /// *quality* side: its `Tank` is PRICIER and BETTER (higher HP, higher penetration that can crack
+    /// the shared front armour), so at an equal budget you field FEWER. Appended AFTER `UsWw2` (tag 4).
+    Germany,
 }
 
 impl Army {
     /// Every army, in a fixed order — the stable index space for any per-army state (the WS-B stat
-    /// table). Iterating this is deterministic by construction, mirroring [`Faction::ALL`].
-    pub const ALL: [Army; 3] = [Army::Neutral, Army::Us, Army::Fr];
+    /// table). Iterating this is deterministic by construction, mirroring [`Faction::ALL`]. The WW2
+    /// armies ([`UsWw2`](Army::UsWw2)/[`Germany`](Army::Germany), D120) are appended AFTER `Fr`, so
+    /// every existing index/tag is unchanged.
+    pub const ALL: [Army; ARMY_COUNT] =
+        [Army::Neutral, Army::Us, Army::Fr, Army::UsWw2, Army::Germany];
 
     /// Dense index into per-army arrays (`[_; ARMY_COUNT]`). The tag order is load-bearing: it MUST
     /// match the persist/wire codecs ([`sim`](crate::sim) `army_tag` + [`lockstep`](crate::lockstep)
     /// `put_army`), so a selection encoded on one peer decodes to the identical army on every other
-    /// (invariant #7) — the same discipline as [`Faction::index`].
+    /// (invariant #7) — the same discipline as [`Faction::index`]. The WW2 armies (D120) take the new
+    /// tags 3/4, appended so 0/1/2 stay put.
     #[inline]
     pub const fn index(self) -> usize {
         match self {
             Army::Neutral => 0,
             Army::Us => 1,
             Army::Fr => 2,
+            Army::UsWw2 => 3,
+            Army::Germany => 4,
         }
     }
 }
 
-/// Number of armies — the width of every per-army array (WS-B's stat table).
-pub const ARMY_COUNT: usize = 3;
+/// Number of armies — the width of every per-army array (WS-B's stat table). Grew 3 → 5 with the WW2
+/// cost-vs-power armies (D120).
+pub const ARMY_COUNT: usize = 5;
 
 /// What an entity *is*. Determines which systems act on it: `Unit`s move and fight,
 /// `Building`s are produced/upgraded and can be attacked (driving "base under attack").

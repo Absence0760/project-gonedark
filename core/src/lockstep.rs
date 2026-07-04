@@ -47,7 +47,10 @@ use crate::sim::Command;
 /// hitting `BadTag(4)` mid-game or, worse, silently desyncing on the new archetype.
 /// 10 added the camp spawn-rally `Command::SetCampRally` (tag 18) — the troop-training rally seam —
 /// so a pre-rally peer's frame is rejected at the handshake, not on `BadTag(18)` mid-game.
-const WIRE_VERSION: u8 = 10;
+/// 11 added the WW2 cost-vs-power armies `Army::UsWw2`/`Army::Germany` (army codec tags 3/4, D120) —
+/// so a pre-D120 peer (which cannot decode a `SelectArmy` for a WW2 army) fails the handshake rather
+/// than hitting `BadTag(3/4)` mid-game or, worse, silently misreading the army it fields (invariant #7).
+const WIRE_VERSION: u8 = 11;
 
 /// Frame-kind tag, the byte after the version. Picks which payload follows so the codec can
 /// carry command sets, checksum reports, and delay-change proposals over the one wire format.
@@ -303,6 +306,11 @@ fn put_army(w: &mut Writer, a: Army) {
         Army::Neutral => 0,
         Army::Us => 1,
         Army::Fr => 2,
+        // WW2 cost-vs-power armies (D120) — appended tags 3/4, matching sim.rs's `army_tag` +
+        // `Army::index`. WIRE_VERSION bumped 10→11 so a pre-D120 peer fails the handshake rather than
+        // hitting `BadTag(3/4)` mid-game or silently misreading a WW2 SelectArmy.
+        Army::UsWw2 => 3,
+        Army::Germany => 4,
     });
 }
 fn get_army(r: &mut Reader) -> Result<Army, DecodeError> {
@@ -310,6 +318,8 @@ fn get_army(r: &mut Reader) -> Result<Army, DecodeError> {
         0 => Army::Neutral,
         1 => Army::Us,
         2 => Army::Fr,
+        3 => Army::UsWw2,
+        4 => Army::Germany,
         t => return Err(DecodeError::BadTag(t)),
     })
 }
@@ -1222,6 +1232,51 @@ mod tests {
     }
 
     #[test]
+    fn army_codec_round_trips_every_tag_including_ww2() {
+        // Every Army put→get is identity (the tags match sim.rs's `army_tag` + `Army::index`), and the
+        // new D120 WW2 armies ride append-only tags 3/4 (0–2 unchanged). An UNKNOWN tag is a loud
+        // BadTag, never a silent mis-decode (invariant #7).
+        for army in [Army::Neutral, Army::Us, Army::Fr, Army::UsWw2, Army::Germany] {
+            let mut w = Writer::new();
+            put_army(&mut w, army);
+            let mut r = Reader::new(&w.buf);
+            assert_eq!(get_army(&mut r).expect("decode"), army);
+        }
+        // The WW2 armies are exactly tags 3 and 4.
+        let mut w = Writer::new();
+        put_army(&mut w, Army::UsWw2);
+        assert_eq!(w.buf, vec![3]);
+        let mut w = Writer::new();
+        put_army(&mut w, Army::Germany);
+        assert_eq!(w.buf, vec![4]);
+        // An out-of-range tag (5) is rejected, not silently misparsed into a wrong army.
+        let mut w = Writer::new();
+        w.u8(5);
+        let mut r = Reader::new(&w.buf);
+        assert_eq!(get_army(&mut r).unwrap_err(), DecodeError::BadTag(5));
+    }
+
+    #[test]
+    fn select_army_ww2_survives_the_wire_codec() {
+        // A full SelectArmy frame for each WW2 army must round-trip the wire codec bit-for-bit (its
+        // Faction + Army tags match sim.rs, so the setup command decodes to the identical matchup on
+        // every peer — invariant #7, D120). Mirrors the modern SelectArmy coverage in
+        // `frame_codec_roundtrips_all_variants`.
+        let cmds = vec![
+            Command::SelectArmy { faction: Faction::Player, army: Army::UsWw2 },
+            Command::SelectArmy { faction: Faction::Enemy, army: Army::Germany },
+        ];
+        let bytes = encode_frame(1, 7, &cmds);
+        let (peer, tick, decoded) = match decode_frame(&bytes).expect("decode") {
+            Frame::Command(p, t, c) => (p, t, c),
+            other => panic!("expected a command frame, got {other:?}"),
+        };
+        assert_eq!((peer, tick, decoded.len()), (1, 7, cmds.len()));
+        // Re-encoding the decoded set reproduces the bytes exactly (catches a dropped/reordered field).
+        assert_eq!(bytes, encode_frame(peer, tick, &decoded));
+    }
+
+    #[test]
     fn decode_rejects_malformed_frames() {
         assert_eq!(decode_frame(&[]).unwrap_err(), DecodeError::UnexpectedEof);
 
@@ -1964,10 +2019,10 @@ mod tests {
         // Every codec bump must be enforced: a frame written under any older WIRE_VERSION is
         // rejected loudly, never silently misparsed against the new layout. Cover the original
         // frame-kind bump (2), the pre-`Locomote` version (3), and the immediately-previous
-        // version (5, pre-`AimTurret`/`DriveHull`; and 6, pre-`SelectArmy`) — the match-setup
-        // SelectArmy vocabulary (tag 16) is the reason WIRE_VERSION is now 7, so a pre-factions
-        // peer's frame must be rejected at the handshake, never misparsed against the new layout.
-        for old in [2u8, 3, 5, 6] {
+        // version (5, pre-`AimTurret`/`DriveHull`; 6, pre-`SelectArmy`; and 10, pre-D120: the WW2
+        // cost-vs-power armies added army tags 3/4, so a pre-D120 peer that can't decode a WW2
+        // `SelectArmy` must be rejected at the handshake, never misparsed against the new vocabulary).
+        for old in [2u8, 3, 5, 6, 10] {
             let mut w = Writer::new();
             w.u8(old);
             w.u8(FrameKind::Command as u8);

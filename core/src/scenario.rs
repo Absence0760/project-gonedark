@@ -1956,6 +1956,7 @@ mod tests {
                     &CommanderConfig::default(),
                     &[],
                     Faction::Enemy,
+                    Army::Neutral,
                     sim.tick_count(),
                 )
             } else {
@@ -2736,6 +2737,7 @@ mod tests {
                     &CommanderConfig::default(),
                     &[],
                     Faction::Enemy,
+                    Army::Neutral,
                     sim.tick_count(),
                 )
             } else {
@@ -2914,6 +2916,7 @@ mod tests {
                     &CommanderConfig::default(),
                     &[],
                     Faction::Enemy,
+                    Army::Neutral,
                     sim.tick_count(),
                 )
             } else {
@@ -3073,6 +3076,7 @@ mod tests {
                     &CommanderConfig::default(),
                     &[],
                     Faction::Enemy,
+                    Army::Neutral,
                     sim.tick_count(),
                 )
             } else {

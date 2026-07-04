@@ -225,6 +225,14 @@ impl Sim {
         self.armies[faction.index()]
     }
 
+    /// The full per-side army map, indexed by [`Faction::index`]. The host threads this into the
+    /// army-aware spend paths ([`economy::queue_production`](crate::economy::queue_production), D120)
+    /// so a Tank is charged the producing faction's army price (the WW2 cost-vs-power fork).
+    #[inline]
+    pub fn armies(&self) -> &[Army; FACTION_COUNT] {
+        &self.armies
+    }
+
     /// Select which [`Army`] a [`Faction`] fields — the per-side match-setup choice (factions-plan
     /// WS-A). A scene seeder or the host (via [`Command::SelectArmy`] / the
     /// [`shell`](crate::shell) seam) calls this. Match-config: it never folds into the per-tick
@@ -393,7 +401,13 @@ impl Sim {
                 economy::upgrade(&mut self.world, &mut self.resources, camp);
             }
             Command::QueueProduction { camp, unit } => {
-                economy::queue_production(&mut self.world, &mut self.resources, camp, unit);
+                economy::queue_production(
+                    &mut self.world,
+                    &mut self.resources,
+                    camp,
+                    unit,
+                    &self.armies,
+                );
             }
             Command::SetCampRally { camp, rally } => {
                 economy::set_camp_rally(&mut self.world, camp, rally);
@@ -989,7 +1003,11 @@ impl Sim {
 /// 10→11 by the camp spawn-rally (troop-training rally seam): the per-slot `Building` fold grew a
 /// rally presence byte (+ a fixed-point `Vec2` when set), so a pre-rally snapshot is rejected at the
 /// version gate rather than misparsed against the longer building layout.
-const SNAPSHOT_VERSION: u8 = 11;
+/// 11→12 by the WW2 cost-vs-power armies (D120): the wrapper's per-faction [`Army`] tag space gained
+/// values 3 (`UsWw2`) and 4 (`Germany`). The layout width is unchanged (still one tag byte per
+/// faction), but bumping deliberately rejects a pre-D120 build's snapshot at the version gate rather
+/// than letting it silently misread a tag-3/4 army as corruption mid-resume.
+const SNAPSHOT_VERSION: u8 = 12;
 
 /// Smallest possible encoding of one `ControlPoint`: `pos` (2×i32) + owner tag (u8) + progress
 /// (i32) = 13 bytes. Used to reject a garbage point count before allocating.
@@ -1251,6 +1269,9 @@ fn army_tag(a: Army) -> u8 {
         Army::Neutral => 0,
         Army::Us => 1,
         Army::Fr => 2,
+        // WW2 cost-vs-power armies (D120) — appended tags, matching `Army::index` + the codecs.
+        Army::UsWw2 => 3,
+        Army::Germany => 4,
     }
 }
 
@@ -1259,6 +1280,8 @@ fn read_army(r: &mut Reader) -> Result<Army, DeserializeError> {
         0 => Army::Neutral,
         1 => Army::Us,
         2 => Army::Fr,
+        3 => Army::UsWw2,
+        4 => Army::Germany,
         t => return Err(DeserializeError::BadTag(t)),
     })
 }
@@ -1643,6 +1666,26 @@ mod tests {
     }
 
     #[test]
+    fn ww2_army_selection_survives_the_snapshot_round_trip() {
+        // D120: the WW2 cost-vs-power armies (tags 3/4) must survive the persist wrapper exactly like
+        // the modern ones — a reconnecting peer resumes the same Sherman-vs-Panther matchup, and the
+        // new tags round-trip through `army_tag`/`read_army` (invariant #7). SNAPSHOT_VERSION bumped
+        // 11→12 for the new tag vocabulary, so an old snapshot is rejected, not misread.
+        let mut sim = Sim::new(120);
+        sim.set_army(Faction::Player, Army::UsWw2);
+        sim.set_army(Faction::Enemy, Army::Germany);
+        for _ in 0..10 {
+            sim.step(&[]);
+        }
+        let bytes = sim.serialize();
+        let restored = Sim::deserialize(&bytes).expect("WW2 army-selected sim round-trips");
+        assert_eq!(restored.army_of(Faction::Player), Army::UsWw2, "Sherman doctrine must survive resume");
+        assert_eq!(restored.army_of(Faction::Enemy), Army::Germany, "Panther doctrine must survive resume");
+        assert_eq!(restored.checksum(), sim.checksum());
+        assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
+    }
+
+    #[test]
     fn deserialize_rejects_a_bad_army_tag() {
         // A garbage army tag in the wrapper is corruption (BadTag), never a silently-wrong identity.
         let mut bytes = Sim::new(0).serialize();
@@ -1746,8 +1789,8 @@ mod tests {
         // what folds into the checksum).
         sim.world.building[pcamp.index as usize].build_ticks_left = 0;
         sim.world.building[ecamp.index as usize].build_ticks_left = 0;
-        assert!(economy::queue_production(&mut sim.world, &mut sim.resources, pcamp, UnitKind::Rifleman));
-        assert!(economy::queue_production(&mut sim.world, &mut sim.resources, ecamp, UnitKind::Rifleman));
+        assert!(economy::queue_production(&mut sim.world, &mut sim.resources, pcamp, UnitKind::Rifleman, &sim.armies));
+        assert!(economy::queue_production(&mut sim.world, &mut sim.resources, ecamp, UnitKind::Rifleman, &sim.armies));
         (sim, economy::prod_time(UnitKind::Rifleman, 0))
     }
 

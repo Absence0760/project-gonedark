@@ -1987,8 +1987,9 @@ fn seed_default_scene(sim: &mut Sim, player_loadout: Loadout) -> (Entity, bool) 
         Vec2::new(Fixed::from_int(-22), Fixed::ZERO),
     ) {
         sim.world.building[camp.index as usize].build_ticks_left = 0; // skip construction
-        economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
-        economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman);
+        let armies = *sim.armies();
+        economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman, &armies);
+        economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman, &armies);
     }
 
     // An enemy camp too, so the commander has somewhere to reinforce from — making the
@@ -3791,6 +3792,7 @@ impl Game {
                 &self.commander_config,
                 &tells,
                 Faction::Enemy,
+                self.sim.army_of(Faction::Enemy),
                 self.sim.tick_count(),
             );
             commands.extend(cmds);
@@ -8167,6 +8169,7 @@ mod tests {
                 &CommanderConfig::default(),
                 &[],
                 faction,
+                sim.army_of(faction),
                 sim.tick_count(),
             ));
         }

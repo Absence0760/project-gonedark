@@ -511,7 +511,9 @@ pub struct GunsmithPool {
 pub const fn pool_for(army: Army) -> GunsmithPool {
     match army {
         // The baseline pool IS the slot enums' own deltas — zero behavioural change off-faction.
-        Army::Neutral => GunsmithPool {
+        // The WW2 cost-vs-power armies (D120) share the baseline gunsmith pool for now — their
+        // identity is the cost-vs-power tank, not a bespoke gunsmith bench (content stage, deferred).
+        Army::Neutral | Army::UsWw2 | Army::Germany => GunsmithPool {
             marksman: Optic::Marksman.delta(),
             close_quarters: Optic::CloseQuarters.delta(),
             heavy: Barrel::Heavy.delta(),
