@@ -204,9 +204,15 @@ model.
 - [x] **PvP attention mind-game — mechanism, HUD, honest AI consult** — the `core::detection` tell
   (`Hidden|Subtle|Marked`, default Subtle), the `render::detection` overlay, and the config-gated
   commander consult ([D33](decisions.md)).
-- [ ] **Profiling on target hardware + the D21 dual-rate re-eval** — desktop numbers are in; the
-  on-device thermal/sustained measurement (and thus the global-60-vs-dual-rate call) needs a physical
-  mid-range device. Job-system (rayon) parallelism deliberately deferred — unjustified at ~3.7 ms/tick
+- [ ] **Profiling on target hardware + the D21 dual-rate re-eval** — desktop numbers are in *and now
+  gated*: a release-only CI perf gate (`sim-runner`'s `stress_200_stays_within_frame_budget`, the
+  `perf-budget` job in `test.yml`) asserts the 200-unit median stays under **8 ms** (half the 16.6 ms
+  60 Hz budget; ~3.3 ms desktop baseline, so a ~5x regression fails loudly, noise doesn't), and the
+  `timing-json` schema + `stress:50/100/200` matrix + committed desktop baseline
+  (`sim-runner/perf/desktop-baseline.json`) turn "validate on device" into "run `pnpm android:stress`,
+  diff the JSON" (procedure: `platforms.md` §6.1). **Still owed:** the actual on-device mid-range
+  numbers + thermal/sustained measurement (and thus the global-60-vs-dual-rate call), which need a
+  physical device. Job-system (rayon) parallelism deliberately deferred — unjustified at ~3.7 ms/tick
   and would need its own decision (invariant #2).
 - [ ] **Wi-Fi↔cellular handoff** — blocked on a QUIC `pal::Transport` (only UDP has landed); the
   reconnect policy is already transport-agnostic and ready for it.
@@ -575,7 +581,10 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   lint-PNG/manifest metrics; baked/generated maps join when the D77 loader lands
 - [ ] Consent & legal gate (ToS / privacy / age) — gates telemetry + store, so it precedes them
 - [ ] Store listing — icon, screenshots, description + a Play Console build channel
-- [ ] Performance / thermal pass on mid-range arm64 (the honest Phase 1/3 caveat — not yet validated off-flagship)
+- [ ] Performance / thermal pass on mid-range arm64 — the honest Phase 1/3 caveat is now a **gate +
+  a device-comparison harness**, not a hole: the sim-cost budget is CI-asserted (`platforms.md` §6.1)
+  and the arm64 procedure is a one-liner (`pnpm android:stress`, diff vs. `desktop-baseline.json`);
+  what's owed is the on-device numbers + thermal/sustained run on a physical mid-range device
 - [ ] Crash + telemetry consent wiring verified end-to-end (telemetry/consent gate landed, Phase 4 workstream D)
 
 ---

@@ -516,6 +516,120 @@ mod tests {
         stream
     }
 
+    /// Time the `stress:n` scene for `ticks` ticks and return the raw per-tick micros — the
+    /// measurement seam the budget gate drives. This mirrors `run`'s `Instant`-around-`step`
+    /// timing EXACTLY (the same path `--time` uses), minus the stdout `emit`: timing is host-side
+    /// only and never touches sim state, so it cannot move the checksum (hard constraint —
+    /// measurement only). Same deterministic `Sim` the checksum CI drives.
+    fn time_stress(n: u32, ticks: u64) -> Vec<u128> {
+        let mut scenario = build(Which::Stress(n));
+        let mut durations = Vec::with_capacity(ticks as usize);
+        for t in 1..ticks {
+            let cmds = scenario.commands_for(t).to_vec();
+            let start = Instant::now();
+            scenario.sim.step(&cmds);
+            durations.push(start.elapsed().as_micros());
+        }
+        durations
+    }
+
+    /// The 60 Hz sim tick budget: 1000 / 60 = 16.666… ms per tick (invariant #4). The whole
+    /// point of the 200-unit power budget is to stay well under this.
+    const FRAME_BUDGET_MS: f64 = 16.6;
+    /// Hard median ceiling for the perf gate: HALF the frame budget. The desktop baseline is
+    /// ~3.3 ms median at 200 units (`sim-runner/perf/desktop-baseline.json`), so this leaves
+    /// ~2.4x headroom — day-to-day scheduler noise and a ~2x-slower shared CI runner both stay
+    /// green, but a real ~5x regression (→ ~16 ms, at/over the frame budget) trips it decisively.
+    /// We gate on the MEDIAN because it is the stable central stat (measured run-to-run variance
+    /// on the dev machine is ~±1.5%), not the noise-prone max.
+    const BUDGET_MEDIAN_MS: f64 = 8.0;
+    /// p99 ceiling. Deliberately looser than the median gate: a single tick can be preempted by
+    /// the OS/VM scheduler on a shared CI runner and spike, so a tight p99 would flap. 14 ms
+    /// (~84% of the frame budget, vs. a ~5 ms desktop p99) tolerates an occasional lone spike yet
+    /// still trips on a broad regression that lifts the whole tail toward/over the frame budget.
+    const BUDGET_P99_MS: f64 = 14.0;
+
+    /// The CI perf-regression gate (wired in `.github/workflows/test.yml`, `perf-budget` job).
+    /// Runs the canonical 200-unit `stress` scene for 300 ticks and asserts per-tick sim cost
+    /// stays well under the 60 Hz frame budget. Purpose: a 5x regression that would blow the
+    /// budget lands LOUDLY here instead of silently; the generous thresholds mean noise doesn't.
+    #[test]
+    fn stress_200_stays_within_frame_budget() {
+        let stats = TimingStats::from_durations(&time_stress(200, 300)).expect("300 ticks timed");
+        let median_ms = stats.median_us as f64 / 1000.0;
+        let p99_ms = stats.p99_us as f64 / 1000.0;
+
+        // Debug builds are unoptimized, so wall-clock is meaningless there — and `cargo test`
+        // (test.yml's `test` job) runs this in the DEV profile. Smoke-run to prove the scene
+        // doesn't panic at size, but gate the numeric budget only in release: the `perf-budget`
+        // CI job runs `cargo test -p gonedark-sim-runner --release` for exactly that. This is
+        // why the test passes in BOTH `cargo test` profiles (CLAUDE.md coding floor).
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "stress:200 debug median {median_ms:.3} ms / p99 {p99_ms:.3} ms \
+                 (budget assertion is release-only; skipped in the dev profile)"
+            );
+            return;
+        }
+
+        assert!(
+            median_ms < BUDGET_MEDIAN_MS,
+            "stress:200 median {median_ms:.3} ms exceeded the {BUDGET_MEDIAN_MS} ms gate \
+             (half the {FRAME_BUDGET_MS} ms 60 Hz frame budget) — a perf regression. Profile the \
+             per-tick systems before re-baselining; re-pin only on an intended, justified change."
+        );
+        assert!(
+            p99_ms < BUDGET_P99_MS,
+            "stress:200 p99 {p99_ms:.3} ms exceeded the {BUDGET_P99_MS} ms gate \
+             (~84% of the {FRAME_BUDGET_MS} ms frame budget) — a broad tail regression."
+        );
+        eprintln!("stress:200 release median {median_ms:.3} ms / p99 {p99_ms:.3} ms — under budget");
+    }
+
+    /// The committed desktop baseline (`sim-runner/perf/desktop-baseline.json`) is the reference a
+    /// device run's `timing-json` is diffed against (docs/platforms.md §6.1). Guard it against
+    /// schema drift: every field the live `timing-json` emitter produces must appear in the
+    /// baseline, and every baseline scenario token must still re-parse into a runnable scene. If
+    /// the emitter's schema changes, this fails so the baseline + the procedure doc are updated in
+    /// lockstep rather than rotting.
+    #[test]
+    fn desktop_baseline_matches_timing_json_schema() {
+        let baseline = include_str!("../perf/desktop-baseline.json");
+        // A live line for the matrix's headline scene — the exact schema the baseline must mirror.
+        let live = TimingStats::from_durations(&[1000, 2000, 3000])
+            .unwrap()
+            .json_line(Which::Stress(200));
+        for key in [
+            "\"scenario\"",
+            "\"ticks\"",
+            "\"min_ms\"",
+            "\"median_ms\"",
+            "\"p99_ms\"",
+            "\"max_ms\"",
+            "\"mean_ms\"",
+        ] {
+            assert!(live.contains(key), "timing-json emitter dropped key {key}");
+            assert!(
+                baseline.contains(key),
+                "baseline missing schema key {key} — regenerate per docs/platforms.md §6.1"
+            );
+        }
+        // Every scenario in the documented matrix must still round-trip through the CLI parser,
+        // so the SAME command re-runs the SAME scene on device.
+        for token in ["stress:50", "stress:100", "stress:200"] {
+            assert!(baseline.contains(token), "baseline missing matrix scenario {token}");
+            assert!(
+                Which::parse(token).is_some(),
+                "baseline scenario {token} no longer parses — matrix + docs out of sync"
+            );
+        }
+        // The baseline pins the same 60 Hz frame budget the gate asserts against — keep them one.
+        assert!(
+            baseline.contains("16.6"),
+            "baseline should record the {FRAME_BUDGET_MS} ms frame budget"
+        );
+    }
+
     #[test]
     fn scenario_token_parsing() {
         assert_eq!(Which::parse("phase2"), Some(Which::Phase2));
