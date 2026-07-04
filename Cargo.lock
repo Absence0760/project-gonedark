@@ -1304,6 +1304,8 @@ name = "gonedark-net-sim-runner"
 version = "0.0.0"
 dependencies = [
  "gonedark-core",
+ "gonedark-pal",
+ "gonedark-pal-desktop",
 ]
 
 [[package]]

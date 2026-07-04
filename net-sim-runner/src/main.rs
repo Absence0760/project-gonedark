@@ -17,7 +17,20 @@
 //! (a separately-named `net-checksums-<target>.txt` artifact — never dumped into the
 //! existing `checksums-*.txt` glob, whose `compare` job requires all entries identical).
 //!
-//! Usage: `gonedark-net-sim-runner [ticks] [delay]`  (defaults: 300 ticks, delay 2).
+//! **Real-socket mode (`--sockets`).** The same two peers and no-network reference, but every
+//! lockstep order-frame crosses a real `std::net::UdpSocket` over the loopback interface
+//! (127.0.0.1, two OS-chosen ephemeral ports) via the shipped
+//! [`gonedark_pal_desktop::UdpTransport`] — the real-network analogue of the in-memory reference.
+//! It asserts the *identical* per-tick checksum agreement over the run, proving order-frames
+//! survive a real socket. In-order/exact delivery is **not** the transport's job: UDP is lossy,
+//! unordered, and may duplicate, and `core::lockstep` is already the reliability layer — its
+//! `drain_outbound` re-sends every retained order-frame each pump (loss-tolerant, no ACKs) and
+//! `deliver` ignores stale/duplicate frames. So a dropped datagram is simply re-sent next pump; a
+//! tick **never** advances without every peer's order for it (the `try_advance` gate). Loopback is
+//! effectively lossless besides, so the run converges immediately. Both peers run in one process
+//! over the real sockets (send-all-then-poll-all per pump).
+//!
+//! Usage: `gonedark-net-sim-runner [ticks] [delay] [--sockets]`  (defaults: 300 ticks, delay 2).
 //! Everything is integer/fixed-point and spawn/merge order is stable, so it is float-free
 //! and deterministic — the determinism guard greps this crate's tests too (no `f32`/`f64`).
 
@@ -25,11 +38,13 @@ use gonedark_core::components::{BuildingKind, Faction, Order, Stance, UnitKind, 
 use gonedark_core::economy::{self, Resources};
 use gonedark_core::ecs::Entity;
 use gonedark_core::fixed::Fixed;
-use gonedark_core::lockstep::{Lockstep, PeerId};
+use gonedark_core::lockstep::{Desync, Lockstep, PeerId};
 use gonedark_core::rng::Rng;
 use gonedark_core::scenario::{v, ScenarioBuilder};
 use gonedark_core::sim::{Command, Sim};
 use gonedark_core::territory::ControlPoint;
+use gonedark_pal::Transport;
+use gonedark_pal_desktop::UdpTransport;
 
 /// Scene seed — fixed so every peer (and the reference) builds the identical world.
 const SCENE_SEED: u64 = 0x9E3779B97F4A7C15;
@@ -254,20 +269,8 @@ fn run(cfg: Config) -> Outcome {
     let h = scene(&mut sims[0]);
     let _ = scene(&mut sims[1]); // identical handles by determinism
 
-    let mut refsim = Sim::new(SCENE_SEED);
-    let _ = scene(&mut refsim);
-
     // Reference stream: one sim fed the merged (peer-0 then peer-1) command set each tick.
-    let mut refsums = Vec::with_capacity(ticks as usize);
-    for t in 0..ticks {
-        let mut merged = Vec::new();
-        if t >= delay {
-            merged.extend(script(&h, 0, t, delay));
-            merged.extend(script(&h, 1, t, delay));
-        }
-        refsim.step(&merged);
-        refsums.push(refsim.checksum());
-    }
+    let refsums = reference_stream(ticks, delay);
 
     let mut sessions = [Lockstep::new(2, 0, delay), Lockstep::new(2, 1, delay)];
 
@@ -368,8 +371,36 @@ fn run(cfg: Config) -> Outcome {
 
     // Both peers ran exactly `ticks` ticks (0..ticks). Assert agreement at every one, and
     // against the reference. The agreed stream is peer 0's (== peer 1's once checked).
-    let n = ticks as usize;
-    for t in 0..n {
+    verify(&sums, &refsums, ticks as usize, delay, wire_desyncs)
+}
+
+/// The no-network reference checksum stream: one `Sim` fed the merged (peer-0 then peer-1)
+/// command set each tick. Rebuilt from the identical seeded [`scene`], so its handles are
+/// bit-identical to the peers' by determinism. This is the ground truth both the in-memory
+/// ([`run`]) and real-socket ([`run_sockets`]) paths must reproduce exactly.
+fn reference_stream(ticks: u64, delay: u64) -> Vec<u64> {
+    let mut refsim = Sim::new(SCENE_SEED);
+    let h = scene(&mut refsim);
+    let mut refsums = Vec::with_capacity(ticks as usize);
+    for t in 0..ticks {
+        let mut merged = Vec::new();
+        if t >= delay {
+            merged.extend(script(&h, 0, t, delay));
+            merged.extend(script(&h, 1, t, delay));
+        }
+        refsim.step(&merged);
+        refsums.push(refsim.checksum());
+    }
+    refsums
+}
+
+/// Assert both peers' per-tick checksum streams agree with each other and the no-network
+/// reference over `ticks` ticks. The single source of truth for the checksum-agreement gate:
+/// any divergence is a cross-client desync — a real lockstep bug (invariant #7) — so it prints a
+/// `::error::` line and returns a NON-agreed [`Outcome`] truncated at the first divergence rather
+/// than a wrong stream. `wire_desyncs` is threaded through unchanged (the caller collected it).
+fn verify(sums: &[Vec<u64>; 2], refsums: &[u64], ticks: usize, delay: u64, wire_desyncs: Vec<Desync>) -> Outcome {
+    for t in 0..ticks {
         let a = sums[0][t];
         let b = sums[1][t];
         let r = refsums[t];
@@ -391,6 +422,130 @@ fn run(cfg: Config) -> Outcome {
         agreed: true,
         wire_desyncs,
     }
+}
+
+/// Extra socket pumps after both peers finish, so the last ticks' checksum reports surely cross
+/// the wire and any injected divergence surfaces. Loopback delivery is effectively synchronous, so
+/// a small fixed count is ample (each pump re-sends everything, loss-tolerant).
+const SOCKET_SETTLE_PUMPS: usize = 16;
+
+/// One real-socket pump: each peer ships its outbound frames over its OWN socket (peer 0 →
+/// peer 1, peer 1 → peer 0), then both drain arrived datagrams and feed them back into lockstep.
+/// Send-all-then-poll-all so a loopback datagram is visible the same pump. The transport moves
+/// opaque bytes only — it never inspects, splits, or merges a frame (the D27 contract).
+fn pump_sockets(sessions: &mut [Lockstep; 2], tx: &mut [UdpTransport; 2]) {
+    for i in 0..2 {
+        for frame in sessions[i].drain_outbound() {
+            tx[i].send(&frame);
+        }
+    }
+    for i in 0..2 {
+        for bytes in tx[i].poll() {
+            sessions[i]
+                .deliver(&bytes)
+                .expect("well-formed lockstep frame off the loopback socket");
+        }
+    }
+}
+
+/// The **real-socket** analogue of [`run`]: the same two deterministic peers and no-network
+/// reference, but every lockstep order-frame crosses a real `std::net::UdpSocket` over loopback
+/// via the shipped [`gonedark_pal_desktop::UdpTransport`]. Proves order-frames survive a real
+/// socket and still produce the bit-identical per-tick checksum stream — the load-bearing property
+/// PvP lockstep rests on. The transport moves bytes only; the sim never sees it, so the emitted
+/// stream is pure `core::Sim` output identical to [`run`]'s and the reference's.
+///
+/// Reliability/ordering is the lockstep layer's job, not the transport's (see the module docs):
+/// `drain_outbound` re-sends every retained order-frame each pump and `deliver` ignores
+/// stale/duplicate frames, so UDP loss/reorder/dup is tolerated and a tick never advances without
+/// every peer's order for it. A dropped order-frame is re-sent, never skipped.
+fn run_sockets(cfg: Config) -> Outcome {
+    let ticks = cfg.ticks;
+    let delay = cfg.delay;
+    debug_assert!(ticks > delay, "ticks must exceed the input delay");
+
+    // Two peer sims built from the identical seeded scene (handles identical by determinism).
+    let mut sims = [Sim::new(SCENE_SEED), Sim::new(SCENE_SEED)];
+    let h = scene(&mut sims[0]);
+    let _ = scene(&mut sims[1]);
+
+    let refsums = reference_stream(ticks, delay);
+
+    let mut sessions = [Lockstep::new(2, 0, delay), Lockstep::new(2, 1, delay)];
+
+    // Real loopback UDP: `tx[0]` is peer 0's socket (targets peer 1), `tx[1]` is peer 1's
+    // (targets peer 0) — `pair` binds both on 127.0.0.1:0 and points them at each other.
+    let (a, b) = UdpTransport::pair().expect("bind a localhost UDP pair for the socket run");
+    let mut tx = [a, b];
+
+    let mut sums: [Vec<u64>; 2] = [
+        Vec::with_capacity(ticks as usize),
+        Vec::with_capacity(ticks as usize),
+    ];
+    let mut wire_desyncs: Vec<Desync> = Vec::new();
+
+    let mut it = 0u64;
+    loop {
+        // Sample + submit local input, kept at most `delay` ticks ahead of execution (as in `run`).
+        for (i, session) in sessions.iter_mut().enumerate() {
+            while session.submit_tick() < ticks
+                && session.submit_tick() <= session.next_tick() + delay
+            {
+                let t = session.submit_tick();
+                session.submit(script(&h, i as PeerId, t, delay));
+            }
+        }
+
+        // Move this pump's frames across the real sockets, both directions.
+        pump_sockets(&mut sessions, &mut tx);
+
+        for i in 0..2 {
+            while let Some(cmds) = sessions[i].try_advance() {
+                // `next_tick` was just incremented, so the tick we executed is `next_tick - 1`.
+                let tick = sessions[i].next_tick() - 1;
+                sims[i].step(&cmds);
+                let checksum = sims[i].checksum();
+                sums[i].push(checksum);
+                // Test-only: optionally poison the *recorded report* (not the sim, not the emitted
+                // stream) to force a cross-client divergence the wire broadcast must catch.
+                let recorded = match cfg.corrupt {
+                    Some((p, t)) if p as usize == i && t == tick => checksum ^ CORRUPT_XOR,
+                    _ => checksum,
+                };
+                sessions[i].record_checksum(tick, recorded);
+            }
+        }
+
+        for session in &mut sessions {
+            wire_desyncs.extend(session.take_desyncs());
+        }
+
+        if sessions[0].next_tick() >= ticks && sessions[1].next_tick() >= ticks {
+            break;
+        }
+        it += 1;
+        // Loopback must converge well within this bound; failing to is a stall, not a clean desync
+        // — still a real bug (invariant #7), surfaced loudly rather than hanging CI forever.
+        if it >= 10_000_000 {
+            eprintln!(
+                "::error::socket-mode lockstep failed to converge (delay={delay}) — a stall, not \
+                 a clean desync; treat as a real bug (invariant #7)"
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // Settle: exchange the last ticks' checksum reports so the wire agreement path is exercised
+    // right to the final tick. No sim stepping happens here (both peers are done), so the emitted
+    // stream is untouched.
+    for _ in 0..SOCKET_SETTLE_PUMPS {
+        pump_sockets(&mut sessions, &mut tx);
+        for session in &mut sessions {
+            wire_desyncs.extend(session.take_desyncs());
+        }
+    }
+
+    verify(&sums, &refsums, ticks as usize, delay, wire_desyncs)
 }
 
 /// How many extra settle pumps to run so the last ticks' checksum reports surely arrive: enough
@@ -421,9 +576,17 @@ fn fatal_arg(name: &str, s: &str) -> ! {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let ticks: u64 = parse_arg(args.first().map(|s| s.as_str()), 300)
+    // `--sockets` selects the real-UDP-loopback transport; it may appear anywhere and is filtered
+    // out of the positional (ticks, delay) args.
+    let sockets = args.iter().any(|a| a == "--sockets");
+    let positional: Vec<&str> = args
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|a| *a != "--sockets")
+        .collect();
+    let ticks: u64 = parse_arg(positional.first().copied(), 300)
         .unwrap_or_else(|bad| fatal_arg("ticks", &bad));
-    let delay: u64 = parse_arg(args.get(1).map(|s| s.as_str()), 2)
+    let delay: u64 = parse_arg(positional.get(1).copied(), 2)
         .unwrap_or_else(|bad| fatal_arg("delay", &bad));
 
     if ticks <= delay {
@@ -431,7 +594,8 @@ fn main() {
         std::process::exit(2);
     }
 
-    let outcome = run(Config::for_run(ticks, delay));
+    let cfg = Config::for_run(ticks, delay);
+    let outcome = if sockets { run_sockets(cfg) } else { run(cfg) };
     for (t, &c) in outcome.stream.iter().enumerate() {
         emit(t as u64, c);
     }
@@ -452,8 +616,13 @@ fn main() {
         }
         std::process::exit(1);
     }
+    let transport = if sockets {
+        "real-UDP-loopback"
+    } else {
+        "in-memory"
+    };
     eprintln!(
-        "ok: 2-peer lockstep agreed with the no-network reference over {ticks} ticks \
+        "ok: 2-peer {transport} lockstep agreed with the no-network reference over {ticks} ticks \
          (delay {delay}); wire checksum-agreement broadcast surfaced no desync"
     );
 }
@@ -634,6 +803,101 @@ mod tests {
         assert_eq!(
             clean, poisoned.stream,
             "injection must not change the emitted checksum stream"
+        );
+    }
+
+    // ----- real-socket mode (`--sockets`): lockstep order-frames over real UDP loopback -----
+    //
+    // These bind real `std::net::UdpSocket`s on 127.0.0.1 (via `UdpTransport::pair`) — the same
+    // localhost bind the shipped `pal-desktop` udp_tests already exercise, so the environment
+    // permits it. Each drives the SAME deterministic scene/script as the in-memory reference and
+    // asserts the real-socket path adds no divergence of its own.
+
+    /// The full agreed stream over real UDP, asserting the run actually agreed.
+    fn agreed_stream_sockets(cfg: Config) -> Vec<u64> {
+        let o = run_sockets(cfg);
+        assert!(o.agreed, "socket run did not agree across peers/reference");
+        o.stream
+    }
+
+    #[test]
+    fn sockets_peers_agree_and_match_reference() {
+        // The headline exit criterion: two peers exchanging lockstep order-frames over real UDP
+        // loopback agree with the no-network reference on every one of 300 ticks.
+        let o = run_sockets(cfg(300, 2));
+        assert!(
+            o.agreed,
+            "peers must agree with the reference every tick over real UDP"
+        );
+        assert_eq!(o.stream.len(), 300, "one checksum per executed tick");
+        assert!(
+            o.wire_desyncs.is_empty(),
+            "healthy socket run must surface no wire desyncs, got {:?}",
+            o.wire_desyncs
+        );
+    }
+
+    #[test]
+    fn sockets_stream_equals_in_memory_and_reference() {
+        // The load-bearing determinism property: routing the SAME order-frames over a real socket
+        // must yield the byte-identical checksum stream as the in-memory channel and the no-network
+        // reference. If the transport perturbed the sim, this would diverge.
+        let over_udp = agreed_stream_sockets(cfg(200, 2));
+        let in_memory = agreed_stream(cfg(200, 2));
+        let reference = reference_stream(200, 2);
+        assert_eq!(
+            over_udp, in_memory,
+            "real-socket stream must equal the in-memory stream"
+        );
+        assert_eq!(
+            over_udp, reference,
+            "real-socket stream must equal the no-network reference"
+        );
+    }
+
+    #[test]
+    fn sockets_agree_across_several_delays() {
+        // Delay-independent over the real socket, like the in-memory path.
+        for delay in [1u64, 2, 5] {
+            let o = run_sockets(cfg(120, delay));
+            assert!(o.agreed, "socket desync at delay {delay}");
+            assert_eq!(o.stream.len(), 120);
+        }
+    }
+
+    #[test]
+    fn sockets_wire_agreement_detects_injected_divergence() {
+        // Poison peer 1's *recorded* checksum for a mid-run tick (not the sim, not the emitted
+        // stream). Its forged report must cross the real socket to peer 0, which compares it against
+        // its own correct checksum and surfaces a `Desync` — live cross-client desync detection over
+        // real UDP.
+        let corrupt_tick = 40u64;
+        let mut c = cfg(120, 2);
+        c.corrupt = Some((1, corrupt_tick));
+        let o = run_sockets(c);
+        let detected = o
+            .wire_desyncs
+            .iter()
+            .find(|d| d.tick == corrupt_tick && d.peer == 1)
+            .expect("the corrupted tick's desync is reported over the socket, attributed to peer 1");
+        assert_eq!(
+            detected.remote,
+            detected.local ^ CORRUPT_XOR,
+            "the remote value is exactly the forged (poisoned) checksum"
+        );
+    }
+
+    #[test]
+    fn sockets_injected_divergence_does_not_change_the_emitted_stream() {
+        // Same purity guard as the in-memory path, over real UDP: poisoning a recorded report is
+        // pure verification and must NOT alter the emitted checksum stream.
+        let clean = agreed_stream_sockets(cfg(120, 2));
+        let mut c = cfg(120, 2);
+        c.corrupt = Some((1, 40));
+        let poisoned = run_sockets(c);
+        assert_eq!(
+            clean, poisoned.stream,
+            "socket injection must not change the emitted checksum stream"
         );
     }
 }

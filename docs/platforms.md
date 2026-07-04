@@ -161,6 +161,19 @@ kind. That means:
 - iOS caveat for any scripting VM: **no JIT on iOS** — run Lua (or similar) in
   interpreter mode; LuaJIT's JIT is unavailable. Affects the scripting-hot-reload dev
   convenience (roadmap), not shipping determinism.
+- **Real-socket proof (`net-sim-runner --sockets`).** The in-memory 2-peer checksum
+  reference now has a real-network sibling: `--sockets` drives the same two peers over
+  the shipped `pal_desktop::UdpTransport` (real `std::net::UdpSocket`s on `127.0.0.1`,
+  two OS-chosen ports) and asserts the **identical** per-tick checksum stream over 300
+  ticks. It proves lockstep order-frames survive a real socket and still produce
+  bit-identical output — the property PvP rests on. **The transport moves bytes, never
+  touches the sim**, and in-order/exact delivery is *not* the transport's job: UDP is
+  lossy/unordered/duplicating, and `core::lockstep` is the reliability layer
+  (`drain_outbound` re-sends every retained order-frame each pump; `deliver` drops
+  stale/duplicate frames), so a dropped order-frame is re-sent, never skipped — a tick
+  never advances without every peer's order for it. **Follow-on (not this slice):** a
+  QUIC transport behind the same `Transport` trait (Wi-Fi↔cellular path migration), a
+  mobile (`pal-android`) transport, and the matchmaking/lobby/session layer in `server`.
 
 ## 8. Build & distribution
 

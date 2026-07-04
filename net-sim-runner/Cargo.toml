@@ -6,8 +6,16 @@ license.workspace = true
 publish = false
 
 # Headless 2-peer lockstep driver for netcode determinism CI (Phase 3 workstream B step 2,
-# D27). Drives two in-process `core::lockstep::Lockstep` instances over a deterministic
-# channel and emits the agreed per-tick checksum stream. Depends ONLY on core — no
-# platform, no transport — so the stream is pure sim output and bit-identical across arch.
+# D27). Default (`--sockets` absent) drives two in-process `core::lockstep::Lockstep`
+# instances over a deterministic in-memory channel and emits the agreed per-tick checksum
+# stream — pure sim output, bit-identical across arch. `--sockets` runs the same two peers
+# over the **real** `gonedark_pal_desktop::UdpTransport` on loopback, proving lockstep
+# order-frames survive a real socket and still produce the identical checksum stream.
+#
+# `gonedark-pal`/`-pal-desktop` are pulled ONLY for that real-socket mode; they are the
+# platform side (invariant #2 keeps them out of `core`), so the emitted checksum stream is
+# still pure `core::Sim` output (the transport moves bytes, never touches the sim).
 [dependencies]
 gonedark-core = { path = "../core" }
+gonedark-pal = { path = "../pal" }
+gonedark-pal-desktop = { path = "../pal-desktop" }
