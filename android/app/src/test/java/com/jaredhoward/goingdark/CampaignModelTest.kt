@@ -83,13 +83,14 @@ class CampaignModelTest {
     }
 
     @Test
-    fun campaign_is_four_self_contained_seize_hold_push_chains() {
-        // Mirrors engine::default_campaign()'s D105 graph: four conflicts, each a self-contained
-        // Seize -> Hold -> Push chain (root open, gating within the conflict only). List index ==
-        // node id (NodeId(i)==nodes[i]).
-        assertEquals("four conflicts x three battles (D105)", 12, campaignNodes.size)
+    fun campaign_is_five_self_contained_seize_hold_push_chains() {
+        // Mirrors engine::default_campaign()'s D105+D121 graph: FIVE conflicts, each a
+        // self-contained Seize -> Hold -> Push chain (root open, gating within the conflict only).
+        // The fifth chain (nodes 12-14) is D121's Normandy '44. List index == node id
+        // (NodeId(i)==nodes[i]).
+        assertEquals("five conflicts x three battles (D105 + D121 Normandy)", 15, campaignNodes.size)
 
-        for ((chain, root) in listOf(0, 3, 6, 9).withIndex()) {
+        for ((chain, root) in listOf(0, 3, 6, 9, 12).withIndex()) {
             val seize = campaignNodes[root]
             assertEquals(root, seize.id)
             assertEquals("mission1", seize.sceneToken)
@@ -125,30 +126,42 @@ class CampaignModelTest {
 
     @Test
     fun campaign_atlas_mirrors_the_rust_grouping() {
-        // Pins the D79 mirror of default_campaign()'s Q28 conflict-atlas grouping — since D105
-        // four fictional modern conflicts, one operation each, eras staggered 2027-2034 for the
-        // atlas year scrubber. List index == id, mirroring Rust's ConflictId(i)/OperationId(i).
-        assertEquals(4, campaignConflicts.size)
+        // Pins the D79 mirror of default_campaign()'s Q28 conflict-atlas grouping — D105's four
+        // fictional modern conflicts (eras staggered 2027-2034) plus D121's fifth conflict,
+        // Normandy '44 (the atlas's first HISTORICAL war, 1944), one operation each. List index ==
+        // id, mirroring Rust's ConflictId(i)/OperationId(i).
+        assertEquals(5, campaignConflicts.size)
         assertEquals(
-            listOf("The Channel Crisis", "The Meridian Crisis", "The Gotland Winter", "The Santo Crisis"),
+            listOf(
+                "The Channel Crisis",
+                "The Meridian Crisis",
+                "The Gotland Winter",
+                "The Santo Crisis",
+                "Normandy '44",
+            ),
             campaignConflicts.map { it.name },
         )
+        // The first four are staggered modern near-future; the fifth is the 1944 historical one.
         assertEquals(
-            listOf(2027 to 2028, 2029 to 2030, 2031 to 2032, 2033 to 2034),
+            listOf(2027 to 2028, 2029 to 2030, 2031 to 2032, 2033 to 2034, 1944 to 1944),
             campaignConflicts.map { it.startYear to it.endYear },
         )
         campaignConflicts.forEachIndexed { i, conflict ->
             assertEquals(i, conflict.id)
             assertTrue("year span is not inverted", conflict.startYear <= conflict.endYear)
         }
+        // Only the four D105 wars are modern; Normandy '44 is the lone historical (pre-2000) one.
+        assertEquals(4, campaignConflicts.count { it.startYear >= 2000 })
+        assertEquals("Normandy '44", campaignConflicts.single { it.startYear < 2000 }.name)
 
-        assertEquals(4, campaignOperations.size)
+        assertEquals(5, campaignOperations.size)
         assertEquals(
             listOf(
                 "Operation First Light",
                 "Operation Dry Season",
                 "Operation Frostline",
                 "Operation Trade Wind",
+                "Operation Cobra",
             ),
             campaignOperations.map { it.name },
         )
@@ -174,17 +187,21 @@ class CampaignModelTest {
                     kotlin.math.abs(lon - conflict.lonX10) <= 15,
             )
         }
-        // Spot-pin one anchor verbatim against the Rust source (Visby Airport).
+        // Spot-pin two anchors verbatim against the Rust source: Visby Airport (node 7) and the
+        // Normandy Seize at Pointe du Hoc (node 12, the D121 fifth-conflict root).
         assertEquals(577, campaignNodes[7].latX10)
         assertEquals(184, campaignNodes[7].lonX10)
+        assertEquals(494, campaignNodes[12].latX10)
+        assertEquals(-10, campaignNodes[12].lonX10)
     }
 
     @Test
     fun the_inline_authored_nodes_mirror_the_rust_source_verbatim() {
-        // Nodes 3-11 have no Rust briefing const to diff against — their copy is authored inline
-        // in `default_campaign()` (D105) — so this third copy is the D79 drift tripwire: a Rust
-        // edit that isn't hand-mirrored into CampaignModel.kt fails here instead of shipping a
-        // cross-shell content divergence, exactly like the MISSION_* verbatim pins above.
+        // Nodes 3-14 have no Rust briefing const to diff against — their copy is authored inline
+        // in `default_campaign()` (D105, and D121 for the Normandy nodes 12-14) — so this third
+        // copy is the D79 drift tripwire: a Rust edit that isn't hand-mirrored into
+        // CampaignModel.kt fails here instead of shipping a cross-shell content divergence, exactly
+        // like the MISSION_* verbatim pins above.
         val expected = mapOf(
             3 to Pair(
                 "Take the Fuel Yard",
@@ -242,6 +259,32 @@ class CampaignModelTest {
                 "Three strongpoints down the coast road to Luganville, every one of them held. " +
                     "Take them in order and hold what you take — the town falls when the road " +
                     "does. But the post you clear blind is theirs again before you turn around.",
+            ),
+            // ---- Normandy '44 — Operation Cobra (D121) ----
+            12 to Pair(
+                "Silence the Battery",
+                "A German coastal battery zeroes the whole landing beach, and its commander is up " +
+                    "on the clifftop directing every gun. Twelve of yours went up the ropes — " +
+                    "enough to swamp the trenches, never enough to trade shots with a Tiger. Kill " +
+                    "the officer and the guns go quiet. Direct the rush from the map, or climb the " +
+                    "last rope yourself; but the casemate you go dark on is the one that ranges in " +
+                    "on you.",
+            ),
+            13 to Pair(
+                "Hold the Crossroads",
+                "You took the hedgerow crossroads; now a Panzer counterattack wants it back before " +
+                    "dark. You have more men than they have tanks, and thicker cover than they " +
+                    "expect — dig the line in and make every Panther earn the lane. Fight it from " +
+                    "above, or put yourself behind a rifle in the sunken road; but the hedge you " +
+                    "can't see is the one a Tiger noses through.",
+            ),
+            14 to Pair(
+                "Break the Bocage",
+                "Three hedgerow strongpoints stand between you and the breakout, every one " +
+                    "anchored on a dug-in Panther. You cannot out-gun them — you out-mass and " +
+                    "out-flank them: take each strongpoint in order, hold it, and roll on before " +
+                    "their armor re-sets. Clear a lane blind and the tank you drove past is behind " +
+                    "you now, in the hedge you never checked.",
             ),
         )
         expected.forEach { (id, pair) ->

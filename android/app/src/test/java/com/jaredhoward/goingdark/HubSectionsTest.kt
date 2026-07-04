@@ -114,11 +114,11 @@ class HubSectionsTest {
 
     @Test
     fun the_shipped_campaign_groups_one_section_per_conflict() {
-        // The shipped tables (D105): four conflicts, one operation each, every node grouped — so
-        // the hub renders one headed section per war and no ungrouped tail. Pins the authored
-        // data's atlas integrity.
+        // The shipped tables (D105 + D121 Normandy): five conflicts, one operation each, every
+        // node grouped — so the hub renders one headed section per war and no ungrouped tail. Pins
+        // the authored data's atlas integrity.
         val sections = hubSections(CampaignProgress())
-        assertEquals(4, sections.size)
+        assertEquals(5, sections.size)
         assertEquals(campaignConflicts.map { it.name }, sections.map { it.conflict?.first?.name })
         assertEquals(campaignOperations.map { it.name }, sections.map { it.operation?.first?.name })
         // Each section carries its own conflict's three battles, in authored order, covering the

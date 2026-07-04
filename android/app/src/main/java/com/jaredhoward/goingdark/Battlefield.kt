@@ -49,7 +49,7 @@ val KNOWN_SCENE_TOKENS = setOf(
  * would ride the wire and degrade to the plain open skirmish engine-side (graceful, but a dead
  * tile) — the test forbids shipping one.
  */
-val KNOWN_MAP_IDS = setOf("crossroads", "prokhorovka")
+val KNOWN_MAP_IDS = setOf("crossroads", "prokhorovka", "pointe-du-hoc", "bocage")
 
 /**
  * Every battlefield the skirmish setup offers, in display order: the standing battle scenes first
@@ -80,5 +80,18 @@ val shellBattlefields = listOf(
         name = "Prokhorovka",
         blurb = "The 1943 Kursk tank battle: a wide, even steppe. Deploy at opposite ends and cross.",
         mapId = "prokhorovka",
+    ),
+    // The two D119 Normandy library maps — the Rust `BATTLEFIELDS` grew these; mirror them here.
+    Battlefield(
+        id = "pointe-du-hoc",
+        name = "Pointe du Hoc",
+        blurb = "The Normandy clifftop battery. Land under the sea wall and fight north through the casemates.",
+        mapId = "pointe-du-hoc",
+    ),
+    Battlefield(
+        id = "bocage",
+        name = "Bocage",
+        blurb = "A hedgerow maze fought south to north. Weave the lanes; every wall breaks sight.",
+        mapId = "bocage",
     ),
 )

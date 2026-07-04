@@ -18,9 +18,11 @@ package com.jaredhoward.goingdark
  * or the two shells silently disagree. The [CampaignModelTest] pins the id strings and the cycle so a
  * drift trips a test rather than shipping.
  *
- * [campaignNodes] mirrors `engine::mission_registry::default_campaign()`: the D105 **four-conflict
- * atlas** — every war a self-contained Seize → Hold → Push chain (each battle unlocks once the one
- * before it is cleared; every war's root is open from the start). Integration (not this file)
+ * [campaignNodes] mirrors `engine::mission_registry::default_campaign()`: the D105 four-conflict
+ * atlas plus the D121 fifth conflict (Normandy '44 — the atlas's first *historical* war), a
+ * **five-conflict / 15-battle atlas** — every war a self-contained Seize → Hold → Push chain (each
+ * battle unlocks once the one before it is cleared; every war's root is open from the start).
+ * Integration (not this file)
  * resolves a node's [MissionNode.sceneToken] to a real launchable scene (via the Rust
  * `Scene::for_mission` seam — `mission1`/`mission2`/`mission3`) and wires the
  * Campaign → MissionSelect → Briefing flow; this model only names the mission.
@@ -297,13 +299,15 @@ data class CampaignResult(val node: Int, val tier: Difficulty) {
 }
 
 /**
- * The shipped campaign nodes, mirroring `engine::mission_registry::default_campaign()`: the D105
- * **four-conflict atlas** — every conflict a self-contained Seize → Hold → Push chain over the
- * three shipped scenes, roots open from the start, gating within each conflict only. Nodes 0–2
- * (the Channel chain) mirror the Rust `MISSION_*_BRIEFING` `title`/`situation` **verbatim** (the
- * desktop/Compose briefing surface shows only the situation, not the separate `objective_line`,
- * so neither does this); nodes 3–11 mirror the per-node titles/situations authored inline in
- * `default_campaign()`. Each [sceneToken] mirrors the Rust `Scene::for_mission` mapping
+ * The shipped campaign nodes, mirroring `engine::mission_registry::default_campaign()`: the
+ * **five-conflict / 15-battle atlas** (D105's four fictional-modern wars + D121's Normandy '44,
+ * the atlas's first *historical* one) — every conflict a self-contained Seize → Hold → Push chain
+ * over the three shipped scenes, roots open from the start, gating within each conflict only.
+ * Nodes 0–2 (the Channel chain) mirror the Rust `MISSION_*_BRIEFING` `title`/`situation`
+ * **verbatim** (the desktop/Compose briefing surface shows only the situation, not the separate
+ * `objective_line`, so neither does this); nodes 3–14 mirror the per-node titles/situations
+ * authored inline in `default_campaign()`. Each [sceneToken] mirrors the Rust `Scene::for_mission`
+ * mapping
  * (Seize → `mission1`, Hold → `mission2`, Push → `mission3`; the archetypes are deliberately
  * reused across conflicts) — D79 mirrored strings the [CampaignModelTest] pins so a future edit
  * to the Rust copy can't silently diverge. Keep in lock-step.
@@ -451,14 +455,64 @@ val campaignNodes: List<MissionNode> = listOf(
         latX10 = -151,
         lonX10 = 1671,
     ),
+    // ---- Normandy '44 — Operation Cobra (the WW2 cost-vs-power debut, D120/D121) ----
+    // The atlas's first HISTORICAL conflict: the three nodes carry the WW2 armies engine-side
+    // (UsWw2 Shermans vs Germany Panthers/Tigers), but this model only names the mission — the
+    // situation copy is mirrored verbatim from the inline authoring in `default_campaign()`.
+    MissionNode(
+        id = 12,
+        name = "Silence the Battery",
+        sceneToken = "mission1",
+        briefing = "A German coastal battery zeroes the whole landing beach, and its commander is up " +
+            "on the clifftop directing every gun. Twelve of yours went up the ropes — enough " +
+            "to swamp the trenches, never enough to trade shots with a Tiger. Kill the officer " +
+            "and the guns go quiet. Direct the rush from the map, or climb the last rope " +
+            "yourself; but the casemate you go dark on is the one that ranges in on you.",
+        operation = 4,
+        // Pointe du Hoc, the clifftop battery west of Omaha (~49.4°N, 0.99°W).
+        latX10 = 494,
+        lonX10 = -10,
+    ),
+    MissionNode(
+        id = 13,
+        name = "Hold the Crossroads",
+        sceneToken = "mission2",
+        briefing = "You took the hedgerow crossroads; now a Panzer counterattack wants it back before " +
+            "dark. You have more men than they have tanks, and thicker cover than they expect " +
+            "— dig the line in and make every Panther earn the lane. Fight it from above, or " +
+            "put yourself behind a rifle in the sunken road; but the hedge you can't see is " +
+            "the one a Tiger noses through.",
+        prerequisites = listOf(12),
+        operation = 4,
+        // Sunken bocage lanes south of Isigny (~49.2°N, 0.9°W).
+        latX10 = 492,
+        lonX10 = -9,
+    ),
+    MissionNode(
+        id = 14,
+        name = "Break the Bocage",
+        sceneToken = "mission3",
+        briefing = "Three hedgerow strongpoints stand between you and the breakout, every one anchored " +
+            "on a dug-in Panther. You cannot out-gun them — you out-mass and out-flank them: " +
+            "take each strongpoint in order, hold it, and roll on before their armor re-sets. " +
+            "Clear a lane blind and the tank you drove past is behind you now, in the hedge you " +
+            "never checked.",
+        prerequisites = listOf(13),
+        operation = 4,
+        // The Saint-Lô–Périers road, the Cobra breakout start line (~49.1°N, 1.1°W).
+        latX10 = 491,
+        lonX10 = -11,
+    ),
 )
 
 /**
- * The shipped conflict atlas, mirroring `default_campaign()`'s Q28 grouping — since D105 **four**
- * fictional modern conflicts (each a war the shipped US/FR roster plausibly covers, per the Q28
- * fork-1(c) lean; names/framing are content, not a lock), each holding one operation holding its
- * three battles, eras staggered 2027–2034 for the atlas year scrubber. D79 mirrored constants —
- * [CampaignModelTest] pins them against the Rust copy. Keep in lock-step with
+ * The shipped conflict atlas, mirroring `default_campaign()`'s Q28 grouping — **five** conflicts:
+ * D105's four fictional modern wars (each a war the shipped US/FR roster plausibly covers, per the
+ * Q28 fork-1(c) lean; names/framing are content, not a lock), then D121's **Normandy '44**, the
+ * atlas's first *historical* conflict (1944, fielding the D120 WW2 cost-vs-power armies engine-side
+ * — UsWw2 Shermans vs Germany Panthers/Tigers). Each holds one operation holding its three
+ * battles; eras run 2027–2034 for the four modern wars, then the 1944 historical one. D79 mirrored
+ * constants — [CampaignModelTest] pins them against the Rust copy. Keep in lock-step with
  * `engine::mission_registry::default_campaign()`.
  */
 val campaignConflicts: List<Conflict> = listOf(
@@ -511,6 +565,20 @@ val campaignConflicts: List<Conflict> = listOf(
         latX10 = -155,
         lonX10 = 1672,
     ),
+    Conflict(
+        id = 4,
+        name = "Normandy '44",
+        startYear = 1944,
+        endYear = 1944,
+        summary = "The Allied invasion of occupied France, June–August 1944 — and the " +
+            "campaign's first HISTORICAL conflict. The US armored spearhead trades " +
+            "a flood of cheap, thin-skinned Shermans against fewer, far tougher " +
+            "German Panthers and Tigers: win it by numbers and manoeuvre, because " +
+            "you will never win it gun-to-gun.",
+        // The Calvados coast behind Omaha / the bocage country (~49.3°N, 0.9°W).
+        latX10 = 493,
+        lonX10 = -9,
+    ),
 )
 
 /** The shipped operations, one per conflict — see [campaignConflicts]. */
@@ -519,6 +587,7 @@ val campaignOperations: List<Operation> = listOf(
     Operation(id = 1, conflict = 1, name = "Operation Dry Season"),
     Operation(id = 2, conflict = 2, name = "Operation Frostline"),
     Operation(id = 3, conflict = 3, name = "Operation Trade Wind"),
+    Operation(id = 4, conflict = 4, name = "Operation Cobra"),
 )
 
 /**
