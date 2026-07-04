@@ -31,3 +31,15 @@ pub(crate) fn pointer_to_ndc(pos: [f32; 2], size_points: [f32; 2]) -> [f32; 2] {
     let h = if size_points[1] > 0.0 { size_points[1] } else { 1.0 };
     [(pos[0] / w) * 2.0 - 1.0, 1.0 - (pos[1] / h) * 2.0]
 }
+
+/// The inverse of [`pointer_to_ndc`]: NDC (`[-1,1]²`, origin centre, y up) → egui logical points
+/// (origin top-left, y down). The operations-map overlay projects battle anchors to NDC
+/// (`project_pin`) and paints egui shapes at them — this is the crossing back. Pure arithmetic,
+/// unit-tested (round-trips with [`pointer_to_ndc`]); render-side floats only, never `core`
+/// (invariant #1).
+pub(crate) fn ndc_to_pointer(ndc: [f32; 2], size_points: [f32; 2]) -> [f32; 2] {
+    [
+        (ndc[0] + 1.0) * 0.5 * size_points[0],
+        (1.0 - ndc[1]) * 0.5 * size_points[1],
+    ]
+}

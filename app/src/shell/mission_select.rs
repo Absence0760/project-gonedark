@@ -18,11 +18,15 @@ use gonedark_render::globe_backdrop::{project_pin, GlobeFlight, GlobePin, GlobeV
 
 /// An action the mission-select (Operations-hub) screen can emit in a frame. The hub reads the
 /// campaign through [`Campaign::mission_select`] (host-side, never the sim — invariants #1/#7); the
-/// only outcomes are launching a node's briefing or backing out to the title.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// outcomes are launching a node's briefing, a look-around camera nudge, or backing out.
+/// (`Look` carries `f32` drag deltas, so the enum is `PartialEq` but not `Eq`.)
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum MissionSelectAction {
     /// Open the briefing for the clicked node (only ever a *playable* node — see [`playable_node`]).
     OpenNode(NodeId),
+    /// A drag on the battlefield surface by `(dx, dy)` logical points — nudges the clamped
+    /// look-around offset ([`apply_hub_look`]); never a screen transition.
+    Look(f32, f32),
     /// Back out of the hub (to the conflict atlas, D104).
     Back,
 }
@@ -213,7 +217,9 @@ pub(crate) fn atlas_pins(campaign: &Campaign) -> Vec<GlobePin> {
 /// How far the battlefield overview zooms into a war. Inside the D104 navigation clamp
 /// ([`GlobeView::ZOOM_MAX`] = 2.6 — nothing the atlas player couldn't already reach by hand),
 /// close enough that a war's battle anchors read as separate grounds (the shipped anchor
-/// authoring keeps them ≥ ~0.1° apart — a test pins the on-screen separation).
+/// authoring keeps them ≥ ~0.1° apart — a test pins the on-screen separation). 2.6 was tried
+/// for the operations-map overlay and rejected: it pushes the east-biased composition's first
+/// anchor off frame (the framing test catches it) — the tuned pair is (2.4, bias 1.0°).
 pub(crate) const OVERVIEW_ZOOM: f32 = 2.4;
 
 /// How far EAST of the war the overview camera centers, in **effective** degrees (divided by
@@ -248,10 +254,17 @@ pub(crate) fn next_battle_in(campaign: &Campaign, conflict: ConflictId) -> Optio
         .or_else(|| nodes.last().copied())
 }
 
+/// How large the overview's battle motes draw, as the render-side "conflict pin = 1.0" multiple.
+/// Bumped past the render default (`BATTLE_PIN_SCALE` = 1.6) shell-side: with the operations-map
+/// overlay's chips and titles floating over them, the motes must read as the grounds those labels
+/// annotate, not dust under them.
+pub(crate) const OVERVIEW_PIN_SCALE: f32 = 2.2;
+
 /// The battlefield overview's pin list (D106): one [`GlobePin::battle`] per **anchored** node of
 /// `conflict` (a node with no authored ground simply doesn't pin — the tile list still carries
-/// it), toned by progress ([`battle_tone`]) with `focused` marked. Integer tenth-degrees convert
-/// to render-side degrees here — the same float boundary as [`atlas_pins`] (invariant #1). Pure.
+/// it), toned by progress ([`battle_tone`]) with `focused` marked, at [`OVERVIEW_PIN_SCALE`].
+/// Integer tenth-degrees convert to render-side degrees here — the same float boundary as
+/// [`atlas_pins`] (invariant #1). Pure.
 pub(crate) fn battlefield_pins(
     campaign: &Campaign,
     conflict: ConflictId,
@@ -263,12 +276,14 @@ pub(crate) fn battlefield_pins(
         .flat_map(|op| campaign.nodes_in(op))
         .filter_map(|n| {
             let (lat, lon) = campaign.node(n)?.anchor?;
-            Some(GlobePin::battle(
+            let mut pin = GlobePin::battle(
                 lat as f32 / 10.0,
                 lon as f32 / 10.0,
                 Some(n) == focused,
                 battle_tone(campaign.progress(n)),
-            ))
+            );
+            pin.scale = OVERVIEW_PIN_SCALE;
+            Some(pin)
         })
         .collect()
 }
@@ -320,6 +335,160 @@ pub(crate) fn hub_backdrop_view(
             None
         }
         (None, target) => target,
+    }
+}
+
+// ---- look-around + the operations-map overlay (the zoomed conflict detail view) ----------------
+
+/// How far the operations screen's look-around drag can peek the camera off the overview, in
+/// radians of yaw. Deliberately small: at [`OVERVIEW_ZOOM`] the eye almost touches the globe, so
+/// even these offsets swing the battlefield most of the way across the screen. The clamp is what
+/// turns "you can tilt around the sites but never spin the planet" into a guarantee — a test
+/// projects every anchored battle at the window's extremes and holds it on screen.
+pub(crate) const LOOK_YAW_LIMIT: f32 = 0.035;
+/// The pitch half of the look window — see [`LOOK_YAW_LIMIT`].
+pub(crate) const LOOK_PITCH_LIMIT: f32 = 0.02;
+
+/// Nudge the hub's look-around offset by a drag, clamped into the LOOK window. Same feel as the
+/// atlas drag: [`DRAG_SENS`](crate::shell::atlas::DRAG_SENS) scaled down by zoom, with the
+/// surface-following longitude correction
+/// ([`lon_drag_correction`](crate::shell::atlas::lon_drag_correction)) so the ground tracks the
+/// cursor. Pure — the operations screen's one camera-gesture decision, unit-tested.
+pub(crate) fn apply_hub_look(look: &mut (f32, f32), dx: f32, dy: f32, base: GlobeView) {
+    let s = crate::shell::atlas::DRAG_SENS / base.zoom;
+    let corr = crate::shell::atlas::lon_drag_correction(base);
+    look.0 = (look.0 + dx * s * corr).clamp(-LOOK_YAW_LIMIT, LOOK_YAW_LIMIT);
+    look.1 = (look.1 + dy * s).clamp(-LOOK_PITCH_LIMIT, LOOK_PITCH_LIMIT);
+}
+
+/// The camera the operations screen actually shows: the base view (the D107 fly-in mid-flight,
+/// else the D106 overview) with the player's clamped look offsets added, re-clamped. The **one
+/// effective view** — the host threads it to the backdrop, the overlay, and pin-picking alike,
+/// so the three can never disagree (the D104 discipline). A `None` base (no battlefield) stays
+/// `None`: there is nothing to peek around. Pure.
+pub(crate) fn hub_effective_view(base: Option<GlobeView>, look: (f32, f32)) -> Option<GlobeView> {
+    base.map(|v| GlobeView { yaw: v.yaw + look.0, pitch: v.pitch + look.1, zoom: v.zoom }.clamped())
+}
+
+/// One battle site on the operations-map overlay: its 1-based progression `order` within the
+/// conflict (the authored prerequisite-chain walk — the same order [`battlefield_pins`] takes),
+/// its campaign state, display title, and where it projects on screen. `ndc` is `None` for a
+/// far-side/off-screen site — the glue skips drawing it, but the site **stays in the list** so
+/// ordering and path adjacency stay stable. Locked sites are deliberately included: the map shows
+/// the whole operation start → finish (the Normandy read — beach first, the inland grounds
+/// visible but padlocked), locked ground never hides. Pure data — never the sim.
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct SiteWaypoint {
+    pub node: NodeId,
+    pub order: usize,
+    pub title: String,
+    pub progress: NodeProgress,
+    pub ndc: Option<[f32; 2]>,
+}
+
+/// A site keeps its screen position up to slightly past the frame edge, so a chip half off-frame
+/// still draws instead of popping the instant its centre crosses the edge.
+const SITE_NDC_MARGIN: f32 = 1.05;
+
+/// The overlay's ordered site list for `conflict` under the live `view`: one waypoint per
+/// **anchored** node, numbered 1..n in prerequisite-chain (authored) order, projected through the
+/// SAME [`project_pin`] the renderer and [`pick_battle`] use. Pure — unit-tested; the painting is
+/// the exempt glue.
+pub(crate) fn site_waypoints(
+    campaign: &Campaign,
+    conflict: ConflictId,
+    view: GlobeView,
+    aspect: f32,
+) -> Vec<SiteWaypoint> {
+    let mut out = Vec::new();
+    for op in campaign.operations_in(conflict) {
+        for n in campaign.nodes_in(op) {
+            let Some(node) = campaign.node(n) else { continue };
+            let Some((lat, lon)) = node.anchor else { continue };
+            let ndc = project_pin(view, aspect, lat as f32 / 10.0, lon as f32 / 10.0)
+                .filter(|p| p[0].abs() <= SITE_NDC_MARGIN && p[1].abs() <= SITE_NDC_MARGIN);
+            out.push(SiteWaypoint {
+                node: n,
+                order: out.len() + 1,
+                title: node.title.clone(),
+                progress: campaign.progress(n),
+                ndc,
+            });
+        }
+    }
+    out
+}
+
+/// The progression path's drawable legs: consecutive sites' screen segments (straight lines —
+/// the shipped anchors sit ≤ ~1.5° apart, no great-circle needed), each carrying the
+/// **destination** site's progress (a leg is "the road to that ground": cleared legs read green,
+/// the leg to the live battle amber, locked slate). A leg with either end far-side/off-screen
+/// drops; the sites themselves still list. Pure.
+pub(crate) fn site_path_legs(sites: &[SiteWaypoint]) -> Vec<([f32; 2], [f32; 2], NodeProgress)> {
+    sites
+        .windows(2)
+        .filter_map(|w| match (w[0].ndc, w[1].ndc) {
+            (Some(a), Some(b)) => Some((a, b, w[1].progress)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A site's overlay colour — the shell twin of the pin shader's tone tints
+/// (`globe_backdrop.wgsl` `fs_pin`: amber available, slate locked, green cleared), so the mote
+/// and the chip annotating it always agree. Pure — unit-tested against those hues.
+pub(crate) fn site_color(progress: NodeProgress) -> egui::Color32 {
+    match progress {
+        // fs_pin locked tint (0.42, 0.47, 0.58) — cold slate.
+        NodeProgress::Locked => egui::Color32::from_rgb(107, 120, 148),
+        // fs_pin neutral tint (0.96, 0.62, 0.20) — the signal amber.
+        NodeProgress::Available => egui::Color32::from_rgb(245, 158, 51),
+        // fs_pin cleared tint (0.36, 0.85, 0.48) — taken-ground green.
+        NodeProgress::Cleared { .. } => egui::Color32::from_rgb(92, 217, 122),
+    }
+}
+
+/// Which side of its chip a site's title sits **by default**: alternating by progression order
+/// (odd right, even left) so two neighbouring sites' labels fan away from each other instead of
+/// colliding — the shipped anchors are close enough that same-side labels would overlap. Pure.
+pub(crate) fn label_on_right(order: usize) -> bool {
+    order % 2 == 1
+}
+
+/// A label's lane is "crowded" when another visible site sits on that side within this screen
+/// window (NDC): roughly a title's width horizontally, a chip-and-label's height vertically.
+const LABEL_LANE_DX: f32 = 0.18;
+const LABEL_LANE_DY: f32 = 0.10;
+/// A site almost directly above/below (|dx| inside this dead zone) is NOT lane-crowding: the
+/// order alternation already fans a stacked pair apart, and a hair's-width dx must not flip
+/// sides arbitrarily (the fixture's stacked anchors project ~0.001 apart in x).
+const LABEL_LANE_EPS: f32 = 0.02;
+
+/// The side site `i`'s label actually takes: the [`label_on_right`] alternation, **collision-
+/// nudged** — when the default side points straight at another visible site inside the label
+/// lane (the shipped Channel Crisis zigzags its grounds close enough for exactly that) and the
+/// opposite side is free, the label flips away. A tie (both sides crowded, or no screen
+/// position) keeps the default, so degenerate layouts stay deterministic. Pure — unit-tested.
+pub(crate) fn label_side_for(sites: &[SiteWaypoint], i: usize) -> bool {
+    let default_right = label_on_right(sites[i].order);
+    let Some(p) = sites[i].ndc else {
+        return default_right;
+    };
+    let crowded = |right: bool| {
+        sites.iter().enumerate().any(|(j, s)| {
+            if j == i {
+                return false;
+            }
+            let Some(q) = s.ndc else { return false };
+            let dx = q[0] - p[0];
+            let toward = if right { dx > LABEL_LANE_EPS } else { dx < -LABEL_LANE_EPS };
+            toward && dx.abs() < LABEL_LANE_DX && (q[1] - p[1]).abs() < LABEL_LANE_DY
+        })
+    };
+    if crowded(default_right) && !crowded(!default_right) {
+        !default_right
+    } else {
+        default_right
     }
 }
 
@@ -425,14 +594,25 @@ pub(crate) fn mission_select_ui(
     use egui::RichText;
     let mut action = None;
 
-    // The battlefield surface: a fullscreen click area added FIRST, so the card/tiles drawn after
-    // it win pointer priority — exactly the atlas_ui pattern. Only live when the backdrop really
-    // is the overview (picking must share the drawn view, never guess one).
+    // The battlefield surface: a fullscreen click+drag area added FIRST, so the card/tiles drawn
+    // after it win pointer priority — exactly the atlas_ui pattern. Only live when the backdrop
+    // really is the overview (picking must share the drawn view, never guess one). A drag is the
+    // look-around gesture (a clamped peek, applied by the host through `apply_hub_look` — never a
+    // free spin); a click picks a battle.
     if let (Some(view), Some(conflict)) = (overview, only) {
         let screen = ui.ctx().input(|i| i.raw.screen_rect).unwrap_or_else(|| ui.clip_rect());
         let aspect = if screen.height() > 1.0 { screen.width() / screen.height() } else { 1.0 };
-        let surface =
-            ui.interact(screen, ui.id().with("battlefield_surface"), egui::Sense::click());
+        let surface = ui.interact(
+            screen,
+            ui.id().with("battlefield_surface"),
+            egui::Sense::click_and_drag(),
+        );
+        if surface.dragged() {
+            let d = surface.drag_delta();
+            if d.x != 0.0 || d.y != 0.0 {
+                action = Some(MissionSelectAction::Look(d.x, d.y));
+            }
+        }
         if surface.clicked() {
             if let Some(pos) = surface.interact_pointer_pos() {
                 let ndc = crate::shell::util::pointer_to_ndc(
@@ -444,6 +624,8 @@ pub(crate) fn mission_select_ui(
                 }
             }
         }
+        // The operations-map overlay, painted with the SAME view the surface picks with.
+        draw_operations_overlay(ui, campaign, conflict, view, aspect, screen);
     }
 
     // With the battlefield overview live, park the card at the left margin so the war (globe +
@@ -525,4 +707,87 @@ pub(crate) fn mission_select_ui(
     });
 
     action
+}
+
+/// The chip's radius (px) and how far it floats above its site's glowing mote — lifted so the pin
+/// itself stays readable under the annotation.
+const CHIP_R: f32 = 9.0;
+const CHIP_LIFT: f32 = 22.0;
+
+/// Paint the operations-map overlay over the battlefield: the dashed progression path, then each
+/// visible site's order chip, padlock (locked ground only), and title. Painter shapes are not
+/// widgets — they can never intercept the surface's or the card's clicks — and this runs before
+/// the hub card is laid out, so the card paints over the overlay where they overlap. Every
+/// decision lives in the pure seams ([`site_waypoints`], [`site_path_legs`], [`site_color`],
+/// [`label_on_right`], [`ndc_to_pointer`](crate::shell::util::ndc_to_pointer)); this is the
+/// exempt egui glue.
+fn draw_operations_overlay(
+    ui: &egui::Ui,
+    campaign: &Campaign,
+    conflict: ConflictId,
+    view: GlobeView,
+    aspect: f32,
+    screen: egui::Rect,
+) {
+    use egui::{pos2, vec2, Align2, FontId, Shape, Stroke};
+    let painter = ui.painter();
+    let size = [screen.width(), screen.height()];
+    let to_px = |ndc: [f32; 2]| {
+        let p = crate::shell::util::ndc_to_pointer(ndc, size);
+        pos2(screen.min.x + p[0], screen.min.y + p[1])
+    };
+    let sites = site_waypoints(campaign, conflict, view, aspect);
+    // The progression path first (under the chips): dashed legs, each tinted by the ground it
+    // leads TO — cleared green (taken), the live battle's amber, locked slate dimmed further
+    // (visible, not yet reachable — the Normandy read).
+    for (a, b, progress) in site_path_legs(&sites) {
+        let dim = if progress == NodeProgress::Locked { 0.45 } else { 0.8 };
+        let stroke = Stroke::new(1.5, site_color(progress).gamma_multiply(dim));
+        painter.extend(Shape::dashed_line(&[to_px(a), to_px(b)], stroke, 6.0, 5.0));
+    }
+    for (i, site) in sites.iter().enumerate() {
+        let Some(ndc) = site.ndc else { continue };
+        let color = site_color(site.progress);
+        let chip = to_px(ndc) + vec2(0.0, -CHIP_LIFT);
+        painter.circle_filled(chip, CHIP_R, PANEL_GLASS);
+        painter.circle_stroke(chip, CHIP_R, Stroke::new(1.5, color));
+        painter.text(
+            chip,
+            Align2::CENTER_CENTER,
+            site.order.to_string(),
+            FontId::proportional(11.0),
+            color,
+        );
+        // The label lane: a padlock (locked ground only), then the title, fanned to alternating
+        // sides — collision-nudged away from a neighbouring site — so text never piles up.
+        let right = label_side_for(&sites, i);
+        let dir = if right { 1.0 } else { -1.0 };
+        let mut x = chip.x + dir * (CHIP_R + 6.0);
+        if site.progress == NodeProgress::Locked {
+            draw_padlock(painter, pos2(x + dir * 5.0, chip.y), color);
+            x += dir * 13.0;
+        }
+        let anchor = if right { Align2::LEFT_CENTER } else { Align2::RIGHT_CENTER };
+        painter.text(pos2(x, chip.y), anchor, &site.title, FontId::proportional(TYPE_CAPTION), color);
+    }
+}
+
+/// A padlock in painter primitives — no emoji (the shell's no-tofu rule: egui's default font has
+/// no lock glyph) and no new assets: a rounded-rect body under a stroked semicircular shackle.
+/// Glue (needs a live painter); the decision to show it is `site.progress == Locked`, pinned by
+/// the [`site_waypoints`] tests.
+fn draw_padlock(painter: &egui::Painter, center: egui::Pos2, color: egui::Color32) {
+    use egui::{pos2, vec2, CornerRadius, Rect, Shape, Stroke};
+    let body = Rect::from_center_size(center + vec2(0.0, 1.5), vec2(7.5, 6.0));
+    painter.rect_filled(body, CornerRadius::same(2), color);
+    // The shackle: a semicircle sampled into a polyline (egui's painter has no arc primitive).
+    let r = 2.4;
+    let hinge = pos2(center.x, body.min.y);
+    let arc: Vec<egui::Pos2> = (0..=8)
+        .map(|i| {
+            let t = std::f32::consts::PI * i as f32 / 8.0;
+            pos2(hinge.x - r * t.cos(), hinge.y - r * t.sin())
+        })
+        .collect();
+    painter.add(Shape::line(arc, Stroke::new(1.3, color)));
 }

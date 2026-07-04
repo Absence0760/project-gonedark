@@ -65,8 +65,8 @@ Borrowed from **Company of Heroes**' meta-campaign map and **Delta Force**'s rep
   to four** — *The Channel Crisis*, *The Meridian Crisis*, *The Gotland Winter*, and *The Santo
   Crisis* (12 nodes total, each conflict its own self-contained Seize → Hold → Push chain reusing
   the three shipped seeders) — all fictional/modern/roster-plausible per the Q28 fork-1(c) lean.
-  On desktop the atlas *presentation* has since shipped in four steps ([D103](decisions.md) →
-  [D104](decisions.md) → [D106](decisions.md) → [D107](decisions.md)):
+  On desktop the atlas *presentation* has since shipped in five steps ([D103](decisions.md) →
+  [D104](decisions.md) → [D106](decisions.md) → [D107](decisions.md) → [D110](decisions.md)):
   CAMPAIGN opens a **navigable earth** — drag/zoom, a year scrubber, one glowing pin per conflict
   at its authored `lat/lon` anchor — and picking a war now lands on that war's **battlefield
   overview**: the globe zooms onto the conflict's ground and each battle draws as its own
@@ -76,7 +76,13 @@ Borrowed from **Company of Heroes**' meta-campaign map and **Delta Force**'s rep
   briefing → overview → atlas → title, and the title's CONTINUE still deep-links straight to
   the next briefing). The atlas ↔ battlefield hop is a **camera flight**, not a cut — ENTER
   flies down onto the war, escape flies back up, and any drag/zoom cancels the flight in favor
-  of the player's hand ([D107](decisions.md)). Android's hub keeps the grouped list (the recorded
+  of the player's hand ([D107](decisions.md)). The overview itself now reads as an
+  **operations map** ([D110](decisions.md)): each site carries an order chip (1 → 2 → 3 along
+  the prerequisite chain), its mission title, and — on locked ground — a padlock, with a
+  dashed progression path linking the chain (the Normandy read: the beach first, the inland
+  grounds visible but locked); the overview accepts a clamped look-around drag that can never
+  lose the battlefield, and the atlas drag is surface-following (zoomed dragging slides the
+  terrain under the cursor instead of spinning the planet). Android's hub keeps the grouped list (the recorded
   [Q28](open-questions.md#q28--conflict-atlas) fork) — the mirrored data carries the per-battle
   anchors regardless; the roster and conflict-selection forks stay open — nothing in the hub
   *model* above changed.

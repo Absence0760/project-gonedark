@@ -16,11 +16,12 @@ use crate::shell::mission_select::focused_conflict;
 use crate::shell::theme::*;
 use crate::shell::widgets::*;
 use gonedark_core::campaign::{Campaign, Conflict, NodeId};
-use gonedark_render::globe_backdrop::{project_pin, GlobeFlight, GlobePin, GlobeView};
+use gonedark_render::globe_backdrop::{eye_elevation, project_pin, GlobeFlight, GlobePin, GlobeView};
 
 /// Radians of globe rotation per logical point of drag at zoom 1 (halves as zoom doubles, so a
-/// zoomed-in drag stays fine-grained over the region under the cursor).
-const DRAG_SENS: f32 = 0.006;
+/// zoomed-in drag stays fine-grained over the region under the cursor). Shared by the operations
+/// screen's look-around drag so both surfaces feel identical under the hand.
+pub(crate) const DRAG_SENS: f32 = 0.006;
 /// Zoom factor per scroll "line" (egui's scroll unit); >1 = scroll-up zooms in.
 const ZOOM_STEP: f32 = 1.10;
 /// Click-to-pin pick radius in NDC (fraction of the half-screen) — generous enough for a pin's
@@ -130,10 +131,15 @@ pub(crate) fn apply_atlas_action(
             // always wins over the automatic camera, instantly.
             state.flight = None;
             let s = DRAG_SENS / state.view.zoom;
+            // Surface-following pan: the longitude delta grows by 1/cos(center latitude), so
+            // the terrain under the cursor tracks the hand at every latitude and zoom. The old
+            // raw `yaw += dx*s` rotated the whole world instead: at a zoomed-in 60°N view the
+            // ground slid past the cursor at half the hand's rate. Pitch stays linear.
+            let corr = lon_drag_correction(state.view);
             state.view = GlobeView {
                 // Dragging right pulls the visible face right (the globe turns with the hand);
                 // dragging down tips the northern hemisphere toward the viewer.
-                yaw: state.view.yaw + dx * s,
+                yaw: state.view.yaw + dx * s * corr,
                 pitch: state.view.pitch + dy * s,
                 zoom: state.view.zoom,
             }
@@ -166,6 +172,23 @@ pub(crate) fn apply_atlas_action(
         }
         AtlasAction::Back => AtlasStep::Back,
     }
+}
+
+/// The cap on [`lon_drag_correction`]: near the pitch clamp the view center's latitude passes
+/// 70–100° where `1/cos` blows up toward infinity — a capped polar drag pans fast, never
+/// explosively.
+pub(crate) const LON_DRAG_CORRECTION_CAP: f32 = 3.0;
+
+/// The **surface-following** longitude correction for a drag: one radian of yaw moves `cos(lat)`
+/// less east-west ground at latitude `lat`, so the yaw delta scales by `1/cos(center_lat)` to
+/// keep the terrain under the cursor glued to the hand. The latitude under the view center is
+/// `pitch + eye_elevation(zoom)` — the exact inverse of `GlobeView::over`'s pitch mapping (the
+/// render crate exports the term so the two sides can never drift). Capped at
+/// [`LON_DRAG_CORRECTION_CAP`] (a near-polar view has `cos → 0`, and can even pass 90° at the
+/// pitch clamp — the `.max` also guards the negative-cos side). Pure — unit-tested.
+pub(crate) fn lon_drag_correction(view: GlobeView) -> f32 {
+    let center_lat = view.pitch + eye_elevation(view.zoom);
+    1.0 / center_lat.cos().max(1.0 / LON_DRAG_CORRECTION_CAP)
 }
 
 /// The index (into `campaign.conflicts()`) of the conflict a node belongs to, or `None` for an

@@ -36,7 +36,8 @@
 > moved in lock-step. The egui
 > mission-select/briefing hub reaches every node — now **grouped by conflict/operation** with D98
 > rollup headers, since grown on desktop into the navigable conflict atlas + per-battle
-> battlefield overview with a camera-flight hop between them (D103/D104/D106/D107; Android stays
+> battlefield overview — dressed as an operations map (site chips, padlocks, a progression
+> path) — with a camera-flight hop between them (D103/D104/D106/D107/D110; Android stays
 > the grouped list, the recorded Q28 fork) — and the **native (Compose) mission-select/briefing
 > chrome renders and launches every
 > playable node** (`MissionSelectScreen.kt`/`BriefingScreen.kt` + the pure `missionLaunchConfig`
@@ -153,8 +154,9 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
   *The Meridian Crisis* / *Operation Dry Season*, *The Gotland Winter* / *Operation Frostline*,
   *The Santo Crisis* / *Operation Trade Wind*) — pure static
   metadata (progress blob byte-identical *per node set*; growing 3 → 12 nodes retires pre-D105
-  saves by design); the atlas *presentation* has since shipped on desktop (D103/D104/D106/D107 —
-  navigable globe → per-battle overview → camera flight); Android's presentation and the
+  saves by design); the atlas *presentation* has since shipped on desktop (D103/D104/D106/D107/
+  D110 — navigable globe → per-battle overview → camera flight → operations-map dressing);
+  Android's presentation and the
   roster/conflict-selection forks stay open in
   [Q28](../open-questions.md#q28--conflict-atlas).
 - Mission-select + briefing surface in the **native shell** ([D32](../decisions.md)) reached through
@@ -162,7 +164,8 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
   **a separate host file** (campaign metadata, not sim state) — the host-side content model
   [D76](../decisions.md) locks in. *(The **egui** hub reaches every node end-to-end — grouped by
   conflict/operation with D98 rollup headers, since grown into the desktop navigable atlas +
-  battlefield overview + camera flight (D103/D104/D106/D107) — and the native Android
+  battlefield overview (dressed as an operations map) + camera flight (D103/D104/D106/D107/D110)
+  — and the native Android
   **Compose** chrome — `MissionSelectScreen.kt`/
   `BriefingScreen.kt` + the pure `missionLaunchConfig` seam — renders **and launches every playable
   node**; the gated-node launch wire closed 2026-07-03, see

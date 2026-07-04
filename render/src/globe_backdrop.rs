@@ -152,15 +152,12 @@ impl GlobeView {
     /// globe axis ([`EYE`]), so the anchor must land at the eye's elevation off `+Z` or the
     /// facing gate ([`project_pin`]) swallows it at close zoom. Under [`globe_model`]'s
     /// `R_x(pitch)·R_y(yaw)`, a point at latitude `φ` ends up `φ − pitch` above `+Z`, so
-    /// `pitch = φ − elevation(zoom)` points its surface normal straight up the eye ray.
-    /// Clamped like every other view (unit-tested via [`project_pin`]).
+    /// `pitch = φ − `[`eye_elevation`]`(zoom)` points its surface normal straight up the eye
+    /// ray. Clamped like every other view (unit-tested via [`project_pin`]).
     pub fn over(lat_deg: f32, lon_deg: f32, zoom: f32) -> Self {
-        let k = 1.0 / zoom.clamp(Self::ZOOM_MIN, Self::ZOOM_MAX);
-        // The eye's elevation angle above +Z as seen from the globe center.
-        let elevation = (EYE[1] * k - GLOBE_CENTER[1]).atan2(EYE[2] * k);
         GlobeView {
             yaw: -lon_deg.to_radians(),
-            pitch: lat_deg.to_radians() - elevation,
+            pitch: lat_deg.to_radians() - eye_elevation(zoom),
             zoom,
         }
         .clamped()
@@ -232,6 +229,16 @@ impl GlobeFlight {
     pub fn done(&self) -> bool {
         self.elapsed >= Self::DURATION
     }
+}
+
+/// The camera eye's **elevation angle** (radians) above the globe center's `+Z` axis at a zoom —
+/// the term [`GlobeView::over`] subtracts from a target latitude so that ground faces the eye,
+/// and, inverted, the term the shells add back to recover the latitude under the view center
+/// (`center_lat = pitch + eye_elevation(zoom)` — the surface-following drag correction). One
+/// exported function so the two sides can never drift apart. Pure + GPU-free, unit-tested.
+pub fn eye_elevation(zoom: f32) -> f32 {
+    let k = 1.0 / zoom.clamp(GlobeView::ZOOM_MIN, GlobeView::ZOOM_MAX);
+    (EYE[1] * k - GLOBE_CENTER[1]).atan2(EYE[2] * k)
 }
 
 /// Wrap an angle (radians) into `[-pi, pi]` — the shortest-arc term of [`GlobeFlight`]. Pure.
@@ -1040,6 +1047,24 @@ mod tests {
                 "at zoom {zoom} the globe's front ({clearance}) crowds the near plane ({NEAR})",
             );
         }
+    }
+
+    /// `eye_elevation` is the exported half of `GlobeView::over`'s pitch mapping: adding it back
+    /// onto an `over` view's pitch recovers the target latitude — the exact inverse the shells'
+    /// surface-following drag correction relies on (`center_lat = pitch + eye_elevation(zoom)`).
+    /// It also grows with zoom (the pulled-in eye sits at a steeper elevation over the ground) —
+    /// a sign/term slip here would silently mis-latitude every zoomed drag.
+    #[test]
+    fn eye_elevation_inverts_the_overview_pitch_mapping() {
+        for &(lat, zoom) in &[(0.0f32, 1.0f32), (50.0, 2.4), (-15.5, 1.6), (57.6, 2.6)] {
+            let view = GlobeView::over(lat, 0.0, zoom);
+            let recovered = (view.pitch + eye_elevation(zoom)).to_degrees();
+            assert!((recovered - lat).abs() < 1e-3, "lat {lat} zoom {zoom}: got {recovered}");
+        }
+        assert!(eye_elevation(1.0) > 0.0, "the eye always sits above the +Z axis");
+        assert!(eye_elevation(2.6) > eye_elevation(1.0), "elevation grows as zoom pulls in");
+        // Out-of-range zooms clamp exactly like the views that consume them.
+        assert_eq!(eye_elevation(99.0), eye_elevation(GlobeView::ZOOM_MAX));
     }
 
     /// `GlobeView::over` (the D106 battlefield-overview camera) really centers its target: the

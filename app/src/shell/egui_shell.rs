@@ -267,8 +267,10 @@ impl EguiShell {
         // (D104's `only` filter) the backdrop becomes the **battlefield overview** (D106): the
         // globe zooms onto the war's battle anchors, one progress-toned pin per battle, with the
         // next battle focused — and the pins are pickable (mission_select_ui gets the same view).
-        // The host resolves `view` per frame (the D107 fly-in owns it mid-flight —
-        // `hub_backdrop_view`); `None` falls back to the settled per-conflict framing.
+        // The host resolves `view` per frame — the EFFECTIVE camera: the D107 fly-in mid-flight
+        // (`hub_backdrop_view`) plus the clamped look-around peek (`hub_effective_view`) — so the
+        // backdrop, the operations-map overlay, and picking all share one camera. `None` falls
+        // back to the settled per-conflict framing.
         let pins = match (only, view) {
             (Some(c), Some(_)) => battlefield_pins(campaign, c, next_battle_in(campaign, c)),
             _ => atlas_pins(campaign),

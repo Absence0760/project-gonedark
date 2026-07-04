@@ -4946,3 +4946,59 @@ presentation-safe boundary the card's integer-only data respects). Files:
 `app/src/shell/tests.rs` (the desktop panel + seams), `android/.../MapCard.kt` +
 `SkirmishSetupScreen.kt` + `MapCardTest.kt` (the mirror + drift guards), `docs/modes.md` /
 `docs/roadmap.md` / `docs/plans/phase-4-plan.md` (shipped-vs-target updates).
+
+## D110 — The battlefield overview becomes an operations map: ordered site chips, padlocked locked ground, and drag that stops spinning the planet
+
+**Status: landed (desktop).** The D106 zoomed overview was honest but mute — three dim motes
+under a list panel. It now reads as an **operations map** progressing start → finish, the
+Normandy read: the beach first, the inland grounds visible but padlocked. Three pieces:
+
+1. **The site overlay.** Each anchored battle of the picked conflict projects through the
+   same `project_pin` the picker uses, and the shell paints at that screen position an
+   **order chip** (1-based prerequisite-chain index in a stroked circle), the mission title,
+   a painter-primitive **padlock** on Locked sites (rounded-rect body + arc shackle — no
+   assets, no emoji), and a **dashed progression path** whose legs tint by their destination
+   site's state. Locked sites deliberately still show — the map teaches where the operation
+   is *going*. Chip hues are the shell twins of `fs_pin`'s WGSL tone tints, so mote and chip
+   can never disagree; the overlay is painter-shapes only (never a widget), so `pick_battle`
+   clicks pass straight through, and the seams (`site_waypoints`, `site_path_legs`,
+   `label_side_for` with a collision nudge, `ndc_to_pointer`) are pure and pinned by tests.
+   Battle motes bumped shell-side to `OVERVIEW_PIN_SCALE = 2.2` (render default untouched).
+
+2. **Look-around on the overview.** The battlefield surface now senses drag: a clamped local
+   offset (±0.035 rad yaw / ±0.02 rad pitch, cos-corrected) layered over the D106 view and
+   the D107 flight's landing view — one `hub_effective_view` threaded to backdrop, overlay,
+   and picking alike. The clamp is the fix: a test proves every shipped war's anchors stay on
+   screen at all four extremes, so the planet *cannot* be spun from here. Offsets reset on
+   every hub entry; the atlas return flight departs from the peeked view so escape never cuts.
+
+3. **Surface-following atlas drag.** The atlas Drag arm's raw `yaw += dx·s` becomes
+   `yaw += dx·s / cos(center_lat)` (capped ×3 near the pitch clamp), with `center_lat` from
+   the same `eye_elevation(zoom)` the camera itself uses (extracted and exported from
+   `GlobeView::over` — the one render-crate touch, no shader changes). Zoomed dragging now
+   slides the terrain under the cursor at any latitude instead of visibly rotating the ball.
+
+**Why.** Player feedback on the shipped view, verbatim intent: the zoomed conflict view
+"doesn't do much" — it should be "an in detail view of the operations, progressing from the
+start to finish," with locked operations *shown* on the 3D map, and rotation while zoomed
+should stop turning "the whole world." The overlay answers the first (the unlock model was
+already derived and per-battle anchors already authored — this is presentation over existing
+data, zero `core` changes); the clamped look-around and the cos-corrected pan answer the
+second within the globe-fixed camera D104 locked (a true free-orbit pivot would be new camera
+machinery — deliberately not opened here). `OVERVIEW_ZOOM` stays 2.4: 2.6 was tried for a
+tighter frame and rejected — it pushes the east-biased composition's first anchor off frame
+(the framing test caught it).
+
+**Honest caveats.** Confirmed by the headless shell screenshot (chips, padlocks, path, and
+the label collision-nudge all visible on the Channel Crisis) — but the *feel* of the two drag
+fixes is by-hand work the next desktop session owes. Android untouched (the recorded Q28
+grouped-list fork).
+
+**Cross-link:** [D106](#d106--entering-a-war-lands-on-its-battlefield-the-hub-becomes-a-zoomed-overview-on-the-globe-one-pin-per-battle)
+(the overview this dresses), [D107](#d107--the-atlas--battlefield-hop-is-a-camera-flight-not-a-cut-cancellable-by-the-players-hand)
+(the flight the look-around layers over), [D104](#d104--the-campaigns-front-door-is-the-navigable-conflict-atlas-drag-the-earth-scrub-the-years-pick-a-war-closes-q28-fork-2-on-desktop)
+(the drag model the pan correction fixes), [Q28](open-questions.md#q28--conflict-atlas) (the
+Android fork, unchanged). Files: `app/src/shell/mission_select.rs` (overlay seams +
+look-around), `app/src/shell/atlas.rs` (surface-following drag), `app/src/shell/util.rs`
+(`ndc_to_pointer`), `app/src/main.rs` (`hub_look` state), `render/src/globe_backdrop.rs`
+(`eye_elevation` export), `app/src/shell/tests.rs` + render tests (the pins).

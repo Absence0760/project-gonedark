@@ -174,6 +174,13 @@ struct App {
     /// ENTER from the atlas only — a briefing back-out or CONTINUE deep-link cuts straight to
     /// the overview. Session presentation state; never persisted, never sim state.
     hub_flight: Option<GlobeFlight>,
+    /// The hub's **look-around** offset `(yaw, pitch)` in radians — the player's clamped peek on
+    /// top of the D106 overview / D107 flight camera (the `apply_hub_look` seam bounds it so the
+    /// battlefield can never leave frame). Reset to neutral on every hub entry
+    /// ([`enter_hub_camera`]) — which is also every flight seed — and folded into the atlas's
+    /// return-leg start so escaping mid-peek never cuts. Session presentation state; never
+    /// persisted, never sim state.
+    hub_look: (f32, f32),
     /// The Operations-hub campaign model (PvE WS-B, D58) the mission-select / briefing screens read
     /// and a win advances. **Host-side meta-progression — never sim state, never in the per-tick
     /// checksum** (invariants #1/#7): its progress persists to its own host blob
@@ -254,6 +261,7 @@ impl App {
             // The atlas re-seeds on every open (`OpenAtlas`), so the boot value is just sensible.
             atlas: AtlasState::opened(&campaign),
             hub_flight: None,
+            hub_look: (0.0, 0.0),
             campaign,
             registry: default_registry(),
             briefing_difficulty: Difficulty::default(),
@@ -627,15 +635,28 @@ impl App {
                         .get(self.atlas.selected)
                         .map(|c| c.id);
                     // This frame's backdrop camera: the D107 fly-in while live (advanced by the
-                    // wall-clock dt), else the D106 overview target, else the settled fallback.
+                    // wall-clock dt), else the D106 overview target, else the settled fallback —
+                    // then the player's clamped look-around peek on top. ONE effective view: the
+                    // backdrop, the operations-map overlay, and pin-picking all receive it, so
+                    // they can never disagree (the D104 discipline).
                     let target = only.and_then(|c| shell::overview_view(&self.campaign, c));
-                    let view = shell::hub_backdrop_view(&mut self.hub_flight, target, dt);
+                    let base = shell::hub_backdrop_view(&mut self.hub_flight, target, dt);
+                    let view = shell::hub_effective_view(base, self.hub_look);
                     if let Some(action) = sh.draw_mission_select(surface, &self.campaign, only, view) {
                         transition = match action {
                             // A playable tile → open that node's briefing (the click was already
                             // gated to playable nodes by the pure `playable_node` seam).
                             MissionSelectAction::OpenNode(node) => {
                                 Some(HostTransition::OpenBriefing(node))
+                            }
+                            // A battlefield drag: nudge the clamped look offset (a camera edit,
+                            // never a transition). Applied against the BASE camera (its zoom /
+                            // centre latitude set the drag feel), stored for next frame's view.
+                            MissionSelectAction::Look(dx, dy) => {
+                                if let Some(base) = base {
+                                    shell::apply_hub_look(&mut self.hub_look, dx, dy, base);
+                                }
+                                None
                             }
                             // The hub backs out to the atlas it was entered from (D104).
                             MissionSelectAction::Back => Some(HostTransition::OpenAtlas),
@@ -870,7 +891,11 @@ impl App {
                     .map(|c| c.id)
                     .and_then(|c| shell::overview_view(&self.campaign, c));
                 let from = atlas_return_from(&self.screen, self.hub_flight.as_ref(), hub_target);
+                // The return leg starts from the camera the player actually sees — the
+                // look-around peek included — so escaping mid-peek never cuts.
+                let from = shell::hub_effective_view(from, self.hub_look);
                 self.hub_flight = None;
+                self.hub_look = (0.0, 0.0);
                 self.atlas = match from {
                     Some(view) => AtlasState::opened_from(&self.campaign, view),
                     None => AtlasState::opened(&self.campaign),
@@ -889,7 +914,9 @@ impl App {
                     .get(self.atlas.selected)
                     .map(|c| c.id)
                     .and_then(|c| shell::overview_view(&self.campaign, c));
-                self.hub_flight = seed_hub_flight(&self.screen, self.atlas.view, target);
+                let (flight, look) = enter_hub_camera(&self.screen, self.atlas.view, target);
+                self.hub_flight = flight;
+                self.hub_look = look;
                 self.screen = Screen::MissionSelect;
                 self.last_frame = Instant::now();
             }
@@ -1043,6 +1070,19 @@ fn seed_hub_flight(
         (true, Some(to)) => Some(GlobeFlight::new(atlas_view, to)),
         _ => None,
     }
+}
+
+/// Everything the hub's camera re-seeds on entry: the fly-in decision ([`seed_hub_flight`]) plus
+/// a **neutral look-around offset** — entering the hub (and therefore starting any flight) always
+/// resets the player's peek, so a D107 fly-in lands exactly on the overview and a re-entered hub
+/// opens dead-on, never inheriting a stale tilt. Pure — the entry decision, unit-tested; the
+/// transition arm is the glue that stores the pair.
+fn enter_hub_camera(
+    prev: &Screen,
+    atlas_view: GlobeView,
+    target: Option<GlobeView>,
+) -> (Option<GlobeFlight>, (f32, f32)) {
+    (seed_hub_flight(prev, atlas_view, target), (0.0, 0.0))
 }
 
 /// The camera the atlas's **return flight** starts from (D107), or `None` for a plain settled
@@ -1456,7 +1496,7 @@ mod flight_nav_tests {
     //! The D107 fly-in seeding decisions — pure functions of (previous screen, camera state),
     //! extracted from the transition arms exactly like `escape_transition`. The arms that store
     //! the results are the glue.
-    use super::{atlas_return_from, seed_hub_flight, Screen};
+    use super::{atlas_return_from, enter_hub_camera, seed_hub_flight, Screen};
     use gonedark_render::globe_backdrop::{GlobeFlight, GlobeView};
 
     const ATLAS_VIEW: GlobeView = GlobeView { yaw: 0.3, pitch: 0.0, zoom: 1.0 };
@@ -1475,6 +1515,38 @@ mod flight_nav_tests {
         for prev in [Screen::Title, Screen::Briefing(gonedark_core::campaign::NodeId(0))] {
             assert_eq!(seed_hub_flight(&prev, ATLAS_VIEW, Some(OVERVIEW)), None);
         }
+    }
+
+    #[test]
+    fn entering_the_hub_resets_the_look_so_the_flight_lands_clean() {
+        // From the atlas: the fly-in seeds AND the look-around offset zeroes — mid-flight the
+        // effective view is exactly the flown camera (a stale peek from the last visit would
+        // smear every frame of the fly-in, and the landing would miss the overview).
+        let (flight, look) = enter_hub_camera(&Screen::Atlas, ATLAS_VIEW, Some(OVERVIEW));
+        assert!(flight.is_some(), "atlas entry flies");
+        assert_eq!(look, (0.0, 0.0), "entry always opens with a neutral peek");
+        let mut flight = flight;
+        let base = crate::shell::hub_backdrop_view(&mut flight, Some(OVERVIEW), 0.1);
+        assert_eq!(crate::shell::hub_effective_view(base, look), base);
+        // From anywhere else: no flight (the pre-existing cut), and the look still opens neutral.
+        let (flight, look) = enter_hub_camera(&Screen::Title, ATLAS_VIEW, Some(OVERVIEW));
+        assert!(flight.is_none());
+        assert_eq!(look, (0.0, 0.0));
+    }
+
+    #[test]
+    fn the_return_leg_folds_the_peek_in_so_escaping_mid_peek_never_cuts() {
+        // The OpenAtlas arm composes `atlas_return_from` with `hub_effective_view(_, hub_look)`
+        // before resetting the look: with a non-zero peek at escape time, the return flight
+        // must depart from the camera the player actually sees — base + peek, exactly.
+        let look = (0.02, -0.01);
+        let from = atlas_return_from(&Screen::MissionSelect, None, Some(OVERVIEW));
+        let peeked = crate::shell::hub_effective_view(from, look).expect("a parked hub flies back");
+        assert!((peeked.yaw - (OVERVIEW.yaw + look.0)).abs() < 1e-6);
+        assert!((peeked.pitch - (OVERVIEW.pitch + look.1)).abs() < 1e-6);
+        assert_eq!(peeked.zoom, OVERVIEW.zoom);
+        // A neutral peek is the pre-D110 behavior, unchanged.
+        assert_eq!(crate::shell::hub_effective_view(from, (0.0, 0.0)), from);
     }
 
     #[test]

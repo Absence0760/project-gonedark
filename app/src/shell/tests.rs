@@ -1476,7 +1476,12 @@ use gonedark_render::tiers::QualityTier;
         assert_eq!(pins.len(), 2, "only anchored battles pin");
         assert_eq!((pins[0].tone, pins[0].focused), (PinTone::Neutral, true));
         assert_eq!((pins[1].tone, pins[1].focused), (PinTone::Locked, false));
-        assert!(pins.iter().all(|p| p.scale > 1.0), "battle pins draw larger than conflict pins");
+        // Shell-side scale bump: the overview motes draw at OVERVIEW_PIN_SCALE (2.2 > the render
+        // default 1.6), so they read as the grounds the overlay chips annotate, not dust.
+        assert!(
+            pins.iter().all(|p| p.scale == OVERVIEW_PIN_SCALE && p.scale > 1.0),
+            "battle pins draw larger than conflict pins, at the overview-read scale"
+        );
 
         // Clear Alpha: it goes green, Bravo opens amber and takes the focus.
         campaign.clear(NodeId(0), Difficulty::Recruit).unwrap();
@@ -1522,6 +1527,225 @@ use gonedark_render::tiers::QualityTier;
         campaign.clear(NodeId(0), Difficulty::Recruit).unwrap();
         assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, bravo), Some(NodeId(1)));
         assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, alpha), Some(NodeId(0)));
+    }
+
+    // ---- the surface-following drag + the operations detail view --------------------------------
+
+    /// The atlas drag's longitude correction follows the terrain, not the raw yaw: at an
+    /// equatorial view centre the drag is exactly the pre-fix `dx * s` (no regression), at a 60°
+    /// centre latitude the same drag moves longitude ~2x (1/cos 60°), and near the pitch clamp
+    /// the correction caps instead of exploding.
+    #[test]
+    fn the_atlas_drag_follows_the_surface_across_latitudes() {
+        use gonedark_render::globe_backdrop::{eye_elevation, GlobeView};
+        let campaign = atlas_campaign();
+
+        // Equatorial centre: pitch chosen so the latitude under the view centre is 0 (the
+        // `GlobeView::over` inverse) — correction is exactly 1, the drag is dx*s verbatim.
+        let mut eq = AtlasState::opened(&campaign);
+        eq.view.pitch = -eye_elevation(eq.view.zoom);
+        assert!((lon_drag_correction(eq.view) - 1.0).abs() < 1e-6);
+        let y0 = eq.view.yaw;
+        apply_atlas_action(AtlasAction::Drag(100.0, 0.0), &mut eq, &campaign);
+        let eq_dyaw = eq.view.yaw - y0;
+        assert!((eq_dyaw - 100.0 * DRAG_SENS / eq.view.zoom).abs() < 1e-5, "no equatorial regression");
+
+        // 60° centre latitude: the lon delta doubles, so the ground under the cursor tracks the
+        // hand instead of sliding at half rate.
+        let mut mid = AtlasState::opened(&campaign);
+        mid.view.pitch = 60.0f32.to_radians() - eye_elevation(mid.view.zoom);
+        assert!((lon_drag_correction(mid.view) - 2.0).abs() < 1e-3);
+        let y0 = mid.view.yaw;
+        apply_atlas_action(AtlasAction::Drag(100.0, 0.0), &mut mid, &campaign);
+        assert!(((mid.view.yaw - y0) / eq_dyaw - 2.0).abs() < 1e-3, "60N drags ~2x the lon");
+
+        // Pitch mapping stays linear — the same drag's dy lands identically at both latitudes.
+        let (mut a, mut b) = (AtlasState::opened(&campaign), AtlasState::opened(&campaign));
+        b.view.pitch = 0.5;
+        apply_atlas_action(AtlasAction::Drag(0.0, 40.0), &mut a, &campaign);
+        apply_atlas_action(AtlasAction::Drag(0.0, 40.0), &mut b, &campaign);
+        assert!(((a.view.pitch - 0.0) - (b.view.pitch - 0.5)).abs() < 1e-6);
+
+        // At the pitch clamp the centre latitude passes ~89°: the correction caps, a polar drag
+        // pans fast but never explodes.
+        let mut polar = AtlasState::opened(&campaign);
+        polar.view.pitch = GlobeView::PITCH_LIMIT;
+        assert_eq!(lon_drag_correction(polar.view), LON_DRAG_CORRECTION_CAP);
+    }
+
+    /// The operations screen's look-around: offsets clamp into the LOOK window (the "you can
+    /// never spin the planet" guarantee), small drags accumulate with the atlas feel, at every
+    /// extreme of the window every anchored battle still projects on screen, and a `None` base
+    /// (no battlefield) yields no effective view at all.
+    #[test]
+    fn the_hub_look_clamps_and_keeps_the_battlefield_on_screen() {
+        use gonedark_render::globe_backdrop::project_pin;
+        let campaign = atlas_campaign();
+        let base = overview_view(&campaign, ConflictId(0)).expect("conflict 0 is anchored");
+
+        // A wild drag clamps to the window on both axes, in both directions.
+        let mut look = (0.0f32, 0.0f32);
+        apply_hub_look(&mut look, 1e6, -1e6, base);
+        assert_eq!(look, (LOOK_YAW_LIMIT, -LOOK_PITCH_LIMIT));
+        apply_hub_look(&mut look, -1e7, 1e7, base);
+        assert_eq!(look, (-LOOK_YAW_LIMIT, LOOK_PITCH_LIMIT));
+
+        // Small drags accumulate with the atlas drag feel: DRAG_SENS/zoom, lon cos-corrected.
+        let mut small = (0.0f32, 0.0f32);
+        apply_hub_look(&mut small, 4.0, 2.0, base);
+        let s = DRAG_SENS / base.zoom;
+        assert!((small.0 - 4.0 * s * lon_drag_correction(base)).abs() < 1e-6);
+        assert!((small.1 - 2.0 * s).abs() < 1e-6);
+
+        // At all four extremes of the look window, every anchored battle stays on screen — the
+        // clamp values are tuned exactly for this (the eye almost touches the globe at
+        // OVERVIEW_ZOOM, so small angles swing far).
+        for look in [
+            (LOOK_YAW_LIMIT, LOOK_PITCH_LIMIT),
+            (LOOK_YAW_LIMIT, -LOOK_PITCH_LIMIT),
+            (-LOOK_YAW_LIMIT, LOOK_PITCH_LIMIT),
+            (-LOOK_YAW_LIMIT, -LOOK_PITCH_LIMIT),
+        ] {
+            let view = hub_effective_view(Some(base), look).expect("a base always yields a view");
+            for node in [NodeId(0), NodeId(1)] {
+                let (lat, lon) = campaign.node(node).unwrap().anchor.unwrap();
+                let p = project_pin(view, 16.0 / 9.0, lat as f32 / 10.0, lon as f32 / 10.0)
+                    .expect("an extreme look keeps the battle visible");
+                assert!(
+                    p[0].abs() <= 1.0 && p[1].abs() <= 1.0,
+                    "battle {node:?} off screen at {p:?} under look {look:?}"
+                );
+            }
+        }
+
+        // A neutral look passes the base through untouched (the effective view IS the overview).
+        assert_eq!(hub_effective_view(Some(base), (0.0, 0.0)), Some(base));
+        // No battlefield → nothing to peek around.
+        assert_eq!(hub_effective_view(None, (0.01, 0.01)), None);
+
+        // And the guarantee holds for the SHIPPED atlas, not just the fixture: every anchored
+        // battle of every shipped war stays visible and on screen at every look extreme.
+        let shipped = gonedark_engine::mission_registry::default_campaign();
+        for conflict in shipped.conflicts() {
+            let base = overview_view(&shipped, conflict.id).expect("shipped wars are anchored");
+            for look in [
+                (LOOK_YAW_LIMIT, LOOK_PITCH_LIMIT),
+                (LOOK_YAW_LIMIT, -LOOK_PITCH_LIMIT),
+                (-LOOK_YAW_LIMIT, LOOK_PITCH_LIMIT),
+                (-LOOK_YAW_LIMIT, -LOOK_PITCH_LIMIT),
+            ] {
+                let view = hub_effective_view(Some(base), look).unwrap();
+                for op in shipped.operations_in(conflict.id) {
+                    for n in shipped.nodes_in(op) {
+                        let Some((lat, lon)) = shipped.node(n).unwrap().anchor else { continue };
+                        let p = project_pin(view, 16.0 / 9.0, lat as f32 / 10.0, lon as f32 / 10.0)
+                            .unwrap_or_else(|| {
+                                panic!("{}'s battle {n:?} hides under look {look:?}", conflict.name)
+                            });
+                        assert!(
+                            p[0].abs() <= 1.0 && p[1].abs() <= 1.0,
+                            "{}'s battle {n:?} leaves frame at {p:?} under look {look:?}",
+                            conflict.name,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The operations-map overlay's site list walks the prerequisite chain in order, keeps locked
+    /// ground visible (the Normandy ask: the beach first, the inland battles shown padlocked),
+    /// drops far-side sites' screen positions (but never the sites), tints by the fs_pin hues,
+    /// legs the path by destination state, and alternates label sides.
+    #[test]
+    fn site_waypoints_walk_the_chain_and_keep_locked_ground_visible() {
+        use gonedark_render::globe_backdrop::GlobeView;
+        let campaign = atlas_campaign();
+        let view = overview_view(&campaign, ConflictId(0)).expect("conflict 0 is anchored");
+        let aspect = 16.0 / 9.0;
+
+        let sites = site_waypoints(&campaign, ConflictId(0), view, aspect);
+        // Ordered 1..n by the prerequisite chain (Alpha then Bravo); the un-anchored Charlie has
+        // no ground to mark, so it never becomes a waypoint.
+        assert_eq!(sites.len(), 2);
+        assert_eq!((sites[0].node, sites[0].order, sites[0].title.as_str()), (NodeId(0), 1, "Alpha"));
+        assert_eq!((sites[1].node, sites[1].order, sites[1].title.as_str()), (NodeId(1), 2, "Bravo"));
+        assert_eq!(sites[0].progress, NodeProgress::Available);
+        // Locked ground still shows — it must appear on the map, padlocked, not hide.
+        assert_eq!(sites[1].progress, NodeProgress::Locked);
+        assert!(sites[1].ndc.is_some(), "a locked site still gets a screen position");
+        assert!(sites[0].ndc.is_some());
+
+        // One path leg, from Alpha's screen position to Bravo's, tinted by the DESTINATION state.
+        let legs = site_path_legs(&sites);
+        assert_eq!(legs.len(), 1);
+        assert_eq!((legs[0].0, legs[0].1), (sites[0].ndc.unwrap(), sites[1].ndc.unwrap()));
+        assert_eq!(legs[0].2, NodeProgress::Locked);
+        // Clear Alpha: its site re-tones green, Bravo's opens amber — and the leg follows.
+        let mut cleared = campaign.clone();
+        cleared.clear(NodeId(0), Difficulty::Recruit).unwrap();
+        let sites2 = site_waypoints(&cleared, ConflictId(0), view, aspect);
+        assert!(matches!(sites2[0].progress, NodeProgress::Cleared { .. }));
+        assert_eq!(site_path_legs(&sites2)[0].2, NodeProgress::Available);
+
+        // Tones are the fs_pin tints (globe_backdrop.wgsl), so the chip and mote agree.
+        assert_eq!(site_color(NodeProgress::Available), egui::Color32::from_rgb(245, 158, 51));
+        assert_eq!(site_color(NodeProgress::Locked), egui::Color32::from_rgb(107, 120, 148));
+        assert_eq!(
+            site_color(NodeProgress::Cleared { best: Difficulty::Recruit }),
+            egui::Color32::from_rgb(92, 217, 122)
+        );
+
+        // Far side: yaw the view half a turn — every site keeps its list slot (order stable) but
+        // drops its screen position, and no legs draw.
+        let away = GlobeView { yaw: view.yaw + std::f32::consts::PI, ..view };
+        let hidden = site_waypoints(&campaign, ConflictId(0), away, aspect);
+        assert_eq!(hidden.len(), 2, "far-side sites stay listed");
+        assert!(hidden.iter().all(|s| s.ndc.is_none()));
+        assert!(site_path_legs(&hidden).is_empty());
+
+        // Label sides alternate so neighbouring titles fan apart…
+        assert!(label_on_right(1) && !label_on_right(2) && label_on_right(3));
+        // …and the placed side keeps the alternation when nothing crowds the lane (the fixture's
+        // two sites are vertically stacked — dx = 0 is toward neither side)…
+        assert!(label_side_for(&sites, 0) && !label_side_for(&sites, 1));
+        // …but collision-nudges away when the default side points straight at a neighbouring
+        // site (the shipped Channel Crisis zigzag): site 3's default right lane is occupied by
+        // site 1, its left lane is free → it flips left. Site 1 (rightmost) keeps its default.
+        let crowd = |order: usize, ndc: [f32; 2]| SiteWaypoint {
+            node: NodeId(order as u32),
+            order,
+            title: String::new(),
+            progress: NodeProgress::Available,
+            ndc: Some(ndc),
+        };
+        let zigzag =
+            vec![crowd(1, [0.10, 0.02]), crowd(2, [0.05, -0.06]), crowd(3, [0.02, 0.00])];
+        assert!(label_side_for(&zigzag, 0), "the rightmost site keeps its right label");
+        assert!(!label_side_for(&zigzag, 2), "a crowded right lane flips the label left");
+        // A far-side site (no screen position) just keeps its order default — nothing to nudge.
+        let blind = vec![crowd(1, [0.0, 0.0]), SiteWaypoint { ndc: None, ..crowd(2, [0.0, 0.0]) }];
+        assert_eq!(label_side_for(&blind, 1), label_on_right(2));
+        // The documented tie: neighbours crowd BOTH lanes, so flipping wouldn't help — the
+        // default alternation holds and degenerate layouts stay deterministic.
+        let boxed_in =
+            vec![crowd(1, [-0.10, 0.0]), crowd(2, [0.0, 0.0]), crowd(3, [0.10, 0.0])];
+        assert_eq!(label_side_for(&boxed_in, 1), label_on_right(2));
+    }
+
+    #[test]
+    fn ndc_to_pointer_inverts_the_pointer_mapping() {
+        // The overlay's NDC→points crossing is the exact inverse of the pick path's points→NDC,
+        // so a chip draws precisely where a click on it would pick.
+        let size = [800.0, 600.0];
+        for ndc in [[0.0, 0.0], [-1.0, 1.0], [1.0, -1.0], [0.33, -0.7]] {
+            let p = ndc_to_pointer(ndc, size);
+            let back = pointer_to_ndc(p, size);
+            assert!((back[0] - ndc[0]).abs() < 1e-5 && (back[1] - ndc[1]).abs() < 1e-5);
+        }
+        // The centre of the screen is the NDC origin; the top-left corner is (-1, +1).
+        assert_eq!(ndc_to_pointer([0.0, 0.0], size), [400.0, 300.0]);
+        assert_eq!(ndc_to_pointer([-1.0, 1.0], size), [0.0, 0.0]);
     }
 
     // ---- the atlas ↔ battlefield camera fly-in (D107) -------------------------------------------

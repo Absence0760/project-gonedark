@@ -407,7 +407,9 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   pin-pick → the conflict's filtered hub, which now opens on a per-battle **battlefield
   overview** rather than a settled backdrop — D106: one progress-toned pin per authored battle,
   same playable-gate click-through, briefing keeps the war on screen; the atlas ↔ battlefield hop
-  is now a cancellable **camera flight**, not a cut (D107); [Q28](open-questions.md) fork 2
+  is now a cancellable **camera flight**, not a cut (D107); the overview is dressed as an
+  **operations map** — ordered site chips, padlocked locked ground, a dashed progression path,
+  clamped look-around, surface-following atlas drag (D110); [Q28](open-questions.md) fork 2
   closed for desktop, roster/selection forks + Android's presentation still open), and the
   **native** Android Compose mission-select/briefing chrome
   (`MissionSelectScreen.kt`/`BriefingScreen.kt`, landed per
