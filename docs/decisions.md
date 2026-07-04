@@ -5388,3 +5388,75 @@ is intrinsically drift-prone; a structural fixture checked from both sides makes
 instead of a shipped bug. Files: `engine/tests/d79_mirror_parity.rs`, `parity/d79-mirror.txt`,
 `android/app/src/test/java/com/jaredhoward/goingdark/MirrorParityTest.kt`, `.github/workflows/test.yml`,
 `docs/plans/compose-shell-parity.md`.
+
+## D126 — Real-socket lockstep proof: `net-sim-runner --sockets` over `UdpTransport`
+
+**Status: landed.** The in-memory 2-peer checksum reference now has a real-network sibling. A new
+`net-sim-runner --sockets` mode drives the same two deterministic peers over the *already-shipped*
+`pal_desktop::UdpTransport` (real `std::net::UdpSocket`s on 127.0.0.1 loopback, two ports) and asserts
+the bit-identical per-tick checksum stream over 300 ticks against the no-network reference — and its
+300-line stream is byte-identical to the in-memory mode's. (The `Transport` trait + `UdpTransport`
+already existed from D27; this builds the missing *real-network proof*, not a duplicate transport.)
+**Why:** lockstep's correctness is determinism + exact order delivery; this proves order-frames survive
+a real socket and still produce identical checksums — the load-bearing property PvP rests on — without
+committing to a transport library or the session/UI stack. Exact/in-order delivery stays
+`core::lockstep`'s job (retransmit via `drain_outbound`, stale/dup rejection in `deliver`), so a dropped
+datagram is re-sent and a tick never advances without every peer's order — the UDP layer moves opaque
+bytes and never touches the sim (invariants #1/#2/#7). 17 runner tests (both profiles) incl.
+injected-divergence detection over the socket; pal/pal-desktop suites green. **Follow-on:** a QUIC
+transport behind the same trait (Wi-Fi↔cellular migration), a `pal-android` transport, and
+matchmaking/lobby/session wiring. Files: `net-sim-runner/{Cargo.toml,src/main.rs}`, `docs/platforms.md`.
+
+## D127 — Sim-cost perf gate + arm64 device-comparison harness
+
+**Status: landed.** The standing "perf/thermal never validated off-flagship" caveat becomes a CI-asserted
+regression gate plus a device-comparison harness. `gonedark-sim-runner` gains
+`stress_200_stays_within_frame_budget` — it drives the deterministic 200-unit `stress` scene 300 ticks
+(host-side `Instant` timing, never touching sim state) and asserts per-tick **median < 8 ms** (half the
+16.6 ms 60 Hz budget) and **p99 < 14 ms**; desktop runs ~3.3 ms median (≈2.4× margin), so a ~5× regression
+trips it while noise doesn't. The `--time` `timing-json` output is formalized into a documented schema +
+a `stress:50/100/200` matrix, with a committed desktop baseline (`sim-runner/perf/desktop-baseline.json`)
+that an on-device run (`pnpm android:stress`) diffs against. A dedicated CI `perf-budget` job runs it in
+release. **Hardening (post-merge):** wall-clock gates flap under concurrent CPU load, so the test is
+`#[ignore]`d — the normal suite never runs it — and the `perf-budget` job invokes it explicitly via
+`cargo test --release -- --include-ignored`, so it only gates in isolation. **Why:** nothing asserted the
+~5× headroom, so a regression would land silently; measurement-only, so the `matchup` checksum stays
+`76f33d570df8e3ba` (invariant #1). Device numbers are still owed; the caveat is now "here's the gate + the
+procedure." Files: `sim-runner/{src/main.rs,perf/desktop-baseline.json}`, `.github/workflows/test.yml`,
+`docs/{platforms,roadmap}.md`.
+
+## D128 — Android storage is the internal files dir + AAssetManager, keyed through one host-tested guard
+
+**Status: landed.** The Android `Storage` backend was a stub, blocking on-device save/resume. It now
+writes user data atomically (temp file + rename, so a mid-write kill can't tear a settings/resume file)
+under the app's private internal files dir (`internal_data_path()/gonedark/<key>`), and `read` resolves
+user data first then falls back to a bundled read-only asset via the NDK `AAssetManager`. All path/key
+handling goes through one pure, host-compiled seam (`pal-android::storage`): `safe_relative_key` rejects
+traversal/absolute/drive/NUL/odd-char keys, so every path is provably contained under the app sandbox
+(invariant #8) and is unit-tested off-device (mirroring the `launch`/`thermal` split) — 41 host tests
+(both profiles); arm64-v8a cross-compile verified. Command-view **train/upgrade** production was found
+already live on mobile via the shared `engine::command_touch::CommandBarLayout` (Android supplies the
+pointer; the engine owns the hit-test — no per-platform fork, invariant #2). **Still owed:** Camp
+placement (`building_slot`) + the radial order UI (`command_slot`) wait on the engine growing a *rendered*
+button (wiring them from pal-android alone would fork the hit-test or arm a phantom button); and the
+resume-snapshot `SaveState` path waits on a `Game`-level sim serializer that doesn't yet exist. Files:
+`pal-android/src/{android_backend.rs,storage.rs,lib.rs}`.
+
+## D129 — Per-army WW2 infantry/weapon silhouettes + dedicated WW2 gunsmith pools
+
+**Status: landed.** Closes the two D120 deferrals, completing the WW2 visual identity begun with D120's
+tanks. `Army::UsWw2` and `Army::Germany` now field bespoke, **presentation-only** infantry silhouettes
+(a WW2 GI with M1 pot + horseshoe blanket roll; a Wehrmacht rifleman with M1935 Stahlhelm + jackboots)
+and first-person rifle viewmodels (M1 Garand; Kar98k), generated by the deterministic Blender pipeline
+(D124) and routed through `render::model_for_unit`/`weapon_model_for` — never reaching `core`, so zero
+checksum surface (invariants #1/#7). They also get their own `gunsmith::GunsmithPool`s (US WW2 = the
+Garand's hard-hitting semi-auto rhythm with a shallow-but-snappy mag; Germany = the Kar98k bolt-action's
+deep reach/precision at the cost of tempo), replacing the shared-baseline fallback. **Why:** faction
+identity should read on both the battlefield and the weapon bench, not just via the tank. Each pool stays
+sidegrade-only by construction — every option a pure trade on its slot's disjoint axis pair — so
+`no_pool_build_strictly_dominates_another` now holds per army across all five pools (proven exhaustively,
+243 builds × 5 pools). `Neutral`/`Us`/`Fr` pools are byte-identical and the `matchup` checksum is
+unchanged (`76f33d570df8e3ba`); a fresh model regen diffs clean (D124). **Note:** `render_world_weapon`
+still draws a shared rifle mesh for *every* army (a pre-existing WS-D host-plumbing gap, not a regression
+here) — the WW2 viewmodels are routed + validated but not yet drawn embodied. Files: `core/src/gunsmith.rs`,
+`render/src/{lib,mesh}.rs`, `tools/models/gen_models.py`, `assets/models/**`.

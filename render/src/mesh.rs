@@ -218,7 +218,7 @@ pub enum ModelKind {
     TankTiger,
     /// German WW2 heavy turret (big boxy turret + long 88mm gun), yawed by `turret_yaw` (P7).
     TankTurretTiger,
-    // --- WW2 per-army infantry + weapon silhouettes (D122). Presentation-only per-army WW2 troopers
+    // --- WW2 per-army infantry + weapon silhouettes (D129). Presentation-only per-army WW2 troopers
     // and first-person rifle viewmodels, resolved by [`crate::model_for_unit`] / [`crate::weapon_model_for`]
     // for [`Army::UsWw2`]/[`Army::Germany`]. They never reach `core` (no checksum surface). Appended so
     // the existing discriminants stay put. ---
@@ -413,7 +413,7 @@ impl ModelKind {
                 include_bytes!("../../assets/models/units/tiger_turret.lod1.mesh"),
                 include_bytes!("../../assets/models/units/tiger_turret.lod2.mesh"),
             ],
-            // --- WW2 per-army infantry + weapon silhouettes (D122) ---
+            // --- WW2 per-army infantry + weapon silhouettes (D129) ---
             ModelKind::TrooperUsWw2 => [
                 include_bytes!("../../assets/models/units/trooper_us_ww2.mesh"),
                 include_bytes!("../../assets/models/units/trooper_us_ww2.lod1.mesh"),
@@ -481,7 +481,7 @@ impl ModelKind {
             ModelKind::TankTurretSherman => [0.24, 0.27, 0.16], // matches the Sherman hull
             ModelKind::TankTiger => [0.22, 0.23, 0.20],
             ModelKind::TankTurretTiger => [0.22, 0.23, 0.20], // matches the German hull
-            // WW2 per-army infantry + weapons (D122). Mirrors COLORS in gen_models.py — US WW2 olive
+            // WW2 per-army infantry + weapons (D129). Mirrors COLORS in gen_models.py — US WW2 olive
             // drab, DE feldgrau; the wood rifles read warm. A unit token's faction tint overrides the
             // trooper tint at draw time; these are the greybox fallbacks (the rifles are mask-0 multi-
             // material, so the viewmodel renders their own wood/steel albedo, not this fallback).

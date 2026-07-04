@@ -486,7 +486,7 @@ COLORS = {
     "sherman_turret": (0.24, 0.27, 0.16),   # Sherman rounded cast turret — matches the hull
     "tiger": (0.22, 0.23, 0.20),            # German heavy — panzer-grey hull
     "tiger_turret": (0.22, 0.23, 0.20),     # German heavy boxy turret — matches the hull
-    # --- WW2 per-army INFANTRY + WEAPON silhouettes (D122). Presentation-only per-army troopers and
+    # --- WW2 per-army INFANTRY + WEAPON silhouettes (D129). Presentation-only per-army troopers and
     # first-person rifle viewmodels for the two WW2 factions, same never-reaches-`core` guarantee as
     # the WS-C/D120 meshes. US WW2 = a WW2 GI (M1 pot + horseshoe blanket roll) with an M1 Garand;
     # Germany = a Wehrmacht rifleman (M1935 Stahlhelm, jackboots) with a Kar98k. Geometry carries the
@@ -532,7 +532,7 @@ CATEGORY = {
     "sherman_turret": "units",
     "tiger": "units",
     "tiger_turret": "units",
-    # WW2 per-army infantry + weapon silhouettes (D122) — same role-based categories as their kin.
+    # WW2 per-army infantry + weapon silhouettes (D129) — same role-based categories as their kin.
     "trooper_us_ww2": "units",
     "trooper_germany": "units",
     "weapon_rifle_us_ww2": "weapons",
@@ -635,7 +635,7 @@ def soldier_parts(P, bulk=1.0, helmet="pot"):
         parts.append((dome(0.15, (-0.01, 0.0, 1.60), zsquash=0.80, xyscale=(1.02, 0.98), cut=-0.030), P["helmet"]))
         parts.append((box((0.14, 0.28, 0.045), (0.13, 0.0, 1.585)), P["helmet"]))   # front brim accent (+X)
     elif helmet == "stahlhelm":
-        # German M1935 Stahlhelm (D122): a wider, flatter shell with the iconic flared skirt that
+        # German M1935 Stahlhelm (D129): a wider, flatter shell with the iconic flared skirt that
         # sweeps down over the ears and neck — a deeper `cut` keeps more of the sphere (the long
         # skirt), and a slightly-oversized xy flares the sides. A shallow flared rim ring at the
         # base accentuates the coal-scuttle silhouette that reads instantly as Wehrmacht (vs. the
@@ -1437,7 +1437,7 @@ def build_tiger_turret():
     return weld("tiger_turret", parts, mat, bevel=0.03)
 
 
-# --- WW2 per-army infantry + weapon silhouettes (D122) ------------------------------------------
+# --- WW2 per-army infantry + weapon silhouettes (D129) ------------------------------------------
 # Presentation-only per-army WW2 troopers + first-person rifle viewmodels. Troopers reuse the shared
 # skinned `soldier_parts` skeleton (same frame/proportions) and add per-army WW2 kit + a distinct
 # helmet; the rifles are modelled in the SAME local frame as the other weapon viewmodels (receiver at
@@ -1448,7 +1448,7 @@ def build_tiger_turret():
 
 
 def build_trooper_us_ww2():
-    # US WW2 GI (D122) — the WW2 infantryman: the shared skinned body under an M1 steel pot, but kitted
+    # US WW2 GI (D129) — the WW2 infantryman: the shared skinned body under an M1 steel pot, but kitted
     # for 1944 with the iconic horseshoe blanket roll slung over both shoulders around an M1928 haversack,
     # plus canvas leggings over the boots. A shade bulkier than Neutral; olive-drab fatigues. Reads
     # distinctly WW2-GI vs. the modern US trooper (which carries a rucksack + bedroll, no horseshoe roll).
@@ -1469,7 +1469,7 @@ def build_trooper_us_ww2():
 
 
 def build_trooper_germany():
-    # German WW2 rifleman (D122) — a Wehrmacht infantryman: the shared skinned body under the iconic
+    # German WW2 rifleman (D129) — a Wehrmacht infantryman: the shared skinned body under the iconic
     # M1935 Stahlhelm (the flared coal-scuttle skirt, `helmet="stahlhelm"`), tall jackboots, a Y-strap-
     # slung small pack with a mess tin, a bread bag on the hip, and a fluted gas-mask canister on the
     # back. Feldgrau (grey-green). Reads instantly Wehrmacht vs. every other trooper here.
@@ -1490,7 +1490,7 @@ def build_trooper_germany():
 
 
 def build_weapon_garand():
-    # M1 Garand viewmodel (D122) — a full-power WW2 semi-auto: a long wooden stock running most of the
+    # M1 Garand viewmodel (D129) — a full-power WW2 semi-auto: a long wooden stock running most of the
     # length under a straight-wrist buttstock (NO pistol grip), an exposed steel barrel with the
     # distinctive op-rod / gas-cylinder tube slung UNDER the front barrel, a short upper handguard, a
     # rear aperture sight, the op-rod charging handle on the +Y side, and an internal en-bloc magazine
@@ -1515,7 +1515,7 @@ def build_weapon_garand():
 
 
 def build_weapon_kar98():
-    # Kar98k viewmodel (D122) — a WW2 bolt-action marksman's rifle: an almost-full-length wooden stock
+    # Kar98k viewmodel (D129) — a WW2 bolt-action marksman's rifle: an almost-full-length wooden stock
     # (straight wrist), the classic long upper handguard covering most of the barrel with a short muzzle
     # protruding, a hooded front sight + tangent rear sight, a short internal magazine floor plate, and
     # — the unmistakable tell — a bolt with a turned-DOWN bolt handle on the +Y side. Wood + steel
@@ -1607,19 +1607,19 @@ MODELS = [
     ("tiger_turret", build_tiger_turret,
      "German WW2 heavy turret — a big boxy turret with the long 88mm gun, pivoting about the hull "
      "ring (D120/P7)."),
-    # WW2 per-army infantry + weapon silhouettes (D122) — presentation-only per-army troopers + rifles.
+    # WW2 per-army infantry + weapon silhouettes (D129) — presentation-only per-army troopers + rifles.
     ("trooper_us_ww2", build_trooper_us_ww2,
      "US WW2 GI — skinned infantryman under an M1 steel pot with the iconic horseshoe blanket roll, "
-     "M1928 haversack and canvas leggings (D122)."),
+     "M1928 haversack and canvas leggings (D129)."),
     ("trooper_germany", build_trooper_germany,
      "German WW2 rifleman — skinned infantryman under an M1935 Stahlhelm with jackboots, a slung "
-     "gas-mask canister, bread bag and small pack (D122)."),
+     "gas-mask canister, bread bag and small pack (D129)."),
     ("weapon_rifle_us_ww2", build_weapon_garand,
      "US M1 Garand viewmodel — a full-length wood-stock semi-auto with the op-rod/gas tube under the "
-     "barrel and an internal en-bloc magazine (D122)."),
+     "barrel and an internal en-bloc magazine (D129)."),
     ("weapon_rifle_germany", build_weapon_kar98,
      "German Kar98k viewmodel — a bolt-action rifle with a near-full-length wood stock, long upper "
-     "handguard, and the turned-down bolt handle (D122)."),
+     "handguard, and the turned-down bolt handle (D129)."),
 ]
 
 

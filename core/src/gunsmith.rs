@@ -558,7 +558,7 @@ pub const fn pool_for(army: Army) -> GunsmithPool {
             brake: muzzle_delta(Fixed::from_ratio(1, 64), Fixed::from_ratio(1, 16)),
             suppressor: muzzle_delta(Fixed::from_ratio(-1, 64), Fixed::from_ratio(-1, 16)),
         },
-        // US WW2 (D122) — the M1 Garand bench: a full-power semi-auto. Deep reach and the HARDEST
+        // US WW2 (D129) — the M1 Garand bench: a full-power semi-auto. Deep reach and the HARDEST
         // per-shot damage swing of any pool (the .30-06), but only a SHALLOW magazine capacity trade
         // paid off by the fastest reload swing (the en-bloc clip), and a heavy wooden-stock steadiness
         // swing. (range±3, cooldown±6; damage±9, reserve±70; mag±6, reload±14; move±1/16, cone±1/16;
@@ -576,7 +576,7 @@ pub const fn pool_for(army: Army) -> GunsmithPool {
             brake: muzzle_delta(Fixed::from_ratio(1, 16), Fixed::from_ratio(1, 4)),
             suppressor: muzzle_delta(Fixed::from_ratio(-1, 16), Fixed::from_ratio(-1, 4)),
         },
-        // Germany WW2 (D122) — the Kar98k bench: a bolt-action marksman's rifle. The DEEPEST range↔
+        // Germany WW2 (D129) — the Kar98k bench: a bolt-action marksman's rifle. The DEEPEST range↔
         // fire-rate swing (the sniper's reach) and the DEEPEST steadiness/cone swing (a precise
         // shooter's platform) of any pool, a solid damage/reserve trade, and a moderate stripper-clip
         // magazine. (range±4, cooldown±8; damage±8, reserve±60; mag±9, reload±22; move±5/64, cone±5/64;
@@ -1225,7 +1225,7 @@ mod tests {
     // ---- factions WS-E: per-faction gunsmith pools ------------------------------------------------
 
     /// Every army with a shipping gunsmith pool: the WS-E modern trio (Neutral/US/FR) plus the two
-    /// WW2 benches (D122). The per-pool fairness/disjointness/checksum tests below iterate this, so
+    /// WW2 benches (D129). The per-pool fairness/disjointness/checksum tests below iterate this, so
     /// adding the WW2 pools automatically extends the no-strict-domination proof to cover them.
     const ARMIES: [Army; 5] = [
         Army::Neutral,
@@ -1362,7 +1362,7 @@ mod tests {
     }
 
     /// The pools are genuinely **distinct** — a pool is identity, so every army must ship its own
-    /// table (the WS-E modern trio plus the two WW2 benches, D122). No two of the five pools are the
+    /// table (the WS-E modern trio plus the two WW2 benches, D129). No two of the five pools are the
     /// same, so army identity is observable on the weapon bench.
     #[test]
     fn pools_differ_between_armies() {
@@ -1486,7 +1486,7 @@ mod tests {
         assert_ne!(w, wn, "US pool must differ from the Neutral baseline apply");
     }
 
-    /// Applying the two WW2 pools (D122) moves the Rifleman by their OWN magnitudes (the M1 Garand
+    /// Applying the two WW2 pools (D129) moves the Rifleman by their OWN magnitudes (the M1 Garand
     /// and Kar98k benches), never trips a floor, and differs from the baseline apply — the WW2
     /// benches are wired and their identity is observable.
     #[test]

@@ -380,7 +380,7 @@ pub(crate) fn model_for_unit(army: Army, building: bool, kind: UnitKind) -> mesh
         (Army::Fr, false) => M::TrooperFr,
         // WW2 cost-vs-power armies (D120): bespoke WW2 tank silhouettes — a Sherman for US WW2, a
         // Tiger/Panther-class heavy for Germany — so the era reads at a glance. Their infantry now
-        // get bespoke WW2 silhouettes too (D122): a WW2 GI (M1 pot + horseshoe roll) for US WW2, a
+        // get bespoke WW2 silhouettes too (D129): a WW2 GI (M1 pot + horseshoe roll) for US WW2, a
         // Wehrmacht rifleman (Stahlhelm + jackboots) for Germany. Pure presentation — never reaches `core`.
         (Army::UsWw2, true) => M::TankSherman,
         (Army::Germany, true) => M::TankTiger,
@@ -402,7 +402,7 @@ pub fn weapon_model_for(army: Army) -> mesh::ModelKind {
     match army {
         Army::Us => mesh::ModelKind::WeaponRifleUs,
         Army::Fr => mesh::ModelKind::WeaponRifleFr,
-        // WW2 armies (D122): the period rifles — an M1 Garand for US WW2, a Kar98k for Germany.
+        // WW2 armies (D129): the period rifles — an M1 Garand for US WW2, a Kar98k for Germany.
         Army::UsWw2 => mesh::ModelKind::WeaponRifleUsWw2,
         Army::Germany => mesh::ModelKind::WeaponRifleGermany,
         // Neutral keeps the original shared rifle viewmodel.
@@ -2981,9 +2981,9 @@ mod tests {
         }
     }
 
-    /// D120/D122: the WW2 cost-vs-power armies get bespoke WW2 TANK silhouettes — US WW2 → Sherman,
+    /// D120/D129: the WW2 cost-vs-power armies get bespoke WW2 TANK silhouettes — US WW2 → Sherman,
     /// Germany → Tiger/Panther-class heavy — distinct from each other, from the modern faction tanks,
-    /// and from the shared greybox. D122 also gives their INFANTRY bespoke WW2 silhouettes (US WW2 →
+    /// and from the shared greybox. D129 also gives their INFANTRY bespoke WW2 silhouettes (US WW2 →
     /// GI, Germany → Wehrmacht), and modern (Us/Fr)/Neutral routing is unchanged.
     #[test]
     fn model_for_unit_ww2_armies_get_distinct_tanks() {
@@ -3002,7 +3002,7 @@ mod tests {
                 assert_ne!(w, o, "WW2 tank {w:?} differs from modern/shared tank {o:?}");
             }
         }
-        // WW2 infantry now get bespoke per-army silhouettes (D122), distinct from each other, from
+        // WW2 infantry now get bespoke per-army silhouettes (D129), distinct from each other, from
         // the shared/modern troopers, and from the neutral greybox.
         assert_eq!(model_for_unit(Army::UsWw2, false, UnitKind::Rifleman), M::TrooperUsWw2);
         assert_eq!(model_for_unit(Army::Germany, false, UnitKind::Rifleman), M::TrooperGermany);
@@ -3089,7 +3089,7 @@ mod tests {
         );
     }
 
-    /// WS-C/D122: per-army weapon viewmodels — US M4, FR FAMAS, US WW2 M1 Garand, German Kar98k,
+    /// WS-C/D129: per-army weapon viewmodels — US M4, FR FAMAS, US WW2 M1 Garand, German Kar98k,
     /// Neutral shared rifle — all distinct, with every army resolving (no panic on unmapped). The
     /// embodied-view half of cosmetic identity.
     #[test]
@@ -3098,7 +3098,7 @@ mod tests {
         assert_eq!(weapon_model_for(Army::Us), M::WeaponRifleUs);
         assert_eq!(weapon_model_for(Army::Fr), M::WeaponRifleFr);
         assert_eq!(weapon_model_for(Army::Neutral), M::WeaponRifle);
-        // WW2 armies (D122) now field their own period rifle viewmodels.
+        // WW2 armies (D129) now field their own period rifle viewmodels.
         assert_eq!(weapon_model_for(Army::UsWw2), M::WeaponRifleUsWw2);
         assert_eq!(weapon_model_for(Army::Germany), M::WeaponRifleGermany);
         // Every army's viewmodel is a distinct, in-range mesh.

@@ -1519,7 +1519,7 @@
       "category": "units",
       "file": "units/trooper_us_ww2.glb",
       "cooked": "units/trooper_us_ww2.mesh",
-      "description": "US WW2 GI \u2014 skinned infantryman under an M1 steel pot with the iconic horseshoe blanket roll, M1928 haversack and canvas leggings (D122).",
+      "description": "US WW2 GI \u2014 skinned infantryman under an M1 steel pot with the iconic horseshoe blanket roll, M1928 haversack and canvas leggings (D129).",
       "base_color": [
         0.24,
         0.27,
@@ -1575,7 +1575,7 @@
       "category": "units",
       "file": "units/trooper_germany.glb",
       "cooked": "units/trooper_germany.mesh",
-      "description": "German WW2 rifleman \u2014 skinned infantryman under an M1935 Stahlhelm with jackboots, a slung gas-mask canister, bread bag and small pack (D122).",
+      "description": "German WW2 rifleman \u2014 skinned infantryman under an M1935 Stahlhelm with jackboots, a slung gas-mask canister, bread bag and small pack (D129).",
       "base_color": [
         0.26,
         0.27,
@@ -1631,7 +1631,7 @@
       "category": "weapons",
       "file": "weapons/weapon_rifle_us_ww2.glb",
       "cooked": "weapons/weapon_rifle_us_ww2.mesh",
-      "description": "US M1 Garand viewmodel \u2014 a full-length wood-stock semi-auto with the op-rod/gas tube under the barrel and an internal en-bloc magazine (D122).",
+      "description": "US M1 Garand viewmodel \u2014 a full-length wood-stock semi-auto with the op-rod/gas tube under the barrel and an internal en-bloc magazine (D129).",
       "base_color": [
         0.2,
         0.13,
@@ -1687,7 +1687,7 @@
       "category": "weapons",
       "file": "weapons/weapon_rifle_germany.glb",
       "cooked": "weapons/weapon_rifle_germany.mesh",
-      "description": "German Kar98k viewmodel \u2014 a bolt-action rifle with a near-full-length wood stock, long upper handguard, and the turned-down bolt handle (D122).",
+      "description": "German Kar98k viewmodel \u2014 a bolt-action rifle with a near-full-length wood stock, long upper handguard, and the turned-down bolt handle (D129).",
       "base_color": [
         0.17,
         0.11,
