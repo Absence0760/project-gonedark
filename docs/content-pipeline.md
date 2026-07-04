@@ -155,7 +155,10 @@ meshes still pass §4's filter and §1's cook like any other source.
 by concrete CLIs on the workstation that Claude drives the way D41 drives Blender —
 `--background` / `--export` / a script file, no GUI. **Reach for these first** when a task
 needs an asset; script the generator and commit the *script* + a manifest entry
-(`source` / `license` / `sha256`, §3), never an opaque binary blob.
+(`source` / `license` / `sha256`, §3), never an opaque binary blob. The convention isn't
+asset-only: the sim's trig tables follow it too — `core/build/lut.rs` is the committed
+generator, `core/src/lut_data.rs` the checked-in, hash-locked output
+([`decisions.md`](decisions.md) D108).
 
 | Tool | Lane | Used for |
 |---|---|---|
