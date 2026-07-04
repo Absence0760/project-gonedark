@@ -27,6 +27,11 @@ pub mod thermal;
 // JNI reader that feeds it the live `Intent` extra is android-gated in `android_backend`.
 pub mod launch;
 
+// Pure storage path/key seam (the testable half of `AndroidStorage`). Host-compiled + unit-tested
+// here (the load-bearing path-traversal guard, invariant #8); the fs / AAssetManager I/O that
+// consumes it is android-gated in `android_backend`.
+pub mod storage;
+
 // The Android backend proper — entry point, lifecycle, surface, input, audio, storage. Android-
 // target-only; on a host it is absent and the crate is just the `thermal` mapping seam. The
 // re-export keeps the integrator's `pub use gonedark_pal_android::*;` (see the note at the foot of
