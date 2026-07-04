@@ -10,8 +10,17 @@ use axum::{
 };
 use gonedark_server::http::{router, AppState, CONSENT_HEADER, TELEMETRY_BODY_LIMIT};
 use gonedark_server::liveops::{LiveOpsSource, PersonalizedConfig, PublicConfig};
-use gonedark_server::telemetry::{InMemorySink, TelemetrySink};
+use gonedark_server::telemetry::{InMemorySink, StoreError, TelemetryEvent, TelemetrySink};
 use tower::ServiceExt; // oneshot
+
+/// A sink that always fails to store — the fixture for exercising `post_telemetry`'s `Err` arm
+/// (M6), which `InMemorySink` (whose `store` always returns `Ok`) can never reach.
+struct FailingSink;
+impl TelemetrySink for FailingSink {
+    fn store(&self, _event: TelemetryEvent) -> Result<(), StoreError> {
+        Err(StoreError("boom".to_string()))
+    }
+}
 
 fn event_json() -> String {
     serde_json::json!({
@@ -73,6 +82,33 @@ async fn telemetry_with_consent_is_stored() {
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     assert_eq!(sink.len(), 1);
     assert_eq!(sink.stored()[0].event_id, "evt-http-1");
+}
+
+/// M6: a sink failure (e.g. a Postgres pool exhausted, a dropped connection) must still surface
+/// as a 500 to the client — this pins the *existing* status-code behavior — but it must not be
+/// silent: this is the fixture proving the `Err` arm is actually reachable and exercised (it
+/// necessarily fails before the fix existed, since `InMemorySink::store` always returns `Ok`).
+#[tokio::test]
+async fn telemetry_store_failure_returns_500() {
+    let app = router(AppState {
+        sink: Arc::new(FailingSink),
+        liveops: Arc::new(LiveOpsSource::new()),
+    });
+
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/telemetry")
+                .header("content-type", "application/json")
+                .header(CONSENT_HEADER, "true")
+                .body(Body::from(event_json()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[tokio::test]

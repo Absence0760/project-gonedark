@@ -118,7 +118,13 @@ async fn post_telemetry(
         Ok(Ingest::Stored) => StatusCode::ACCEPTED,
         Ok(Ingest::NoConsent) => StatusCode::NO_CONTENT,
         Ok(Ingest::Invalid(_)) => StatusCode::BAD_REQUEST,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        Err(e) => {
+            // A real sink failure (pool exhausted, connection dropped, …) becoming a bare 500
+            // with no server-side trace is exactly the failure mode you'd most want a log line
+            // for — log it before turning it into the opaque client-facing status.
+            eprintln!("telemetry store failed: {}", e.0);
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
     }
 }
 
