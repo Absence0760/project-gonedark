@@ -8,9 +8,6 @@
 //!
 //! Territory IS per-tick sim state and IS folded into the checksum (invariant #7), so its
 //! field shape is pinned: `points: Vec<ControlPoint>`, each `{ pos, owner, progress }`.
-//!
-//! IMPLEMENTATION OWNER: worker 4. Compiling stub; fill in `territory_system` + inline tests.
-//! KEEP the `Territory`/`ControlPoint` field shapes and the public signatures intact.
 
 use crate::components::{EntityKind, Faction, Vec2};
 use crate::ecs::World;

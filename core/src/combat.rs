@@ -15,9 +15,8 @@
 //! The literal-executor rule (invariant #3) still binds: combat acts on the *stance* the
 //! player set, it does not invent targets the stance forbids or chase beyond weapon range.
 //!
-//! IMPLEMENTATION OWNER: worker 2. A real generational [`Entity`] handle for the
-//! shooter/target (needed by `last_attacker` and the `SimEvent`s) comes from the O(1)
-//! [`World::entity`] accessor.
+//! The generational [`Entity`] handle for the shooter/target (needed by `last_attacker` and
+//! the `SimEvent`s) comes from the O(1) [`World::entity`] accessor.
 
 use crate::components::{Armor, EntityKind, Faction, InputSource, Posture, Stance, Vec2};
 use crate::ecs::World;

@@ -11,18 +11,12 @@
 //!   can see (within its vision radius, with terrain line of sight).
 //! - [`embodied_visibility`] — "the world goes dark" (invariant #6): vision collapses to ONLY
 //!   what the single possessed avatar can see. This is the vision half of embodiment.
-//!
-//! IMPLEMENTATION OWNER: worker 4. Compiling stub. Fill in the bodies + inline tests; you own
-//! the internal `Visibility` representation, but KEEP these three public signatures intact.
 
 use crate::components::{EntityKind, Faction, Vec2};
 use crate::ecs::{Entity, World};
 use crate::fixed::Fixed;
 use crate::flow_field::{CELL_SIZE, GRID, HALF_EXTENT};
 use crate::terrain::Terrain;
-
-/// Default per-unit sight radius (world units) when none is otherwise specified.
-pub const DEFAULT_VISION: Fixed = Fixed::from_int(24);
 
 /// A computed visibility mask over the playfield grid (worker 4 owns the representation;
 /// a row-major `Vec<bool>` over `flow_field::GRID` cells is the expected shape).

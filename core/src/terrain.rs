@@ -14,9 +14,6 @@
 //! - [`Terrain::open`] — an all-clear field.
 //! - [`Terrain::cover_at`] — cover level at a world position (clamped to the grid).
 //! - [`Terrain::line_of_sight`] — is the segment `a→b` unobstructed by sight-blocking cells?
-//!
-//! IMPLEMENTATION OWNER: worker 1. This file is a compiling stub; fill in the real
-//! grid-aware bodies + inline `#[cfg(test)]` tests. Keep the signatures above intact.
 
 use crate::components::Vec2;
 use crate::fixed::Fixed;

@@ -220,13 +220,6 @@ impl World {
         &self.generation
     }
 
-    /// The per-slot liveness array (`alive[i]` is whether slot `i` currently holds a live
-    /// entity).
-    #[inline]
-    pub fn alive_flags(&self) -> &[bool] {
-        &self.alive
-    }
-
     /// The free list — slot indices available for reuse, **in stack order** (`spawn` pops the
     /// last). The order is sim state: it decides which slot the next spawn lands in.
     #[inline]

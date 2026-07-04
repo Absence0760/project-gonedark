@@ -12,9 +12,6 @@
 //! mutates sim state. It must stay *thin* by design — surfacing too much would undo the
 //! blindness that is the whole game (this deliberately does NOT settle open-question Q1 on how
 //! thin the thread is; it implements the current "alerts-only" lean as a mechanism).
-//!
-//! IMPLEMENTATION OWNER: worker 5. Compiling stub. Fill in `ingest` (+ any decay/dedup) and
-//! inline tests; you own the internals, but KEEP the public signatures intact.
 
 use crate::components::{EntityKind, Faction, Vec2};
 use crate::ecs::{Entity, World};
