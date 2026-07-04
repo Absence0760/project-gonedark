@@ -829,8 +829,44 @@ pub const SEIZE_BASE_X: i32 = 24;
 pub const SEIZE_TROOPS: usize = 10;
 
 /// Garrison placements **relative to the enemy base**, in stable spawn order. A small defending
-/// force around the camp the assault has to break through. Length is the garrison size.
-const SEIZE_GARRISON_OFFSETS: [(i32, i32); 4] = [(-5, 4), (-5, -4), (-9, 0), (-1, 7)];
+/// force around the camp the assault has to break through. The baseline mission uses the first
+/// [`SEIZE_GARRISON`] entries; a per-node [`SeizeSetup`] may field up to the whole table (the two
+/// extra posts deepen the southern flank and the rear watch). Appending here never moves the
+/// baseline: the first four entries are the original table, byte-for-byte.
+const SEIZE_GARRISON_OFFSETS: [(i32, i32); 6] =
+    [(-5, 4), (-5, -4), (-9, 0), (-1, 7), (-1, -7), (-8, 6)];
+
+/// The baseline garrison size — the first four [`SEIZE_GARRISON_OFFSETS`] entries, exactly the
+/// original mission's defending force.
+pub const SEIZE_GARRISON: u32 = 4;
+
+/// Per-node variation for the *Seize* archetype (the campaign's per-node battle variation seam):
+/// plain integer counts a campaign node authors so its Seize plays as its own battle, not a
+/// re-skin. Deterministic by construction (invariant #1) — fixed integers resolved at seed time,
+/// no clock, no float. [`Default`] reproduces the baseline mission **byte-for-byte** (the shipped
+/// `seed_seize_mission` world), so adding the seam perturbs no golden checksum.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SeizeSetup {
+    /// How many troops the player assaults with (baseline [`SEIZE_TROOPS`] = 10). Clamped to
+    /// `1..=SEIZE_TROOPS_MAX` at seed time — a mission always fields someone.
+    pub troops: u32,
+    /// Garrison size — how many [`SEIZE_GARRISON_OFFSETS`] entries are fielded, in table order
+    /// (baseline [`SEIZE_GARRISON`] = 4). Clamped to the table length.
+    pub garrison: u32,
+}
+
+/// The most troops a [`SeizeSetup`] may field — keeps an authored count inside the deploy
+/// block's ground (columns extend west from [`SEIZE_PLAYER_X`]).
+pub const SEIZE_TROOPS_MAX: u32 = 16;
+
+impl Default for SeizeSetup {
+    fn default() -> Self {
+        SeizeSetup {
+            troops: SEIZE_TROOPS as u32,
+            garrison: SEIZE_GARRISON,
+        }
+    }
+}
 
 /// The handles a seeded *Seize* mission hands back: the player's ten troops, the enemy base camp
 /// (capture-or-destroy to win), and its garrison. The host embodies/commands `troops`; the
@@ -907,6 +943,24 @@ fn build_seize_terrain(sim: &mut Sim) {
 }
 
 pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> SeizeMission {
+    seed_seize_mission_with_setup(sim, player_loadout, SeizeSetup::default())
+}
+
+/// Seed the *Seize* mission with a per-node [`SeizeSetup`] — the campaign's per-node battle
+/// variation seam. The default setup reproduces [`seed_seize_mission_with_loadout`]
+/// **byte-for-byte** (same spawn order, same values — the golden opening checksum still pins it);
+/// a non-default setup fields a different assault/garrison while keeping every other property
+/// (fixed forces, the US-vs-FR matchup, the advance cover, the loadout contract) unchanged.
+/// Counts are clamped at seed time (`troops` to `1..=`[`SEIZE_TROOPS_MAX`], `garrison` to the
+/// offset table), so any authored integers seed a valid, deterministic world (invariant #1).
+pub fn seed_seize_mission_with_setup(
+    sim: &mut Sim,
+    player_loadout: Loadout,
+    setup: SeizeSetup,
+) -> SeizeMission {
+    let troops_n = setup.troops.clamp(1, SEIZE_TROOPS_MAX) as usize;
+    let garrison_n = setup.garrison.min(SEIZE_GARRISON_OFFSETS.len() as u32) as usize;
+
     // Built through the CT-A `ScenarioBuilder` (the living oracle: the golden opening checksum this
     // pins is captured from the pre-builder implementation, so any drift would trip it). The builder
     // methods are exact wrappers over the primitives this used to open-code, so the spawn order —
@@ -924,22 +978,23 @@ pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -
     b.set_army(Faction::Player, Army::Us);
     b.set_army(Faction::Enemy, Army::Fr);
 
-    // Ten Player Riflemen in a 2x5 block on the west, US-rostered (per-army roster HP+weapon, the
-    // shared baseline HP unchanged), FireAtWill (the engagement default — they shoot any enemy that
-    // comes into range as they assault, but only *move* on the host's order; invariant #3), facing
-    // the base.
-    let mut troops = Vec::with_capacity(SEIZE_TROOPS);
-    for col in 0..5 {
-        for &row_y in &[-2, 2] {
-            let x = SEIZE_PLAYER_X - col * 2;
-            troops.push(b.spawn(
-                UnitKind::Rifleman,
-                at((x, row_y)),
-                Faction::Player,
-                Stance::FireAtWill,
-                Angle(0), // +X, toward the base
-            ));
-        }
+    // The player's Riflemen in a 2-row block on the west (baseline: ten in a 2x5), US-rostered
+    // (per-army roster HP+weapon, the shared baseline HP unchanged), FireAtWill (the engagement
+    // default — they shoot any enemy that comes into range as they assault, but only *move* on the
+    // host's order; invariant #3), facing the base. The index walk reproduces the baseline nested
+    // `for col { for row }` order exactly: (col 0, −2), (col 0, +2), (col 1, −2)…
+    let mut troops = Vec::with_capacity(troops_n);
+    for i in 0..troops_n {
+        let col = (i / 2) as i32;
+        let row_y = if i % 2 == 0 { -2 } else { 2 };
+        let x = SEIZE_PLAYER_X - col * 2;
+        troops.push(b.spawn(
+            UnitKind::Rifleman,
+            at((x, row_y)),
+            Faction::Player,
+            Stance::FireAtWill,
+            Angle(0), // +X, toward the base
+        ));
     }
 
     // Apply the player's chosen gunsmith loadout to every assault troop's weapon — the WS-C
@@ -962,9 +1017,10 @@ pub fn seed_seize_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -
     b.set_purse(0);
 
     // A small garrison defending the base — FireAtWill Riflemen (they engage the assault on sight),
-    // facing the incoming player line.
-    let mut garrison = Vec::with_capacity(SEIZE_GARRISON_OFFSETS.len());
-    for &(dx, dy) in &SEIZE_GARRISON_OFFSETS {
+    // facing the incoming player line. The setup fields the first `garrison_n` table entries in
+    // stable spawn order (baseline: the original four).
+    let mut garrison = Vec::with_capacity(garrison_n);
+    for &(dx, dy) in &SEIZE_GARRISON_OFFSETS[..garrison_n] {
         garrison.push(b.spawn(
             UnitKind::Rifleman,
             at((SEIZE_BASE_X + dx, dy)),
@@ -1035,6 +1091,41 @@ const HOLD_SECONDS: u64 = 45;
 /// FireAtWill defence reaches it with survivors while a passive one is wiped before it.
 pub const HOLD_TICKS: u64 = HOLD_SECONDS * crate::sim::TICK_HZ as u64;
 
+/// Per-node variation for the *Hold* archetype (the campaign's per-node battle variation seam):
+/// plain integer counts + the hold window a campaign node authors so its defense plays as its own
+/// battle. Deterministic by construction (invariant #1). [`Default`] reproduces the baseline
+/// mission **byte-for-byte** (the shipped `seed_hold_mission` world and its [`HOLD_TICKS`] window).
+///
+/// **Authoring bound:** this lethal engine's dug-in defence holds at rough parity *because of the
+/// cover* — an outnumbered line loses to focus fire (see the module note). Keep
+/// `defender_cols >= attacker_cols` when authoring, exactly like the baseline 5-vs-4; the shipped
+/// variants pin their winnability in tests.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HoldSetup {
+    /// Defender columns (a 2-row block ⇒ `2 * cols` defenders). Baseline 5. Clamped to
+    /// `1..=HOLD_COLS_MAX`.
+    pub defender_cols: u32,
+    /// Attacker columns (a 2-row block ⇒ `2 * cols` attackers). Baseline 4. Clamped to
+    /// `1..=HOLD_COLS_MAX`.
+    pub attacker_cols: u32,
+    /// How long the line must hold, in whole seconds at the locked 60 Hz tick. Baseline 45.
+    /// Clamped to at least 1.
+    pub hold_secs: u64,
+}
+
+/// The most columns a [`HoldSetup`] may field per side — keeps an authored block on the map.
+pub const HOLD_COLS_MAX: u32 = 8;
+
+impl Default for HoldSetup {
+    fn default() -> Self {
+        HoldSetup {
+            defender_cols: HOLD_DEFENDER_COLS as u32,
+            attacker_cols: HOLD_ATTACKER_COLS as u32,
+            hold_secs: HOLD_SECONDS,
+        }
+    }
+}
+
 /// The handles a seeded *Hold the Line* mission hands back: the player's dug-in defenders (hold this
 /// line) and the enemy assault force. The host embodies/commands `defenders`; the objective layer
 /// watches the Player faction for a wipe (the `Survive` fail) and the clock for the hold.
@@ -1045,12 +1136,16 @@ pub struct HoldMission {
     pub defenders: Vec<Entity>,
     /// The enemy assault force advancing on the line, in stable spawn order.
     pub attackers: Vec<Entity>,
+    /// The tick the defence must survive to — this node's authored window ([`HOLD_TICKS`] at the
+    /// default [`HoldSetup`]).
+    hold_ticks: u64,
 }
 
 impl HoldMission {
-    /// The tick the defence must survive to ([`HOLD_TICKS`]) — the `Survive` objective's goal.
+    /// The tick the defence must survive to — the `Survive` objective's goal (the node's authored
+    /// window; [`HOLD_TICKS`] for the baseline mission).
     pub const fn hold_ticks(&self) -> u64 {
-        HOLD_TICKS
+        self.hold_ticks
     }
 }
 
@@ -1058,10 +1153,10 @@ impl HoldMission {
 /// incoming fire without blocking the defenders' own line of sight (never `Heavy`, which is a
 /// LoS-blocking wall). Static integer map data (invariant #1), never in the per-tick checksum; it
 /// shelters only the defence and spawns nothing (entity/spawn order + the checksum stream untouched).
-fn build_hold_terrain(sim: &mut Sim) {
+fn build_hold_terrain(sim: &mut Sim, defender_cols: i32) {
     // West edge is the rearmost defender column; east edge is just ahead of the front rank. Two cells
     // of vertical margin either way so the whole 2-row block sits inside the belt.
-    let west = HOLD_DEFENDER_X - (HOLD_DEFENDER_COLS - 1) * 2 - 2;
+    let west = HOLD_DEFENDER_X - (defender_cols - 1) * 2 - 2;
     let (cx0, cy0) = sim.terrain.cell_of(at((west, -5)));
     let (cx1, cy1) = sim.terrain.cell_of(at((HOLD_DEFENDER_X + 2, 5)));
     sim.terrain.fill_rect(cx0, cy0, cx1, cy1, Cover::Light);
@@ -1081,6 +1176,23 @@ pub fn seed_hold_mission(sim: &mut Sim) -> HoldMission {
 /// Player army's gunsmith pool, applied once here, and all the modified weapon fields are already in
 /// `Sim::fold`, so it rides the per-tick checksum with **no new fold surface** (invariant #7).
 pub fn seed_hold_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> HoldMission {
+    seed_hold_mission_with_setup(sim, player_loadout, HoldSetup::default())
+}
+
+/// Seed Mission 2 with a per-node [`HoldSetup`] — the campaign's per-node battle variation seam.
+/// The default setup reproduces [`seed_hold_mission_with_loadout`] **byte-for-byte**; a non-default
+/// setup fields a different line/assault and hold window while keeping every other property (the
+/// fixed-force footing, the matchup, the cover belt, the loadout contract) unchanged. Counts are
+/// clamped at seed time, so any authored integers seed a valid, deterministic world (invariant #1).
+pub fn seed_hold_mission_with_setup(
+    sim: &mut Sim,
+    player_loadout: Loadout,
+    setup: HoldSetup,
+) -> HoldMission {
+    let defender_cols = setup.defender_cols.clamp(1, HOLD_COLS_MAX) as i32;
+    let attacker_cols = setup.attacker_cols.clamp(1, HOLD_COLS_MAX) as i32;
+    let hold_ticks = setup.hold_secs.max(1) * crate::sim::TICK_HZ as u64;
+
     // Fixed-force attrition: empty purses + a slow income drip ⇒ no reinforcement for either side, so
     // the outcome is a deterministic function of the seeded forces + cover (the property the
     // host-side `Survive` objective's authored window rests on).
@@ -1096,8 +1208,8 @@ pub fn seed_hold_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) ->
     // Player defenders: a 2-row block dug in on the west, `HoldPosition` (deliberately rooted) +
     // `FireAtWill` (fire on any enemy that enters range) — the dug-in defence. Facing +X, toward the
     // incoming assault.
-    let mut defenders = Vec::with_capacity((HOLD_DEFENDER_COLS * 2) as usize);
-    for col in 0..HOLD_DEFENDER_COLS {
+    let mut defenders = Vec::with_capacity((defender_cols * 2) as usize);
+    for col in 0..defender_cols {
         for &row_y in &[-2, 2] {
             let x = HOLD_DEFENDER_X - col * 2;
             let d = spawn_rifleman(sim, at((x, row_y)), Faction::Player, Stance::FireAtWill, hp, Angle(0));
@@ -1118,8 +1230,8 @@ pub fn seed_hold_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) ->
     // `AttackMove` onto the defensive line (identical to the host issuing `Command::AttackMove`, so
     // the assault advances deterministically without a commander). Facing −X, toward the defenders.
     let line = at((HOLD_DEFENDER_X, 0));
-    let mut attackers = Vec::with_capacity((HOLD_ATTACKER_COLS * 2) as usize);
-    for col in 0..HOLD_ATTACKER_COLS {
+    let mut attackers = Vec::with_capacity((attacker_cols * 2) as usize);
+    for col in 0..attacker_cols {
         for &row_y in &[-3, 3] {
             let x = HOLD_ATTACKER_X + col * 2;
             let a = spawn_rifleman(sim, at((x, row_y)), Faction::Enemy, Stance::FireAtWill, hp, Angle(ANGLE_FULL / 2));
@@ -1130,9 +1242,13 @@ pub fn seed_hold_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) ->
 
     // Lay the defenders' `Light` cover so the dug-in FireAtWill line reliably outlasts the larger
     // open-ground assault for the hold window (it spawns nothing — entity/spawn order untouched).
-    build_hold_terrain(sim);
+    build_hold_terrain(sim, defender_cols);
 
-    HoldMission { defenders, attackers }
+    HoldMission {
+        defenders,
+        attackers,
+        hold_ticks,
+    }
 }
 
 // --- The *Push* archetype: mission 3, "capture the lane" (pve-campaign.md §3) --------------------
@@ -1153,9 +1269,43 @@ pub const PUSH_PLAYER_X: i32 = -24;
 pub const PUSH_TROOPS: usize = 8;
 /// The lane: the X of each control point in capture (and spawn) order, west → east, all at y = 0.
 pub const PUSH_POST_XS: [i32; 3] = [-8, 4, 16];
-/// Defender placements **relative to each post**, in stable spawn order — a two-man fire team dug
-/// in just east of the post it guards, facing the player's advance.
-const PUSH_GUARD_OFFSETS: [(i32, i32); 2] = [(3, 3), (3, -3)];
+/// Defender placements **relative to each post**, in stable spawn order — a fire team dug in just
+/// east of the post it guards, facing the player's advance. The baseline mission uses the first
+/// [`PUSH_GUARDS`] entries; a per-node [`PushSetup`] may field the whole table (the third man
+/// covers the post's centre line). Appending here never moves the baseline: the first two entries
+/// are the original table, byte-for-byte.
+const PUSH_GUARD_OFFSETS: [(i32, i32); 3] = [(3, 3), (3, -3), (5, 0)];
+
+/// The baseline per-post guard count — the first two [`PUSH_GUARD_OFFSETS`] entries, exactly the
+/// original mission's fire team.
+pub const PUSH_GUARDS: u32 = 2;
+
+/// Per-node variation for the *Push* archetype (the campaign's per-node battle variation seam):
+/// plain integer counts a campaign node authors so its lane plays as its own battle. Deterministic
+/// by construction (invariant #1). [`Default`] reproduces the baseline mission **byte-for-byte**
+/// (the shipped `seed_push_mission` world).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PushSetup {
+    /// How many troops the player pushes with (baseline [`PUSH_TROOPS`] = 8). Clamped to
+    /// `1..=PUSH_TROOPS_MAX`.
+    pub troops: u32,
+    /// Guards dug in per post — how many [`PUSH_GUARD_OFFSETS`] entries are fielded per post, in
+    /// table order (baseline [`PUSH_GUARDS`] = 2). Clamped to `1..=` the table length.
+    pub guards_per_post: u32,
+}
+
+/// The most troops a [`PushSetup`] may field — keeps an authored count inside the deploy block's
+/// ground (columns extend west from [`PUSH_PLAYER_X`]).
+pub const PUSH_TROOPS_MAX: u32 = 16;
+
+impl Default for PushSetup {
+    fn default() -> Self {
+        PushSetup {
+            troops: PUSH_TROOPS as u32,
+            guards_per_post: PUSH_GUARDS,
+        }
+    }
+}
 
 /// The handles a seeded *Push* mission hands back: the player's squad, the dug-in guards, and the
 /// three lane posts (in capture order — the `Vec2`s the host feeds
@@ -1199,6 +1349,23 @@ pub fn seed_push_mission(sim: &mut Sim) -> PushMission {
 /// Player army's gunsmith pool, applied once here, and all the modified weapon fields are already in
 /// `Sim::fold`, so it rides the per-tick checksum with **no new fold surface** (invariant #7).
 pub fn seed_push_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> PushMission {
+    seed_push_mission_with_setup(sim, player_loadout, PushSetup::default())
+}
+
+/// Seed Mission 3 with a per-node [`PushSetup`] — the campaign's per-node battle variation seam.
+/// The default setup reproduces [`seed_push_mission_with_loadout`] **byte-for-byte**; a non-default
+/// setup fields a different squad/garrison density down the same lane while keeping every other
+/// property (the fixed-force footing, the matchup, the lane + form-up cover, the loadout contract)
+/// unchanged. Counts are clamped at seed time, so any authored integers seed a valid,
+/// deterministic world (invariant #1).
+pub fn seed_push_mission_with_setup(
+    sim: &mut Sim,
+    player_loadout: Loadout,
+    setup: PushSetup,
+) -> PushMission {
+    let troops_n = setup.troops.clamp(1, PUSH_TROOPS_MAX) as usize;
+    let guards_n = setup.guards_per_post.clamp(1, PUSH_GUARD_OFFSETS.len() as u32) as usize;
+
     // Fixed-force attrition: empty purses + a slow income drip ⇒ no reinforcement for either side,
     // exactly like *Hold* — the deterministic footing the host-side Capture objectives rest on.
     sim.set_income_period(600);
@@ -1219,20 +1386,21 @@ pub fn seed_push_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) ->
     let hp = economy::unit_stats(UnitKind::Rifleman).0.max;
 
     // Player squad: two rows west of the lane, `FireAtWill`, facing +X (the advance). They *move*
-    // only on the player's orders (invariant #3) — the push itself is the mission.
-    let mut troops = Vec::with_capacity(PUSH_TROOPS);
-    for col in 0..(PUSH_TROOPS as i32 / 2) {
-        for &row_y in &[-2, 2] {
-            let t = spawn_rifleman(
-                sim,
-                at((PUSH_PLAYER_X - col * 2, row_y)),
-                Faction::Player,
-                Stance::FireAtWill,
-                hp,
-                Angle(0),
-            );
-            troops.push(t);
-        }
+    // only on the player's orders (invariant #3) — the push itself is the mission. The index walk
+    // reproduces the baseline nested `for col { for row }` order exactly.
+    let mut troops = Vec::with_capacity(troops_n);
+    for i in 0..troops_n {
+        let col = (i / 2) as i32;
+        let row_y = if i % 2 == 0 { -2 } else { 2 };
+        let t = spawn_rifleman(
+            sim,
+            at((PUSH_PLAYER_X - col * 2, row_y)),
+            Faction::Player,
+            Stance::FireAtWill,
+            hp,
+            Angle(0),
+        );
+        troops.push(t);
     }
 
     // Apply the player's gunsmith loadout to every squad member (WS-C match-setup input; `STANDARD`
@@ -1245,9 +1413,9 @@ pub fn seed_push_mission_with_loadout(sim: &mut Sim, player_loadout: Loadout) ->
 
     // Guards: a dug-in two-man fire team per post (`HoldPosition` + `FireAtWill` — they defend
     // their post and never chase, the literal-executor defence), facing −X into the advance.
-    let mut defenders = Vec::with_capacity(PUSH_POST_XS.len() * PUSH_GUARD_OFFSETS.len());
+    let mut defenders = Vec::with_capacity(PUSH_POST_XS.len() * guards_n);
     for &px in &PUSH_POST_XS {
-        for &(dx, dy) in &PUSH_GUARD_OFFSETS {
+        for &(dx, dy) in PUSH_GUARD_OFFSETS.iter().take(guards_n) {
             let g = spawn_rifleman(
                 sim,
                 at((px + dx, dy)),
@@ -1937,7 +2105,9 @@ mod tests {
             b.build_camp(at((SEIZE_BASE_X, 0)), Faction::Enemy);
             b.set_purse(0);
 
-            for &(dx, dy) in &SEIZE_GARRISON_OFFSETS {
+            // The baseline garrison is the first `SEIZE_GARRISON` offsets (the table now holds more
+            // for the per-node setup seam); the golden was captured at the baseline, so mirror it.
+            for &(dx, dy) in SEIZE_GARRISON_OFFSETS.iter().take(SEIZE_GARRISON as usize) {
                 b.spawn(
                     UnitKind::Rifleman,
                     at((SEIZE_BASE_X + dx, dy)),
@@ -2947,5 +3117,71 @@ mod tests {
         seed_positioned_skirmish(&mut a, at((-40, 4)), at((44, 4)), Loadout::STANDARD);
         seed_positioned_skirmish(&mut b, at((-40, 4)), at((44, 4)), Loadout::STANDARD);
         assert_eq!(a.checksum(), b.checksum());
+    }
+
+    // --- per-node battle setups (the campaign's per-node variation seam) --------------------------
+
+    #[test]
+    fn default_setups_field_the_baseline_forces() {
+        // The default of each setup is the pre-seam force layout, so a node that names no variation
+        // plays exactly the shipped mission (the byte-identical fast path).
+        assert_eq!(SeizeSetup::default().troops, SEIZE_TROOPS as u32);
+        assert_eq!(SeizeSetup::default().garrison, SEIZE_GARRISON);
+        assert_eq!(PushSetup::default().guards_per_post, PUSH_GUARDS);
+
+        let mut a = fresh();
+        let m = seed_seize_mission_with_setup(&mut a, Loadout::STANDARD, SeizeSetup::default());
+        assert_eq!(m.troops.len(), SEIZE_TROOPS);
+        assert_eq!(m.garrison.len(), SEIZE_GARRISON as usize);
+
+        // The default seeder and the explicit-default setup produce the identical world.
+        let mut b = fresh();
+        let n = seed_seize_mission_with_loadout(&mut b, Loadout::STANDARD);
+        assert_eq!(m.troops.len(), n.troops.len());
+        assert_eq!(a.checksum(), b.checksum(), "default setup == baseline seeder, byte for byte");
+    }
+
+    #[test]
+    fn a_custom_setup_fields_the_authored_force_counts() {
+        // A node can dial the force sizes; the counts land inside the authored clamps.
+        let mut sim = fresh();
+        let m = seed_seize_mission_with_setup(
+            &mut sim,
+            Loadout::STANDARD,
+            SeizeSetup { troops: 6, garrison: 2 },
+        );
+        assert_eq!(m.troops.len(), 6, "the assault fields the authored troop count");
+        assert_eq!(m.garrison.len(), 2, "the garrison fields the authored count");
+
+        let mut hold = fresh();
+        let h = seed_hold_mission_with_setup(
+            &mut hold,
+            Loadout::STANDARD,
+            HoldSetup { defender_cols: 3, attacker_cols: 6, hold_secs: 30 },
+        );
+        assert_eq!(h.defenders.len(), 3 * 2, "2-row defender block at 3 cols");
+        assert_eq!(h.attackers.len(), 6 * 2, "2-row attacker block at 6 cols");
+
+        let mut push = fresh();
+        let p = seed_push_mission_with_setup(
+            &mut push,
+            Loadout::STANDARD,
+            PushSetup { troops: 5, guards_per_post: 3 },
+        );
+        assert_eq!(p.troops.len(), 5);
+        assert_eq!(p.defenders.len(), PUSH_POST_XS.len() * 3, "three guards per post");
+    }
+
+    #[test]
+    fn distinct_setups_are_distinct_battles_but_each_is_deterministic() {
+        // Two nodes with different setups seed measurably different worlds (distinct battles), while
+        // the SAME setup on the SAME seed is bit-identical (invariant #1: replayable, cross-platform).
+        let build = |troops: u32| {
+            let mut s = Sim::new(0x5EED);
+            seed_seize_mission_with_setup(&mut s, Loadout::STANDARD, SeizeSetup { troops, garrison: 4 });
+            s.checksum()
+        };
+        assert_eq!(build(10), build(10), "same setup + seed folds identically");
+        assert_ne!(build(10), build(6), "a different force size is a different battle");
     }
 }
