@@ -5295,3 +5295,37 @@ and deterministic, since the WW2 identity is the *produced* Tank and the WW2 arm
 tilt by design. **Follow-up:** a doc sweep for stale "12-node" mentions (`roadmap.md`,
 `plans/compose-shell-parity.md`, `open-questions.md` Q28). Files: `engine/src/mission_registry.rs`,
 `engine/src/lib.rs`, `docs/{pve-campaign,game-design}.md` (+tests).
+
+## D122 — WW2 tank armour differential (Tiger frontal bounce), extends D120
+
+**Status: landed.** The two WW2 armies now diverge in directional **armour** as well as cost/HP/
+penetration, so the German heavy finally *reads* as a Tiger/Panther — the Sherman's shells bounce off
+its frontal plate and you must out-flank or out-mass it. `unit_armor_for(army, kind)` (mirroring
+`unit_cost_for`/`unit_stats_for`) gives `Army::Germany` a thick plate (front 60 / side 28 / rear 12)
+and `Army::UsWw2` a thin one (28 / 14 / 6); Neutral/Us/Fr keep the shared 40/16/8 **byte-for-byte**
+(`unit_armor` delegates to `unit_armor_for(Army::Neutral, …)`, so every existing caller and checksum is
+unchanged — invariant #7). Under `combat::facing_penetration_multiplier`'s `2·p ≥ a` rule: the Tiger's
+60-front hard-bounces both WW2 guns head-on (Sherman `2·18=36<60`; even its own `2·20=40<60` — a
+Tiger-vs-Tiger stalemate), so a Sherman can only hurt a Tiger by flanking the 28-side (`36≥28`, ramp
+pen) or swarming; the Tiger cracks the Sherman's thin 28-front head-on.
+
+Because a frontally-invulnerable Tiger is far stronger per-unit than D120's HP-only model, the
+equal-budget balance was **re-tuned**: Tiger cost 480→960 (a 4:1 count ratio) and HP 660→450 (armour,
+not HP, now carries its survivability). The fairness harness (`equal_budget_quality_vs_quantity`) now
+applies the plate and orients hulls head-on so the frontal armour actually bites, and the trade is a
+**flanking race that flips on two axes** — by budget (a few Tigers win a small fight; a large Sherman
+swarm has enough bodies to get flankers around) and by geometry (close range favours the swarm, long
+range the Tiger's frontal wall) — measured and pinned in
+`ww2_quality_vs_quantity_is_balanced_at_equal_budget`. This **supersedes D120's** symmetric-gun
+≤2-survivor definition of "balanced": with a hard frontal bounce a winning Tiger keeps its whole stack,
+so "close" now means the flip turns on a small budget/range change, not survivor parity.
+
+**Why:** the armour differential is the payoff of the cost-vs-power model — a genuinely tougher tank
+you pay for in numbers, balanced at equal budget, not a stat line that just out-guns the other side.
+**Determinism preserved:** the `matchup` checksum is unchanged (`76f33d570df8e3ba` — the battery
+produces no tanks and touches no modern-army armour), net-sim (2-peer lockstep) agreed with no desync,
+replay is bit-identical, both `core`/`sim-runner` test profiles are green, and the modern US/FR
+swap-invariance gates are untouched and pass. **Judgment call (documented in-code):** the Sherman front
+is 28, not the first-guess 36 — 36 produced frontal stalemates that hit the 8000-tick harness cap, so
+28 gives the Tiger a real head-on win condition and every pinned fight resolves. Files:
+`core/src/economy.rs`, `sim-runner/src/metrics.rs` (+tests).

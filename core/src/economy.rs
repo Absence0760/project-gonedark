@@ -623,7 +623,7 @@ pub fn unit_armor(kind: UnitKind) -> Armor {
 /// (D122, EXTENDS D120's cost/HP/pen fork). Only the WW2 armies' [`Tank`](UnitKind::Tank) diverges from
 /// the shared plate (40/16/8): the [`Army::Germany`] "Panther/Tiger" wears THICKER armour (front 60 —
 /// thick enough that both WW2 guns bounce head-on, a frontal stalemate; kills come from flanking) and
-/// the [`Army::UsWw2`] "Sherman" a THINNER front (36 — cracked head-on by the German pen-20 gun). Every
+/// the [`Army::UsWw2`] "Sherman" a THINNER front (28 — cracked head-on by the German pen-20 gun). Every
 /// other `(army, kind)` returns the shared baseline: a modern Neutral/Us/Fr tank keeps the 40/16/8
 /// plate byte-for-byte, and every non-Tank archetype is the all-zero [`Armor::default()`] (unarmoured)
 /// regardless of army — so [`combat::facing_penetration_multiplier`](crate::combat::facing_penetration_multiplier)
