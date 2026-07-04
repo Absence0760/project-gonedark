@@ -222,6 +222,33 @@ style nit. Two paths:
 Locked as the light path in [D79](../decisions.md), with the bounds mirrored from `core` and a JVM
 test asserting them so drift is caught.
 
+### 8.1 Cross-language mirror-parity guard (the automated drift tripwire)
+
+Per-surface JVM tests pin values *within* Kotlin, but they can't see the Rust source — so a Rust
+change that isn't hand-mirrored still drifts **silently** (the campaign lagged at 12 vs 15 nodes;
+`Battlefield.kt` was missing library maps — both caught only by hand). The two sides live in
+separate build systems (cargo vs gradle), so no single test sees both. The guard closes that with
+**one committed canonical fixture as the shared contract**:
+
+- `parity/d79-mirror.txt` (repo root) — a GENERATED `key=value` fixture of the *structural* mirror
+  facts only: campaign node/conflict/operation counts, ordered node ids + gating + scene tokens +
+  operation grouping, conflict names/years, operation names, and the battlefield table (ordered
+  ids + how each boots) with the derived map-id set. **Prose is deliberately excluded** (briefings/
+  blurbs drift for good editorial reasons and are pinned verbatim by the per-node tests on each
+  side, not here).
+- **Rust half** — `engine/tests/d79_mirror_parity.rs` derives those facts from the *live*
+  `default_campaign()` / `BATTLEFIELDS` and asserts they equal the fixture, so it can never go
+  stale behind the Rust source. Re-bless after an intentional change with
+  `UPDATE_D79_FIXTURE=1 cargo test -p gonedark-engine --test d79_mirror_parity`.
+- **Kotlin half** — `android/.../MirrorParityTest.kt` reads the **same** fixture and asserts the
+  `CampaignModel.kt` / `Battlefield.kt` mirror matches it (plus a direct `KNOWN_MAP_IDS` set check —
+  the exact reported bug class).
+- **CI** — the Rust half rides the workspace `test` job; the Kotlin half rides the new
+  `android-unit-tests` job (`:app:testDebugUnitTest`), both in `.github/workflows/test.yml`.
+
+**Adding a new mirror surface:** extend `canonical_facts()` (Rust) and `canonicalFacts()` (Kotlin)
+with the same new keys, re-bless the fixture, and the guard covers it from both sides.
+
 ---
 
 ## 9. Test discipline (carry every surface)
