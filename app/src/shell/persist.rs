@@ -3,7 +3,7 @@
 //! desktop counterpart of Android's `ShellPrefsCodec`. Presentation only — never sim state, never
 //! checksummed. Pure (no fs/env); the file I/O around it is the exempt host glue in `main.rs`.
 
-use crate::shell::army::ArmySelectState;
+use crate::shell::army::{ArmySelectState, SELECTABLE_ARMIES};
 use crate::shell::profile::{sanitize_callsign, FactionPref, ProfileState};
 use crate::shell::settings::{QualityChoice, SettingsState};
 use gonedark_core::components::Army;
@@ -182,18 +182,21 @@ pub(crate) fn decode_shell_prefs(
 }
 
 /// Decode a stored [`Army`] ordinal to a **player-selectable** army, defaulting to the shipped
-/// [`ArmySelectState::default`] (US) for a missing, unparseable, out-of-range, or non-combatant
-/// value. [`Army::Neutral`] is never a valid player pick (factions-plan WS-A), so a stored `0`
-/// (Neutral) decodes to the default just like garbage would — the tolerant, corruption-safe read
-/// mirroring the enum-ordinal fields above.
+/// [`ArmySelectState::default`] (US) for a missing, unparseable, out-of-range, or non-selectable
+/// value. Only the modern armies in [`SELECTABLE_ARMIES`] are valid player picks (factions-plan
+/// WS-A): [`Army::Neutral`] is a non-combatant, and the WW2 campaign armies ([`Army::UsWw2`] /
+/// [`Army::Germany`], D120) are not offered on the modern army-select screen — so a stored ordinal
+/// for any of those decodes to the default just like garbage would. Gating on `SELECTABLE_ARMIES`
+/// (not `Army::ALL`) keeps this corruption-safe as the roster grows: a stored/tampered `3`/`4` can
+/// never smuggle a cost-tilted WW2 economy into a modern match.
 pub(crate) fn decode_army(value: Option<&&str>) -> Army {
     let default = ArmySelectState::default().selected;
     match value
         .and_then(|s| s.parse::<usize>().ok())
         .and_then(|i| Army::ALL.get(i).copied())
     {
-        Some(Army::Neutral) | None => default,
-        Some(a) => a,
+        Some(a) if SELECTABLE_ARMIES.contains(&a) => a,
+        _ => default,
     }
 }
 

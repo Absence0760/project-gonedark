@@ -597,6 +597,25 @@ fn summary() {
     let fl = tank_duel(9, Angle(0), Angle(0));
     eprintln!("tank duel sep9 front/front: {ff:?} (stalemate: pen 18 bounces the 40-front)");
     eprintln!("tank duel sep9 flank(rear): {fl:?} (flank pens the 8-rear — angle the hull / flank to kill)");
+    // WW2 quality-vs-quantity (D120): the SECOND, orthogonal fairness axis. Unlike the modern
+    // swap-invariant mirror above, these armies are DELIBERATELY not power-neutral — the elite
+    // Germany tank (660 HP / pen 20 / 480 cost) is individually stronger, paid for by cost so an
+    // equal BUDGET fields fewer of them vs the cheap UsWw2 Sherman mass (150 HP / pen 18 / 240 cost).
+    // Fairness = a close trade at equal budget where the winner flips between doctrines by budget
+    // (pinned by `ww2_quality_vs_quantity_is_balanced_at_equal_budget`), never a one-sided sweep.
+    eprintln!("# WW2 quality-vs-quantity (D120): equal-BUDGET Germany elite vs UsWw2 Sherman mass");
+    for &(budget, sep) in &[(960i64, 5i32), (1440, 5), (1920, 5), (2880, 3)] {
+        let (t, elite_surv, cheap_surv) =
+            equal_budget_quality_vs_quantity(budget, sep, Army::Germany, Army::UsWw2);
+        let n_elite = budget / unit_cost_for(Army::Germany, UnitKind::Tank);
+        let n_cheap = budget / unit_cost_for(Army::UsWw2, UnitKind::Tank);
+        eprintln!(
+            "budget {budget} sep{sep}: Germany {n_elite} vs Sherman {n_cheap} -> ended {t} ({:.1}s), \
+             germany survivors {elite_surv}, sherman survivors {cheap_surv} [{}]",
+            secs(t),
+            if elite_surv > 0 { "elite edges it" } else { "mass edges it" },
+        );
+    }
 }
 
 #[cfg(test)]

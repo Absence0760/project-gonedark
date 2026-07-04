@@ -942,6 +942,11 @@ use gonedark_render::tiers::QualityTier;
         assert_eq!(decode_army(None), default, "missing key → default (US)");
         assert_eq!(decode_army(Some(&"2")), Army::Fr, "ordinal 2 → French Army");
         assert_eq!(decode_army(Some(&"1")), Army::Us, "ordinal 1 → US Army");
+        // D120: the WW2 campaign armies (UsWw2=3 / Germany=4) are NOT offered on the modern
+        // army-select screen, so a stored/tampered ordinal for them decodes to the default — a
+        // cost-tilted WW2 economy can never be smuggled into a modern match through a saved pick.
+        assert_eq!(decode_army(Some(&"3")), default, "UsWw2 ordinal → default (not modern-selectable)");
+        assert_eq!(decode_army(Some(&"4")), default, "Germany ordinal → default (not modern-selectable)");
     }
 
     // ---- The About controls reference ------------------------------------------------------------
