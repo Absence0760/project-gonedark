@@ -1,10 +1,17 @@
 # Factions — real modern armies (US Army vs French Army)
 
-**Status: DESIGN-ONLY ([D68](decisions.md)).** This doc records the *direction* and the model. No
-engine code implements per-faction rosters yet — the game still fights with one shared `UnitKind`
-roster across `Faction::Player`/`Faction::Enemy`. The unresolved specifics are [Q19](open-questions.md);
-the build sequencing is [`plans/factions-plan.md`](plans/factions-plan.md) (gated on the
-shared-archetype rebalance, [`plans/combat-rebalance-plan.md`](plans/combat-rebalance-plan.md)).
+**Status: BUILT (modern + WW2 core).** The per-army roster is real engine code: the `Army` tag
+(`Neutral`/`Us`/`Fr`, plus the WW2 `UsWw2`/`Germany` — D120) threads the persist + lockstep codecs,
+and `economy::unit_stats_for(army, kind)` draws each side's tilted loadout. **Two fairness axes now
+ship.** The modern **US vs French** matchup (D68/D71) is *soft, power-neutral* asymmetry — identity
+lives in the logistics rhythm (magazine depth, reload cadence, turret slew) while every combat stat
+stays identical, proven swap-invariant by the `cross_faction_*` metrics. The WW2 **US(Sherman) vs
+Germany(Panther/Tiger)** matchup (D120) is *cost-vs-power quality-vs-quantity* — a unit may be
+individually better but costs more, balanced at **equal budget** (not equal count) by the
+`equal_budget_quality_vs_quantity` harness. Both report side-by-side under `sim-runner --metrics`.
+Remaining specifics track in [Q19](open-questions.md); build sequencing in
+[`plans/factions-plan.md`](plans/factions-plan.md). **Still deferred (D120 content stage):** bespoke
+per-faction models/silhouettes, a WW2 gunsmith pool, a WW2 campaign conflict, and WW2 infantry tilts.
 
 > *"the goal is to have a USA army vs the French army."* — the north star this doc serves.
 
@@ -94,9 +101,14 @@ soft per-stat tilt, or a hard StarCraft-style divergence) are the open fork in [
 
 ---
 
-## 6. Deliberately deferred
+## 6. Built vs still deferred
 
-Out of scope until [Q19](open-questions.md) resolves and the build is greenlit: the per-faction
-`unit_stats` tables and the identity tag + its codecs; per-faction cosmetics/voicelines/silhouettes;
-faction selection UI; how (or whether) faction interacts with progression; any third faction beyond
-US/FR. This doc is the place those land when they do.
+**Built:** the `Army` identity tag + its persist/lockstep codecs; the per-faction `unit_stats_for`
+tables (modern logistics tilt, D71; WW2 cost-vs-power tilt, D120); `unit_cost_for`; the per-army
+gunsmith pool (WS-E); the modern army-select UI; and the `--metrics` fairness harnesses for both axes.
+
+**Still deferred** (the D120 content stage / open specifics): bespoke per-faction
+models/silhouettes/voicelines (WW2 tanks currently share the greybox mesh); a dedicated WW2 gunsmith
+pool (WW2 armies share the baseline pool); a WW2 campaign conflict that fields `UsWw2`/`Germany`; WW2
+infantry tilts (only the tank is tilted so far); how (or whether) faction interacts with progression;
+and any faction beyond the US/FR/WW2 set. This doc is the place those land when they do.

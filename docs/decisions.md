@@ -5228,3 +5228,42 @@ the 300-tick `matchup` checksum is unchanged). A new whole-campaign guard seeds 
 `BattleSpec`s and asserts each re-seeds bit-identically with a resolving objective. **Follow-up:** the
 Android `Battlefield.kt` D79 hand-mirror still needs the two new `map_id`s added to reach shell parity.
 Files: `engine/src/{map_library,mission_registry}.rs`, `maps/{pointe-du-hoc,bocage}.map.ron` (+tests).
+
+## D120 — WW2 quality-vs-quantity faction model (cost-vs-power), a second fairness axis
+
+**Status: core landed; content follows.** D71 fixed the modern US/FR asymmetry to the *logistics
+rhythm* and held every combat stat (damage/HP/armour/penetration) IDENTICAL, because an equal-cost
+mirror mass trade is a Lanchester square-law snowball where any per-unit power gap compounds to a wipe
+— so a fair tilt could only live off the gun. D120 adds a **second, orthogonal** fairness axis for a
+new **WW2 campaign era**, at the user's direction: let a unit be individually BETTER but COST MORE, so
+an equal *budget* fields FEWER elites vs MORE cheap units — the realistic mass-Sherman-vs-elite-Panther
+trade. Fairness is measured at **equal budget**, not equal count.
+
+Two WW2 armies land it over the **shared** `UnitKind::Tank` (faction = content + a table, invariant #2
+— no new unit kinds): `Army::UsWw2` ("Sherman": 240 cost / 150 HP / baseline pen 18, so it bounces the
+shared 40-front) and `Army::Germany` ("Panther/Tiger": 480 cost / 660 HP / pen 20, which *cracks* the
+40-front). They append as army tags **3/4** — tags 0/1/2 (Neutral/Us/Fr) byte-unchanged — with the
+documented codec bumps (WIRE 10→11, SNAPSHOT 11→12, old-version rejection extended, `SelectArmy`
+round-trip tests for both). Cost is army-aware via `unit_cost_for` (the old `unit_cost` delegates to
+`unit_cost_for(Army::Neutral, …)`, so every existing caller stays byte-identical); the power tilt
+(`faction_power_tilt` — HP + penetration) is DELIBERATELY not power-neutral, paid for by the cost tilt.
+
+**Why the numbers balance:** at a 2:1 cost ratio an equal budget fields ~2:1 counts; under the
+square-law of a symmetric-gun melee, power ≈ count²·HP, so parity wants Panther HP ≈ 4× Sherman's —
+tuned to 660 (a touch above 4× to cancel the cheap side's index-order first-mover edge). The
+`equal_budget_quality_vs_quantity` harness + the `ww2_quality_vs_quantity_is_balanced_at_equal_budget`
+test pin it: the trade resolves with the winner keeping only ≤2 tanks and the *winner flips* between
+elite and mass across budgets — neither doctrine free-wins. This is wired into `--metrics=summary`
+alongside the modern swap-invariance verdict, so the two fairness axes report side by side.
+
+**Fairness fences held:** the modern skirmish is UNTOUCHED — `cross_faction_mirror_is_swap_invariant`
+(+ under reload pressure) still pass for Us/Fr/Neutral, and the 300-tick `matchup` checksum is
+unchanged (`76f33d570df8e3ba`); net-sim (2-peer lockstep) agreed with no desync and replay is
+bit-identical, so the codec/version-bump work preserves lockstep (invariants #1/#7). The modern
+army-select screen is gated to `SELECTABLE_ARMIES` (US/FR only), so a stored/tampered ordinal 3/4 can
+never smuggle a cost-tilted WW2 economy into a modern match. **Deferred to the content stage:** bespoke
+Sherman/Panther/Tiger greybox models + silhouettes, a dedicated WW2 gunsmith pool, a WW2 conflict in
+the campaign atlas that fields these armies, WW2 infantry tilts (only the tank is tilted so far), and
+threading armour through the metric spawn path. Files: `core/src/{components,economy,sim,lockstep,
+commander,scenario,gunsmith}.rs`, `engine/src/lib.rs`, `render/src/lib.rs`, `replay-runner/src/codec.rs`,
+`sim-runner/src/metrics.rs`, `app/src/shell/{army,persist}.rs` (+tests).
