@@ -5159,3 +5159,72 @@ asserts cover symmetry), and integer-only end to end keeps it deterministic/cros
 was always there. Files: `tools/maps/gen_prokhorovka.py`, `assets/maps/prokhorovka.covergrid`
 (+`.meta.json`, `manifest.json`), `maps/prokhorovka.map.ron`, `core/src/terrain.rs`,
 `engine/src/map_library.rs`, `android/.../Battlefield.kt`.
+
+## D117 — Enemy commander: seeded variation + tactical depth (focus-fire, defense, retreat), difficulty-scaled
+
+**Status: landed.** The scripted enemy commander was purely greedy and — despite carrying a seeded
+RNG — never drew from it, so every match replayed the identical nearest-point/nearest-foe opening. A
+human learned the one pattern and beat it repeatably: the single biggest fun-killer for the primary
+shippable mode (PvE). The commander now (1) draws an **exploration roll** from its own host-owned
+stream (`sim_seed ^ faction`, never `Sim::rng`) to occasionally take the second-nearest objective, so
+a fixed seed replays bit-identically while a *different* seed yields a different, still-deterministic
+game; (2) **concentrates** free attackers on one priority target (focus-fire) instead of each picking
+its own nearest foe; (3) **defends** — peels a unit back to a control point it owns that a hostile is
+closing on; and (4) **preserves** — pulls badly hurt units back to a camp via `FallBack` rather than
+feeding them in. All four are difficulty-scaled *tactical style* (`plan_style`): Recruit scatters and
+never defends/preserves; Veteran/Elite explore less and concentrate/defend/preserve sooner — a
+**better** commander, never an omniscient one (it reads nothing about the player going dark; invariant
+#6 stays structural).
+
+**Why:** depth belongs in the commander's *order choices*, not in unit autonomy — units remain literal
+executors (invariant #3, D3). Everything is fixed-point/integer, drawn only from the seeded stream, and
+stable-iteration deterministic (invariants #1/#7); draw-count is a pure function of checksummed state,
+so lockstep holds. Verified: 628 `core` tests green in both profiles, the 2-peer `net-sim-runner`
+agreed with the no-network reference over 300 ticks (no desync), and `replay-runner` (single + multi)
+was bit-identical record→playback. The prior byte-identical guarantee is preserved relative to the
+tier (default == Veteran). Files: `core/src/commander.rs` (+12 tests).
+
+## D118 — A generated "going-dark" music score, and desktop audio on by default
+
+**Status: landed.** The engine had a wired-but-dormant music bus (`music_gain`, `Mixer::set_music`, a
+Settings music slider) but **no music source**, and the desktop `audio` feature was opt-out — so a
+stock `pnpm play` shipped **silent**. That is a poor fit for a pillar where the world goes dark and you
+fight by *sound* (invariant #6). Added a deterministic Csound+SoX generator (`tools/audio/gen_music.py`,
+the music twin of `gen_sfx.py` per D41/D46/D100): a loopable low, tense A-minor **combat bed** plus
+**win/lose stingers**, committed as generator-script + manifest (`source`/`license`/`sha256`) + WAVs,
+`include_bytes!`'d and hand-parsed so `pal` stays dependency-free. The bed loops seamlessly by
+whole-cycle construction (its master pass deliberately does no fade / no IIR filter, both of which
+would break the loop). The shared `pal::mix::Mixer` gained a one-shot **stinger** path that ducks the
+bed and resumes it; the host fires the win/lose stinger exactly once on match resolution. `audio` is
+now a **default feature of `gonedark-app`** (opt out via `--no-default-features` / `pnpm play:silent`
+for headless/no-ALSA hosts; CI gained `libasound2-dev`).
+
+**Why:** audio is a *primary system*, not polish — the game should ship making sound. All of this is
+presentation/PAL only: `core/` is untouched and the 300-tick `matchup` checksum is byte-identical
+before and after (`76f33d570df8e3ba`), so lockstep determinism (invariants #1/#4/#7) is unaffected; the
+checksum runners depend only on `core` and stay silent/deterministic. Files: `tools/audio/gen_music.py`,
+`assets/audio/music/*` (+`manifest.json`), `pal/src/{lib,bank,mix}.rs`, `pal-desktop/src/audio.rs`,
+`app/src/main.rs`, `app/Cargo.toml`, `.github/workflows/{test,build}.yml`, `package.json` (+9 tests).
+
+## D119 — Broaden playable content: wire Pointe du Hoc, add the Bocage map, diversify the Gotland opener
+
+**Status: landed.** The game exhausted its *distinct* content in one sitting (2 authored maps + 2 code
+scenes, all flat cover-grids). Three fronts widen it. (1) **Pointe du Hoc** — the D80-baked coastal
+terrain (`map_id 1`) was baked and wired into `core::terrain` but **orphaned** (reachable by no
+`Battlefield`); it now ships a `pointe-du-hoc.map.ron` airlock (3 posts up the assault axis, tactical
+cover, south→north deploy zones verified against the baked covergrid via `tools/maps/lint.py`) and a
+`BATTLEFIELDS` tile. (2) **Bocage** — a new, deliberately contrasting map as pure authored data over
+the open playfield (`terrain 0`): a mirror-x-symmetric north–south hedgerow maze, five posts, and
+solid Heavy walls (`Cover::Impassable`) — a claustrophobic counterpoint to the open steppe. (3)
+Campaign **node 6** (the Gotland Winter Seize opener) swaps its third Standard grind for an
+**Assassinate** win condition under a hunting commander, via the existing per-node `authored_battle_spec`
+seam (D115) — no new sim, no `core` change.
+
+**Why:** the map pipeline (D80) already bakes battlefields into integer, checksum-stable cover grids
+offline, and a `.map.ron` may reference any `map_id` `from_map_id` can build — so "more, varied,
+still-fair" is that pipeline used at scale, not new machinery. Maps feed only the integer sim cover
+grid; objective/commander flavor stays host-side and never enters the checksum (invariants #1/#4/#7 —
+the 300-tick `matchup` checksum is unchanged). A new whole-campaign guard seeds all 12 per-node
+`BattleSpec`s and asserts each re-seeds bit-identically with a resolving objective. **Follow-up:** the
+Android `Battlefield.kt` D79 hand-mirror still needs the two new `map_id`s added to reach shell parity.
+Files: `engine/src/{map_library,mission_registry}.rs`, `maps/{pointe-du-hoc,bocage}.map.ron` (+tests).
