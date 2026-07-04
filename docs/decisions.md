@@ -5267,3 +5267,31 @@ the campaign atlas that fields these armies, WW2 infantry tilts (only the tank i
 threading armour through the metric spawn path. Files: `core/src/{components,economy,sim,lockstep,
 commander,scenario,gunsmith}.rs`, `engine/src/lib.rs`, `render/src/lib.rs`, `replay-runner/src/codec.rs`,
 `sim-runner/src/metrics.rs`, `app/src/shell/{army,persist}.rs` (+tests).
+
+## D121 — WW2 Normandy conflict on the PvE atlas (Sherman vs Panther/Tiger)
+
+**Status: landed.** D120 built the cost-vs-power WW2 armies but nothing shipped them in real missions.
+This adds **Normandy '44** (1944) as the campaign's fifth conflict — and its first *historical* one —
+fielding those armies: `player: Army::UsWw2` (cheap, thin Shermans) vs `enemy: Army::Germany` (few,
+tough Panthers/Tigers). It's **Operation Cobra**, a 3-node Seize→Hold→Push chain: *Silence the Battery*
+(Pointe du Hoc, Assassinate the clifftop officer under a gone-dark-hunting commander) → *Hold the
+Crossroads* (Bocage, Survive a Panzer counterattack) → *Break the Bocage* (the Saint-Lô–Périers push
+under an Elite commander). It reuses the Seize/Hold/Push archetypes and the two WW2-Normandy maps that
+landed in D119 (Pointe du Hoc, Bocage), growing the campaign graph 12→15 nodes.
+
+The per-node army selection rides a new `BattleSpec.armies: (Army, Army)` field on the D115
+`authored_battle_spec` seam, applied in `seed_battle_spec` after the shared `core::scenario` seeders
+run. **Why it's determinism-safe:** the four modern conflicts keep `(Us, Fr)`, which is a *byte-neutral
+re-apply* of what the seeders already set, so the modern nodes and the `matchup` checksum
+(`76f33d570df8e3ba`) are unchanged, `set_army` adds no checksum surface, and the whole-campaign guard
+(`every_authored_node_seeds_deterministically_with_a_resolving_objective`, now 0..15) proves every node
+re-seeds bit-identically (invariants #1/#7). Paired with D120's greybox Sherman/German-heavy
+silhouettes, the quality-vs-quantity fantasy is now visible and playable. **This is the first crack in
+the [Q28] fork-1(c) "fictional/modern only" lean** — justified because D120 gave a real,
+fairness-bounded WW2 roster to field; the four earlier conflicts stay modern-fictional. **Honest
+caveat:** a WW2 node's *opening* infantry still carry modern `Us`/`Fr` infantry stats (the `set_army`
+override lands after the seeder, and `core::scenario` was out of the content stage's scope) — cosmetic
+and deterministic, since the WW2 identity is the *produced* Tank and the WW2 armies carry no infantry
+tilt by design. **Follow-up:** a doc sweep for stale "12-node" mentions (`roadmap.md`,
+`plans/compose-shell-parity.md`, `open-questions.md` Q28). Files: `engine/src/mission_registry.rs`,
+`engine/src/lib.rs`, `docs/{pve-campaign,game-design}.md` (+tests).
