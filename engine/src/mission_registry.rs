@@ -697,11 +697,12 @@ pub fn seed_battle_spec(
 
 /// The authored per-node battle spec for the shipped [`default_campaign`], keyed by [`NodeId`]. The
 /// twelve nodes escalate within each archetype (later conflicts field bigger forces / longer holds
-/// / denser lanes) and ship the two previously-unused objective archetypes on two Seize nodes:
-/// **node 3** (*Meridian* — Extract to the fuel yard) and **node 9** (*Santo* — Assassinate the
-/// landing-force commander). `None` for any other index (→ the resolver uses the archetype
-/// baseline). Every setup stays inside its `core::scenario` clamps; every Hold keeps
-/// `defender_cols >= attacker_cols` (the winnable-when-firing authoring bound).
+/// / denser lanes) and ship the two previously-unused objective archetypes on three Seize nodes:
+/// **node 3** (*Meridian* — Extract to the fuel yard), **node 6** (*Gotland* — Assassinate the quay
+/// officer, under a hunting commander) and **node 9** (*Santo* — Assassinate the landing-force
+/// commander). `None` for any other index (→ the resolver uses the archetype baseline). Every setup
+/// stays inside its `core::scenario` clamps; every Hold keeps `defender_cols >= attacker_cols` (the
+/// winnable-when-firing authoring bound).
 fn authored_battle_spec(node: NodeId) -> Option<BattleSpec> {
     let spec = |setup, objective, commander| BattleSpec {
         setup,
@@ -743,10 +744,13 @@ fn authored_battle_spec(node: NodeId) -> Option<BattleSpec> {
             plain,
         ),
         // ---- The Gotland Winter (conflict 2) — bigger still; a relentless-cadence push commander ----
+        // The opener is a decapitation strike: take out the garrison officer on the ice-bound quay
+        // (Assassinate) rather than grinding the whole force, while the commander hunts a gone-dark
+        // player through the snow — a distinct fight from the two earlier Seizes (Standard/Extract).
         6 => spec(
             NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 5 }),
-            ObjectiveVariant::Standard,
-            plain,
+            ObjectiveVariant::Assassinate,
+            CommanderFlavor { hunt_embodied: true, ..CommanderFlavor::default() },
         ),
         7 => spec(
             NodeSetup::Hold(HoldSetup { defender_cols: 7, attacker_cols: 6, hold_secs: 55 }),
@@ -1725,6 +1729,74 @@ mod tests {
             other => panic!("Assassinate must build an Eliminate(Entity) objective, got {other:?}"),
         };
         assert_eq!(sim.world.faction[vip.index as usize], Faction::Enemy, "the VIP is an enemy");
+
+        // Node 6 — the Gotland opener is now also an Assassinate (the added per-node variety): a
+        // distinct win condition on a live enemy VIP, under a hunting commander.
+        let s6 = battle_spec_for_node(&campaign, NodeId(6)).unwrap();
+        assert_eq!(s6.objective, ObjectiveVariant::Assassinate);
+        assert!(s6.commander.hunt_embodied, "the Gotland opener commander hunts the gone-dark player");
+        let mut sim = Sim::new(0x5EED_0006);
+        let (_p, _e, obj) = seed_battle_spec(&mut sim, s6, Loadout::STANDARD);
+        let vip6 = match obj.objectives[0].kind {
+            ObjectiveKind::Eliminate(EliminateTarget::Entity(e)) => e,
+            other => panic!("node 6 Assassinate must build an Eliminate(Entity), got {other:?}"),
+        };
+        assert!(sim.world.is_alive(vip6), "the node-6 VIP is present in the seeded world");
+        assert_eq!(sim.world.faction[vip6.index as usize], Faction::Enemy);
+    }
+
+    /// Whole-campaign guard: EVERY authored node seeds a bit-identical world on a re-seed
+    /// (invariants #1/#7), carries a non-empty objective set, and — the teeth — every objective's
+    /// target actually resolves in the node's own seeded world. `content_lint` dedupes its battery
+    /// by `MissionId` (so it never seeds the per-node `BattleSpec`s); this covers the twelve nodes'
+    /// real battles, including the Extract/Assassinate variants and escalated force counts.
+    #[test]
+    fn every_authored_node_seeds_deterministically_with_a_resolving_objective() {
+        use gonedark_core::flow_field::HALF_EXTENT;
+        let campaign = default_campaign();
+
+        // A node's objective target must be reachable/present in its own seeded world.
+        let resolves = |sim: &Sim, o: &crate::objectives::Objective| -> bool {
+            match o.kind {
+                ObjectiveKind::Capture { point, .. } => {
+                    sim.territory.points.iter().any(|cp| cp.pos == point)
+                }
+                ObjectiveKind::Eliminate(EliminateTarget::Faction(f)) => {
+                    let force = crate::objectives::faction_forces(sim, f);
+                    force.alive_units + force.buildings > 0
+                }
+                ObjectiveKind::Eliminate(EliminateTarget::Entity(e)) => sim.world.is_alive(e),
+                ObjectiveKind::Survive { until_tick, .. } => until_tick > 0,
+                ObjectiveKind::Reach { who, dest, radius }
+                | ObjectiveKind::Escort { vip: who, dest, radius } => {
+                    let in_bounds = dest.x >= -HALF_EXTENT
+                        && dest.x < HALF_EXTENT
+                        && dest.y >= -HALF_EXTENT
+                        && dest.y < HALF_EXTENT;
+                    in_bounds && radius > Fixed::ZERO && sim.world.is_alive(who)
+                }
+            }
+        };
+
+        for i in 0..12u32 {
+            let node = NodeId(i);
+            let spec = battle_spec_for_node(&campaign, node).unwrap();
+
+            // Re-seed the same node's spec twice on the same seed → bit-identical (no float leak,
+            // stable spawn order).
+            let seed = 0x5EED_0000 ^ (i as u64);
+            let mut a = Sim::new(seed);
+            let mut b = Sim::new(seed);
+            let (_pa, _ea, objs) = seed_battle_spec(&mut a, spec, Loadout::STANDARD);
+            seed_battle_spec(&mut b, spec, Loadout::STANDARD);
+            assert_eq!(a.checksum(), b.checksum(), "node {i}: re-seed diverged");
+
+            // A live objective set whose every target resolves against THIS node's world.
+            assert!(!objs.is_empty(), "node {i}: no objective");
+            for o in &objs.objectives {
+                assert!(resolves(&a, o), "node {i}: objective {:?} does not resolve", o.kind);
+            }
+        }
     }
 
     /// Determinism + variety: the same node's spec seeded twice onto the same seed is bit-identical,
