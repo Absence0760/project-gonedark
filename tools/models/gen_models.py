@@ -286,8 +286,21 @@ def export_glb(obj, filename):
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     path = os.path.join(OUT_DIR, filename)
+    # `export_normals=False, export_texcoords=False` are load-bearing for reproducibility, NOT a
+    # size trim. Blender's glTF exporter computes per-loop normals and UVs with multithreaded
+    # floating-point work whose accumulation order varies run-to-run (and even export-to-export
+    # within one session), so those two accessors drift by ~1 ULP between otherwise-identical
+    # regenerations — the sole source of the spurious `.glb`/manifest-sha256 churn (see
+    # content-pipeline.md §6 "glTF exporter nondeterminism"). We can drop them with zero
+    # information loss: the cooked `.mesh` recomputes its OWN
+    # flat face normals from positions in `export_mesh` (glb normals are never read), the greybox
+    # `.mesh` format carries no UV channel at all, and the gltfpack LOD step re-cooks flat normals
+    # too — so a positions+topology-only glb round-trips to a bit-identical `.mesh`. Positions and
+    # face topology export deterministically, so stripping the two noisy attributes makes the glb
+    # byte-reproducible across runs and machines.
     bpy.ops.export_scene.gltf(
-        filepath=path, export_format="GLB", use_selection=True, export_apply=True
+        filepath=path, export_format="GLB", use_selection=True, export_apply=True,
+        export_normals=False, export_texcoords=False,
     )
     return path
 
