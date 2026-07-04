@@ -614,8 +614,12 @@ fn build_skirmish_terrain(sim: &mut Sim) {
     //    at and path around (Q24). The list lives in `core::obstacles` so the sim owns it and the
     //    renderer reads it — one source, so a prop can never again be visible-but-passable. Scattered
     //    mid-field, clear of the bases (±30,0), spawns and the three capture posts, so it never walls
-    //    off the base-to-base lane or traps a post.
-    crate::obstacles::paint_impassable(&mut sim.terrain, &crate::obstacles::skirmish_obstacles());
+    //    off the base-to-base lane or traps a post. The list is also REGISTERED on the sim
+    //    (`Sim::obstacles`) so the renderer draws exactly the props the sim collides with — the
+    //    sim-owned source both views read (Q24), instead of a render-side hardcoded layout.
+    let props = crate::obstacles::skirmish_obstacles();
+    crate::obstacles::paint_impassable(&mut sim.terrain, &props);
+    sim.obstacles.extend(props);
 }
 
 /// Seed `sim` with the two-base skirmish and return the [`Skirmish`] handles: two operational base
@@ -1679,6 +1683,34 @@ mod tests {
                 assert_eq!(a.terrain.cover_at_cell(cx, cy), b.terrain.cover_at_cell(cx, cy));
             }
         }
+    }
+
+    #[test]
+    fn skirmish_registers_its_props_on_the_sim() {
+        // The renderer draws `Sim::obstacles` (the sim-owned source, Q24) — so the skirmish seed
+        // must register exactly the layout it painted collision under, deterministically, and each
+        // registered prop must stand on the solid cell its footprint painted (visible == collides).
+        let mut sim = fresh();
+        seed_skirmish(&mut sim);
+        assert_eq!(
+            sim.obstacles,
+            crate::obstacles::skirmish_obstacles(),
+            "the registered props are the painted layout"
+        );
+        assert!(!sim.obstacles.is_empty());
+        for o in &sim.obstacles {
+            assert!(
+                sim.terrain.cover_at(o.pos).blocks_movement(),
+                "prop {:?} at {:?} is registered but not solid",
+                o.kind,
+                o.pos,
+            );
+        }
+        // Static map data, never folded: clearing the list must not move the per-tick checksum
+        // (its gameplay effect — the painted terrain — is not per-tick state either).
+        let before = sim.checksum();
+        sim.obstacles.clear();
+        assert_eq!(sim.checksum(), before, "obstacles must not enter the checksum");
     }
 
     /// End-to-end: the skirmish is a **live, evolving match**, not an inert tableau. Drive it the
