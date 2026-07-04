@@ -605,8 +605,8 @@ impl ContentRegistry {
         Self::load_dirs([dir.as_ref().to_path_buf()])
     }
 
-    /// Scan one or more content directories (the repo keeps `missions/` and `maps/` separate), parse
-    /// + validate every `*.mission.ron` and `*.map.ron`, resolve each mission's `map` reference, and
+    /// Scan one or more content directories (the repo keeps `missions/` and `maps/` separate), parse +
+    /// validate every `*.mission.ron` and `*.map.ron`, resolve each mission's `map` reference, and
     /// build a registry — **fail-soft per file**: any file that fails to read, parse, validate,
     /// resolve, or that duplicates an id is dropped into [`ContentScan::errors`] with a precise
     /// message, and the rest still load. This is also the hot-reload entry point (call it again on

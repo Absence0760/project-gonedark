@@ -156,8 +156,8 @@ fn extents_overlap(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
     a_lx <= b_hx && b_lx <= a_hx && a_ly <= b_hy && b_ly <= a_hy
 }
 
-/// The raw, deserialized battlefield — the **spatial half** of a scenario. `#[serde(deny_unknown_fields)]`
-/// + all-integer fields make it the float airlock's front door. Deserializing it does **not** validate
+/// The raw, deserialized battlefield — the **spatial half** of a scenario. `#[serde(deny_unknown_fields)]` +
+/// all-integer fields make it the float airlock's front door. Deserializing it does **not** validate
 /// it; call [`MapSpec::load`] (or [`MapSpec::validate`]) to range-check before use.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

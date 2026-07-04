@@ -226,8 +226,8 @@ pub fn prompt_labels(p: &Prompt, aspect: f32) -> Vec<PromptLabel> {
     prompt_labels_scaled(p, aspect, 1.0)
 }
 
-/// [`prompt_labels`] with an explicit physical `ui_scale`. Label POSITIONS come from the scaled card
-/// + scaled line steps; the emitted `size` stays UNSCALED — the text pass multiplies it by `ui_scale`
+/// [`prompt_labels`] with an explicit physical `ui_scale`. Label POSITIONS come from the scaled card +
+/// scaled line steps; the emitted `size` stays UNSCALED — the text pass multiplies it by `ui_scale`
 /// at draw time (no double-scaling). `ui_scale == 1.0` is byte-identical to [`prompt_labels`].
 pub fn prompt_labels_scaled(p: &Prompt, aspect: f32, ui_scale: f32) -> Vec<PromptLabel> {
     if p.is_empty() || p.alpha <= 0.0 {
