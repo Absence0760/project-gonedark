@@ -8,6 +8,15 @@
 # render's 12, and any future crate's tests) so correctness has a single, clearly-named
 # check. pal-android is excluded — it's an android-target cdylib that's empty on this host
 # (its arm64 compile is covered by build.yml's android-build job).
+#
+# The `android-unit-tests` job runs the Android Compose shell's pure-JVM unit tests
+# (`:app:testDebugUnitTest`). It exists so the **Kotlin half of the D79 mirror-parity guard**
+# (MirrorParityTest.kt) has teeth in CI: the Rust half (engine's `d79_mirror_parity` test, run by
+# the `test` job) pins the live Rust campaign/battlefields to `parity/d79-mirror.txt`; the Kotlin
+# half pins the Android `CampaignModel.kt` / `Battlefield.kt` mirror to that SAME committed fixture,
+# so a Rust change that isn't hand-mirrored into Android fails here instead of drifting silently.
+# The cargo-ndk / libc++ copy tasks are excluded — these are pure-JVM logic tests that never load
+# the native `.so`, so the job needs only a JDK + the Android SDK (no NDK).
 name: test
 
 on:
@@ -59,3 +68,36 @@ jobs:
 
       - name: Workspace tests (excluding android cdylib)
         run: cargo test --workspace --exclude gonedark-pal-android
+
+  android-unit-tests:
+    name: android shell unit tests · JVM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # AGP 8.7 / Gradle 8.11 run on JDK 17; the :app module targets jvmTarget 17.
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # The :app module is a `com.android.application`, so AGP needs the Android SDK to
+      # configure even for pure-JVM unit tests. No NDK — the cargo-ndk/libc++ tasks are excluded.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      # Pure-JVM unit tests (includes MirrorParityTest.kt — the Kotlin half of the D79 guard).
+      # Skip the native cargo-ndk / libc++ copy tasks: these tests never load the `.so`.
+      - name: Android :app unit tests
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest -x cargoNdkBuild -x copyCxxShared --console=plain
