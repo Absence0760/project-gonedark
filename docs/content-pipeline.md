@@ -172,6 +172,37 @@ generator, `core/src/lut_data.rs` the checked-in, hash-locked output
 Install provenance + how each was added lives in the workstation conventions (`~/CLAUDE.md`);
 the toolchain choice is logged as **D46**.
 
+### glTF exporter nondeterminism (why the `.glb` export strips normals + UVs)
+
+The greybox generator is meant to be **bit-reproducible**: re-running `pnpm assets:models`
+with no source change must leave `git status` clean, so the manifest `sha256`s are trustworthy
+and a rebuild diffs to nothing (the D41/D46 contract — the *generator* is the source of truth).
+That held for the cooked `.mesh` (the runtime artifact the engine loads) but **not** for the
+`.glb` interchange files: consecutive regenerations produced byte-different `.glb`s for a
+*shifting* handful of models, which churned the manifest's per-`.glb` `sha256` on every run.
+
+Root cause — **inside Blender's glTF exporter, not our script.** The exporter computes per-loop
+**normals** and **UVs** with multithreaded floating-point work whose accumulation order varies
+run-to-run (and even export-to-export within a single Blender session — the first, cold export
+is stable, later ones race). Isolated with a per-accessor float diff, the *only* drifting data
+was the normal and texcoord accessors, off by ~1 ULP (`5.96e-08`); **positions and face topology
+export deterministically.** It is not a `PYTHONHASHSEED` ordering issue (pinning the seed doesn't
+help) and not an `export_apply` artifact — it is genuine thread-race FP noise in the exporter.
+Blender version at diagnosis: **5.1.2** (arm64).
+
+Mitigation — **drop the two noisy attributes at export** (`export_normals=False`,
+`export_texcoords=False` in `export_glb`). Zero information loss, because nothing downstream
+reads them: the cooked `.mesh` recomputes its **own** flat face normals from positions in
+`export_mesh`, the greybox `.mesh` format has no UV channel at all, and the gltfpack LOD step
+re-cooks flat normals on re-import too. A positions-plus-topology-only `.glb` round-trips to a
+**bit-identical** `.mesh` on every tier — and the `.glb` itself (and therefore the manifest) is
+now byte-reproducible across runs and machines. Verified: two consecutive full regenerations diff
+to nothing; the `gonedark-render` suite stays green and the sim matchup checksum is unmoved
+(models are render-only). The residual — Blender still bakes a *positions* buffer whose exact
+bytes could in principle differ on a very different Blender build — has not been observed here;
+if it ever appears, the next step is a post-export canonicalization pass that rounds the position
+accessor to a fixed grid before hashing.
+
 ## 7. Open fork
 
 How far to lean **CC0-curated** vs **commissioned** vs **AI-generated** for the hero
