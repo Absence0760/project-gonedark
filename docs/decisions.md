@@ -5077,3 +5077,55 @@ the richer "different force sizes / different objectives (assassinate, extract) 
 nodes field distinct forces — the seams and the unused `mission_assassinate`/`mission_extract`
 objective sets are ready for it. Enemy-commander per-mission *knobs* (config, never new AI — D3)
 are part of that owed step. Files: `core/src/scenario.rs`, `engine/src/lib.rs`, `app/src/main.rs`.
+
+## D114 — The command view shows the real map: a cover wash + prop markers (closes the D112 deferral)
+
+**Status: landed.** [D112](#d112--the-sim-owns-the-prop-list-both-views-draw-the-real-battlefields-props)
+made props visible in the embodied view but left the top-down **command view** drawing the same
+map-agnostic procedural ground for every battlefield. It now composites two static, map-derived
+layers over that ground (and under the unit tokens/rings), command view only — never over the dark
+embodied frame (invariant #6):
+
+1. **Cover wash** — one translucent cell-sized square per non-open cover cell, tinted by tier with
+   alpha *rising* with the tier so nothing hides a token drawn on top: Light → faint amber (0.16),
+   Heavy → steel-blue (0.22), Impassable → red-orange (0.30). Different maps now visibly differ and
+   cover is legible top-down (it promotes the F3 debug cover grid into an always-on gameplay layer).
+2. **Prop markers** — one rotated diamond per static `Obstacle`, centred on the prop and sized to
+   its sim collision footprint, tinted per kind (trees green, rocks grey, crates tan, barricades
+   khaki, US/FR turrets blue/cyan). The diamond distinguishes placed props from the axis-aligned
+   cover wash; the embodied view still draws them as 3-D meshes, so no double-draw.
+
+**Why:** the RTS view was the last place the map "looked minimal" — same ground every match. Built
+as CPU geometry through a minimal alpha-blended instanced pipeline on `TerrainRenderer` (modeled on
+its grid-line pipeline), uploaded ONCE at match boot (`set_map_overlay` in the shared
+`from_seeded_sim` tail — so campaign, skirmish, and library maps all get it) with no per-frame cost
+and no `render()` signature change. Presentation only (`render`/`engine`); `core` untouched. The
+pure cover→quad / obstacle→marker seams are unit-tested off-GPU; the device-bound draw glue is the
+documented exempt seam. Files: `render/src/terrain.rs`, `render/src/terrain.wgsl`,
+`render/src/lib.rs`, `engine/src/lib.rs`.
+
+## D115 — Per-node campaign battles: distinct forces + Extract/Assassinate objectives + commander knobs (closes the D113 deferral)
+
+**Status: landed.** [D113](#d113--per-node-campaign-battles-distinct-seeds-now-per-node-force-setups-seamed)
+gave each node a distinct seed and seamed the force setups; the 12 nodes still fielded identical
+forces and objectives per archetype. A per-node **`BattleSpec { setup, objective, commander }`**
+table — keyed by `NodeId` in `engine::mission_registry` (host-side, because the objective variants
+are engine `ObjectiveSet`s and the commander flavor references the engine `Game`; neither may leak
+into `core`, invariant #2) — now threads through `resolve_battle_spec` → `Game::new_battle` →
+`seed_battle_spec`, which drives the existing `core::scenario::seed_*_with_setup` seeders and builds
+the matching objective from the handles they return. Concretely:
+
+- **Escalating forces** across the four conflicts, all inside the `core::scenario` clamps; every
+  Hold keeps `defender_cols ≥ attacker_cols` (the winnable-when-firing bound, sim-tested).
+- **The two unused objective archetypes finally ship:** node 3 is an **Extract** (Reach the base),
+  node 9 an **Assassinate** (kill the garrison VIP) — genuinely different win conditions, not just
+  different force counts.
+- **Commander flavor — config only (D3, no new AI):** optional integer `CommanderConfig` overrides
+  (`max_queue_depth`/`heavy_reserve`/`command_stride`) + a late-node `hunt_embodied` / `Elite` band
+  override, applied at launch after `apply_campaign_tuning`. `None` reproduces the tier byte-for-byte.
+
+**Why:** the campaign's "12 battles" were 3 battles × prose; now each node is a distinct, replayable
+fight (per-node seed from [D113] × per-node forces/objective/commander). All variation is authored
+integers → deterministic, cross-platform (invariant #7). Android boot mirrors desktop (compiled out
+on this host — validated by inspection). Files: `engine/src/mission_registry.rs`, `engine/src/lib.rs`,
+`core/src/commander.rs`, `app/src/main.rs`, `pal-android/src/android_backend.rs`.
