@@ -50,7 +50,7 @@ fn impact_y(heading: Angle, dispersion: Fixed, rng: &mut Rng) -> Fixed {
 fn mean(v: &[Fixed]) -> Fixed {
     let mut sum = Fixed::ZERO;
     for x in v {
-        sum = sum + *x;
+        sum += *x;
     }
     sum / Fixed::from_int(v.len() as i32)
 }
