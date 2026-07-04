@@ -56,31 +56,13 @@ mod metrics;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use gonedark_core::components::{BuildingKind, Faction, Order, Stance, UnitKind, Vec2};
+use gonedark_core::components::{BuildingKind, Faction, Order, UnitKind, Vec2};
 use gonedark_core::economy::{self, Resources};
 use gonedark_core::ecs::Entity;
 use gonedark_core::fixed::Fixed;
-use gonedark_core::scenario::ScenarioBuilder;
+use gonedark_core::scenario::{fx, v, ScenarioBuilder};
 use gonedark_core::sim::{Command, Sim};
 use gonedark_core::territory::ControlPoint;
-use gonedark_core::trig::Angle;
-
-fn fx(n: i32) -> Fixed {
-    Fixed::from_int(n)
-}
-
-fn v(x: i32, y: i32) -> Vec2 {
-    Vec2::new(fx(x), fx(y))
-}
-
-/// Spawn a Rifleman of `faction` at `(x, y)`, set to engage at will, and return its handle.
-/// Routed through the canonical [`ScenarioBuilder::spawn`] primitive — byte-identical to the old
-/// open-coded field writes: these scenes never call `set_army`, so the builder's per-army roster
-/// read resolves `Army::Neutral` (== the shared `unit_stats` baseline), and its explicit
-/// `unit_kind`/facing writes are exactly the `World::spawn` defaults this helper used to leave.
-fn spawn_rifleman(sim: &mut Sim, x: i32, y: i32, faction: Faction) -> Entity {
-    ScenarioBuilder::new(sim).spawn(UnitKind::Rifleman, v(x, y), faction, Stance::FireAtWill, Angle(0))
-}
 
 /// A built scenario: the seeded sim plus the scripted commands to apply, keyed by the tick they
 /// execute on. A `BTreeMap` keeps lookup deterministic; commands within a tick keep insertion
@@ -164,10 +146,10 @@ fn build_phase2() -> Scenario {
     sim.territory.points.push(ControlPoint::neutral(Vec2::ZERO));
     sim.territory.points.push(ControlPoint::neutral(v(20, -20)));
 
-    let p1 = spawn_rifleman(&mut sim, -5, 0, Faction::Player);
-    let p2 = spawn_rifleman(&mut sim, -5, 3, Faction::Player);
-    let _e1 = spawn_rifleman(&mut sim, 5, 0, Faction::Enemy);
-    let _e2 = spawn_rifleman(&mut sim, 5, 3, Faction::Enemy);
+    let p1 = ScenarioBuilder::new(&mut sim).spawn_rifleman(-5, 0, Faction::Player);
+    let p2 = ScenarioBuilder::new(&mut sim).spawn_rifleman(-5, 3, Faction::Player);
+    let _e1 = ScenarioBuilder::new(&mut sim).spawn_rifleman(5, 0, Faction::Enemy);
+    let _e2 = ScenarioBuilder::new(&mut sim).spawn_rifleman(5, 3, Faction::Enemy);
 
     let camp = economy::build(
         &mut sim.world,
@@ -241,8 +223,8 @@ fn build_stress(n: u32) -> Scenario {
         let px = -40 + col;
         let ex = 40 - col;
         let y = -row * 2;
-        player.push(spawn_rifleman(&mut sim, px, y, Faction::Player));
-        enemy.push(spawn_rifleman(&mut sim, ex, y, Faction::Enemy));
+        player.push(ScenarioBuilder::new(&mut sim).spawn_rifleman(px, y, Faction::Player));
+        enemy.push(ScenarioBuilder::new(&mut sim).spawn_rifleman(ex, y, Faction::Enemy));
     }
 
     // A few player camps that finish and produce, exercising the economy/spawn path (and the

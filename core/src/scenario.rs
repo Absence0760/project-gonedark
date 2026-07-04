@@ -60,6 +60,19 @@ use crate::trig::{Angle, ANGLE_FULL};
 // loadout to a spawned weapon, laying a static cover map, baking an opening order — is done through
 // [`ScenarioBuilder::sim_mut`], exactly as the seeders do it today.
 
+/// Build a [`Fixed`] from an integer world-unit — the trivial `fx(n)` convenience every headless
+/// host (`sim-runner`, `net-sim-runner`, `replay-runner`) used to re-declare as its own private
+/// free function. Exported here so they share one definition instead of four copies.
+pub fn fx(n: i32) -> Fixed {
+    Fixed::from_int(n)
+}
+
+/// Build a [`Vec2`] from integer world-unit coordinates — the trivial `v(x, y)` convenience
+/// every headless host used to re-declare alongside its own [`fx`] copy.
+pub fn v(x: i32, y: i32) -> Vec2 {
+    Vec2::new(fx(x), fx(y))
+}
+
 /// A typed, serde-free, fixed-point builder over `core`'s scenario spawn/build primitives — the
 /// content-tooling spine (CT-A). See the module note above. Every method mirrors what the
 /// hand-written seeders open-code, so a `Sim` built through it is byte-identical to a hand-seeded
@@ -134,6 +147,16 @@ impl<'a> ScenarioBuilder<'a> {
         self.sim.world.hull_heading[i] = facing;
         self.sim.world.turret_yaw[i] = facing;
         e
+    }
+
+    /// Spawn a [`UnitKind::Rifleman`] of `faction` at integer world coordinates `(x, y)`,
+    /// [`Stance::FireAtWill`], facing `+X` — the common one-line "put a rifleman on the field"
+    /// convenience the headless runners (`sim-runner`, `net-sim-runner`) each used to re-declare
+    /// as their own private `spawn_rifleman` free function. Exactly
+    /// `self.spawn(UnitKind::Rifleman, v(x, y), faction, Stance::FireAtWill, Angle(0))` — byte-
+    /// identical to what it replaces (invariant #1/#7: no new fold surface).
+    pub fn spawn_rifleman(&mut self, x: i32, y: i32, faction: Faction) -> Entity {
+        self.spawn(UnitKind::Rifleman, v(x, y), faction, Stance::FireAtWill, Angle(0))
     }
 
     /// Build an **operational** camp for `faction` at world `pos`. Routes through the canonical
@@ -1969,6 +1992,36 @@ mod tests {
         assert_eq!(viab.world.health[via.0.index as usize], hand.world.health[hu.index as usize]);
         assert_eq!(viab.world.building[via.1.index as usize].build_ticks_left, 0, "camp is operational");
         assert_eq!(viab.checksum(), hand.checksum(), "builder primitives are byte-identical to hand seeding");
+    }
+
+    /// [`ScenarioBuilder::spawn_rifleman`] (the hoisted headless-runner convenience) is exactly
+    /// `spawn(Rifleman, v(x, y), faction, FireAtWill, Angle(0))` — byte-identical entity fields
+    /// and checksum to the equivalent explicit `spawn` call.
+    #[test]
+    fn builder_spawn_rifleman_matches_explicit_spawn() {
+        let mut via_shorthand = fresh();
+        let mut via_explicit = fresh();
+
+        let e1 = ScenarioBuilder::new(&mut via_shorthand).spawn_rifleman(-5, 3, Faction::Enemy);
+        let e2 = ScenarioBuilder::new(&mut via_explicit).spawn(
+            UnitKind::Rifleman,
+            v(-5, 3),
+            Faction::Enemy,
+            Stance::FireAtWill,
+            Angle(0),
+        );
+
+        assert_eq!(e1, e2, "same spawned entity handle");
+        assert_eq!(via_shorthand.checksum(), via_explicit.checksum(), "byte-identical world");
+    }
+
+    /// [`fx`]/[`v`] are the trivial integer-world-unit constructors every headless runner used to
+    /// re-declare privately; pin their exact values so the hoist can never silently drift them.
+    #[test]
+    fn fx_and_v_build_the_expected_fixed_values() {
+        assert_eq!(fx(5), Fixed::from_int(5));
+        assert_eq!(fx(-3), Fixed::from_int(-3));
+        assert_eq!(v(2, -7), Vec2::new(Fixed::from_int(2), Fixed::from_int(-7)));
     }
 
     // --- Mission 2 — "Hold the Line" (the Survive/defense archetype) ---------------------------

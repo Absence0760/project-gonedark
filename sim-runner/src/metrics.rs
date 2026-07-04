@@ -28,20 +28,13 @@ use gonedark_core::components::{Army, EntityKind, Faction, Stance, UnitKind, Vec
 use gonedark_core::economy::{self, unit_cost, Resources, HEAVY_COST, RIFLEMAN_COST};
 use gonedark_core::ecs::World;
 use gonedark_core::fixed::Fixed;
-use gonedark_core::scenario::ScenarioBuilder;
+use gonedark_core::scenario::{v, ScenarioBuilder};
 use gonedark_core::sim::Sim;
 use gonedark_core::terrain::{Cover, Terrain};
 use gonedark_core::territory::ControlPoint;
 use gonedark_core::trig::{Angle, ANGLE_FULL};
 
 const HZ: u64 = 60;
-
-fn fx(n: i32) -> Fixed {
-    Fixed::from_int(n)
-}
-fn v(x: i32, y: i32) -> Vec2 {
-    Vec2::new(fx(x), fx(y))
-}
 
 /// Spawn a `kind` unit (with its real [`economy::unit_stats`] table stats) of `faction` at
 /// `(x, y)`, set to engage at will. Returns nothing — the metrics read world state, not handles.

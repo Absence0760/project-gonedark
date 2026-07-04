@@ -8,10 +8,10 @@
 
 use std::collections::BTreeMap;
 
-use gonedark_core::components::{Order, Stance, UnitKind, Vec2};
-use gonedark_core::fixed::Fixed;
+use gonedark_core::components::{Order, Stance, UnitKind};
 use gonedark_core::lockstep::PeerId;
 use gonedark_core::scenario;
+use gonedark_core::scenario::v;
 use gonedark_core::sim::{Command, Sim};
 
 /// Which bundled scenario a replay was recorded against. The `u8` tag is stored in the artifact
@@ -69,13 +69,6 @@ impl Built {
     pub fn commands_for(&self, tick: u64) -> &[Command] {
         self.scripted.get(&tick).map(Vec::as_slice).unwrap_or(&[])
     }
-}
-
-fn fx(n: i32) -> Fixed {
-    Fixed::from_int(n)
-}
-fn v(x: i32, y: i32) -> Vec2 {
-    Vec2::new(fx(x), fx(y))
 }
 
 /// Build `scenario` seeded from `seed`. Deterministic: same args ⇒ byte-identical world + script.

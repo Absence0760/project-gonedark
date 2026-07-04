@@ -27,32 +27,14 @@ use gonedark_core::ecs::Entity;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::lockstep::{Lockstep, PeerId};
 use gonedark_core::rng::Rng;
-use gonedark_core::scenario::ScenarioBuilder;
+use gonedark_core::scenario::{v, ScenarioBuilder};
 use gonedark_core::sim::{Command, Sim};
 use gonedark_core::territory::ControlPoint;
-use gonedark_core::trig::Angle;
 
 /// Scene seed — fixed so every peer (and the reference) builds the identical world.
 const SCENE_SEED: u64 = 0x9E3779B97F4A7C15;
 /// Channel seed — fixed so the loss/jitter draw sequence is itself deterministic.
 const NET_SEED: u64 = 0xD1CE_F00D_BAAD_F00D;
-
-fn fx(n: i32) -> Fixed {
-    Fixed::from_int(n)
-}
-
-fn v(x: i32, y: i32) -> Vec2 {
-    Vec2::new(fx(x), fx(y))
-}
-
-/// Spawn a Rifleman of `faction` at `(x, y)`, set to engage at will, and return its handle.
-/// Routed through the canonical [`ScenarioBuilder::spawn`] primitive — byte-identical to the old
-/// open-coded field writes: this scene never calls `set_army`, so the builder's per-army roster
-/// read resolves `Army::Neutral` (== the shared `unit_stats` baseline), and its explicit
-/// `unit_kind`/facing writes are exactly the `World::spawn` defaults this helper used to leave.
-fn spawn_rifleman(sim: &mut Sim, x: i32, y: i32, faction: Faction) -> Entity {
-    ScenarioBuilder::new(sim).spawn(UnitKind::Rifleman, v(x, y), faction, Stance::FireAtWill, Angle(0))
-}
 
 /// Stable handles into the shared scene. Spawn order is fixed, so these are bit-identical
 /// across every `Sim` built by [`scene`].
@@ -64,19 +46,23 @@ struct Handles {
 
 /// Build the shared two-faction scene into `sim` and return its handles. A small phase2-like
 /// scene split across two sides: three player riflemen + a player camp (peer 0 commands),
-/// three enemy riflemen (peer 1 commands), one contested control point.
+/// three enemy riflemen (peer 1 commands), one contested control point. Spawns are routed
+/// through the canonical [`ScenarioBuilder::spawn_rifleman`] convenience — byte-identical to the
+/// old open-coded field writes: this scene never calls `set_army`, so the builder's per-army
+/// roster read resolves `Army::Neutral` (== the shared `unit_stats` baseline), and its explicit
+/// `unit_kind`/facing writes are exactly the `World::spawn` defaults this helper used to leave.
 fn scene(sim: &mut Sim) -> Handles {
     sim.resources = Resources::new(100_000);
     sim.territory.points.push(ControlPoint::neutral(Vec2::ZERO));
     let p = [
-        spawn_rifleman(sim, -5, 0, Faction::Player),
-        spawn_rifleman(sim, -5, 3, Faction::Player),
-        spawn_rifleman(sim, -6, 1, Faction::Player),
+        ScenarioBuilder::new(sim).spawn_rifleman(-5, 0, Faction::Player),
+        ScenarioBuilder::new(sim).spawn_rifleman(-5, 3, Faction::Player),
+        ScenarioBuilder::new(sim).spawn_rifleman(-6, 1, Faction::Player),
     ];
     let e = [
-        spawn_rifleman(sim, 5, 0, Faction::Enemy),
-        spawn_rifleman(sim, 5, 3, Faction::Enemy),
-        spawn_rifleman(sim, 6, 1, Faction::Enemy),
+        ScenarioBuilder::new(sim).spawn_rifleman(5, 0, Faction::Enemy),
+        ScenarioBuilder::new(sim).spawn_rifleman(5, 3, Faction::Enemy),
+        ScenarioBuilder::new(sim).spawn_rifleman(6, 1, Faction::Enemy),
     ];
     let camp = economy::build(
         &mut sim.world,
