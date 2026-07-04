@@ -149,25 +149,21 @@ pub fn stream_digest(checksums: &[u64]) -> u64 {
 /// The checksum vector has one entry per emitted tick: index 0 is the seeded state (tick 0), then
 /// one after each of the `1..ticks` steps — the same `<tick> <checksum>` stream sim-runner prints.
 pub fn record(scenario: Scenario, seed: u64, ticks: u64) -> (Vec<u64>, Replay) {
-    let scenario::Built {
-        mut sim,
-        scripted,
-    } = scenario::build(scenario, seed);
+    let mut built = scenario::build(scenario, seed);
     let mut log: BTreeMap<u64, Vec<Command>> = BTreeMap::new();
     let mut checksums = Vec::with_capacity(ticks as usize);
 
-    let empty: Vec<Command> = Vec::new();
-    checksums.push(sim.checksum()); // tick 0: seeded state
+    checksums.push(built.sim.checksum()); // tick 0: seeded state
     for t in 1..ticks {
-        let cmds: &[Command] = scripted.get(&t).unwrap_or(&empty);
         // Capture the exact command set fed on this tick — this IS the recording step. In a live
         // match these would arrive from input; here they come from the script, but the record path
         // is identical: whatever we step with, we log.
+        let cmds: Vec<Command> = built.commands_for(t).to_vec();
         if !cmds.is_empty() {
-            log.insert(t, cmds.to_vec());
+            log.insert(t, cmds.clone());
         }
-        sim.step(cmds);
-        checksums.push(sim.checksum());
+        built.sim.step(&cmds);
+        checksums.push(built.sim.checksum());
     }
 
     let replay = Replay {
