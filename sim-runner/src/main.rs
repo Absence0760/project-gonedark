@@ -329,10 +329,8 @@ fn main() {
     let timed = args.iter().any(|a| a == "--time");
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
 
-    let ticks: u64 = positional
-        .first()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(300);
+    let ticks: u64 = parse_ticks(positional.first().map(|s| s.as_str()))
+        .unwrap_or_else(|bad| fatal_ticks(&bad));
 
     // `--metrics[=<which>]` is a self-contained balance-harness mode: it runs its own canonical
     // fights, prints the metric series/digest to stderr, and exits without touching the stdout
@@ -375,10 +373,26 @@ fn main() {
     }
 }
 
+/// Parse the `ticks` CLI arg: absent falls back to the default (300); *present but unparseable*
+/// (e.g. a mistyped `$TICKS` in a CI script) must fail loudly instead of silently taking the
+/// default — silently running 300 ticks on a garbled arg would report a spuriously "passing" but
+/// wrongly-short determinism run. Pure — the testable seam behind `main`'s `fatal_ticks` exit.
+fn parse_ticks(arg: Option<&str>) -> Result<u64, String> {
+    match arg {
+        None => Ok(300),
+        Some(s) => s.parse::<u64>().map_err(|_| s.to_string()),
+    }
+}
+
 fn fatal_scenario(s: &str) -> ! {
     eprintln!(
         "unknown scenario {s:?}; expected `phase2`, `stress`, `stress:<n>`, `duel`, `infantry`, or `matchup`"
     );
+    std::process::exit(2);
+}
+
+fn fatal_ticks(s: &str) -> ! {
+    eprintln!("invalid tick count {s:?}; expected a non-negative integer");
     std::process::exit(2);
 }
 
@@ -514,6 +528,26 @@ mod tests {
         assert_eq!(Which::parse("stress:0"), None);
         assert_eq!(Which::parse("nope"), None);
         assert_eq!(Which::parse("stress:abc"), None);
+    }
+
+    #[test]
+    fn parse_ticks_absent_defaults_to_300() {
+        assert_eq!(parse_ticks(None), Ok(300));
+    }
+
+    #[test]
+    fn parse_ticks_present_and_valid_parses() {
+        assert_eq!(parse_ticks(Some("150")), Ok(150));
+        assert_eq!(parse_ticks(Some("0")), Ok(0));
+    }
+
+    #[test]
+    fn parse_ticks_present_and_malformed_errors_loudly_instead_of_defaulting() {
+        // A garbled arg must be reported, not silently treated as absent (the L1 bug: a
+        // mistyped `$TICKS` in a CI script must never look like a spuriously "passing" run).
+        assert_eq!(parse_ticks(Some("abc")), Err("abc".to_string()));
+        assert_eq!(parse_ticks(Some("")), Err(String::new()));
+        assert_eq!(parse_ticks(Some("-5")), Err("-5".to_string())); // u64: no negatives
     }
 
     #[test]

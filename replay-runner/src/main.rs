@@ -52,10 +52,8 @@ fn main() -> ExitCode {
         }
     }
 
-    let ticks: u64 = positional
-        .first()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(300);
+    let ticks: u64 = parse_ticks(positional.first().map(|s| s.as_str()))
+        .unwrap_or_else(|bad| fatal_ticks(&bad));
     let scenario = positional
         .get(1)
         .map(|s| s.as_str())
@@ -242,4 +240,44 @@ fn run_replay_flow<T>(
 fn fatal_scenario(s: &str) -> ! {
     eprintln!("unknown scenario {s:?}; expected `skirmish`");
     std::process::exit(2);
+}
+
+/// Parse the `ticks` CLI arg: absent falls back to the default (300); *present but unparseable*
+/// (e.g. a mistyped CI arg) must fail loudly instead of silently taking the default — a garbled
+/// arg silently defaulting would report a spuriously "passing" but wrongly-shaped replay run.
+/// Pure — the testable seam behind `main`'s `fatal_ticks` exit.
+fn parse_ticks(arg: Option<&str>) -> Result<u64, String> {
+    match arg {
+        None => Ok(300),
+        Some(s) => s.parse::<u64>().map_err(|_| s.to_string()),
+    }
+}
+
+fn fatal_ticks(s: &str) -> ! {
+    eprintln!("invalid tick count {s:?}; expected a non-negative integer");
+    std::process::exit(2);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_ticks_absent_defaults_to_300() {
+        assert_eq!(parse_ticks(None), Ok(300));
+    }
+
+    #[test]
+    fn parse_ticks_present_and_valid_parses() {
+        assert_eq!(parse_ticks(Some("150")), Ok(150));
+        assert_eq!(parse_ticks(Some("0")), Ok(0));
+    }
+
+    #[test]
+    fn parse_ticks_present_and_malformed_errors_loudly_instead_of_defaulting() {
+        // A garbled arg must be reported, not silently treated as absent (the L1 bug).
+        assert_eq!(parse_ticks(Some("abc")), Err("abc".to_string()));
+        assert_eq!(parse_ticks(Some("")), Err(String::new()));
+        assert_eq!(parse_ticks(Some("-5")), Err("-5".to_string())); // u64: no negatives
+    }
 }

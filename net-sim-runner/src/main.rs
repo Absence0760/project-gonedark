@@ -403,10 +403,28 @@ fn emit(tick: u64, checksum: u64) {
     println!("{tick} {checksum:016x}");
 }
 
+/// Parse a positional `u64` CLI arg: absent falls back to `default`; *present but unparseable*
+/// (e.g. a mistyped CI arg) must fail loudly instead of silently taking the default — a garbled
+/// arg silently defaulting would report a spuriously "passing" but wrongly-shaped determinism
+/// run. Pure — the testable seam behind `main`'s `fatal_arg` exit.
+fn parse_arg(arg: Option<&str>, default: u64) -> Result<u64, String> {
+    match arg {
+        None => Ok(default),
+        Some(s) => s.parse::<u64>().map_err(|_| s.to_string()),
+    }
+}
+
+fn fatal_arg(name: &str, s: &str) -> ! {
+    eprintln!("invalid {name} {s:?}; expected a non-negative integer");
+    std::process::exit(2);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let ticks: u64 = args.first().and_then(|s| s.parse().ok()).unwrap_or(300);
-    let delay: u64 = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
+    let ticks: u64 = parse_arg(args.first().map(|s| s.as_str()), 300)
+        .unwrap_or_else(|bad| fatal_arg("ticks", &bad));
+    let delay: u64 = parse_arg(args.get(1).map(|s| s.as_str()), 2)
+        .unwrap_or_else(|bad| fatal_arg("delay", &bad));
 
     if ticks <= delay {
         eprintln!("::error::ticks ({ticks}) must exceed delay ({delay})");
@@ -446,6 +464,26 @@ mod tests {
 
     fn cfg(ticks: u64, delay: u64) -> Config {
         Config::for_run(ticks, delay)
+    }
+
+    #[test]
+    fn parse_arg_absent_defaults() {
+        assert_eq!(parse_arg(None, 300), Ok(300));
+        assert_eq!(parse_arg(None, 2), Ok(2));
+    }
+
+    #[test]
+    fn parse_arg_present_and_valid_parses() {
+        assert_eq!(parse_arg(Some("150"), 300), Ok(150));
+        assert_eq!(parse_arg(Some("0"), 2), Ok(0));
+    }
+
+    #[test]
+    fn parse_arg_present_and_malformed_errors_loudly_instead_of_defaulting() {
+        // A garbled arg must be reported, not silently treated as absent (the L1 bug).
+        assert_eq!(parse_arg(Some("abc"), 300), Err("abc".to_string()));
+        assert_eq!(parse_arg(Some(""), 2), Err(String::new()));
+        assert_eq!(parse_arg(Some("-1"), 2), Err("-1".to_string())); // u64: no negatives
     }
 
     /// The full agreed stream, asserting the run actually agreed (so a test that wanted the
