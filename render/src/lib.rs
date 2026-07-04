@@ -306,7 +306,7 @@ pub fn shape_signed(shape: u32, x: f32, y: f32) -> f32 {
 /// unit-tested — the distinctness of the three silhouettes is asserted through this seam.
 pub fn shape_on_band(shape: u32, x: f32, y: f32) -> bool {
     let m = shape_signed(shape, x, y);
-    m <= 0.0 && m >= -SHAPE_BAND
+    (-SHAPE_BAND..=0.0).contains(&m)
 }
 
 /// Drawn half-extent (world units) per kind. Render-only cosmetic scale.

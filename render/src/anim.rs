@@ -37,9 +37,10 @@ use crate::mesh::ModelKind;
 /// Which locomotion / action clip a unit is playing. Presentation-derived (never sim state), stored
 /// on [`crate::UnitInstance`] as a `u32` discriminant so the draw path can pick a pose without a
 /// second snapshot read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AnimClip {
     /// Standing still and alive — a slow breathing bob.
+    #[default]
     Idle,
     /// Moving over the ground faster than [`WALK_SPEED_THRESHOLD`] — a stride bob + slight lean.
     Walk,
@@ -47,12 +48,6 @@ pub enum AnimClip {
     Fire,
     /// Not alive — a topple + sink (overrides everything).
     Death,
-}
-
-impl Default for AnimClip {
-    fn default() -> Self {
-        AnimClip::Idle
-    }
 }
 
 impl AnimClip {
