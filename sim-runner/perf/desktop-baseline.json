@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "what": "Desktop per-tick sim-cost baseline for the Going Dark 200-unit power budget. The reference a mid-range arm64 device run's `timing-json` output is diffed against — turning 'validate on device' into 'run the matrix, compare these medians'. See docs/platforms.md §6.1 for the schema, the scenario matrix, and the arm64 procedure.",
+  "sim_tick_hz": 60,
+  "frame_budget_ms": 16.6,
+  "budget_gate": {
+    "median_ms": 8.0,
+    "p99_ms": 14.0,
+    "note": "The CI perf gate (sim-runner test `stress_200_stays_within_frame_budget`, .github/workflows/test.yml `perf-budget` job) asserts the stress:200 median/p99 stay under these. Deliberately generous vs. the desktop baseline so noise doesn't flap, but a ~5x regression toward the frame budget trips it."
+  },
+  "run_schema": {
+    "description": "Each `runs[]` object mirrors the runner's stderr `timing-json` line EXACTLY (same keys, same ms units), so a device line is directly comparable field-for-field. Emitted by sim-runner `TimingStats::json_line`.",
+    "keys": {
+      "scenario": "lower-case scene token (round-trips through the sim-runner CLI parser)",
+      "ticks": "number of timed ticks (N-1 for an N-tick run; tick 0 is the un-timed initial emit)",
+      "min_ms": "fastest per-tick step, milliseconds",
+      "median_ms": "50th-percentile per-tick step — the stable stat the budget gate compares",
+      "p99_ms": "99th-percentile per-tick step",
+      "max_ms": "slowest per-tick step",
+      "mean_ms": "arithmetic mean per-tick step"
+    }
+  },
+  "host": {
+    "class": "desktop-flagship",
+    "cpu": "Apple M3 Pro (aarch64)",
+    "os": "macOS 26.5.1",
+    "rustc": "1.96.0",
+    "profile": "release",
+    "ticks_arg": 300,
+    "captured": "2026-07-04",
+    "captured_at_commit": "8528812",
+    "command": "cargo run -q -p gonedark-sim-runner --release -- 300 <scenario> --time"
+  },
+  "runs": [
+    { "scenario": "stress:50",  "ticks": 299, "min_ms": 0.204, "median_ms": 0.974, "p99_ms": 2.099, "max_ms": 2.623, "mean_ms": 1.010 },
+    { "scenario": "stress:100", "ticks": 299, "min_ms": 0.232, "median_ms": 1.690, "p99_ms": 3.291, "max_ms": 4.722, "mean_ms": 1.726 },
+    { "scenario": "stress:200", "ticks": 299, "min_ms": 0.302, "median_ms": 3.267, "p99_ms": 5.042, "max_ms": 7.566, "mean_ms": 3.282 }
+  ],
+  "device_baselines": {
+    "note": "Mid-range arm64 device numbers are still OWED (the honest Phase 1/3 caveat). Populate this array by running the matrix on a real device per docs/platforms.md §6.1 (scripts/android-stress.sh emits the comparable timing-json), then commit the device object alongside these desktop runs.",
+    "runs": []
+  }
+}

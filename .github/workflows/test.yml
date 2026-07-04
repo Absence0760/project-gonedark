@@ -69,6 +69,25 @@ jobs:
       - name: Workspace tests (excluding android cdylib)
         run: cargo test --workspace --exclude gonedark-pal-android
 
+  # Perf-regression gate — the 200-unit stress sim must stay well under the 60 Hz frame budget.
+  # This is a SEPARATE job (does not alter the `test` job above) because the budget assertion is
+  # RELEASE-ONLY: the sim-runner perf test (`stress_200_stays_within_frame_budget`) skips its
+  # numeric assert in the dev profile (unoptimized wall-clock is meaningless — the `test` job
+  # above merely smoke-runs it) and only asserts under `--release`. It gates the median at half
+  # the 16.6 ms frame budget (8 ms) with a ~2.4x desktop margin, so a real ~5x regression fails
+  # the build but scheduler noise on a shared runner does not (see sim-runner/perf/desktop-baseline.json
+  # and docs/platforms.md §6.1). sim-runner depends ONLY on `core` (no wgpu/winit/cpal), so this
+  # job needs NO graphics/audio apt link deps and is fast.
+  perf-budget:
+    name: sim perf budget · release · ubuntu x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+      - name: 200-unit stress sim stays within the 60 Hz frame budget
+        run: cargo test -p gonedark-sim-runner --release
+
   android-unit-tests:
     name: android shell unit tests · JVM
     runs-on: ubuntu-latest

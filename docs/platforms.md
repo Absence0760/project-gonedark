@@ -143,6 +143,70 @@ This is the *runtime* tier — the same source asset scaled per device. Where th
 art comes from, how it's graded into tiers in the cook step, and the open-source sourcing
 + license policy behind it are covered in [`content-pipeline.md`](content-pipeline.md).
 
+### 6.1 The sim-cost perf gate & the arm64 device-comparison harness
+
+The 200-unit power budget was, for a long time, an **honest caveat** — validated only on a
+flagship (Galaxy S24, D22), never gated, so a perf regression could land silently and
+mid-range arm64 numbers were unmeasured. That caveat is now a **repeatable gate + a
+device-comparison harness**; what's left is the device numbers themselves.
+
+**The budget.** The sim runs a locked **60 Hz** tick (invariant #4), so the per-tick
+wall-clock budget is `1000 / 60 = 16.6 ms`. Everything else the frame does (render,
+audio, input) shares the wall clock, so the sim must sit *well* under 16.6 ms.
+
+**The CI gate (regression alarm).** `gonedark-sim-runner`'s
+`stress_200_stays_within_frame_budget` test drives the deterministic 200-unit `stress`
+scene for 300 ticks and asserts:
+
+| stat | ceiling | vs. 16.6 ms budget | desktop baseline | why it won't flap |
+|---|---|---|---|---|
+| median | **< 8.0 ms** | half the budget | ~3.3 ms (≈2.4x margin) | median is the stable stat (~±1.5% run-to-run); a shared CI runner at ~2x still clears it |
+| p99 | **< 14.0 ms** | ~84% of budget | ~5.0 ms | loose enough that a lone scheduler-preempted tick on a CI VM doesn't trip it |
+
+The gate is deliberately **generous** — its job is to catch a ~5x regression (which would
+push the median to/over the frame budget), not to police noise. It is **release-only**:
+the assertion is skipped in the dev profile (unoptimized wall-clock is meaningless), so
+it passes both `cargo test` profiles. CI runs it in release via the **`perf-budget`** job
+in [`.github/workflows/test.yml`](../.github/workflows/test.yml). Timing is host-side
+`Instant` only — it never touches sim state, so it cannot move the checksum (invariant #1).
+
+**The device-comparison harness (validation).** The runner's `--time` flag emits, to
+**stderr**, a stable one-line `timing-json` record per run — the schema below. The same
+keys and ms units appear whether the runner is on desktop or pushed to an arm64 phone, so
+"validate on device" becomes "run the matrix, diff the JSON":
+
+```
+timing-json {"scenario":"stress:200","ticks":299,"min_ms":0.302,"median_ms":3.267,
+             "p99_ms":5.042,"max_ms":7.566,"mean_ms":3.282}
+```
+
+| field | meaning |
+|---|---|
+| `scenario` | lower-case scene token; round-trips through the sim-runner CLI parser |
+| `ticks` | timed ticks (N−1 for an N-tick run; tick 0 is the un-timed initial emit) |
+| `min_ms` / `median_ms` / `p99_ms` / `max_ms` / `mean_ms` | per-tick step distribution, ms |
+
+The **scenario matrix** is `stress:50` / `stress:100` / `stress:200` — the same scene at
+three sizes, so a device that clears 200 but chokes at scale (or vice versa) is legible.
+The committed desktop reference is
+[`sim-runner/perf/desktop-baseline.json`](../sim-runner/perf/desktop-baseline.json) (each
+`runs[]` object mirrors a `timing-json` line field-for-field); a schema-drift test
+(`desktop_baseline_matches_timing_json_schema`) keeps the baseline and the emitter in
+lockstep.
+
+**arm64 validation procedure** (device numbers still owed):
+
+1. Desktop matrix: `cargo run -q -p gonedark-sim-runner --release -- 300 stress:50 --time`
+   (repeat for `stress:100`, `stress:200`); the `timing-json` lines are the committed
+   baseline.
+2. On device: `pnpm android:stress` (`scripts/android-stress.sh`) cross-compiles the
+   core-only runner for `aarch64-linux-android`, pushes it over `adb`, runs the timed
+   `stress` scene, **and** diffs the on-device checksum stream against the host (so it
+   doubles as an at-scale determinism check — a divergence is a real desync, never
+   silenced). Set `GONEDARK_STRESS_UNITS` to sweep 50/100/200.
+3. Compare the device `median_ms` against the baseline and the 8 ms gate; commit the
+   device object into the baseline's `device_baselines.runs[]`.
+
 ## 7. Cross-platform deterministic multiplayer — the payoff
 
 Because the sim is **float-free fixed-point**, it produces bit-identical results across
