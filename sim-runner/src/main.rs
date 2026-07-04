@@ -554,16 +554,19 @@ mod tests {
     /// stays well under the 60 Hz frame budget. Purpose: a 5x regression that would blow the
     /// budget lands LOUDLY here instead of silently; the generous thresholds mean noise doesn't.
     #[test]
+    #[ignore = "wall-clock perf gate: flaps under concurrent CPU load (e.g. a parallel `cargo build`), \
+                so it is NOT part of the normal suite — the isolated CI `perf-budget` job runs it via \
+                `cargo test --release -- --include-ignored`; run it locally the same way (ideally idle)"]
     fn stress_200_stays_within_frame_budget() {
         let stats = TimingStats::from_durations(&time_stress(200, 300)).expect("300 ticks timed");
         let median_ms = stats.median_us as f64 / 1000.0;
         let p99_ms = stats.p99_us as f64 / 1000.0;
 
-        // Debug builds are unoptimized, so wall-clock is meaningless there — and `cargo test`
-        // (test.yml's `test` job) runs this in the DEV profile. Smoke-run to prove the scene
-        // doesn't panic at size, but gate the numeric budget only in release: the `perf-budget`
-        // CI job runs `cargo test -p gonedark-sim-runner --release` for exactly that. This is
-        // why the test passes in BOTH `cargo test` profiles (CLAUDE.md coding floor).
+        // Debug builds are unoptimized, so wall-clock is meaningless there. This test is
+        // `#[ignore]`d (see the attribute), so the normal suite never runs it; the `perf-budget`
+        // CI job runs it in release via `--include-ignored`. If someone runs it with
+        // `--include-ignored` in the DEV profile, smoke-run (prove the scene doesn't panic at size)
+        // but skip the numeric budget — the assertion gates in release only.
         if cfg!(debug_assertions) {
             eprintln!(
                 "stress:200 debug median {median_ms:.3} ms / p99 {p99_ms:.3} ms \

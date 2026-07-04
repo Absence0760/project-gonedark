@@ -86,7 +86,9 @@ jobs:
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
       - name: 200-unit stress sim stays within the 60 Hz frame budget
-        run: cargo test -p gonedark-sim-runner --release
+        # `--include-ignored` runs the `#[ignore]`d wall-clock perf gate (kept out of the normal
+        # suite so it can't flap under concurrent load); this dedicated job runs it in isolation.
+        run: cargo test -p gonedark-sim-runner --release -- --include-ignored
 
   android-unit-tests:
     name: android shell unit tests · JVM
