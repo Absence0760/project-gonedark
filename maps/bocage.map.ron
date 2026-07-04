@@ -1,0 +1,168 @@
+// bocage.map.ron — "Bocage": a dense, north–south hedgerow battlefield authored entirely as data.
+//
+// A deliberately DIFFERENT layout from the shipped library: where `crossroads` is a small
+// west–east junction and `prokhorovka` is a wide-open steppe, this is a claustrophobic hedgerow
+// maze fought along the VERTICAL axis. The attacker deploys at the south edge and pushes north
+// through five staggered hedgerow bands (Normandy bocage: tall walls that break line of sight and
+// block movement), weaving between the central lane and the flank gaps each band leaves open.
+// Five posts to contest — a diamond of four (N/S/E/W) around a central crossing.
+//
+// It is built ENTIRELY over the open playfield (`terrain: 0`, core::terrain SCENE_MAP_ID) using
+// authored cover props — no bake step, exactly like `crossroads`/`seize_outpost`. The layout is
+// MIRROR-X SYMMETRIC (every solid at (x,y) has a twin at (127-x,y)), so neither the west nor the
+// east flank inherits a structural edge; the whole passable field is one connected region and both
+// deploy zones reach every post (flood-fill verified). The `Barricade`/`Rock` props are the Heavy
+// tier, so `MapSpec::apply` paints their footprint Cover::Impassable — real walls you stop at and
+// can't see through — while `Crate`/`Tree` props stay passable concealment you fight from.
+//
+// EVERY number here is an INTEGER cell (or the u16 terrain id) — the `engine::map_format` loader is
+// the float airlock (invariant #1). Cells are on the 128x128 playfield ([0, 128) per axis); cy=0 is
+// the south edge, so the player deploys low and the enemy high. The hedgerow bands leave lanes: a
+// wide central gap at bands A/E (flank walls only), flank + centre gaps at bands B/D, and the
+// centre post bracketed by short walls at band C — so the advance is always channelled but never
+// sealed.
+MapSpec(
+    terrain: 0,
+
+    // Five posts: a central crossing plus a N/S/E/W diamond, all on open lanes between the bands.
+    control_points: [
+        CellRef(x: 63, y: 64),
+        CellRef(x: 63, y: 34),
+        CellRef(x: 63, y: 94),
+        CellRef(x: 34, y: 64),
+        CellRef(x: 93, y: 64),
+    ],
+
+    cover_props: [
+        // Band A hedgerows (y=30) — flank walls, wide central lane
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 24, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 25, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 26, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 27, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 28, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 29, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 30, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 31, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 32, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 33, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 94, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 95, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 96, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 97, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 98, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 99, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 100, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 101, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 102, y: 30)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 103, y: 30)),
+        // Band B hedgerows (y=46) — inner walls, flank + centre gaps
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 46, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 47, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 48, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 49, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 50, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 51, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 52, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 53, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 54, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 55, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 72, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 73, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 74, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 75, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 76, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 77, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 78, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 79, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 80, y: 46)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 81, y: 46)),
+        // Band C (y=64) — short walls bracketing the centre post
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 41, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 42, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 43, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 44, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 45, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 46, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 47, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 80, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 81, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 82, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 83, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 84, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 85, y: 64)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 86, y: 64)),
+        // Band D hedgerows (y=82) — staggered opposite band B
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 46, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 47, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 48, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 49, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 50, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 51, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 52, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 53, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 54, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 55, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 72, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 73, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 74, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 75, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 76, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 77, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 78, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 79, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 80, y: 82)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 81, y: 82)),
+        // Band E hedgerows (y=98) — flank walls mirroring band A
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 24, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 25, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 26, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 27, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 28, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 29, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 30, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 31, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 32, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 33, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 94, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 95, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 96, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 97, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 98, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 99, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 100, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 101, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 102, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 103, y: 98)),
+        // Centre boulders (Heavy hard cover)
+        CoverPropSpec(kind: Rock, cell: CellRef(x: 60, y: 64)),
+        CoverPropSpec(kind: Rock, cell: CellRef(x: 67, y: 64)),
+        // Light concealment at the five posts (crate nests + tree line)
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 61, y: 64)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 65, y: 64)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 63, y: 62)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 63, y: 66)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 61, y: 34)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 65, y: 34)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 63, y: 32)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 63, y: 36)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 61, y: 94)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 65, y: 94)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 63, y: 92)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 63, y: 96)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 32, y: 64)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 36, y: 64)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 34, y: 62)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 34, y: 66)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 91, y: 64)),
+        CoverPropSpec(kind: Crate, cell: CellRef(x: 95, y: 64)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 93, y: 62)),
+        CoverPropSpec(kind: Tree, cell: CellRef(x: 93, y: 66)),
+    ],
+
+    // Two deploy zones at OPPOSITE ENDS of the vertical axis: the attacker at the south edge, the
+    // defender at the north. Mirror-x symmetric, non-overlapping, in-bounds; both centres are open.
+    spawn_zones: [
+        SpawnZoneSpec(name: "player", min: CellRef(x: 57, y: 6),   max: CellRef(x: 69, y: 12)),
+        SpawnZoneSpec(name: "enemy",  min: CellRef(x: 57, y: 116), max: CellRef(x: 69, y: 122)),
+    ],
+)

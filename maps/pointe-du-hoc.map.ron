@@ -1,0 +1,60 @@
+// pointe-du-hoc.map.ron — "Pointe du Hoc, Normandy": the spatial half of a skirmish on the
+// D80-baked coastal battlefield (`terrain: 1`, core::terrain POINTE_DU_HOC_MAP_ID).
+//
+// The 1944 Ranger assault on the clifftop battery. Unlike the abstract `crossroads` sample, this
+// rides the REAL baked terrain baked by `tools/maps/bake.py` from GIS data: the sea/cliff wall
+// (the solid `#` band along the south edge), the concrete casemates and observation bunkers, and
+// the hedgerow scrub are all in the cover grid itself (`assets/maps/pointe-du-hoc.covergrid`) —
+// the same `Terrain::from_map_id` bridge Prokhorovka uses. The baked artifact was already
+// committed and wired into `core::terrain` (D-orphan); this file is the missing airlock that makes
+// it a *selectable, playable* battlefield.
+//
+// The fight reads south → north: the attacker deploys on the open ground just inland of the sea
+// wall and pushes up through the bunker complex toward the northern plateau. Three posts to
+// contest — the central crossing and the two flanking casemate approaches (the west post sits
+// right beside a baked bunker, so it plays as a fight for the casemate itself). Spawns and posts
+// were verified against the baked grid with `tools/maps/lint.py --spawn 62,29 --spawn 62,121
+// --control 62,64 --control 48,80 --control 76,80` (0 errors; both spawns reach 100% of the
+// passable field; narrowest corridor 19 cells).
+//
+// EVERY number here is an INTEGER cell (or the u16 terrain id) — the `engine::map_format` loader is
+// the float airlock (invariant #1). Cells are on the 128x128 playfield ([0, 128) per axis); cy=0
+// is the south (seaward) edge. The added cover props sit on baked OPEN cells (verified), so they
+// only add tactical cover — they never fight the baked terrain.
+MapSpec(
+    terrain: 1,
+
+    // Three posts up the assault axis: the central crossing, plus the west and east casemate
+    // approaches (all on baked open ground; the west post abuts a baked bunker).
+    control_points: [
+        CellRef(x: 62, y: 64),
+        CellRef(x: 48, y: 80),
+        CellRef(x: 76, y: 80),
+    ],
+
+    // Cover strewn at the objectives (drawn in both views, Q24/D50): light crate nests to fight
+    // from, and sight-blocking barricades flanking the two casemate posts. All on baked open cells.
+    cover_props: [
+        // Centre crossing — a light crate nest.
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 59, y: 62)),
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 65, y: 62)),
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 59, y: 66)),
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 65, y: 66)),
+        // West casemate approach — a crate to fight from, barricades bracketing the post.
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 51, y: 80)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 48, y: 77)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 48, y: 83)),
+        // East casemate approach — mirror of the west.
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 73, y: 80)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 76, y: 77)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 76, y: 83)),
+    ],
+
+    // Two deploy zones: the attacker on the open ground just inland of the sea wall (south), the
+    // garrison up on the northern plateau. Non-overlapping and in-bounds (the loader enforces both);
+    // both centres are baked-open (verified).
+    spawn_zones: [
+        SpawnZoneSpec(name: "player", min: CellRef(x: 56, y: 26), max: CellRef(x: 68, y: 32)),
+        SpawnZoneSpec(name: "enemy",  min: CellRef(x: 56, y: 118), max: CellRef(x: 68, y: 124)),
+    ],
+)

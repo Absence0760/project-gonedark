@@ -54,6 +54,20 @@ pub const MAP_LIBRARY: &[MapLibraryEntry] = &[
         id: "prokhorovka",
         source: include_str!("../../maps/prokhorovka.map.ron"),
     },
+    // Pointe du Hoc (Normandy) — the D80-baked coastal assault on
+    // `core::terrain` POINTE_DU_HOC_MAP_ID (terrain 1): sea wall, casemates and hedgerow scrub are
+    // in the baked grid; this spec adds the posts, tactical cover, and south→north deploy zones.
+    MapLibraryEntry {
+        id: "pointe-du-hoc",
+        source: include_str!("../../maps/pointe-du-hoc.map.ron"),
+    },
+    // Bocage — a dense north–south hedgerow maze authored entirely over the open playfield
+    // (terrain 0), mirror-x symmetric, five posts. A deliberately claustrophobic contrast to the
+    // open steppe and the small crossroads junction.
+    MapLibraryEntry {
+        id: "bocage",
+        source: include_str!("../../maps/bocage.map.ron"),
+    },
 ];
 
 /// Parse + validate a library map by id — the one gate between the embedded text and a usable
@@ -140,6 +154,18 @@ pub const BATTLEFIELDS: &[Battlefield] = &[
         name: "Prokhorovka",
         blurb: "The 1943 Kursk tank battle: a wide, even steppe. Deploy at opposite ends and cross.",
         kind: BattlefieldKind::LibraryMap("prokhorovka"),
+    },
+    Battlefield {
+        id: "pointe-du-hoc",
+        name: "Pointe du Hoc",
+        blurb: "The Normandy clifftop battery. Land under the sea wall and fight north through the casemates.",
+        kind: BattlefieldKind::LibraryMap("pointe-du-hoc"),
+    },
+    Battlefield {
+        id: "bocage",
+        name: "Bocage",
+        blurb: "A hedgerow maze fought south to north. Weave the lanes; every wall breaks sight.",
+        kind: BattlefieldKind::LibraryMap("bocage"),
     },
 ];
 
@@ -260,6 +286,61 @@ mod tests {
             assert_eq!(sim.resources.amounts[Faction::Player.index()], SKIRMISH_START_PURSE);
             assert_eq!(sim.income_period(), SKIRMISH_INCOME_PERIOD);
         }
+    }
+
+    #[test]
+    fn pointe_du_hoc_is_a_selectable_baked_battlefield() {
+        // Item-1 guard: the orphaned D80-baked Pointe du Hoc terrain is now a real, selectable
+        // battlefield — it has a picker tile, its library map validates, it rides the baked
+        // terrain (map id 1, not the open playfield), and it carries both deploy zones the
+        // skirmish recipe needs.
+        let bf = BATTLEFIELDS
+            .iter()
+            .find(|b| b.id == "pointe-du-hoc")
+            .expect("Pointe du Hoc has a battlefield tile");
+        assert_eq!(bf.library_map(), Some("pointe-du-hoc"));
+        let spec = library_spec("pointe-du-hoc").expect("Pointe du Hoc library map validates");
+        assert_eq!(
+            spec.terrain,
+            gonedark_core::terrain::Terrain::POINTE_DU_HOC_MAP_ID,
+            "Pointe du Hoc rides its baked coastal terrain, not the open playfield",
+        );
+        assert!(spec.spawn_zone(PLAYER_ZONE).is_some() && spec.spawn_zone(ENEMY_ZONE).is_some());
+        assert_eq!(spec.control_points.len(), 3, "three posts up the assault axis");
+
+        // It seeds a real, playable skirmish: both sides fielded on the baked ground.
+        let mut sim = Sim::new(0x9013);
+        let s = seed_map_skirmish(&mut sim, &spec, Loadout::STANDARD).expect("seeds a skirmish");
+        assert!(faction_entity_count(&sim, Faction::Player) >= 2);
+        assert!(faction_entity_count(&sim, Faction::Enemy) >= 2);
+        assert_ne!(s.player_base, s.enemy_base);
+    }
+
+    #[test]
+    fn bocage_is_a_distinct_hedgerow_battlefield_with_solid_walls() {
+        // Item-2 guard: the new authored bocage map is selectable, validates, and — unlike the
+        // open-field samples — actually lays SOLID walls (its Heavy hedgerow props paint
+        // Cover::Impassable), so it plays as a genuinely different, cover-dense layout.
+        let bf = BATTLEFIELDS
+            .iter()
+            .find(|b| b.id == "bocage")
+            .expect("Bocage has a battlefield tile");
+        assert_eq!(bf.library_map(), Some("bocage"));
+        let spec = library_spec("bocage").expect("Bocage library map validates");
+        assert_eq!(spec.control_points.len(), 5, "a five-post diamond");
+        assert!(spec.spawn_zone(PLAYER_ZONE).is_some() && spec.spawn_zone(ENEMY_ZONE).is_some());
+
+        let mut sim = Sim::new(0xB0CA);
+        seed_map_skirmish(&mut sim, &spec, Loadout::STANDARD).expect("seeds a skirmish");
+        // The barricade footprints are solid (blocks movement) — the defining feature vs. the
+        // open-field maps, and neither deploy-zone centre is ever walled in (loader + authoring).
+        let solid_cells = spec
+            .cover_props
+            .iter()
+            .filter(|p| p.kind.is_solid())
+            .filter(|p| sim.terrain.cover_at_cell(p.cell.x, p.cell.y).blocks_movement())
+            .count();
+        assert!(solid_cells >= 90, "the hedgerows lay solid walls, got {solid_cells}");
     }
 
     #[test]
