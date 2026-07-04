@@ -22,7 +22,7 @@
 //! instances` / `marker_for` pattern.
 
 use crate::text::{Anchor, TextRenderer};
-use gonedark_core::shell::{FactionStats, MatchOutcome, MatchSummary};
+use gonedark_core::shell::{EndReason, FactionStats, MatchOutcome, MatchSummary};
 use wgpu::util::DeviceExt;
 
 /// Which in-session overlay surface the host wants drawn this frame. A flat, presentation-only
@@ -686,6 +686,27 @@ fn outcome_title(outcome: MatchOutcome) -> &'static str {
     }
 }
 
+/// The summary's readable **reason line** — *why* the match ended, drawn on the outcome accent
+/// strip under the title. Uppercase printable-ASCII only (the glyph atlas' charset). Fairness
+/// (invariant #6): an objective loss names the failed objective itself, so every loss reads as
+/// "I stayed too long", never "the game robbed me". Pure fn (host-tested, no GPU).
+fn outcome_reason(summary: &MatchSummary) -> String {
+    use gonedark_core::components::Faction;
+    match &summary.reason {
+        EndReason::Elimination => match summary.outcome {
+            MatchOutcome::Victory(Faction::Player) => "ENEMY FORCES ELIMINATED".to_string(),
+            MatchOutcome::Victory(_) => "YOUR FORCES ELIMINATED".to_string(),
+            MatchOutcome::Draw => "MUTUAL ELIMINATION".to_string(),
+        },
+        EndReason::Timeout => "TIME EXPIRED - SCORE DECIDES".to_string(),
+        EndReason::Surrender => "MATCH SURRENDERED".to_string(),
+        EndReason::ObjectivesComplete => "ALL OBJECTIVES COMPLETE".to_string(),
+        EndReason::ObjectiveFailed(label) => {
+            format!("OBJECTIVE FAILED - {}", label.to_uppercase())
+        }
+    }
+}
+
 /// The caption a button slot draws, by surface position. The renderer owns the slot *layout*;
 /// `engine::session_shell` owns *which* actions are live, but the per-surface vocabulary is fixed
 /// and deterministic (mirrors [`surface_choices`]), so the captions are a safe render-side
@@ -785,6 +806,18 @@ pub fn overlay_labels_scaled(overlay: &Overlay, ui_scale: f32) -> Vec<TextLabel>
             size: TITLE_SIZE,
             anchor: Anchor::BottomCenter,
             color: LABEL_COLOR,
+        });
+
+        // The reason line — WHY the match ended — centered on the outcome accent strip (the strip
+        // quad spans `[panel_hh - 2*accent_hh, panel_hh]`, so its center is `panel_hh - accent_hh`).
+        // Dark ink for contrast over the colored strip fill, the same rule the amber primary
+        // button's caption follows. Invariant #6: a loss names its objective, in words.
+        out.push(TextLabel {
+            text: outcome_reason(summary),
+            pos: [0.0, panel_hh - accent_hh],
+            size: LABEL_SIZE,
+            anchor: Anchor::Center,
+            color: crate::theme::INK,
         });
 
         // Per-faction numeric readouts, one row per faction, aligned with the bar rows in
@@ -1101,7 +1134,7 @@ mod tests {
 
     use super::*;
     use gonedark_core::components::{Faction, FACTION_COUNT};
-    use gonedark_core::shell::{FactionStats, MatchOutcome, MatchSummary};
+    use gonedark_core::shell::{EndReason, FactionStats, MatchOutcome, MatchSummary};
 
     /// The hit-test must track the DRAW at any `ui_scale`: the center of each scaled-drawn button
     /// must hit-test to its own slot. Without the scaled hit-test, a click on the visible (scaled)
@@ -1141,6 +1174,7 @@ mod tests {
         per_faction[Faction::Enemy.index()].units_killed = enemy;
         MatchSummary {
             outcome,
+            reason: EndReason::Elimination,
             end_tick: 3600,
             per_faction,
         }
@@ -1169,6 +1203,7 @@ mod tests {
         per_faction[Faction::Enemy.index()].resources_total = e_res;
         MatchSummary {
             outcome,
+            reason: EndReason::Elimination,
             end_tick: 3600,
             per_faction,
         }

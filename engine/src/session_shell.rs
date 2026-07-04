@@ -37,7 +37,8 @@
 use gonedark_core::components::{Faction, FACTION_COUNT};
 use gonedark_core::event::SimEvent;
 use gonedark_core::shell::{
-    ConnectionStatus, FactionStats, LinkState, MatchOutcome, MatchSummary, SessionAction,
+    ConnectionStatus, EndReason, FactionStats, LinkState, MatchOutcome, MatchSummary,
+    SessionAction,
 };
 
 /// Which in-session shell surface is currently up. A small, flat state machine — the in-engine
@@ -216,6 +217,7 @@ pub fn assemble_summary(
     events: &[SimEvent],
     end_tick: u64,
     outcome: MatchOutcome,
+    reason: EndReason,
     end_reads: &[EndStateRead; FACTION_COUNT],
 ) -> MatchSummary {
     let mut per_faction: [FactionStats; FACTION_COUNT] = Default::default();
@@ -266,6 +268,7 @@ pub fn assemble_summary(
 
     MatchSummary {
         outcome,
+        reason,
         end_tick,
         per_faction,
     }
@@ -338,33 +341,78 @@ pub fn evaluate_outcome(
     elapsed_ticks: u64,
     timeout_ticks: u64,
 ) -> Option<MatchOutcome> {
-    let player_out = player.is_eliminated();
-    let enemy_out = enemy.is_eliminated();
+    elimination_outcome(player, enemy)
+        .or_else(|| timeout_outcome(player, enemy, elapsed_ticks, timeout_ticks))
+}
 
-    // Rule 1 — elimination dominates the clock: a wiped-out side has lost now.
-    match (player_out, enemy_out) {
-        (false, true) => return Some(MatchOutcome::Victory(Faction::Player)),
-        (true, false) => return Some(MatchOutcome::Victory(Faction::Enemy)),
-        (true, true) => return Some(MatchOutcome::Draw), // mutual annihilation
-        (false, false) => {}                             // both alive — fall through
+/// Rule 1 of [`evaluate_outcome`], isolated: elimination dominates the clock — a wiped-out side
+/// has lost *now*. `None` while both combatants still stand.
+fn elimination_outcome(player: FactionForces, enemy: FactionForces) -> Option<MatchOutcome> {
+    match (player.is_eliminated(), enemy.is_eliminated()) {
+        (false, true) => Some(MatchOutcome::Victory(Faction::Player)),
+        (true, false) => Some(MatchOutcome::Victory(Faction::Enemy)),
+        (true, true) => Some(MatchOutcome::Draw), // mutual annihilation
+        (false, false) => None,                   // both alive
     }
+}
 
-    // Rule 2 — timeout tiebreak: territory first, then resources, else a true draw.
-    if elapsed_ticks >= timeout_ticks {
-        let outcome = match player.territory_held.cmp(&enemy.territory_held) {
+/// Rule 2 of [`evaluate_outcome`], isolated: once the clock expires, decide on score — territory
+/// first, then resources, else a true draw. `None` before `timeout_ticks`.
+fn timeout_outcome(
+    player: FactionForces,
+    enemy: FactionForces,
+    elapsed_ticks: u64,
+    timeout_ticks: u64,
+) -> Option<MatchOutcome> {
+    if elapsed_ticks < timeout_ticks {
+        return None;
+    }
+    let outcome = match player.territory_held.cmp(&enemy.territory_held) {
+        core::cmp::Ordering::Greater => MatchOutcome::Victory(Faction::Player),
+        core::cmp::Ordering::Less => MatchOutcome::Victory(Faction::Enemy),
+        core::cmp::Ordering::Equal => match player.resources_total.cmp(&enemy.resources_total) {
             core::cmp::Ordering::Greater => MatchOutcome::Victory(Faction::Player),
             core::cmp::Ordering::Less => MatchOutcome::Victory(Faction::Enemy),
-            core::cmp::Ordering::Equal => match player.resources_total.cmp(&enemy.resources_total) {
-                core::cmp::Ordering::Greater => MatchOutcome::Victory(Faction::Player),
-                core::cmp::Ordering::Less => MatchOutcome::Victory(Faction::Enemy),
-                core::cmp::Ordering::Equal => MatchOutcome::Draw,
-            },
-        };
-        return Some(outcome);
-    }
+            core::cmp::Ordering::Equal => MatchOutcome::Draw,
+        },
+    };
+    Some(outcome)
+}
 
-    // Rule 3 — still ongoing.
-    None
+/// **The full match-end decision** — [`evaluate_outcome`] with the host-side objective layer folded
+/// in, returning both the outcome and the readable [`EndReason`] the summary draws. Pure, like the
+/// evaluator it extends: it reads only `Copy`/owned snapshots (never `&Sim`), so it folds nothing
+/// and cannot desync (invariants #1/#7).
+///
+/// `mission` is the objective layer's own verdict
+/// ([`ObjectiveSet::decided`](crate::objectives::ObjectiveSet::decided)) — `None` when the scene
+/// has no objectives *or* the mission is still in progress, so the pre-objective elimination /
+/// timeout behavior is preserved exactly for those matches.
+///
+/// ## Priority order (and why)
+///
+/// 1. **Elimination.** Dominates everything, including a mission verdict that lands the same tick
+///    (an owner wipe fails every objective the same evaluation it eliminates the side): "your
+///    forces were eliminated" is the honest read of a wipe (invariant #6), not the objective label
+///    it incidentally failed.
+/// 2. **Mission verdict.** An objective win/loss ends the match the tick the `ObjectiveSet`
+///    decides, with the objective-shaped reason.
+/// 3. **Timeout tiebreak.** Unchanged from [`evaluate_outcome`].
+pub fn decide_match_end(
+    player: FactionForces,
+    enemy: FactionForces,
+    mission: Option<(MatchOutcome, EndReason)>,
+    elapsed_ticks: u64,
+    timeout_ticks: u64,
+) -> Option<(MatchOutcome, EndReason)> {
+    if let Some(outcome) = elimination_outcome(player, enemy) {
+        return Some((outcome, EndReason::Elimination));
+    }
+    if mission.is_some() {
+        return mission;
+    }
+    timeout_outcome(player, enemy, elapsed_ticks, timeout_ticks)
+        .map(|outcome| (outcome, EndReason::Timeout))
 }
 
 #[cfg(test)]
@@ -390,7 +438,7 @@ mod tests {
 
     /// A minimal summary for the surrender-path tests (the assembler is tested separately).
     fn stub_summary() -> MatchSummary {
-        assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads())
+        assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads())
     }
 
     // ---- state machine transitions ----
@@ -469,6 +517,7 @@ mod tests {
             &[],
             999,
             MatchOutcome::Victory(Faction::Enemy),
+            EndReason::Surrender,
             &empty_reads(),
         );
         s.apply(SessionAction::Surrender, &summary);
@@ -486,11 +535,12 @@ mod tests {
     #[test]
     fn end_match_is_idempotent_keeps_first_summary() {
         let mut s = InSessionShell::new(true);
-        let first = assemble_summary(&[], 10, MatchOutcome::Draw, &empty_reads());
+        let first = assemble_summary(&[], 10, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         let second = assemble_summary(
             &[],
             20,
             MatchOutcome::Victory(Faction::Player),
+            EndReason::Elimination,
             &empty_reads(),
         );
         s.end_match(first.clone());
@@ -676,6 +726,7 @@ mod tests {
             &events,
             3600,
             MatchOutcome::Victory(Faction::Player),
+            EndReason::Elimination,
             &reads,
         );
 
@@ -707,7 +758,7 @@ mod tests {
             territory_held: 1,
             resources_total: 42,
         };
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &reads);
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &reads);
         for f in Faction::ALL {
             let s = summary.faction(f);
             assert_eq!(s.units_produced, 0);
@@ -722,7 +773,7 @@ mod tests {
     #[test]
     fn assembler_resources_total_is_i64() {
         // A compile-time check documenting intent: resources_total is i64 (no float money).
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, &empty_reads());
+        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         let _total: i64 = summary.faction(Faction::Player).resources_total;
     }
 
@@ -743,7 +794,7 @@ mod tests {
                 to: Faction::Player,
             },
         ];
-        let summary = assemble_summary(&events, 5, MatchOutcome::Draw, &empty_reads());
+        let summary = assemble_summary(&events, 5, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
         for f in Faction::ALL {
             let s = summary.faction(f);
             assert_eq!(s.units_produced, 0);
@@ -865,6 +916,71 @@ mod tests {
             out,
             Some(MatchOutcome::Victory(Faction::Player)),
             "elimination wins outright; the clock/tiebreak never runs"
+        );
+    }
+
+    // ---- decide_match_end: the full decision with the objective layer folded in ----
+
+    /// Both combatants still standing, so elimination/timeout do not fire.
+    const BOTH_ALIVE: (FactionForces, FactionForces) = (
+        FactionForces { alive_units: 3, buildings: 1, territory_held: 1, resources_total: 100 },
+        FactionForces { alive_units: 2, buildings: 1, territory_held: 1, resources_total: 100 },
+    );
+
+    #[test]
+    fn decide_no_objectives_falls_back_to_elimination_then_timeout() {
+        // No mission verdict → identical to `evaluate_outcome` (elimination, then timeout tiebreak).
+        // Both alive, before timeout → ongoing.
+        assert_eq!(decide_match_end(BOTH_ALIVE.0, BOTH_ALIVE.1, None, 100, NEVER), None);
+        // Enemy eliminated → player wins by elimination.
+        assert_eq!(
+            decide_match_end(forces(2, 1, 0, 0), forces(0, 0, 0, 0), None, 10, NEVER),
+            Some((MatchOutcome::Victory(Faction::Player), EndReason::Elimination)),
+        );
+        // Both alive at the clock → timeout tiebreak, tagged Timeout.
+        assert_eq!(
+            decide_match_end(forces(2, 1, 3, 0), forces(2, 1, 1, 0), None, 3600, 3600),
+            Some((MatchOutcome::Victory(Faction::Player), EndReason::Timeout)),
+        );
+    }
+
+    #[test]
+    fn decide_objective_win_ends_the_match_while_both_alive() {
+        // A mission verdict ends the match the tick it decides, even though neither side is
+        // eliminated and the clock is nowhere near expiry.
+        let mission = Some((MatchOutcome::Victory(Faction::Player), EndReason::ObjectivesComplete));
+        assert_eq!(
+            decide_match_end(BOTH_ALIVE.0, BOTH_ALIVE.1, mission.clone(), 100, NEVER),
+            mission,
+        );
+    }
+
+    #[test]
+    fn decide_objective_loss_ends_the_match_with_its_failed_label() {
+        // A failed objective ends the match as the opposing victory, carrying the objective's own
+        // label so the summary can name what went wrong (invariant #6: an honest loss).
+        let mission = Some((
+            MatchOutcome::Victory(Faction::Enemy),
+            EndReason::ObjectiveFailed("Hold the line".into()),
+        ));
+        assert_eq!(
+            decide_match_end(BOTH_ALIVE.0, BOTH_ALIVE.1, mission.clone(), 50, NEVER),
+            mission,
+        );
+    }
+
+    #[test]
+    fn decide_elimination_outranks_a_same_tick_objective_verdict() {
+        // If the owner is wiped the same evaluation its objectives fail, the honest read is
+        // "your forces were eliminated", not the incidental objective label — elimination wins.
+        let mission = Some((
+            MatchOutcome::Victory(Faction::Enemy),
+            EndReason::ObjectiveFailed("Reach the LZ".into()),
+        ));
+        assert_eq!(
+            decide_match_end(forces(0, 0, 0, 0), forces(2, 1, 0, 0), mission, 50, NEVER),
+            Some((MatchOutcome::Victory(Faction::Enemy), EndReason::Elimination)),
+            "elimination reason dominates a same-tick mission failure",
         );
     }
 }
