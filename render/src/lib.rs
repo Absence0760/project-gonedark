@@ -233,6 +233,17 @@ pub fn fixed_to_f32(v: Fixed) -> f32 {
     v.to_bits() as f32 / Fixed::SCALE as f32
 }
 
+/// Quantize a host-side `f32` to exact Q16.16 `Fixed` bits — the exact inverse of
+/// [`fixed_to_f32`] (`round(v * SCALE)` ⇄ `bits / SCALE`) and the single sanctioned
+/// float→fixed hop. This is THE input boundary invariant #1 leans on: the `f32` never enters
+/// `core`, only the rounded bits do, so every caller must round identically. `engine`'s
+/// `world_to_fixed`/`fire`/`locomote` quantizers and `fog`'s instance cull all delegate here
+/// so the formula lives exactly once and can never drift.
+#[inline]
+pub fn f32_to_fixed(v: f32) -> Fixed {
+    Fixed::from_bits((v * Fixed::SCALE as f32).round() as i32)
+}
+
 /// Interpolate two binary-radian [`Angle`]s by `alpha ∈ [0,1]` and return the result in **f32
 /// radians** for the mesh-yaw transform (invariant #4 — angle interpolation lives in the renderer,
 /// not the sim). Crosses the wrap seam the **shortest way around**, mirroring

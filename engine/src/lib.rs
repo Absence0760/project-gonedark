@@ -45,7 +45,7 @@ use gonedark_pal::{Audio, InputFrame, SoundId, Transport};
 use gonedark_render::marquee::Marquee;
 use gonedark_render::overlay::Overlay;
 use gonedark_render::radial::RadialMenu;
-use gonedark_render::{fixed_to_f32, Camera, Renderer};
+use gonedark_render::{f32_to_fixed, fixed_to_f32, Camera, Renderer};
 
 use selection::{GestureScale, Selection};
 use session_shell::{EndStateRead, FactionForces, InSessionShell, ShellSurface};
@@ -446,10 +446,11 @@ enum CameraMode {
 
 /// Quantize a host-side world coordinate to exact Q16.16 `Fixed` bits — the mirror of
 /// `render::fixed_to_f32`. THE input boundary: the float never enters `core`; the `Command`
-/// it produces carries Fixed bits into the deterministic sim (invariant #1).
+/// it produces carries Fixed bits into the deterministic sim (invariant #1). Delegates to the
+/// canonical [`gonedark_render::f32_to_fixed`] so the round-to-bits rule lives exactly once.
 #[inline]
 pub fn world_to_fixed(world_coord: f32) -> Fixed {
-    Fixed::from_bits((world_coord * Fixed::SCALE as f32).round() as i32)
+    f32_to_fixed(world_coord)
 }
 
 /// Command-view camera tilt above the horizon (D45). A three-quarter RTS pitch (think Company of

@@ -16,10 +16,10 @@ use gonedark_core::sim::Command;
 
 /// Quantize one host float to `Fixed` Q16.16 bits — the single sanctioned float→sim boundary,
 /// identical to [`world_to_fixed`](crate::world_to_fixed). Round-to-nearest so `+x` aim maps to
-/// `Fixed::ONE` exactly.
+/// `Fixed::ONE` exactly. Delegates to the canonical [`gonedark_render::f32_to_fixed`].
 #[inline]
 fn quantize(v: f32) -> Fixed {
-    Fixed::from_bits((v * Fixed::SCALE as f32).round() as i32)
+    gonedark_render::f32_to_fixed(v)
 }
 
 /// Build the [`Command::Fire`] for an embodied unit this frame, or `None` if the fire button is

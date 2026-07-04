@@ -24,16 +24,7 @@
 
 use crate::{UnitInstance, FLAG_EMBODIED, FLAG_RING};
 use gonedark_core::components::Vec2;
-use gonedark_core::fixed::Fixed;
 use gonedark_core::fog::Visibility;
-
-/// Map a render-space `f32` world coordinate back to a `core` `Fixed`. The exact inverse of
-/// [`crate::fixed_to_f32`] (`bits / SCALE` ⇄ `round(v * SCALE)`), so an instance lands in the
-/// same grid cell the sim used when `fog` was computed. Render-only — `f32` is fine here.
-#[inline]
-fn f32_to_fixed(v: f32) -> Fixed {
-    Fixed::from_bits((v * Fixed::SCALE as f32).round() as i32)
-}
 
 /// Filter the frame's instances against the visibility `fog` mask (invariant #6 — going dark
 /// stays fair). The drawn set is a hard visibility cut; no dimming.
@@ -63,7 +54,7 @@ pub fn visible_instances(
                 return true;
             }
             // Everything else is gated on the visibility mask.
-            fog.is_visible(Vec2::new(f32_to_fixed(u.x), f32_to_fixed(u.y)))
+            fog.is_visible(Vec2::new(crate::f32_to_fixed(u.x), crate::f32_to_fixed(u.y)))
         })
         .collect()
 }

@@ -25,10 +25,11 @@ use gonedark_core::sim::Command;
 
 /// Quantize one host float to `Fixed` Q16.16 bits — the single sanctioned float→sim boundary,
 /// identical to [`world_to_fixed`](crate::world_to_fixed) and [`fire`](crate::fire)'s aim
-/// quantizer. Round-to-nearest so a `+x` heading maps to `Fixed::ONE` exactly.
+/// quantizer. Round-to-nearest so a `+x` heading maps to `Fixed::ONE` exactly. Delegates to the
+/// canonical [`gonedark_render::f32_to_fixed`] so the round-to-bits rule lives exactly once.
 #[inline]
 fn quantize(v: f32) -> Fixed {
-    Fixed::from_bits((v * Fixed::SCALE as f32).round() as i32)
+    gonedark_render::f32_to_fixed(v)
 }
 
 /// Stick deflections at or below this magnitude are treated as neutral (no command). Small enough
