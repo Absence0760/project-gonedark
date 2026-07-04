@@ -58,6 +58,33 @@
       "water_handling": "mapped to Cover::Heavy; true impassability pending flow-field decision",
       "license": "features: see sources (OSM = ODbL-1.0); baked grid: derived data",
       "generator": "tools/maps/bake.py"
+    },
+    {
+      "name": "prokhorovka",
+      "title": "Prokhorovka, Kursk",
+      "map_id": 2,
+      "mode": "inspired",
+      "fidelity": "material",
+      "era": "1943-07",
+      "grid": 128,
+      "cell_world_units": 1,
+      "synthetic_source": true,
+      "symmetry": "mirror-x",
+      "covergrid_file": "prokhorovka.covergrid",
+      "covergrid_sha256": "73f912889f175b1fb95aaf23fa7e78e700721213b30e0860a6b8a9e6f74dcb9e",
+      "cover_cells": {
+        "none": 14824,
+        "light": 1224,
+        "heavy": 336
+      },
+      "balance": {
+        "cover_density": 0.0952,
+        "lr_asymmetry": 0.0,
+        "note": "built on one half and mirrored across x -> exactly even; neither spawn gets a cover edge"
+      },
+      "elevation": "none (the steppe is flat -- the point of the location)",
+      "license": "synthetic (generator-authored); no third-party GIS data",
+      "generator": "tools/maps/gen_prokhorovka.py"
     }
   ]
 }

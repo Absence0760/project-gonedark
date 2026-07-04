@@ -37,15 +37,24 @@ pub struct MapLibraryEntry {
     pub source: &'static str,
 }
 
-/// The shipped authored battlefields (D76 `*.map.ron`, embedded — see the module docs). v1 ships
-/// **Crossroads** (three posts across an open junction, `player`/`enemy` spawn zones, terrain 0).
-/// Baked real-world maps (D80) and generated maps (CT-G) join when the D77 content-addressed
-/// loader lands — their terrain grids aren't reachable through `Terrain::from_map_id` yet (the
-/// D80 interim-bridge constraint), and `modes.md` §3 scopes generated maps as "eventually".
-pub const MAP_LIBRARY: &[MapLibraryEntry] = &[MapLibraryEntry {
-    id: "crossroads",
-    source: include_str!("../../maps/crossroads.map.ron"),
-}];
+/// The shipped authored battlefields (D76 `*.map.ron`, embedded — see the module docs). Ships
+/// **Crossroads** (three posts across an open junction, `player`/`enemy` spawn zones, terrain 0)
+/// and **Prokhorovka** (D116) — a large, *even* open-steppe skirmish map on the D80-baked
+/// `Terrain::PROKHOROVKA_MAP_ID` (terrain 2): a `.map.ron` reaches baked terrain through the same
+/// `Terrain::from_map_id` interim bridge Pointe du Hoc uses. Generated maps (CT-G) join when the
+/// D77 content-addressed loader lands (`modes.md` §3 scopes them as "eventually").
+pub const MAP_LIBRARY: &[MapLibraryEntry] = &[
+    MapLibraryEntry {
+        id: "crossroads",
+        source: include_str!("../../maps/crossroads.map.ron"),
+    },
+    // Prokhorovka (Kursk) — a large, even open-steppe battlefield on the baked
+    // `core::terrain` PROKHOROVKA_MAP_ID (terrain 2), spawns at opposite ends of the full field.
+    MapLibraryEntry {
+        id: "prokhorovka",
+        source: include_str!("../../maps/prokhorovka.map.ron"),
+    },
+];
 
 /// Parse + validate a library map by id — the one gate between the embedded text and a usable
 /// [`MapSpec`] (the D76 float airlock; a `None` is an unknown id or — defensively, forbidden by
@@ -125,6 +134,12 @@ pub const BATTLEFIELDS: &[Battlefield] = &[
         name: "Crossroads",
         blurb: "Three posts strung across an open junction. The library's first authored map.",
         kind: BattlefieldKind::LibraryMap("crossroads"),
+    },
+    Battlefield {
+        id: "prokhorovka",
+        name: "Prokhorovka",
+        blurb: "The 1943 Kursk tank battle: a wide, even steppe. Deploy at opposite ends and cross.",
+        kind: BattlefieldKind::LibraryMap("prokhorovka"),
     },
 ];
 

@@ -1,0 +1,55 @@
+// prokhorovka.map.ron — "Prokhorovka, Kursk": a large, EVEN open-steppe battlefield.
+//
+// The July 1943 tank battle, fought on flat open ground where both sides met in the open — chosen
+// as the skirmish's even-playing-field map. Unlike the abstract `crossroads` sample, this rides a
+// REAL baked terrain (`terrain: 2`, core::terrain PROKHOROVKA_MAP_ID) synthesized by
+// `tools/maps/gen_prokhorovka.py`: the steppe, the rail line, two settlements and the shelterbelts
+// are in the cover grid itself, laid on one half and MIRRORED across x so neither side gets an edge.
+//
+// This spatial half then spreads the fight across the WHOLE 128x128 field (the old skirmish packed
+// it into a ~60x28 central box): the two deploy zones sit at opposite ends (x 8..14 vs x 113..119),
+// and six capture posts span all three latitudes (south y=32, centre y=64, north y=96) as mirrored
+// pairs. The result plays big and reads as an even fight.
+//
+// EVERY number is an INTEGER cell (or the u16 terrain id) — the `engine::map_format` loader is the
+// float airlock (invariant #1). Cells are on the 128x128 playfield ([0,128) per axis); the mirror
+// axis sits between col 63 and 64, so every placement below has a mirror-paired twin (127-x, y).
+MapSpec(
+    terrain: 2,
+
+    // Six capture posts, mirror-paired about the axis so contested value is even. Centre pair
+    // brackets the rail junction; north/south pairs anchor the flank settlements.
+    control_points: [
+        CellRef(x: 60, y: 64), CellRef(x: 67, y: 64),   // centre — the rail-line crossing
+        CellRef(x: 38, y: 96), CellRef(x: 89, y: 96),   // north flank — Oktyabrsky farm approach
+        CellRef(x: 38, y: 32), CellRef(x: 89, y: 32),   // south flank — the hamlet approach
+    ],
+
+    // Visible tactical props at the objectives (drawn in both views, Q24/D50) — laid in mirrored
+    // pairs (127-x, y) so they never tilt the field. Solid kinds (Turret/Barricade) paint their
+    // footprint impassable; all sit clear of the deploy zones and the central crossing lane.
+    cover_props: [
+        // Centre hard points + crate nests bracketing the rail junction.
+        CoverPropSpec(kind: Turret,    cell: CellRef(x: 57, y: 60)),
+        CoverPropSpec(kind: Turret,    cell: CellRef(x: 70, y: 60)),
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 58, y: 67)),
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 69, y: 67)),
+        // North flank nests.
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 36, y: 94)),
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 91, y: 94)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 37, y: 98)),
+        CoverPropSpec(kind: Barricade, cell: CellRef(x: 90, y: 98)),
+        // South flank nests.
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 36, y: 30)),
+        CoverPropSpec(kind: Crate,     cell: CellRef(x: 91, y: 30)),
+        CoverPropSpec(kind: Tree,      cell: CellRef(x: 40, y: 34)),
+        CoverPropSpec(kind: Tree,      cell: CellRef(x: 87, y: 34)),
+    ],
+
+    // Two deploy zones at OPPOSITE ENDS of the full field (west vs east), mirror-paired about the
+    // axis (8..14 ↔ 113..119) — a real steppe to cross. A mission/skirmish populates them.
+    spawn_zones: [
+        SpawnZoneSpec(name: "player", min: CellRef(x: 8,   y: 58), max: CellRef(x: 14,  y: 70)),
+        SpawnZoneSpec(name: "enemy",  min: CellRef(x: 113, y: 58), max: CellRef(x: 119, y: 70)),
+    ],
+)

@@ -49,7 +49,7 @@ val KNOWN_SCENE_TOKENS = setOf(
  * would ride the wire and degrade to the plain open skirmish engine-side (graceful, but a dead
  * tile) — the test forbids shipping one.
  */
-val KNOWN_MAP_IDS = setOf("crossroads")
+val KNOWN_MAP_IDS = setOf("crossroads", "prokhorovka")
 
 /**
  * Every battlefield the skirmish setup offers, in display order: the standing battle scenes first
@@ -74,5 +74,11 @@ val shellBattlefields = listOf(
         name = "Crossroads",
         blurb = "Three posts strung across an open junction. The library's first authored map.",
         mapId = "crossroads",
+    ),
+    Battlefield(
+        id = "prokhorovka",
+        name = "Prokhorovka",
+        blurb = "The 1943 Kursk tank battle: a wide, even steppe. Deploy at opposite ends and cross.",
+        mapId = "prokhorovka",
     ),
 )

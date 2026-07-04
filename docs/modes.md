@@ -89,11 +89,12 @@ order a player thinks:
    > a picked map boots a real skirmish (`seed_positioned_skirmish` in its spawn zones),
    > and the picker now shows a **MapSpec-derived map card** ([D109](decisions.md): a
    > sketch + integer metrics — cover counts/density, quadrant breakdown, spawn extents —
-   > on both shells). Still target-model, not shipped: the lint preview PNG + the
-   > *baker's* manifest balance metrics (they exist only for baked maps); baked (D80) and
-   > generated (CT-G) maps joining the library (blocked on the D77 content-hash loader —
-   > their grids aren't reachable through `Terrain::from_map_id`); and more than the one
-   > authored map (Crossroads).
+   > on both shells). Two authored maps ship: **Crossroads** and a real baked D80 map,
+   > **Prokhorovka** ([D116](decisions.md)) — joined through the same interim bridge
+   > rather than waiting on D77. Still target-model, not shipped: the lint preview PNG +
+   > the *baker's* manifest balance metrics (they exist only for baked maps); and
+   > *generated* (CT-G) maps joining the library, which stay blocked on the D77
+   > content-hash loader.
 2. **Army** — US or FR via the existing army-select seam ([D71](decisions.md); the
    native screens already landed on both platforms). Pick the enemy's army too.
 3. **Opponent** — the honest commander's difficulty tier (the 3-tier

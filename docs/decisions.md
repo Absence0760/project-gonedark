@@ -5129,3 +5129,33 @@ fight (per-node seed from [D113] × per-node forces/objective/commander). All va
 integers → deterministic, cross-platform (invariant #7). Android boot mirrors desktop (compiled out
 on this host — validated by inspection). Files: `engine/src/mission_registry.rs`, `engine/src/lib.rs`,
 `core/src/commander.rs`, `app/src/main.rs`, `pal-android/src/android_backend.rs`.
+
+## D116 — "Prokhorovka": a large, even skirmish battlefield on real baked terrain
+
+**Status: landed.** The skirmish's default ground played *small* — not because the field is small
+(it is a fixed `128×128`; `core::flow_field::GRID` is a load-bearing determinism constant, not
+resizable without breaking lockstep/checksums) but because the open skirmish packs the action into a
+~`60×28` central box (`SKIRMISH_BASE_X = 30`, posts at `±14`) on otherwise-empty ground. The fix is
+a **new library battlefield** that (a) rides *real baked terrain* so the whole field reads as a
+place, and (b) spreads the fight across the entire extent.
+
+**Prokhorovka (Kursk, July 1943)** — the archetypal *even, open-ground* battle — is synthesized
+offline by `tools/maps/gen_prokhorovka.py` into `assets/maps/prokhorovka.covergrid` and wired as
+`core::terrain::Terrain::PROKHOROVKA_MAP_ID = 2` (the Pointe du Hoc pattern, exactly:
+`include_str!` → `from_cover_grid` → a `from_map_id` arm + a build==rebuild determinism test). The
+generator paints every feature on **one half and mirrors across x**, so the field is *exactly*
+symmetric — `lint.py --pvp mirror-x` passes and neither commander inherits a cover/sightline edge
+(the "even playing field"). `maps/prokhorovka.map.ron` (`terrain: 2`) then spreads six capture posts
+across all three latitudes and puts the two deploy zones at **opposite ends** of the full field
+(`x 8..14` vs `x 113..119` → bases ~`106` world units apart, vs the old `60`).
+
+**Why:** the map pipeline ([D80](#d80--real-world-battlefield-maps-a-scripted-gis-ingestbakelint-pipeline-faithful-then-balance-passed)) already
+bakes real battlefields into integer, checksum-stable cover grids offline (Pointe du Hoc ships as a
+`synthetic_source` bake — no live GIS fetch needed), and a `.map.ron` may reference *any* `map_id`
+`from_map_id` can build. So delivering "bigger + real + even" is exactly this pipeline used at full
+scale, not new machinery. Mirror-x construction makes fairness a *proved property* (a core test
+asserts cover symmetry), and integer-only end to end keeps it deterministic/cross-platform
+(invariants #1/#7). The sim playfield is unchanged — "bigger" means *using the whole field*, which
+was always there. Files: `tools/maps/gen_prokhorovka.py`, `assets/maps/prokhorovka.covergrid`
+(+`.meta.json`, `manifest.json`), `maps/prokhorovka.map.ron`, `core/src/terrain.rs`,
+`engine/src/map_library.rs`, `android/.../Battlefield.kt`.

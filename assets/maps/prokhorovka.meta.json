@@ -1,0 +1,25 @@
+{
+  "name": "prokhorovka",
+  "title": "Prokhorovka, Kursk",
+  "map_id": 2,
+  "mode": "inspired",
+  "fidelity": "material",
+  "era": "1943-07",
+  "generator": "tools/maps/gen_prokhorovka.py",
+  "seed": 1943,
+  "symmetry": "mirror-x",
+  "synthetic_source": true,
+  "grid": 128,
+  "cell_world_units": 1,
+  "cover_cells": {
+    "none": 14824,
+    "light": 1224,
+    "heavy": 336
+  },
+  "cover_density": 0.0952,
+  "covergrid_file": "prokhorovka.covergrid",
+  "covergrid_sha256": "73f912889f175b1fb95aaf23fa7e78e700721213b30e0860a6b8a9e6f74dcb9e",
+  "notes": "July 1943 tank battle on open steppe. Built on the west half and mirrored across x (mirror-x) so the field is EXACTLY even \u2014 neither commander gets a structural edge. Features (rail line, two settlements, shelterbelts) appear as mirrored pairs. Synthetic source (no live GIS fetch), same as pointe-du-hoc; elevation is not modeled (the steppe is flat \u2014 the point of the location).",
+  "license": "synthetic (generator-authored); no third-party GIS data",
+  "lint_cmd": "python3 tools/maps/lint.py prokhorovka --spawn 11,64 --spawn 116,64 --control 60,64 --control 67,64 --control 38,96 --control 89,96 --control 38,32 --control 89,32 --pvp mirror-x"
+}

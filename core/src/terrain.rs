@@ -101,6 +101,14 @@ impl Terrain {
     /// [`from_cover_grid`]: Self::from_cover_grid
     pub const POINTE_DU_HOC_MAP_ID: MapId = 1;
 
+    /// The "Prokhorovka, Kursk" map — a **large, even** open-steppe battlefield (the July 1943 tank
+    /// battle). Synthesized offline by `tools/maps/gen_prokhorovka.py` into
+    /// `assets/maps/prokhorovka.covergrid` and embedded below. Built on one half and mirrored across
+    /// x, so the field is **exactly symmetric** — neither commander inherits a structural edge, the
+    /// "even playing field" the map exists to provide. Integer grid only (invariant #1); the flat
+    /// steppe has no sim-side elevation to model.
+    pub const PROKHOROVKA_MAP_ID: MapId = 2;
+
     /// An all-clear field (no cover, no walls) — the Phase 1 open playfield.
     pub fn open() -> Terrain {
         Terrain {
@@ -160,6 +168,7 @@ impl Terrain {
         match id {
             Self::SCENE_MAP_ID => Some(Terrain::open()),
             Self::POINTE_DU_HOC_MAP_ID => Some(build_pointe_du_hoc()),
+            Self::PROKHOROVKA_MAP_ID => Some(build_prokhorovka()),
             _ => None,
         }
     }
@@ -339,6 +348,17 @@ const POINTE_DU_HOC_COVERGRID: &str = include_str!("../../assets/maps/pointe-du-
 /// [`Terrain::from_map_id`]; both lockstep peers call it to rebuild the identical map.
 fn build_pointe_du_hoc() -> Terrain {
     Terrain::from_cover_grid(POINTE_DU_HOC_COVERGRID)
+}
+
+/// The synthesized "Prokhorovka" cover grid, embedded at compile time (regenerate with
+/// `python3 tools/maps/gen_prokhorovka.py`). Integer grid only — the flat steppe carries no
+/// float DEM (invariants #1, #4); a text asset, so `core` stays platform/GPU-free (invariant #2).
+const PROKHOROVKA_COVERGRID: &str = include_str!("../../assets/maps/prokhorovka.covergrid");
+
+/// Deterministic builder for [`Terrain::PROKHOROVKA_MAP_ID`]. Reached only via
+/// [`Terrain::from_map_id`]; both lockstep peers call it to rebuild the identical map.
+fn build_prokhorovka() -> Terrain {
+    Terrain::from_cover_grid(PROKHOROVKA_COVERGRID)
 }
 
 // --- Coordinate mapping (an EXACT mirror of flow_field's private mapping) -------------------
@@ -757,6 +777,50 @@ mod tests {
             sight_blocking > 0,
             "baked map must have at least one sight-blocking cell"
         );
+    }
+
+    #[test]
+    fn from_map_id_prokhorovka_is_deterministic() {
+        // Same invariant-#7 floor as pointe-du-hoc: rebuild twice, get a bit-identical grid, so both
+        // lockstep peers agree on the terrain.
+        let a = Terrain::from_map_id(Terrain::PROKHOROVKA_MAP_ID)
+            .expect("prokhorovka map id is registered");
+        let b = Terrain::from_map_id(Terrain::PROKHOROVKA_MAP_ID).unwrap();
+        for cy in 0..GRID as i32 {
+            for cx in 0..GRID as i32 {
+                assert_eq!(a.cover_at_cell(cx, cy), b.cover_at_cell(cx, cy));
+            }
+        }
+    }
+
+    #[test]
+    fn prokhorovka_is_a_real_field_and_an_even_one() {
+        // Proves the embedded covergrid is read (real cover) AND that it is the "even playing field"
+        // the map exists to be: cover is EXACTLY symmetric under mirror-x (col c mirrors GRID-1-c),
+        // so neither spawn inherits a structural cover edge. Regeneration-proof — asserts the
+        // symmetry property and non-triviality, never exact cells.
+        let t = build_prokhorovka();
+        let mut any_cover = 0usize;
+        let mut sight_blocking = 0usize;
+        for cy in 0..GRID as i32 {
+            for cx in 0..GRID as i32 {
+                let c = t.cover_at_cell(cx, cy);
+                if c != Cover::None {
+                    any_cover += 1;
+                }
+                if c.blocks_sight() {
+                    sight_blocking += 1;
+                }
+                // Mirror-x fairness: cell (cx,cy) and its reflection carry identical cover.
+                assert_eq!(
+                    c,
+                    t.cover_at_cell(GRID as i32 - 1 - cx, cy),
+                    "prokhorovka must be mirror-x symmetric at ({cx},{cy})"
+                );
+            }
+        }
+        assert!(any_cover > 0, "prokhorovka must have cover (covergrid was read)");
+        assert!(sight_blocking > 0, "prokhorovka must have sight-blocking cover");
     }
 
     #[test]

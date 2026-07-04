@@ -5,10 +5,12 @@ you diagnose one when it misbehaves. The tooling lives in [`tools/maps/`](../too
 decision behind it is [D80](decisions.md); it is the real-world-sourced sibling of the procedural
 generator in [`content-tooling-plan.md`](plans/content-tooling-plan.md) (CT-C/CT-F/CT-G).
 
-> **Status:** a working **spike**. The ingest→bake→lint pipeline runs end-to-end and produces a
-> real, `core::terrain`-compatible map (the Pointe du Hoc sample). Sim-side elevation, true
-> impassability, and destructibility are deliberately *not* built yet — see
-> [§ Known gaps](#known-gaps).
+> **Status:** a working **spike**. The ingest→bake→lint pipeline runs end-to-end and produces
+> real, `core::terrain`-compatible maps — the **Pointe du Hoc** sample ([D80](decisions.md)) and
+> **Prokhorovka** ([D116](decisions.md)), a large *even* open-steppe skirmish map synthesized by
+> `tools/maps/gen_prokhorovka.py` (mirrored across x, so it is provably fair). Sim-side elevation
+> and destructibility are deliberately *not* built yet (true impassability landed —
+> [D92](decisions.md)) — see [§ Known gaps](#known-gaps).
 
 ---
 
@@ -98,7 +100,10 @@ D77 "grid data → `Terrain`" primitive.
 registry. So the first baked map is wired the only way the current code allows, an **explicit interim
 bridge** ([D80](decisions.md)):
 
-- `Terrain::POINTE_DU_HOC_MAP_ID` + a `from_map_id` arm that `include_str!`s its `.covergrid`;
+- `Terrain::POINTE_DU_HOC_MAP_ID` / `Terrain::PROKHOROVKA_MAP_ID` + a `from_map_id` arm each that
+  `include_str!`s its `.covergrid` (a new baked map is one const + one arm + one determinism test);
+- a `.map.ron` may reference **any** of these ids (`terrain: 1`, `terrain: 2`, …) through the D76
+  airlock — that is how `maps/prokhorovka.map.ron` puts real baked terrain under a library skirmish;
 - `Sim::load_map(id)` sets `map_id` **and** rebuilds `terrain` together, so a reconnect snapshot
   (which carries only `map_id`, [D28](decisions.md)) can't silently rebuild the wrong map
   ([invariant #7](../CLAUDE.md)).
@@ -111,9 +116,10 @@ CT-G PvP-symmetry validator.
 A **second, parallel bridge of the same shape** now exists for the authored `*.map.ron` library
 ([D102](decisions.md)): `engine::map_library` `include_str!`s the shipped battlefields so the
 skirmish picker's map library exists on every platform (in-APK included) without a filesystem or
-distribution story. Both bridges retire together when the D77 loader lands — baked maps like this
-one join that picker at the same moment (their grids aren't reachable through `from_map_id`'s
-hardcoded arms).
+distribution story. A baked map doesn't have to wait for D77 to reach the picker — a `.map.ron`
+just references the `from_map_id` arm's terrain id, which is exactly how **Prokhorovka**
+([D116](decisions.md)) got there. Both bridges retire together when the D77/D76 content-set loader
+lands and `Terrain::from_content` replaces the hardcoded arms.
 
 ---
 
