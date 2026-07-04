@@ -14,7 +14,9 @@ D35/D36, server telemetry/consent/live-ops scaffolding, in-session + post-match 
 FPS controls, 3D greybox assets, and avatar-visible unit rendering run through D52. The PvE
 campaign now ships a **four-conflict atlas** (D105: 12 battles across four fictional modern
 wars) fronted on desktop by a navigable globe → per-battle battlefield overview → camera flight
-(D104/D106/D107); Android keeps the grouped-list hub (the recorded Q28 fork).** The custom
+(D104/D106/D107); Android keeps the grouped-list hub (the recorded Q28 fork). The overview is
+now a full operations map (D110), and the skirmish picker carries a MapSpec-derived map card on
+both shells (D109).** The custom
 Rust engine ([D10]) is committed; the Unity/Godot fallback ([D8]) is retired. The design corpus in `docs/`
 is the product of record; engine code now exists in the
 Cargo workspace (`core/ pal/ render/ engine/ pal-desktop/ pal-android/ app/ sim-runner/
@@ -44,6 +46,8 @@ flagship; frame-rate/thermal on mid-range silicon and the 200-unit power budget 
 | `docs/customization.md` | Gunsmith (horizontal sidegrades), cosmetics, the mobile HUD layout editor (D60/D61) — all fairness-bounded |
 | `docs/factions.md` | Real-army asymmetric factions — US Army vs French Army (D68/D71); WS-A–E built — the fairness-bounded roster model |
 | `docs/maps.md` | Real-world battlefield maps — the GIS ingest→bake→lint pipeline (D80), the two-artifact split (integer sim cover grid vs. float render mesh), faithful-then-balance-pass, map diagnostics |
+| `docs/content-pipeline.md` | Asset production — quality tiers, open-source sourcing, license hygiene, the two-view filter, what Claude can/can't build |
+| `docs/embodied-feel-floor.md` | The embodied game-feel floor — the written CP-2 acceptance checklist a playtester reads to judge "does the gunplay clear the bar?"; presentation/feel only, never sim state |
 | `docs/architecture.md` | Engine & systems reference — native core, deterministic sim, Vulkan, lockstep netcode |
 | `docs/platforms.md` | Cross-platform plan — Windows/Linux/Android/iOS, shared core + native backends |
 | `docs/infrastructure.md` | Local dev (Docker), env/config files, Terraform infra, sops secrets |
