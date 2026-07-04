@@ -180,18 +180,74 @@ class CampaignModelTest {
     }
 
     @Test
-    fun a_new_conflict_node_mirrors_the_rust_source_verbatim() {
-        // Spot-pin for the D105 inline-authored copy (nodes 3-11 have no Rust briefing const to
-        // diff against, so this guards the hand-mirrored strings the same way the MISSION_*
-        // pins do): the Meridian root's title + situation, byte-for-byte.
-        val fuelYard = campaignNodes[3]
-        assertEquals("Take the Fuel Yard", fuelYard.name)
-        assertEquals(
-            "The port runs on one fuel yard, and their garrison is sitting on it. Ten of " +
-                "yours to take it. Command the assault from above — or go dark and breach the wire " +
-                "yourself. The dust hides them; it hides you too.",
-            fuelYard.briefing,
+    fun the_inline_authored_nodes_mirror_the_rust_source_verbatim() {
+        // Nodes 3-11 have no Rust briefing const to diff against — their copy is authored inline
+        // in `default_campaign()` (D105) — so this third copy is the D79 drift tripwire: a Rust
+        // edit that isn't hand-mirrored into CampaignModel.kt fails here instead of shipping a
+        // cross-shell content divergence, exactly like the MISSION_* verbatim pins above.
+        val expected = mapOf(
+            3 to Pair(
+                "Take the Fuel Yard",
+                "The port runs on one fuel yard, and their garrison is sitting on it. Ten of " +
+                    "yours to take it. Command the assault from above — or go dark and breach the " +
+                    "wire yourself. The dust hides them; it hides you too.",
+            ),
+            4 to Pair(
+                "Hold the Causeway",
+                "One causeway carries the only road into the port, and they want it back. Dig in " +
+                    "and fight it from the map — or embody a rifle at the barricade. Go dark and " +
+                    "the bank you can't see is the one they wade across.",
+            ),
+            5 to Pair(
+                "Open the Corridor",
+                "Three checkpoints between the port and the highway north, every one of them " +
+                    "held. Take them in order and hold what you take — or clear each gate " +
+                    "yourself, rifle in hand. But the checkpoint you rush blind is the one that " +
+                    "closes behind you.",
+            ),
+            6 to Pair(
+                "Seize the Quay",
+                "A garrison winters on the ice-bound harbor, and command wants it before the " +
+                    "strait refreezes. Ten of yours, no more coming. Direct them from above — or " +
+                    "take a rifle onto the ice yourself, and remember the quay you can't see is " +
+                    "still shooting.",
+            ),
+            7 to Pair(
+                "Hold the Airfield",
+                "The airstrip is yours; they want it back before first light. Fight the " +
+                    "perimeter from the map, or embody one rifle in the snow and hold it by " +
+                    "hand — but the treeline you go dark on is the one they come through.",
+            ),
+            8 to Pair(
+                "Break the Coast Road",
+                "Three strongpoints up the coast road to Visby, every one dug into the drifts. " +
+                    "Take them in order and keep them taken — or clear each one point-blank " +
+                    "yourself. But the strongpoint you rush blind is the one retaken behind you.",
+            ),
+            9 to Pair(
+                "Seize the Wharf",
+                "Their task force beat you ashore and dug in on Santo's deepwater wharf. Ten of " +
+                    "yours to take it before their heavy lift arrives. Command the assault from " +
+                    "the ridge — or wade in yourself, and hope the wharf you can't see isn't " +
+                    "reinforcing.",
+            ),
+            10 to Pair(
+                "Hold the Airstrip",
+                "The wharf bought you the airstrip; now they want it back before dawn. Hold the " +
+                    "perimeter from above, or put yourself behind a rifle on the wire — but the " +
+                    "stretch of runway you go dark on is the one they land on.",
+            ),
+            11 to Pair(
+                "Break the Road to Luganville",
+                "Three strongpoints down the coast road to Luganville, every one of them held. " +
+                    "Take them in order and hold what you take — the town falls when the road " +
+                    "does. But the post you clear blind is theirs again before you turn around.",
+            ),
         )
+        expected.forEach { (id, pair) ->
+            assertEquals("node $id name", pair.first, campaignNodes[id].name)
+            assertEquals("node $id briefing", pair.second, campaignNodes[id].briefing)
+        }
     }
 
     @Test
