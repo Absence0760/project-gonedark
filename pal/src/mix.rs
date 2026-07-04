@@ -104,6 +104,11 @@ pub struct Mixer {
     /// Default `0.0` (silent) so a bed is inaudible until the host opts it in — music never plays
     /// itself on a test/viz host that installs a bed but never sets a level.
     music_gain: f32,
+    /// A one-shot music **stinger** (win/lose match-end punctuation), if one is playing: the buffer
+    /// plus a *non-wrapping* cursor. While present it plays on the music bus **instead of** the
+    /// looping bed (the punctuation owns the moment) and clears itself when the cursor runs off the
+    /// end, at which point the bed resumes. Installed by [`play_music_oneshot`](Self::play_music_oneshot).
+    music_oneshot: Option<(Arc<Vec<f32>>, usize)>,
 }
 
 impl Mixer {
@@ -139,9 +144,20 @@ impl Mixer {
             l += v.lp_l;
             r += v.lp_r;
         }
-        // Looping music bed: centred, scaled by the bus gain, cursor wraps for a seamless loop.
+        // Music bus (centred, scaled by the bus gain). Only sounds while the gain is up (mirrors the
+        // bed's original gate). A one-shot stinger, while active, plays *instead of* the looping bed
+        // — the win/lose punctuation owns the moment — and the bed resumes the frame it finishes.
         if self.music_gain > 0.0 {
-            if let Some(bed) = &self.music {
+            // Retire a finished stinger first, so the bed resumes this same frame (no gap).
+            if matches!(&self.music_oneshot, Some((buf, pos)) if *pos >= buf.len()) {
+                self.music_oneshot = None;
+            }
+            if let Some((buf, pos)) = &mut self.music_oneshot {
+                let s = buf[*pos] * self.music_gain;
+                *pos += 1;
+                l += s;
+                r += s;
+            } else if let Some(bed) = &self.music {
                 if !bed.is_empty() {
                     let s = bed[self.music_pos] * self.music_gain;
                     self.music_pos = (self.music_pos + 1) % bed.len();
@@ -170,6 +186,22 @@ impl Mixer {
     /// The music-bus gain currently applied to the bed (test/diagnostic).
     pub fn music_gain(&self) -> f32 {
         self.music_gain
+    }
+
+    /// Play a one-shot music **stinger** (a win/lose match-end punctuation) on the music bus. It
+    /// plays once at the live [`music_gain`](Self::music_gain), centred, **ducking the looping bed**
+    /// while it sounds, then clears itself so the bed resumes. Installing a new stinger replaces any
+    /// still playing (the latest match-end result wins). An empty buffer is ignored.
+    pub fn play_music_oneshot(&mut self, buf: Arc<Vec<f32>>) {
+        if buf.is_empty() {
+            return;
+        }
+        self.music_oneshot = Some((buf, 0));
+    }
+
+    /// True while a one-shot stinger is playing (test/diagnostic).
+    pub fn music_oneshot_active(&self) -> bool {
+        self.music_oneshot.is_some()
     }
 
     /// Queue a voice. At [`MAX_VOICES`] it first prunes finished voices, then (if still full)
@@ -671,5 +703,54 @@ mod tests {
         }
         // Longer sample rate ⇒ more samples (a fixed-duration bed).
         assert!(synth_music(48_000).len() > synth_music(24_000).len());
+    }
+
+    // --- music one-shot stinger (win/lose punctuation) ----------------------------------------
+
+    #[test]
+    fn stinger_plays_once_then_stops_and_reports_active() {
+        let mut m = Mixer::new();
+        m.set_music_gain(1.0);
+        m.play_music_oneshot(flat_bed(0.5, 3));
+        assert!(m.music_oneshot_active(), "a queued stinger is active");
+        // Three non-zero frames (0.5 * gain 1.0), then it retires and goes silent.
+        for i in 0..3 {
+            let (l, _) = m.next_frame();
+            assert!((l - 0.5).abs() < 1e-6, "frame {i} = {l}");
+        }
+        let (l, _) = m.next_frame();
+        assert_eq!(l, 0.0, "stinger is finished → silent");
+        assert!(!m.music_oneshot_active(), "a finished stinger clears itself");
+    }
+
+    #[test]
+    fn stinger_ducks_the_bed_while_playing_then_the_bed_resumes() {
+        let mut m = Mixer::new();
+        m.set_music(Some(flat_bed(0.4, 8))); // a steady bed…
+        m.set_music_gain(1.0);
+        m.play_music_oneshot(flat_bed(0.6, 2)); // …a 2-sample stinger on top
+        // While the stinger plays, ONLY the stinger sounds (the bed is ducked out): 0.6, not 0.4+0.6.
+        let (a, _) = m.next_frame();
+        let (b, _) = m.next_frame();
+        assert!((a - 0.6).abs() < 1e-6 && (b - 0.6).abs() < 1e-6, "stinger owns the bus: {a},{b}");
+        // The frame it finishes, the bed resumes (no gap): back to the bed's 0.4.
+        let (c, _) = m.next_frame();
+        assert!((c - 0.4).abs() < 1e-6, "bed resumes at {c}");
+        assert!(!m.music_oneshot_active());
+    }
+
+    #[test]
+    fn stinger_respects_the_bus_gain_and_empty_is_ignored() {
+        let mut m = Mixer::new();
+        m.set_music_gain(0.5);
+        m.play_music_oneshot(flat_bed(0.8, 4));
+        let (l, r) = m.next_frame();
+        assert!((l - 0.4).abs() < 1e-6, "0.8 * 0.5 = 0.4, got {l}");
+        assert_eq!(l, r, "the stinger is centred");
+        // An empty buffer installs nothing.
+        let mut m2 = Mixer::new();
+        m2.set_music_gain(1.0);
+        m2.play_music_oneshot(Arc::new(Vec::new()));
+        assert!(!m2.music_oneshot_active(), "empty stinger is ignored");
     }
 }

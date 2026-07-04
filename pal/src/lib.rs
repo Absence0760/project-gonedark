@@ -205,6 +205,26 @@ pub enum SoundId {
     Impact,
 }
 
+/// A distinct piece of **music** — the presentation score, not an SFX cue. Unlike [`SoundId`]
+/// (positioned, event-driven world sound), music is non-positional and rides the separate *music
+/// bus* the player's music-volume slider drives ([`mix::Mixer::set_music_gain`]). The set is small:
+/// one looping bed under a match, plus the two match-end stingers. Like [`SoundId`] it is a plain
+/// `repr` enum shared by the mixer and the backends with no dependency either way. Presentation
+/// only — music never enters `core` (invariant #1/#4).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum MusicId {
+    /// The looping ambient combat bed — the "going-dark" mood bus that plays under a match. Installed
+    /// once via [`mix::Mixer::set_music`] and cursor-wrapped, so its asset is authored to loop
+    /// seamlessly (see `tools/audio/gen_music.py`).
+    CombatBed,
+    /// The match-**won** stinger — a short rising, resolving figure played once on the music bus via
+    /// [`mix::Mixer::play_music_oneshot`], ducking the bed while it sounds.
+    WinStinger,
+    /// The match-**lost** stinger — a short falling, somber figure, the loss twin of
+    /// [`WinStinger`](MusicId::WinStinger).
+    LoseStinger,
+}
+
 /// One positioned sound for this frame's mix. Floats are fine here (platform side, not the sim):
 /// `azimuth`/`gain` are derived in the engine's *presentation* path from the deterministic event
 /// stream + the listener pose — they never feed back into `core` (invariant #1).

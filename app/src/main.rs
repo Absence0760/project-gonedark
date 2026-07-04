@@ -214,6 +214,12 @@ struct App {
     /// Whether the current match's clear has already been recorded — so a win is recorded exactly
     /// once even though `mission_status()` reads `Won` every subsequent frame. Reset at match start.
     mission_recorded: bool,
+    /// Whether this match's win/lose **music stinger** has already fired — so the match-end
+    /// punctuation plays exactly once even though `mission_status()` reads terminal every subsequent
+    /// frame. Independent of [`mission_recorded`](App::mission_recorded) (which is campaign-clear
+    /// bookkeeping): the stinger fires for every match type, on a loss as well as a win. Reset at
+    /// match start. Presentation only — never a sim input (invariant #1/#4).
+    outcome_stinger_fired: bool,
 
     /// Effective music-bus gain (D75 follow-up). Refreshed each match frame from the Settings
     /// `master_volume`×`music_volume` via `gonedark_engine::music_gain` — the music analog of the SFX
@@ -270,6 +276,7 @@ impl App {
             active_skirmish: None,
             active_mission: None,
             mission_recorded: false,
+            outcome_stinger_fired: false,
             // Recomputed each match frame from the Settings volumes; the default mirrors
             // SettingsState's shipped master×music until the first frame refreshes it.
             music_gain: 0.0,
@@ -409,6 +416,7 @@ impl App {
         // (the skirmish branch above).
         game.select_army(Faction::Player, player_army);
         self.mission_recorded = false;
+        self.outcome_stinger_fired = false;
         self.screen = Screen::InMatch(Box::new(game));
         // Don't charge the time spent on the out-of-match screens to the first sim tick.
         self.last_frame = Instant::now();
@@ -820,6 +828,25 @@ impl App {
                             &self.thermal,
                         );
                         surface.present(frame);
+                    }
+                }
+                // Match-end music (the going-dark score): the first frame the match resolves, fire
+                // the win/lose stinger once through the music bus (it ducks the ambient bed while it
+                // sounds). Fires for EVERY match type — skirmish and campaign, on a loss as well as a
+                // win — and is independent of the campaign clear-recording below. Presentation only:
+                // `mission_status()` is a pure read of the host-side objective layer and the stinger
+                // is a music-bus cue, so this never touches the deterministic sim (invariants #1/#4).
+                if !self.outcome_stinger_fired {
+                    match game.mission_status() {
+                        MissionStatus::Won => {
+                            self.audio.play_music_stinger(true);
+                            self.outcome_stinger_fired = true;
+                        }
+                        MissionStatus::Lost => {
+                            self.audio.play_music_stinger(false);
+                            self.outcome_stinger_fired = true;
+                        }
+                        MissionStatus::Active => {}
                     }
                 }
                 // Record a campaign clear the first frame this match reads `Won`. The clear advances

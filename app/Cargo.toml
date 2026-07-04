@@ -11,11 +11,17 @@ publish = false
 # `winit`/`wgpu` are fine here — invariant #2 only keeps GPU/windowing out of `core` and the
 # abstract `pal` trait crate. (Android does NOT use this binary; its entry is `android_main`
 # in `pal-android`, which drives the same `engine::Game`.)
-# Real desktop audio output is opt-in (forwards to pal-desktop's `audio` feature, which pulls
-# cpal → links ALSA; needs `alsa-lib-devel`). OFF by default so the standard desktop build needs
-# no audio dev headers (invariant #8). Enable with `cargo run -p gonedark-app --features audio`
-# (or `pnpm play:audio`).
+# Real desktop audio output is ON BY DEFAULT (forwards to pal-desktop's `audio` feature, which pulls
+# cpal). Audio is a PRIMARY system — the world goes dark and you fight by sound (invariant #6) — so a
+# stock `cargo run -p gonedark-app` / `pnpm play` must have sound, not silence. The tradeoff: cpal
+# links the OS audio API, which on Linux needs the ALSA dev headers (`libasound2-dev` /
+# `alsa-lib-devel`); macOS (CoreAudio) and Windows (WASAPI) need none. A headless / no-audio-headers
+# build (CI runners, servers) opts OUT with `cargo run -p gonedark-app --no-default-features`
+# (`pnpm play:silent`), which links the silent no-op sink. The sim/checksum runners
+# (sim-runner/net-sim-runner/replay-runner) depend only on `core` and never pull this, so they stay
+# audio-free and deterministic regardless (invariant #8's clone-and-run still holds for them).
 [features]
+default = ["audio"]
 audio = ["gonedark-pal-desktop/audio"]
 
 [dependencies]
