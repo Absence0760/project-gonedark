@@ -650,7 +650,7 @@ hardware — [`roadmap.md`](roadmap.md)), not here, and is not a reason to add a
 - **Commandable + embodiable on device.** One unit moves via the flow field; tap-to-move
   works; a (provisional) two-finger-tap embody toggle flips the world dark (invariant #5).
 - **At target frame rate.** The on-device FPS heartbeat showed a sustained **120 fps** (the
-  panel rate) with the sim on its locked **60 Hz** tick ([D21](#d21)) — frames advancing
+  panel rate) with the sim on its locked **60 Hz** tick ([D21](#d21--sim-rate-a-single-global-60-hz-tick-for-phase-1-dual-rate-deferred-not-killed)) — frames advancing
   ~120/s while ticks advance ~60/s, demonstrating the sim/render decoupling (invariant #4)
   live on hardware.
 
@@ -3956,7 +3956,7 @@ apply), `combat.rs`/`systems.rs`/`orders.rs` (the four mechanics, fast-path-guar
 test to 243 builds (+ per-pool), byte-neutral-default + golden-checksum-unmoved, 2-peer checksum
 agreement with stock/muzzle selections, and a per-mechanic combat test each. **Slice Stock first**
 (cheapest — no new damage curve), then Muzzle (lands falloff; re-validate the
-[D69](#d69)/[D70](#d70) Rifleman↔Heavy RPS with `sim-runner --metrics`). This is a
+[D69](#d69--combat-rebalance-ws-a-restore-the-riflemanheavy-rps-at-lethal-speed-heavy-28090--300100)/[D70](#d70--combat-rebalance-ws-b-area-suppression--lower-pin-suppression-bites-before-the-kill) Rifleman↔Heavy RPS with `sim-runner --metrics`). This is a
 sim-touching, `/safe-edit`-class change (invariant #1/#7) — implement behind the coder↔reviewer +
 determinism-auditor loop, not fire-and-forget.
 
@@ -3990,7 +3990,7 @@ checksums (ballistic duel, sim-runner duel/infantry), fights byte-identical. Shi
 persist round-trips) + an `engine` `train_ui` test, green dev+release; 2-peer lockstep agreed with no
 desync.
 
-**Cross-link:** [D18](#d18) (SoA ECS), [D27](#d27) (lockstep), [D28](#d28) (snapshot/persist),
+**Cross-link:** [D18](#d18--ecs-storage-hand-rolled-struct-of-arrays-not-an-off-the-shelf-ecs) (SoA ECS), [D27](#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait) (lockstep), [D28](#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk) (snapshot/persist),
 invariant #1/#3/#7, [`roadmap.md`](roadmap.md) *Playable game loop → Troop-training UI*.
 
 ## D87 — Runtime skeletal playback landed, completing the D84 deferral
@@ -4006,7 +4006,7 @@ the command-view token pass and the embodied world pass.
 interface, so nothing upstream changed. "Skinning" is one matrix per rigid part —
 `model = place · A_bone(t) · inverse_bind[bone]` — drawn as ordinary instanced `MeshInstance`s
 through the **existing** `MeshPipeline`: no new shader, no skinning shader, no new vertex attribute,
-no glTF-at-runtime (render stays `wgpu` + `bytemuck` only, [D19](#d19)/[D46](#d46)). Render never
+no glTF-at-runtime (render stays `wgpu` + `bytemuck` only, [D19](#d19--the-gpu-device-crosses-into-the-renderer-at-the-concrete-wiring-layer-not-through-the-abstract-pal-trait)/[D46](#d46--the-headless-asset-tooling-toolbox-one-scriptable-cli-per-content-lane)). Render never
 touches sim state (invariant #4) — all inputs are the already-interpolated float render snapshot.
 Since `interpolate_instances` forces `Army::Neutral`, essentially all in-game infantry are generic
 Troopers, so this animates the whole roster; per-faction rigs (`TrooperUs`/`TrooperFr` keep the
@@ -4014,12 +4014,12 @@ procedural floor) and runtime-driven death (dead units drop from the snapshot) r
 491 render tests green dev+release.
 
 **Cross-link:** [D84](#d84--animation-floor-cp3ws-b-is-a-pure-clip-selection-seam--a-procedural-pose-rig-authoring-lands-skeletal-playback-deferred),
-[D19](#d19), [D46](#d46), invariant #4, [`roadmap.md`](roadmap.md) CP-3 / *Art & assets*,
+[D19](#d19--the-gpu-device-crosses-into-the-renderer-at-the-concrete-wiring-layer-not-through-the-abstract-pal-trait), [D46](#d46--the-headless-asset-tooling-toolbox-one-scriptable-cli-per-content-lane), invariant #4, [`roadmap.md`](roadmap.md) CP-3 / *Art & assets*,
 [`plans/visual-design-plan.md`](plans/visual-design-plan.md) WS-B.
 
 ## D88 — `core::scenario::ScenarioBuilder` lands the content-tooling spine (CT-A)
 
-**Status: landed.** [D76](#d76) settled the mission/map authoring format as **external RON data behind
+**Status: landed.** [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15) settled the mission/map authoring format as **external RON data behind
 a host-side loader driving a serde-free `core` builder**;
 [`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-A is the first slice of that
 build-out and is now in `core::scenario`. `ScenarioBuilder<'a>` borrows `&mut Sim` and exposes a
@@ -4040,7 +4040,7 @@ free. 557 `core` tests green dev+release; the sim-runner checksum stream is unch
 ScenarioBuilder::new(&mut sim)… }; sim`); mission-specific shaping is via `sim_mut()`, so the RON
 loader may want thin builder wrappers for the common shaping ops if the schema warrants it.
 
-**Cross-link:** [D76](#d76), [D77](#d77),
+**Cross-link:** [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15), [D77](#d77--content-addressed-terrain-maps-carry-the-grid-persist-serializes-a-content-hash-id-resolves-q22),
 [`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-A, invariants #1/#2/#7.
 
 ## D89 — Replays are a seed + an input log, proven by checksum equality (PC-3)
@@ -4063,12 +4063,12 @@ error, not a silent drop), loud decode errors. **Scope:** single-client (one ord
 multi-peer per-peer ordering and a *rendered* spectator view are follow-ups on this same seed+log
 foundation. 9 crate tests green dev+release. Opens [Q26](open-questions.md).
 
-**Cross-link:** invariants #1/#2/#7, [D27](#d27) (lockstep wire discipline),
+**Cross-link:** invariants #1/#2/#7, [D27](#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait) (lockstep wire discipline),
 [`positioning-pc.md`](positioning/positioning-pc.md) PC-3, [`roadmap.md`](roadmap.md) PC-3.
 
 ## D90 — Desktop key-rebind editor is a pure `engine::keybind` seam wired at the `app` boundary
 
-**Status: landed (host toggles).** The owed rebind half of the [D75](#d75) Settings surface: the
+**Status: landed (host toggles).** The owed rebind half of the [D75](#d75--desktop-settings--profile--about-surfaces-land-phase-4-surface-3-partial-audio--look-prefs-wired) Settings surface: the
 rebindable host actions (Pause/Esc, Toggle-fullscreen/F11, Toggle-debug-overlay/F3) now bind through a
 `KeybindMap` in a new `engine::keybind` module — defaults, conflict-rejecting `rebind` (a shared key
 returns `RebindOutcome::Conflict(owner)` and leaves the map untouched), reset, and an
@@ -4086,11 +4086,11 @@ state. **Scope:** only the `app`-owned host toggles are rebindable; the `pal-des
 (move/fire/embody/build/train/upgrade/…) stays hardcoded because it decodes in a different crate —
 extending the map to it is a PAL-boundary change, deferred as [Q27](open-questions.md).
 
-**Cross-link:** [D75](#d75), invariant #2, [`roadmap.md`](roadmap.md) Settings / *UI-UX polish*.
+**Cross-link:** [D75](#d75--desktop-settings--profile--about-surfaces-land-phase-4-surface-3-partial-audio--look-prefs-wired), invariant #2, [`roadmap.md`](roadmap.md) Settings / *UI-UX polish*.
 
 ## D91 — The content-tooling format layer lands: RON mission/map airlock, archetype vocab, content lint, procedural map generator (CT-B/C/E/F/G)
 
-**Status: landed.** Building on the [D88](#d88) `ScenarioBuilder` spine, five parallel
+**Status: landed.** Building on the [D88](#d88--corescenarioscenariobuilder-lands-the-content-tooling-spine-ct-a) `ScenarioBuilder` spine, five parallel
 [`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) workstreams landed together, turning
 mission/battlefield authoring from an engineer-recompile task toward a designer-edit-a-file task:
 
@@ -4123,7 +4123,7 @@ mission/battlefield authoring from an engineer-recompile task toward a designer-
   wrong-transform map correctly ERRORs) — the fairness gate for the LEAD symmetric-PvP shape. Same seed
   → byte-identical output. Output under `assets/maps/generated/`.
 
-**Why.** [D76](#d76) settled the format question; this cashes it in while holding every guardrail: the
+**Why.** [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15) settled the format question; this cashes it in while holding every guardrail: the
 loader is the single float airlock, `core` stays serde-free, the data file never enters the checksum
 (only the seeded `Sim` does — same footing as a hand seeder, so the cross-arch matrix needs no new
 coverage), and authored/generated content is deterministic and lint-guarded. Built in five isolated
@@ -4134,9 +4134,9 @@ check` clean, maps `lint.py --self-test` 14/14.
 
 **Remaining (per the plan):** CT-D (data-backed registry + between-match hot-reload) is the payoff slice
 still owed — it points `mission_registry` at a content directory of the CT-B/CT-C files and wires the
-CT-F lint over them; CT-G's terrain half builds against [D77](#d77) content-addressed terrain.
+CT-F lint over them; CT-G's terrain half builds against [D77](#d77--content-addressed-terrain-maps-carry-the-grid-persist-serializes-a-content-hash-id-resolves-q22) content-addressed terrain.
 
-**Cross-link:** [D76](#d76), [D77](#d77), [D88](#d88), invariants #1/#2/#7,
+**Cross-link:** [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15), [D77](#d77--content-addressed-terrain-maps-carry-the-grid-persist-serializes-a-content-hash-id-resolves-q22), [D88](#d88--corescenarioscenariobuilder-lands-the-content-tooling-spine-ct-a), invariants #1/#2/#7,
 [`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-B/C/E/F/G,
 [`maps.md`](maps.md) (the real-world CT-G sibling), [`roadmap.md`](roadmap.md) PC-4.
 
@@ -4169,7 +4169,7 @@ profiles; the skirmish opening golden checksum is unchanged.
   so a unit grazing a wall slides along it), the terrain analogue of `resolve_building_collisions`.
 
 **Why.** The player could walk through almost everything they saw: the embodied props were
-render-only with **no sim body** ([D50](#d50) shipped them as a cosmetic `PROP_LAYOUT` and flagged
+render-only with **no sim body** ([D50](#d50--wire-the-placeholder-model-library-to-the-sim-unit-kind-tokens-the-tank-and-first-person-world-dressing) shipped them as a cosmetic `PROP_LAYOUT` and flagged
 the fix — *"if props ever need to be gameplay cover they must become sim … data, never a render-side
 back-channel to the sim — invariant #4"*), and terrain cover cells never blocked movement at all.
 [Q24](open-questions.md)'s lean was an explicit per-cell **cost** layer; a binary **impassable
@@ -4189,14 +4189,14 @@ prop layout is now visibly **symmetric** (mirrored), a small cosmetic change fro
 dressing. Graded traversal **cost** (the other half of Q24's lean) is deliberately still open —
 reopen it as a new question if marsh/slow-mud is ever scoped.
 
-**Cross-link:** [D50](#d50), [D28](#d28)/[D77](#d77) (terrain as static, content-addressed map
+**Cross-link:** [D50](#d50--wire-the-placeholder-model-library-to-the-sim-unit-kind-tokens-the-tank-and-first-person-world-dressing), [D28](#d28--authoritative-snapshot-format-a-hand-rolled-le-serialization-sharing-the-checksum-walk)/[D77](#d77--content-addressed-terrain-maps-carry-the-grid-persist-serializes-a-content-hash-id-resolves-q22) (terrain as static, content-addressed map
 data), invariants #1/#4/#6/#7, [`maps.md`](maps.md), [`architecture.md`](architecture.md),
 [Q24](open-questions.md) (closed), [Q25](open-questions.md#q25--destructible-terrain) (prop
 destruction still leans on entity props — unaffected).
 
 ## D93 — Multi-peer replays merge per-peer command sets in ascending peer order, matching lockstep (PC-3)
 
-**Status: landed.** Extends the [D89](#d89) replay foundation from a single command stream to a
+**Status: landed.** Extends the [D89](#d89--replays-are-a-seed--an-input-log-proven-by-checksum-equality-pc-3) replay foundation from a single command stream to a
 **multi-peer** form for lockstep PvP matches, where each tick's inputs come from several peers. A
 `MultiReplay` keeps every peer's commands *separately* per tick (`tick → peer → commands`, both
 `BTreeMap`s) and merges them at playback into a single ordered set: **every peer's commands
@@ -4219,13 +4219,13 @@ one choice that keeps a recorded PvP match faithful. Codec stays in the runner, 
 **Scope / follow-up.** The *rendered* spectator view (rendering a playback) is still deferred — it is
 GPU-gated render-side work and can consume `MultiReplay::merged_for`/`arrivals` directly when built.
 
-**Cross-link:** invariants #1/#2/#7, [D89](#d89) (replay foundation), [D27](#d27) (lockstep wire
+**Cross-link:** invariants #1/#2/#7, [D89](#d89--replays-are-a-seed--an-input-log-proven-by-checksum-equality-pc-3) (replay foundation), [D27](#d27--netcode-topology-deterministic-lockstep-in-core-transport-behind-a-pal-trait) (lockstep wire
 discipline + per-peer ordering), [`positioning-pc.md`](positioning/positioning-pc.md) PC-3,
 [`roadmap.md`](roadmap.md) PC-3.
 
 ## D94 — Missions load from a content directory of RON files with fail-soft hot-reload (CT-D/CT-F)
 
-**Status: landed.** Completes the content-tooling payoff slice ([D91](#d91) built the RON airlock;
+**Status: landed.** Completes the content-tooling payoff slice ([D91](#d91--the-content-tooling-format-layer-lands-ron-missionmap-airlock-archetype-vocab-content-lint-procedural-map-generator-ct-bcefg) built the RON airlock;
 this wires it into the registry). `engine::mission_registry` gains a `ContentRegistry` that scans a
 content directory of `*.mission.ron` + `*.map.ron`, parses+validates each through the already-proven
 `mission_format`/`map_format` loaders, resolves every mission's `map:` reference against the loaded
@@ -4240,8 +4240,8 @@ battery (deterministic double-seed, 180-tick bit-identity, objective-target reso
 proving the lint has teeth; `pnpm content:check` runs it.
 
 **Why.** This turns mission/map authoring from an engineer-recompile task into a designer-edit-a-file
-task ([D76](#d76)), and the between-match reload is the primary mitigation for Rust's weak engine-code
-hot-reload ([D10](#d10)). Seeding stays on the proven `load_mission` path, so the data registry
+task ([D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15)), and the between-match reload is the primary mitigation for Rust's weak engine-code
+hot-reload ([D10](#d10--engine-language-rust)). Seeding stays on the proven `load_mission` path, so the data registry
 re-asserts the same Seize opening checksum (`0x474cdbf2ad913ecb`) — the format is a faithful
 re-expression, not a second code path. Codec/serde stay host-side in `engine` (invariant #2, `core`
 serde-free); no sim state, `SNAPSHOT_VERSION`, or `WIRE_VERSION` touched, so zero checksum surface
@@ -4256,18 +4256,18 @@ and cross-referenced (a dangling ref is a hard load error) and independently lin
 is a clean follow-up that requires intentionally **re-baselining the byte-identity oracle** — a
 decision to take explicitly, not smuggle. Flagged here rather than decided.
 
-**Cross-link:** invariants #1/#2/#7, [D91](#d91) (RON airlock CT-B/C/E/F/G), [D76](#d76) (RON data
-format), [D10](#d10) (weak Rust hot-reload → data-reload lane), [D58](#d58)–[D61](#d61) (the PvE
+**Cross-link:** invariants #1/#2/#7, [D91](#d91--the-content-tooling-format-layer-lands-ron-missionmap-airlock-archetype-vocab-content-lint-procedural-map-generator-ct-bcefg) (RON airlock CT-B/C/E/F/G), [D76](#d76--missionscenario-authoring-format-external-ron-data-files-behind-a-host-side-loader-resolves-q15) (RON data
+format), [D10](#d10--engine-language-rust) (weak Rust hot-reload → data-reload lane), [D58](#d58--pve-first-the-operations-campaign-is-the-first-shippable-product-resolves-q5)–[D61](#d61--mobile-hud-customization-a-per-layer-layout-editor-presentation-only) (the PvE
 campaign this feeds), [`plans/content-tooling-plan.md`](plans/content-tooling-plan.md) CT-D/CT-F,
 [`roadmap.md`](roadmap.md) PC-4.
 
 ## D95 — Rendered spectator playback via a one-tick `Game::spectate_frame` seam (PC-3)
 
-**Status: landed.** Cashes the [D89](#d89)/[D93](#d93) replay determinism freebie in *visually*: a
+**Status: landed.** Cashes the [D89](#d89--replays-are-a-seed--an-input-log-proven-by-checksum-equality-pc-3)/[D93](#d93--multi-peer-replays-merge-per-peer-command-sets-in-ascending-peer-order-matching-lockstep-pc-3) replay determinism freebie in *visually*: a
 replay is "a seed + an ordered input log" (invariant #1), so drawing a spectate is just stepping the
 sim with that log through the real render path. New `Game::spectate_frame(merged, viewport, device,
 queue, view)` advances the sim by **exactly one tick** with an externally-supplied, already-merged
-`Command` set — e.g. `MultiReplay::merged_for` (the ascending-peer-id order [D93](#d93) fixed) — then
+`Command` set — e.g. `MultiReplay::merged_for` (the ascending-peer-id order [D93](#d93--multi-peer-replays-merge-per-peer-command-sets-in-ascending-peer-order-matching-lockstep-pc-3) fixed) — then
 draws the top-down **command view**. A `viz-runner --spectator` mode (`pnpm desktop:viz:spectator`)
 records + round-trips a `MultiReplay` (reusing `replay-runner`), renders each tick, and asserts the
 rendered per-tick checksum stream is **bit-identical to the headless replay oracle**, reproducible
@@ -4288,7 +4288,7 @@ engine lib + 2 viz-runner tests green dev+release; the 6-assertion GPU smoke pas
 networked match* is deferred — it needs the Phase 3 live net layer (not landed). Free-cam / interactive
 spectator camera is also out; the fixed command-view is deliberate (and the fair one).
 
-**Cross-link:** invariants #1/#4/#6/#7, [D89](#d89) (replay foundation), [D93](#d93) (multi-peer
+**Cross-link:** invariants #1/#4/#6/#7, [D89](#d89--replays-are-a-seed--an-input-log-proven-by-checksum-equality-pc-3) (replay foundation), [D93](#d93--multi-peer-replays-merge-per-peer-command-sets-in-ascending-peer-order-matching-lockstep-pc-3) (multi-peer
 ordering), [`positioning-pc.md`](positioning/positioning-pc.md) PC-3, [`roadmap.md`](roadmap.md) PC-3.
 
 ## D96 — Live-ops rotation bridge: server ships `(period, track)` scalars, `core` owns the modifier catalog (CP-8)
@@ -4352,8 +4352,8 @@ Compose shell re-authors them per D32 (a `compose-shell-parity.md` Tier-2 follow
 routing semantics and validation rules did not fork). The identity card's record line reads 0/0
 until the post-match writer for `ProfileState` lands (its documented placeholder).
 
-**Cross-link:** [D32](#d32)/[D36](#d36) (native per-platform chrome), [D78](#d78) (sanctioned title
-divergence), [D81](#d81) (routing vocabulary), [D82](#d82) (bidirectional parity + persistence),
+**Cross-link:** [D32](#d32--meta-ui--app-shell-native-per-platform-shells-out-of-match-in-engine-in-session)/[D36](#d36--the-desktop-app-shell-an-egui-boot--title-title-screen-desktop-sibling-of-d35) (native per-platform chrome), [D78](#d78--android-title-backdrop-is-compose-native-not-an-embedded-wgpu-surface) (sanctioned title
+divergence), [D81](#d81--play-modes-dont-funnel-through-the-gunsmith-the-gunsmith-is-loadout-customization-behind-settings) (routing vocabulary), [D82](#d82--shell-parity-is-bidirectional-desktop-adopts-d81-both-platforms-converge-features-and-persistence) (bidirectional parity + persistence),
 [`compose-shell-parity.md`](plans/compose-shell-parity.md), `app/src/shell/{egui_shell,transitions,
 mission_select}.rs`.
 
@@ -4389,14 +4389,14 @@ rosters** (fork 1), and the **conflict-selection policy** for real/recent wars (
 placeholder conflict is placeholder *content*, not an identity decision.
 
 **Cross-link:** [Q28](open-questions.md#q28--conflict-atlas) (partially resolved — structural half),
-[D58](#d58)/[D59](#d59) (the hub this groups over), [D79](#d79) (the Kotlin mirror discipline),
-[D83](#d83) (replay difficulty, unchanged), [`modes.md`](modes.md) §2,
+[D58](#d58--pve-first-the-operations-campaign-is-the-first-shippable-product-resolves-q5)/[D59](#d59--the-operations-hub-campaign--a-host-side-objective-system) (the hub this groups over), [D79](#d79--android-shells-pure-decisionvalidation-seams-are-re-implemented-in-kotlin-with-tests-not-single-sourced-over-jni) (the Kotlin mirror discipline),
+[D83](#d83--campaign-replay-difficulty-reshapes-the-situation-not-a-4th-commander-band-resolves-q21) (replay difficulty, unchanged), [`modes.md`](modes.md) §2,
 [`pve-campaign.md`](pve-campaign.md) §2, `core/src/campaign.rs`, `engine/src/mission_registry.rs`,
 `android/.../CampaignModel.kt`.
 
 ## D99 — The gameplay keymap is rebindable: a host-owned `KeybindMap` threads into the PAL decode (closes Q27)
 
-**Status: landed.** The [D90](#d90) rebind editor's scope cap is lifted: the **gameplay** keys
+**Status: landed.** The [D90](#d90--desktop-key-rebind-editor-is-a-pure-enginekeybind-seam-wired-at-the-app-boundary) rebind editor's scope cap is lifted: the **gameplay** keys
 (embody/surface, movement, jump, the order menu + its ten vocabulary slots, build/train/upgrade,
 crouch/reload/select-fire) are now rebindable alongside the three host toggles. Three moves make it
 hold invariant #2 on both sides of the seam:
@@ -4438,8 +4438,8 @@ produced them. Tested at the platform-free seam per the repo discipline: default
 (every action bound, no overlapping-layer duplicates), the layer conflict rules, legacy-blob
 decode, the rebound-map PAL decode, and the winit mapping's totality — green in dev + release.
 
-**Cross-link:** [Q27](open-questions.md#q27--gameplay-key-rebind) (resolved), [D90](#d90),
-[D42](#d42) (the button split + the `R` share), invariant #2, [`roadmap.md`](roadmap.md) PC-2,
+**Cross-link:** [Q27](open-questions.md#q27--gameplay-key-rebind) (resolved), [D90](#d90--desktop-key-rebind-editor-is-a-pure-enginekeybind-seam-wired-at-the-app-boundary),
+[D42](#d42--desktop-command-controls-the-classic-rts-split-left-click-selects-right-click-commands) (the button split + the `R` share), invariant #2, [`roadmap.md`](roadmap.md) PC-2,
 `pal/src/keybind.rs`, `pal-desktop/src/lib.rs`, `app/src/shell/settings.rs`.
 
 ## D100 — CP-6 audio identity: a designed, committed Csound+SoX cue set served through `pal::bank`
@@ -4494,7 +4494,7 @@ provenance note: Csound + SoX are **Homebrew formulae** on this machine (the D46
 build" note described the previous workstation; both are swept by `update-all`).
 
 **Cross-link:** invariant #6, [D26](#d26--phase-2-polish-round-real-opt-in-audio-output-a-selection-highlight-and-a-first-pass-balance-baseline)/[D29](#d29--android-audio-sink-oboe-low-latency-aaudio-mixing-through-a-shared-host-tested-seam)
-(the placeholders this replaces), [D41](#d41)/[D46](#d46) (the scripted-asset method +
+(the placeholders this replaces), [D41](#d41--ai-generated-placeholder-models-for-all-render-content-skip-commissioned-art-for-now)/[D46](#d46--the-headless-asset-tooling-toolbox-one-scriptable-cli-per-content-lane) (the scripted-asset method +
 toolchain), [Q1](open-questions.md) (the real-audio playtest gate),
 [`roadmap.md`](roadmap.md) CP-6, [`content-pipeline.md`](content-pipeline.md) §6,
 `tools/audio/gen_sfx.py`, `assets/audio/manifest.json`, `pal/src/bank.rs`,
