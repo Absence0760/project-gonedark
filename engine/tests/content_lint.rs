@@ -508,14 +508,21 @@ fn every_shipped_map_loads_validates_and_applies() {
 // --- CT-F teeth: a deliberately-broken authored file fails the lint with a precise diagnostic ----
 
 /// A dependency-free unique scratch dir, removed on drop (no tempfile crate in the tree).
+/// Unique per (pid, process-atomic counter, wall-clock nanos) — same scheme as
+/// `mission_registry`'s `TempContent`; nanos alone collide when parallel test threads land on
+/// the same clock tick, and a shared dir makes both tests see each other's fixtures.
 struct TempDir(PathBuf);
 impl TempDir {
     fn new() -> TempDir {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("gonedark-ctf-lint-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join(format!("gonedark-ctf-lint-{}-{n}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         TempDir(dir)
     }
