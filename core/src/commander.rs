@@ -14,13 +14,19 @@
 //!   `sqrt`/`normalize`/transcendental. The determinism guard greps this file (incl. tests).
 //! - **Stable iteration + tie-breaks.** Every scan walks the world in `0..capacity()` index
 //!   order; "nearest" ties break toward the lowest index (`<` never replaces an equal-distance
-//!   earlier candidate), so the produced command list is a pure function of `(world, territory,
-//!   resources, rng-state, faction, tick)`.
+//!   earlier candidate). Where the plan is deliberately *varied* (the exploration roll that lets
+//!   the commander pick the second-nearest objective), the choice is drawn from the seeded RNG —
+//!   so the produced command list is still a pure function of `(world, territory, resources,
+//!   rng-state, config, faction, tick)`, identical on every peer, but a *different seed* yields a
+//!   different (still reproducible) game. That is the whole point: a human can no longer learn one
+//!   fixed opening and beat it every match.
 //! - **Own RNG stream.** The commander draws from a RNG owned by the *host* (`engine::Game`),
 //!   seeded `sim_seed ^ faction`, **never** `Sim::rng()` (that stream is folded into the
 //!   checksum; a host-side draw would advance it and desync). The host pushes the returned
 //!   commands into the same lockstep stream player commands travel, so they are applied
-//!   bit-identically on every peer — the commander itself stays peer-agnostic.
+//!   bit-identically on every peer — the commander itself stays peer-agnostic. Because the draw
+//!   count is a pure function of already-checksummed state (how many free units face a real
+//!   objective *choice* this cycle), every peer advances the RNG identically.
 //!
 //! The host calls [`commander_orders`] on a `tick % PERIOD == 0` cadence (see
 //! [`COMMANDER_PERIOD`]); on off-ticks it issues nothing. Returning a `Vec<Command>` (not
@@ -46,6 +52,74 @@ pub const COMMANDER_PERIOD: u64 = 60;
 /// point and is not re-tasked. Matches the territory capture radius so a unit sitting on a
 /// point it is capturing is left to finish the job. Squared at the use site (no sqrt).
 const POINT_COMMIT_RADIUS: Fixed = crate::territory::CAPTURE_RADIUS;
+
+/// Radius (world units) within which a hostile unit is considered to be *threatening* a control
+/// point this faction owns — twice the [capture radius](crate::territory::CAPTURE_RADIUS), so the
+/// commander reacts as an enemy *closes on* a held point, not only once it is already inside the
+/// capture ring. Squared at the use site (no sqrt). Only consulted when the tier
+/// [`defends`](PlanStyle::defend).
+const DEFEND_RADIUS: Fixed = Fixed::from_int(12);
+
+/// The **tactical style** the commander plays at, derived purely from its difficulty tier
+/// ([`plan_style`]). This is the "behavior quality" axis (invariant #3: it changes only which
+/// orders the *commander* chooses — units stay literal executors): a harder tier explores less
+/// wildly, concentrates its fire, defends what it holds, and preserves damaged bodies; an easier
+/// tier scatters more, never concentrates or defends, and feeds wounded units back in.
+///
+/// It is deliberately *separate* from [`DifficultyParams`] (which carries the economic / cadence
+/// knobs the sim already checksums through the command stream): the style is commander-local
+/// tactical policy, all integer, float-free (invariant #1), so it is deterministic and bit-
+/// identical on every peer. The RNG only ever enters through [`explore_pct`](Self::explore_pct).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct PlanStyle {
+    /// Chance, in **percent**, that a free unit facing a real *choice* of open control points
+    /// takes the SECOND-nearest instead of the nearest. The unpredictability knob: `0` ⇒ pure
+    /// greedy-nearest (the old, learnable opening); higher ⇒ the commander's route/priority
+    /// varies by seed. Rolled from the seeded RNG, so it stays reproducible per seed.
+    explore_pct: u32,
+    /// Concentrate free attackers on ONE priority target (focus-fire) rather than each picking its
+    /// own nearest foe. Off ⇒ the old per-unit nearest-hostile spread.
+    concentrate: bool,
+    /// Peel free units back to defend a held control point a hostile is closing on
+    /// ([`DEFEND_RADIUS`]) before taking new ground. Off ⇒ never defends (the old always-advance).
+    defend: bool,
+    /// Health fraction, in **percent**, below which a unit is pulled back to a friendly building to
+    /// preserve it (`0` ⇒ never retreat — feed them in, the old behavior).
+    retreat_hp_pct: u32,
+}
+
+/// The tactical [`PlanStyle`] for a difficulty tier — the "difficulty changes *behavior quality*"
+/// mapping ([D-AI]). Easiest → hardest: exploration tightens (a sharper commander wanders less),
+/// while concentration, defense, and force-preservation switch on and deepen. Every value is an
+/// integer, so the whole thing is `const`-evaluable and float-free (invariant #1).
+const fn plan_style(difficulty: Difficulty) -> PlanStyle {
+    match difficulty {
+        // Forgiving: scatters its objectives most, never concentrates or defends, and throws
+        // wounded units back into the fight — the tier a new player learns the loop against.
+        Difficulty::Recruit => PlanStyle {
+            explore_pct: 40,
+            concentrate: false,
+            defend: false,
+            retreat_hp_pct: 0,
+        },
+        // The baseline commander: explores moderately, focus-fires, defends what it holds, and
+        // pulls a badly hurt unit (under a quarter health) back rather than trading it away.
+        Difficulty::Veteran => PlanStyle {
+            explore_pct: 25,
+            concentrate: true,
+            defend: true,
+            retreat_hp_pct: 25,
+        },
+        // Sharp: wanders least (still varies by seed), always concentrates and defends, and
+        // preserves bodies sooner — a better commander, never an omniscient one.
+        Difficulty::Elite => PlanStyle {
+            explore_pct: 15,
+            concentrate: true,
+            defend: true,
+            retreat_hp_pct: 35,
+        },
+    }
+}
 
 // The production backlog cap and the Heavy-purchase reserve are no longer fixed constants: they
 // are **difficulty knobs** ([`mission_tuning::DifficultyParams`]), so a tier scales how deep the
@@ -138,24 +212,38 @@ impl CommanderConfig {
 /// With `CommanderConfig::default()` and `tells == &[]`, the returned command list is **identical,
 /// byte-for-byte, to the original commander** — the default scenes' checksum streams are untouched.
 ///
-/// Behavior loop (all "only existing order/economy commands", invariant #3):
+/// Behavior loop (all "only existing order/economy commands", invariant #3 — the *commander*
+/// chooses; units still execute literally). The tactical style — how much it explores, whether it
+/// concentrates, defends, and preserves damaged units — is a pure function of the difficulty tier
+/// (`plan_style`), so a harder tier is a genuinely *better* commander, never an omniscient one:
 /// 1. **Reinforce.** For each built friendly camp, if the faction can afford a unit, queue one
 ///    (`QueueProduction`). Heavy when flush, else Rifleman — pure resource thresholds, no float.
-/// 2. **Hunt the dark** *(only when `config.hunt_embodied`)*. If a hostile has gone dark
+/// 2. **Posture.** Any unit on `HoldFire` is bumped to `FireAtWill` so the commander's army
+///    actually engages (a one-shot stance fix; idempotent thereafter). `ReturnFire` would not do:
+///    a `HoldFire`/`ReturnFire` unit only shoots once *it* is hit, so a defending line would never
+///    open up on an attacker — it must `FireAtWill` to fight on its own.
+/// 3. **Preserve (retreat).** A unit whose health has dropped under the tier's `retreat_hp_pct`
+///    is pulled back to its nearest friendly building (`SetOrder` → `FallBack`) instead of being
+///    fed in to die — once, not every cycle (FallBack is terminal, so the guard never re-fires).
+///    `retreat_hp_pct == 0` (Recruit) keeps the old feed-them-in behavior — easier to beat.
+/// 4. **Hunt the dark** *(only when `config.hunt_embodied`)*. If a hostile has gone dark
 ///    (embodied) within what the detection channel HONESTLY reveals (a non-empty `tells`), a free
 ///    unit is pressed toward its nearest tell's (last-seen) position ABOVE taking ground — a
 ///    gone-dark player is the juiciest target. Empty `tells` (out of range / no LoS / `Hidden`) ⇒
 ///    no reaction, so the AI never knows more than detection grants (invariant #6, no omniscient
 ///    peek). Off by default → no effect on the default streams.
-/// 3. **Capture.** Idle / freshly-produced units not already committed to a point are sent to
-///    the nearest neutral-or-enemy control point (`AttackMove` onto it) — taking ground is how
-///    you out-produce the player.
-/// 4. **Attack.** Units with no point to take are pointed at the nearest hostile force
-///    (`AttackMove` toward the nearest enemy unit/building) so the line keeps pressing.
-/// 5. **Posture.** Any unit on `HoldFire` is bumped to `FireAtWill` so the commander's army
-///    actually engages (a one-shot stance fix; idempotent thereafter). `ReturnFire` would not do:
-///    a `HoldFire`/`ReturnFire` unit only shoots once *it* is hit, so a defending line would never
-///    open up on an attacker — it must `FireAtWill` to fight on its own.
+/// 5. **Defend** *(tiers with `defend`)*. A free unit will hold a control point the faction owns
+///    that a hostile is closing on (within `DEFEND_RADIUS`) BEFORE grabbing new ground — don't
+///    lose what you hold. Multiple free units near the same threatened point converge on it, so a
+///    real defending force peels back.
+/// 6. **Capture.** Free units are otherwise sent to an open (neutral/enemy) control point. The
+///    target is usually the nearest, but with the tier's `explore_pct` chance the commander picks
+///    the *second*-nearest instead (a seeded roll) — so it does not march the identical greedy
+///    opening every match. Taking ground is how you out-produce the player.
+/// 7. **Attack.** Units with no point to take press the enemy. With `concentrate` on, they all
+///    converge on ONE priority target — the hostile nearest to the commander's own line
+///    (`nearest_contact`) — so the army focus-fires instead of each unit dribbling toward its
+///    own nearest foe. Without it (Recruit) each unit picks its own nearest hostile, as before.
 #[allow(clippy::too_many_arguments)] // honest read-only inputs; bundling them buys no clarity
 pub fn commander_orders(
     world: &World,
@@ -225,11 +313,24 @@ pub fn commander_orders(
         }
     }
 
-    // --- 2 & 3. Task idle units: capture the nearest open point, else press the nearest foe. ---
+    // --- 2..7. Task the army: preserve, defend, capture (with variation), and concentrate. -----
     // Gated by the difficulty cadence: an easier commander (stride > 1) skips re-tasking on
     // off-cycles, so its army reconsiders orders less often. At Veteran stride this runs every
-    // cycle exactly as before.
+    // cycle. The tactical *style* (explore / concentrate / defend / preserve) is the difficulty
+    // tier's — the "harder tier = better commander" axis (invariant #3: only the commander's
+    // *choices* change; units still execute literally).
     if retask_this_cycle {
+        let style = plan_style(config.difficulty);
+
+        // The single priority target for a concentrated attack, computed ONCE so every free
+        // attacker converges on it (focus-fire). `None` when the tier does not concentrate or
+        // there is no contact — then each unit falls back to its own nearest hostile below.
+        let focus = if style.concentrate {
+            nearest_contact(world, faction)
+        } else {
+            None
+        };
+
         for i in 0..world.capacity() {
             if !world.is_index_alive(i)
                 || world.kind[i] != EntityKind::Unit
@@ -249,13 +350,34 @@ pub fn commander_orders(
                 }
             }
 
+            let pos = world.pos[i];
+
+            // Preserve (retreat): a badly hurt unit is pulled back to its nearest friendly building
+            // rather than fed in to die. This applies even to a unit mid-order (it is *losing* the
+            // fight it is in) — so it comes BEFORE the "leave a busy unit alone" gate. Issued once:
+            // FallBack is terminal ([`orders`]), so a unit already falling back is skipped and the
+            // order never thrashes. `retreat_hp_pct == 0` (Recruit) disables this entirely.
+            if style.retreat_hp_pct > 0
+                && !matches!(world.order[i], Order::FallBack(_))
+                && world.health[i].fraction() < Fixed::from_ratio(style.retreat_hp_pct as i32, 100)
+            {
+                if let (Some(e), Some(rally)) =
+                    (world.entity(i), nearest_friendly_building(world, pos, faction))
+                {
+                    commands.push(Command::SetOrder {
+                        entity: e,
+                        order: Order::FallBack(rally),
+                    });
+                    continue;
+                }
+            }
+
             // Only (re-)task units free to take a new objective: Idle / HoldPosition. A unit mid-
             // MoveTo/AttackMove/Patrol/FallBack is left to finish its current order (re-issuing every
             // period would thrash it).
             if !matches!(world.order[i], Order::Idle | Order::HoldPosition) {
                 continue;
             }
-            let pos = world.pos[i];
 
             // Already standing on a not-yet-ours point? Leave it to capture (don't re-issue).
             if sitting_on_open_point(territory, pos, faction) {
@@ -278,23 +400,33 @@ pub fn commander_orders(
                 }
             }
 
-            // Prefer taking ground: nearest neutral/enemy control point.
-            if let Some(target) = nearest_open_point(territory, pos, faction) {
+            // Defend (tiers with `defend`): hold a point we own that an enemy is closing on before
+            // going to grab new ground — free units near the same threatened point converge on it.
+            if style.defend {
+                if let Some(target) = nearest_threatened_owned_point(territory, world, pos, faction)
+                {
+                    commands.push(Command::AttackMove { entity: e, target });
+                    continue;
+                }
+            }
+
+            // Take ground: an open (neutral/enemy) control point. Usually the nearest, but with the
+            // tier's `explore_pct` chance the seeded RNG picks the second-nearest instead — so the
+            // opening/priority varies by seed and can't be learned as one fixed pattern.
+            if let Some(target) = choose_open_point(territory, pos, faction, style.explore_pct, rng)
+            {
                 commands.push(Command::AttackMove { entity: e, target });
                 continue;
             }
 
-            // No point to take (we own them all, or there are none) → press the nearest hostile force.
-            if let Some(target) = nearest_hostile(world, pos, faction) {
+            // No point to take → press the enemy. Concentrate on the one priority target when the
+            // tier focus-fires; otherwise each unit presses its own nearest hostile (the old spread).
+            let target = focus.or_else(|| nearest_hostile(world, pos, faction));
+            if let Some(target) = target {
                 commands.push(Command::AttackMove { entity: e, target });
             }
         }
     }
-
-    // The RNG is part of the contract (own stream, seeded `sim_seed ^ faction`) so the commander
-    // can later make randomized-but-deterministic choices without ever touching `Sim::rng`. Today
-    // the plan is fully deterministic from world state, so we don't draw — but we keep the seam.
-    let _ = rng;
 
     commands
 }
@@ -308,25 +440,6 @@ fn sitting_on_open_point(territory: &Territory, pos: Vec2, faction: Faction) -> 
         .points
         .iter()
         .any(|p| p.owner != faction && (p.pos - pos).len_sq() <= r_sq)
-}
-
-/// Nearest control point not owned by `faction` (neutral or enemy), by squared distance from
-/// `pos`. `None` if the faction owns every point (or there are none). Deterministic: stable
-/// vector order, ties break toward the earliest point (`<` never displaces an equal-distance
-/// earlier one).
-fn nearest_open_point(territory: &Territory, pos: Vec2, faction: Faction) -> Option<Vec2> {
-    let mut best: Option<(Fixed, Vec2)> = None;
-    for p in &territory.points {
-        if p.owner == faction {
-            continue;
-        }
-        let d = (p.pos - pos).len_sq();
-        match best {
-            Some((bd, _)) if d >= bd => {}
-            _ => best = Some((d, p.pos)),
-        }
-    }
-    best.map(|(_, t)| t)
 }
 
 /// Nearest hostile (different, non-`Neutral` faction) entity — unit OR building — to `pos`, by
@@ -349,6 +462,157 @@ fn nearest_hostile(world: &World, pos: Vec2, faction: Faction) -> Option<Vec2> {
         }
     }
     best.map(|(_, t)| t)
+}
+
+/// Choose which open (neutral/enemy) control point a free unit at `pos` heads for — usually the
+/// nearest, but with `explore_pct`% chance the **second**-nearest instead. This is the
+/// unpredictability knob (invariant #3 style): a fixed seed replays identically, but a different
+/// seed yields a different opening/priority, so a human can't learn one greedy pattern and beat it
+/// every match. The RNG is drawn **only when there is a real choice** (two or more open points),
+/// so a single-candidate scene is byte-identical to plain nearest and advances the stream by
+/// nothing. Float-free: squared-distance comparisons, an integer percent roll from the seeded RNG.
+///
+/// Deterministic: the two nearest are found by a stable point-order scan with lowest-index tie-
+/// breaks; the roll is `rng.below(100) < explore_pct`.
+fn choose_open_point(
+    territory: &Territory,
+    pos: Vec2,
+    faction: Faction,
+    explore_pct: u32,
+    rng: &mut Rng,
+) -> Option<Vec2> {
+    // Track the two nearest open points (by squared distance), stable lowest-index tie-break.
+    let mut best: Option<(Fixed, Vec2)> = None;
+    let mut second: Option<(Fixed, Vec2)> = None;
+    for p in &territory.points {
+        if p.owner == faction {
+            continue;
+        }
+        let d = (p.pos - pos).len_sq();
+        match best {
+            // Strictly closer than the current best → best becomes second, this becomes best.
+            Some((bd, _)) if d < bd => {
+                second = best;
+                best = Some((d, p.pos));
+            }
+            // Not better than best, but better than second (or there is no second yet).
+            Some(_) => match second {
+                Some((sd, _)) if d >= sd => {}
+                _ => second = Some((d, p.pos)),
+            },
+            None => best = Some((d, p.pos)),
+        }
+    }
+    let (_, best_pos) = best?;
+    // A real choice (a distinct second option) → roll for exploration; otherwise take the nearest.
+    match second {
+        Some((_, second_pos)) if explore_pct > 0 && rng.below(100) < explore_pct => Some(second_pos),
+        _ => Some(best_pos),
+    }
+}
+
+/// The single **priority target** for a concentrated (focus-fire) attack: the hostile — unit OR
+/// building — sitting closest to *any* of this faction's own units, i.e. where the lines actually
+/// meet. Sending every free attacker here makes the army converge instead of each unit dribbling
+/// toward its own nearest foe. `None` when the faction has no units or there is no hostile.
+///
+/// Deterministic and float-free: for each hostile (stable index order) take its squared distance
+/// to the nearest of our units (stable inner scan), then keep the hostile with the smallest such
+/// distance, ties breaking toward the lowest hostile index (`>=` never displaces an earlier one).
+fn nearest_contact(world: &World, faction: Faction) -> Option<Vec2> {
+    let mut best: Option<(Fixed, Vec2)> = None;
+    for j in 0..world.capacity() {
+        if !world.is_index_alive(j) {
+            continue;
+        }
+        let f = world.faction[j];
+        if f == faction || f == Faction::Neutral {
+            continue;
+        }
+        // Distance from this hostile to the nearest of our own units.
+        let mut nearest_ours: Option<Fixed> = None;
+        for i in 0..world.capacity() {
+            if !world.is_index_alive(i)
+                || world.kind[i] != EntityKind::Unit
+                || world.faction[i] != faction
+            {
+                continue;
+            }
+            let d = (world.pos[i] - world.pos[j]).len_sq();
+            nearest_ours = Some(match nearest_ours {
+                Some(x) if x <= d => x,
+                _ => d,
+            });
+        }
+        let Some(d) = nearest_ours else {
+            continue; // we have no units to measure from
+        };
+        match best {
+            Some((bd, _)) if d >= bd => {}
+            _ => best = Some((d, world.pos[j])),
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// The nearest control point this `faction` owns that a hostile **unit** is closing on (within
+/// [`DEFEND_RADIUS`]) — the point to peel a defender back to. `None` if no owned point is
+/// threatened. Deterministic: stable point order for the nearest pick (lowest-index tie-break),
+/// stable index-order threat scan; squared-distance only (no sqrt), float-free (invariant #1).
+fn nearest_threatened_owned_point(
+    territory: &Territory,
+    world: &World,
+    pos: Vec2,
+    faction: Faction,
+) -> Option<Vec2> {
+    let threat_sq = DEFEND_RADIUS * DEFEND_RADIUS;
+    let mut best: Option<(Fixed, Vec2)> = None;
+    for p in &territory.points {
+        if p.owner != faction {
+            continue;
+        }
+        // Is any hostile unit closing on this point?
+        let threatened = (0..world.capacity()).any(|j| {
+            world.is_index_alive(j)
+                && world.kind[j] == EntityKind::Unit
+                && world.faction[j] != faction
+                && world.faction[j] != Faction::Neutral
+                && (world.pos[j] - p.pos).len_sq() <= threat_sq
+        });
+        if !threatened {
+            continue;
+        }
+        let d = (p.pos - pos).len_sq();
+        match best {
+            Some((bd, _)) if d >= bd => {}
+            _ => best = Some((d, p.pos)),
+        }
+    }
+    best.map(|(_, t)| t)
+}
+
+/// Nearest alive friendly (`same faction`) **building** to `pos` — the rally a retreating unit
+/// falls back to. `None` if the faction has no building. Deterministic: stable index-order scan,
+/// ties break toward the lowest index. Squared-distance only (no sqrt), float-free (invariant #1).
+/// (Mirrors [`orders`](crate::orders)'s private rally scan, but returns `Option` so the commander
+/// can decline to retreat a unit that has nowhere to fall back to, rather than sending it to the
+/// origin.)
+fn nearest_friendly_building(world: &World, pos: Vec2, faction: Faction) -> Option<Vec2> {
+    let mut best: Option<(Fixed, Vec2)> = None;
+    for j in 0..world.capacity() {
+        if !world.is_index_alive(j)
+            || world.kind[j] != EntityKind::Building
+            || world.faction[j] != faction
+        {
+            continue;
+        }
+        let d = (world.pos[j] - pos).len_sq();
+        match best {
+            Some((bd, _)) if d >= bd => {}
+            _ => best = Some((d, world.pos[j])),
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 /// Nearest gone-dark tell to `pos` by squared distance (no sqrt). `None` for an empty slice.
@@ -477,10 +741,12 @@ mod tests {
         let far = at(-30, 0);
         spawn_unit(&mut world, Faction::Player, near);
         spawn_unit(&mut world, Faction::Player, far);
-        // The only point is already owned by us → not "open", so step 3 (attack) applies.
+        // The only point is already owned by us → not "open", so the attack step applies. It sits
+        // far from both foes (well beyond DEFEND_RADIUS) so the defensive-reaction step does not
+        // preempt the attack we are asserting here — this test isolates the attack fallback.
         let terr = Territory {
             points: vec![ControlPoint {
-                pos: at(0, 0),
+                pos: at(0, 40),
                 owner: Faction::Enemy,
                 progress: Fixed::ZERO,
             }],
@@ -1280,5 +1546,347 @@ mod tests {
             cmds.iter().any(|c| matches!(c, Command::QueueProduction { .. })),
             "the override lets Recruit stack a second item: {cmds:?}"
         );
+    }
+
+    // --- Seeded variation: same seed replays, different seed can differ (the fun-killer fix) ----
+    //
+    // The headline change: the commander no longer marches the identical greedy opening every
+    // match. It draws an exploration roll from its OWN seeded stream, so a fixed seed is perfectly
+    // reproducible (lockstep-safe) while a different seed yields a different — but equally
+    // deterministic — plan. A human can't learn one pattern and beat it forever.
+
+    /// `choose_open_point` is greedy-nearest at `explore_pct == 0`, always the second-nearest at
+    /// `100`, deterministic for a fixed `(seed, pct)`, and takes BOTH branches across seeds at a
+    /// moderate percentage — the mechanism behind the per-seed variation.
+    #[test]
+    fn choose_open_point_explores_deterministically() {
+        let near = at(5, 0);
+        let far = at(20, 0);
+        let terr = Territory {
+            points: vec![ControlPoint::neutral(near), ControlPoint::neutral(far)],
+        };
+        let choose = |seed: u64, pct: u32| {
+            let mut rng = Rng::new(seed);
+            choose_open_point(&terr, at(0, 0), Faction::Enemy, pct, &mut rng)
+        };
+
+        // 0% ⇒ pure greedy-nearest (byte-identical to the old behavior); 100% ⇒ always the second.
+        assert_eq!(choose(1, 0), Some(near), "explore_pct 0 is always the nearest");
+        assert_eq!(choose(1, 100), Some(far), "explore_pct 100 is always the second-nearest");
+        // Deterministic for a fixed (seed, pct).
+        assert_eq!(choose(9, 25), choose(9, 25), "same seed + pct ⇒ same choice");
+        // A moderate percentage takes BOTH branches over a run of the seeded stream (drawn from one
+        // evolving generator, the way the live commander does — a fresh generator's very first
+        // draw is not well distributed across nearby seeds).
+        let mut rng = Rng::new(0xC0FFEE);
+        let (mut saw_near, mut saw_far) = (false, false);
+        for _ in 0..200 {
+            match choose_open_point(&terr, at(0, 0), Faction::Enemy, 25, &mut rng) {
+                Some(p) if p == near => saw_near = true,
+                Some(p) if p == far => saw_far = true,
+                _ => {}
+            }
+        }
+        assert!(saw_near && saw_far, "a moderate explore_pct must reach both the nearest and second");
+    }
+
+    /// A single open point is not a *choice*, so `choose_open_point` returns it WITHOUT drawing —
+    /// the RNG stream is untouched (a one-candidate scene advances the seed by nothing, which is
+    /// what keeps single-point scenes reproducible and cheap).
+    #[test]
+    fn choose_open_point_single_candidate_draws_no_rng() {
+        let only = at(7, 0);
+        let terr = Territory {
+            points: vec![ControlPoint::neutral(only)],
+        };
+        let mut rng = Rng::new(3);
+        let before = rng.checksum_state();
+        assert_eq!(
+            choose_open_point(&terr, at(0, 0), Faction::Enemy, 40, &mut rng),
+            Some(only)
+        );
+        assert_eq!(rng.checksum_state(), before, "no real choice → no draw → stream untouched");
+    }
+
+    /// End-to-end: a fixed seed replays bit-identically, and *some* different seed produces a
+    /// different plan (the whole army's command stream). Uses several units and several open
+    /// points so every free unit faces a real objective choice.
+    #[test]
+    fn same_seed_replays_but_a_different_seed_varies_the_plan() {
+        let scene = || {
+            let mut world = World::new();
+            spawn_unit(&mut world, Faction::Enemy, at(0, 0));
+            spawn_unit(&mut world, Faction::Enemy, at(1, 0));
+            spawn_unit(&mut world, Faction::Enemy, at(0, 1));
+            spawn_unit(&mut world, Faction::Enemy, at(1, 1));
+            let terr = Territory {
+                points: vec![
+                    ControlPoint::neutral(at(10, 0)),
+                    ControlPoint::neutral(at(12, 3)),
+                    ControlPoint::neutral(at(20, -2)),
+                    ControlPoint::neutral(at(9, -5)),
+                ],
+            };
+            (world, terr)
+        };
+        let plan = |seed: u64| -> Vec<String> {
+            let (world, terr) = scene();
+            let mut rng = Rng::new(seed);
+            commander_orders(
+                &world,
+                &terr,
+                &Resources::new(0),
+                &mut rng,
+                &CommanderConfig::default(),
+                &[],
+                Faction::Enemy,
+                60,
+            )
+            .iter()
+            .map(|c| format!("{c:?}"))
+            .collect()
+        };
+        assert_eq!(plan(42), plan(42), "a fixed seed must replay bit-identically");
+        let base = plan(1);
+        let varied = (2..512u64).any(|s| plan(s) != base);
+        assert!(varied, "a different seed must be able to yield a different plan");
+    }
+
+    // --- Preserve (retreat): pull damaged units back instead of feeding them in ----------------
+
+    /// A badly hurt unit (below the tier's `retreat_hp_pct`) is ordered to FALL BACK to its nearest
+    /// friendly building — even though it is mid-AttackMove — rather than being left to die.
+    #[test]
+    fn retreat_pulls_a_low_hp_unit_back_to_the_camp() {
+        let mut world = World::new();
+        let _camp = spawn_built_camp(&mut world, Faction::Enemy, at(0, 0));
+        let u = spawn_unit(&mut world, Faction::Enemy, at(20, 0));
+        world.order[u.index as usize] = Order::AttackMove(at(50, 0)); // busy — losing this fight
+        world.health[u.index as usize] = Health {
+            cur: Fixed::from_int(10),
+            max: Fixed::from_int(100), // 10% < Veteran's 25% retreat threshold
+        };
+        let mut rng = Rng::new(1);
+        let cmds = commander_orders(
+            &world,
+            &Territory::empty(),
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            60,
+        );
+        assert!(
+            cmds.iter().any(|c| matches!(c,
+                Command::SetOrder { entity, order: Order::FallBack(rally) }
+                    if *entity == u && *rally == at(0, 0))),
+            "a low-HP unit should be ordered to FallBack to the camp: {cmds:?}"
+        );
+        // And it must NOT also be handed an attack/capture order this cycle (retreat wins).
+        assert!(
+            !cmds.iter().any(|c| matches!(c, Command::AttackMove { entity, .. } if *entity == u)),
+            "a retreating unit is not simultaneously sent to attack: {cmds:?}"
+        );
+    }
+
+    /// `Recruit` (retreat_hp_pct 0) never preserves — it feeds a hurt unit right back in, which is
+    /// part of what makes the easy tier easy. Same wound, no FallBack.
+    #[test]
+    fn recruit_does_not_retreat_a_low_hp_unit() {
+        let mut world = World::new();
+        let _camp = spawn_built_camp(&mut world, Faction::Enemy, at(0, 0));
+        let u = spawn_unit(&mut world, Faction::Enemy, at(20, 0));
+        world.health[u.index as usize] = Health {
+            cur: Fixed::from_int(5),
+            max: Fixed::from_int(100),
+        };
+        let mut rng = Rng::new(1);
+        let cmds = commander_orders(
+            &world,
+            &Territory::empty(),
+            &Resources::new(0),
+            &mut rng,
+            &tier_cfg(Difficulty::Recruit),
+            &[],
+            Faction::Enemy,
+            0,
+        );
+        assert!(
+            !cmds.iter().any(|c| matches!(c, Command::SetOrder { order: Order::FallBack(_), .. })),
+            "Recruit never retreats — it has no preservation instinct: {cmds:?}"
+        );
+    }
+
+    /// A hurt unit with NOWHERE to fall back to (no friendly building) is left to fight, not sent
+    /// to some arbitrary origin — the commander only retreats when there is a real rally.
+    #[test]
+    fn no_retreat_without_a_friendly_building() {
+        let mut world = World::new();
+        let u = spawn_unit(&mut world, Faction::Enemy, at(20, 0));
+        world.order[u.index as usize] = Order::HoldPosition;
+        world.health[u.index as usize] = Health {
+            cur: Fixed::from_int(5),
+            max: Fixed::from_int(100),
+        };
+        let mut rng = Rng::new(1);
+        let cmds = commander_orders(
+            &world,
+            &Territory::empty(),
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig::default(), // Veteran (would retreat if it could)
+            &[],
+            Faction::Enemy,
+            60,
+        );
+        assert!(
+            !cmds.iter().any(|c| matches!(c, Command::SetOrder { order: Order::FallBack(_), .. })),
+            "with no rally the commander must not retreat the unit: {cmds:?}"
+        );
+    }
+
+    // --- Defend: hold a threatened owned point before grabbing new ground ----------------------
+
+    /// When a hostile is closing on a control point the faction OWNS, a free unit is peeled back to
+    /// hold it (an `AttackMove` onto the point) — the defensive reaction the greedy planner lacked.
+    #[test]
+    fn defends_a_threatened_owned_point() {
+        let mut world = World::new();
+        // A point we own, with a player unit closing on it (within DEFEND_RADIUS = 12).
+        spawn_unit(&mut world, Faction::Player, at(5, 0));
+        let held = at(0, 0);
+        let terr = Territory {
+            points: vec![ControlPoint {
+                pos: held,
+                owner: Faction::Enemy,
+                progress: Fixed::ZERO,
+            }],
+        };
+        // A free enemy unit well away from the point (not already on it).
+        let defender = spawn_unit(&mut world, Faction::Enemy, at(30, 0));
+        let mut rng = Rng::new(1);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            60,
+        );
+        assert!(
+            cmds.iter().any(|c| matches!(c,
+                Command::AttackMove { entity, target } if *entity == defender && *target == held)),
+            "a threatened owned point should pull a defender back to it: {cmds:?}"
+        );
+    }
+
+    /// `Recruit` does not defend — the same threatened point is ignored and the free unit just
+    /// presses the nearest foe. (The tier's defensive instinct is off.)
+    #[test]
+    fn recruit_does_not_defend_its_point() {
+        let mut world = World::new();
+        let foe = at(5, 0);
+        spawn_unit(&mut world, Faction::Player, foe);
+        let held = at(0, 0);
+        let terr = Territory {
+            points: vec![ControlPoint {
+                pos: held,
+                owner: Faction::Enemy,
+                progress: Fixed::ZERO,
+            }],
+        };
+        let unit = spawn_unit(&mut world, Faction::Enemy, at(30, 0));
+        let mut rng = Rng::new(1);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(0),
+            &mut rng,
+            &tier_cfg(Difficulty::Recruit),
+            &[],
+            Faction::Enemy,
+            0,
+        );
+        // It presses the foe, not the held point (no defense at this tier).
+        assert!(
+            cmds.iter().any(|c| matches!(c,
+                Command::AttackMove { entity, target } if *entity == unit && *target == foe)),
+            "Recruit ignores the threat and presses the foe: {cmds:?}"
+        );
+        assert!(
+            !cmds.iter().any(|c| matches!(c,
+                Command::AttackMove { entity, target } if *entity == unit && *target == held)),
+            "Recruit must not defend the point: {cmds:?}"
+        );
+    }
+
+    // --- Concentrate (focus-fire): converge attackers on one priority target -------------------
+
+    /// With no ground to take, a concentrating tier (`Veteran`) sends BOTH free units at the ONE
+    /// priority target — the hostile nearest the commander's own line — instead of each dribbling
+    /// toward its own nearest foe. `Recruit` (no concentration) scatters them.
+    #[test]
+    fn concentrate_converges_attackers_that_recruit_would_scatter() {
+        // unit1 sits by foe A; unit2 sits far away by foe B. A is the closest contact overall.
+        let mut world = World::new();
+        let a_pos = at(4, 0); // near unit1
+        let b_pos = at(0, -55); // near unit2
+        spawn_unit(&mut world, Faction::Player, a_pos);
+        spawn_unit(&mut world, Faction::Player, b_pos);
+        let u1 = spawn_unit(&mut world, Faction::Enemy, at(0, 0)); // dist 4 to A
+        let u2 = spawn_unit(&mut world, Faction::Enemy, at(0, -50)); // dist 5 to B
+
+        let plan = |cfg: &CommanderConfig| {
+            let mut rng = Rng::new(1);
+            commander_orders(
+                &world,
+                &Territory::empty(), // no ground to take → the attack step runs
+                &Resources::new(0),
+                &mut rng,
+                cfg,
+                &[],
+                Faction::Enemy,
+                0,
+            )
+        };
+        let target_of = |cmds: &[Command], u: Entity| -> Option<Vec2> {
+            cmds.iter().find_map(|c| match c {
+                Command::AttackMove { entity, target } if *entity == u => Some(*target),
+                _ => None,
+            })
+        };
+
+        // Veteran concentrates: both units converge on the nearest contact (foe A).
+        let vet = plan(&CommanderConfig::default());
+        assert_eq!(target_of(&vet, u1), Some(a_pos), "u1 → priority target A");
+        assert_eq!(target_of(&vet, u2), Some(a_pos), "u2 also focus-fires the priority target A");
+
+        // Recruit scatters: each unit presses its own nearest foe (u1→A, u2→B).
+        let rec = plan(&tier_cfg(Difficulty::Recruit));
+        assert_eq!(target_of(&rec, u1), Some(a_pos), "Recruit u1 → its own nearest (A)");
+        assert_eq!(target_of(&rec, u2), Some(b_pos), "Recruit u2 → its own nearest (B), scattered");
+    }
+
+    /// `nearest_contact` is the focus-fire target picker: the hostile closest to *any* of our units
+    /// (where the lines meet), stable and float-free. `None` when we field no unit or see no foe.
+    #[test]
+    fn nearest_contact_finds_where_the_lines_meet() {
+        let mut world = World::new();
+        spawn_unit(&mut world, Faction::Enemy, at(0, 0));
+        spawn_unit(&mut world, Faction::Enemy, at(0, -50));
+        spawn_unit(&mut world, Faction::Player, at(3, 0)); // 3 from our first unit — the contact
+        spawn_unit(&mut world, Faction::Player, at(0, -60)); // 10 from our second unit
+        assert_eq!(nearest_contact(&world, Faction::Enemy), Some(at(3, 0)));
+
+        // No hostiles → None. No units → None.
+        let mut only_ours = World::new();
+        spawn_unit(&mut only_ours, Faction::Enemy, at(0, 0));
+        assert_eq!(nearest_contact(&only_ours, Faction::Enemy), None);
+        let mut only_foes = World::new();
+        spawn_unit(&mut only_foes, Faction::Player, at(0, 0));
+        assert_eq!(nearest_contact(&only_foes, Faction::Enemy), None);
     }
 }
