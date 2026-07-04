@@ -14,7 +14,7 @@ use gonedark_core::campaign::{
     Campaign, Conflict, ConflictId, GroupProgress, MissionSelectEntry, NodeId, NodeProgress,
     Operation, OperationId,
 };
-use gonedark_render::globe_backdrop::{project_pin, GlobePin, GlobeView, PinTone};
+use gonedark_render::globe_backdrop::{project_pin, GlobeFlight, GlobePin, GlobeView, PinTone};
 
 /// An action the mission-select (Operations-hub) screen can emit in a frame. The hub reads the
 /// campaign through [`Campaign::mission_select`] (host-side, never the sim — invariants #1/#7); the
@@ -295,6 +295,32 @@ pub(crate) fn overview_view(campaign: &Campaign, conflict: ConflictId) -> Option
     // (guarded away from the poles, capped so a polar war can't spin the camera off its ground).
     let bias = (OVERVIEW_EAST_BIAS_DEG / lat.to_radians().cos().max(0.2)).min(3.0);
     Some(GlobeView::over(lat, lon - bias, OVERVIEW_ZOOM))
+}
+
+/// Resolve the hub backdrop's camera for one frame (D107): while a fly-in `flight` is live it
+/// owns the camera (advanced by the frame's wall-clock `dt`, dropped on landing); otherwise the
+/// battlefield `target` shows directly. A `None` target (no picked conflict, or a war with no
+/// anchored battles) drops any stale flight and hands back `None` — the settled D103 fallback,
+/// exactly as before D107. Pure — the per-frame decision, unit-tested; the run loop is glue.
+pub(crate) fn hub_backdrop_view(
+    flight: &mut Option<GlobeFlight>,
+    target: Option<GlobeView>,
+    dt: f32,
+) -> Option<GlobeView> {
+    match (flight.as_mut(), target) {
+        (Some(f), Some(_)) => {
+            let view = f.step(dt);
+            if f.done() {
+                *flight = None;
+            }
+            Some(view)
+        }
+        (_, None) => {
+            *flight = None;
+            None
+        }
+        (None, target) => target,
+    }
 }
 
 /// Resolve a click at `ndc` on the battlefield overview to the battle it lands on: the nearest

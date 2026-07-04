@@ -261,19 +261,20 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         campaign: &Campaign,
         only: Option<ConflictId>,
+        view: Option<GlobeView>,
     ) -> Option<MissionSelectAction> {
         // The campaign door swaps the diorama for the atlas globe (D103). With a conflict picked
         // (D104's `only` filter) the backdrop becomes the **battlefield overview** (D106): the
         // globe zooms onto the war's battle anchors, one progress-toned pin per battle, with the
         // next battle focused — and the pins are pickable (mission_select_ui gets the same view).
-        // A conflict with no anchored battles falls back to the settled per-conflict framing.
-        let overview = only.and_then(|c| overview_view(campaign, c));
-        let pins = match (only, overview) {
+        // The host resolves `view` per frame (the D107 fly-in owns it mid-flight —
+        // `hub_backdrop_view`); `None` falls back to the settled per-conflict framing.
+        let pins = match (only, view) {
             (Some(c), Some(_)) => battlefield_pins(campaign, c, next_battle_in(campaign, c)),
             _ => atlas_pins(campaign),
         };
-        self.run_and_paint(surface, ShellBackdrop::Globe(overview, &pins), |ui| {
-            mission_select_ui(ui, campaign, only, overview)
+        self.run_and_paint(surface, ShellBackdrop::Globe(view, &pins), |ui| {
+            mission_select_ui(ui, campaign, only, view)
         })
     }
 

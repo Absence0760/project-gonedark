@@ -176,6 +176,75 @@ impl GlobeView {
     }
 }
 
+/// A camera **flight** between two [`GlobeView`]s (D107): the atlas → battlefield fly-in when a
+/// war is entered, and the return leg when the hub escapes back to the atlas. Pure wall-clock
+/// presentation — stepped from the frame `dt`, never the sim tick (the same discipline as every
+/// feel system; invariant #4) — and pure math: the host owns one of these and asks it for the
+/// frame's [`GlobeView`], so picking always shares the exact flown camera.
+///
+/// Interpolation choices (each unit-tested): **yaw takes the shortest arc** (a war at +170°
+/// entered from −170° crosses the date line, not the whole planet), pitch eases linearly, and
+/// **zoom interpolates in eye distance** (`1/zoom` — the term [`view_eye`] scales by), so the
+/// camera travels at a perceptually steady rate instead of lurching at the near end. Progress is
+/// smoothstepped (ease-in-out).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct GlobeFlight {
+    pub from: GlobeView,
+    pub to: GlobeView,
+    elapsed: f32,
+}
+
+impl GlobeFlight {
+    /// Flight time in seconds — long enough to read as travel, short enough to never gate input
+    /// (the flight is cancellable: the atlas drops it on any drag/zoom).
+    pub const DURATION: f32 = 0.9;
+
+    /// A flight from `from` to `to`, at its start.
+    pub fn new(from: GlobeView, to: GlobeView) -> GlobeFlight {
+        GlobeFlight { from, to, elapsed: 0.0 }
+    }
+
+    /// Advance by a frame's wall-clock `dt` (negative dt is treated as zero — a clock hiccup
+    /// must never fly backwards) and return the camera for this frame.
+    pub fn step(&mut self, dt: f32) -> GlobeView {
+        self.elapsed += dt.max(0.0);
+        self.view()
+    }
+
+    /// The camera at the current progress, without advancing.
+    pub fn view(&self) -> GlobeView {
+        let t = (self.elapsed / Self::DURATION).clamp(0.0, 1.0);
+        let e = t * t * (3.0 - 2.0 * t); // smoothstep ease-in-out
+        // Shortest-arc yaw: wrap the difference into [-pi, pi] before scaling.
+        let dyaw = wrap_pi(self.to.yaw - self.from.yaw);
+        // Zoom in eye-distance space: view_eye scales the eye by 1/zoom, so lerping the
+        // reciprocal moves the camera linearly along its ray.
+        let k = 1.0 / self.from.zoom + (1.0 / self.to.zoom - 1.0 / self.from.zoom) * e;
+        GlobeView {
+            yaw: self.from.yaw + dyaw * e,
+            pitch: self.from.pitch + (self.to.pitch - self.from.pitch) * e,
+            zoom: 1.0 / k,
+        }
+    }
+
+    /// Whether the flight has landed (progress reached the destination view).
+    pub fn done(&self) -> bool {
+        self.elapsed >= Self::DURATION
+    }
+}
+
+/// Wrap an angle (radians) into `[-pi, pi]` — the shortest-arc term of [`GlobeFlight`]. Pure.
+fn wrap_pi(a: f32) -> f32 {
+    let two_pi = std::f32::consts::TAU;
+    let mut a = a % two_pi;
+    if a > std::f32::consts::PI {
+        a -= two_pi;
+    } else if a < -std::f32::consts::PI {
+        a += two_pi;
+    }
+    a
+}
+
 /// Map latitude/longitude (degrees) to the earth-fixed **unit sphere** position the mesh, pins,
 /// and WGSL mask lookup all share: `+Y` = north pole, longitude `0` faces `+Z`, east positive
 /// toward `+X`. The WGSL inverse is `lat = asin(y), lon = atan2(x, z)` — keep them in lock-step.
@@ -878,6 +947,72 @@ mod tests {
         let tipped = GlobeView { pitch: 0.3, ..view };
         let pt = project_pin(tipped, 1.6, 50.0, -1.5).expect("a tipped focus stays visible");
         assert!(pt[1] < p[1], "positive pitch must lower the northern pin (got {} vs {})", pt[1], p[1]);
+    }
+
+    /// `wrap_pi`'s boundaries: exact multiples of 2π collapse to zero, the antipodal tie at
+    /// exactly ±π keeps its sign (the `>` vs `>=` boundary — a silent flip would reverse which
+    /// way the camera spins on an antipodal flight), and large angles land in-range with the
+    /// same tie-break.
+    #[test]
+    fn wrap_pi_handles_the_antipodal_tie_and_full_turns() {
+        use std::f32::consts::{PI, TAU};
+        assert_eq!(wrap_pi(0.0), 0.0);
+        assert!(wrap_pi(TAU).abs() < 1e-6 && wrap_pi(-TAU).abs() < 1e-6);
+        assert!(wrap_pi(2.0 * TAU).abs() < 1e-5);
+        // The antipodal tie: +pi stays +pi (not flipped to -pi), and -pi stays -pi.
+        assert_eq!(wrap_pi(PI), PI);
+        assert_eq!(wrap_pi(-PI), -PI);
+        // Large angles wrap into range; 3pi is antipodal again and keeps the -pi side (3pi mod
+        // 2pi = pi exactly in f32? it lands within float error of ±pi — assert in-range and
+        // antipodal magnitude).
+        let w = wrap_pi(3.0 * PI);
+        assert!(w.abs() <= PI + 1e-6 && (w.abs() - PI).abs() < 1e-5);
+        // A plain in-range angle passes through untouched.
+        assert_eq!(wrap_pi(1.25), 1.25);
+        assert_eq!(wrap_pi(-2.8), -2.8);
+    }
+
+    /// The D107 camera flight: exact at both endpoints, shortest-arc in yaw, eye-distance-linear
+    /// in zoom, monotonic under accumulated frame dts, and clock-hiccup safe.
+    #[test]
+    fn the_camera_flight_lands_exactly_and_takes_the_short_way_round() {
+        let from = GlobeView { yaw: 3.0, pitch: 0.1, zoom: 1.0 };
+        let to = GlobeView { yaw: -3.0, pitch: 0.6, zoom: 2.4 };
+        let flight = GlobeFlight::new(from, to);
+
+        // Endpoints exact: t=0 is `from`; at/after DURATION it is `to` (bitwise for yaw wrap:
+        // the flown yaw is from + wrapped-diff, which differs from `to.yaw` by a 2*pi multiple —
+        // same orientation — so compare orientations, and pitch/zoom exactly).
+        assert_eq!(flight.view(), from);
+        let mut landed = flight;
+        landed.step(GlobeFlight::DURATION + 0.1);
+        assert!(landed.done());
+        let v = landed.view();
+        assert!(wrap_pi(v.yaw - to.yaw).abs() < 1e-5, "landed yaw is the target orientation");
+        assert!((v.pitch - to.pitch).abs() < 1e-6 && (v.zoom - to.zoom).abs() < 1e-5);
+
+        // Shortest arc: 3.0 → -3.0 crosses pi (a +0.28 rad hop), never back through 0 — so the
+        // midpoint yaw sits beyond +3.0, not between -3.0 and 3.0.
+        let mut mid = GlobeFlight::new(from, to);
+        mid.step(GlobeFlight::DURATION / 2.0);
+        assert!(mid.view().yaw > 3.0, "midpoint takes the date-line hop, got {}", mid.view().yaw);
+
+        // Zoom is linear in eye distance at the eased midpoint (smoothstep(0.5) == 0.5):
+        // k = (1/1.0 + 1/2.4) / 2 → zoom = 1/k.
+        let expect_zoom = 1.0 / ((1.0 + 1.0 / 2.4) / 2.0);
+        assert!((mid.view().zoom - expect_zoom).abs() < 1e-5);
+
+        // Accumulated small steps advance monotonically toward the target zoom...
+        let mut stepped = GlobeFlight::new(from, to);
+        let mut last = stepped.view().zoom;
+        for _ in 0..9 {
+            let z = stepped.step(0.1).zoom;
+            assert!(z >= last, "zoom advances monotonically");
+            last = z;
+        }
+        // ...and a negative dt (a clock hiccup) never flies backwards.
+        let before = stepped.view();
+        assert_eq!(stepped.step(-1.0), before);
     }
 
     /// The near plane never cuts into the globe anywhere in the legal zoom range — the

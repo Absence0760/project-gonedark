@@ -1110,7 +1110,7 @@ use gonedark_render::tiers::QualityTier;
     // ---- The conflict-atlas grouping seam (D98) -------------------------------------------------
 
     use gonedark_core::campaign::{Conflict, ConflictId, GroupProgress, Operation, OperationId};
-    use gonedark_render::globe_backdrop::{project_pin, PinTone};
+    use gonedark_render::globe_backdrop::{project_pin, GlobeView, PinTone};
 
     /// An atlas-grouped campaign exercising every grouping shape at once: conflict 0 with two
     /// operations (op 0: Alpha → Bravo; op 1: Charlie gated on Bravo), conflict 1 with only a
@@ -1522,6 +1522,79 @@ use gonedark_render::tiers::QualityTier;
         campaign.clear(NodeId(0), Difficulty::Recruit).unwrap();
         assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, bravo), Some(NodeId(1)));
         assert_eq!(pick_battle(&campaign, ConflictId(0), view, aspect, alpha), Some(NodeId(0)));
+    }
+
+    // ---- the atlas ↔ battlefield camera fly-in (D107) -------------------------------------------
+
+    /// The hub's per-frame camera resolution: a live flight owns the view (advanced by dt, dropped
+    /// on landing), no flight shows the target directly, and a vanished target (no anchored war)
+    /// drops any stale flight and falls back to the settled framing.
+    #[test]
+    fn the_hub_backdrop_view_flies_then_lands_on_the_target() {
+        use gonedark_render::globe_backdrop::GlobeFlight;
+        let from = GlobeView { yaw: 0.0, pitch: 0.0, zoom: 1.0 };
+        let to = GlobeView { yaw: 1.0, pitch: 0.5, zoom: 2.4 };
+
+        // Mid-flight: the flown view (neither endpoint) is what the frame renders with.
+        let mut flight = Some(GlobeFlight::new(from, to));
+        let mid = hub_backdrop_view(&mut flight, Some(to), GlobeFlight::DURATION / 2.0)
+            .expect("a live flight always yields a view");
+        assert!(mid != from && mid != to, "mid-flight is between the endpoints");
+        assert!(flight.is_some(), "still flying");
+
+        // Landing: the final frame yields (effectively) the target and drops the flight; from
+        // then on the target passes straight through.
+        let landed = hub_backdrop_view(&mut flight, Some(to), GlobeFlight::DURATION).unwrap();
+        assert!((landed.zoom - to.zoom).abs() < 1e-5 && (landed.pitch - to.pitch).abs() < 1e-6);
+        assert!(flight.is_none(), "the flight is dropped on landing");
+        assert_eq!(hub_backdrop_view(&mut flight, Some(to), 0.016), Some(to));
+
+        // No target (a war with no anchored battles): a stale flight is dropped, settled fallback.
+        let mut stale = Some(GlobeFlight::new(from, to));
+        assert_eq!(hub_backdrop_view(&mut stale, None, 0.016), None);
+        assert!(stale.is_none(), "a stale flight can't outlive its target");
+    }
+
+    /// The atlas's return leg: `opened_from` starts exactly at the hub's camera (no cut), flies
+    /// to the same view a plain `opened` lands on, and the player's own drag/zoom cancels the
+    /// flight instantly (the hand always beats the autopilot) — while scrub/select do not.
+    #[test]
+    fn the_atlas_return_flight_lands_on_the_opened_view_unless_the_player_grabs_it() {
+        use gonedark_render::globe_backdrop::GlobeFlight;
+        let campaign = atlas_campaign();
+        let hub_view = overview_view(&campaign, ConflictId(0)).expect("conflict 0 is anchored");
+        let opened = AtlasState::opened(&campaign);
+
+        // Starts at the hub's camera, targeting the plain opened view.
+        let mut state = AtlasState::opened_from(&campaign, hub_view);
+        assert_eq!(state.view, hub_view, "no cut: the first frame is the hub's camera");
+        assert_eq!((state.year, state.selected), (opened.year, opened.selected));
+
+        // Fly to landing: indistinguishable from a plain open afterwards.
+        tick_atlas_flight(&mut state, GlobeFlight::DURATION / 2.0);
+        assert!(state.flight.is_some() && state.view != hub_view && state.view != opened.view);
+        tick_atlas_flight(&mut state, GlobeFlight::DURATION);
+        assert!(state.flight.is_none(), "the flight is dropped on landing");
+        assert_eq!(state.view, opened.view, "landed exactly on the plain opened view");
+        // A landed state ticks as a no-op.
+        tick_atlas_flight(&mut state, 0.016);
+        assert_eq!(state.view, opened.view);
+
+        // A drag mid-flight cancels it and applies immediately...
+        let mut grabbed = AtlasState::opened_from(&campaign, hub_view);
+        tick_atlas_flight(&mut grabbed, 0.1);
+        assert!(grabbed.flight.is_some());
+        apply_atlas_action(AtlasAction::Drag(10.0, 0.0), &mut grabbed, &campaign);
+        assert!(grabbed.flight.is_none(), "a drag hands the camera to the player");
+        // ...and so does a zoom.
+        let mut zoomed = AtlasState::opened_from(&campaign, hub_view);
+        apply_atlas_action(AtlasAction::Zoom(1.0), &mut zoomed, &campaign);
+        assert!(zoomed.flight.is_none(), "a zoom hands the camera to the player");
+        // Scrubbing the year or picking a pin is not a camera gesture — the flight keeps flying.
+        let mut scrubbed = AtlasState::opened_from(&campaign, hub_view);
+        apply_atlas_action(AtlasAction::SetYear(2028), &mut scrubbed, &campaign);
+        apply_atlas_action(AtlasAction::SelectConflict(1), &mut scrubbed, &campaign);
+        assert!(scrubbed.flight.is_some(), "scrub/select never steal the camera");
     }
 
     #[test]

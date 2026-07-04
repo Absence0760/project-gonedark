@@ -16,7 +16,7 @@ use crate::shell::mission_select::focused_conflict;
 use crate::shell::theme::*;
 use crate::shell::widgets::*;
 use gonedark_core::campaign::{Campaign, Conflict, NodeId};
-use gonedark_render::globe_backdrop::{project_pin, GlobePin, GlobeView};
+use gonedark_render::globe_backdrop::{project_pin, GlobeFlight, GlobePin, GlobeView};
 
 /// Radians of globe rotation per logical point of drag at zoom 1 (halves as zoom doubles, so a
 /// zoomed-in drag stays fine-grained over the region under the cursor).
@@ -38,6 +38,10 @@ pub(crate) struct AtlasState {
     pub year: i16,
     /// The selected conflict (an index into `campaign.conflicts()`), the ENTER target.
     pub selected: usize,
+    /// An in-progress camera flight back from a battlefield (D107) — the return leg of the
+    /// atlas → battlefield fly-in. While live it drives `view` each frame
+    /// ([`tick_atlas_flight`]); any drag/zoom cancels it (the player takes the camera over).
+    pub flight: Option<GlobeFlight>,
 }
 
 impl AtlasState {
@@ -53,6 +57,30 @@ impl AtlasState {
             view: GlobeView { yaw: -lon.to_radians(), pitch: 0.0, zoom: 1.0 },
             year,
             selected,
+            flight: None,
+        }
+    }
+
+    /// [`opened`](Self::opened), but **flown into** from an existing camera (D107): the return
+    /// leg of the battlefield fly-in. Starts exactly at `from` (the hub's last backdrop view, so
+    /// there is no cut) and flies to the same view a plain `opened` lands on — after the flight
+    /// (or a cancelling drag/zoom) the atlas is indistinguishable from a plain open. Pure.
+    pub fn opened_from(campaign: &Campaign, from: GlobeView) -> AtlasState {
+        let mut state = AtlasState::opened(campaign);
+        state.flight = Some(GlobeFlight::new(from, state.view));
+        state.view = from;
+        state
+    }
+}
+
+/// Advance the atlas's return flight (D107) by a frame's wall-clock `dt`: while a flight is
+/// live it owns `view`; on landing it is dropped, handing the (now-settled) camera back to the
+/// drag/zoom paths. Pure — the per-frame decision, unit-tested; the run loop is the glue.
+pub(crate) fn tick_atlas_flight(state: &mut AtlasState, dt: f32) {
+    if let Some(flight) = &mut state.flight {
+        state.view = flight.step(dt);
+        if flight.done() {
+            state.flight = None;
         }
     }
 }
@@ -98,6 +126,9 @@ pub(crate) fn apply_atlas_action(
 ) -> AtlasStep {
     match action {
         AtlasAction::Drag(dx, dy) => {
+            // A camera gesture cancels any in-progress return flight (D107): the player's hand
+            // always wins over the automatic camera, instantly.
+            state.flight = None;
             let s = DRAG_SENS / state.view.zoom;
             state.view = GlobeView {
                 // Dragging right pulls the visible face right (the globe turns with the hand);
@@ -110,6 +141,8 @@ pub(crate) fn apply_atlas_action(
             AtlasStep::Stay
         }
         AtlasAction::Zoom(lines) => {
+            // Same player-takeover rule as Drag (D107).
+            state.flight = None;
             state.view =
                 GlobeView { zoom: state.view.zoom * ZOOM_STEP.powf(lines), ..state.view }.clamped();
             AtlasStep::Stay

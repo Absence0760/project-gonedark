@@ -27,6 +27,7 @@ use gonedark_engine::{pixel_to_ndc, Game, OverlayClick, Scene, DEFAULT_SEED};
 use gonedark_pal_desktop::{
     keycode_to_keyid, DesktopAudio, DesktopInput, DesktopRenderSurface, DesktopThermalSensor,
 };
+use gonedark_render::globe_backdrop::{GlobeFlight, GlobeView};
 use gonedark_render::tiers::QualityTier;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -168,6 +169,11 @@ struct App {
     /// and the selected conflict. Session presentation state — re-seeded (settled on the conflict
     /// being fought) each time the atlas opens; never persisted, never sim state.
     atlas: AtlasState,
+    /// The hub's in-progress atlas → battlefield camera fly-in (D107), advanced by the frame's
+    /// wall-clock `dt` and dropped on landing (the pure `hub_backdrop_view` seam). Seeded on
+    /// ENTER from the atlas only — a briefing back-out or CONTINUE deep-link cuts straight to
+    /// the overview. Session presentation state; never persisted, never sim state.
+    hub_flight: Option<GlobeFlight>,
     /// The Operations-hub campaign model (PvE WS-B, D58) the mission-select / briefing screens read
     /// and a win advances. **Host-side meta-progression — never sim state, never in the per-tick
     /// checksum** (invariants #1/#7): its progress persists to its own host blob
@@ -247,6 +253,7 @@ impl App {
             skirmish: SkirmishSetupState::default(),
             // The atlas re-seeds on every open (`OpenAtlas`), so the boot value is just sensible.
             atlas: AtlasState::opened(&campaign),
+            hub_flight: None,
             campaign,
             registry: default_registry(),
             briefing_difficulty: Difficulty::default(),
@@ -595,6 +602,9 @@ impl App {
                 }
             }
             Screen::Atlas => {
+                // Advance the return fly-in (D107) before drawing: while live it owns the view;
+                // a drag/zoom this frame cancels it inside `apply_atlas_action`.
+                shell::tick_atlas_flight(&mut self.atlas, dt);
                 if let Some(sh) = self.shell.as_mut() {
                     if let Some(action) = sh.draw_atlas(surface, &self.campaign, &self.atlas) {
                         // Navigation/selection edits (drag, zoom, scrub, pin pick) mutate the
@@ -616,7 +626,11 @@ impl App {
                         .conflicts()
                         .get(self.atlas.selected)
                         .map(|c| c.id);
-                    if let Some(action) = sh.draw_mission_select(surface, &self.campaign, only) {
+                    // This frame's backdrop camera: the D107 fly-in while live (advanced by the
+                    // wall-clock dt), else the D106 overview target, else the settled fallback.
+                    let target = only.and_then(|c| shell::overview_view(&self.campaign, c));
+                    let view = shell::hub_backdrop_view(&mut self.hub_flight, target, dt);
+                    if let Some(action) = sh.draw_mission_select(surface, &self.campaign, only, view) {
                         transition = match action {
                             // A playable tile → open that node's briefing (the click was already
                             // gated to playable nodes by the pure `playable_node` seam).
@@ -844,12 +858,38 @@ impl App {
             // fought (predictable on every open; the player's in-screen navigation is session
             // gesture state, not a persisted camera).
             Some(HostTransition::OpenAtlas) => {
-                self.atlas = AtlasState::opened(&self.campaign);
+                // Leaving a hub that was showing a battlefield flies the camera back up to the
+                // re-seeded atlas view (D107) — from wherever the hub camera actually is right
+                // now (mid-fly-in included), so there is never a cut. Any other entry (the
+                // title's CAMPAIGN) opens settled, exactly as before. The decision is the pure
+                // `atlas_return_from` seam; this arm just stores the result.
+                let hub_target = self
+                    .campaign
+                    .conflicts()
+                    .get(self.atlas.selected)
+                    .map(|c| c.id)
+                    .and_then(|c| shell::overview_view(&self.campaign, c));
+                let from = atlas_return_from(&self.screen, self.hub_flight.as_ref(), hub_target);
+                self.hub_flight = None;
+                self.atlas = match from {
+                    Some(view) => AtlasState::opened_from(&self.campaign, view),
+                    None => AtlasState::opened(&self.campaign),
+                };
                 self.screen = Screen::Atlas;
                 self.last_frame = Instant::now();
             }
             // The atlas's ENTER → the selected conflict's Operations hub (PvE pillar, D58/D104).
+            // Entered FROM the atlas, the hub flies the camera from the player's current atlas
+            // view down onto the war's battlefield overview (D107); from anywhere else (a
+            // briefing backing out, a deep link) it cuts straight to the overview.
             Some(HostTransition::OpenMissionSelect) => {
+                let target = self
+                    .campaign
+                    .conflicts()
+                    .get(self.atlas.selected)
+                    .map(|c| c.id)
+                    .and_then(|c| shell::overview_view(&self.campaign, c));
+                self.hub_flight = seed_hub_flight(&self.screen, self.atlas.view, target);
                 self.screen = Screen::MissionSelect;
                 self.last_frame = Instant::now();
             }
@@ -987,6 +1027,38 @@ fn escape_transition(screen: &Screen) -> Option<HostTransition> {
         // Nowhere to back out from the title; a match handles Escape as the pause toggle.
         Screen::Title | Screen::InMatch(_) => None,
     }
+}
+
+/// Whether entering the Operations hub seeds the atlas → battlefield **fly-in** (D107): only
+/// when the hub is entered FROM the atlas (the one case where a globe camera is already on
+/// screen to fly from) *and* the picked war has a battlefield to fly to. A briefing backing
+/// out, a title CONTINUE deep-link, or an anchor-less war cuts, exactly as before D107. Pure —
+/// the seeding decision, unit-tested; the transition arm is the glue that stores the result.
+fn seed_hub_flight(
+    prev: &Screen,
+    atlas_view: GlobeView,
+    target: Option<GlobeView>,
+) -> Option<GlobeFlight> {
+    match (matches!(prev, Screen::Atlas), target) {
+        (true, Some(to)) => Some(GlobeFlight::new(atlas_view, to)),
+        _ => None,
+    }
+}
+
+/// The camera the atlas's **return flight** starts from (D107), or `None` for a plain settled
+/// open: only a hub showing a battlefield flies back, starting from wherever its camera
+/// actually is — the live fly-in's mid-flight view if one is still airborne, else the overview
+/// it was parked on. Any other entry to the atlas (the title's CAMPAIGN) has no prior globe
+/// camera and opens settled. Pure — the return-leg decision, unit-tested.
+fn atlas_return_from(
+    prev: &Screen,
+    hub_flight: Option<&GlobeFlight>,
+    hub_target: Option<GlobeView>,
+) -> Option<GlobeView> {
+    if !matches!(prev, Screen::MissionSelect) {
+        return None;
+    }
+    hub_flight.map(|f| f.view()).or(hub_target)
 }
 
 impl ApplicationHandler for App {
@@ -1376,6 +1448,54 @@ mod escape_nav_tests {
     fn escape_does_nothing_on_the_title() {
         // Nowhere to back out to from the title.
         assert_eq!(escape_transition(&Screen::Title), None);
+    }
+}
+
+#[cfg(test)]
+mod flight_nav_tests {
+    //! The D107 fly-in seeding decisions — pure functions of (previous screen, camera state),
+    //! extracted from the transition arms exactly like `escape_transition`. The arms that store
+    //! the results are the glue.
+    use super::{atlas_return_from, seed_hub_flight, Screen};
+    use gonedark_render::globe_backdrop::{GlobeFlight, GlobeView};
+
+    const ATLAS_VIEW: GlobeView = GlobeView { yaw: 0.3, pitch: 0.0, zoom: 1.0 };
+    const OVERVIEW: GlobeView = GlobeView { yaw: -1.2, pitch: 0.8, zoom: 2.4 };
+
+    #[test]
+    fn the_fly_in_seeds_only_from_the_atlas_toward_a_real_battlefield() {
+        // Atlas + a battlefield target → a flight from the player's current atlas camera.
+        let flight = seed_hub_flight(&Screen::Atlas, ATLAS_VIEW, Some(OVERVIEW))
+            .expect("ENTER from the atlas flies");
+        assert_eq!((flight.from, flight.to), (ATLAS_VIEW, OVERVIEW));
+        // An anchor-less war has nowhere to fly to — cut (settled fallback), as before D107.
+        assert_eq!(seed_hub_flight(&Screen::Atlas, ATLAS_VIEW, None), None);
+        // Entering the hub from anywhere else (a briefing backing out, a CONTINUE deep-link)
+        // has no globe camera on screen to fly from — cut.
+        for prev in [Screen::Title, Screen::Briefing(gonedark_core::campaign::NodeId(0))] {
+            assert_eq!(seed_hub_flight(&prev, ATLAS_VIEW, Some(OVERVIEW)), None);
+        }
+    }
+
+    #[test]
+    fn the_return_leg_starts_from_the_hubs_actual_camera_or_not_at_all() {
+        // From the hub, parked on its overview → fly back from the overview.
+        assert_eq!(
+            atlas_return_from(&Screen::MissionSelect, None, Some(OVERVIEW)),
+            Some(OVERVIEW)
+        );
+        // From the hub with the fly-in still airborne → fly back from the MID-FLIGHT camera
+        // (an early escape reverses smoothly, never snaps to the un-reached overview).
+        let mut airborne = GlobeFlight::new(ATLAS_VIEW, OVERVIEW);
+        airborne.step(GlobeFlight::DURATION / 2.0);
+        let from = atlas_return_from(&Screen::MissionSelect, Some(&airborne), Some(OVERVIEW))
+            .expect("an airborne hub still flies back");
+        assert_eq!(from, airborne.view());
+        assert!(from != OVERVIEW, "the return starts mid-flight, not at the target");
+        // A hub with no battlefield (settled fallback) has nothing to fly back from — cut.
+        assert_eq!(atlas_return_from(&Screen::MissionSelect, None, None), None);
+        // Entering the atlas from anywhere but the hub (the title's CAMPAIGN) opens settled.
+        assert_eq!(atlas_return_from(&Screen::Title, None, Some(OVERVIEW)), None);
     }
 }
 
