@@ -20,13 +20,14 @@
 //! **stdout** (determinism-covered), the human-readable report on **stderr** (never touches stdout).
 
 use gonedark_core::combat::SUPPRESSION_MAX;
-use gonedark_core::components::{EntityKind, Faction, Order, Stance, UnitKind, Vec2};
+use gonedark_core::components::{Faction, Order, Stance, UnitKind, Vec2};
 use gonedark_core::ecs::Entity;
 use gonedark_core::economy;
 use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
-use gonedark_core::scenario::{self, Infantry};
+use gonedark_core::scenario::{self, Infantry, ScenarioBuilder};
 use gonedark_core::sim::{Command, Sim};
+use gonedark_core::trig::Angle;
 
 /// Tick the player is possessed on (an embodied `Fire` needs an Embodied input source).
 const EMBODY_TICK: u64 = 1;
@@ -202,18 +203,13 @@ struct Check {
 }
 
 /// Spawn a full-stat produced Rifleman (range 14 / 6 dmg / 30-tick cd / 30-round mag) at `(x, y)`.
+/// Routed through the canonical [`ScenarioBuilder::spawn`] primitive — byte-identical to the old
+/// open-coded writes: these fresh battery sims never call `set_army`, so the builder's per-army
+/// roster read resolves `Army::Neutral` (== the shared `unit_stats` baseline), and its facing
+/// writes are exactly the `World::spawn` defaults.
 fn spawn_rifle(sim: &mut Sim, x: i32, y: i32, faction: Faction, stance: Stance) -> Entity {
-    let (health, weapon) = economy::unit_stats(UnitKind::Rifleman);
-    let e = sim.world.spawn();
-    let i = e.index as usize;
-    sim.world.kind[i] = EntityKind::Unit;
-    sim.world.unit_kind[i] = UnitKind::Rifleman;
-    sim.world.faction[i] = faction;
-    sim.world.pos[i] = Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
-    sim.world.health[i] = health;
-    sim.world.weapon[i] = weapon;
-    sim.world.stance[i] = stance;
-    e
+    let pos = Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
+    ScenarioBuilder::new(sim).spawn(UnitKind::Rifleman, pos, faction, stance, Angle(0))
 }
 
 /// **Stance:** a `FireAtWill` shooter engages a hostile in range; a `HoldFire` one never does

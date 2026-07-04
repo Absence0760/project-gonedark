@@ -56,12 +56,14 @@ mod metrics;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use gonedark_core::components::{BuildingKind, EntityKind, Faction, Order, Stance, UnitKind, Vec2};
+use gonedark_core::components::{BuildingKind, Faction, Order, Stance, UnitKind, Vec2};
 use gonedark_core::economy::{self, Resources};
 use gonedark_core::ecs::Entity;
 use gonedark_core::fixed::Fixed;
+use gonedark_core::scenario::ScenarioBuilder;
 use gonedark_core::sim::{Command, Sim};
 use gonedark_core::territory::ControlPoint;
+use gonedark_core::trig::Angle;
 
 fn fx(n: i32) -> Fixed {
     Fixed::from_int(n)
@@ -72,17 +74,12 @@ fn v(x: i32, y: i32) -> Vec2 {
 }
 
 /// Spawn a Rifleman of `faction` at `(x, y)`, set to engage at will, and return its handle.
+/// Routed through the canonical [`ScenarioBuilder::spawn`] primitive — byte-identical to the old
+/// open-coded field writes: these scenes never call `set_army`, so the builder's per-army roster
+/// read resolves `Army::Neutral` (== the shared `unit_stats` baseline), and its explicit
+/// `unit_kind`/facing writes are exactly the `World::spawn` defaults this helper used to leave.
 fn spawn_rifleman(sim: &mut Sim, x: i32, y: i32, faction: Faction) -> Entity {
-    let (health, weapon) = economy::unit_stats(UnitKind::Rifleman);
-    let e = sim.world.spawn();
-    let i = e.index as usize;
-    sim.world.kind[i] = EntityKind::Unit;
-    sim.world.faction[i] = faction;
-    sim.world.pos[i] = v(x, y);
-    sim.world.health[i] = health;
-    sim.world.weapon[i] = weapon;
-    sim.world.stance[i] = Stance::FireAtWill;
-    e
+    ScenarioBuilder::new(sim).spawn(UnitKind::Rifleman, v(x, y), faction, Stance::FireAtWill, Angle(0))
 }
 
 /// A built scenario: the seeded sim plus the scripted commands to apply, keyed by the tick they

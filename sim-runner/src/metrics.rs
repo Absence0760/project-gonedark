@@ -28,6 +28,7 @@ use gonedark_core::components::{Army, EntityKind, Faction, Stance, UnitKind, Vec
 use gonedark_core::economy::{self, unit_cost, Resources, HEAVY_COST, RIFLEMAN_COST};
 use gonedark_core::ecs::World;
 use gonedark_core::fixed::Fixed;
+use gonedark_core::scenario::ScenarioBuilder;
 use gonedark_core::sim::Sim;
 use gonedark_core::terrain::{Cover, Terrain};
 use gonedark_core::territory::ControlPoint;
@@ -44,17 +45,12 @@ fn v(x: i32, y: i32) -> Vec2 {
 
 /// Spawn a `kind` unit (with its real [`economy::unit_stats`] table stats) of `faction` at
 /// `(x, y)`, set to engage at will. Returns nothing — the metrics read world state, not handles.
+/// Routed through the canonical [`ScenarioBuilder::spawn`] primitive — byte-identical to the old
+/// open-coded writes: the metric sims never call `set_army` before this, so the builder's per-army
+/// roster read resolves `Army::Neutral` (== the `unit_stats` baseline), and its facing writes are
+/// exactly the `World::spawn` defaults (`Angle(0)`).
 fn spawn(sim: &mut Sim, x: i32, y: i32, faction: Faction, kind: UnitKind) {
-    let (health, weapon) = economy::unit_stats(kind);
-    let e = sim.world.spawn();
-    let i = e.index as usize;
-    sim.world.kind[i] = EntityKind::Unit;
-    sim.world.unit_kind[i] = kind;
-    sim.world.faction[i] = faction;
-    sim.world.pos[i] = v(x, y);
-    sim.world.health[i] = health;
-    sim.world.weapon[i] = weapon;
-    sim.world.stance[i] = Stance::FireAtWill;
+    ScenarioBuilder::new(sim).spawn(kind, v(x, y), faction, Stance::FireAtWill, Angle(0));
 }
 
 // --- Pure metric extractors (these are the testable seam) ---
@@ -227,18 +223,17 @@ pub fn equal_cost_outcome(budget: i64, sep: i32) -> (u64, u32, u32) {
 /// measuring the armoured Tank REQUIRES them, or the tank would (wrongly) take full damage from
 /// penetration-0 fire and resolve no facets. Float-free.
 fn spawn_produced(sim: &mut Sim, x: i32, y: i32, faction: Faction, kind: UnitKind, hull: Angle) {
-    let (health, weapon) = economy::unit_stats(kind);
-    let e = sim.world.spawn();
+    // Route the common spawn through the canonical builder primitive, then layer the produced
+    // loadout on through `sim_mut` (the builder's documented mission-specific-shaping seam).
+    // The builder's `facing` sets hull AND turret together, but the production path leaves the
+    // turret at rest (`Angle(0)`) — so pass the resting default and set the hull explicitly,
+    // keeping this byte-identical to the old open-coded writes (the metric pins depend on it).
+    let mut b = ScenarioBuilder::new(sim);
+    let e = b.spawn(kind, v(x, y), faction, Stance::FireAtWill, Angle(0));
     let i = e.index as usize;
-    sim.world.kind[i] = EntityKind::Unit;
-    sim.world.unit_kind[i] = kind;
-    sim.world.faction[i] = faction;
-    sim.world.pos[i] = v(x, y);
-    sim.world.health[i] = health;
-    sim.world.weapon[i] = weapon;
+    let sim = b.sim_mut();
     sim.world.armor[i] = economy::unit_armor(kind);
     sim.world.hull_heading[i] = hull;
-    sim.world.stance[i] = Stance::FireAtWill;
 }
 
 /// Equal-**resource** trade of an `infantry`-mass (Player) vs a produced-Tank-mass (Enemy), `sep`
@@ -318,16 +313,12 @@ pub fn tank_duel(sep: i32, player_hull: Angle, enemy_hull: Angle) -> (u64, u32, 
 /// ([`economy::unit_stats_for`]) at `(x, y)`, FireAtWill — the per-faction-roster analogue of
 /// [`spawn`]. Used by [`cross_faction_equal_cost`] to pit one army's roster against another's.
 fn spawn_army(sim: &mut Sim, x: i32, y: i32, faction: Faction, army: Army, kind: UnitKind) {
-    let (health, weapon) = economy::unit_stats_for(army, kind);
-    let e = sim.world.spawn();
-    let i = e.index as usize;
-    sim.world.kind[i] = EntityKind::Unit;
-    sim.world.unit_kind[i] = kind;
-    sim.world.faction[i] = faction;
-    sim.world.pos[i] = v(x, y);
-    sim.world.health[i] = health;
-    sim.world.weapon[i] = weapon;
-    sim.world.stance[i] = Stance::FireAtWill;
+    // `set_army` then spawn: the builder's roster read (`unit_stats_for(army_of(faction), kind)`)
+    // is then exactly the `unit_stats_for(army, kind)` this used to open-code. `set_army` is
+    // match-setup identity (never folded), so recording it is byte-neutral to every metric.
+    let mut b = ScenarioBuilder::new(sim);
+    b.set_army(faction, army);
+    b.spawn(kind, v(x, y), faction, Stance::FireAtWill, Angle(0));
 }
 
 /// The **mirror-of-roles** equal-cost trade (factions-plan WS-B, the per-faction analogue of D30's
