@@ -34,7 +34,7 @@ use gonedark_core::campaign::{
     Campaign, Conflict, ConflictId, Difficulty as ReplayTier, MissionId, NodeId, Operation,
     OperationId, OperationNode,
 };
-use gonedark_core::components::Faction;
+use gonedark_core::components::{Army, Faction};
 use gonedark_core::ecs::Entity;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::gunsmith::Loadout;
@@ -248,12 +248,15 @@ pub fn default_registry() -> MissionRegistry {
     ])
 }
 
-/// The shipped Operations-hub campaign graph, wired to [`default_registry`]. **Four fictional
-/// modern conflicts on the atlas** (D105), each a self-contained three-battle chain
+/// The shipped Operations-hub campaign graph, wired to [`default_registry`]. **Five conflicts on
+/// the atlas** (D105 + the D120 WW2 conflict), each a self-contained three-battle chain
 /// Seize → Hold → Push over the three shipped seeders: *The Channel Crisis* (2027–2028, the
 /// original D98 placeholder, framed from the `MISSION_*_BRIEFING` consts), then *The Meridian
-/// Crisis* (2029–2030, Gulf of Guinea), *The Gotland Winter* (2031–2032, central Baltic), and
-/// *The Santo Crisis* (2033–2034, Melanesia) — each with its own per-node titles/situations
+/// Crisis* (2029–2030, Gulf of Guinea), *The Gotland Winter* (2031–2032, central Baltic),
+/// *The Santo Crisis* (2033–2034, Melanesia), and finally *Normandy '44* (1944, the first
+/// **historical** conflict — the WW2 cost-vs-power armies debut here: a mass of cheap [`Army::UsWw2`]
+/// Shermans against fewer, far tougher [`Army::Germany`] Panthers/Tigers, per-node via the
+/// [`authored_battle_spec`] army seam) — each with its own per-node titles/situations
 /// authored inline. Every conflict's root is open from the start ("pick a war"); gating runs
 /// only *within* a conflict, so clearing one war never unlocks another. Each node names its
 /// mission by [`MissionId`] only — the three archetypes are deliberately **reused** across
@@ -265,13 +268,15 @@ pub fn default_registry() -> MissionRegistry {
 /// [`MissionId`] resolves in [`default_registry`] ([`MissionRegistry::covers`] holds — a test
 /// pins it), so launching any playable node always resolves to a runnable mission.
 ///
-/// The conflicts stay inside the Q28 fork-1(c) lean: **fictional, modern, plausibly covered by
-/// the shipped US/FR roster** — no historical conflict ships before the roster and
-/// conflict-selection forks are decided. The atlas grouping remains pure metadata over the node
-/// chains — unlock behavior and the persisted format are unchanged (a test pins the blob
-/// byte-identical to the same nodes ungrouped) — but the node count is now 12: a pre-existing
-/// 3-node progress blob no longer applies (`apply_progress` rejects the topology skew cleanly —
-/// a fresh-progress reset, by design; see D105).
+/// The first four conflicts stay inside the Q28 fork-1(c) lean: **fictional, modern, plausibly
+/// covered by the shipped US/FR roster**. The fifth, *Normandy '44*, is the first **historical**
+/// conflict — unlocked by D120's WW2 cost-vs-power armies (a mass of cheap `UsWw2` Shermans vs
+/// fewer, tougher `Germany` Panthers/Tigers), which give the WW2 fantasy a real, fairness-bounded
+/// roster to field. The atlas grouping remains pure metadata over the node chains — unlock behavior
+/// and the persisted format are unchanged (a test pins the blob byte-identical to the same nodes
+/// ungrouped) — but the node count is now 15: a pre-existing 12-node progress blob no longer applies
+/// (`apply_progress` rejects the topology skew cleanly — a fresh-progress reset, by design; see
+/// D105 / D120).
 pub fn default_campaign() -> Campaign {
     Campaign::with_atlas(
         vec![
@@ -328,6 +333,21 @@ pub fn default_campaign() -> Campaign {
                 lat_x10: -155,
                 lon_x10: 1672,
             },
+            Conflict {
+                id: ConflictId(4),
+                name: "Normandy '44".to_string(),
+                start_year: 1944,
+                end_year: 1944,
+                summary: "The Allied invasion of occupied France, June–August 1944 — and the \
+                          campaign's first HISTORICAL conflict. The US armored spearhead trades \
+                          a flood of cheap, thin-skinned Shermans against fewer, far tougher \
+                          German Panthers and Tigers: win it by numbers and manoeuvre, because \
+                          you will never win it gun-to-gun."
+                    .to_string(),
+                // The Calvados coast behind Omaha / the bocage country (~49.3°N, 0.9°W).
+                lat_x10: 493,
+                lon_x10: -9,
+            },
         ],
         vec![
             Operation {
@@ -349,6 +369,11 @@ pub fn default_campaign() -> Campaign {
                 id: OperationId(3),
                 conflict: ConflictId(3),
                 name: "Operation Trade Wind".to_string(),
+            },
+            Operation {
+                id: OperationId(4),
+                conflict: ConflictId(4),
+                name: "Operation Cobra".to_string(),
             },
         ],
         vec![
@@ -493,15 +518,57 @@ pub fn default_campaign() -> Campaign {
             .in_operation(OperationId(3))
             // Hog Harbour on the East Coast Road (~15.1°S, 167.1°E).
             .at(-151, 1671),
+            // ---- Normandy '44 — Operation Cobra (the WW2 cost-vs-power debut, D120) ----
+            OperationNode::new(
+                NodeId(12),
+                MISSION_SEIZE,
+                "Silence the Battery",
+                "A German coastal battery zeroes the whole landing beach, and its commander is up \
+                 on the clifftop directing every gun. Twelve of yours went up the ropes — enough \
+                 to swamp the trenches, never enough to trade shots with a Tiger. Kill the officer \
+                 and the guns go quiet. Direct the rush from the map, or climb the last rope \
+                 yourself; but the casemate you go dark on is the one that ranges in on you.",
+            )
+            .in_operation(OperationId(4))
+            // Pointe du Hoc, the clifftop battery west of Omaha (~49.4°N, 0.99°W).
+            .at(494, -10),
+            OperationNode::new(
+                NodeId(13),
+                MISSION_HOLD,
+                "Hold the Crossroads",
+                "You took the hedgerow crossroads; now a Panzer counterattack wants it back before \
+                 dark. You have more men than they have tanks, and thicker cover than they expect \
+                 — dig the line in and make every Panther earn the lane. Fight it from above, or \
+                 put yourself behind a rifle in the sunken road; but the hedge you can't see is \
+                 the one a Tiger noses through.",
+            )
+            .requires([NodeId(12)])
+            .in_operation(OperationId(4))
+            // Sunken bocage lanes south of Isigny (~49.2°N, 0.9°W).
+            .at(492, -9),
+            OperationNode::new(
+                NodeId(14),
+                MISSION_PUSH,
+                "Break the Bocage",
+                "Three hedgerow strongpoints stand between you and the breakout, every one anchored \
+                 on a dug-in Panther. You cannot out-gun them — you out-mass and out-flank them: \
+                 take each strongpoint in order, hold it, and roll on before their armor re-sets. \
+                 Clear a lane blind and the tank you drove past is behind you now, in the hedge you \
+                 never checked.",
+            )
+            .requires([NodeId(13)])
+            .in_operation(OperationId(4))
+            // The Saint-Lô–Périers road, the Cobra breakout start line (~49.1°N, 1.1°W).
+            .at(491, -11),
         ],
     )
 }
 
 // ================= Per-node battle variation — the campaign's per-battle variety seam ===========
 //
-// `default_campaign` reuses the three archetype `MissionId`s across all four conflicts (Seize / Hold
+// `default_campaign` reuses the three archetype `MissionId`s across all five conflicts (Seize / Hold
 // / Push). Left alone, every node of one archetype would field the byte-identical opening force and
-// objective — twelve battles, three distinct fights. This seam adds real per-node variety on top of
+// objective — fifteen battles, three distinct fights. This seam adds real per-node variety on top of
 // the already-landed variation seams, WITHOUT touching the shared deterministic seeders:
 //
 // * **Forces** — each node carries an authored [`SeizeSetup`] / [`HoldSetup`] / [`PushSetup`] (all
@@ -621,12 +688,23 @@ pub struct BattleSpec {
     pub setup: NodeSetup,
     pub objective: ObjectiveVariant,
     pub commander: CommanderFlavor,
+    /// The `(player, enemy)` [`Army`] matchup this node fields — the D115 per-node army seam that
+    /// lets a conflict pick its roster (D120). The `core::scenario` seeders always seed the modern
+    /// baseline matchup ([`Army::Us`] vs [`Army::Fr`]); [`seed_battle_spec`] re-applies *this* pair
+    /// afterward, so a node can instead field the WW2 cost-vs-power armies ([`Army::UsWw2`] Sherman
+    /// mass vs [`Army::Germany`] Panther/Tiger elite). The baseline `(Us, Fr)` is idempotent with
+    /// what the seeder already set, so the modern nodes stay byte-identical (invariants #1/#7); a
+    /// WW2 node's produced tanks are then charged the per-army price (`unit_cost_for`, D120), which
+    /// is what makes the quantity-vs-quality fantasy real. Match-setup identity only — never folds
+    /// into the per-tick checksum (its *roster effect* on spawned/produced units is what folds).
+    pub armies: (Army, Army),
 }
 
 impl BattleSpec {
     /// The archetype baseline for a `MissionId` — the shipped default forces + standard objective +
-    /// neutral commander flavor. Byte-identical to the plain `seed_*_mission_with_loadout` scene.
-    /// `None` for a `MissionId` with no seedable archetype (a content gap — never guessed).
+    /// neutral commander flavor + the modern `(Us, Fr)` matchup. Byte-identical to the plain
+    /// `seed_*_mission_with_loadout` scene. `None` for a `MissionId` with no seedable archetype (a
+    /// content gap — never guessed).
     fn baseline(mission: MissionId) -> Option<BattleSpec> {
         let setup = if mission == MISSION_SEIZE {
             NodeSetup::Seize(SeizeSetup::default())
@@ -641,6 +719,8 @@ impl BattleSpec {
             setup,
             objective: ObjectiveVariant::Standard,
             commander: CommanderFlavor::default(),
+            // The modern matchup the seeders already set — a byte-neutral re-apply.
+            armies: (Army::Us, Army::Fr),
         })
     }
 
@@ -662,7 +742,7 @@ pub fn seed_battle_spec(
     spec: BattleSpec,
     loadout: Loadout,
 ) -> (Entity, bool, ObjectiveSet) {
-    match spec.setup {
+    let seeded = match spec.setup {
         NodeSetup::Seize(setup) => {
             let m = gonedark_core::scenario::seed_seize_mission_with_setup(sim, loadout, setup);
             let player = m.troops[0];
@@ -692,22 +772,47 @@ pub fn seed_battle_spec(
             let m = gonedark_core::scenario::seed_push_mission_with_setup(sim, loadout, setup);
             (m.troops[0], false, ObjectiveSet::mission_push(Faction::Player, &m.posts))
         }
-    }
+    };
+
+    // Apply the node's authored `(player, enemy)` army matchup (the D115/D120 seam). The seeders
+    // above always set the modern baseline (`Us` vs `Fr`); re-applying it here is a no-op, so every
+    // modern node stays byte-identical to the bare seed (invariants #1/#7). A WW2 node instead lands
+    // `UsWw2` (Sherman) vs `Germany` (Panther/Tiger): the initial infantry are already spawned, but
+    // the enemy commander's *produced* tanks are now charged the per-army cost-vs-power price
+    // (`economy::unit_cost_for`, D120), which is where the quantity-vs-quality fight actually lives.
+    // `set_army` is match-setup identity — it never adds per-tick checksum surface (invariant #7).
+    sim.set_army(Faction::Player, spec.armies.0);
+    sim.set_army(Faction::Enemy, spec.armies.1);
+    seeded
 }
 
 /// The authored per-node battle spec for the shipped [`default_campaign`], keyed by [`NodeId`]. The
-/// twelve nodes escalate within each archetype (later conflicts field bigger forces / longer holds
-/// / denser lanes) and ship the two previously-unused objective archetypes on three Seize nodes:
+/// fifteen nodes escalate within each archetype (later conflicts field bigger forces / longer holds
+/// / denser lanes) and ship the two previously-unused objective archetypes on Seize nodes:
 /// **node 3** (*Meridian* — Extract to the fuel yard), **node 6** (*Gotland* — Assassinate the quay
-/// officer, under a hunting commander) and **node 9** (*Santo* — Assassinate the landing-force
-/// commander). `None` for any other index (→ the resolver uses the archetype baseline). Every setup
-/// stays inside its `core::scenario` clamps; every Hold keeps `defender_cols >= attacker_cols` (the
-/// winnable-when-firing authoring bound).
+/// officer, under a hunting commander), **node 9** (*Santo* — Assassinate the landing-force
+/// commander), and **node 12** (*Normandy* — Assassinate the battery officer). The three
+/// *Normandy '44* nodes (12–14) field the WW2 cost-vs-power matchup — [`Army::UsWw2`] Shermans vs
+/// [`Army::Germany`] Panthers/Tigers (D120) — through the [`BattleSpec::armies`] seam; every other
+/// node keeps the modern `(Us, Fr)` matchup. `None` for any out-of-range index (→ the resolver uses
+/// the archetype baseline). Every setup stays inside its `core::scenario` clamps; every Hold keeps
+/// `defender_cols >= attacker_cols` (the winnable-when-firing authoring bound).
 fn authored_battle_spec(node: NodeId) -> Option<BattleSpec> {
+    // The modern matchup every pre-Normandy node fields — the byte-neutral `(Us, Fr)` baseline.
     let spec = |setup, objective, commander| BattleSpec {
         setup,
         objective,
         commander,
+        armies: (Army::Us, Army::Fr),
+    };
+    // The WW2 cost-vs-power matchup the *Normandy '44* nodes field: a mass of cheap `UsWw2` Shermans
+    // against fewer, far tougher `Germany` Panthers/Tigers (D120). Same closure shape as `spec`,
+    // only the army pair differs.
+    let ww2 = |setup, objective, commander| BattleSpec {
+        setup,
+        objective,
+        commander,
+        armies: (Army::UsWw2, Army::Germany),
     };
     let plain = CommanderFlavor::default();
     Some(match node.0 {
@@ -774,6 +879,33 @@ fn authored_battle_spec(node: NodeId) -> Option<BattleSpec> {
             plain,
         ),
         11 => spec(
+            NodeSetup::Push(PushSetup { troops: 12, guards_per_post: 3 }),
+            ObjectiveVariant::Standard,
+            CommanderFlavor {
+                hunt_embodied: true,
+                difficulty: Some(Difficulty::Elite),
+                ..CommanderFlavor::default()
+            },
+        ),
+        // ---- Normandy '44 (conflict 4) — the WW2 cost-vs-power armies (D120) ----
+        // The opener is a decapitation: swamp the clifftop battery with a full 12-troop assault and
+        // kill the officer directing the guns (Assassinate), while the Panzer commander hunts a
+        // gone-dark player. Sherman mass (`UsWw2`) vs Panther/Tiger elite (`Germany`).
+        12 => ww2(
+            NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 6 }),
+            ObjectiveVariant::Assassinate,
+            CommanderFlavor { hunt_embodied: true, ..CommanderFlavor::default() },
+        ),
+        // Hold the bocage crossroads against the counterattack — the proven 8-vs-7 / 60 s dug-in
+        // firing line (same winnable setup as node 10), now German armor testing the hedgerow.
+        13 => ww2(
+            NodeSetup::Hold(HoldSetup { defender_cols: 8, attacker_cols: 7, hold_secs: 60 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        // The Cobra breakout climax: the densest lane in the campaign under an Elite, hunting
+        // commander — you out-mass and out-flank the dug-in Panthers, you never out-gun them.
+        14 => ww2(
             NodeSetup::Push(PushSetup { troops: 12, guards_per_post: 3 }),
             ObjectiveVariant::Standard,
             CommanderFlavor {
@@ -1218,7 +1350,7 @@ mod tests {
     fn default_campaign_is_seize_then_hold_then_push() {
         let reg = default_registry();
         let mut campaign = default_campaign();
-        assert_eq!(campaign.mission_select().len(), 12, "four conflicts x three battles (D105)");
+        assert_eq!(campaign.mission_select().len(), 15, "five conflicts x three battles (D105/D120)");
 
         // Node 0 is the root Seize; node 1 is the gated Hold, framed from MISSION_TWO_BRIEFING.
         assert_eq!(campaign.node(NodeId(0)).unwrap().mission, MISSION_SEIZE);
@@ -1258,38 +1390,53 @@ mod tests {
         assert_eq!(reg.resolve_node(&campaign, NodeId(2)).map(|m| m.id), Some(MISSION_PUSH));
     }
 
-    /// The shipped graph carries the Q28 conflict-atlas grouping, grown to the D105 four-conflict
-    /// atlas: every conflict holds exactly one operation holding its three battles, all conflicts
-    /// are fictional-modern (the Q28 fork-1(c) lean), and the grouping is pure metadata (the
-    /// progress blob is byte-identical to the same node set built with no atlas).
+    /// The shipped graph carries the Q28 conflict-atlas grouping, grown to five conflicts (the D105
+    /// four modern wars + the D120 *Normandy '44* WW2 conflict): every conflict holds exactly one
+    /// operation holding its three battles, the first four are fictional-modern (the Q28 fork-1(c)
+    /// lean) while Normandy is the first historical conflict (1944), and the grouping is pure
+    /// metadata (the progress blob is byte-identical to the same node set built with no atlas).
     #[test]
     fn default_campaign_is_grouped_under_the_conflict_atlas() {
         let mut campaign = default_campaign();
 
-        // Four conflicts, four operations, linked one-to-one, all modern fiction (Q28 fork 1(c):
-        // wars the shipped US/FR roster plausibly covers — no historical conflict before the
-        // roster/selection forks are decided).
-        assert_eq!(campaign.conflicts().len(), 4);
-        assert_eq!(campaign.operations().len(), 4);
+        // Five conflicts, five operations, linked one-to-one. The first four are modern fiction
+        // (Q28 fork 1(c)); the fifth, Normandy '44, is the first HISTORICAL conflict (D120's WW2
+        // cost-vs-power armies give it a real roster).
+        assert_eq!(campaign.conflicts().len(), 5);
+        assert_eq!(campaign.operations().len(), 5);
         assert_eq!(campaign.conflict(ConflictId(0)).unwrap().name, "The Channel Crisis");
         assert_eq!(campaign.conflict(ConflictId(1)).unwrap().name, "The Meridian Crisis");
         assert_eq!(campaign.conflict(ConflictId(2)).unwrap().name, "The Gotland Winter");
         assert_eq!(campaign.conflict(ConflictId(3)).unwrap().name, "The Santo Crisis");
-        for i in 0..4u16 {
-            let conflict = campaign.conflict(ConflictId(i)).unwrap();
-            assert!(conflict.start_year >= 2020, "every shipped conflict is modern (Q28 lean)");
+        assert_eq!(campaign.conflict(ConflictId(4)).unwrap().name, "Normandy '44");
+        for i in 0..5u16 {
             let op = campaign.operation(OperationId(i)).unwrap();
             assert_eq!(op.conflict, ConflictId(i), "operations link to their conflicts in order");
             assert_eq!(campaign.operations_in(ConflictId(i)), vec![OperationId(i)]);
             assert_eq!(campaign.nodes_in(OperationId(i)).len(), 3, "three battles per war");
         }
-        // The eras are staggered so the atlas year scrubber has spread (2027..=2034, no gaps).
+        // The four modern conflicts stay inside the Q28 lean; Normandy '44 is the lone historical one.
+        for i in 0..4u16 {
+            assert!(
+                campaign.conflict(ConflictId(i)).unwrap().start_year >= 2020,
+                "the first four conflicts are modern (Q28 lean)",
+            );
+        }
+        assert_eq!(
+            campaign.conflict(ConflictId(4)).unwrap().start_year,
+            1944,
+            "Normandy '44 is the historical WW2 conflict (D120)",
+        );
+        // The four modern eras stagger 2027..=2034; Normandy anchors the historical end (1944).
         let spans: Vec<(i16, i16)> = campaign
             .conflicts()
             .iter()
             .map(|c| (c.start_year, c.end_year))
             .collect();
-        assert_eq!(spans, vec![(2027, 2028), (2029, 2030), (2031, 2032), (2033, 2034)]);
+        assert_eq!(
+            spans,
+            vec![(2027, 2028), (2029, 2030), (2031, 2032), (2033, 2034), (1944, 1944)]
+        );
 
         // The Channel chain still sits in its operation; the rollup tracks it end-to-end — and
         // completing one war completes only that war.
@@ -1329,7 +1476,7 @@ mod tests {
         let mut campaign = default_campaign();
 
         let expected = [MISSION_SEIZE, MISSION_HOLD, MISSION_PUSH];
-        for i in 0..4u16 {
+        for i in 0..5u16 {
             let nodes = campaign.nodes_in(OperationId(i));
             assert_eq!(nodes.len(), 3);
             for (j, (node, mission)) in nodes.iter().zip(expected).enumerate() {
@@ -1348,7 +1495,7 @@ mod tests {
             campaign.clear(node, CampaignDifficulty::Recruit).unwrap();
         }
         assert!(campaign.conflict_progress(ConflictId(1)).is_complete());
-        for i in [0u16, 2, 3] {
+        for i in [0u16, 2, 3, 4] {
             let nodes = campaign.nodes_in(OperationId(i));
             assert_eq!(campaign.progress(nodes[1]), NodeProgress::Locked);
             assert_eq!(campaign.progress(nodes[2]), NodeProgress::Locked);
@@ -1362,7 +1509,7 @@ mod tests {
     #[test]
     fn every_shipped_battle_is_anchored_near_its_war() {
         let campaign = default_campaign();
-        for i in 0..4u16 {
+        for i in 0..5u16 {
             let conflict = campaign.conflict(ConflictId(i)).unwrap();
             let nodes = campaign.nodes_in(OperationId(i));
             let anchors: Vec<(i16, i16)> = nodes
@@ -1624,14 +1771,14 @@ mod tests {
         crate::objectives::faction_forces(sim, Faction::Player).alive_units
     }
 
-    /// Every one of the shipped twelve nodes has a `BattleSpec`, and the setup's archetype matches
+    /// Every one of the shipped fifteen nodes has a `BattleSpec`, and the setup's archetype matches
     /// the node's own `MissionId` (the guard against a mis-keyed hand table). `battle_spec_for_node`
     /// is gate-free, so it covers the whole authored graph (locked nodes included).
     #[test]
     fn every_node_has_a_matching_battle_spec() {
         let campaign = default_campaign();
-        assert_eq!(campaign.mission_select().len(), 12);
-        for i in 0..12u32 {
+        assert_eq!(campaign.mission_select().len(), 15);
+        for i in 0..15u32 {
             let node = NodeId(i);
             let spec = battle_spec_for_node(&campaign, node)
                 .unwrap_or_else(|| panic!("node {i} must have a battle spec"));
@@ -1748,8 +1895,9 @@ mod tests {
     /// Whole-campaign guard: EVERY authored node seeds a bit-identical world on a re-seed
     /// (invariants #1/#7), carries a non-empty objective set, and — the teeth — every objective's
     /// target actually resolves in the node's own seeded world. `content_lint` dedupes its battery
-    /// by `MissionId` (so it never seeds the per-node `BattleSpec`s); this covers the twelve nodes'
-    /// real battles, including the Extract/Assassinate variants and escalated force counts.
+    /// by `MissionId` (so it never seeds the per-node `BattleSpec`s); this covers the fifteen nodes'
+    /// real battles, including the Extract/Assassinate variants, escalated force counts, and the
+    /// Normandy '44 WW2-army nodes (whose `set_army` override is deterministic, so the re-seed holds).
     #[test]
     fn every_authored_node_seeds_deterministically_with_a_resolving_objective() {
         use gonedark_core::flow_field::HALF_EXTENT;
@@ -1778,7 +1926,7 @@ mod tests {
             }
         };
 
-        for i in 0..12u32 {
+        for i in 0..15u32 {
             let node = NodeId(i);
             let spec = battle_spec_for_node(&campaign, node).unwrap();
 
@@ -1843,6 +1991,55 @@ mod tests {
         let f11 = battle_spec_for_node(&campaign, NodeId(11)).unwrap().commander;
         assert!(f11.hunt_embodied);
         assert_eq!(f11.difficulty, Some(CommanderDifficulty::Elite));
+    }
+
+    /// The *Normandy '44* conflict (nodes 12–14) fields the WW2 cost-vs-power matchup and reads as
+    /// a real Seize → Hold → Push chain: the player commands [`Army::UsWw2`] (Sherman mass), the
+    /// enemy [`Army::Germany`] (Panther/Tiger elite). Every earlier node keeps the modern `(Us, Fr)`
+    /// matchup. The chain's opener is an Assassinate (kill the battery officer), and the shipped D120
+    /// economy makes the fantasy real — the Sherman is strictly *cheaper* than the Panther/Tiger, so
+    /// the player genuinely trades numbers for durability.
+    #[test]
+    fn normandy_ww2_conflict_fields_the_cost_vs_power_armies() {
+        use gonedark_core::components::UnitKind;
+        use gonedark_core::economy::unit_cost_for;
+        let campaign = default_campaign();
+
+        // The four modern conflicts (nodes 0–11) all field the byte-neutral (Us, Fr) matchup.
+        for i in 0..12u32 {
+            assert_eq!(
+                battle_spec_for_node(&campaign, NodeId(i)).unwrap().armies,
+                (Army::Us, Army::Fr),
+                "node {i} keeps the modern matchup",
+            );
+        }
+
+        // Normandy '44 (nodes 12–14): Sherman mass vs Panther/Tiger elite, a full Seize→Hold→Push.
+        let expected = [
+            (12u32, MISSION_SEIZE, ObjectiveVariant::Assassinate),
+            (13, MISSION_HOLD, ObjectiveVariant::Standard),
+            (14, MISSION_PUSH, ObjectiveVariant::Standard),
+        ];
+        for (i, mission, objective) in expected {
+            let spec = battle_spec_for_node(&campaign, NodeId(i)).unwrap();
+            assert_eq!(spec.armies, (Army::UsWw2, Army::Germany), "node {i} fields the WW2 armies");
+            assert_eq!(spec.setup.mission(), mission, "node {i} archetype");
+            assert_eq!(spec.objective, objective, "node {i} objective variant");
+
+            // Seeding actually lands the WW2 matchup on the Sim (the `set_army` override in
+            // `seed_battle_spec`), so the enemy commander's produced tanks are charged the German price.
+            let mut sim = Sim::new(0x2A44_0000 ^ i as u64);
+            seed_battle_spec(&mut sim, spec, Loadout::STANDARD);
+            assert_eq!(sim.army_of(Faction::Player), Army::UsWw2, "node {i}: player is UsWw2");
+            assert_eq!(sim.army_of(Faction::Enemy), Army::Germany, "node {i}: enemy is Germany");
+        }
+
+        // The whole point (D120): the Sherman is cheaper than the Panther/Tiger, so the player wins
+        // by numbers, never gun-to-gun. This ties the conflict to the shipped cost model.
+        assert!(
+            unit_cost_for(Army::UsWw2, UnitKind::Tank) < unit_cost_for(Army::Germany, UnitKind::Tank),
+            "the WW2 conflict rests on the Sherman being the cheaper, more numerous tank",
+        );
     }
 
     /// Winnability of the escalated hardest Hold node (node 10: an 8-vs-7 line, 60 s window). The

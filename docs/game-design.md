@@ -250,4 +250,8 @@ globe zoomed to that war's ground, one progress-toned pin per battle ([D106](dec
 dressed as an **operations map**: order chips start → finish along the prerequisite chain,
 locked ground padlocked but visible, a dashed progression path ([D110](decisions.md)) — with
 the remaining forks in
-[Q28](open-questions.md#q28--conflict-atlas).
+[Q28](open-questions.md#q28--conflict-atlas). The shipped atlas now carries **five conflicts**:
+four fictional-modern wars ([D105](decisions.md)) plus the campaign's first *historical* one,
+**Normandy '44** ([D120](decisions.md)) — the debut of the WW2 **cost-vs-power** armies, a mass
+of cheap US Shermans against fewer, tougher German Panthers/Tigers, where you win by numbers and
+manoeuvre rather than gun-to-gun (full write-up in [`pve-campaign.md`](pve-campaign.md)).
