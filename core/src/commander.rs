@@ -32,7 +32,7 @@ use crate::detection::Tell;
 use crate::ecs::World;
 use crate::economy::{self, Resources};
 use crate::fixed::Fixed;
-use crate::mission_tuning::Difficulty;
+use crate::mission_tuning::{Difficulty, DifficultyParams};
 use crate::rng::Rng;
 use crate::sim::Command;
 use crate::territory::Territory;
@@ -82,6 +82,49 @@ pub struct CommanderConfig {
     /// **Defaults `false`** so the default scenes' lockstep command streams stay byte-identical;
     /// enable it per-scene/per-difficulty to make the AI hunt a gone-dark player.
     pub hunt_embodied: bool,
+
+    /// Per-node override of the tier's production backlog depth (the **aggression** knob,
+    /// [`DifficultyParams::max_queue_depth`]). `None` ⇒ the tier's value — the byte-identical
+    /// default. A campaign node dials this in its per-node battle spec so it can field a keener or
+    /// slacker commander than its replay-tier band alone; it is host-side planning **config**, not
+    /// new AI logic (invariant #3: units stay literal executors; only the commander's *choices*
+    /// change). Applied deterministically at launch, so two peers at the same override stay
+    /// bit-identical (invariant #7).
+    pub max_queue_depth: Option<usize>,
+
+    /// Per-node override of the tier's Heavy-purchase reserve cushion
+    /// ([`DifficultyParams::heavy_reserve`], the **reserve / unit-mix** knob). `None` ⇒ the tier's
+    /// value. Clamped `>= 0` on apply (a negative reserve is meaningless). Same config-only,
+    /// deterministic contract as [`max_queue_depth`](Self::max_queue_depth).
+    pub heavy_reserve: Option<i64>,
+
+    /// Per-node override of the tier's re-plan **cadence** stride
+    /// ([`DifficultyParams::command_stride`]). `None` ⇒ the tier's value. Clamped `>= 1` on apply
+    /// (stride 0 would divide by zero in the cadence gate). Same config-only, deterministic
+    /// contract as [`max_queue_depth`](Self::max_queue_depth).
+    pub command_stride: Option<u64>,
+}
+
+impl CommanderConfig {
+    /// The integer knobs the planner actually uses this tick: the [`difficulty`](Self::difficulty)
+    /// tier's [`params`](Difficulty::params), with any per-node `Some(_)` override applied on top
+    /// (the reserve clamped `>= 0`, the stride clamped `>= 1`). With **no** overrides (the default)
+    /// this is *exactly* `self.difficulty.params()`, so a default config is byte-identical to the
+    /// pre-override commander — the property that keeps the golden-checksum streams untouched.
+    /// Pure, `const`-friendly, float-free (invariant #1).
+    pub fn resolved_params(&self) -> DifficultyParams {
+        let mut p = self.difficulty.params();
+        if let Some(q) = self.max_queue_depth {
+            p.max_queue_depth = q;
+        }
+        if let Some(r) = self.heavy_reserve {
+            p.heavy_reserve = r.max(0);
+        }
+        if let Some(s) = self.command_stride {
+            p.command_stride = s.max(1);
+        }
+        p
+    }
 }
 
 /// Survey the world and return the orders to feed the lockstep stream this tick — possibly empty
@@ -124,10 +167,11 @@ pub fn commander_orders(
     faction: Faction,
     tick: u64,
 ) -> Vec<Command> {
-    // Difficulty tier → the integer knobs that scale this plan (aggression / reserve / cadence).
-    // The default tier (`Veteran`) returns the commander's original constants, so a default-config
+    // Difficulty tier → the integer knobs that scale this plan (aggression / reserve / cadence),
+    // with any per-node override the caller dialed in (`resolved_params`). The default tier
+    // (`Veteran`) with no overrides returns the commander's original constants, so a default-config
     // call is byte-identical to the pre-difficulty commander.
-    let params = config.difficulty.params();
+    let params = config.resolved_params();
 
     // Re-plan **cadence** (the `command_stride` knob): the army-tasking + posture pass runs only on
     // cycles where `cycle % stride == 0`, where `cycle = tick / COMMANDER_PERIOD` is a pure function
@@ -1167,6 +1211,74 @@ mod tests {
             plan(Difficulty::Veteran),
             plan(Difficulty::Elite),
             "the difficulty knob must change the command stream"
+        );
+    }
+
+    // --- Per-node param overrides (the campaign battle-spec commander flavor) -----------------
+    //
+    // A per-node battle spec may dial the tier's integer knobs (aggression / reserve / cadence)
+    // without inventing a new tier. `None` overrides reproduce the tier byte-for-byte; a `Some`
+    // override replaces just that knob, clamped so a bad authored value can't break the planner.
+
+    /// No overrides ⇒ `resolved_params` is *exactly* the tier's `params` for every tier — the
+    /// byte-identical default that keeps the golden-checksum streams untouched. And each `Some`
+    /// override replaces its knob, with the documented clamps (reserve `>= 0`, stride `>= 1`).
+    #[test]
+    fn resolved_params_default_matches_tier_and_overrides_clamp() {
+        for d in Difficulty::ALL {
+            let cfg = CommanderConfig {
+                difficulty: d,
+                ..CommanderConfig::default()
+            };
+            assert_eq!(cfg.resolved_params(), d.params(), "no override ⇒ the tier's params");
+        }
+
+        let cfg = CommanderConfig {
+            difficulty: Difficulty::Veteran,
+            max_queue_depth: Some(5),
+            heavy_reserve: Some(-10), // clamps to 0
+            command_stride: Some(0),  // clamps to 1
+            ..CommanderConfig::default()
+        };
+        let p = cfg.resolved_params();
+        assert_eq!(p.max_queue_depth, 5, "backlog override applied");
+        assert_eq!(p.heavy_reserve, 0, "negative reserve clamped to 0");
+        assert_eq!(p.command_stride, 1, "stride clamped to >= 1 (no div-by-zero)");
+    }
+
+    /// The override has real teeth in the planner: a per-node backlog override lets an otherwise
+    /// shallow-queuing `Recruit` commander stack a second production item — the flavor a campaign
+    /// node carries reaches the actual command stream, not just the config struct.
+    #[test]
+    fn backlog_override_lets_recruit_stack_a_second_item() {
+        let mut world = World::new();
+        let camp = spawn_built_camp(&mut world, Faction::Enemy, at(0, 0));
+        // Pre-load one item so the depth cap is what decides a second.
+        world.building[camp.index as usize].queue.push(ProductionItem {
+            kind: UnitKind::Rifleman,
+            ticks_left: 10,
+        });
+        let terr = Territory::empty();
+        // Recruit's depth cap is 1 (declines a second) — but a per-node override to 3 stacks one.
+        let cfg = CommanderConfig {
+            difficulty: Difficulty::Recruit,
+            max_queue_depth: Some(3),
+            ..CommanderConfig::default()
+        };
+        let mut rng = Rng::new(1);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(10_000), // flush, so only the depth cap gates
+            &mut rng,
+            &cfg,
+            &[],
+            Faction::Enemy,
+            0,
+        );
+        assert!(
+            cmds.iter().any(|c| matches!(c, Command::QueueProduction { .. })),
+            "the override lets Recruit stack a second item: {cmds:?}"
         );
     }
 }

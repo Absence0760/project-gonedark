@@ -34,12 +34,15 @@ use gonedark_core::campaign::{
     Campaign, Conflict, ConflictId, Difficulty as ReplayTier, MissionId, NodeId, Operation,
     OperationId, OperationNode,
 };
+use gonedark_core::components::Faction;
 use gonedark_core::ecs::Entity;
+use gonedark_core::fixed::Fixed;
 use gonedark_core::gunsmith::Loadout;
 use gonedark_core::mission_tuning::{
     Briefing, Difficulty, ScenarioModifiers, MISSION_ONE_BRIEFING, MISSION_THREE_BRIEFING,
     MISSION_TWO_BRIEFING,
 };
+use gonedark_core::scenario::{HoldSetup, PushSetup, SeizeSetup};
 use gonedark_core::sim::Sim;
 
 use std::path::{Path, PathBuf};
@@ -492,6 +495,319 @@ pub fn default_campaign() -> Campaign {
             .at(-151, 1671),
         ],
     )
+}
+
+// ================= Per-node battle variation — the campaign's per-battle variety seam ===========
+//
+// `default_campaign` reuses the three archetype `MissionId`s across all four conflicts (Seize / Hold
+// / Push). Left alone, every node of one archetype would field the byte-identical opening force and
+// objective — twelve battles, three distinct fights. This seam adds real per-node variety on top of
+// the already-landed variation seams, WITHOUT touching the shared deterministic seeders:
+//
+// * **Forces** — each node carries an authored [`SeizeSetup`] / [`HoldSetup`] / [`PushSetup`] (all
+//   plain integer counts, clamped in `core::scenario`), so later battles field bigger garrisons /
+//   longer holds / denser lanes. The per-node seed already differs (`campaign_match_seed`), so even
+//   identical setups play out differently; distinct setups make them different *situations*.
+// * **Objective** — a node may swap its archetype's default win condition for one of the two
+//   previously-unshipped objective archetypes: [`ObjectiveVariant::Assassinate`] (eliminate a VIP)
+//   or [`ObjectiveVariant::Extract`] (reach an extraction point). Both compose the existing
+//   host-side `ObjectiveSet` evaluators from handles the seeder already returns — no new sim.
+// * **Commander flavor** — a node may dial the enemy commander's integer knobs and opt it into the
+//   gone-dark hunt ([`CommanderFlavor`]). Config only (invariant #3): units stay literal executors,
+//   only the commander's *choices* change, and it reads only what detection honestly reveals
+//   (invariant #6). Applied at launch alongside `apply_campaign_tuning`.
+//
+// It lives in `engine`, not `core::campaign`, for the same reason the registry does: it references
+// the host-side [`ObjectiveSet`] and the engine [`Scene`](crate::Scene)/[`Game`](crate::Game),
+// which `core` must not import (invariant #2). It is a parallel table keyed by [`NodeId`], resolved
+// when the shell launches a node — the campaign graph stays the opaque node list it already is.
+
+/// How far (world units) the runner must get to the extraction point to complete an
+/// [`ObjectiveVariant::Extract`] objective. Generous enough to read as "you made the objective,"
+/// small enough that the player must fight across the field to reach it.
+const EXTRACT_RADIUS: Fixed = Fixed::from_int(5);
+
+/// Which archetype's force setup a node fields — one variant per shipped archetype, each wrapping
+/// the plain-integer `core::scenario` setup for that archetype.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NodeSetup {
+    Seize(SeizeSetup),
+    Hold(HoldSetup),
+    Push(PushSetup),
+}
+
+impl NodeSetup {
+    /// The [`MissionId`] archetype this setup seeds — the guard that keeps an authored per-node
+    /// setup from being applied to a node of a *different* archetype (a mismatched hand table).
+    pub fn mission(self) -> MissionId {
+        match self {
+            NodeSetup::Seize(_) => MISSION_SEIZE,
+            NodeSetup::Hold(_) => MISSION_HOLD,
+            NodeSetup::Push(_) => MISSION_PUSH,
+        }
+    }
+
+    /// The [`Scene`](crate::Scene) this setup boots — for the presentation flags only
+    /// (`debug_overlay_default` / `teaches_going_dark`); the seeded world is whatever the setup
+    /// produces. Mirrors [`Scene::for_mission`](crate::Scene::for_mission).
+    pub fn scene(self) -> crate::Scene {
+        match self {
+            NodeSetup::Seize(_) => crate::Scene::Mission1,
+            NodeSetup::Hold(_) => crate::Scene::Mission2,
+            NodeSetup::Push(_) => crate::Scene::Mission3,
+        }
+    }
+}
+
+/// Which win condition a node ships. `Standard` is the archetype's own objective (Seize→eliminate,
+/// Hold→survive, Push→capture-lane); the other two are the previously-unshipped objective
+/// archetypes, supported on **Seize** nodes (whose seeder returns the garrison VIP + base handles
+/// they key off). A variant authored on a Hold/Push node is ignored — those handles aren't there —
+/// which the shipped table never does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ObjectiveVariant {
+    #[default]
+    Standard,
+    /// Eliminate a specific enemy VIP (the rear garrison officer) instead of the whole force.
+    Assassinate,
+    /// Reach an extraction point (the objective ground) with the lead trooper.
+    Extract,
+}
+
+/// Per-node enemy-commander flavor — the integer/bool knobs a node dials, applied at launch
+/// alongside [`Game::apply_campaign_tuning`](crate::Game::apply_campaign_tuning). Config only
+/// (invariant #3): it changes the commander's *choices*, never introduces unit-level autonomy, and
+/// the gone-dark hunt reads only what detection honestly reveals (invariant #6). `Default` (all
+/// `None`/`false`) leaves the replay-tier band untouched — a no-op.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct CommanderFlavor {
+    /// Opt the commander into chasing a gone-dark (embodied) player, bounded by detection.
+    pub hunt_embodied: bool,
+    /// Override the commander's aggression band for this node (else the replay-tier band stands).
+    pub difficulty: Option<Difficulty>,
+    /// Override the tier's production backlog depth (aggression). `None` ⇒ the tier's value.
+    pub max_queue_depth: Option<usize>,
+    /// Override the tier's Heavy reserve cushion. `None` ⇒ the tier's value.
+    pub heavy_reserve: Option<i64>,
+    /// Override the tier's re-plan cadence stride. `None` ⇒ the tier's value.
+    pub command_stride: Option<u64>,
+}
+
+impl CommanderFlavor {
+    /// Apply this flavor to an already-tuned `game`, AFTER
+    /// [`apply_campaign_tuning`](crate::Game::apply_campaign_tuning): a `Some(difficulty)` overrides
+    /// the replay-tier band, the param overrides ride
+    /// [`set_commander_param_overrides`](crate::Game::set_commander_param_overrides), and the hunt
+    /// flag rides [`set_commander_hunts_embodied`](crate::Game::set_commander_hunts_embodied). All
+    /// host-side planning knobs — never sim state (invariant #7).
+    pub fn apply_to(&self, game: &mut crate::Game) {
+        game.set_commander_hunts_embodied(self.hunt_embodied);
+        if let Some(d) = self.difficulty {
+            game.set_commander_difficulty(d);
+        }
+        game.set_commander_param_overrides(
+            self.max_queue_depth,
+            self.heavy_reserve,
+            self.command_stride,
+        );
+    }
+}
+
+/// The full per-node battle spec: the force setup, the objective variant, and the commander flavor.
+/// `Copy` (every field is `Copy`), so a resolved spec is cheap to seed with *and then* read for its
+/// commander flavor at launch.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct BattleSpec {
+    pub setup: NodeSetup,
+    pub objective: ObjectiveVariant,
+    pub commander: CommanderFlavor,
+}
+
+impl BattleSpec {
+    /// The archetype baseline for a `MissionId` — the shipped default forces + standard objective +
+    /// neutral commander flavor. Byte-identical to the plain `seed_*_mission_with_loadout` scene.
+    /// `None` for a `MissionId` with no seedable archetype (a content gap — never guessed).
+    fn baseline(mission: MissionId) -> Option<BattleSpec> {
+        let setup = if mission == MISSION_SEIZE {
+            NodeSetup::Seize(SeizeSetup::default())
+        } else if mission == MISSION_HOLD {
+            NodeSetup::Hold(HoldSetup::default())
+        } else if mission == MISSION_PUSH {
+            NodeSetup::Push(PushSetup::default())
+        } else {
+            return None;
+        };
+        Some(BattleSpec {
+            setup,
+            objective: ObjectiveVariant::Standard,
+            commander: CommanderFlavor::default(),
+        })
+    }
+
+    /// The [`Scene`](crate::Scene) this spec boots (presentation flags only).
+    pub fn scene(&self) -> crate::Scene {
+        self.setup.scene()
+    }
+}
+
+/// Seed `sim` for a node's [`BattleSpec`] and build the host-side [`ObjectiveSet`] that watches it,
+/// applying the player's pre-match gunsmith `loadout` — the setup-aware analogue of the plain
+/// `seed_*_mission_scene` functions, returning `(player, start_embodied, objectives)` on the same
+/// footing. The forces come from the authored setup (through the shared, deterministic
+/// `core::scenario` `_with_setup` seeders — no new sim), and the objective from the variant, keyed
+/// to the handles the seeder returns. Assassinate/Extract are honoured on Seize nodes (whose seeder
+/// returns the VIP/base handles); Hold/Push ship their standard objective.
+pub fn seed_battle_spec(
+    sim: &mut Sim,
+    spec: BattleSpec,
+    loadout: Loadout,
+) -> (Entity, bool, ObjectiveSet) {
+    match spec.setup {
+        NodeSetup::Seize(setup) => {
+            let m = gonedark_core::scenario::seed_seize_mission_with_setup(sim, loadout, setup);
+            let player = m.troops[0];
+            let objectives = match spec.objective {
+                ObjectiveVariant::Standard => ObjectiveSet::mission_one(m.enemy_strength()),
+                ObjectiveVariant::Assassinate => {
+                    // The VIP is the rear-most garrison officer (last in stable spawn order); a
+                    // degenerate empty garrison falls back to the base so the objective is never
+                    // un-completable (shipped assassinate nodes author a garrison, so this holds).
+                    let vip = m.garrison.last().copied().unwrap_or(m.enemy_base);
+                    ObjectiveSet::mission_assassinate(Faction::Player, vip)
+                }
+                ObjectiveVariant::Extract => {
+                    // Extract to the objective ground — the base's seeded position; the lead
+                    // trooper must fight across the field to reach it.
+                    let dest = sim.world.pos[m.enemy_base.index as usize];
+                    ObjectiveSet::mission_extract(Faction::Player, player, dest, EXTRACT_RADIUS)
+                }
+            };
+            (player, false, objectives)
+        }
+        NodeSetup::Hold(setup) => {
+            let m = gonedark_core::scenario::seed_hold_mission_with_setup(sim, loadout, setup);
+            (m.defenders[0], false, ObjectiveSet::mission_hold(m.hold_ticks()))
+        }
+        NodeSetup::Push(setup) => {
+            let m = gonedark_core::scenario::seed_push_mission_with_setup(sim, loadout, setup);
+            (m.troops[0], false, ObjectiveSet::mission_push(Faction::Player, &m.posts))
+        }
+    }
+}
+
+/// The authored per-node battle spec for the shipped [`default_campaign`], keyed by [`NodeId`]. The
+/// twelve nodes escalate within each archetype (later conflicts field bigger forces / longer holds
+/// / denser lanes) and ship the two previously-unused objective archetypes on two Seize nodes:
+/// **node 3** (*Meridian* — Extract to the fuel yard) and **node 9** (*Santo* — Assassinate the
+/// landing-force commander). `None` for any other index (→ the resolver uses the archetype
+/// baseline). Every setup stays inside its `core::scenario` clamps; every Hold keeps
+/// `defender_cols >= attacker_cols` (the winnable-when-firing authoring bound).
+fn authored_battle_spec(node: NodeId) -> Option<BattleSpec> {
+    let spec = |setup, objective, commander| BattleSpec {
+        setup,
+        objective,
+        commander,
+    };
+    let plain = CommanderFlavor::default();
+    Some(match node.0 {
+        // ---- The Channel Crisis (conflict 0) — the shipped baselines ----
+        0 => spec(
+            NodeSetup::Seize(SeizeSetup { troops: 10, garrison: 4 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        1 => spec(
+            NodeSetup::Hold(HoldSetup { defender_cols: 5, attacker_cols: 4, hold_secs: 45 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        2 => spec(
+            NodeSetup::Push(PushSetup { troops: 8, guards_per_post: 2 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        // ---- The Meridian Crisis (conflict 1) — bigger, and an Extract ----
+        3 => spec(
+            NodeSetup::Seize(SeizeSetup { troops: 11, garrison: 4 }),
+            ObjectiveVariant::Extract,
+            plain,
+        ),
+        4 => spec(
+            NodeSetup::Hold(HoldSetup { defender_cols: 6, attacker_cols: 5, hold_secs: 50 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        5 => spec(
+            NodeSetup::Push(PushSetup { troops: 9, guards_per_post: 2 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        // ---- The Gotland Winter (conflict 2) — bigger still; a relentless-cadence push commander ----
+        6 => spec(
+            NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 5 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        7 => spec(
+            NodeSetup::Hold(HoldSetup { defender_cols: 7, attacker_cols: 6, hold_secs: 55 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        8 => spec(
+            NodeSetup::Push(PushSetup { troops: 10, guards_per_post: 3 }),
+            ObjectiveVariant::Standard,
+            CommanderFlavor { command_stride: Some(1), ..CommanderFlavor::default() },
+        ),
+        // ---- The Santo Crisis (conflict 3) — the hardest; an Assassinate + a hunting commander ----
+        9 => spec(
+            NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 6 }),
+            ObjectiveVariant::Assassinate,
+            CommanderFlavor { hunt_embodied: true, ..CommanderFlavor::default() },
+        ),
+        10 => spec(
+            NodeSetup::Hold(HoldSetup { defender_cols: 8, attacker_cols: 7, hold_secs: 60 }),
+            ObjectiveVariant::Standard,
+            plain,
+        ),
+        11 => spec(
+            NodeSetup::Push(PushSetup { troops: 12, guards_per_post: 3 }),
+            ObjectiveVariant::Standard,
+            CommanderFlavor {
+                hunt_embodied: true,
+                difficulty: Some(Difficulty::Elite),
+                ..CommanderFlavor::default()
+            },
+        ),
+        _ => return None,
+    })
+}
+
+/// The [`BattleSpec`] a campaign **node** fields, **ignoring the unlock gate** — the gate-free
+/// analogue of [`MissionRegistry::get`]. Returns the authored spec when the node has one *and* it
+/// matches the node's archetype (a mismatched hand table falls back), else the archetype baseline.
+/// `None` when the node is out of range or names a `MissionId` with no seedable archetype. Use this
+/// to inspect any node's authored battle (the authoring-consistency checks); use
+/// [`resolve_battle_spec`] to launch one.
+pub fn battle_spec_for_node(campaign: &Campaign, node: NodeId) -> Option<BattleSpec> {
+    let n = campaign.node(node)?;
+    if let Some(spec) = authored_battle_spec(node) {
+        if spec.setup.mission() == n.mission {
+            return Some(spec);
+        }
+    }
+    BattleSpec::baseline(n.mission)
+}
+
+/// Resolve a campaign **node** to the [`BattleSpec`] it launches — the per-node battle-variation
+/// analogue of [`MissionRegistry::resolve_node`], honouring the same unlock gate. `None` when the
+/// node is out of range, still [`Locked`](gonedark_core::campaign::NodeProgress::Locked) (you
+/// cannot launch what you cannot play), or names a `MissionId` with no seedable archetype;
+/// otherwise the node's [`battle_spec_for_node`] spec. A cleared node is replayable, so it resolves.
+pub fn resolve_battle_spec(campaign: &Campaign, node: NodeId) -> Option<BattleSpec> {
+    if !campaign.progress(node).is_playable() {
+        return None;
+    }
+    battle_spec_for_node(campaign, node)
 }
 
 // ================= CT-D — data-backed registry + between-match content hot-reload ================
@@ -1293,6 +1609,200 @@ mod tests {
         let mut sim2 = Sim::new(0xC0FFEE);
         let _ = def.launch(&mut sim2, Loadout::STANDARD, CampaignDifficulty::Regular);
         assert_eq!(sim.checksum(), sim2.checksum());
+    }
+
+    // ---- Per-node battle variation (the campaign per-battle variety seam) ----------------------
+
+    use crate::objectives::{EliminateTarget, ObjectiveKind};
+
+    /// Count living Player units after seeding a spec — the authored assault/defence/squad size.
+    fn player_unit_count(sim: &Sim) -> u32 {
+        crate::objectives::faction_forces(sim, Faction::Player).alive_units
+    }
+
+    /// Every one of the shipped twelve nodes has a `BattleSpec`, and the setup's archetype matches
+    /// the node's own `MissionId` (the guard against a mis-keyed hand table). `battle_spec_for_node`
+    /// is gate-free, so it covers the whole authored graph (locked nodes included).
+    #[test]
+    fn every_node_has_a_matching_battle_spec() {
+        let campaign = default_campaign();
+        assert_eq!(campaign.mission_select().len(), 12);
+        for i in 0..12u32 {
+            let node = NodeId(i);
+            let spec = battle_spec_for_node(&campaign, node)
+                .unwrap_or_else(|| panic!("node {i} must have a battle spec"));
+            let mission = campaign.node(node).unwrap().mission;
+            assert_eq!(spec.setup.mission(), mission, "node {i} setup archetype must match its mission");
+            assert_eq!(spec.scene(), crate::Scene::for_mission(mission).unwrap(), "spec scene matches mission");
+        }
+        // Out of range → None on both accessors.
+        assert!(battle_spec_for_node(&campaign, NodeId(999)).is_none());
+        assert!(resolve_battle_spec(&campaign, NodeId(999)).is_none());
+    }
+
+    /// `resolve_battle_spec` honours the unlock gate exactly like `resolve_node`: a conflict root is
+    /// launchable from the start, a gated node is not until its prerequisite clears, and a cleared
+    /// node stays replayable.
+    #[test]
+    fn resolve_battle_spec_honours_the_unlock_gate() {
+        let mut campaign = default_campaign();
+        // Node 0 (a conflict root) is Available fresh → resolves; node 1 (gated Hold) is Locked.
+        assert_eq!(campaign.progress(NodeId(0)), NodeProgress::Available);
+        assert!(resolve_battle_spec(&campaign, NodeId(0)).is_some(), "a root resolves");
+        assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Locked);
+        assert!(resolve_battle_spec(&campaign, NodeId(1)).is_none(), "a locked node yields no spec");
+        // Clearing node 0 unlocks node 1 → it now resolves; node 0 stays replayable.
+        campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
+        assert!(resolve_battle_spec(&campaign, NodeId(1)).is_some(), "the unlocked node resolves");
+        assert!(resolve_battle_spec(&campaign, NodeId(0)).is_some(), "a cleared node is replayable");
+    }
+
+    /// A node with a custom setup fields the authored force counts — not the archetype baseline.
+    /// Node 6 (Gotland Seize) authors a 12-troop / 5-garrison assault; node 10 (Santo Hold) an
+    /// 8×2-defender line with a 60 s window; node 8 (Gotland Push) a 10-troop / 3-guard lane.
+    #[test]
+    fn authored_setups_field_the_authored_counts() {
+        // Seize node 6 → 12 player troops, 5 garrison + 1 base = enemy strength 6.
+        let campaign = default_campaign();
+        let s6 = battle_spec_for_node(&campaign, NodeId(6)).unwrap();
+        assert_eq!(s6.setup, NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 5 }));
+        let mut sim = Sim::new(0x5EED_0006);
+        seed_battle_spec(&mut sim, s6, Loadout::STANDARD);
+        assert_eq!(player_unit_count(&sim), 12, "node 6 fields its authored 12 troops");
+        let enemy = crate::objectives::faction_forces(&sim, Faction::Enemy);
+        assert_eq!((enemy.alive_units, enemy.buildings), (5, 1), "5 garrison + the base camp");
+
+        // Hold node 10 → 8 defender columns (16 defenders), 60 s window.
+        let s10 = battle_spec_for_node(&campaign, NodeId(10)).unwrap();
+        assert_eq!(
+            s10.setup,
+            NodeSetup::Hold(HoldSetup { defender_cols: 8, attacker_cols: 7, hold_secs: 60 })
+        );
+        let mut sim = Sim::new(0x5EED_0010);
+        let (_p, _e, obj) = seed_battle_spec(&mut sim, s10, Loadout::STANDARD);
+        assert_eq!(player_unit_count(&sim), 16, "8 defender columns × 2 rows");
+        // The Survive objective's goal is the authored 60 s window (in ticks).
+        let want_ticks = 60 * gonedark_core::sim::TICK_HZ as u64;
+        assert!(matches!(
+            obj.objectives[0].kind,
+            ObjectiveKind::Survive { until_tick, .. } if until_tick == want_ticks
+        ));
+
+        // Push node 8 → 10 squad troops.
+        let s8 = battle_spec_for_node(&campaign, NodeId(8)).unwrap();
+        assert_eq!(s8.setup, NodeSetup::Push(PushSetup { troops: 10, guards_per_post: 3 }));
+        let mut sim = Sim::new(0x5EED_0008);
+        seed_battle_spec(&mut sim, s8, Loadout::STANDARD);
+        assert_eq!(player_unit_count(&sim), 10, "node 8 fields its authored 10-troop squad");
+    }
+
+    /// The two previously-unshipped objective archetypes now ship on live nodes: node 3 (Extract)
+    /// builds a `Reach` objective, node 9 (Assassinate) an `Eliminate(Entity)` objective — a
+    /// genuinely different win condition, not just different force counts.
+    #[test]
+    fn assassinate_and_extract_nodes_build_the_right_objective() {
+        let campaign = default_campaign();
+
+        // Node 3 — Extract: one Reach objective toward the base ground.
+        let s3 = battle_spec_for_node(&campaign, NodeId(3)).unwrap();
+        assert_eq!(s3.objective, ObjectiveVariant::Extract);
+        let mut sim = Sim::new(0x5EED_0003);
+        let (player, _e, obj) = seed_battle_spec(&mut sim, s3, Loadout::STANDARD);
+        assert_eq!(obj.objectives.len(), 1);
+        assert!(matches!(
+            obj.objectives[0].kind,
+            ObjectiveKind::Reach { who, .. } if who == player
+        ), "Extract builds a Reach objective for the lead trooper");
+
+        // Node 9 — Assassinate: one Eliminate(Entity) objective on a garrison VIP (an Enemy unit).
+        let s9 = battle_spec_for_node(&campaign, NodeId(9)).unwrap();
+        assert_eq!(s9.objective, ObjectiveVariant::Assassinate);
+        let mut sim = Sim::new(0x5EED_0009);
+        let (_p, _e, obj) = seed_battle_spec(&mut sim, s9, Loadout::STANDARD);
+        assert_eq!(obj.objectives.len(), 1);
+        let vip = match obj.objectives[0].kind {
+            ObjectiveKind::Eliminate(EliminateTarget::Entity(e)) => e,
+            other => panic!("Assassinate must build an Eliminate(Entity) objective, got {other:?}"),
+        };
+        assert_eq!(sim.world.faction[vip.index as usize], Faction::Enemy, "the VIP is an enemy");
+    }
+
+    /// Determinism + variety: the same node's spec seeded twice onto the same seed is bit-identical,
+    /// and two distinct nodes (distinct setups) diverge — the honest per-node variety, folded into
+    /// the checksum with no new surface (invariants #1/#7).
+    #[test]
+    fn same_spec_seeds_bit_identically_and_distinct_nodes_differ() {
+        let campaign = default_campaign();
+        let s6 = battle_spec_for_node(&campaign, NodeId(6)).unwrap();
+
+        let mut a = Sim::new(0xABCD);
+        let mut b = Sim::new(0xABCD);
+        seed_battle_spec(&mut a, s6, Loadout::STANDARD);
+        seed_battle_spec(&mut b, s6, Loadout::STANDARD);
+        assert_eq!(a.checksum(), b.checksum(), "same seed + same spec ⇒ bit-identical");
+
+        // Node 9 fields a different Seize force (12/6 vs 12/5) → the opening world differs even at
+        // the identical seed. (The objective variant is host-side and never folds.)
+        let s9 = battle_spec_for_node(&campaign, NodeId(9)).unwrap();
+        let mut c = Sim::new(0xABCD);
+        seed_battle_spec(&mut c, s9, Loadout::STANDARD);
+        assert_ne!(a.checksum(), c.checksum(), "distinct setups ⇒ distinct opening worlds");
+    }
+
+    /// The authored commander flavor is carried per node (the config the shell applies at launch):
+    /// node 9 hunts the gone-dark player, node 11 overrides the band to Elite and hunts, node 8
+    /// dials a relentless re-plan cadence — while a plain node carries the neutral default.
+    #[test]
+    fn authored_commander_flavor_per_node() {
+        let campaign = default_campaign();
+        // A plain node: no flavor.
+        assert_eq!(
+            battle_spec_for_node(&campaign, NodeId(0)).unwrap().commander,
+            CommanderFlavor::default()
+        );
+        // Node 8 — relentless cadence.
+        assert_eq!(
+            battle_spec_for_node(&campaign, NodeId(8)).unwrap().commander.command_stride,
+            Some(1)
+        );
+        // Node 9 — hunts the gone-dark player.
+        assert!(battle_spec_for_node(&campaign, NodeId(9)).unwrap().commander.hunt_embodied);
+        // Node 11 — hunts AND fights at the Elite band regardless of replay tier.
+        let f11 = battle_spec_for_node(&campaign, NodeId(11)).unwrap().commander;
+        assert!(f11.hunt_embodied);
+        assert_eq!(f11.difficulty, Some(CommanderDifficulty::Elite));
+    }
+
+    /// Winnability of the escalated hardest Hold node (node 10: an 8-vs-7 line, 60 s window). The
+    /// bigger dug-in FireAtWill line in Light cover still beats the larger assault and survives to
+    /// the timer — the `defender_cols >= attacker_cols` authoring bound holds at scale, so the
+    /// escalation stays fair (the `HoldSetup` doc's "shipped variants pin their winnability").
+    #[test]
+    fn hold_node_10_firing_line_holds_to_the_timer() {
+        use crate::objectives::{faction_forces_all, MissionStatus, ObserveCtx};
+        let campaign = default_campaign();
+        let s10 = battle_spec_for_node(&campaign, NodeId(10)).unwrap();
+        let mut sim = Sim::new(0x5EED_000A);
+        // The defenders seed FireAtWill + HoldPosition already (a dug-in firing line); just run the
+        // clock — the attackers carry a baked-in AttackMove, so no commander is needed.
+        let (_p, _e, mut obj) = seed_battle_spec(&mut sim, s10, Loadout::STANDARD);
+        let hold_ticks = match obj.objectives[0].kind {
+            ObjectiveKind::Survive { until_tick, .. } => until_tick,
+            other => panic!("Hold builds a Survive objective, got {other:?}"),
+        };
+        for _ in 0..hold_ticks + 1 {
+            sim.step(&[]);
+            let forces = faction_forces_all(&sim);
+            obj.observe(&ObserveCtx::new(sim.events(), &forces, sim.tick_count()));
+            if obj.status() != MissionStatus::Active {
+                break;
+            }
+        }
+        assert_eq!(
+            obj.status(),
+            MissionStatus::Won,
+            "the 8-vs-7 dug-in firing line holds its Light cover to the 60 s timer"
+        );
     }
 }
 

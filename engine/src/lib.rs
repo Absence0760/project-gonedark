@@ -2447,6 +2447,37 @@ impl Game {
         Self::from_seeded_sim(device, surface_format, seed, scene, sim, player, start_embodied, objectives)
     }
 
+    /// Build the game for a campaign node's per-node [`BattleSpec`](crate::mission_registry::BattleSpec)
+    /// — the setup-aware campaign boot. Identical to [`new_scene_with_loadout`](Game::new_scene_with_loadout)
+    /// except the world + objective set come from the node's authored spec (distinct forces, and for
+    /// the Assassinate/Extract Seize nodes a distinct **win condition**) via the GPU-free
+    /// [`seed_battle_spec`](crate::mission_registry::seed_battle_spec) dispatch, rather than the
+    /// archetype default. The presentation flags follow the spec's [`Scene`](crate::Scene). The host
+    /// then applies the replay tier ([`apply_campaign_tuning`](Game::apply_campaign_tuning)) and the
+    /// node's commander flavor ([`CommanderFlavor::apply_to`](crate::mission_registry::CommanderFlavor::apply_to))
+    /// before tick 0 — all deterministic match-setup input (invariant #7).
+    pub fn new_battle(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        seed: u64,
+        spec: crate::mission_registry::BattleSpec,
+        player_loadout: Loadout,
+    ) -> Self {
+        let mut sim = Sim::new(seed);
+        let (player, start_embodied, objectives) =
+            crate::mission_registry::seed_battle_spec(&mut sim, spec, player_loadout);
+        Self::from_seeded_sim(
+            device,
+            surface_format,
+            seed,
+            spec.scene(),
+            sim,
+            player,
+            start_embodied,
+            objectives,
+        )
+    }
+
     /// Build the game into a **skirmish on a library map** (D102, `modes.md` §3): the picked
     /// [`map_library::MAP_LIBRARY`] battlefield laid through the D76 airlock plus the shared
     /// skirmish force recipe in its spawn zones (`map_library::seed_map_skirmish`), fielding the
@@ -2951,6 +2982,24 @@ impl Game {
     /// The enemy commander's current difficulty tier (a read-only host/test window).
     pub fn commander_difficulty(&self) -> gonedark_core::mission_tuning::Difficulty {
         self.commander_config.difficulty
+    }
+
+    /// Set the commander's **per-node integer knob overrides** (aggression backlog depth / Heavy
+    /// reserve / re-plan cadence stride) — the campaign battle-spec commander flavor
+    /// ([`CommanderFlavor`](crate::mission_registry::CommanderFlavor)). `None` for a knob keeps the
+    /// difficulty tier's value; a `Some` override replaces just that knob (clamped in
+    /// [`CommanderConfig::resolved_params`](gonedark_core::commander::CommanderConfig::resolved_params)).
+    /// A pure host-side planning knob — never sim state (invariant #7) — so it perturbs only future
+    /// orders, not the running checksum. The all-`None` default reproduces the tier byte-for-byte.
+    pub fn set_commander_param_overrides(
+        &mut self,
+        max_queue_depth: Option<usize>,
+        heavy_reserve: Option<i64>,
+        command_stride: Option<u64>,
+    ) {
+        self.commander_config.max_queue_depth = max_queue_depth;
+        self.commander_config.heavy_reserve = heavy_reserve;
+        self.commander_config.command_stride = command_stride;
     }
 
     /// Apply a campaign **replay tier**'s combat tuning to an already-seeded mission game (D83,
