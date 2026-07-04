@@ -11,11 +11,14 @@ agreement, `core::persist`/`reconnect`, and the `spatial` index have landed. A p
 (D37–D40) made it an end-to-end playable loop (command-and-grow UI, embodied FPS combat,
 win/lose, a scripted enemy commander), and Phase 4 app-shell work is in flight (boot/title
 D35/D36, server telemetry/consent/live-ops scaffolding, in-session + post-match shell); embodied
-FPS controls, 3D greybox assets, and avatar-visible unit rendering run through D52.** The custom
+FPS controls, 3D greybox assets, and avatar-visible unit rendering run through D52. The PvE
+campaign now ships a **four-conflict atlas** (D105: 12 battles across four fictional modern
+wars) fronted on desktop by a navigable globe → per-battle battlefield overview → camera flight
+(D104/D106/D107); Android keeps the grouped-list hub (the recorded Q28 fork).** The custom
 Rust engine ([D10]) is committed; the Unity/Godot fallback ([D8]) is retired. The design corpus in `docs/`
 is the product of record; engine code now exists in the
 Cargo workspace (`core/ pal/ render/ engine/ pal-desktop/ pal-android/ app/ sim-runner/
-net-sim-runner/ viz-runner/ server/`) with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]).
+net-sim-runner/ replay-runner/ viz-runner/ server/`) with a deterministic fixed-point `core` (Q16.16 [D17], hand-rolled SoA ECS [D18]).
 A real deterministic **flow field** (`core::flow_field`) drives unit movement (the literal-executor
 `core::orders::order_system` via `core::systems::step_toward`); a real
 `wgpu` 29 + `winit` 0.30 desktop renderer and PAL backend interpolate prev→curr snapshots

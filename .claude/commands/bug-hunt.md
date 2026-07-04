@@ -11,9 +11,9 @@ sibling paths that share the pattern.
 
 `$ARGUMENTS` is an optional scope. If empty, you pick targets (step 1).
 
-**Precondition:** this needs engine code. The repo is pre-production/design-only
-(decisions.md D10) — if there are no `crates/`/Rust sources yet, say so and stop; there's
-nothing to hunt. (Design-doc inconsistencies go through `/check-docs`.)
+**Precondition:** this needs engine code — if you are somehow run in a tree with no
+Rust sources, say so and stop; there's nothing to hunt. (Design-doc inconsistencies go
+through `/check-docs`.)
 
 ## Operating rules (non-negotiable — CLAUDE.md invariants)
 - **Prove it before you believe it.** A bug isn't real until reproduced — a failing probe

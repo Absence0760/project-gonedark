@@ -14,8 +14,9 @@ You make the project's test-hygiene rule mechanical: every non-trivial engine ch
 ships with the tests its surface warrants, and no sim/netcode change lands without the
 determinism coverage that protects lockstep. It's easy to forget; you make it a checklist.
 
-The repo is **pre-production, design-only** (decisions.md D10 picked Rust; no engine code
-yet). Until `crates/`/`Cargo.toml` exist, there is nothing to test — say so and stop.
+The engine is a live Rust workspace (decisions.md D10) — a root `Cargo.toml` with the
+`core`/`engine`/`render`/`app`/... crates. If you are somehow run in a tree without Rust
+sources, there is nothing to test — say so and stop.
 
 ## Procedure
 

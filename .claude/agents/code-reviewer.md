@@ -17,9 +17,8 @@ the loop ends (clean → ready to commit) or re-cycles (concrete findings → co
 you re-review).
 
 **If the diff is docs-only** (`docs/`, `*.md`, `README.md`, `CLAUDE.md`): this is not
-your job — say so in one line and point the orchestrator at `design-doc-keeper`. The
-engine doesn't exist yet (pre-production, decisions.md D10), so most diffs *are*
-docs-only today. Don't invent code findings.
+your job — say so in one line and point the orchestrator at `design-doc-keeper`. Don't
+invent code findings.
 
 ## What you read
 

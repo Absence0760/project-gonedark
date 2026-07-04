@@ -11,6 +11,8 @@
 #   app         — desktop host: winit run loop that drives `engine::Game`.
 #   sim-runner  — headless core driver emitting per-tick checksums for determinism CI.
 #   net-sim-runner — headless 2-peer lockstep driver: agreed per-tick checksum stream for netcode CI.
+#   replay-runner — headless replay record/playback driver (PC-3): the same per-tick checksum
+#                 stream, so a replayed match is determinism-covered exactly like a live one.
 #   viz-runner  — headless OFFSCREEN render driver: pixel-readback smoke test (local, needs a GPU).
 #   server      — backend services (placeholder; see docs/infrastructure.md).
 [workspace]

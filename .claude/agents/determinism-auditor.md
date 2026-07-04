@@ -4,7 +4,7 @@ description: >
   Audits engine/sim code for anything that can break the deterministic fixed-point
   simulation or cross-platform lockstep. Use once engine code exists — before merging
   sim/netcode changes, or when investigating a desync. Read-only; reports findings by
-  severity. (No-op while the repo is still design-only.)
+  severity. (No-op only if run before any engine code exists.)
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---

@@ -123,7 +123,7 @@ no cloud access or secrets needed:
 
 ```
 docker compose up -d        # Postgres + Redis (backend deps)
-cargo run                   # loads .env.development   (once engine code exists)
+cargo run -p gonedark-app   # the desktop game (or `pnpm play`); loads .env.development
 ```
 
 Production secrets are KMS-encrypted (sops) in the separate private estate repo

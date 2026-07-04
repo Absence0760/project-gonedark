@@ -10,9 +10,9 @@ cross-platform lockstep — the bug class that desyncs **silently** (CLAUDE.md i
 
 `$ARGUMENTS` is an optional focus area. If empty, sweep the whole sim/core.
 
-**Precondition:** needs engine code. The repo is pre-production/design-only (decisions.md
-D10) — if there are no Rust sources yet, say so and stop. Nothing to audit. (The
-`sim-determinism-guard.sh` PostToolUse hook already guards new edits in the meantime.)
+**Precondition:** needs engine code — if you are somehow run in a tree with no Rust
+sources, say so and stop; nothing to audit. (The `sim-determinism-guard.sh` PostToolUse
+hook already guards every new edit as it lands.)
 
 ## What this is
 The fix-and-land counterparts are `/bug-hunt` (wide, multi-round) and `/safe-edit`
