@@ -24,7 +24,8 @@
 //!   [`scroll`](CommandGestureOutput::scroll) from the per-frame spread delta (fingers apart = zoom IN
 //!   = positive scroll, matching the wheel), fed to `zoom_half_extent`.
 //! - **EMBODY** — a genuine two-finger **tap** (both fingers down AND back up within
-//!   [`TAP_MAX_MS`], with total movement under [`TAP_SLOP_PX`], and never more than two fingers) raises
+//!   [`TAP_MAX_MS`], with total movement under [`TAP_SLOP_PX`], never more than two fingers, and the
+//!   SAME two fingers throughout — any pair re-anchor disqualifies it) raises
 //!   the one-shot [`embody`](CommandGestureOutput::embody) edge. A pan or a pinch moves too far / holds
 //!   too long, so it can NEVER be mistaken for the embody tap (the mis-tap resistance, P1-4).
 //!
@@ -99,6 +100,11 @@ struct Tracking {
     moved: f32,
     /// Largest finger count seen during the gesture: a tap must never have exceeded two fingers.
     max_pointers: usize,
+    /// Whether the gesture ever re-anchored to a different finger pair. A tap must be one pair of
+    /// physical fingers down-and-up; a re-anchor by definition means the pair identity changed, so
+    /// it disqualifies the tap even when a lift+land in a single poll keeps the count at two (where
+    /// `max_pointers` alone would never see the handoff).
+    pair_changed: bool,
 }
 
 /// Per-frame-persistent command-gesture state. Lives on the platform backend (Android), fed the raw
@@ -139,6 +145,7 @@ impl CommandGesture {
                         prev_spread: spread,
                         moved: 0.0,
                         max_pointers: n,
+                        pair_changed: false,
                     });
                     CommandGestureOutput::default()
                 }
@@ -168,6 +175,11 @@ impl CommandGesture {
                             tr.ids = (touches[0].id, touches[1].id);
                             tr.prev_centroid = centroid;
                             tr.prev_spread = spread;
+                            // The pair identity changed, so this gesture can never be the embody
+                            // tap — a tap's start and end must be the SAME two physical fingers.
+                            // `max_pointers` alone misses a lift+land delivered in one poll (the
+                            // count never exceeds two); this flag is the authoritative qualifier.
+                            tr.pair_changed = true;
                             CommandGestureOutput::default()
                         }
                     }
@@ -179,7 +191,10 @@ impl CommandGesture {
             let embody = match self.tracking.take() {
                 Some(tr) => {
                     let dur = now_ms.saturating_sub(tr.start_ms);
-                    tr.max_pointers == 2 && dur < TAP_MAX_MS && tr.moved < TAP_SLOP_PX
+                    tr.max_pointers == 2
+                        && !tr.pair_changed
+                        && dur < TAP_MAX_MS
+                        && tr.moved < TAP_SLOP_PX
                 }
                 None => false,
             };
@@ -406,6 +421,31 @@ mod tests {
         );
         assert_eq!(out.move_axis, (1.0, 0.0), "the tracked pair's motion drives the pan");
         assert_eq!(out.scroll, 0.0, "the tracked pair's rigid translation must not zoom");
+    }
+
+    /// REGRESSION (cross-identity tap): a platform delivering a simultaneous lift+land in ONE poll
+    /// (an original id gone AND a new id present in the same slice, so the slice stays length 2 and
+    /// `max_pointers` never exceeds two) re-anchors the pair — and a re-anchor disqualifies the
+    /// embody tap. Without the `pair_changed` qualifier a quick, still gesture here would "tap" with
+    /// a start and end made of DIFFERENT physical fingers. A subsequent clean two-finger tap on the
+    /// same state machine still qualifies (the disqualifier is per-gesture, not sticky).
+    #[test]
+    fn a_same_frame_pair_swap_never_embodies_but_the_next_clean_tap_does() {
+        let mut g = CommandGesture::new();
+        // Pair (1, 2) lands.
+        g.update(&[t(1, 100.0, 100.0), t(2, 200.0, 100.0)], 0);
+        // In a single poll finger 2 is gone and finger 3 has landed in its place: the slice is
+        // still length 2, near-motionless, so max_pointers stays at 2 and moved stays tiny.
+        let out = g.update(&[t(1, 100.0, 100.0), t(3, 200.0, 100.0)], 16);
+        assert_eq!(out, CommandGestureOutput::default(), "pair swap re-anchors without a delta");
+        // Both lift quickly, well within the tap window and slop budget — but the "tap"'s start
+        // and end were different physical fingers, so it must NOT embody.
+        let out = g.update(&[], 40);
+        assert!(!out.embody, "a tap must never span a pair-identity change");
+        // A fresh, clean two-finger tap afterwards still embodies normally.
+        g.update(&[t(4, 100.0, 100.0), t(5, 200.0, 100.0)], 100);
+        let out = g.update(&[], 140);
+        assert!(out.embody, "a clean same-pair tap after the swap still qualifies");
     }
 
     /// Sub-deadzone jitter on a held two-finger contact produces neither pan nor zoom (so a resting
