@@ -5329,3 +5329,20 @@ swap-invariance gates are untouched and pass. **Judgment call (documented in-cod
 is 28, not the first-guess 36 — 36 produced frontal stalemates that hit the 8000-tick harness cap, so
 28 gives the Tiger a real head-on win condition and every pinned fight resolves. Files:
 `core/src/economy.rs`, `sim-runner/src/metrics.rs` (+tests).
+
+## D123 — Campaign nodes select their army matchup *before* seeding (closes the D121/D122 caveat)
+
+**Status: landed.** D121/D122 both flagged an honest caveat: a WW2 campaign node's *opening infantry*
+spawned under the seeder's hardcoded modern `Us`/`Fr` roster because `seed_battle_spec` applied the
+node's authored `set_army` **after** the `core::scenario` seeder had already spawned them — so a
+Normandy Sherman-army rifleman carried the US logistics tilt instead of the WW2 baseline. Fixed by
+ordering: `seed_battle_spec` now sets the node's `(player, enemy)` armies on the `Sim` **before**
+calling the seeder, and the three mission seeders (`seed_{seize,hold,push}_mission_with_setup`) default
+to the `Us`-vs-`Fr` baseline **only if the faction is still `Neutral`** (i.e. the caller hasn't
+pre-selected) rather than hardcoding it. **Why byte-safe:** every existing caller seeds a fresh `Sim`
+(both factions `Neutral`) so the default still applies verbatim, and a modern campaign node sets exactly
+the `Us`/`Fr` the seeder would have — so those nodes and the skirmish seeders (left untouched) stay
+bit-identical (invariants #1/#7: core 635 + engine 511 green both profiles, `matchup` checksum
+`76f33d570df8e3ba` and net-sim/replay unchanged, the whole-campaign re-seed guard still holds). Only
+WW2 nodes' opening infantry change — to the intended baseline roster (WW2 carries no infantry tilt).
+Files: `core/src/scenario.rs`, `engine/src/mission_registry.rs`.

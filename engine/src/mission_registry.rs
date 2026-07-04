@@ -742,6 +742,17 @@ pub fn seed_battle_spec(
     spec: BattleSpec,
     loadout: Loadout,
 ) -> (Entity, bool, ObjectiveSet) {
+    // Select the node's authored `(player, enemy)` army matchup BEFORE seeding, so the opening units
+    // spawn with the right per-army roster (the D122 fix: the seeders now honour a pre-set army rather
+    // than hardcoding the modern `Us`/`Fr` default). For a modern node this sets exactly what the
+    // seeders would have defaulted to, so those nodes stay byte-identical (invariants #1/#7); a WW2
+    // node instead lands `UsWw2` (Sherman) vs `Germany` (Panther/Tiger), so its infantry spawn on the
+    // WW2 baseline roster (WW2 carries no infantry tilt) and the produced tanks field the cost-vs-power
+    // economy (`unit_cost_for`/`unit_armor_for`, D120/D122) where the quantity-vs-quality fight lives.
+    // `set_army` is match-setup identity — never per-tick checksum surface (invariant #7).
+    sim.set_army(Faction::Player, spec.armies.0);
+    sim.set_army(Faction::Enemy, spec.armies.1);
+
     let seeded = match spec.setup {
         NodeSetup::Seize(setup) => {
             let m = gonedark_core::scenario::seed_seize_mission_with_setup(sim, loadout, setup);
@@ -774,15 +785,8 @@ pub fn seed_battle_spec(
         }
     };
 
-    // Apply the node's authored `(player, enemy)` army matchup (the D115/D120 seam). The seeders
-    // above always set the modern baseline (`Us` vs `Fr`); re-applying it here is a no-op, so every
-    // modern node stays byte-identical to the bare seed (invariants #1/#7). A WW2 node instead lands
-    // `UsWw2` (Sherman) vs `Germany` (Panther/Tiger): the initial infantry are already spawned, but
-    // the enemy commander's *produced* tanks are now charged the per-army cost-vs-power price
-    // (`economy::unit_cost_for`, D120), which is where the quantity-vs-quality fight actually lives.
-    // `set_army` is match-setup identity — it never adds per-tick checksum surface (invariant #7).
-    sim.set_army(Faction::Player, spec.armies.0);
-    sim.set_army(Faction::Enemy, spec.armies.1);
+    // (The army matchup was applied BEFORE seeding, above — the D122 fix — so the opening units
+    // already carry the right per-army roster; nothing to re-apply here.)
     seeded
 }
 

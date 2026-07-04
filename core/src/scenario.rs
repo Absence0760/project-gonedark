@@ -991,10 +991,16 @@ pub fn seed_seize_mission_with_setup(
     b.set_income(600);
 
     // The PvE matchup (factions-plan WS-A/WS-D, D68): the campaign is played US-side, with the French
-    // Army as the OPFOR — so factions debut in PvE. Identity only (no per-army stats until WS-B), so
-    // this is byte-neutral; it records the matchup for WS-B/WS-C to render distinctly.
-    b.set_army(Faction::Player, Army::Us);
-    b.set_army(Faction::Enemy, Army::Fr);
+    // Army as the OPFOR. Default to that baseline ONLY if the caller hasn't already selected a matchup
+    // — a campaign node authors its armies on the Sim *before* seeding (the D122 fix), e.g. a WW2 node's
+    // `UsWw2` vs `Germany`, so the opening troops spawn with the right per-army roster. Byte-identical
+    // for every existing caller (a fresh Sim leaves both factions `Neutral` → the default applies).
+    if b.sim_mut().army_of(Faction::Player) == Army::Neutral {
+        b.set_army(Faction::Player, Army::Us);
+    }
+    if b.sim_mut().army_of(Faction::Enemy) == Army::Neutral {
+        b.set_army(Faction::Enemy, Army::Fr);
+    }
 
     // The player's Riflemen in a 2-row block on the west (baseline: ten in a 2x5), US-rostered
     // (per-army roster HP+weapon, the shared baseline HP unchanged), FireAtWill (the engagement
@@ -1219,9 +1225,15 @@ pub fn seed_hold_mission_with_setup(
     sim.set_income_period(600);
 
     // The PvE matchup (factions-plan WS-A/WS-D, D68): played US-side with the French Army as OPFOR,
-    // matching *Seize*. Identity only (logistics-tilted rosters, D71) — the matchup stays fair.
-    sim.set_army(Faction::Player, Army::Us);
-    sim.set_army(Faction::Enemy, Army::Fr);
+    // matching *Seize*. Default to that baseline ONLY if the caller hasn't pre-selected a matchup, so
+    // a campaign node's authored armies (e.g. a WW2 `UsWw2`/`Germany` node, D122) — set on the Sim
+    // before seeding — spawn the defenders with the right roster. Byte-identical for a fresh Sim.
+    if sim.army_of(Faction::Player) == Army::Neutral {
+        sim.set_army(Faction::Player, Army::Us);
+    }
+    if sim.army_of(Faction::Enemy) == Army::Neutral {
+        sim.set_army(Faction::Enemy, Army::Fr);
+    }
 
     let hp = economy::unit_stats(UnitKind::Rifleman).0.max;
 
@@ -1393,9 +1405,15 @@ pub fn seed_push_mission_with_setup(
     sim.set_income_period(600);
 
     // The PvE matchup (D68/D71): played US-side with the French Army as OPFOR, matching the other
-    // campaign missions. Identity only (logistics-tilted rosters) — the matchup stays fair.
-    sim.set_army(Faction::Player, Army::Us);
-    sim.set_army(Faction::Enemy, Army::Fr);
+    // campaign missions. Default to that baseline ONLY if the caller hasn't pre-selected a matchup, so
+    // a campaign node's authored armies (e.g. a WW2 `UsWw2`/`Germany` node, D122) — set on the Sim
+    // before seeding — spawn the assault troops with the right roster. Byte-identical for a fresh Sim.
+    if sim.army_of(Faction::Player) == Army::Neutral {
+        sim.set_army(Faction::Player, Army::Us);
+    }
+    if sim.army_of(Faction::Enemy) == Army::Neutral {
+        sim.set_army(Faction::Enemy, Army::Fr);
+    }
 
     // The lane: three neutral posts, spawn order = capture order (west → east). The guards dug in
     // beside each post are what makes them *held* — a post flips only once its fire team is dead
