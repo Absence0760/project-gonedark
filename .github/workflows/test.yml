@@ -32,7 +32,11 @@ jobs:
       # binaries links the Vulkan loader + Wayland/X11 libs (the tests themselves are pure
       # logic and create no GPU device, but the binary still links). Same -dev set as
       # build.yml's graphics-build. mesa-vulkan-drivers gives the loader a software ICD.
-      - name: Install winit/wgpu link deps
+      #
+      # `libasound2-dev` (ALSA) is here because `gonedark-app` now enables its `audio` feature by
+      # DEFAULT (audio is a primary system — invariant #6), so building app's test binary compiles
+      # cpal, which links ALSA on Linux. macOS/Windows need no equivalent.
+      - name: Install winit/wgpu/cpal link deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -46,6 +50,7 @@ jobs:
             libxcursor-dev \
             libxrandr-dev \
             libvulkan-dev \
+            libasound2-dev \
             mesa-vulkan-drivers
 
       # rust-toolchain.toml pins the compiler; rustup auto-installs it on first cargo use.

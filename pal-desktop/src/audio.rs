@@ -29,6 +29,9 @@ mod backend {
 
         /// Match the feature-on backend's music-bus API — a no-op in the silent build.
         pub fn set_music_gain(&mut self, _gain: f32) {}
+
+        /// Match the feature-on backend's match-end stinger API — a no-op in the silent build.
+        pub fn play_music_stinger(&mut self, _win: bool) {}
     }
 
     impl Audio for DesktopAudio {
@@ -44,17 +47,20 @@ mod backend {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use cpal::{FromSample, SizedSample};
-    use gonedark_pal::bank::sample_bank;
+    use gonedark_pal::bank::{music_bank, sample_bank};
     use gonedark_pal::mix::{oneshot_sound, scaled_gain, synth_music, voice_from_cue, Mixer};
-    use gonedark_pal::{Audio, AudioCue, SoundId};
+    use gonedark_pal::{Audio, AudioCue, MusicId, SoundId};
 
-    /// Active output: the live stream (kept alive by ownership), the shared mixer, and the
-    /// decoded designed cue bank. The per-voice render math (pan/gain/muffle/sum/eviction) lives in the
-    /// shared, host-tested `gonedark_pal::mix` seam — this backend only owns the cpal stream glue.
+    /// Active output: the live stream (kept alive by ownership), the shared mixer, the decoded
+    /// designed SFX cue bank, and the decoded music bank (the win/lose stingers played through the
+    /// music bus; the looping bed is already installed into the mixer). The per-voice render math
+    /// (pan/gain/muffle/sum/eviction) and the music-bus mixing live in the shared, host-tested
+    /// `gonedark_pal::mix` seam — this backend only owns the cpal stream glue.
     struct Active {
         _stream: cpal::Stream,
         mixer: Arc<Mutex<Mixer>>,
         bank: HashMap<SoundId, Arc<Vec<f32>>>,
+        music: HashMap<MusicId, Arc<Vec<f32>>>,
     }
 
     /// Desktop audio sink. `inner` is `None` when no device/stream could be opened — the sink then
@@ -111,6 +117,25 @@ mod backend {
             }
         }
 
+        /// Fire the match-end **music stinger** once (`win` → the triumphant rising sting, else the
+        /// somber falling one). It plays through the music bus at the live music gain, ducking the
+        /// looping bed while it sounds (see `gonedark_pal::mix::Mixer::play_music_oneshot`). A no-op
+        /// when no stream opened or the stinger asset is absent (music is never load-bearing).
+        pub fn play_music_stinger(&mut self, win: bool) {
+            let Some(active) = &self.inner else { return };
+            let id = if win {
+                MusicId::WinStinger
+            } else {
+                MusicId::LoseStinger
+            };
+            let Some(buf) = active.music.get(&id) else {
+                return;
+            };
+            if let Ok(mut mixer) = active.mixer.lock() {
+                mixer.play_music_oneshot(Arc::clone(buf));
+            }
+        }
+
         /// Queue one voice for `sound`, panned by `azimuth` (0 = ahead, + = right), scaled by
         /// `gain` **and** the player's master/bus volumes, low-passed when `muffled`. The pan/gain/
         /// muffle derivation is the shared `gonedark_pal::mix::voice_from_cue`, and the volume scaling
@@ -158,10 +183,17 @@ mod backend {
 
             let mixer = Arc::new(Mutex::new(Mixer::default()));
             let bank = sample_bank(sample_rate);
-            // Install the looping music bed once; it stays muted (gain 0) until the host pushes a
-            // music-bus level via `set_music_gain`, so a host that never touches music is silent.
+            let music = music_bank(sample_rate);
+            // Install the looping music bed once: the designed `combat_bed` asset, or the procedural
+            // `synth_music` placeholder if that asset failed to decode (never silent — degrade like
+            // the SFX bank). It stays muted (gain 0) until the host pushes a music-bus level via
+            // `set_music_gain`, so a host that never touches music is silent.
+            let bed = music
+                .get(&MusicId::CombatBed)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(synth_music(sample_rate)));
             if let Ok(mut m) = mixer.lock() {
-                m.set_music(Some(Arc::new(synth_music(sample_rate))));
+                m.set_music(Some(bed));
             }
 
             let stream = build_stream(&device, &config, sample_format, Arc::clone(&mixer))?;
@@ -171,6 +203,7 @@ mod backend {
                 _stream: stream,
                 mixer,
                 bank,
+                music,
             })
         }
     }

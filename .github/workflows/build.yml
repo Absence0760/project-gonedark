@@ -62,7 +62,10 @@ jobs:
       # executable that must resolve libwayland/libxkbcommon/libX11/libvulkan/libudev.
       # mesa-vulkan-drivers gives a software ICD so the Vulkan loader has a target
       # (no GPU on the runner) — link-time only; nothing here renders.
-      - name: Install winit/wgpu link deps
+      # `libasound2-dev` (ALSA): `gonedark-app` now enables its `audio` feature by DEFAULT (audio is
+      # a primary system — invariant #6), so `cargo build -p gonedark-app` + the workspace clippy
+      # compile cpal, which links ALSA on Linux.
+      - name: Install winit/wgpu/cpal link deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -76,6 +79,7 @@ jobs:
             libxcursor-dev \
             libxrandr-dev \
             libvulkan-dev \
+            libasound2-dev \
             mesa-vulkan-drivers
 
       # rust-toolchain.toml pins the exact compiler (1.96.0 + clippy); rustup auto-installs
