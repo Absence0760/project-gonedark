@@ -17,15 +17,13 @@
 //! `ObjectiveSet`s whose targets are absent from the world and asserts each is rejected with a
 //! precise diagnostic — so a green run means the checks fired, not that they were vacuous.
 //!
-//! ## The RON seam (CT-B / CT-C, in parallel)
+//! ## Two batteries, one lint (CT-B/CT-C landed; CT-D/CT-F below)
 //!
-//! Today every linted piece of content is **code-built**: a [`MissionDef`] from
-//! [`default_registry`], seeded through `MissionDef::launch`. That is deliberately the only source
-//! this file depends on — it does NOT touch `engine::mission_format` / `engine::map_format` (owned
-//! by CT-B/CT-C, landing separately). The [`LintTarget`] abstraction below is the seam a future step
-//! points at loaded `*.mission.ron` / `*.map.ron` files: a loader yields exactly this shape (a
-//! `label` + a `seed` closure that produces a fresh `Sim` + its `ObjectiveSet`), and every assertion
-//! in this file applies to it unchanged. See the `SEAM` note on [`code_built_targets`].
+//! The same [`LintTarget`] shape (a `label` + a `seed` closure producing a fresh `Sim` + its
+//! `ObjectiveSet`) is enumerated twice: [`code_built_targets`] over the hand-written
+//! [`default_registry`]/[`default_campaign`], and [`data_built_targets`] over every real
+//! `*.mission.ron`/`*.map.ron` under `missions/`/`maps/` via [`ContentRegistry::load_dirs`]. Every
+//! assertion below runs against both, so code-built and data-built content get identical coverage.
 
 use gonedark_core::campaign::{Campaign, Difficulty as ReplayTier, NodeId};
 use gonedark_core::components::{Faction, Vec2};

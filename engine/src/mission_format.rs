@@ -339,6 +339,12 @@ fn world_half_extent() -> i32 {
     HALF_EXTENT.to_int()
 }
 
+/// Upper bound for an authored Reach/Escort `radius_mu`: comfortably larger than any distance
+/// possible on the `[-64, 64)` playfield (a full-diagonal radius is ~181,000 mu), and far below
+/// the point where `Fixed::from_ratio(radius_mu, 1000)` silently overflows `i32` (~32,767,000 mu)
+/// — so a bad value fails loudly here instead of wrapping into a garbage radius.
+const MAX_RADIUS_MU: i32 = 500_000;
+
 /// Whole degrees → a fixed-point [`Angle`] in binary radians, exact integer arithmetic (invariant
 /// #1). `0° → Angle(0)` (+X), `180° → Angle(ANGLE_FULL/2)` (−X). No float, no transcendental.
 fn angle_from_degrees(deg: i32) -> Angle {
@@ -438,8 +444,10 @@ pub fn validate(spec: &MissionSpec) -> Result<(), MissionLoadError> {
                 if !in_bounds(*dest) {
                     return err(bounds_msg(&format!("objectives[{i}] Reach dest"), *dest));
                 }
-                if *radius_mu < 0 {
-                    return err(format!("objectives[{i}] Reach radius_mu must be >= 0"));
+                if !(0..=MAX_RADIUS_MU).contains(radius_mu) {
+                    return err(format!(
+                        "objectives[{i}] Reach radius_mu {radius_mu} out of range [0, {MAX_RADIUS_MU}]"
+                    ));
                 }
             }
             ObjectiveSpec::Escort { vip, dest, radius_mu, .. } => {
@@ -447,8 +455,10 @@ pub fn validate(spec: &MissionSpec) -> Result<(), MissionLoadError> {
                 if !in_bounds(*dest) {
                     return err(bounds_msg(&format!("objectives[{i}] Escort dest"), *dest));
                 }
-                if *radius_mu < 0 {
-                    return err(format!("objectives[{i}] Escort radius_mu must be >= 0"));
+                if !(0..=MAX_RADIUS_MU).contains(radius_mu) {
+                    return err(format!(
+                        "objectives[{i}] Escort radius_mu {radius_mu} out of range [0, {MAX_RADIUS_MU}]"
+                    ));
                 }
             }
         }
@@ -756,6 +766,38 @@ mod tests {
         let src = valid_ron().replace("facing_deg: 0)", "facing_deg: 360)");
         let e = try_load(&src).expect_err("facing must be in [0, 360)");
         assert!(matches!(e, MissionLoadError::Validation(m) if m.contains("facing_deg")));
+    }
+
+    #[test]
+    fn rejects_a_negative_reach_radius_mu() {
+        let src = valid_ron().replace(
+            "EliminateFaction(owner: Player, target: Enemy, label: \"Take it\"),",
+            "Reach(owner: Player, who: 0, dest: (5, 5), radius_mu: -1, label: \"Go\"),",
+        );
+        let e = try_load(&src).expect_err("a negative radius must be rejected");
+        assert!(matches!(e, MissionLoadError::Validation(m) if m.contains("radius_mu")));
+    }
+
+    #[test]
+    fn rejects_an_overflowing_reach_radius_mu() {
+        // Past MAX_RADIUS_MU, `Fixed::from_ratio(radius_mu, 1000)` would silently wrap i32 into a
+        // garbage (possibly negative) radius — the loader must fail loudly instead.
+        let src = valid_ron().replace(
+            "EliminateFaction(owner: Player, target: Enemy, label: \"Take it\"),",
+            "Reach(owner: Player, who: 0, dest: (5, 5), radius_mu: 40000000, label: \"Go\"),",
+        );
+        let e = try_load(&src).expect_err("an overflowing radius must be rejected");
+        assert!(matches!(e, MissionLoadError::Validation(m) if m.contains("out of range")));
+    }
+
+    #[test]
+    fn rejects_an_overflowing_escort_radius_mu() {
+        let src = valid_ron().replace(
+            "EliminateFaction(owner: Player, target: Enemy, label: \"Take it\"),",
+            "Escort(owner: Player, vip: 0, dest: (5, 5), radius_mu: 40000000, label: \"Guard\"),",
+        );
+        let e = try_load(&src).expect_err("an overflowing radius must be rejected");
+        assert!(matches!(e, MissionLoadError::Validation(m) if m.contains("out of range")));
     }
 
     #[test]
