@@ -5010,7 +5010,7 @@ mod tests {
         // Every node index yields a distinct seed (so archetype-sharing nodes are distinct battles),
         // the mix is a pure function of the index (same node → same seed, on every platform), and
         // node 0 is NOT just DEFAULT_SEED (the whole point — even the first node is remixed).
-        let seeds: Vec<u64> = (0..12).map(campaign_match_seed).collect();
+        let seeds: Vec<u64> = (0..15).map(campaign_match_seed).collect();
         for i in 0..seeds.len() {
             for j in (i + 1)..seeds.len() {
                 assert_ne!(seeds[i], seeds[j], "nodes {i} and {j} must seed distinct battles");

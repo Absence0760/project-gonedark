@@ -63,8 +63,19 @@ Borrowed from **Company of Heroes**' meta-campaign map and **Delta Force**'s rep
   into conflict → operation → battle (`core::campaign::{Conflict, Operation}` + per-node tags and
   derived rollups). **[D105](decisions.md) grew the shipped campaign from one placeholder conflict
   to four** — *The Channel Crisis*, *The Meridian Crisis*, *The Gotland Winter*, and *The Santo
-  Crisis* (12 nodes total, each conflict its own self-contained Seize → Hold → Push chain reusing
-  the three shipped seeders) — all fictional/modern/roster-plausible per the Q28 fork-1(c) lean.
+  Crisis* — all fictional/modern/roster-plausible per the Q28 fork-1(c) lean. **[D120](decisions.md)
+  then added the campaign's first *historical* conflict, *Normandy '44*** (15 nodes total now): the
+  WW2 cost-vs-power armies debut here — a mass of cheap, thin-skinned **US Shermans** (`Army::UsWw2`)
+  against fewer, far tougher **German Panthers/Tigers** (`Army::Germany`). Its three battles run the
+  same self-contained Seize → Hold → Push chain over the three shipped seeders (Silence the Battery,
+  an *Assassinate* on the clifftop battery officer under a hunting Panzer commander → Hold the
+  Crossroads, a dug-in bocage defense against the counterattack → Break the Bocage, the Cobra
+  breakout under an Elite commander), but sets `player: UsWw2` vs `enemy: Germany` per node through
+  the D115 `authored_battle_spec` army seam. The economy makes the fantasy real (D120 `unit_cost_for`):
+  the Sherman is strictly cheaper, so the enemy commander's produced Panthers are always fewer — you
+  win by numbers and manoeuvre, never gun-to-gun. Every other conflict keeps the modern `(Us, Fr)`
+  matchup, and the WW2 armies never touch the shipped modern balance (they diverge only on the
+  `Tank` archetype's cost/power).
   On desktop the atlas *presentation* has since shipped in five steps ([D103](decisions.md) →
   [D104](decisions.md) → [D106](decisions.md) → [D107](decisions.md) → [D110](decisions.md)):
   CAMPAIGN opens a **navigable earth** — drag/zoom, a year scrubber, one glowing pin per conflict
