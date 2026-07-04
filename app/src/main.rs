@@ -324,8 +324,11 @@ impl App {
             // unplayable/unregistered) tunes nothing and falls back to Mission1.
             let mission = self.registry.resolve_node(&self.campaign, node).map(|def| def.id);
             let scene = mission.and_then(Scene::for_mission).unwrap_or(Scene::Mission1);
-            let mut game =
-                Game::new_scene_with_loadout(device, format, DEFAULT_SEED, scene, loadout);
+            // Seed each node from its own index (deterministic, shared match config) so two nodes on
+            // the same archetype are distinct battles rather than the byte-identical DEFAULT_SEED
+            // replay — the honest per-node variety the campaign is supposed to have.
+            let seed = gonedark_engine::campaign_match_seed(node.0);
+            let mut game = Game::new_scene_with_loadout(device, format, seed, scene, loadout);
             // D83 (resolves Q21): the player's chosen replay tier drives the fight on both axes —
             // the 4→3 enemy-commander band and the scenario situation modifiers — through the shared
             // `core::campaign` mapping (never a per-platform fork, invariant #2). Applied before tick

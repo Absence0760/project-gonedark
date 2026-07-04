@@ -197,6 +197,21 @@ pub use alert_cues::{haptic_pulse_ms, AlertCueMode, HapticPulse, HapticSide, BUT
 /// deterministic scene (invariant #1 / #7).
 pub const DEFAULT_SEED: u64 = 0x00C0_FFEE;
 
+/// The per-node match seed for a campaign battle: a deterministic mix of [`DEFAULT_SEED`] and the
+/// node's stable index. Two campaign nodes that share a mission archetype (e.g. all four *Seize*
+/// nodes) previously ran the byte-identical battle from [`DEFAULT_SEED`] — same spawns, same RNG,
+/// same replay. Seeding each node from its index makes every node a **distinct** battle (the
+/// RNG-driven commander decisions, combat rolls and reinforcement timing all diverge) while any
+/// single node stays perfectly replayable and identical across platforms — the seed is shared match
+/// config, like the army pick (invariant #7). Pure integer hash (a splitmix64 finalizer); no float,
+/// no clock, so both hosts derive the same seed for the same node.
+pub fn campaign_match_seed(node_index: u32) -> u64 {
+    let mut z = DEFAULT_SEED.wrapping_add((node_index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// Half-extent (world units) the top-down command camera covers from center to the shorter
 /// screen edge. Framed on the Phase 2 demo scene (units clustered within ~±25) so the
 /// skirmish, the camp, and the control points read at a usable size.
@@ -4933,6 +4948,21 @@ mod tests {
     use gonedark_render::fixed_to_f32;
 
     /// Scene-name parsing for the `app --scene <name>` host flag — pure, GPU-free.
+    #[test]
+    fn campaign_match_seed_is_distinct_per_node_and_stable() {
+        // Every node index yields a distinct seed (so archetype-sharing nodes are distinct battles),
+        // the mix is a pure function of the index (same node → same seed, on every platform), and
+        // node 0 is NOT just DEFAULT_SEED (the whole point — even the first node is remixed).
+        let seeds: Vec<u64> = (0..12).map(campaign_match_seed).collect();
+        for i in 0..seeds.len() {
+            for j in (i + 1)..seeds.len() {
+                assert_ne!(seeds[i], seeds[j], "nodes {i} and {j} must seed distinct battles");
+            }
+        }
+        assert_eq!(campaign_match_seed(3), campaign_match_seed(3), "pure: same node, same seed");
+        assert_ne!(campaign_match_seed(0), DEFAULT_SEED, "node 0 is remixed, not the bare default");
+    }
+
     #[test]
     fn scene_parse_known_and_unknown() {
         assert_eq!(Scene::parse("default"), Some(Scene::Default));
