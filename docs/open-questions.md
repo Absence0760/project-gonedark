@@ -841,3 +841,33 @@ nothing now: decide **before the ranked build starts** ([`modes.md`](modes.md) �
 the custom-lobby and quick-match steps need none of it. Cross-link: [`modes.md`](modes.md),
 [D13](decisions.md), [D89](decisions.md), [Q17](#q17--crossplay-input-fairness),
 [Q26](#q26--replay-compatibility), [Q28](#q28--conflict-atlas).
+
+---
+
+## Q30 — EliminateFaction HUD progress vs. a reinforcing target: standing-force or cumulative-kills semantics? <a id="q30--eliminate-progress-semantics"></a>
+
+An audit of `engine/src/objectives.rs` surfaced a latent HUD honesty gap. An
+`EliminateFaction` objective fixes its progress-bar `goal` at mission load — the target
+faction's *initial* unit+building count (`engine/src/mission_format.rs`) — but at runtime
+`Objective::observe` measures the *current* standing force. If the target faction trains
+reinforcements mid-mission, `remaining` can exceed the original goal and the
+`saturating_sub` floors the bar at zero: a player actively killing units sees **no bar
+movement** until the force drops back under its starting strength. The completion check
+itself (`is_eliminated()`) stays correct — only the bar lies. No shipped mission hits this
+today (no `EliminateFaction` target currently reinforces), so nothing is broken yet; the
+fork is which semantics a future mission author gets.
+
+| Option | For | Against |
+|---|---|---|
+| **(a) Document + lint the constraint** — `EliminateFaction` is only well-behaved against a non-reinforcing target; add a content-lint check so a violating mission fails a test instead of shipping a misleading bar | Zero new sim/HUD machinery; the lint makes the constraint structural (the `content_lint.rs` pattern) | Constrains mission design — "wear down a producing enemy" missions stay off the table until (b) |
+| **(b) Cumulative-kills bar** — count kills against the target faction via a counter fed from `SimEvent::Killed`, independent of standing force | Bar is honest under reinforcement; opens attrition-style missions | New counter + event plumbing; "goal" becomes open-ended when the enemy keeps producing (what does 100% mean?) |
+
+**Why it matters:** invariant #6's promise — every loss reads as *"I stayed too long,"*
+never *"the game robbed me"* — extends to HUD honesty; a progress bar that sits at zero
+while the player is doing the objective is the same broken contract in miniature.
+
+**Current lean:** **(a) now, (b) if an attrition mission is ever designed.** The lint is
+an afternoon; the kill counter is real plumbing with an unresolved "what is 100%?"
+question that only a concrete mission design can answer. Cross-link:
+[`pve-campaign.md`](pve-campaign.md) (objective system), invariant #6
+([`game-design.md`](game-design.md) §6).
