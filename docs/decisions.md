@@ -5346,3 +5346,45 @@ bit-identical (invariants #1/#7: core 635 + engine 511 green both profiles, `mat
 `76f33d570df8e3ba` and net-sim/replay unchanged, the whole-campaign re-seed guard still holds). Only
 WW2 nodes' opening infantry change — to the intended baseline roster (WW2 carries no infantry tilt).
 Files: `core/src/scenario.rs`, `engine/src/mission_registry.rs`.
+
+## D124 — Strip normals + UVs from the greybox `.glb` export for bit-reproducible model regeneration
+
+**Status: landed.** Re-running the Blender model generator (`pnpm assets:models`) churned the model
+manifest's per-`.glb` `sha256`s run-to-run, breaking the D41/D46 contract that the generator is the
+source of truth and a regen diffs to nothing. Root cause (pinned with a per-accessor float diff):
+Blender 5.1.2's glTF exporter computes per-loop **normals** and **UVs** with multithreaded
+floating-point accumulation whose order is non-deterministic — drift isolated to exactly the VEC2
+texcoord/normal accessors at ~1 ULP (5.96e-08); positions + topology export deterministically. It is
+inside Blender, not our script (a fixed `PYTHONHASHSEED` did not help). Fix: export `.glb` with
+`export_normals=False, export_texcoords=False` — **zero information loss**, because the runtime `.mesh`
+cook recomputes its own flat face normals from positions, the greybox `.mesh` format has no UV channel,
+and gltfpack re-cooks flat normals on the LOD re-import. Two consecutive full regenerations now produce
+byte-identical `.glb`/`.mesh`/manifest (a fresh regen leaves `git status` clean); the full asset set was
+re-baked once to the deterministic output. **Why:** the nondeterminism is unfixable from flags/seed, and
+dropping two unused, noisy attributes is the minimal change that restores reproducibility without a
+heavier post-export canonicalization pass (documented as the fallback if a position buffer ever drifts).
+Presentation-only: `render` stays green (610 tests) and the sim `matchup` checksum is unmoved
+(`76f33d570df8e3ba`). Files: `tools/models/gen_models.py`, `docs/content-pipeline.md`, `assets/models/**`.
+
+## D125 — A generated-fixture parity guard against Rust↔Android D79 mirror drift
+
+**Status: landed.** The Android shell hand-mirrors slices of the Rust engine (the "D79 mirror"
+pattern — campaign graph, battlefield list), and had **no** automated cross-language check, so it
+drifted silently (twice: the 12→15-node campaign and the missing D119 maps both had to be caught by
+hand). Guard: one committed canonical fixture (`parity/d79-mirror.txt`) is the shared contract, asserted
+from both languages. The Rust half (`engine/tests/d79_mirror_parity.rs`) derives the mirror facts from
+the *live* `default_campaign()` + `BATTLEFIELDS` and asserts they equal the fixture (so it can't go
+stale behind Rust; re-bless with `UPDATE_D79_FIXTURE=1`); the Kotlin half
+(`android/.../MirrorParityTest.kt`) reads the *same* fixture and asserts `CampaignModel.kt`/
+`Battlefield.kt` match it. Only structural facts are pinned (node/conflict/operation counts, per-node
+scene token + gating, conflict/operation names + years, the ordered battlefield table + map-id set) —
+prose (briefings/blurbs) is deliberately excluded, staying covered by the existing verbatim per-node
+tests. Wired into CI: the Rust half rides the existing workspace `test` job; a **new `android-unit-tests`
+job** runs `:app:testDebugUnitTest` (pure-JVM, NDK tasks excluded) — the first Android unit tests to run
+in CI at all (a pre-existing gap). **Proven both ways:** passes on the synced tree, and trips on injected
+drift on each half (a renamed Rust conflict → Rust guard fails at `campaign.conflict.02.name`; removing
+`"bocage"` from Kotlin `KNOWN_MAP_IDS` → Kotlin guard fails), then reverts green. **Why:** the hand-mirror
+is intrinsically drift-prone; a structural fixture checked from both sides makes divergence a red build
+instead of a shipped bug. Files: `engine/tests/d79_mirror_parity.rs`, `parity/d79-mirror.txt`,
+`android/app/src/test/java/com/jaredhoward/goingdark/MirrorParityTest.kt`, `.github/workflows/test.yml`,
+`docs/plans/compose-shell-parity.md`.
