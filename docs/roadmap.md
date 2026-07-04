@@ -236,10 +236,12 @@ model.
 > re-authored in Compose ([D78](decisions.md)/[D79](decisions.md)) and a parity-gap sweep closing the
 > last UI/content divergences; the product-of-record status (and the structural items still open — an
 > Android campaign progress/unlock model, desktop-side shell-pref persistence) lives in
-> [`plans/compose-shell-parity.md`](plans/compose-shell-parity.md) §12. The remaining surfaces stay
-> pending — onboarding, match setup, lobby, store, and consent — deferred behind missing per-platform
-> UI projects and the [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3
-> blockers.
+> [`plans/compose-shell-parity.md`](plans/compose-shell-parity.md) §12. **Onboarding and match setup
+> have since substantially landed** (CP-7's teach machine ships in PvE mission 1 on both platforms;
+> the skirmish setup + honest PvP staging doors and the map-library picker are live on both shells —
+> [D101](decisions.md)/[D102](decisions.md)). What's still genuinely pending is **lobby, store, and
+> consent**, deferred behind missing per-platform UI projects and the
+> [Q5](open-questions.md)/[Q9](open-questions.md)/[Q11](open-questions.md)/Phase-3 blockers.
 
 **Goal:** wrap the game in everything that ships *around* the match — the app shell, the
 storefront, the first-run teach — and tune it to mid-range silicon.
@@ -258,9 +260,9 @@ in the in-match layer; the **settings surface that configures it** is.
 | Surface | What it covers | Depends on |
 |---|---|---|
 | **Boot & title** | Splash, title/attract screen, build-channel + version stamp. **Landed (Android [D35](decisions.md) + desktop [D36](decisions.md)):** a native Jetpack Compose title/landing screen on Android (the launcher) and a native egui title screen on desktop (`app` now opens here, Start enters the match); only the iOS shell still pending (no iOS target) | — |
-| **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a new player reads a loss as *"I stayed too long"* | [Q5](open-questions.md) (PvE-first is the natural teach surface); invariant #6 |
+| **Onboarding / tutorial** | Teach the going-dark cost; telegraph the blindness *before* it bites; a guided first-possession beat. The single most important screen — invariant #6 lives or dies on whether a new player reads a loss as *"I stayed too long"*. **Functionally complete, both platforms** (CP-7 below): `engine::onboarding`'s 3-beat WentDark→Lingering→StayedTooLong teach machine is wired into PvE mission 1; **owed:** the by-ear/by-eye playtest confirming it lands | [Q5](open-questions.md) (PvE-first is the natural teach surface, [D58](decisions.md)); invariant #6 |
 | **Settings** | Graphics tiers (↔ device quality tiers above), audio-mix levels, the touch-layout / rebind editor (configures the D14 scheme), desktop key/gamepad rebinds, **accessibility** | invariant #6 (see accessibility note) |
-| **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry. **Designed:** [`modes.md`](modes.md) (the mode taxonomy + the skirmish map/army/difficulty setup flow). **Landed, both shells:** the three distinct doors ([D101](decisions.md)) — skirmish match-setup (battlefield/armies/tier) + the honest PvP staging door ([`plans/compose-shell-parity.md`](plans/compose-shell-parity.md) §12 items 6–7 closed); the map-library picker (D34 manifest listing) is the remaining half | order/stance vocab (D25) |
+| **Match setup** | Army/loadout composition, map + mode select; skirmish-vs-PvP entry. **Designed:** [`modes.md`](modes.md) (the mode taxonomy + the skirmish map/army/difficulty setup flow). **Landed, both shells:** the three distinct doors ([D101](decisions.md)) — skirmish match-setup (battlefield/armies/tier) + the honest PvP staging door ([`plans/compose-shell-parity.md`](plans/compose-shell-parity.md) §12 items 6–7 closed) — and the map-library picker ([D102](decisions.md): the `BATTLEFIELDS` table, both shells); picker preview/metrics + baked/generated maps are the remaining target-model half | order/stance vocab (D25) |
 | **Lobby & matchmaking** (PvP) | Party/invite, connection-quality readout, ready-up. **Seam:** the net plumbing is Phase 3 (D27 lockstep, reconnect/handoff); only the *surface* is Phase 4. **Designed:** [`modes.md`](modes.md) §4–5 (army/map/ranking as three separate subsystems; build order custom lobby → quick match → ranked; rating model open as [Q29](open-questions.md)) | Phase 3 netcode; [Q5](open-questions.md) |
 | **Progression & profile** | Persistence, stats, cosmetic inventory | account/persistence backend ([`infrastructure.md`](infrastructure.md)) |
 | **Store / IAP** | Cosmetic purchases, restore-purchases, receipts, refund paths | [Q9](open-questions.md) (per-platform billing rails); [Q11](open-questions.md) (hero-tier cosmetics feed the catalog) |
