@@ -2504,7 +2504,12 @@ impl Game {
 
         let curr = sim.snapshot();
         let prev = curr.clone();
-        let renderer = Renderer::new(device, surface_format);
+        let mut renderer = Renderer::new(device, surface_format);
+        // Upload the command-view map overlay ONCE (the cover grid + obstacle list are static map
+        // data, never mutated per tick): the top-down view then tints the ground by the real cover
+        // grid and draws the props as markers, so different battlefields look different and cover is
+        // legible (core → render, invariant #4; command view only, invariant #6).
+        renderer.set_map_overlay(device, &sim.terrain, &sim.obstacles);
 
         Game {
             sim,
