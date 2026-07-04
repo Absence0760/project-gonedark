@@ -1,0 +1,14 @@
+# cargo-audit policy. Every ignore below must carry the why + the removal condition.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0194 / RUSTSEC-2026-0195: quick-xml 0.39.4 DoS advisories
+    # (memory exhaustion / quadratic attribute scan; fixed in >=0.41.0).
+    # Reached ONLY via wayland-scanner, a build-time proc-macro that parses the
+    # pinned Wayland protocol XML shipped inside the wayland-* crates — never
+    # attacker-controlled input, and nothing at runtime. Unfixable from this
+    # lockfile until wayland-scanner bumps its quick-xml requirement to 0.41+.
+    # Remove both entries once `cargo update -p wayland-scanner` pulls that in.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
