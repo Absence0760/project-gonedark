@@ -378,11 +378,16 @@ pub(crate) fn model_for_unit(army: Army, building: bool, kind: UnitKind) -> mesh
         (Army::Us, false) => M::TrooperUs,
         (Army::Fr, true) => M::TankFr,
         (Army::Fr, false) => M::TrooperFr,
-        // Neutral / non-aligned AND the WW2 cost-vs-power armies (D120) → the original shared greybox.
-        // The WW2 armies reuse the shared silhouettes for now; bespoke Sherman/Panther meshes are the
-        // content stage (deferred). Byte-identical pre-factions behaviour for the shared token.
-        (Army::Neutral | Army::UsWw2 | Army::Germany, true) => M::Tank,
-        (Army::Neutral | Army::UsWw2 | Army::Germany, false) => M::Trooper,
+        // WW2 cost-vs-power armies (D120): bespoke WW2 tank silhouettes — a Sherman for US WW2, a
+        // Tiger/Panther-class heavy for Germany — so the era reads at a glance. Their infantry keep
+        // the shared trooper body for now (only the tank is the showcase; per-army WW2 troopers can
+        // layer on later the way WS-C did). Pure presentation — never reaches `core`.
+        (Army::UsWw2, true) => M::TankSherman,
+        (Army::Germany, true) => M::TankTiger,
+        (Army::UsWw2 | Army::Germany, false) => M::Trooper,
+        // Neutral / non-aligned → the original shared greybox. Byte-identical pre-factions behaviour.
+        (Army::Neutral, true) => M::Tank,
+        (Army::Neutral, false) => M::Trooper,
     }
 }
 
@@ -434,16 +439,20 @@ pub fn faction_name(army: Army) -> &'static str {
 }
 
 /// The independently-slewing turret mesh that seats atop a given hull silhouette, if any (WS-C / P7).
-/// Every tank silhouette — the shared [`Tank`](mesh::ModelKind::Tank) and the per-faction
-/// [`TankUs`](mesh::ModelKind::TankUs)/[`TankFr`](mesh::ModelKind::TankFr) — pairs with the matching
-/// turret; non-tank bodies have none. Keeps [`token_meshes`] from hard-coding the shared turret so a
-/// faction tank gets its own turret silhouette. Pure + testable.
+/// Every tank silhouette — the shared [`Tank`](mesh::ModelKind::Tank), the per-faction
+/// [`TankUs`](mesh::ModelKind::TankUs)/[`TankFr`](mesh::ModelKind::TankFr), and the WW2
+/// [`TankSherman`](mesh::ModelKind::TankSherman)/[`TankTiger`](mesh::ModelKind::TankTiger) (D120) —
+/// pairs with the matching turret; non-tank bodies have none. Keeps [`token_meshes`] from hard-coding
+/// the shared turret so a faction tank gets its own turret silhouette. Pure + testable.
 fn turret_for(hull: mesh::ModelKind) -> Option<mesh::ModelKind> {
     use mesh::ModelKind as M;
     match hull {
         M::Tank => Some(M::TankTurret),
         M::TankUs => Some(M::TankTurretUs),
         M::TankFr => Some(M::TankTurretFr),
+        // WW2 tanks (D120) each pair with their own bespoke turret.
+        M::TankSherman => Some(M::TankTurretSherman),
+        M::TankTiger => Some(M::TankTurretTiger),
         _ => None,
     }
 }
@@ -2969,6 +2978,36 @@ mod tests {
         }
     }
 
+    /// D120: the WW2 cost-vs-power armies get bespoke WW2 TANK silhouettes — US WW2 → Sherman,
+    /// Germany → Tiger/Panther-class heavy — distinct from each other, from the modern faction tanks,
+    /// and from the shared greybox. Their INFANTRY stay on the shared trooper body for now (only the
+    /// tank is the showcase), and modern (Us/Fr)/Neutral routing is unchanged.
+    #[test]
+    fn model_for_unit_ww2_armies_get_distinct_tanks() {
+        use mesh::ModelKind as M;
+        // WW2 tanks (Heavy and produced Tank both map to the chassis).
+        for &kind in &[UnitKind::Heavy, UnitKind::Tank] {
+            assert_eq!(model_for_unit(Army::UsWw2, false, kind), M::TankSherman);
+            assert_eq!(model_for_unit(Army::Germany, false, kind), M::TankTiger);
+        }
+        // The two WW2 tanks are distinct from each other and from every modern/shared tank.
+        let ww2 = [M::TankSherman, M::TankTiger];
+        let others = [M::Tank, M::TankUs, M::TankFr];
+        assert_ne!(M::TankSherman, M::TankTiger, "Sherman ≠ German heavy");
+        for w in ww2 {
+            for o in others {
+                assert_ne!(w, o, "WW2 tank {w:?} differs from modern/shared tank {o:?}");
+            }
+        }
+        // WW2 infantry keep the shared trooper body (deferred per-army WW2 troopers).
+        assert_eq!(model_for_unit(Army::UsWw2, false, UnitKind::Rifleman), M::Trooper);
+        assert_eq!(model_for_unit(Army::Germany, false, UnitKind::Rifleman), M::Trooper);
+        // Modern/Neutral routing is byte-for-byte unchanged.
+        assert_eq!(model_for_unit(Army::Us, false, UnitKind::Tank), M::TankUs);
+        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Tank), M::TankFr);
+        assert_eq!(model_for_unit(Army::Neutral, false, UnitKind::Tank), M::Tank);
+    }
+
     /// WS-C: the full `(Army, kind)` × building matrix resolves to *some* committed mesh and never
     /// panics — and US/FR units are visually distinct from each other and from Neutral (the whole
     /// point of cosmetic identity). Exercises every combination (the "no panic on unmapped" floor).
@@ -3100,6 +3139,17 @@ mod tests {
             token(M::Tank),
             vec![(M::Tank, TOKEN_SCALE, 0.5), (M::TankTurret, TOKEN_SCALE, 1.2)],
             "the shared tank keeps the shared turret"
+        );
+        // D120: the WW2 tanks each emit their own bespoke hull + turret pair.
+        assert_eq!(
+            token(M::TankSherman),
+            vec![(M::TankSherman, TOKEN_SCALE, 0.5), (M::TankTurretSherman, TOKEN_SCALE, 1.2)],
+            "a Sherman emits the Sherman hull + rounded Sherman turret"
+        );
+        assert_eq!(
+            token(M::TankTiger),
+            vec![(M::TankTiger, TOKEN_SCALE, 0.5), (M::TankTurretTiger, TOKEN_SCALE, 1.2)],
+            "the German heavy emits its hull + big boxy turret"
         );
         // Faction infantry is a single body part (no turret).
         assert_eq!(token(M::TrooperUs), vec![(M::TrooperUs, TOKEN_SCALE, 0.5)]);

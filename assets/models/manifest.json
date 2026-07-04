@@ -1289,6 +1289,230 @@
           "cooked_sha256": "f7ead7f5f758f75ff5dabb8e2c0716253fb05fcffabf26ad820a266595177c57"
         }
       ]
+    },
+    {
+      "name": "sherman",
+      "category": "units",
+      "file": "units/sherman.glb",
+      "cooked": "units/sherman.mesh",
+      "description": "US WW2 M4 Sherman hull \u2014 a tall, upright, boxy chassis with a steep short glacis and a rounded cast front nose bulge (D120).",
+      "base_color": [
+        0.24,
+        0.27,
+        0.16
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 90748,
+      "sha256": "5ccf6f11dccfcd02cd50f0ae60dd0bdfde3dcff2b915fab2741d3fd625030278",
+      "cooked_bytes": 175308,
+      "cooked_sha256": "4e62ab3d8b806c997fbd5b7cdf00620ad0fe83988445aa1c36b3b7ce03da2422",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/sherman.glb",
+          "cooked": "units/sherman.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 1328,
+          "bytes": 90748,
+          "sha256": "5ccf6f11dccfcd02cd50f0ae60dd0bdfde3dcff2b915fab2741d3fd625030278",
+          "cooked_bytes": 175308,
+          "cooked_sha256": "4e62ab3d8b806c997fbd5b7cdf00620ad0fe83988445aa1c36b3b7ce03da2422"
+        },
+        {
+          "level": 1,
+          "file": "units/sherman.lod1.glb",
+          "cooked": "units/sherman.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 630,
+          "bytes": 12972,
+          "sha256": "bc632b29c961665bfd67259060abbf6d04ee569da8e3390788bc1b73b1057e39",
+          "cooked_bytes": 83172,
+          "cooked_sha256": "69cbcebb260050efd3de5996781d6c2d2687a84d17540c87f975efc16bd9a27a"
+        },
+        {
+          "level": 2,
+          "file": "units/sherman.lod2.glb",
+          "cooked": "units/sherman.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 192,
+          "bytes": 5144,
+          "sha256": "e907ff9f43ca70855d61cde363bf25be183dab1c275550be172bb80b6848ee0d",
+          "cooked_bytes": 25356,
+          "cooked_sha256": "eca9e311ed66eb77154abf80b49d8fd931528fcc67bf2ddace654d69d369b4e1"
+        }
+      ]
+    },
+    {
+      "name": "sherman_turret",
+      "category": "units",
+      "file": "units/sherman_turret.glb",
+      "cooked": "units/sherman_turret.mesh",
+      "description": "US WW2 M4 Sherman turret \u2014 a rounded cast turret drum + short 75mm gun and a round cupola, pivoting about the hull ring (D120/P7).",
+      "base_color": [
+        0.24,
+        0.27,
+        0.16
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 51520,
+      "sha256": "60ef475191cd1a59672db020f270fbc7b8f1dfce22ff582a1dda2d03751c9003",
+      "cooked_bytes": 100332,
+      "cooked_sha256": "d840c77334a634dc71b1deba158c5b11dccf56c385ed55d88df680d988722c33",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/sherman_turret.glb",
+          "cooked": "units/sherman_turret.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 760,
+          "bytes": 51520,
+          "sha256": "60ef475191cd1a59672db020f270fbc7b8f1dfce22ff582a1dda2d03751c9003",
+          "cooked_bytes": 100332,
+          "cooked_sha256": "d840c77334a634dc71b1deba158c5b11dccf56c385ed55d88df680d988722c33"
+        },
+        {
+          "level": 1,
+          "file": "units/sherman_turret.lod1.glb",
+          "cooked": "units/sherman_turret.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 371,
+          "bytes": 8032,
+          "sha256": "3d6af94e6a249b60d8b0842e3773170e24731dab50b42941ff3b97bae0bb79a1",
+          "cooked_bytes": 48984,
+          "cooked_sha256": "85ff21513130fa26ea6383805a07bcbefdccbef210cfb060b6ec903844ec80d7"
+        },
+        {
+          "level": 2,
+          "file": "units/sherman_turret.lod2.glb",
+          "cooked": "units/sherman_turret.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 181,
+          "bytes": 4372,
+          "sha256": "ce7709858ac29ad98c9fe3385ade7891306454f04b55d9fcaac3503cca680f47",
+          "cooked_bytes": 23904,
+          "cooked_sha256": "cb7e38782fa155e6eac072dbc404225a7ac70a931d3c8750908f68062e00be29"
+        }
+      ]
+    },
+    {
+      "name": "tiger",
+      "category": "units",
+      "file": "units/tiger.glb",
+      "cooked": "units/tiger.mesh",
+      "description": "German WW2 heavy hull (Tiger/Panther-class) \u2014 a long, wide, slab-sided boxy chassis with a stepped near-vertical nose over wide tracks (D120).",
+      "base_color": [
+        0.22,
+        0.23,
+        0.2
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 114088,
+      "sha256": "33c7fb7c3d348f1ef942158bb161ce0314c920e069203fecd5dacc2ce90c7a02",
+      "cooked_bytes": 220716,
+      "cooked_sha256": "e17ae8380d3ef753954d3211a2d0c497cf317e8e0d110b9a4f6958a9dfa455a9",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/tiger.glb",
+          "cooked": "units/tiger.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 1672,
+          "bytes": 114088,
+          "sha256": "33c7fb7c3d348f1ef942158bb161ce0314c920e069203fecd5dacc2ce90c7a02",
+          "cooked_bytes": 220716,
+          "cooked_sha256": "e17ae8380d3ef753954d3211a2d0c497cf317e8e0d110b9a4f6958a9dfa455a9"
+        },
+        {
+          "level": 1,
+          "file": "units/tiger.lod1.glb",
+          "cooked": "units/tiger.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 812,
+          "bytes": 16032,
+          "sha256": "c84c8328aa9538737d40d75949fe4adb5c5c93a5c0fadf8ba73068323cc5fcb4",
+          "cooked_bytes": 107196,
+          "cooked_sha256": "e78d6a120b2166da86384bb5ed2a26a82694ffbd83d9ad316f30539dc0d142fb"
+        },
+        {
+          "level": 2,
+          "file": "units/tiger.lod2.glb",
+          "cooked": "units/tiger.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 376,
+          "bytes": 7564,
+          "sha256": "354e4c29378991b616bdcd6fe38e657cc57d69542f1cc5be936c7b49f76e84df",
+          "cooked_bytes": 49644,
+          "cooked_sha256": "c01c709ceaaf3489ccc4e15cbc33dd3bc5ede33661b0444626f95c8678f1780d"
+        }
+      ]
+    },
+    {
+      "name": "tiger_turret",
+      "category": "units",
+      "file": "units/tiger_turret.glb",
+      "cooked": "units/tiger_turret.mesh",
+      "description": "German WW2 heavy turret \u2014 a big boxy turret with the long 88mm gun, pivoting about the hull ring (D120/P7).",
+      "base_color": [
+        0.22,
+        0.23,
+        0.2
+      ],
+      "source": "procedural (Blender bpy \u2014 tools/models/gen_models.py)",
+      "generator": "5.1.2",
+      "author": "Jared Howard",
+      "license": "CC0-1.0",
+      "url": "",
+      "bytes": 38912,
+      "sha256": "f03c3702075b04d27e87236f0c6f3f47d277a0f3e24c15f668196c80eb09fd81",
+      "cooked_bytes": 74460,
+      "cooked_sha256": "75f1b7c3111b39f3c28c0dafd36b73e852b3a7f21a1aafdfd518e8a948e9affd",
+      "lods": [
+        {
+          "level": 0,
+          "file": "units/tiger_turret.glb",
+          "cooked": "units/tiger_turret.mesh",
+          "simplify_ratio": 1.0,
+          "tri_count": 564,
+          "bytes": 38912,
+          "sha256": "f03c3702075b04d27e87236f0c6f3f47d277a0f3e24c15f668196c80eb09fd81",
+          "cooked_bytes": 74460,
+          "cooked_sha256": "75f1b7c3111b39f3c28c0dafd36b73e852b3a7f21a1aafdfd518e8a948e9affd"
+        },
+        {
+          "level": 1,
+          "file": "units/tiger_turret.lod1.glb",
+          "cooked": "units/tiger_turret.lod1.mesh",
+          "simplify_ratio": 0.5,
+          "tri_count": 232,
+          "bytes": 5512,
+          "sha256": "7a5ad2403f25210c2c67fe06e6dbc70da26b3ef741f48cac39a9674f5a1129af",
+          "cooked_bytes": 30636,
+          "cooked_sha256": "3bb5a66cedde6452fe4126c6f65107798e350a79ebb7374344b4db06d34bde28"
+        },
+        {
+          "level": 2,
+          "file": "units/tiger_turret.lod2.glb",
+          "cooked": "units/tiger_turret.lod2.mesh",
+          "simplify_ratio": 0.25,
+          "tri_count": 116,
+          "bytes": 3324,
+          "sha256": "c4f27302a6967fc90f1662b96601ff658378fe93375e6d31d84d243e0a9ff058",
+          "cooked_bytes": 15324,
+          "cooked_sha256": "d6eaca8910d709bb5982b174f4586ec10b7881c5cfc21d1f2e8a9f5ba578b29d"
+        }
+      ]
     }
   ]
 }

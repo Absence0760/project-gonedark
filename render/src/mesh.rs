@@ -207,12 +207,23 @@ pub enum ModelKind {
     /// a plain rifleman ([`crate::model_for_unit`] resolves the sim's AntiTank archetype here,
     /// army-agnostic for now).
     AntiTank,
+    // --- WW2 cost-vs-power tank silhouettes (D120). Presentation-only per-army WW2 tanks, resolved by
+    // [`crate::model_for_unit`] / [`crate::turret_for`] for [`Army::UsWw2`]/[`Army::Germany`]. They
+    // never reach `core` (no checksum surface). Appended so the existing discriminants stay put. ---
+    /// US WW2 M4 Sherman hull (tall, upright, boxy — its [`TankTurretSherman`](ModelKind::TankTurretSherman) slews atop it).
+    TankSherman,
+    /// US WW2 M4 Sherman turret (rounded cast drum + short 75mm gun), yawed by `turret_yaw` (P7).
+    TankTurretSherman,
+    /// German WW2 heavy hull (Tiger/Panther-class — long, wide, slab-sided — its [`TankTurretTiger`](ModelKind::TankTurretTiger) slews atop it).
+    TankTiger,
+    /// German WW2 heavy turret (big boxy turret + long 88mm gun), yawed by `turret_yaw` (P7).
+    TankTurretTiger,
 }
 
 impl ModelKind {
     /// Every kind, in canonical (enum-discriminant) order. Faction silhouettes (WS-C) are appended
     /// after the shared kinds so existing discriminants stay put.
-    pub const ALL: [ModelKind; 23] = [
+    pub const ALL: [ModelKind; 27] = [
         ModelKind::Trooper,
         ModelKind::Tank,
         ModelKind::TankTurret,
@@ -236,6 +247,10 @@ impl ModelKind {
         ModelKind::TurretFr,
         ModelKind::Medic,
         ModelKind::AntiTank,
+        ModelKind::TankSherman,
+        ModelKind::TankTurretSherman,
+        ModelKind::TankTiger,
+        ModelKind::TankTurretTiger,
     ];
 
     /// The cooked `.mesh` bytes for every LOD tier, embedded at build time so they ride into the
@@ -361,6 +376,27 @@ impl ModelKind {
                 include_bytes!("../../assets/models/units/at_infantry.lod1.mesh"),
                 include_bytes!("../../assets/models/units/at_infantry.lod2.mesh"),
             ],
+            // --- WW2 cost-vs-power tank silhouettes (D120) ---
+            ModelKind::TankSherman => [
+                include_bytes!("../../assets/models/units/sherman.mesh"),
+                include_bytes!("../../assets/models/units/sherman.lod1.mesh"),
+                include_bytes!("../../assets/models/units/sherman.lod2.mesh"),
+            ],
+            ModelKind::TankTurretSherman => [
+                include_bytes!("../../assets/models/units/sherman_turret.mesh"),
+                include_bytes!("../../assets/models/units/sherman_turret.lod1.mesh"),
+                include_bytes!("../../assets/models/units/sherman_turret.lod2.mesh"),
+            ],
+            ModelKind::TankTiger => [
+                include_bytes!("../../assets/models/units/tiger.mesh"),
+                include_bytes!("../../assets/models/units/tiger.lod1.mesh"),
+                include_bytes!("../../assets/models/units/tiger.lod2.mesh"),
+            ],
+            ModelKind::TankTurretTiger => [
+                include_bytes!("../../assets/models/units/tiger_turret.mesh"),
+                include_bytes!("../../assets/models/units/tiger_turret.lod1.mesh"),
+                include_bytes!("../../assets/models/units/tiger_turret.lod2.mesh"),
+            ],
         }
     }
 
@@ -402,6 +438,12 @@ impl ModelKind {
             // Medic/AntiTank share the trooper body's olive tint (mirrors COLORS in gen_models.py).
             ModelKind::Medic => [0.30, 0.34, 0.18],
             ModelKind::AntiTank => [0.30, 0.34, 0.18],
+            // WW2 tanks (D120). Mirrors COLORS in gen_models.py — US WW2 olive drab, DE panzer grey.
+            // A unit token's faction tint overrides this at draw time; these are the greybox fallbacks.
+            ModelKind::TankSherman => [0.24, 0.27, 0.16],
+            ModelKind::TankTurretSherman => [0.24, 0.27, 0.16], // matches the Sherman hull
+            ModelKind::TankTiger => [0.22, 0.23, 0.20],
+            ModelKind::TankTurretTiger => [0.22, 0.23, 0.20], // matches the German hull
         }
     }
 }

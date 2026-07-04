@@ -465,6 +465,14 @@ COLORS = {
     "weapon_rifle_fr": (0.13, 0.13, 0.12),  # FAMAS bullpup — warmer gunmetal
     "turret_us": (0.30, 0.31, 0.24),        # US emplacement — CARC grey-green (matches Abrams hull)
     "turret_fr": (0.22, 0.27, 0.18),        # FR emplacement — darker French green (matches Leclerc hull)
+    # --- WW2 cost-vs-power armies (D120). Presentation-only bespoke tank silhouettes for the two WW2
+    # factions (US WW2 = Sherman, the quantity doctrine; Germany = Tiger/Panther-class heavy, the
+    # quality doctrine). Same never-reaches-`core` guarantee as the WS-C faction meshes. US = WW2
+    # olive drab; DE = panzer grey. Geometry carries the era read; the tint reinforces it. ---
+    "sherman": (0.24, 0.27, 0.16),          # M4 Sherman — WW2 olive-drab hull
+    "sherman_turret": (0.24, 0.27, 0.16),   # Sherman rounded cast turret — matches the hull
+    "tiger": (0.22, 0.23, 0.20),            # German heavy — panzer-grey hull
+    "tiger_turret": (0.22, 0.23, 0.20),     # German heavy boxy turret — matches the hull
 }
 
 
@@ -497,6 +505,11 @@ CATEGORY = {
     "weapon_rifle_fr": "weapons",
     "turret_us": "structures",
     "turret_fr": "structures",
+    # WW2 cost-vs-power tank silhouettes (D120) — units, same as their modern kin.
+    "sherman": "units",
+    "sherman_turret": "units",
+    "tiger": "units",
+    "tiger_turret": "units",
 }
 
 
@@ -1286,6 +1299,109 @@ def build_turret_fr():
     return weld("turret_fr", parts, mat, bevel=0.018)
 
 
+# --- WW2 cost-vs-power tank silhouettes (D120) --------------------------------------------------
+# Presentation-only bespoke tanks for the two WW2 armies, in the SAME local frame as the shared/WS-C
+# tanks they replace (Z-up, base z≈0; hull barrel/nose +X; turret-ring pivot at the hull origin, so
+# `token_meshes`/`turret_for` slew the turret about the ring unchanged). They NEVER reach `core` —
+# per-army silhouettes add zero checksum surface (invariant #1/#7 untouched). The read is deliberately
+# WW2, and deliberately distinct US-vs-DE: the Sherman is a TALL, upright, boxy hull with a ROUNDED
+# cast turret + short 75mm gun; the German heavy is a LONGER, wider, slab-sided hull with a BIG BOXY
+# turret + the longest gun of any tank here (the 88). Same crisp WS-F language (booleans + running_gear
+# + tight bevels) as the modern tanks, kept unmistakably 1940s.
+
+
+def build_sherman():
+    # US WW2 M4 Sherman HULL — a TALL, upright, boxy chassis (the WW2 tell: high-sided and slab-flanked,
+    # vs. the low, wide modern Abrams). A steep short upper glacis milled in, a rounded cast front
+    # differential nose bulge, a VVSS bogie run (six road wheels + larger idler/sprocket), and a tight
+    # bevel. Turret is the separate `sherman_turret` (rounded, slews independently, P7). Pivot at origin.
+    mat = make_material("sherman", rgba("sherman"))  # WW2 olive drab
+    lower = box((3.3, 1.5, 0.6), (0, 0, 0.55))                 # tall lower hull tub
+    upper = box((3.3, 1.7, 0.62), (0, 0, 1.06))                # tall upright upper hull (boxy, high-sided)
+    # Steep short Sherman glacis (~48°) milled into the upper front — a stubby steep nose, NOT the long
+    # shallow modern slope. Large half-space cutter (its underside is the glacis plane).
+    boolean_cut(upper, [box((5.0, 3.0, 4.0), (2.55, 0, 2.55), rot=(0, math.radians(48), 0))])
+    parts = [
+        lower, upper,
+        box((0.5, 1.5, 0.5), (-1.56, 0, 0.95), rot=(0, math.radians(-14), 0)),  # rear hull plate (sloped)
+        # Rounded cast differential/final-drive nose bulge, low at the front (+X) — a Sherman tell.
+        cyl(0.46, 1.42, (1.58, 0, 0.55), rot=(math.radians(90), 0, 0), verts=14),
+    ]
+    parts += running_gear(
+        track_y=0.85, wheel_z=0.34,
+        wheels=((1.36, 0.30), (0.78, 0.24), (0.22, 0.24), (-0.34, 0.24), (-0.90, 0.24), (-1.46, 0.30)),
+        track_dims=(3.4, 0.44, 0.52), track_z=0.34,
+        fender_dims=(3.5, 0.50, 0.10), fender_z=0.82,
+    )
+    return weld("sherman", parts, mat, bevel=0.02)
+
+
+def build_sherman_turret():
+    # M4 Sherman TURRET — the headline WW2 read: a ROUNDED cast turret (a low cylindrical drum, not a
+    # box) with a short 75mm gun and a raised round commander's cupola. Pivot at the hull origin, barrel
+    # +X; seated on the tall hull top (z≈1.4). Deliberately contrasts the German heavy's big box turret.
+    mat = make_material("sherman_turret", rgba("sherman_turret"))  # olive drab (matches the hull)
+    turret = cyl(0.86, 0.52, (-0.08, 0, 1.62), verts=20)       # rounded cast turret drum
+    parts = [
+        cyl(0.60, 0.14, (0, 0, 1.40), verts=16),               # turret ring (drops into the hull socket)
+        turret,
+        box((0.42, 0.66, 0.44), (0.66, 0, 1.58)),              # gun mantlet block
+        cyl(0.22, 0.30, (-0.30, 0, 2.00), verts=14),           # commander's cupola (round, on top)
+        cyl(0.066, 1.30, (1.38, 0, 1.58), rot=(0, math.radians(90), 0)),  # short 75mm gun, +X
+        cyl(0.10, 0.22, (0.86, 0, 1.58), rot=(0, math.radians(90), 0), verts=12),  # mantlet collar
+        box((0.5, 0.60, 0.18), (-0.70, 0, 1.52)),              # rear stowage bin
+        cyl(0.035, 0.55, (-0.55, 0.32, 2.12), verts=6),        # whip radio antenna (top-down read)
+    ]
+    return weld("sherman_turret", parts, mat, bevel=0.03)
+
+
+def build_tiger():
+    # German WW2 heavy (Tiger/Panther-class) HULL — a LONG, wide, slab-sided boxy chassis, bigger than
+    # the Sherman: a broad flat superstructure overhanging WIDE tracks, a near-vertical stepped nose
+    # plate (the boxy German front, NOT a long modern slope), and a dense road-wheel run (eight
+    # wheels — the interleaved German running-gear read). Turret is the separate `tiger_turret` (big
+    # boxy turret + long 88 gun, P7). Pivot at origin.
+    mat = make_material("tiger", rgba("tiger"))  # panzer grey
+    lower = box((3.7, 1.9, 0.55), (0, 0, 0.50))                # long wide lower hull tub
+    upper = box((3.8, 2.5, 0.55), (0, 0, 1.00))                # broad flat superstructure (overhangs wide tracks)
+    # Only a modest upper-front bevel (the boxy German front keeps most of its slab), plus a separate
+    # near-vertical lower nose plate below — a stepped front, not a raked modern glacis.
+    boolean_cut(upper, [box((4.0, 3.2, 3.0), (2.9, 0, 2.2), rot=(0, math.radians(20), 0))])
+    # Sponson undercut so the superstructure reads proud of the wide tracks (a defined shadow line).
+    boolean_cut(upper, [box((3.4, 0.4, 0.2), (0, 1.18, 0.78)),
+                        box((3.4, 0.4, 0.2), (0, -1.18, 0.78))])
+    parts = [
+        lower, upper,
+        box((0.5, 1.9, 0.46), (-1.92, 0, 0.86), rot=(0, math.radians(-10), 0)),  # flat rear plate
+        box((0.9, 2.0, 0.36), (1.62, 0, 0.60), rot=(0, math.radians(62), 0)),    # near-vertical lower nose plate
+    ]
+    parts += running_gear(
+        track_y=1.05, wheel_z=0.34,
+        wheels=((1.56, 0.34), (1.06, 0.32), (0.56, 0.32), (0.06, 0.32),
+                (-0.44, 0.32), (-0.94, 0.32), (-1.44, 0.32), (-1.92, 0.34)),
+        track_dims=(3.9, 0.60, 0.52), track_z=0.34,
+        fender_dims=(4.0, 0.66, 0.10), fender_z=0.84,
+    )
+    return weld("tiger", parts, mat, bevel=0.02)
+
+
+def build_tiger_turret():
+    # German heavy TURRET — a BIG, boxy, slab-sided turret with the LONGEST gun of any tank here (the
+    # 88mm tell): deliberately larger and more angular than the Sherman's rounded drum. Pivot at the
+    # hull origin, barrel +X; seated on the superstructure top (z≈1.3).
+    mat = make_material("tiger_turret", rgba("tiger_turret"))  # panzer grey (matches the hull)
+    parts = [
+        cyl(0.76, 0.14, (0, 0, 1.30), verts=14),               # turret ring (drops into the hull socket)
+        box((1.9, 2.0, 0.70), (-0.15, 0, 1.66)),               # big boxy turret
+        box((0.46, 1.10, 0.56), (0.86, 0, 1.60)),              # broad gun mantlet
+        cyl(0.088, 2.60, (1.92, 0, 1.60), rot=(0, math.radians(90), 0)),  # LONG 88mm gun, +X
+        cyl(0.13, 0.24, (0.60, 0, 1.60), rot=(0, math.radians(90), 0), verts=12),  # mantlet collar
+        cyl(0.24, 0.26, (-0.55, 0, 2.10), verts=14),           # commander's cupola (round, on top)
+        box((0.9, 1.6, 0.50), (-0.98, 0, 1.62)),               # rear turret bustle (overhangs)
+    ]
+    return weld("tiger_turret", parts, mat, bevel=0.03)
+
+
 MODELS = [
     ("trooper", build_trooper,
      "Infantry unit — an organic skinned humanoid (skeleton + Skin modifier) in fatigues cradling an "
@@ -1341,6 +1457,19 @@ MODELS = [
     ("turret_fr", build_turret_fr,
      "French Army emplacement — remote weapon station: compact stabilised gun pod on a narrow "
      "slewing mast, boxed thermal sight, slim ported gun, no crew shield (WS-F/WS-C)."),
+    # WW2 cost-vs-power tank silhouettes (D120) — presentation-only per-army WW2 tanks.
+    ("sherman", build_sherman,
+     "US WW2 M4 Sherman hull — a tall, upright, boxy chassis with a steep short glacis and a rounded "
+     "cast front nose bulge (D120)."),
+    ("sherman_turret", build_sherman_turret,
+     "US WW2 M4 Sherman turret — a rounded cast turret drum + short 75mm gun and a round cupola, "
+     "pivoting about the hull ring (D120/P7)."),
+    ("tiger", build_tiger,
+     "German WW2 heavy hull (Tiger/Panther-class) — a long, wide, slab-sided boxy chassis with a "
+     "stepped near-vertical nose over wide tracks (D120)."),
+    ("tiger_turret", build_tiger_turret,
+     "German WW2 heavy turret — a big boxy turret with the long 88mm gun, pivoting about the hull "
+     "ring (D120/P7)."),
 ]
 
 
