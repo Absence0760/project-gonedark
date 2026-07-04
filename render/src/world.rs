@@ -50,21 +50,11 @@ const DETAIL_TEX_BYTES: &[u8] = include_bytes!("../../assets/textures/detail.gra
 
 /// Compute the muzzle-flash intensity in `[0, 1]` for the current `tick`, given the tick the
 /// player last fired on (`None` if they have not fired). Fresh shot → `1.0`, then a linear ramp to
-/// `0.0` over [`MUZZLE_FLASH_TICKS`]; a future-stamped or long-past fire is dark. Pure float math
-/// (presentation boundary), so it is unit-testable without a GPU.
+/// `0.0` over [`MUZZLE_FLASH_TICKS`]; a future-stamped or long-past fire is dark. The shared
+/// [`crate::fade::fade_out_since`] ramp on this module's window. Pure float math (presentation
+/// boundary), so it is unit-testable without a GPU.
 pub fn muzzle_flash_intensity(last_fire_tick: Option<u64>, tick: u64) -> f32 {
-    let Some(fired) = last_fire_tick else {
-        return 0.0;
-    };
-    if tick < fired {
-        return 0.0; // future-stamped fire is not yet live
-    }
-    let age = tick - fired;
-    if age >= MUZZLE_FLASH_TICKS {
-        return 0.0;
-    }
-    let t = age as f32 / MUZZLE_FLASH_TICKS as f32; // 0 fresh → 1 at cutoff
-    1.0 - t
+    crate::fade::fade_out_since(last_fire_tick, tick, MUZZLE_FLASH_TICKS)
 }
 
 /// Build the column-major **view-space** model matrix that places the weapon viewmodel in the
@@ -744,37 +734,15 @@ mod tests {
     const EPS: f32 = 1e-4;
 
     // ---- muzzle flash fade ----
+    // The fade curve itself (None / future-stamp / monotonic decay) is the shared
+    // `crate::fade::fade_out_since`, tested in `fade::tests`; here we only pin that the wrapper
+    // wires [`MUZZLE_FLASH_TICKS`] through as its window.
 
     #[test]
-    fn no_fire_means_no_flash() {
-        assert_eq!(muzzle_flash_intensity(None, 100), 0.0);
-    }
-
-    #[test]
-    fn fresh_fire_is_full_flash() {
-        assert!((muzzle_flash_intensity(Some(50), 50) - 1.0).abs() < EPS);
-    }
-
-    #[test]
-    fn flash_decays_monotonically_to_zero() {
-        let young = muzzle_flash_intensity(Some(0), 1);
-        let mid = muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS / 2);
-        let old = muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS - 1);
-        assert!(young > mid, "flash should decrease with age");
-        assert!(mid > old, "flash should keep decreasing");
-        assert!(old > 0.0, "still lit just before the cutoff");
-    }
-
-    #[test]
-    fn flash_is_dark_after_window() {
-        assert_eq!(muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS), 0.0);
-        assert_eq!(muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS + 100), 0.0);
-    }
-
-    #[test]
-    fn future_fire_is_dark() {
-        // A fire stamped in the future (tick < fired) is not yet live.
-        assert_eq!(muzzle_flash_intensity(Some(100), 50), 0.0);
+    fn muzzle_flash_fades_over_its_own_window() {
+        assert!((muzzle_flash_intensity(Some(50), 50) - 1.0).abs() < EPS, "fresh shot is full");
+        assert!(muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS - 1) > 0.0, "lit just before");
+        assert_eq!(muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS), 0.0, "gone at cutoff");
     }
 
     // ---- world uniform ----

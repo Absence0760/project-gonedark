@@ -54,20 +54,12 @@ const DUST_COLOR: [f32; 3] = [0.66, 0.52, 0.40];
 
 /// The impact burst intensity in `[0, 1]` for the current `tick`, given the tick the avatar's shot
 /// last landed on (`None` → no burst). Fresh strike → `1.0`, linear ramp to `0.0` over
-/// [`IMPACT_TICKS`]; a future-stamped or long-past hit is dark. Pure float math (presentation
-/// boundary), so it is unit-testable without a GPU. The fade twin of `world::muzzle_flash_intensity`.
+/// [`IMPACT_TICKS`]; a future-stamped or long-past hit is dark. The shared
+/// [`crate::fade::fade_out_since`] ramp on this module's window — the fade twin of
+/// `world::muzzle_flash_intensity`. Pure float math (presentation boundary), so it is
+/// unit-testable without a GPU.
 pub fn impact_intensity(last_impact_tick: Option<u64>, tick: u64) -> f32 {
-    let Some(landed) = last_impact_tick else {
-        return 0.0;
-    };
-    if tick < landed {
-        return 0.0; // future-stamped hit is not yet live
-    }
-    let age = tick - landed;
-    if age >= IMPACT_TICKS {
-        return 0.0;
-    }
-    1.0 - age as f32 / IMPACT_TICKS as f32
+    crate::fade::fade_out_since(last_impact_tick, tick, IMPACT_TICKS)
 }
 
 /// One impact-burst element ready to upload. `repr(C)` + `Pod` so it streams into the per-instance
@@ -403,31 +395,15 @@ mod tests {
     const EPS: f32 = 1e-4;
 
     // ---- fade ----
+    // The fade curve itself (None / future-stamp / monotonic decay) is the shared
+    // `crate::fade::fade_out_since`, tested in `fade::tests`; here we only pin that the wrapper
+    // wires [`IMPACT_TICKS`] through as its window.
 
     #[test]
-    fn no_hit_means_no_burst() {
-        assert_eq!(impact_intensity(None, 100), 0.0);
-    }
-
-    #[test]
-    fn fresh_hit_is_full_intensity() {
-        assert!((impact_intensity(Some(50), 50) - 1.0).abs() < EPS);
-    }
-
-    #[test]
-    fn intensity_decays_monotonically_then_vanishes() {
-        let young = impact_intensity(Some(0), 1);
-        let mid = impact_intensity(Some(0), IMPACT_TICKS / 2);
-        let old = impact_intensity(Some(0), IMPACT_TICKS - 1);
-        assert!(young > mid && mid > old, "fades with age");
-        assert!(old > 0.0, "still lit just before the cutoff");
+    fn impact_fades_over_its_own_window() {
+        assert!((impact_intensity(Some(50), 50) - 1.0).abs() < EPS, "fresh hit is full");
+        assert!(impact_intensity(Some(0), IMPACT_TICKS - 1) > 0.0, "lit just before cutoff");
         assert_eq!(impact_intensity(Some(0), IMPACT_TICKS), 0.0, "gone at the cutoff");
-        assert_eq!(impact_intensity(Some(0), IMPACT_TICKS + 100), 0.0);
-    }
-
-    #[test]
-    fn future_stamped_hit_is_dark() {
-        assert_eq!(impact_intensity(Some(100), 50), 0.0);
     }
 
     // ---- builder ----

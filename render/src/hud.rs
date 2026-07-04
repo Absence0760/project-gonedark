@@ -366,16 +366,12 @@ pub fn hitmarker_marker_scaled(
     tick: u64,
     ui_scale: f32,
 ) -> Option<HudMarker> {
-    let fired = last_hit_tick?;
-    if tick < fired {
-        return None; // future-stamped hit is not yet live
-    }
-    let age = tick - fired;
-    if age >= HITMARKER_TICKS {
+    // Linear fade: full-bright on the connecting frame, gone by HITMARKER_TICKS (the shared
+    // `crate::fade` ramp). Not live (never hit / future-stamped / aged out) → no marker at all.
+    let alpha = crate::fade::fade_out_since(last_hit_tick, tick, HITMARKER_TICKS);
+    if alpha <= 0.0 {
         return None;
     }
-    // Linear fade: full-bright on the connecting frame, gone by HITMARKER_TICKS.
-    let alpha = 1.0 - age as f32 / HITMARKER_TICKS as f32;
     let [r, g, b] = HITMARKER_COLOR;
     Some(HudMarker {
         ndc_x: 0.0,

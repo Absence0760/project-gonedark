@@ -47,6 +47,9 @@ pub mod theme;
 /// The full-screen present grade (WS-E). Owns `PresentUniform` + `going_dark_grade`: the cinematic
 /// tonemap applied over the scene as it upscales, plus the embodied "world goes dark" intensification.
 pub mod present;
+/// Shared linear fade-out clock. Owns [`fade::fade_out_since`]: the one tick-stamped
+/// full-bright→dark ramp the muzzle flash, impact burst, and hitmarker all read from.
+pub mod fade;
 /// Fog-of-war application (worker 1). Owns `visible_instances`: the visibility → drawn-instances
 /// filter the unit pass runs each frame.
 mod fog;
