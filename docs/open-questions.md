@@ -722,7 +722,7 @@ surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.m
 
 ---
 
-## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md) data; [D104](decisions.md) fork 2 resolved for desktop; [D105](decisions.md) grows the atlas to four wars; [D106](decisions.md) grows the desktop presentation again (battlefield overview); [D107](decisions.md) makes the atlas ↔ battlefield hop a camera flight; [D110](decisions.md) dresses the overview as an operations map; roster/selection forks open) <a id="q28--conflict-atlas"></a>
+## Q28 — Campaign shell: a world-map / timeline "conflict atlas"? — PARTIALLY RESOLVED ([D98](decisions.md) data; [D104](decisions.md) fork 2 resolved for desktop; [D105](decisions.md) grows the atlas to four wars; [D106](decisions.md) grows the desktop presentation again (battlefield overview); [D107](decisions.md) makes the atlas ↔ battlefield hop a camera flight; [D110](decisions.md) dresses the overview as an operations map; [D121](decisions.md) grows the atlas to five wars and cracks fork 1(c) with the first historical conflict; roster/selection forks open) <a id="q28--conflict-atlas"></a>
 
 > **Structural half resolved in [D98](decisions.md):** the conflict → operation → battle hierarchy
 > now exists as static authored data in `core::campaign` (`Conflict`/`Operation` + node tags +
@@ -747,7 +747,14 @@ surface. Cross-link: [D90](decisions.md), invariant #2, [`roadmap.md`](roadmap.m
 > presentation fork are untouched. **[D107](decisions.md) then turned that hop into a camera
 > flight:** ENTER flies the atlas view down onto the battlefield overview instead of cutting, and
 > escape flies back up — cancellable at any point by the player's own drag/zoom. Still inside the
-> decided fork 2; nothing here touches the open forks or Android's presentation.
+> decided fork 2; nothing here touches the open forks or Android's presentation. **[D121](decisions.md)
+> then grew the atlas itself again, and put the first crack in fork 1(c):** `default_campaign()`
+> grows from four conflicts to **five** — [D120](decisions.md)'s fairness-bounded WW2 cost-vs-power
+> roster (`Army::UsWw2` vs `Army::Germany`) now exists to field, so *Normandy '44* / *Operation
+> Cobra* ships as a 3-node Seize→Hold→Push chain (12→15 nodes total), the atlas's first
+> **historical** conflict. The four earlier conflicts stay modern-fictional; this is a crack in the
+> fork-1(c) lean, not its resolution — per-conflict rosters for *further* historical conflicts and
+> the conflict-selection editorial policy (forks 1(b) and 3) still gate what ships next.
 
 Proposal (2026-07-03): the campaign presents as a **navigable world map with a time axis** — pick a
 year, see that era's conflicts on the globe, zoom into one, and play its battles. Era-agnostic by
@@ -769,6 +776,14 @@ armies; every historical conflict implies its own belligerents.
 | **(a) Stand-in armies** — the shipped roster fights every battle | Cheapest; nothing reopens | Ahistorical (US vs FR at Normandy?); wastes the atlas fantasy |
 | **(b) Per-conflict rosters** — the fairness-bounded roster model ([D68](decisions.md)) becomes a *template* stamped per war | The right fantasy; each conflict is a real content drop | A full roster + balance pass **per conflict** — the big bill |
 | **(c) Constrain the atlas** — ship only conflicts the current roster plausibly covers; grow rosters conflict-by-conflict | Honest *and* affordable; (b) on an incremental schedule | The launch atlas is small; "any war" is a promise kept slowly |
+
+**[D121](decisions.md) put the first crack in (c):** [D120](decisions.md) built a real,
+fairness-bounded WW2 roster (`Army::UsWw2` vs `Army::Germany`, a quality-vs-quantity cost model
+rather than a stand-in), so *Normandy '44* ships fielding it — the atlas's first historical
+conflict, no longer hypothetical. This resolves (c) for Normandy specifically; it does not pick
+(b) as the general per-conflict policy, and the other four conflicts stay modern-fictional under
+(c) — the *next* historical conflict still needs its own roster built and the fork-3 selection
+policy decided.
 
 **2. Presentation.** The Operations hub is functionally complete as a **native** shell
 ([D32](decisions.md): Compose on Android), so a free-navigation 3D globe means either embedding the
@@ -792,19 +807,22 @@ via the [D68](decisions.md) template). Getting the conflict→operation→battle
 campaign *data* early is cheap; the presentation can then grow list → regional map → globe without
 rework.
 
-**Current lean (updated post-D110):** the data grouping (D98) and the desktop presentation
+**Current lean (updated post-D121):** the data grouping (D98) and the desktop presentation
 (D104: the full navigable globe; D106: the per-battle overview it opens into; D107: the
 camera-flight transition between them; D110: the overview dressed as an operations map —
 ordered site chips, padlocked locked ground, a progression path, clamped look-around) are
-**decided and shipped**. What remains: shipped
-conflicts stay **modern** ones the shipped US/FR roster plausibly covers (fork 1(c) — four such
-wars ship as of [D105](decisions.md)); **Android's presentation** keeps the grouped list until
+**decided and shipped**. The atlas is now **five conflicts / 15 nodes**: four stay **modern**
+ones the shipped US/FR roster plausibly covers (fork 1(c), as of [D105](decisions.md)), and the
+fifth — [D121](decisions.md)'s *Normandy '44* — is the atlas's first **historical** conflict,
+fielding [D120](decisions.md)'s already-built, fairness-bounded WW2 roster. That's the first
+crack in fork 1(c), not its resolution: **Android's presentation** keeps the grouped list until
 its own call (an engine surface in the Compose shell vs. a native 2.5D regional map — the phone
-half of the old fork 2); per-conflict rosters and the conflict-selection policy must be decided
-**before the first historical conflict ships**.
+half of the old fork 2); per-conflict rosters for *further* historical conflicts and the
+conflict-selection policy still gate what ships next.
 Cross-link: [D58](decisions.md)/[D59](decisions.md), [D68](decisions.md)/[D71](decisions.md),
 [D32](decisions.md), [D76](decisions.md), [D80](decisions.md), [D106](decisions.md),
-[D107](decisions.md), [D110](decisions.md), [Q16](#q16--narrative-depth).
+[D107](decisions.md), [D110](decisions.md), [D120](decisions.md), [D121](decisions.md),
+[Q16](#q16--narrative-depth).
 
 ---
 

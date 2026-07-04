@@ -374,9 +374,10 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
 > mission seeders — *Seize* (mission 1), the *Hold* archetype's *Hold the Line* (mission 2,
 > `core::scenario::seed_hold_mission`), and the *Push* archetype's *Break the Line* (mission 3,
 > `core::scenario::seed_push_mission`) — and [D105](decisions.md) **reuses all three under four
-> conflicts**: the shipped campaign graph is now **12 nodes**, one self-contained *Seize* →
-> *Hold* → *Push* chain per conflict (each node unlocks once the one before is cleared, gating
-> stays within a war), with the Android `CampaignModel` mirror moved in lock-step (see WS-B).
+> conflicts**, later joined by [D121](decisions.md)'s fifth: the shipped campaign graph is now
+> **15 nodes**, one self-contained *Seize* → *Hold* → *Push* chain per conflict (each node
+> unlocks once the one before is cleared, gating stays within a war), with the Android
+> `CampaignModel` mirror moved in lock-step (see WS-B).
 
 - [x] **Mission/objective core (WS-A)** — host-side `Objective`/`ObjectiveSet` off the `SimEvent`
   stream (generalizes [D38](decisions.md)'s `evaluate_outcome`); zero checksum surface; ships with
@@ -393,14 +394,16 @@ serializes a content-hash map id, so a mission's terrain travels in its data fil
   `core::scenario::seed_push_mission`, `ObjectiveSet::mission_push`; directly playable via
   `Scene::Mission3`/`--scene push`; **placed as the third node in every conflict's chain**,
   gated behind that conflict's *Hold* — [D105](decisions.md) reuses this seeder under all four
-  operations, incl. the original *Operation First Light*)
+  modern operations, incl. the original *Operation First Light*, and [D121](decisions.md) reuses
+  it a fifth time for *Normandy '44*'s *Operation Cobra*)
 - [~] **Operations hub (WS-B)** — node-graph meta-progression, unlock state, mission-select +
   briefing (native shell, [D32](decisions.md)). **Functionally complete on both platforms:** the
   host model `core/src/campaign.rs` + persistence, the `MissionId→mission` registry
   (`engine/src/mission_registry.rs`, holding *Seize*, *Hold*, and *Push*), the shipped
-  **12-node graph** (`default_campaign()`) — four conflicts, each a self-contained *Seize* →
+  **15-node graph** (`default_campaign()`) — five conflicts, each a self-contained *Seize* →
   *Hold* → *Push* chain ([D105](decisions.md): *The Channel Crisis*, *The Meridian Crisis*,
-  *The Gotland Winter*, *The Santo Crisis*) — with the node→scene launch mapping
+  *The Gotland Winter*, *The Santo Crisis*; [D121](decisions.md): *Normandy '44*, the atlas's
+  first historical conflict) — with the node→scene launch mapping
   (`Scene::for_mission`) wired on desktop + Android, the egui mission-select/briefing hub (reaches
   every node, now **grouped by conflict/operation** with D98 atlas rollup headers and — on
   desktop — fronted by the **navigable conflict atlas** (D103 → D104: the earth, a year scrubber,

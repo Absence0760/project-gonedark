@@ -12,8 +12,9 @@ agreement, `core::persist`/`reconnect`, and the `spatial` index have landed. A p
 win/lose, a scripted enemy commander), and Phase 4 app-shell work is in flight (boot/title
 D35/D36, server telemetry/consent/live-ops scaffolding, in-session + post-match shell); embodied
 FPS controls, 3D greybox assets, and avatar-visible unit rendering run through D52. The PvE
-campaign now ships a **four-conflict atlas** (D105: 12 battles across four fictional modern
-wars) fronted on desktop by a navigable globe → per-battle battlefield overview → camera flight
+campaign now ships a **five-conflict, 15-battle atlas** (D105: 12 battles across four fictional
+modern wars; D121: a fifth conflict, Normandy '44 — 3 more battles, the atlas's first historical
+one) fronted on desktop by a navigable globe → per-battle battlefield overview → camera flight
 (D104/D106/D107); Android keeps the grouped-list hub (the recorded Q28 fork). The overview is
 now a full operations map (D110), and the skirmish picker carries a MapSpec-derived map card on
 both shells (D109).** The custom

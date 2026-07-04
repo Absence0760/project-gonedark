@@ -25,12 +25,14 @@
 > *Seize*, *Hold the Line* (`core::scenario::seed_hold_mission`, `ObjectiveSet::mission_hold`), and
 > *Break the Line* (`core::scenario::seed_push_mission`, `ObjectiveSet::mission_push`) — tests
 > green dev+release). **All three are placed as nodes** in `default_campaign()`, and
-> [D105](../decisions.md) reuses them under **four** conflicts: a **12-node graph**, one
+> [D105](../decisions.md) reuses them under **four** conflicts, later joined by
+> [D121](../decisions.md)'s fifth: a **15-node graph**, one
 > self-contained **three-node chain** *Seize* → *Hold* → *Push* per conflict (each `.requires`
 > the one before, so it unlocks the moment its predecessor is cleared; every conflict's root is
 > open from the start), grouped under the D98 conflict atlas (*The Channel Crisis* / *Operation
 > First Light*, *The Meridian Crisis* / *Operation Dry Season*, *The Gotland Winter* / *Operation
-> Frostline*, *The Santo Crisis* / *Operation Trade Wind*), with the node→scene launch mapping
+> Frostline*, *The Santo Crisis* / *Operation Trade Wind*, and [D121](../decisions.md)'s *Normandy
+> '44* / *Operation Cobra*, the atlas's first historical conflict), with the node→scene launch mapping
 > (`Scene::for_mission`: Seize → `Mission1`, Hold → `Mission2`, Push → `Mission3`) wired into the
 > desktop shell and the Android backend, and the hand-maintained Android `CampaignModel` mirror
 > moved in lock-step. The egui
@@ -137,28 +139,31 @@ the `determinism.yml` cross-arch matrix stays green (the objective layer is host
 checksum surface — confirm the sim it observes is unchanged). This is the WS that most needs
 [`/check`](../../.claude/commands) + the test-gap-checker before commit.
 
-### WS-B — Operations hub — **FUNCTIONALLY COMPLETE on both platforms (host model + 12-node atlas-grouped graph + node→scene launch + native Compose mission-select/briefing chrome incl. gated-node launch all landed; more content remains — [D32](../decisions.md)'s native-shell approach is settled, see status block above)**
+### WS-B — Operations hub — **FUNCTIONALLY COMPLETE on both platforms (host model + 15-node atlas-grouped graph + node→scene launch + native Compose mission-select/briefing chrome incl. gated-node launch all landed; more content remains — [D32](../decisions.md)'s native-shell approach is settled, see status block above)**
 
 - Node-graph meta-progression: a `Campaign`/`OperationNode` model (host/shell-side), unlock state
   (clearing a node opens successors), replay-at-higher-difficulty. **The shipped graph is now
-  12 nodes** (`engine::mission_registry::default_campaign()`) — four conflicts, each its own
+  15 nodes** (`engine::mission_registry::default_campaign()`) — five conflicts, each its own
   self-contained **three-node chain** *Seize* → *Hold* → *Push* (each gated behind the one
   before it *within its conflict*; every conflict's root is open from the start —
-  [D105](../decisions.md)) — resolved to runnable missions by `default_registry()` and launched into the right
+  [D105](../decisions.md), [D121](../decisions.md)) — resolved to runnable missions by `default_registry()` and launched into the right
   scene by `Scene::for_mission` (Seize → `Mission1`, Hold → `Mission2`, Push → `Mission3`) — wired on both the desktop
   shell (`app/src/main.rs`) and the Android backend (`pal-android/src/android_backend.rs`), with the
   Android `CampaignModel` Kotlin mirror kept in lock-step. **The graph now also carries the Q28
   conflict-atlas grouping** ([D98](../decisions.md)): `Conflict`/`Operation` structs + per-node tags
   and derived `GroupProgress` rollups in `core::campaign`, with the shipped chains grouped under
-  **four** conflicts ([D105](../decisions.md): *The Channel Crisis* / *Operation First Light*,
-  *The Meridian Crisis* / *Operation Dry Season*, *The Gotland Winter* / *Operation Frostline*,
-  *The Santo Crisis* / *Operation Trade Wind*) — pure static
-  metadata (progress blob byte-identical *per node set*; growing 3 → 12 nodes retires pre-D105
-  saves by design); the atlas *presentation* has since shipped on desktop (D103/D104/D106/D107/
+  **five** conflicts (four modern, [D105](../decisions.md): *The Channel Crisis* / *Operation First
+  Light*, *The Meridian Crisis* / *Operation Dry Season*, *The Gotland Winter* / *Operation
+  Frostline*, *The Santo Crisis* / *Operation Trade Wind*; plus [D121](../decisions.md)'s
+  *Normandy '44* / *Operation Cobra*, the atlas's first historical conflict) — pure static
+  metadata (progress blob byte-identical *per node set*; growing 3 → 12 nodes retired pre-D105
+  saves by design); the atlas *presentation* has since
+  shipped on desktop (D103/D104/D106/D107/
   D110 — navigable globe → per-battle overview → camera flight → operations-map dressing);
   Android's presentation and the
   roster/conflict-selection forks stay open in
-  [Q28](../open-questions.md#q28--conflict-atlas).
+  [Q28](../open-questions.md#q28--conflict-atlas) (D121 cracked fork 1(c) open for Normandy
+  specifically; the fork itself stands).
 - Mission-select + briefing surface in the **native shell** ([D32](../decisions.md)) reached through
   the `core::shell` seam ([D34](../decisions.md)); progress persisted **outside** the checksum fold as
   **a separate host file** (campaign metadata, not sim state) — the host-side content model
@@ -172,12 +177,12 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
   [`compose-shell-parity.md`](compose-shell-parity.md) §12.)*
 
 **Tests:** unlock-graph transitions (both the synthetic chain and the shipped `default_campaign()`
-12-node graph — each gated node locked until its predecessor clears, then available/replayable);
+15-node graph — each gated node locked until its predecessor clears, then available/replayable);
 `covers` + `resolve_node` on the gated nodes resolve to `MISSION_HOLD`/`MISSION_PUSH`; the
 `MissionId→Scene` mapping (`Scene::for_mission`); the D98 atlas grouping + rollups + blob-parity
-across all four conflicts; persistence round-trip of campaign progress over the 12-node topology
+across all five conflicts; persistence round-trip of campaign progress over the 15-node topology
 (incl. the D105 cleanly-rejected pre-D105 3-node blob). Kotlin: the `CampaignModel`
-mirror + progress tests assert the same 12-node/four-conflict shape, the atlas mirror, and (via
+mirror + progress tests assert the same 15-node/five-conflict shape, the atlas mirror, and (via
 `MissionLaunchTest`) that every playable node resolves to its own scene/index on the launch wire.
 
 ### WS-C — Gunsmith loadout — **DONE on both platforms (sim model + UI seam + match-start application; egui gunsmith screen on desktop, Compose `GunsmithScreen.kt` on Android per [`compose-shell-parity.md`](compose-shell-parity.md) Tier 2)**

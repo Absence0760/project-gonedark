@@ -154,8 +154,9 @@ the JNI reader.
 > shown/carried but not applied; **both now are**. **Persistence:** Settings/Profile/loadout now
 > survive restarts via `ShellPrefs` (SharedPreferences) — since extended to the army pick + the
 > campaign cleared set (`ShellPrefsCodec.KEY_ARMY`/`KEY_CAMPAIGN`), and desktop has since landed its
-> own twin (§12 item 2). **Update:** the shipped campaign is now a **12-node graph** — four
-> conflicts, each a self-contained *Seize* → *Hold* → *Push* chain ([D105](../decisions.md)) —
+> own twin (§12 item 2). **Update:** the shipped campaign is now a **15-node graph** — five
+> conflicts, each a self-contained *Seize* → *Hold* → *Push* chain ([D105](../decisions.md);
+> [D121](../decisions.md) adds the fifth, *Normandy '44*) —
 > on both the shared model (`engine::default_campaign()`) and the Android
 > `CampaignModel` mirror, with the node→scene launch mapping (`Scene::for_mission`) wired through
 > the backend, and the Compose mission-select tiles now render **and launch every playable node**
@@ -296,8 +297,9 @@ staging door, the D98 atlas-grouped hub) — all three closed with same-day Comp
 1. **Campaign progress model — ✅ CLOSED (2026-07-03).** `CampaignModel.kt` carries the full
    `CampaignProgress`/`NodeProgress` (Locked/Available/Cleared) derivation, the clear gate,
    best-tier tracking, and the persistence codec — the JVM-testable twin of desktop's `Campaign`.
-   **The shipped campaign is a 12-node graph** — four conflicts, each a self-contained *Seize* →
-   *Hold* → *Push* chain ([D105](../decisions.md)) — via `engine::default_campaign()`,
+   **The shipped campaign is a 15-node graph** — five conflicts, each a self-contained *Seize* →
+   *Hold* → *Push* chain ([D105](../decisions.md); [D121](../decisions.md) adds the fifth,
+   *Normandy '44*) — via `engine::default_campaign()`,
    and `campaignNodes` mirrors it in lock-step (each conflict's Hold `prerequisites` the Seize
    before it, gating within a war only); the node→scene
    launch mapping (`Scene::for_mission`) is wired on both hosts, and the
