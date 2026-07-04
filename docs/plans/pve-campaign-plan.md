@@ -35,8 +35,10 @@
 > desktop shell and the Android backend, and the hand-maintained Android `CampaignModel` mirror
 > moved in lock-step. The egui
 > mission-select/briefing hub reaches every node — now **grouped by conflict/operation** with D98
-> rollup headers (the first, list-shaped increment of the Q28 presentation; the map/globe forks
-> stay open) — and the **native (Compose) mission-select/briefing chrome renders and launches every
+> rollup headers, since grown on desktop into the navigable conflict atlas + per-battle
+> battlefield overview with a camera-flight hop between them (D103/D104/D106/D107; Android stays
+> the grouped list, the recorded Q28 fork) — and the **native (Compose) mission-select/briefing
+> chrome renders and launches every
 > playable node** (`MissionSelectScreen.kt`/`BriefingScreen.kt` + the pure `missionLaunchConfig`
 > seam; gated-node launch wire closed 2026-07-03, [`compose-shell-parity.md`](compose-shell-parity.md)
 > §12). **What remains for WS-B is more mission content (data, not engine).
@@ -151,14 +153,17 @@ checksum surface — confirm the sim it observes is unchanged). This is the WS t
   *The Meridian Crisis* / *Operation Dry Season*, *The Gotland Winter* / *Operation Frostline*,
   *The Santo Crisis* / *Operation Trade Wind*) — pure static
   metadata (progress blob byte-identical *per node set*; growing 3 → 12 nodes retires pre-D105
-  saves by design); the atlas *presentation* stays open in
+  saves by design); the atlas *presentation* has since shipped on desktop (D103/D104/D106/D107 —
+  navigable globe → per-battle overview → camera flight); Android's presentation and the
+  roster/conflict-selection forks stay open in
   [Q28](../open-questions.md#q28--conflict-atlas).
 - Mission-select + briefing surface in the **native shell** ([D32](../decisions.md)) reached through
   the `core::shell` seam ([D34](../decisions.md)); progress persisted **outside** the checksum fold as
   **a separate host file** (campaign metadata, not sim state) — the host-side content model
   [D76](../decisions.md) locks in. *(The **egui** hub reaches every node end-to-end — grouped by
-  conflict/operation with D98 rollup headers, the first list-shaped increment of the Q28
-  presentation — and the native Android **Compose** chrome — `MissionSelectScreen.kt`/
+  conflict/operation with D98 rollup headers, since grown into the desktop navigable atlas +
+  battlefield overview + camera flight (D103/D104/D106/D107) — and the native Android
+  **Compose** chrome — `MissionSelectScreen.kt`/
   `BriefingScreen.kt` + the pure `missionLaunchConfig` seam — renders **and launches every playable
   node**; the gated-node launch wire closed 2026-07-03, see
   [`compose-shell-parity.md`](compose-shell-parity.md) §12.)*

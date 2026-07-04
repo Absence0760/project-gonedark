@@ -4835,6 +4835,14 @@ discipline). Every seam is unit-tested (endpoints exact, shortest-arc, monotonic
 accumulated dts, drag/zoom cancel, scrub/select don't); the flight itself is the only new
 machinery — no easing framework, no tween library.
 
+**One D106 constant tightened in this same increment** *(recorded here as the change of
+record — D106's entry states the value it shipped with)*: the globe camera's near plane moved
+`0.05 → 0.02`. Writing this increment's review-gate regression test (the sphere must clear the
+near plane across the whole legal zoom range) caught that `0.05` still clipped a small hole
+dead-center at `ZOOM_MAX = 2.6` (clearance there is ~0.030); `0.02` restores a ~1.5× margin and
+the new `the_near_plane_never_cuts_the_globe_at_legal_zoom` test pins it so `EYE`/`NEAR`/
+`GLOBE_*`/`ZOOM_MAX` can never again be re-tuned independently into a silent blank.
+
 **Cross-link:** [D106](#d106--entering-a-war-lands-on-its-battlefield-the-hub-becomes-a-zoomed-overview-on-the-globe-one-pin-per-battle)
 (the two views this connects), [D104](#d104--the-campaigns-front-door-is-the-navigable-conflict-atlas-drag-the-earth-scrub-the-years-pick-a-war-closes-q28-fork-2-on-desktop)
 (the navigable atlas + its input rules), [Q28](open-questions.md#q28--conflict-atlas) (Android

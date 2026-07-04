@@ -406,14 +406,16 @@ staging door, the D98 atlas-grouped hub) — all three closed with same-day Comp
    `HubSectionsTest`, incl. label-formatting parity with the desktop output), consumed by the
    grouped `MissionSelectScreen.kt`. Presentation only — no wire/progress-model change (the
    item-1 launch seam already covers every node).
-9. **Atlas globe (backdrop → fully navigable → per-battle overview) — deliberate
-   desktop-only presentation (2026-07-03, [D103](../decisions.md)/[D104](../decisions.md)/
-   [D106](../decisions.md)).** Desktop's campaign front door is now the **navigable conflict
-   atlas** (`shell::atlas` over `render::globe_backdrop`: drag/zoom, a year scrubber,
-   pin-click → the conflict's filtered hub); picking a war now lands on a **battlefield
-   overview** instead of a settled backdrop — the globe zooms onto that conflict's ground with
-   one progress-toned pin per authored battle, and the briefing keeps that same view with the
-   briefed node's pin focused ([D106](../decisions.md)). Android's hub **deliberately keeps the
+9. **Atlas globe (backdrop → fully navigable → per-battle overview → camera flight) —
+   deliberate desktop-only presentation (2026-07-03, [D103](../decisions.md)/
+   [D104](../decisions.md)/[D106](../decisions.md)/[D107](../decisions.md)).** Desktop's
+   campaign front door is now the **navigable conflict atlas** (`shell::atlas` over
+   `render::globe_backdrop`: drag/zoom, a year scrubber, pin-click → the conflict's filtered
+   hub); picking a war now lands on a **battlefield overview** instead of a settled backdrop —
+   the globe zooms onto that conflict's ground with one progress-toned pin per authored battle,
+   and the briefing keeps that same view with the briefed node's pin focused
+   ([D106](../decisions.md)). The atlas ↔ battlefield hop is a cancellable **camera flight**,
+   not a cut ([D107](../decisions.md)). Android's hub **deliberately keeps the
    grouped list** — the phone-side cost is exactly the D32 strain
    [Q28](../open-questions.md#q28--conflict-atlas) named (no engine surface in the Compose
    shell), plus the fiddly-touch-navigation half D104 left deferred. Like item 4, this is a
