@@ -25,7 +25,9 @@
 
 use gonedark_core::combat;
 use gonedark_core::components::{Army, EntityKind, Faction, Stance, UnitKind, Vec2};
-use gonedark_core::economy::{self, unit_cost, unit_cost_for, Resources, HEAVY_COST, RIFLEMAN_COST};
+use gonedark_core::economy::{
+    self, unit_armor_for, unit_cost, unit_cost_for, Resources, HEAVY_COST, RIFLEMAN_COST,
+};
 use gonedark_core::ecs::World;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::scenario::{v, ScenarioBuilder};
@@ -362,12 +364,16 @@ pub fn cross_faction_equal_cost(
 /// `budget / unit_cost_for(elite_army, Tank)` elite tanks (Enemy, fewer), `sep` apart, run to a wipe
 /// (8000-tick cap). Returns `(end_tick, elite_survivors, cheap_survivors)`.
 ///
-/// Fairness is defined at EQUAL BUDGET (not equal count): the fewer, tougher elite tanks must trade
-/// ~evenly with the cheaper mass. The tanks are spawned via [`spawn_army`], which sets HP + weapon
-/// from `unit_stats_for` but NOT armour — so the WW2 tanks are effectively unarmoured here, and
-/// penetration is a no-op against an unarmoured target (`facing_penetration_multiplier` ⇒ 1.0). That
-/// is intentional (D120): the equal-budget balance is decided by COST (→ count) and HP against the
-/// SHARED gun, exactly the Lanchester square-law axis the numbers were tuned on. All integer/`Fixed`.
+/// Fairness is defined at EQUAL BUDGET (not equal count): the fewer, tougher, THICK-ARMOURED elite
+/// tanks must trade ~evenly with the cheaper mass. `spawn_army` sets HP + weapon from `unit_stats_for`
+/// but NOT armour, so D122 layers on each side's `unit_armor_for` plate AFTER spawning AND turns each
+/// hull to present its FRONT to the enemy line (Player/cheap at x=0 faces +X; Enemy/elite at +sep faces
+/// −X). Only under that head-on orientation does the Tiger's 60-front actually BITE: a Sherman shell
+/// bounces off it (`2·18 = 36 < 60`), so the swarm can hurt the Tiger only by FLANKING (the German
+/// side 28 falls to `2·18 = 36 ≥ 28`) or out-massing. The equal-budget trade is therefore a
+/// **flanking race** — decided by count (→ cost), armour facing, and geometry, not the D120
+/// symmetric-gun grind. Turrets stay at rest and auto-slew to targets in combat (as `spawn_produced`
+/// does), so only the DEFENSIVE facet changes. All integer/`Fixed` (invariant #1).
 pub fn equal_budget_quality_vs_quantity(
     budget: i64,
     sep: i32,
@@ -382,6 +388,31 @@ pub fn equal_budget_quality_vs_quantity(
     }
     for k in 0..n_elite {
         spawn_army(&mut sim, sep, k, Faction::Enemy, elite_army, UnitKind::Tank);
+    }
+    // D122 — layer on the per-army ARMOUR and orient each hull to present its FRONT to the enemy line.
+    // `spawn_army` sets HP + weapon from `unit_stats_for` but NOT armour (it is the modern-parity helper,
+    // where the tank is unarmoured); the WW2 differential is measured only if we add the plate here. We
+    // also turn each hull to face the enemy — the realistic head-on engagement, and the only orientation
+    // under which the German frontal plate BITES (a Sherman shell hitting the Tiger's front bounces; the
+    // mass must out-flank/out-mass to land side/rear shots). Player (cheap) at x=0 faces +X toward the
+    // enemy; Enemy (elite) at +sep faces −X toward the player. The turret is left at rest and auto-slews
+    // to the target in combat (exactly as `spawn_produced` does), so only the DEFENSIVE facet changes.
+    // Armour + hull_heading both fold into the checksum via their components (invariant #7).
+    for i in 0..sim.world.capacity() {
+        if !sim.world.is_index_alive(i) || sim.world.kind[i] != EntityKind::Unit {
+            continue;
+        }
+        match sim.world.faction[i] {
+            Faction::Player => {
+                sim.world.armor[i] = unit_armor_for(cheap_army, UnitKind::Tank);
+                sim.world.hull_heading[i] = Angle(0);
+            }
+            Faction::Enemy => {
+                sim.world.armor[i] = unit_armor_for(elite_army, UnitKind::Tank);
+                sim.world.hull_heading[i] = Angle(ANGLE_FULL / 2);
+            }
+            _ => {}
+        }
     }
     for t in 1..=8000u64 {
         sim.step(&[]);
@@ -597,14 +628,18 @@ fn summary() {
     let fl = tank_duel(9, Angle(0), Angle(0));
     eprintln!("tank duel sep9 front/front: {ff:?} (stalemate: pen 18 bounces the 40-front)");
     eprintln!("tank duel sep9 flank(rear): {fl:?} (flank pens the 8-rear — angle the hull / flank to kill)");
-    // WW2 quality-vs-quantity (D120): the SECOND, orthogonal fairness axis. Unlike the modern
-    // swap-invariant mirror above, these armies are DELIBERATELY not power-neutral — the elite
-    // Germany tank (660 HP / pen 20 / 480 cost) is individually stronger, paid for by cost so an
-    // equal BUDGET fields fewer of them vs the cheap UsWw2 Sherman mass (150 HP / pen 18 / 240 cost).
-    // Fairness = a close trade at equal budget where the winner flips between doctrines by budget
-    // (pinned by `ww2_quality_vs_quantity_is_balanced_at_equal_budget`), never a one-sided sweep.
-    eprintln!("# WW2 quality-vs-quantity (D120): equal-BUDGET Germany elite vs UsWw2 Sherman mass");
-    for &(budget, sep) in &[(960i64, 5i32), (1440, 5), (1920, 5), (2880, 3)] {
+    // WW2 quality-vs-quantity (D120 + the D122 ARMOUR differential): the SECOND, orthogonal fairness
+    // axis. Unlike the modern swap-invariant mirror above, these armies are DELIBERATELY not
+    // power-neutral — the elite Germany Tiger (450 HP / pen 20 / 960 cost / THICK 60-front) is
+    // individually far stronger, paid for by a 4:1 cost so an equal BUDGET fields a QUARTER as many vs
+    // the cheap UsWw2 Sherman mass (150 HP / pen 18 / 240 cost / thin 28-front). With armour biting, a
+    // Sherman shell BOUNCES off the Tiger's 60-front — the swarm can only hurt it by FLANKING (side 28)
+    // or swarming. Fairness = a flanking race that FLIPS on two axes (pinned by
+    // `ww2_quality_vs_quantity_is_balanced_at_equal_budget`): by BUDGET (few Tigers win a small fight; a
+    // big Sherman swarm gets enough flankers to win) and by GEOMETRY (close range → the swarm flanks and
+    // wins; long range → the Tiger's frontal wall holds and the elite wins). Never a one-sided sweep.
+    eprintln!("# WW2 quality-vs-quantity (D122): equal-BUDGET Germany Tiger vs UsWw2 Sherman mass (armour biting)");
+    for &(budget, sep) in &[(1920i64, 3i32), (2880, 3), (2880, 5)] {
         let (t, elite_surv, cheap_surv) =
             equal_budget_quality_vs_quantity(budget, sep, Army::Germany, Army::UsWw2);
         let n_elite = budget / unit_cost_for(Army::Germany, UnitKind::Tank);
@@ -613,7 +648,7 @@ fn summary() {
             "budget {budget} sep{sep}: Germany {n_elite} vs Sherman {n_cheap} -> ended {t} ({:.1}s), \
              germany survivors {elite_surv}, sherman survivors {cheap_surv} [{}]",
             secs(t),
-            if elite_surv > 0 { "elite edges it" } else { "mass edges it" },
+            if elite_surv > 0 { "Tiger holds" } else { "swarm flanks it" },
         );
     }
 }
@@ -622,73 +657,97 @@ fn summary() {
 mod tests {
     use super::*;
 
-    /// **MEASURED WW2 cost-vs-power fairness (D120).** The showcase of the quantity-vs-quality fork:
-    /// at an EQUAL BUDGET, the fewer, tougher German Panther/Tiger tanks trade ~evenly with the cheaper
-    /// Sherman mass. "Balanced" is defined concretely: the match RESOLVES (someone is wiped, never the
-    /// 8000-tick cap), and the WINNER keeps only a SMALL margin (≤2 of its stack) — neither side
-    /// free-wins. The load-bearing proof that the balance is genuine (not a one-sided sweep the cheap
-    /// side always takes): the winner FLIPS between the elite and the mass with budget/geometry — the
-    /// Germans win the small 4-vs-2 budget, the Shermans win the larger 6-vs-3. Exact ticks/survivors
-    /// pinned (deterministic dev==release) so a stray edit to the WW2 cost/HP block trips CI.
-    ///
-    /// The trade is decided by COST (→ count) and HP against the SHARED gun — the tanks are unarmoured
-    /// here (`spawn_army` sets no armour), so the German gun's higher penetration is a no-op (D120): it
-    /// is narrative/armoured-combat power, not a lever on this equal-budget metric.
+    /// **MEASURED WW2 cost-vs-power + ARMOUR fairness (D120 + D122).** The showcase of the
+    /// quantity-vs-quality fork, now with the per-army armour differential biting: at an EQUAL BUDGET,
+    /// the fewer, tougher, THICK-front German Tigers trade ~evenly with the cheaper Sherman mass — but a
+    /// Sherman shell BOUNCES off the Tiger's 60-front, so the swarm can hurt it only by FLANKING or
+    /// out-massing. "Balanced" (D122, superseding D120's symmetric-gun ≤2-margin definition) means: the
+    /// match RESOLVES (someone is wiped, never the 8000-tick cap), NEITHER side sweeps, and the winner
+    /// FLIPS on TWO axes — by BUDGET (few Tigers win a small fight; a big Sherman swarm gets enough
+    /// flankers to win) and by GEOMETRY (close range → the swarm flanks and wins; long range → the
+    /// Tiger's frontal wall holds). Because the front is a HARD bounce, a Tiger that wins takes
+    /// near-zero damage and keeps its whole stack, so the survivor margin is deliberately lopsided —
+    /// "close" here means the flip turns on a small budget/range change, not survivor parity. Exact
+    /// ticks/survivors pinned (deterministic dev==release) so a stray edit to the WW2 cost/HP/armour
+    /// block trips CI.
     #[test]
     fn ww2_quality_vs_quantity_is_balanced_at_equal_budget() {
-        // budget 1440: 3 Panthers (480 ea) vs 6 Shermans (240 ea) — the MASS edges it, keeping 1 tank.
-        let mid = equal_budget_quality_vs_quantity(1440, 5, Army::Germany, Army::UsWw2);
-        assert_eq!(mid, (305, 0, 1), "budget 1440 sep5: Sherman mass wins by a single tank");
-        // budget 960: 2 Panthers vs 4 Shermans — the ELITE edges it, keeping 1 tank. The winner FLIPS,
-        // so neither doctrine free-wins — the fork is genuinely balanced, not a quantity landslide.
-        let small = equal_budget_quality_vs_quantity(960, 5, Army::Germany, Army::UsWw2);
-        assert_eq!(small, (229, 1, 0), "budget 960 sep5: fewer Panthers win by a single tank");
+        // BUDGET FLIP at close range (sep3). Return is (end_tick, germany_survivors, sherman_survivors).
+        // budget 1920: 2 Tigers (960 ea) vs 8 Shermans (240 ea) — too few flankers, the TIGERS hold.
+        let small = equal_budget_quality_vs_quantity(1920, 3, Army::Germany, Army::UsWw2);
+        assert_eq!(small, (995, 2, 0), "budget 1920 sep3: the elite Tigers win the small fight");
+        // budget 2880: 3 Tigers vs 12 Shermans — the swarm now has enough flankers, the MASS wins.
+        let big = equal_budget_quality_vs_quantity(2880, 3, Army::Germany, Army::UsWw2);
+        assert_eq!(big, (922, 0, 3), "budget 2880 sep3: the Sherman swarm out-flanks the Tigers");
+        // GEOMETRY FLIP at the SAME budget (2880): pull the range out to sep5 and the Tiger's frontal
+        // wall holds — the swarm can't close to flank, so the ELITE wins the identical budget.
+        let ranged = equal_budget_quality_vs_quantity(2880, 5, Army::Germany, Army::UsWw2);
+        assert_eq!(ranged, (923, 3, 0), "budget 2880 sep5: at range the Tiger wall holds, the elite wins");
 
-        // The DEFINITION of balanced, asserted structurally (not just the pins) at a few real budgets:
-        // every trade resolves inside the cap, exactly one side is wiped, and the winner's surviving
-        // stack is ≤2 — a razor-thin trade, never a free win.
-        for &(budget, sep) in &[(960i64, 5i32), (1440, 5), (1440, 9), (2400, 5)] {
+        // The DEFINITION of balanced, asserted structurally at real (non-capping) budgets/geometries:
+        // every trade RESOLVES (a wipe inside the cap) and exactly one side is wiped — and, across the
+        // set, the winner FLIPS (neither doctrine sweeps).
+        let mut germany_wins = 0;
+        let mut sherman_wins = 0;
+        for &(budget, sep) in &[(1440i64, 3i32), (1920, 3), (1920, 5), (2880, 3), (2880, 5)] {
             let (t, elite, cheap) = equal_budget_quality_vs_quantity(budget, sep, Army::Germany, Army::UsWw2);
             assert!(t < 8000, "budget {budget} sep{sep}: the trade must RESOLVE (a wipe), not hit the cap");
             assert!(
                 (elite == 0) ^ (cheap == 0),
-                "budget {budget} sep{sep}: exactly one side must be wiped (elite {elite}, cheap {cheap})",
+                "budget {budget} sep{sep}: exactly one side must be wiped (germany {elite}, sherman {cheap})",
             );
-            let winner = elite.max(cheap);
-            assert!(
-                (1..=2).contains(&winner),
-                "budget {budget} sep{sep}: the winner must keep only a SMALL margin (≤2), got {winner}",
-            );
+            if elite > 0 {
+                germany_wins += 1;
+            } else {
+                sherman_wins += 1;
+            }
         }
+        assert!(germany_wins > 0, "the elite Tiger must win at least one budget/geometry (no swarm sweep)");
+        assert!(sherman_wins > 0, "the Sherman mass must win at least one budget/geometry (no elite sweep)");
     }
 
-    /// The cost + HP block the fairness above rests on (D120): the Sherman is CHEAPER + weaker, the
-    /// Panther PRICIER + tougher, and the 2:1 cost ratio is what makes an equal budget field 2:1 counts.
+    /// The cost + HP + ARMOUR block the fairness above rests on (D120 + D122): the Sherman is CHEAPER,
+    /// weaker, and THIN-fronted; the Tiger PRICIER, and THICK-fronted (its armour, not raw HP, carries
+    /// its survivability). The 4:1 cost ratio is what makes an equal budget field 4:1 counts.
     #[test]
-    fn ww2_cost_and_hp_tilt_is_wired() {
-        // Cost tilt: Sherman cheaper than the shared 360, Panther pricier; 2:1 to each other.
+    fn ww2_cost_hp_and_armour_tilt_is_wired() {
+        // Cost tilt: Sherman cheaper than the shared 360, Tiger pricier; 4:1 to each other (D122 re-tune).
         assert_eq!(unit_cost_for(Army::UsWw2, UnitKind::Tank), 240, "Sherman is the cheap tank");
-        assert_eq!(unit_cost_for(Army::Germany, UnitKind::Tank), 480, "Panther is the pricey tank");
+        assert_eq!(unit_cost_for(Army::Germany, UnitKind::Tank), 960, "Tiger is the pricey tank");
         assert!(unit_cost_for(Army::UsWw2, UnitKind::Tank) < unit_cost(UnitKind::Tank));
         assert!(unit_cost_for(Army::Germany, UnitKind::Tank) > unit_cost(UnitKind::Tank));
         assert_eq!(
             unit_cost_for(Army::Germany, UnitKind::Tank),
-            2 * unit_cost_for(Army::UsWw2, UnitKind::Tank),
-            "an equal budget fields twice as many Shermans as Panthers",
+            4 * unit_cost_for(Army::UsWw2, UnitKind::Tank),
+            "an equal budget fields four times as many Shermans as Tigers",
         );
         // Non-WW2 armies keep the shared price (modern balance untouched).
         for a in [Army::Neutral, Army::Us, Army::Fr] {
             assert_eq!(unit_cost_for(a, UnitKind::Tank), unit_cost(UnitKind::Tank), "{a:?} keeps TANK_COST");
         }
-        // Power tilt: Sherman weaker (lower HP), Panther tougher (higher HP), both vs the shared 300.
+        // Power tilt: Sherman weaker (lower HP), Tiger tougher (higher HP), both vs the shared 300.
         let (sh, _sw) = economy::unit_stats_for(Army::UsWw2, UnitKind::Tank);
         let (gh, gw) = economy::unit_stats_for(Army::Germany, UnitKind::Tank);
         let base = economy::unit_stats(UnitKind::Tank);
         assert!(sh.max < base.0.max, "Sherman has less HP than the shared tank");
-        assert!(gh.max > base.0.max, "Panther has more HP than the shared tank");
-        // The German gun cracks the shared 40-front (2·pen ≥ 40); the Sherman keeps the shared 18.
-        assert!(gw.penetration >= Fixed::from_int(20), "Panther gun penetration ≥ 20 (cracks the 40-front)");
+        assert!(gh.max > base.0.max, "Tiger has more HP than the shared tank");
+        // The Tiger gun's penetration (20) bounces its own thick 60-front (a Tiger-vs-Tiger stalemate);
+        // the Sherman keeps the shared baseline penetration (18).
+        assert!(gw.penetration >= Fixed::from_int(20), "Tiger gun penetration ≥ 20");
         assert_eq!(economy::unit_stats_for(Army::UsWw2, UnitKind::Tank).1.penetration, base.1.penetration);
+        // Armour tilt (D122): the Tiger's front bounces BOTH WW2 guns head-on (2·20 = 40 < front and
+        // 2·18 = 36 < front); the Sherman's thinner front is cracked by the Tiger gun (2·20 = 40 > front).
+        let tiger = unit_armor_for(Army::Germany, UnitKind::Tank);
+        let sherman = unit_armor_for(Army::UsWw2, UnitKind::Tank);
+        assert!(tiger.front > Fixed::from_int(40), "Tiger front bounces even its own pen-20 gun (2·20=40)");
+        assert!(tiger.front > sherman.front, "the Tiger is more thickly fronted than the Sherman");
+        assert!(sherman.front < Fixed::from_int(40), "the Tiger gun cracks the Sherman front (2·20=40 > front)");
+        // The Sherman CAN flank the Tiger: its pen 18 cracks the Tiger's side (2·18 = 36 ≥ side).
+        assert!(Fixed::from_int(36) >= tiger.side, "the Sherman's gun cracks the Tiger's flank (out-flank to kill)");
+        // Modern/Neutral tanks keep the shared baseline plate byte-for-byte (invariant #7).
+        for a in [Army::Neutral, Army::Us, Army::Fr] {
+            assert_eq!(unit_armor_for(a, UnitKind::Tank), economy::unit_armor(UnitKind::Tank), "{a:?} keeps the shared plate");
+        }
     }
 
     /// Raw Q16.16 bits of one full-health produced Tank (300 HP) — the "took zero damage" yardstick.

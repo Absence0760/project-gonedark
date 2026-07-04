@@ -130,47 +130,53 @@ pub const TANK_COST: i64 = 360;
 /// Base ticks to produce a [`Tank`](UnitKind::Tank). 840 = 14 s — slow, deliberate armour.
 pub const TANK_BASE_TICKS: u16 = 840;
 
-// --- WW2 cost-vs-power armies (D120): the *quantity vs quality* fork. The two WW2 armies field the
-// SAME shared `UnitKind::Tank` archetype, but at per-army COST + POWER (`unit_cost_for` +
-// `faction_power_tilt`) tuned so a cost-equal Sherman mass trades ~evenly with the fewer, tougher
-// Panther/Tiger tanks. Fairness is measured at EQUAL BUDGET (not equal count) — see the
-// `equal_budget_quality_vs_quantity` harness in `sim-runner`. Every non-WW2 army (Neutral/Us/Fr)
-// keeps the shared `TANK_COST` (360) and shared HP, so the modern balance (D71) is byte-identical.
-// Integer/fixed-point only (invariant #1).
+// --- WW2 cost-vs-power armies (D120) + the per-army ARMOUR differential (D122). The two WW2 armies
+// field the SAME shared `UnitKind::Tank` archetype, but at per-army COST + POWER (`unit_cost_for` +
+// `faction_power_tilt`) AND per-army ARMOUR (`unit_armor_for`) tuned so a cost-equal Sherman mass
+// trades ~evenly with the fewer, tougher, THICK-ARMOURED Panther/Tiger tanks. Fairness is measured at
+// EQUAL BUDGET (not equal count) — see the `equal_budget_quality_vs_quantity` harness in `sim-runner`.
+// Every non-WW2 army (Neutral/Us/Fr) keeps the shared `TANK_COST` (360), shared HP, and shared plate,
+// so the modern balance (D71) is byte-identical. Integer/fixed-point only (invariant #1).
 //
-// The 2:1 count ratio the equal-budget fight rests on: at any budget the Sherman side fields twice
-// the tanks of the Panther side (240 vs 480). Under the Lanchester square law of a symmetric-gun
-// melee (both WW2 tanks fire the SHARED baseline gun — damage/cadence/range unchanged), a force's
-// combat power is ≈ count² · per-tank-HP, so balance needs the Panther's HP ≈ 4× the Sherman's. The
-// tuned block (Sherman 150 HP / Germany 660 HP) sits just above that point (660, not 600, to cancel
-// the cheap side's index-order first-mover edge); the metric harness confirms the trade resolves with
-// the winner — which FLIPS between the elite and the mass by budget/geometry — keeping ≤2 tanks (D120).
+// WHY the D120 numbers moved (D122 re-tune): once armour BITES, the Tiger's thick front (60) BOUNCES
+// the Sherman's gun head-on (`2·18 = 36 < 60`) — the Sherman can only hurt it by FLANKING (the German
+// side 28 falls to `2·18 = 36 ≥ 28`) or swarming. That makes the Tiger far stronger per-unit than the
+// D120 HP-only model, so the balance was re-tuned: the Tiger got PRICIER (480 → 960, a 4:1 count
+// ratio) and LESS HP (660 → 450 — armour, not HP, now carries its survivability). The equal-budget
+// trade is no longer a symmetric-gun Lanchester grind; it is a **flanking race**, and it FLIPS on two
+// axes (measured, `ww2_quality_vs_quantity_is_balanced_at_equal_budget`): by BUDGET (few Tigers win a
+// small fight; a large Sherman swarm gets enough flankers to win) and by GEOMETRY (at close range the
+// swarm flanks and wins; at long range the Tiger's frontal wall holds and the elite wins). Because the
+// front is a HARD bounce, a Tiger that wins takes near-zero damage and keeps its whole stack — the
+// margin is deliberately lopsided, so "close" here means the flip turns on a small budget/range change,
+// not on survivor parity (this supersedes D120's symmetric-gun ≤2-margin definition).
 
 /// Cost to produce the **WW2 US "Sherman"** [`Tank`](UnitKind::Tank) ([`Army::UsWw2`], D120). 240 =
-/// ⅔ of the shared [`TANK_COST`] (360): the CHEAP, mass-produced tank — an equal budget fields twice
-/// as many of these as the German tank (480).
+/// ⅔ of the shared [`TANK_COST`] (360): the CHEAP, mass-produced tank — at an equal budget you field
+/// FOUR of these per German Tiger (960), the swarm side of the fork.
 pub const USWW2_TANK_COST: i64 = 240;
 /// Cost to produce the **WW2 German "Panther/Tiger"** [`Tank`](UnitKind::Tank) ([`Army::Germany`],
-/// D120). 480 = 2× [`USWW2_TANK_COST`]: the PRICEY elite — an equal budget fields half as many.
-pub const GERMANY_TANK_COST: i64 = 480;
+/// D120; re-tuned D122). 960 = 4× [`USWW2_TANK_COST`]: the PRICEY elite. Raised from D120's 480 (2:1)
+/// because the D122 frontal armour makes the Tiger far stronger per-unit — the Sherman bounces off its
+/// front and must out-mass/out-flank it, so an equal budget rightly fields only a QUARTER as many Tigers.
+pub const GERMANY_TANK_COST: i64 = 960;
 
-/// HP of the WW2 US "Sherman" tank ([`Army::UsWw2`], D120): 150 — HALF the shared 300, the *weaker*
-/// end of the quantity-vs-quality fork. You field more of them, each dies faster.
+/// HP of the WW2 US "Sherman" tank ([`Army::UsWw2`], D120): 150 — the *weaker* end of the fork. You
+/// field four of them per Tiger, each dies fast (the German gun cracks its thin 28-front for partial
+/// damage, ~3 hits).
 pub const USWW2_TANK_HP: i32 = 150;
-/// HP of the WW2 German "Panther/Tiger" tank ([`Army::Germany`], D120): 660 — 2.2× the shared 300,
-/// ≈4.4× the Sherman's 150. The *tougher* end: you field fewer, each is a wall. The Lanchester square
-/// law of a symmetric-gun melee predicts a ≈4:1 HP ratio to offset the 2:1 count disadvantage; the
-/// tuned value sits a touch above that (660, not 600) to cancel the cheap side's index-order
-/// first-mover edge, so the `equal_budget_quality_vs_quantity` harness resolves with the WINNER —
-/// which FLIPS between the elite and the mass by budget/geometry — keeping only ≤2 tanks (D120).
-pub const GERMANY_TANK_HP: i32 = 660;
+/// HP of the WW2 German "Panther/Tiger" tank ([`Army::Germany`], D120; re-tuned D122): 450. LOWERED
+/// from D120's 660 because the D122 frontal ARMOUR now carries the Tiger's survivability (a head-on
+/// Sherman shell does zero) — HP only governs how long it lasts once FLANKED. The tuned value keeps the
+/// flanking race balanced: the Sherman swarm needs a real numeric edge (and close range) to grind a
+/// flanked Tiger down before the Tiger's gun thins the swarm (`equal_budget_quality_vs_quantity`).
+pub const GERMANY_TANK_HP: i32 = 450;
 
-/// Armour penetration of the WW2 German tank's gun ([`Army::Germany`], D120): 20. Chosen so
-/// `2·20 = 40 ≥ TANK_ARMOR_FRONT` (40) — the Panther/Tiger gun CAN crack the shared frontal facet
-/// head-on, the *quality* half of the fork. (The Sherman keeps the shared baseline penetration of 18,
-/// which bounces the 40-front: `2·18 = 36 < 40`.) Penetration only bites against an *armoured* target;
-/// the equal-budget fairness harness spawns unarmoured tanks, so this is narrative/real-combat power,
-/// not a lever on the measured trade. `Fixed`, no float (invariant #1).
+/// Armour penetration of the WW2 German tank's gun ([`Army::Germany`], D120): 20. It bounces its OWN
+/// thick frontal plate ([`GERMANY_TANK_ARMOR_FRONT`] = 60: `2·20 = 40 < 60`) — a Tiger-vs-Tiger head-on
+/// is a stalemate, kills come from flanking — but cracks the Sherman's thinner 28-front for partial
+/// damage (`2·20 = 40 > 28`), so the Tiger kills the Sherman head-on. (The Sherman keeps the shared
+/// baseline penetration of 18.) `Fixed`, no float (invariant #1).
 pub const GERMANY_TANK_PENETRATION: Fixed = Fixed::from_int(20);
 
 // --- Produced-Tank directional armour (tank embodiment P9, the armour half — completes the D65
@@ -196,6 +202,43 @@ pub const TANK_ARMOR_FRONT: Fixed = Fixed::from_int(40);
 pub const TANK_ARMOR_SIDE: Fixed = Fixed::from_int(16);
 /// Rear armour of a produced Tank — the thinnest facet; cracked by even a modest penetrating gun.
 pub const TANK_ARMOR_REAR: Fixed = Fixed::from_int(8);
+
+// --- WW2 per-army ARMOUR differential (D122, EXTENDS D120). The two WW2 armies field the SAME shared
+// `UnitKind::Tank`, but at per-army *armour* (`unit_armor_for`) as well as per-army cost + HP/pen
+// (`unit_cost_for` + `faction_power_tilt`). This is what makes the German heavy READ as a Tiger/Panther:
+// its frontal plate is thick enough that the Sherman's baseline penetration (18) BOUNCES head-on
+// (`2·18 = 36 < 60`) — and so does the Tiger's OWN gun (pen 20: `2·20 = 40 < 60`), a frontal stalemate.
+// Kills come from FLANKING (the German side 28 falls to `2·18 = 36 ≥ 28`) or massing. The Sherman's
+// thinner front (36) is cracked head-on by the German gun (`2·20 = 40 ≥ 36`), so the Tiger kills the
+// Sherman frontally. Every non-WW2 army (Neutral/Us/Fr) keeps the SHARED baseline plate (40/16/8), so
+// the modern balance (D71) and every existing armour test/checksum stay byte-identical. Armour folds
+// into the checksum via the `Armor` component, so a WW2 tank on the field diverges a mismatched peer
+// there (invariant #7). All `Fixed`, no float (invariant #1); values chosen against the `2·p ≥ a` rule
+// in `combat::facing_penetration_multiplier`.
+
+/// Frontal armour of the WW2 German "Panther/Tiger" tank ([`Army::Germany`], D122): 60 — thick enough
+/// that BOTH WW2 guns bounce head-on (Sherman pen 18: `2·18 = 36 < 60`; even the German's own pen 20:
+/// `2·20 = 40 < 60`). A frontal stalemate — the Tiger is killed by a flank/rear shot or by being
+/// swarmed, never cracked head-on.
+pub const GERMANY_TANK_ARMOR_FRONT: Fixed = Fixed::from_int(60);
+/// Side (flank) armour of the WW2 German tank ([`Army::Germany`], D122): 28 — the Sherman's pen 18
+/// CRACKS it (`2·18 = 36 ≥ 28`), so out-flanking the Tiger is the mass's answer to the frontal bounce.
+pub const GERMANY_TANK_ARMOR_SIDE: Fixed = Fixed::from_int(28);
+/// Rear armour of the WW2 German tank ([`Army::Germany`], D122): 12 — the thinnest facet, cracked by
+/// any WW2 gun.
+pub const GERMANY_TANK_ARMOR_REAR: Fixed = Fixed::from_int(12);
+
+/// Frontal armour of the WW2 US "Sherman" tank ([`Army::UsWw2`], D122): 28 — THINNER than the shared
+/// 40, so the German gun (pen 20) cracks it head-on for solid partial damage (`2·20 = 40 > 28`, ramp
+/// `(40−28)/28 ≈ 0.43` — the Tiger kills the Sherman in ~3 frontal hits). A cost-equal Sherman also
+/// cracks a Sherman front (its own pen 18: `2·18 = 36 > 28`, ramp ≈ 0.29). Kept thin (not the task's
+/// first-guess 36) so the Tiger has a real head-on win condition and the equal-budget fights RESOLVE
+/// instead of stalemating — measured in `equal_budget_quality_vs_quantity`.
+pub const USWW2_TANK_ARMOR_FRONT: Fixed = Fixed::from_int(28);
+/// Side (flank) armour of the WW2 US "Sherman" tank ([`Army::UsWw2`], D122): 14 — thin.
+pub const USWW2_TANK_ARMOR_SIDE: Fixed = Fixed::from_int(14);
+/// Rear armour of the WW2 US "Sherman" tank ([`Army::UsWw2`], D122): 6 — the thinnest facet on the field.
+pub const USWW2_TANK_ARMOR_REAR: Fixed = Fixed::from_int(6);
 
 /// Cost to produce a [`Medic`](UnitKind::Medic) — a cheap support body. 120 ≈ 1.2 Riflemen.
 pub const MEDIC_COST: i64 = 120;
@@ -566,27 +609,52 @@ pub fn unit_stats(kind: UnitKind) -> (Health, Weapon) {
     }
 }
 
-/// Directional [`Armor`] for a produced unit of `kind` (tank embodiment P9). Only the
-/// [`Tank`](UnitKind::Tank) is armoured — every other archetype returns the all-zero
-/// [`Armor::default()`] (unarmoured), so it takes byte-identical damage to today
-/// ([`combat::facing_penetration_multiplier`](crate::combat::facing_penetration_multiplier) returns
-/// exactly `1.0` for an unarmoured defender) and no checksum moves where the tank is absent
-/// (invariant #7). Kept **separate** from [`unit_stats`]'s `(Health, Weapon)` tuple so the armour
-/// concern doesn't disturb that signature's ~30 call sites, and is **not** per-army (`unit_stats_for`
-/// has no armour tilt): armour is a snowball-sensitive combat axis, held identical across armies by
-/// the same fairness band as damage/HP/penetration. No float (invariant #1).
+/// Directional [`Armor`] for a produced unit of `kind` at the **shared baseline** — the army-agnostic
+/// plate every non-WW2 army wears. Kept as the canonical entry point for every existing caller: it
+/// delegates to [`unit_armor_for`]`(Army::Neutral, kind)`, which returns the baseline plate
+/// byte-for-byte, so no existing armour path moves and no checksum shifts where a WW2 tank is absent
+/// (invariant #7).
 #[inline]
 pub fn unit_armor(kind: UnitKind) -> Armor {
-    match kind {
-        UnitKind::Tank => Armor {
+    unit_armor_for(Army::Neutral, kind)
+}
+
+/// Directional [`Armor`] for a produced unit of `kind` for the given `army` — the **army-aware** plate
+/// (D122, EXTENDS D120's cost/HP/pen fork). Only the WW2 armies' [`Tank`](UnitKind::Tank) diverges from
+/// the shared plate (40/16/8): the [`Army::Germany`] "Panther/Tiger" wears THICKER armour (front 60 —
+/// thick enough that both WW2 guns bounce head-on, a frontal stalemate; kills come from flanking) and
+/// the [`Army::UsWw2`] "Sherman" a THINNER front (36 — cracked head-on by the German pen-20 gun). Every
+/// other `(army, kind)` returns the shared baseline: a modern Neutral/Us/Fr tank keeps the 40/16/8
+/// plate byte-for-byte, and every non-Tank archetype is the all-zero [`Armor::default()`] (unarmoured)
+/// regardless of army — so [`combat::facing_penetration_multiplier`](crate::combat::facing_penetration_multiplier)
+/// still returns exactly `1.0` for it and the modern paths take byte-identical damage (invariant #7).
+/// Kept **separate** from [`unit_stats_for`]'s `(Health, Weapon)` tuple so the armour concern doesn't
+/// disturb that signature's call sites. No float (invariant #1).
+#[inline]
+pub fn unit_armor_for(army: Army, kind: UnitKind) -> Armor {
+    match (army, kind) {
+        // WW2 German "Panther/Tiger": THICK plate — front bounces both WW2 guns (the frontal stalemate).
+        (Army::Germany, UnitKind::Tank) => Armor {
+            front: GERMANY_TANK_ARMOR_FRONT,
+            side: GERMANY_TANK_ARMOR_SIDE,
+            rear: GERMANY_TANK_ARMOR_REAR,
+        },
+        // WW2 US "Sherman": THINNER front — cracked head-on by the German pen-20 gun.
+        (Army::UsWw2, UnitKind::Tank) => Armor {
+            front: USWW2_TANK_ARMOR_FRONT,
+            side: USWW2_TANK_ARMOR_SIDE,
+            rear: USWW2_TANK_ARMOR_REAR,
+        },
+        // Shared baseline: a modern Neutral/Us/Fr tank keeps the 40/16/8 plate, byte-identical to before.
+        (_, UnitKind::Tank) => Armor {
             front: TANK_ARMOR_FRONT,
             side: TANK_ARMOR_SIDE,
             rear: TANK_ARMOR_REAR,
         },
-        // Infantry and support carry no armour — the unarmoured default that preserves today's
-        // balance exactly (multiplier 1.0 on every shot, regardless of facing or penetration). The
-        // anti-tank team is infantry too: it DEALS penetration, it does not WEAR armour (D73).
-        UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Medic | UnitKind::AntiTank => {
+        // Infantry and support carry no armour — the unarmoured default that preserves today's balance
+        // exactly (multiplier 1.0 on every shot, regardless of facing/penetration/army). The anti-tank
+        // team is infantry too: it DEALS penetration, it does not WEAR armour (D73).
+        (_, UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Medic | UnitKind::AntiTank) => {
             Armor::default()
         }
     }
@@ -971,10 +1039,12 @@ pub fn economy_system(
         world.pos[ei] = pos;
         world.health[ei] = health;
         world.weapon[ei] = weapon;
-        // Directional armour (tank embodiment P9): a produced Tank enters armoured; every other
-        // archetype draws the unarmoured default, so non-tank production is byte-identical to before
-        // and the checksum only moves once an armoured tank is actually on the field (invariant #7).
-        world.armor[ei] = unit_armor(unit_kind);
+        // Directional armour (tank embodiment P9 + the WW2 per-army differential, D122): a produced
+        // Tank enters armoured with its PRODUCING army's plate (Germany thick / Sherman thin / shared
+        // baseline for Neutral/Us/Fr); every other archetype draws the unarmoured default. So non-tank
+        // production AND every modern/Neutral tank stay byte-identical to before, and the checksum only
+        // moves once a WW2-armoured tank is actually on the field (invariant #7).
+        world.armor[ei] = unit_armor_for(armies[faction.index()], unit_kind);
         // Inherit the camp's spawn rally as the FIRST order (troop-training rally seam): a literal
         // Move to the rally point (invariant #3 — the unit walks there, it makes no decision), so a
         // reinforcement leaves the pad toward the front instead of piling up Idle on the camp. With
@@ -1898,9 +1968,9 @@ mod tests {
         // `balance_baseline_reads_in_seconds` pattern).
         let (sherman, panther, shared) = (USWW2_TANK_COST, GERMANY_TANK_COST, TANK_COST);
         assert_eq!(sherman, 240, "Sherman is the cheap tank");
-        assert_eq!(panther, 480, "Panther is the pricey tank");
+        assert_eq!(panther, 960, "Tiger is the pricey tank (D122: raised from 480 — armour makes it far stronger)");
         assert!(sherman < shared && panther > shared, "cheaper / pricier than shared");
-        assert_eq!(panther, 2 * sherman, "2:1 cost ratio → 2:1 counts at equal budget");
+        assert_eq!(panther, 4 * sherman, "4:1 cost ratio → 4:1 counts at equal budget (D122)");
         // unit_cost is the Neutral-baseline delegate: every existing caller is unchanged.
         for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic, UnitKind::AntiTank] {
             assert_eq!(unit_cost(kind), unit_cost_for(Army::Neutral, kind), "{kind:?}: unit_cost == Neutral");
@@ -2014,6 +2084,46 @@ mod tests {
         assert_eq!(a.front, TANK_ARMOR_FRONT);
         assert_eq!(a.side, TANK_ARMOR_SIDE);
         assert_eq!(a.rear, TANK_ARMOR_REAR);
+    }
+
+    /// The WW2 per-army armour differential (D122). The German Tiger wears THICKER armour than the
+    /// shared plate (its front bounces both WW2 guns head-on — a frontal stalemate); the US Sherman a
+    /// THINNER front (cracked head-on by the German pen-20 gun); and every non-WW2 army (Neutral/Us/Fr)
+    /// keeps the shared baseline plate byte-for-byte, so the modern balance and checksums are untouched
+    /// (invariant #7). `unit_armor` is exactly `unit_armor_for(Neutral, _)`.
+    #[test]
+    fn unit_armor_for_ww2_differential() {
+        let tiger = unit_armor_for(Army::Germany, UnitKind::Tank);
+        let sherman = unit_armor_for(Army::UsWw2, UnitKind::Tank);
+        let base = unit_armor_for(Army::Neutral, UnitKind::Tank);
+
+        // Tiger: thicker than baseline on every facet, still well-ordered front>side>rear.
+        assert!(tiger.front > base.front && tiger.side > base.side && tiger.rear > base.rear,
+            "the Tiger is more thickly armoured than the shared tank on every facet");
+        assert!(tiger.front > tiger.side && tiger.side > tiger.rear, "Tiger armour stays well-ordered");
+        // The frontal-stalemate math: the Tiger front bounces BOTH the Sherman's pen 18 (2·18 = 36)
+        // and its own pen 20 (2·20 = 40) — hard bounces, since 2·p ≤ front for both.
+        assert!(Fixed::from_int(36) < tiger.front, "Sherman pen 18 hard-bounces the Tiger front (2·18 < front)");
+        assert!(Fixed::from_int(40) < tiger.front, "even the Tiger's own pen 20 bounces its front (2·20 < front)");
+        // But the Tiger's FLANK falls to the Sherman's gun (2·18 = 36 ≥ side) — out-flank to kill.
+        assert!(Fixed::from_int(36) >= tiger.side, "the Sherman's pen 18 cracks the Tiger flank (2·18 ≥ side)");
+
+        // Sherman: thinner front than baseline, cracked head-on by the German pen-20 gun (2·20 = 40 > front).
+        assert!(sherman.front < base.front, "the Sherman front is thinner than the shared plate");
+        assert!(Fixed::from_int(40) > sherman.front, "the Tiger gun (pen 20) cracks the Sherman front (2·20 > front)");
+
+        // Every non-WW2 army keeps the shared baseline plate byte-for-byte (modern balance untouched).
+        for army in [Army::Neutral, Army::Us, Army::Fr] {
+            assert_eq!(unit_armor_for(army, UnitKind::Tank), base, "{army:?} keeps the shared tank plate");
+        }
+        // `unit_armor` delegates to `unit_armor_for(Neutral, _)` — the canonical byte-identical entry point.
+        assert_eq!(unit_armor(UnitKind::Tank), base);
+        // Non-tank archetypes stay unarmoured regardless of army (armour is a Tank-only concern).
+        for army in [Army::Neutral, Army::Us, Army::Fr, Army::UsWw2, Army::Germany] {
+            for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Medic, UnitKind::AntiTank] {
+                assert_eq!(unit_armor_for(army, kind), Armor::default(), "{army:?} {kind:?} is unarmoured");
+            }
+        }
     }
 
     /// The production seam itself: a Tank pushed through `economy_system` spawns wearing its armour,
