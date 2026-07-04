@@ -4804,3 +4804,41 @@ decided desktop fork; Android fork untouched),
 `render/src/globe_backdrop.rs`/`.wgsl` (`GlobeView::over`, tone/scale lanes, `NEAR`, the
 1:50m mask), `app/src/shell/mission_select.rs` (the overview seams),
 `tools/earth/gen_landmask.py` (the regenerated mask).
+
+## D107 — The atlas ↔ battlefield hop is a camera flight, not a cut (cancellable by the player's hand)
+
+**Status: landed (desktop).** ENTER on a conflict no longer cuts to the battlefield overview —
+the camera **flies** from the player's current atlas view down onto the war (D106's framing),
+and escaping the hub flies it back up to the re-seeded atlas view. The return leg starts from
+wherever the hub camera actually is — a mid-fly-in escape reverses smoothly, never snaps. Two
+rules keep it honest: **the player's hand always wins** (any atlas drag/zoom cancels the return
+flight instantly and applies the gesture — the autopilot never fights input), and **flights only
+connect views that are both on screen** — a briefing back-out or a title CONTINUE deep-link
+still cuts (there is no prior globe camera to fly from), and a war with no anchored battles
+keeps the settled-fallback cut it had.
+
+**Mechanics.** One pure interpolator, `render::globe_backdrop::GlobeFlight` (~0.9 s,
+smoothstepped): **yaw takes the shortest arc** (a war entered from across the date line crosses
+it, not the whole planet), pitch eases linearly, and **zoom interpolates in eye distance**
+(`1/zoom`, the exact term the camera eye scales by) so the travel rate reads steady instead of
+lurching at the near end. A negative frame `dt` (a clock hiccup) is clamped — the camera can
+never fly backwards. All wall-clock presentation, stepped from the frame `dt`, never the sim
+tick (invariant #4) — the sim is untouched and nothing here is checksummed.
+
+**Where the state lives.** The hub leg is `App::hub_flight` resolved per frame by the pure
+`hub_backdrop_view` seam (flight owns the camera while live, drops itself on landing, and a
+vanished target drops a stale flight); the atlas leg lives on `AtlasState::flight`, seeded by
+`AtlasState::opened_from` (starts exactly at the hub's camera — no cut) and advanced by
+`tick_atlas_flight`. Picking is flight-aware for free: both screens already pick with the same
+view they render, so a click mid-flight resolves against the drawn pixels (the D104/D106
+discipline). Every seam is unit-tested (endpoints exact, shortest-arc, monotonic under
+accumulated dts, drag/zoom cancel, scrub/select don't); the flight itself is the only new
+machinery — no easing framework, no tween library.
+
+**Cross-link:** [D106](#d106--entering-a-war-lands-on-its-battlefield-the-hub-becomes-a-zoomed-overview-on-the-globe-one-pin-per-battle)
+(the two views this connects), [D104](#d104--the-campaigns-front-door-is-the-navigable-conflict-atlas-drag-the-earth-scrub-the-years-pick-a-war-closes-q28-fork-2-on-desktop)
+(the navigable atlas + its input rules), [Q28](open-questions.md#q28--conflict-atlas) (Android
+presentation fork untouched — no flight to mirror until the phone has a globe),
+`render/src/globe_backdrop.rs` (`GlobeFlight`), `app/src/shell/atlas.rs`
+(`opened_from`/`tick_atlas_flight`), `app/src/shell/mission_select.rs` (`hub_backdrop_view`),
+`app/src/main.rs` (`hub_flight` + the transition wiring).
