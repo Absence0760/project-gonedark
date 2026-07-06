@@ -76,7 +76,7 @@ repo never ships ciphertext (decision D12). Terraform reads them through the
 → `local.secrets[...]`). Create/edit with `sops gonedark/prod.sops.yaml` from inside
 that repo (after `aws sso login --profile gonedark`). Full per-project workflow in the
 estate repo's `README.md`; estate pattern reference in
-`~/github/templates/docs/secrets-management.md`.
+`~/github/project-mgmt/docs/secrets-management.md`.
 
 ## Why this shape
 
