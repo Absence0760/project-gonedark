@@ -21,8 +21,8 @@
 //! ## The pure seam
 //!
 //! All layout math — which lines exist and each line's world rectangle — lives in the free
-//! [`grid_lines`] fn so it is unit-testable without a GPU, exactly the `marquee_quads` / `layout_glyphs`
-//! pattern. [`TerrainRenderer::render`] is the only GPU-touching code and is exercised by the
+//! `grid_lines` fn so it is unit-testable without a GPU, exactly the `marquee_quads` / `layout_glyphs`
+//! pattern. `TerrainRenderer::render` is the only GPU-touching code and is exercised by the
 //! offscreen `viz-runner`, not the no-GPU CI matrix.
 
 use gonedark_core::flow_field::GRID;
@@ -76,7 +76,7 @@ const MINOR_COLOR: [f32; 3] = [0.072, 0.092, 0.130];
 const MAJOR_COLOR: [f32; 3] = [0.205, 0.250, 0.335];
 
 /// One ground-grid line as an axis-aligned world rectangle (center + half-extents + color). Pure
-/// CPU data produced by [`grid_lines`]; converted to a [`LineInstance`] for upload.
+/// CPU data produced by [`grid_lines`]; converted to a `LineInstance` for upload.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct GridLine {
     /// Line center in world space.
@@ -124,7 +124,7 @@ struct LineInstance {
     _pad: f32,
 }
 
-/// Whether the line `i` cells out from the origin is a "major" line (every [`MAJOR_EVERY`] cells,
+/// Whether the line `i` cells out from the origin is a "major" line (every `MAJOR_EVERY` cells,
 /// and the origin axis itself at `i == 0`). Pure — the testable classifier the layout shares.
 #[inline]
 pub fn is_major(i: i32) -> bool {
@@ -132,9 +132,9 @@ pub fn is_major(i: i32) -> bool {
 }
 
 /// Build the ground-grid lines for the command view: a lattice of vertical + horizontal lines from
-/// `-half_extent` to `+half_extent` spaced `spacing` apart, the every-[`MAJOR_EVERY`]th heavier.
+/// `-half_extent` to `+half_extent` spaced `spacing` apart, the every-`MAJOR_EVERY`th heavier.
 /// Pure (no GPU, no sim, no fog) — the testable layout seam. Returns vertical lines first, then
-/// horizontal, each as a thin world rectangle ready to expand to a [`LineInstance`].
+/// horizontal, each as a thin world rectangle ready to expand to a `LineInstance`.
 ///
 /// `spacing` is clamped to a sane positive floor so a degenerate `0.0` can't loop forever or divide
 /// by zero (a render-side guard; the host always passes the constant [`GRID_SPACING`]).
@@ -183,10 +183,10 @@ pub fn grid_lines(half_extent: f32, spacing: f32) -> Vec<GridLine> {
 }
 
 /// Build the registration cross-marks: a small "+" survey mark at every major×major grid
-/// intersection (the origin and every [`MAJOR_EVERY`]th line either way), giving the lattice precise,
+/// intersection (the origin and every `MAJOR_EVERY`th line either way), giving the lattice precise,
 /// surveyed nodes like a military map's coordinate ticks. Pure (no GPU, no sim, no fog) — a fixed
 /// lattice keyed only off the world extent, identical every frame. Each cross is two short
-/// perpendicular [`GridLine`] arms (horizontal then vertical) coloured [`TICK_COLOR`] so the junctions
+/// perpendicular [`GridLine`] arms (horizontal then vertical) coloured `TICK_COLOR` so the junctions
 /// read above the major lines they sit on. Drawn AFTER [`grid_lines`] (opaque REPLACE) so the marks
 /// win at the intersection. Marks are flagged `major` (they belong to the structural tier).
 pub fn tick_marks(half_extent: f32, spacing: f32) -> Vec<GridLine> {
@@ -323,7 +323,7 @@ pub struct OverlayQuad {
 }
 
 /// Build the translucent cover-wash quads for the command view: one filled cell-sized square per
-/// non-open [`Cover`] cell of `terrain`, coloured by tier ([`COVER_FILL_LIGHT`]/`HEAVY`/`IMPASSABLE`).
+/// non-open [`Cover`] cell of `terrain`, coloured by tier (`COVER_FILL_LIGHT`/`HEAVY`/`IMPASSABLE`).
 /// `Cover::None` cells draw nothing (an open map ⇒ no quads). Each quad sits on the cell CENTRE with a
 /// `0.5` half-extent, so it exactly fills the sim cell — the same mapping `core::terrain` uses. Pure
 /// (no GPU) — the testable seam, mirroring [`crate::debug::covergrid_lines`].
@@ -372,8 +372,8 @@ fn prop_marker_color(kind: ObstacleKind) -> [f32; 3] {
 /// Build the top-down prop markers for the command view: one diamond per static [`Obstacle`], centred
 /// on the prop's world position, sized to its sim collision footprint
 /// ([`ObstacleKind::footprint_radius`]) so a wide barricade reads bigger than a slim tree, and tinted
-/// per kind ([`prop_marker_color`]). The embodied view already draws these as 3-D meshes
-/// ([`crate::prop_draw_plan`]); this is the strategic-map read of the SAME sim list (core → render).
+/// per kind (`prop_marker_color`). The embodied view already draws these as 3-D meshes
+/// (`crate::prop_draw_plan`); this is the strategic-map read of the SAME sim list (core → render).
 /// Pure (no GPU) — the testable seam. `_pad`/`rot` mark the quad a rotated diamond so it reads as a
 /// placed object over the axis-aligned cover wash.
 pub fn prop_markers(obstacles: &[Obstacle]) -> Vec<OverlayQuad> {
@@ -978,11 +978,12 @@ mod tests {
     fn ground_fill_quad_covers_the_camera_framing() {
         // The ground-fill quad must fully cover the ±40 top-down camera framing (and the ±44 grid)
         // with margin, so no flat slate sliver shows at the frame edges.
-        assert!(
+        // (`const` asserts: pure const comparisons, enforced at compile time on any build.)
+        const _: () = assert!(
             GROUND_FILL_HALF > GRID_HALF_EXTENT,
             "ground covers the grid"
         );
-        assert!(
+        const _: () = assert!(
             GROUND_FILL_HALF >= 60.0,
             "ground covers the ±40 framing's corners with margin"
         );
@@ -1129,8 +1130,9 @@ mod tests {
             1
         );
         // Alpha rises with the tier so a blocking cell reads strongest, light concealment faintest.
-        assert!(COVER_FILL_LIGHT[3] < COVER_FILL_HEAVY[3]);
-        assert!(COVER_FILL_HEAVY[3] < COVER_FILL_IMPASSABLE[3]);
+        // (`const` asserts: pure const comparisons, enforced at compile time on any build.)
+        const _: () = assert!(COVER_FILL_LIGHT[3] < COVER_FILL_HEAVY[3]);
+        const _: () = assert!(COVER_FILL_HEAVY[3] < COVER_FILL_IMPASSABLE[3]);
         // The wash stays translucent (never hides a unit token drawn on top).
         for x in &q {
             assert!(
