@@ -12,7 +12,22 @@
 yanked = "deny"
 # Add a `RUSTSEC-YYYY-NNNN` here ONLY with a written rationale if an advisory is a false
 # positive or genuinely doesn't apply, never to silence a real one.
-ignore = []
+ignore = [
+    # ttf-parser is unmaintained (an advisory, not a vulnerability). It reaches us only
+    # through winit's Wayland client-side-decoration path (winit → sctk-adwaita →
+    # ab_glyph → owned_ttf_parser) — desktop window chrome, nowhere near the sim.
+    # RustSec lists no safe upgrade; drop this ignore when winit/sctk-adwaita move to a
+    # maintained font parser (e.g. skrifa).
+    "RUSTSEC-2026-0192",
+    # quick-xml < 0.41 has two algorithmic-complexity DoS advisories, both only
+    # reachable when parsing UNTRUSTED XML. Our sole consumer is wayland-scanner, a
+    # BUILD-TIME proc-macro that parses the Wayland protocol XML bundled in the crate —
+    # trusted input, never at runtime, never attacker-controlled. wayland-scanner pins
+    # quick-xml ^0.39, so no compatible upgrade exists yet; drop both ignores when a
+    # wayland-scanner release moves to quick-xml >= 0.41.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
 
 [licenses]
 # Only OSI-permissive licenses are allowed — no copyleft (GPL/LGPL/MPL/AGPL) sneaking in
@@ -30,6 +45,14 @@ allow = [
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
+    # Font licenses carried by sctk-adwaita's bundled decoration fonts (winit's Wayland
+    # client-side decorations). Both are permissive for embedding/redistribution and
+    # impose no obligations on our code — they cover the font files themselves.
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    # webpki-roots ships Mozilla's CA root data under CDLA-Permissive-2.0 — a permissive
+    # data license (attribution-free use/redistribution), fine for a closed binary.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 # Our own workspace crates declare `license = "UNLICENSED"` (private, never published).
