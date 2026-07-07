@@ -17,8 +17,8 @@
 //! ## The pure seam
 //!
 //! Like [`tank_hud`](crate::tank_hud) and [`objective_hud`](crate::objective_hud), all the geometry /
-//! formatting math lives in pure free fns — [`health_fraction`], [`ammo_label`], [`player_hud_quads`],
-//! [`player_hud_labels`] — so it is unit-testable without a GPU (exactly the `reload_ring_fill` /
+//! formatting math lives in pure free fns — `health_fraction`, `ammo_label`, `player_hud_quads`,
+//! `player_hud_labels` — so it is unit-testable without a GPU (exactly the `reload_ring_fill` /
 //! `objective_hud_quads` pattern). The bar draws through the shared [`overlay`](crate::overlay) quad
 //! pipeline and the count through the shared [`text`](crate::text) pass (no new pipeline/shader),
 //! so the `lib.rs` wiring mirrors [`render_prompt`](crate::Renderer::render_prompt) exactly.
@@ -152,7 +152,7 @@ pub fn ammo_label(ammo: u32, mag_size: u32) -> String {
     format!("{ammo} / {mag_size}")
 }
 
-/// Is the magazine **low** (some rounds left, at/below [`AMMO_LOW_FRAC`] of capacity)? Exclusive of
+/// Is the magazine **low** (some rounds left, at/below `AMMO_LOW_FRAC` of capacity)? Exclusive of
 /// empty — a dry mag reads as [`ammo_out`], never as merely low. A magazine-less weapon
 /// (`mag_size == 0`) is never low. Pure, host-testable (the cue-state seam).
 pub fn ammo_low(ammo: u32, mag_size: u32) -> bool {

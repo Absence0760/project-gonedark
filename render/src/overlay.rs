@@ -3,7 +3,7 @@
 //!
 //! Like [`hud`](crate::hud), this is a screen-space LOAD pass (it composites over the already-
 //! rendered frame, never clears) and a **pure presentation derivation** — it reads only the small,
-//! already-presentation-safe overlay description the host hands it ([`Overlay`]) and emits
+//! already-presentation-safe overlay description the host hands it (`Overlay`) and emits
 //! screen-space quads. It is checksum-neutral by construction: it never touches sim state and the
 //! host computes it from `core::shell`/`engine::session_shell` views, not from `&World`.
 //!
@@ -18,7 +18,7 @@
 //! has no spatial data to leak.
 //!
 //! The testable layout math (which panels appear, their rects, the summary bar lengths) lives in
-//! the free [`overlay_quads`] so it is unit-testable without a GPU — exactly the `interpolate_
+//! the free `overlay_quads` so it is unit-testable without a GPU — exactly the `interpolate_
 //! instances` / `marker_for` pattern.
 
 use crate::text::{Anchor, TextRenderer};
@@ -423,14 +423,14 @@ fn push_button_row(out: &mut Vec<OverlayQuad>, choices: &[QuadRole], ui_scale: f
 /// Hit-test a point in NDC (`x` rightward, `y` upward — the same screen space [`overlay_quads`]
 /// lays the chrome out in) against the overlay's choice-button row, returning the 0-based slot
 /// index of the button under the point, or `None` if it misses every button (or the overlay has
-/// none). The geometry mirrors [`push_button_row`] exactly, so a hit here corresponds 1:1 to a
+/// none). The geometry mirrors `push_button_row` exactly, so a hit here corresponds 1:1 to a
 /// drawn button — this is the seam the native/touch layer calls to turn a tap into a slot.
 pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize> {
     button_slot_at_scaled(overlay, ndc_x, ndc_y, 1.0)
 }
 
 /// [`button_slot_at`] with the physical `ui_scale` applied — the hit-test twin of
-/// [`push_button_row`]'s scaled DRAW. Both scale the button half-extents / gap / row-center by
+/// `push_button_row`'s scaled DRAW. Both scale the button half-extents / gap / row-center by
 /// `ui_scale`, so the tappable region always tracks the drawn button: without this, at `ui_scale != 1`
 /// (retina desktop, dense phone) the button would draw large but hit-test at its 1.0 size, and a
 /// click on the visible button would miss. `ui_scale == 1.0` is byte-identical to the legacy hit-test

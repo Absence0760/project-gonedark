@@ -2,7 +2,7 @@
 //! to exercise ONE mechanic in isolation and prove it works.
 //!
 //! The point of this module is **single-sourcing**: a scene is seeded the same way on every
-//! surface, so the thing you *watch* is the thing CI *checks*. The headless [`sim-runner`] seeds a
+//! surface, so the thing you *watch* is the thing CI *checks*. The headless `sim-runner` seeds a
 //! scene, drives a scripted input, and reports / asserts the outcome; the desktop `app` and the
 //! offscreen `viz-runner` seed the **identical** `Sim` and render it, so a screenshot corresponds
 //! to an assertion. Because the seeder is pure `core` (invariant #1/#2: fixed-point, no platform
@@ -18,7 +18,7 @@
 //! *produced* unit. Per the prototyping call, it reuses the existing [`UnitKind::Heavy`] chassis
 //! rather than introducing a new `Tank` kind: the scene layers tank-like [`Armor`] + a
 //! `muzzle_vel`/`penetration` gun onto that chassis **locally**, touching neither
-//! [`economy::unit_stats`](crate::economy::unit_stats) nor the shipping balance.
+//! [`economy::unit_stats`] nor the shipping balance.
 //!
 //! The numbers are chosen so the mechanic reads at a glance — *angle the hull, flank to kill*:
 //! the gun's penetration cleanly **bounces** off the thick frontal facet but **pens** the thinner
@@ -884,7 +884,7 @@ pub const SEIZE_TROOPS: usize = 10;
 const SEIZE_GARRISON_OFFSETS: [(i32, i32); 6] =
     [(-5, 4), (-5, -4), (-9, 0), (-1, 7), (-1, -7), (-8, 6)];
 
-/// The baseline garrison size — the first four [`SEIZE_GARRISON_OFFSETS`] entries, exactly the
+/// The baseline garrison size — the first four `SEIZE_GARRISON_OFFSETS` entries, exactly the
 /// original mission's defending force.
 pub const SEIZE_GARRISON: u32 = 4;
 
@@ -898,7 +898,7 @@ pub struct SeizeSetup {
     /// How many troops the player assaults with (baseline [`SEIZE_TROOPS`] = 10). Clamped to
     /// `1..=SEIZE_TROOPS_MAX` at seed time — a mission always fields someone.
     pub troops: u32,
-    /// Garrison size — how many [`SEIZE_GARRISON_OFFSETS`] entries are fielded, in table order
+    /// Garrison size — how many `SEIZE_GARRISON_OFFSETS` entries are fielded, in table order
     /// (baseline [`SEIZE_GARRISON`] = 4). Clamped to the table length.
     pub garrison: u32,
 }
@@ -1355,7 +1355,7 @@ pub const PUSH_POST_XS: [i32; 3] = [-8, 4, 16];
 /// are the original table, byte-for-byte.
 const PUSH_GUARD_OFFSETS: [(i32, i32); 3] = [(3, 3), (3, -3), (5, 0)];
 
-/// The baseline per-post guard count — the first two [`PUSH_GUARD_OFFSETS`] entries, exactly the
+/// The baseline per-post guard count — the first two `PUSH_GUARD_OFFSETS` entries, exactly the
 /// original mission's fire team.
 pub const PUSH_GUARDS: u32 = 2;
 
@@ -1368,7 +1368,7 @@ pub struct PushSetup {
     /// How many troops the player pushes with (baseline [`PUSH_TROOPS`] = 8). Clamped to
     /// `1..=PUSH_TROOPS_MAX`.
     pub troops: u32,
-    /// Guards dug in per post — how many [`PUSH_GUARD_OFFSETS`] entries are fielded per post, in
+    /// Guards dug in per post — how many `PUSH_GUARD_OFFSETS` entries are fielded per post, in
     /// table order (baseline [`PUSH_GUARDS`] = 2). Clamped to `1..=` the table length.
     pub guards_per_post: u32,
 }

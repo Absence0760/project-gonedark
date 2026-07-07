@@ -23,8 +23,8 @@
 //! Like [`debug`](crate::debug) it is a command-view, world-space pass: a screen-composited **LOAD**
 //! pass (never clears), no depth test (always reads on top), reusing the unit pass's camera bind
 //! group (the top-down view-projection) so world points map to clip exactly as the units do. The
-//! renderable geometry is built by the GPU-free [`detection_vertices`] seam (unit-tested without a
-//! device); [`DetectionRenderer`] is the thin GPU glue.
+//! renderable geometry is built by the GPU-free `detection_vertices` seam (unit-tested without a
+//! device); `DetectionRenderer` is the thin GPU glue.
 //!
 //! ## Fairness (invariant #6) is preserved structurally
 //!

@@ -90,7 +90,7 @@ pub(crate) fn confirm_menu_button(
 
 /// Draw one emphasis-styled action button at an explicit width — the body of [`footer_button`].
 /// Only the primary button sets an explicit fill; secondary/tertiary leave the fill to the widget
-/// ramp in [`shell_style`](crate::shell::theme::shell_style) so they visibly lift on hover. Glue.
+/// ramp in [`shell_style`] so they visibly lift on hover. Glue.
 fn emphasis_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis, width: f32) -> bool {
     use egui::{Button, RichText};
     let fg = match emphasis {
@@ -158,7 +158,7 @@ pub(crate) fn glass_card_frame() -> egui::Frame {
 
 /// A compact secondary "chip" button for the title screen's top-right utility cluster
 /// (SETTINGS / PROFILE) — smaller than the full-width [`footer_button`] so it reads as utility chrome
-/// rather than a primary action. Rides the [`shell_style`](crate::shell::theme::shell_style) widget
+/// rather than a primary action. Rides the [`shell_style`] widget
 /// ramp (lifts to PANEL_RAISED + an amber rim on hover). Glue (needs a live `Ui`); the click→action
 /// mapping it feeds is what the pure
 /// [`resolve_title_action`](crate::shell::transitions::resolve_title_action) seam covers. Text-only,

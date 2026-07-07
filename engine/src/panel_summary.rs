@@ -3,13 +3,13 @@
 //! [`crate`]) leans on so a selection reads at a glance on a small (phone-aspect) screen.
 //!
 //! Two decisions live here, extracted as free fns so they are unit-testable without a `Game` (the
-//! CLAUDE.md "extract the pure logic to a testable seam" rule, exactly like [`crate::command_ui`] /
+//! CLAUDE.md "extract the pure logic to a testable seam" rule, exactly like `crate::command_ui` /
 //! [`crate::command_touch`]):
 //!
-//! - [`composition_rows`] — collapse a selection's per-kind counts into **at most `budget`** rows,
+//! - `composition_rows` — collapse a selection's per-kind counts into **at most `budget`** rows,
 //!   with a trailing `"+N more"` roll-up when the composition would otherwise overflow the panel on
 //!   a short screen. Depth stays in what the player *reads*, never in unit AI (invariant #3).
-//! - [`hp_line_style`] — map an average-health percentage to the shared [`LineStyle`] state language
+//! - `hp_line_style` — map an average-health percentage to the shared `LineStyle` state language
 //!   (green when healthy, red when hurt) so a wounded group reads as *hurt* at a glance instead of
 //!   as a flat neutral number.
 //!

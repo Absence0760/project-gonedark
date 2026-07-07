@@ -1,16 +1,16 @@
 //! The **radial command menu** renderer — the on-screen wedge ring a held long-press opens over the
 //! command vocabulary (`engine::command_ui`'s radial preview / commit, invariant #3: depth lives in
-//! the vocabulary, never in unit AI). The host fills [`gonedark_engine::Game::radial_menu`] on a
-//! long-press and hands the renderer a flat [`RadialMenu`] description; this draws the wedges.
+//! the vocabulary, never in unit AI). The host fills `gonedark_engine::Game::radial_menu` on a
+//! long-press and hands the renderer a flat `RadialMenu` description; this draws the wedges.
 //!
 //! Like [`hud`](crate::hud) and [`overlay`](crate::overlay) this is a screen-space LOAD pass (it
 //! composites over the already-rendered frame, never clears) and a **pure presentation derivation**
-//! — it reads only the small [`RadialMenu`] the host hands it and emits NDC quads. It owns its own
+//! — it reads only the small `RadialMenu` the host hands it and emits NDC quads. It owns its own
 //! tiny pipeline + shader (`radial.wgsl`) so it never contends with the unit/HUD/overlay passes.
 //!
 //! ## Fairness (invariant #6) holds by construction
 //!
-//! Every quad is in NDC ([`RadialQuad`] carries no world position, no fog mask), and the host only
+//! Every quad is in NDC (`RadialQuad` carries no world position, no fog mask), and the host only
 //! ever draws this in the **command view** — the menu is empty while embodied and the host gates the
 //! pass on `!embodied`, so it never paints over the dark frame. The ring is *chrome*, not intel.
 //!
@@ -18,12 +18,12 @@
 //!
 //! A dim backdrop, a center hub at the anchor, and one wedge per available action laid out clockwise
 //! from the top, **each labelled with its real command name** through the W4 [`text`](crate::text)
-//! pass ([`radial_labels`], fed the host's `engine::Game::radial_menu` vocabulary via
-//! [`RadialRenderer::render_with_labels`]). The ring is laid out aspect-corrected (horizontal offsets
+//! pass (`radial_labels`, fed the host's `engine::Game::radial_menu` vocabulary via
+//! `RadialRenderer::render_with_labels`). The ring is laid out aspect-corrected (horizontal offsets
 //! `/aspect`) so it reads as a true circle, not an ellipse, on a wide window.
 //!
 //! The testable layout math (how many quads, where each wedge sits, the labels) lives in the free
-//! [`radial_quads`] / [`radial_labels`] so it is unit-testable without a GPU — the `overlay_quads` /
+//! `radial_quads` / `radial_labels` so it is unit-testable without a GPU — the `overlay_quads` /
 //! `marker_for` pattern.
 
 use crate::text::{Anchor, TextRenderer};
@@ -60,7 +60,7 @@ pub enum RadialRole {
 }
 
 /// One screen-space radial-menu quad in NDC, ready to upload. The `role` is CPU-side only (drives
-/// the color and lets tests assert structure); it is dropped from the uploaded [`RadialInstance`].
+/// the color and lets tests assert structure); it is dropped from the uploaded `RadialInstance`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct RadialQuad {
     /// Center in NDC ([-1,1], +y up).
@@ -269,7 +269,7 @@ fn placeholder_slot_label(i: usize) -> String {
 
 /// Build the wedge labels for `menu`, one per slot, each anchored at the wedge center. Pure (no GPU,
 /// no sim) — the testable label seam. `names` optionally supplies real per-slot action strings (the
-/// host SEAM); when `None`, [`placeholder_slot_label`] fills each slot from its index. A slot with an
+/// host SEAM); when `None`, `placeholder_slot_label` fills each slot from its index. A slot with an
 /// empty/missing name is skipped (draws no label, but the wedge quad still shows the slot). Returns
 /// an empty vec when the menu has no slots.
 pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>, aspect: f32) -> Vec<WedgeLabel> {
@@ -279,7 +279,7 @@ pub fn radial_labels(menu: &RadialMenu, names: Option<&[&str]>, aspect: f32) -> 
 /// [`radial_labels`] with an explicit physical `ui_scale`. Label POSITIONS sit on the SCALED ring
 /// (radius `* ui_scale`) so they track the scaled wedges; the emitted `size` stays UNSCALED — the
 /// text pass multiplies it by `ui_scale` at draw time. Because both the wedge width and the label
-/// width scale by `ui_scale`, the fit ratio [`fitted_label_size`] computes is scale-independent, so
+/// width scale by `ui_scale`, the fit ratio `fitted_label_size` computes is scale-independent, so
 /// it needs no `ui_scale`. `ui_scale == 1.0` is byte-identical to [`radial_labels`].
 pub fn radial_labels_scaled(
     menu: &RadialMenu,

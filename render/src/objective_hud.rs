@@ -6,11 +6,11 @@
 //! Like every HUD module here, it is **pure layout**: the host (`engine`) derives *which* objective
 //! is current + its progress from the host-side `ObjectiveSet` (which OBSERVES the sim and never
 //! mutates it — objectives are not sim state, so this never folds into the checksum, invariant
-//! #1/#7) and hands in this [`ObjectiveHudView`]; this module turns it into NDC quads + labels.
+//! #1/#7) and hands in this `ObjectiveHudView`; this module turns it into NDC quads + labels.
 //!
 //! Fairness (invariant #6): the objective text is **command-layer information** — it is a screen-
 //! space NDC label with no world position, and the host gates it to the command view, so it never
-//! draws over the dark embodied frame. The free fns [`objective_hud_quads`] / [`objective_hud_labels`]
+//! draws over the dark embodied frame. The free fns `objective_hud_quads` / `objective_hud_labels`
 //! are GPU-free and unit-tested (the `command_panel` / `readout` pattern).
 
 use crate::overlay::{OverlayQuad, QuadRole};

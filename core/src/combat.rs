@@ -2,7 +2,7 @@
 //!
 //! `combat_system` is the deterministic per-tick weapons resolver. For each living, armed
 //! unit it acquires a target (nearest enemy in weapon range with line of sight), respecting
-//! the unit's [`Stance`](crate::components::Stance), fires on cooldown, applies
+//! the unit's [`Stance`] [^stance], fires on cooldown, applies
 //! cover-mitigated damage, accumulates **suppression** on the target, decays suppression
 //! over time, and despawns anything reduced to zero health — emitting [`SimEvent`]s for the
 //! alert/audio channel as it goes.
@@ -15,7 +15,7 @@
 //! The literal-executor rule (invariant #3) still binds: combat acts on the *stance* the
 //! player set, it does not invent targets the stance forbids or chase beyond weapon range.
 //!
-//! The generational [`Entity`] handle for the shooter/target (needed by `last_attacker` and
+//! The generational `Entity` handle for the shooter/target (needed by `last_attacker` and
 //! the `SimEvent`s) comes from the O(1) [`World::entity`] accessor.
 
 use crate::components::{Armor, EntityKind, Faction, InputSource, Posture, Stance, Vec2};
@@ -227,7 +227,7 @@ fn acquire_target(
 /// 2. **Engage** — armed, non-embodied, non-pinned units acquire a target by stance and fire on a
 ///    ready cooldown. A **hitscan** gun (`muzzle_vel == 0` — rifles, the D65 unarmoured tank)
 ///    applies cover-mitigated damage + suppression instantly. A **ballistic** gun (`muzzle_vel > 0`
-///    — the produced armoured tank, P9) instead launches a real traveling [`Projectile`] via the
+///    — the produced armoured tank, P9) instead launches a real traveling `Projectile` via the
 ///    same [`projectile::fire_ballistic`](crate::projectile::fire_ballistic) the embodied path uses
 ///    (D72): the AI fires along the bearing to the target's *current* position — it never leads or
 ///    solves a firing solution (invariant #3) — and impact resolves the damage later, in

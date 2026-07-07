@@ -1,22 +1,22 @@
 //! Embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9) — the screen-space scope
 //! chrome drawn over the dark embodied frame while the local player aims down sight in a tank. It is
 //! the render half of the zoom view; the FOV-narrowing + input→zoom-intent math is the engine's
-//! [`gonedark_engine::scope`] seam. Five alpha-blended elements turn "the player is scoped at zoom
+//! `gonedark_engine::scope` seam. Five alpha-blended elements turn "the player is scoped at zoom
 //! `t`" into a recognizable gun-sight:
 //!
 //! - **Vignette tunnel** — a full-screen darken everywhere *outside* the round aperture, so the
-//!   periphery blacks out into the classic scope tunnel ([`scope_instances`], shape `VIGNETTE`).
-//! - **Aperture ring** — the bright circular sight edge ([`scope_instances`], shape `RING`).
+//!   periphery blacks out into the classic scope tunnel (`scope_instances`, shape `VIGNETTE`).
+//! - **Aperture ring** — the bright circular sight edge (`scope_instances`, shape `RING`).
 //! - **Crosshair bars** — a horizontal + vertical reticle line through center (shape `BAR`).
 //! - **Center dot** — the aiming pip (shape `DOT`).
 //!
-//! The whole overlay **fades in with the zoom** ([`scope_fade`]) so it eases on with the FOV rather
+//! The whole overlay **fades in with the zoom** (`scope_fade`) so it eases on with the FOV rather
 //! than popping. Invariant #4: this is the **float side** — every number here is `f32` host-side
-//! presentation, never `core` sim state, and the renderer only READS the [`ScopeState`] it is
+//! presentation, never `core` sim state, and the renderer only READS the `ScopeState` it is
 //! handed. Invariant #6: it is avatar-only chrome with no world position — it reveals nothing about
 //! unseen enemies and narrows (never widens) the visible frustum. Like [`tank_hud`](crate::tank_hud)
 //! all the geometry math lives in pure free fns so it is unit-testable without a GPU; only
-//! [`ScopeRenderer::render`] needs a device.
+//! `ScopeRenderer::render` needs a device.
 
 use wgpu::util::DeviceExt;
 
@@ -94,8 +94,8 @@ pub struct ScopeInstance {
     pub p1: f32,
 }
 
-/// The scope's opacity fade for a given zoom `t`: `0` below [`SCOPE_FADE_LO`], easing (smoothstep) to
-/// `1` at [`SCOPE_FADE_HI`]. So the overlay eases on with the FOV narrowing rather than popping in.
+/// The scope's opacity fade for a given zoom `t`: `0` below `SCOPE_FADE_LO`, easing (smoothstep) to
+/// `1` at `SCOPE_FADE_HI`. So the overlay eases on with the FOV narrowing rather than popping in.
 /// Pure, host-testable.
 pub fn scope_fade(zoom_t: f32) -> f32 {
     smoothstep(SCOPE_FADE_LO, SCOPE_FADE_HI, zoom_t)
@@ -124,7 +124,7 @@ fn round_half(r: f32, aspect: f32) -> (f32, f32) {
 /// host-testable without a GPU; [`ScopeRenderer::render`] just uploads + draws whatever this returns.
 /// Returns **empty** when the zoom is too shallow to show ([`scope_fade`] `== 0`), so the renderer
 /// no-ops at hip. Every element's alpha is scaled by the fade so the whole sight eases in with the
-/// FOV. Round elements are aspect-corrected via [`round_half`]; the crosshair bars are sized so both
+/// FOV. Round elements are aspect-corrected via `round_half`; the crosshair bars are sized so both
 /// lines share one on-screen thickness regardless of aspect.
 pub fn scope_instances(state: &ScopeState) -> Vec<ScopeInstance> {
     let fade = scope_fade(state.zoom_t);

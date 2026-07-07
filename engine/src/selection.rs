@@ -3,7 +3,7 @@
 //! Selection is pure *presentation* state — which of the player's units the next order applies
 //! to. It is computed from the command-view pointer (tap to pick the nearest unit; drag a
 //! rectangle to band-select several) and never touches sim state (invariant #1) — it only ever
-//! produces, downstream in [`crate::command_ui`], `Command`s the sim already understands.
+//! produces, downstream in `crate::command_ui`, `Command`s the sim already understands.
 //!
 //! The engine does the camera unprojection at the input boundary and hands this layer
 //! WORLD-space points + the candidate units' world positions, so the logic here is float-only

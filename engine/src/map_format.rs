@@ -21,7 +21,7 @@
 //! this module the same as any sim code. Integers cross into `core` only through
 //! [`Fixed::from_int`] (cell → world). `#[serde(deny_unknown_fields)]` rejects typos/unknown keys,
 //! the loader range-validates every cell and spawn zone, and it **fails loud** (a returned
-//! [`MapError`], never a silent clamp) on an out-of-bounds cell, an out-of-bounds or overlapping
+//! `MapError`, never a silent clamp) on an out-of-bounds cell, an out-of-bounds or overlapping
 //! spawn zone, or a dangling terrain reference — a bad file errors host-side, never silently
 //! desyncs.
 //!

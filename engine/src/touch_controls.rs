@@ -13,7 +13,7 @@
 //! `touches` empty, so this seam never runs there (the Android-only GUI, per the design).
 //!
 //! ## The scheme (COD-Mobile "fixed joystick", D14's validated split)
-//! - **Move stick** is a *fixed*, always-drawn ring anchored in the lower-left ([`stick_base`]): a
+//! - **Move stick** is a *fixed*, always-drawn ring anchored in the lower-left (`stick_base`): a
 //!   finger-down **inside the visible ring** claims the stick, and deflection is measured from the
 //!   ring's (fixed) centre, clamped to its radius, to give `move_axis`. Fixed — not floating — so
 //!   there is a discoverable target and a touch can never be silently mis-classified as look
@@ -29,7 +29,6 @@
 //!   that was mid-look-drag and slid onto it — a dragging look finger *releases* look the moment it
 //!   crosses a button, so Fire/Crouch/etc. fire without lifting first.
 //!
-//! [`stick_base`]: TouchLayout::stick_base
 //!
 //! Floats are fine here: this is host-side presentation/input, the platform side of the PAL seam.
 //! Nothing in this module touches the sim — the intents it returns are quantized to `Fixed` *later*
@@ -178,7 +177,7 @@ impl TouchLayout {
     /// Lay the HUD out for a `width × height` viewport at a known display `density` — the dp scale
     /// factor `densityDpi / DENSITY_DEFAULT` on Android (or `Window::scale_factor()` on desktop). Same
     /// fractional placement as [`new`](Self::new), but every round button radius is floored to at least
-    /// [`MIN_TOUCH_MM`] in *real* millimetres (via [`mm_to_px`]) so a dense phone can't shrink a
+    /// `MIN_TOUCH_MM` in *real* millimetres (via [`mm_to_px`]) so a dense phone can't shrink a
     /// control — especially Fire/Surface — below the ~9 mm (44/48 dp) tappable minimum. `density` is
     /// clamped to `[0.5, 3.0]` at this boundary. Presentation/input only, never the sim (invariant #1).
     pub fn with_density(width: u32, height: u32, density: f32) -> Self {

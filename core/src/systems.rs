@@ -7,7 +7,7 @@
 //!
 //! Pathing uses a real deterministic [`FlowField`](crate::flow_field): a unit steps along the
 //! sampled downhill direction toward its target. Fields come from a per-tick
-//! [`FlowFieldCache`](crate::flow_field::FlowFieldCache) — units sharing a goal share one build,
+//! [`FlowFieldCache`] — units sharing a goal share one build,
 //! which is bit-identical to each building its own (a field is a pure function of its goal) but
 //! turns a 200-unit shared push from ~200 builds into a handful (the measured 60 Hz bottleneck;
 //! `docs/plans/phase-3-plan.md` §"Workstream A"). Phase 1 had no obstacles, so the field points at the
@@ -24,7 +24,7 @@ use crate::trig;
 pub const MOVE_SPEED: Fixed = Fixed::from_ratio(1, 8);
 
 /// Maximum hull turn rate, angle-units per tick (tank embodiment P2, D55). A full turn is
-/// [`trig::ANGLE_FULL`](crate::trig::ANGLE_FULL) `= 65536` units, so `256/tick` at the locked 60 Hz
+/// [`trig::ANGLE_FULL`] `= 65536` units, so `256/tick` at the locked 60 Hz
 /// is `256·60/65536` of a turn per second ≈ a 84°/s chassis traverse — a deliberately heavy,
 /// turn-then-drive feel (the hull cannot snap to the stick). Playtest baseline, not final feel:
 /// dial against the embodied tank's handling once P7/P8 make it visible.

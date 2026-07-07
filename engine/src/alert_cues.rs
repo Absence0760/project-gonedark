@@ -7,7 +7,7 @@
 //! core mechanic is unfair to them (invariant #6). This module is the pure seam that turns the live
 //! [`AlertChannel`] into those equivalents:
 //!
-//! - a **directional audio ping** — one positioned [`AudioCue`] per fresh alert, panned by bearing,
+//! - a **directional audio ping** — one positioned `AudioCue` per fresh alert, panned by bearing,
 //!   at a *constant* gain (bearing only — never distance-attenuated), never muffled, so it cuts
 //!   through the muffled off-map strategic bleed the way the flash does; and
 //! - a **directional haptic pulse** — a coarse [`HapticPulse`] (kind + a left/center/right side) for
@@ -16,7 +16,7 @@
 //! ## Fairness (invariant #6 — "alerts, not intel")
 //!
 //! Both channels reveal *exactly* what the flash reveals: a **bearing** and the alert **kind**, and
-//! no more. The audio ping's gain is a constant ([`ALERT_PING_GAIN`]) so loudness can never leak
+//! no more. The audio ping's gain is a constant (`ALERT_PING_GAIN`) so loudness can never leak
 //! range, and the haptic side is deliberately low-resolution (a motor can't localize, and fore/aft
 //! both collapse to `Center`) — mirroring the edge-ring flash, which shows direction but not
 //! distance. This is the behavioural line between these accessibility cues and the primary,

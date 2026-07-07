@@ -22,7 +22,7 @@
 //! Two shapes ride this same seed+log foundation:
 //!
 //! - **single-peer** ([`Replay`]) — one ordered command stream per tick (a solo match or a
-//!   spectator of one). This is the [D89] foundation.
+//!   spectator of one). This is the `D89` foundation.
 //! - **multi-peer** ([`MultiReplay`]) — a lockstep PvP match, where each tick's inputs come from
 //!   several peers. The record keeps every peer's set *separately* (`tick -> peer -> commands`)
 //!   and merges them at playback in a **deterministic per-peer order** — ascending peer id,

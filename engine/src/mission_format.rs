@@ -10,13 +10,13 @@
 //!   cells (whole world units), whole degrees, whole seconds, fixed-point **milli-units** for
 //!   distances. There is **no `f32`/`f64` anywhere in the type graph from file to sim**: the loader
 //!   converts integer → [`Fixed`] via [`Fixed::from_int`] / [`Fixed::from_ratio`], and a whole
-//!   turn maps to [`ANGLE_FULL`] with exact integer arithmetic. A float literal in the RON cannot
+//!   turn maps to `ANGLE_FULL` with exact integer arithmetic. A float literal in the RON cannot
 //!   even *deserialize* into an integer field — it fails loudly at parse.
 //! - **`core` stays serde-free (invariant #2).** serde and RON live in `engine`; the spec types
 //!   here MIRROR the `core` vocabulary (`Faction`/`Army`/`UnitKind`/`Stance`/`Difficulty`) as local
 //!   `Deserialize` enums that map onto the real `core` types, so `core` gains no dependency.
 //!
-//! The loader **range-validates and fails LOUD** ([`MissionLoadError`]) — it never silently clamps
+//! The loader **range-validates and fails LOUD** (`MissionLoadError`) — it never silently clamps
 //! a bad coordinate or dangling reference into a playable-but-wrong mission. Because it drives the
 //! CT-A builder, the seeded `Sim` rides the *exact* same per-tick checksum footing as a
 //! hand-written seeder (invariant #7); the RON file itself never enters the checksum.
@@ -86,7 +86,7 @@ pub struct MissionSpec {
     pub objectives: Vec<ObjectiveSpec>,
     /// The commander difficulty tier this mission is briefed at.
     pub difficulty: DifficultySpec,
-    /// Light narrative framing ([Q16] keeps depth deferred).
+    /// Light narrative framing (`Q16` keeps depth deferred).
     pub briefing: BriefingSpec,
 }
 

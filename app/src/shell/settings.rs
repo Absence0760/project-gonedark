@@ -230,7 +230,7 @@ pub(crate) enum SettingsStep {
 
 /// Apply a [`SettingsAction`] to the preferences and report the resulting screen step. `ResetDefaults`
 /// mutates state and stays; the rest are screen/host transitions. Pure (no egui/window) — the
-/// Settings testable decision seam, mirroring [`apply_loadout_action`].
+/// Settings testable decision seam, mirroring `apply_loadout_action`.
 pub(crate) fn apply_settings_action(
     action: SettingsAction,
     state: &mut SettingsState,

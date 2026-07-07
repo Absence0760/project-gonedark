@@ -1,5 +1,5 @@
 //! WS-E — difficulty tiers, scenario modifiers, and light per-node briefing framing for the
-//! PvE Operations campaign ([`docs/plans/pve-campaign-plan.md`], [D58]/[D60]).
+//! PvE Operations campaign (`docs/plans/pve-campaign-plan.md`, `D58`/`D60`).
 //!
 //! Three small, **deterministic, float-free** value types (invariant #1):
 //!
@@ -13,12 +13,12 @@
 //!
 //! - [`ScenarioModifiers`]: reshape the **situation** through scenario-local levers only —
 //!   force size, reinforcement cadence (income period), fog rules ([`TellMode`]), and a match
-//!   time limit. They **never** touch the locked [D30] balance constants
-//!   ([`economy`](crate::economy)): a Rifleman costs the same and hits as hard at every tier,
+//!   time limit. They **never** touch the locked `D30` balance constants
+//!   ([`economy`]): a Rifleman costs the same and hits as hard at every tier,
 //!   so the measured balance baseline and cross-arch determinism (invariant #7) hold. Modifiers
 //!   change the *board*, not the *pieces*.
 //!
-//! - [`Briefing`]: minimal narrative framing per campaign node ([Q16] keeps depth deferred) —
+//! - [`Briefing`]: minimal narrative framing per campaign node (`Q16` keeps depth deferred) —
 //!   pure static text plus the tuning that node runs at. No sim state, no logic.
 //!
 //! - [`ScenarioModifiers::for_rotation`] (CP-8): the live-ops rotation bridge —
@@ -113,7 +113,7 @@ impl Difficulty {
     }
 }
 
-/// Scenario-parameter modifiers — reshape the **situation**, never the [D30] balance numbers.
+/// Scenario-parameter modifiers — reshape the **situation**, never the `D30` balance numbers.
 ///
 /// Each field maps to a scenario-local lever the sim/host already exposes (income period, the
 /// detection [`TellMode`], the starting force count, the host-side timeout) — *not* to a per-unit
@@ -142,7 +142,7 @@ pub struct ScenarioModifiers {
 
 impl Default for ScenarioModifiers {
     /// Neutral: force unchanged (100%), scenario's own reinforcement cadence, the `Subtle` fog
-    /// baseline ([D33]), no time limit. Applying the default modifies nothing.
+    /// baseline (`D33`), no time limit. Applying the default modifies nothing.
     fn default() -> Self {
         ScenarioModifiers {
             force_scale_pct: 100,
@@ -285,9 +285,9 @@ impl ScenarioModifiers {
     /// - `period` selects the entry by wrapping (`period % catalog.len()`), so the rotation simply
     ///   repeats — the server can hand out an ever-increasing week counter forever without `core`
     ///   growing a table.
-    /// - `track` selects the catalog: `1` ⇒ [`VARIANT_A_ROTATION`] (the consent-gated experiment
+    /// - `track` selects the catalog: `1` ⇒ `VARIANT_A_ROTATION` (the consent-gated experiment
     ///   catalog); anything else (including the `0` baseline and any unrecognized/future wire
-    ///   value) ⇒ [`STANDARD_ROTATION`] — an unknown track degrades to the safe public baseline,
+    ///   value) ⇒ `STANDARD_ROTATION` — an unknown track degrades to the safe public baseline,
     ///   never to a guess (mirrors [`ConsentGate::guard`](crate)'s "absent/unknown ⇒ the safe
     ///   default" posture).
     pub fn for_rotation(period: u64, track: u32) -> ScenarioModifiers {
@@ -300,7 +300,7 @@ impl ScenarioModifiers {
     }
 }
 
-/// Light per-node briefing framing ([Q16]: campaign-narrative depth is deferred — this is the
+/// Light per-node briefing framing (`Q16`: campaign-narrative depth is deferred — this is the
 /// minimal seam). Pure static text plus the [`Difficulty`] and [`ScenarioModifiers`] the node runs
 /// at; no sim state and no logic, so it carries zero determinism surface. The shell renders these
 /// strings; the host applies the tuning.

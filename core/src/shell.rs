@@ -20,7 +20,7 @@
 //! ## Two directions
 //!
 //! - **Read side (`core` → shell), presentation-safe.** Match lifecycle ([`MatchStatus`]), the
-//!   post-match summary ([`MatchSummary`] — every numeric field is `i64`/[`Fixed`], **never** a
+//!   post-match summary ([`MatchSummary`] — every numeric field is `i64`/`Fixed`, **never** a
 //!   float, invariant #1), the order/stance vocabulary as data ([`order_vocabulary`] /
 //!   [`stance_vocabulary`], single-sourced from [`crate::components`]), and the lockstep
 //!   connection surface ([`ConnectionStatus`], derived from [`crate::lockstep`] — pure data, no
@@ -61,7 +61,7 @@ use crate::fog::Visibility;
 use crate::lockstep::{Desync, Lockstep};
 use crate::sim::Command;
 
-/// The faction-identity type ([`Army`](crate::components::Army)) re-exported through the seam, so a
+/// The faction-identity type ([`Army`]) re-exported through the seam, so a
 /// native match-setup shell reaches the US/FR selection vocabulary from the single `core::shell`
 /// import surface (factions-plan WS-A, D68) — the same single-sourcing as the order/stance vocab and
 /// the campaign types. It is plain presentation-safe data (a `repr`-stable tag, no float, no sim

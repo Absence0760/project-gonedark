@@ -13,7 +13,7 @@
 //! the avatar's facing) places the marker at top-center; a positive azimuth (the alert is to
 //! the avatar's right) swings it clockwise toward the right edge, a negative one to the left.
 //! An alert directly behind the avatar lands at bottom-center. The pure placement + fade math
-//! lives in [`marker_for`] so it is unit-testable without a GPU.
+//! lives in `marker_for` so it is unit-testable without a GPU.
 
 use crate::text::Anchor;
 use gonedark_core::alerts::{Alert, AlertChannel, AlertKind};
@@ -149,8 +149,8 @@ pub fn marker_for(
 }
 
 /// [`marker_for`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
-/// Only the marker **glyph** ([`MARKER_HALF_SIZE`]) scales; the ring placement is a positional
-/// encoding (bearing at the fixed [`RING_RADIUS`] edge distance — the no-range-leak fairness
+/// Only the marker **glyph** (`MARKER_HALF_SIZE`) scales; the ring placement is a positional
+/// encoding (bearing at the fixed `RING_RADIUS` edge distance — the no-range-leak fairness
 /// guard, invariant #6) and deliberately does NOT move with `ui_scale`. `ui_scale == 1.0` is
 /// byte-identical to [`marker_for`].
 pub fn marker_for_scaled(
@@ -206,9 +206,9 @@ pub fn place_marker(
 
 /// [`place_marker`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
 /// Scales only the marker **glyph** half-size — the ring radius is a positional encoding (the
-/// bearing rides the fixed [`RING_RADIUS`], leaking direction, never range — invariant #6) and
+/// bearing rides the fixed `RING_RADIUS`, leaking direction, never range — invariant #6) and
 /// stays put so a scaled HUD still places every ping at the exact same screen point. Scaling the
-/// radius would also break the tank-HUD M1 collision band (keyed on [`RING_RADIUS`]) and push
+/// radius would also break the tank-HUD M1 collision band (keyed on `RING_RADIUS`) and push
 /// markers off-screen at large scales. `ui_scale == 1.0` is byte-identical to [`place_marker`].
 #[allow(clippy::too_many_arguments)]
 pub fn place_marker_scaled(
@@ -286,7 +286,7 @@ pub fn scale_marker_chrome(markers: &[HudMarker], ui_scale: f32) -> Vec<HudMarke
 }
 
 /// A short, non-color abbreviation for an alert kind — the **colorblind (CVD) cue** (invariant #6).
-/// The shape glyph ([`shape_for`]) + luminance-spread palette ([`alert_color`]) already make the four
+/// The shape glyph (`shape_for`) + luminance-spread palette (`alert_color`) already make the four
 /// kinds distinguishable without hue, but a hue-blind player under a same-hue frame region can still
 /// be unsure *which* kind a glyph is; a two-to-four-letter label removes all ambiguity. Kept terse so
 /// it stays legible at marker size and never crowds the thin thread back.
@@ -328,7 +328,7 @@ pub fn alert_labels(
 }
 
 /// [`alert_labels`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
-/// The label column stays on the marker's (unscaled) ring position; only the [`LABEL_DROP`] gap
+/// The label column stays on the marker's (unscaled) ring position; only the `LABEL_DROP` gap
 /// scales, so the abbrev keeps riding just below the `ui_scale`-grown marker glyph and the text
 /// pass's `px * ui_scale` glyphs. `ui_scale == 1.0` is byte-identical to [`alert_labels`].
 pub fn alert_labels_scaled(
@@ -368,7 +368,7 @@ pub fn hitmarker_marker(last_hit_tick: Option<u64>, tick: u64) -> Option<HudMark
 
 /// [`hitmarker_marker`] with an explicit accessibility `ui_scale` (the picker's `*_scaled`
 /// pattern). The "X" stays dead-center (that placement is the "my own shot connected" read, and
-/// center is scale-independent anyway); only its [`HITMARKER_HALF_SIZE`] glyph grows.
+/// center is scale-independent anyway); only its `HITMARKER_HALF_SIZE` glyph grows.
 /// `ui_scale == 1.0` is byte-identical to [`hitmarker_marker`].
 pub fn hitmarker_marker_scaled(
     last_hit_tick: Option<u64>,
@@ -462,7 +462,7 @@ pub struct SurfaceHint {
     pub alpha: f32,
 }
 
-/// The desktop-only "[key] SURFACE" reminder (M5): while embodied, keyboard players have no
+/// The desktop-only "`key` SURFACE" reminder (M5): while embodied, keyboard players have no
 /// on-screen Surface button (that is a touch affordance), so a low-opacity hint tells them which
 /// key surfaces them back to command. Returns `None` on touch (the touch HUD already draws a
 /// Surface button) or for an empty `label`, so it is **gated to embodied-AND-not-touch** — the
@@ -616,7 +616,7 @@ impl HudRenderer {
     ///   longer takes it. (If aspect correction is ever wanted, re-add a real param there.)
     /// - `tick`: the current sim tick (to fade alerts by age).
     /// - `ui_scale`: the accessibility UI scale — grows the marker glyphs only
-    ///   ([`marker_for_scaled`]); the bearing ring stays at [`RING_RADIUS`].
+    ///   ([`marker_for_scaled`]); the bearing ring stays at `RING_RADIUS`.
     ///
     /// Builds the live marker set via [`marker_for_scaled`], uploads it, and records a single LOAD
     /// render pass so the markers composite over the embodied frame. No-op if nothing is live.

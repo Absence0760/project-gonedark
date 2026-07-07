@@ -29,7 +29,7 @@
 //! first-person space underneath — a sky gradient, a gridded ground, and a weapon viewmodel (W5,
 //! [`world::WorldRenderer`]) — BEFORE this unit pass loads. That world is a pure function of the
 //! *camera* (it has no access to sim entities), so no enemy/building/control-point intel can leak
-//! through it; the fairness boundary stays exactly where the [`fog`] filter draws it. The embodied
+//! through it; the fairness boundary stays exactly where the `fog` filter draws it. The embodied
 //! frame is therefore: `world sky/ground (clears)` → this avatar pass (LOADs) → weapon viewmodel →
 //! alert HUD.
 
@@ -270,7 +270,7 @@ pub const FLAG_SELECTED: u32 = 4; // command-layer selected — drawn with a bri
 pub const FLAG_MESH: u32 = 8; // a 3D token mesh draws this body — the quad is UI decals only (D44)
 
 /// Command-view faction **shape tags** (visual-design WS-D — non-colour redundancy). The quad shader
-/// ([`shader.wgsl`]) draws a per-faction footprint marker in this silhouette under each 3D token, so a
+/// (`shader.wgsl`) draws a per-faction footprint marker in this silhouette under each 3D token, so a
 /// colourblind player tells factions apart by *shape*, not hue alone. Redundant with the faction
 /// colour ([`faction_color_in`]) — same information in a second channel, never new strategic intel, so
 /// it stays inside invariant #6 (a faction identity tag the colour already conveyed). **Always-on**:
@@ -420,7 +420,7 @@ pub fn weapon_model_for(army: Army) -> mesh::ModelKind {
 /// steel emplacement ([`Turret`](mesh::ModelKind::Turret)). Pure presentation — a fortified-point
 /// silhouette, never sim state (the emplacements are fixed cosmetic environment dressing with no ECS
 /// entity behind them, so they stay fair under "world goes dark", invariant #6). Mirrors the WS-C
-/// [`weapon_model_for`] / [`model_for_unit`] faction-cosmetic pattern so a future per-faction structure
+/// [`weapon_model_for`] / `model_for_unit` faction-cosmetic pattern so a future per-faction structure
 /// system has a tested seam. Pure + testable.
 pub fn structure_turret_for(army: Army) -> mesh::ModelKind {
     match army {
@@ -658,7 +658,7 @@ fn prop_draw_plan(
 /// allies and enemies standing in its line of sight (the missing half of the dark frame: losing the
 /// strategic MAP is intel loss, but the soldier in front of your rifle is a fair physical target —
 /// invariant #6). `instances` is the ALREADY fog-filtered draw set, so only units inside the
-/// avatar's vision survive upstream ([`fog::visible_instances`]) and this never re-checks intel. It
+/// avatar's vision survive upstream (`fog::visible_instances`) and this never re-checks intel. It
 /// drops the avatar's own body ([`FLAG_EMBODIED`] — you don't render yourself in first person) and
 /// any non-mesh instance ([`token_meshes`] is empty for control-point rings, which are map intel
 /// and never appear in the dark frame anyway), then stands each remaining unit on the ground
@@ -739,7 +739,7 @@ fn tracer_color(faction: Faction) -> [f32; 4] {
 /// current-tick position, while a just-spawned shell simply appears one tick later and a spent one
 /// plays out its final segment — no fragile cross-tick index matching. Each bolt is yawed to its
 /// travel heading (`atan2(vel)`, matching [`mesh::model_matrix`]'s `+X = 0`/CCW convention) and stood
-/// at its `(x, y, height)`; a hot per-shell tint ([`tracer_color`]) drives the shader glow. These are
+/// at its `(x, y, height)`; a hot per-shell tint (`tracer_color`) drives the shader glow. These are
 /// embodied-only by construction (invariant #3 — only an embodied unit fires a ballistic shell), so
 /// every bolt is the firing player's own physical round, never strategic map intel (invariant #6).
 /// Pure + GPU-free, so it is unit-tested without a device.
@@ -764,7 +764,7 @@ pub fn interpolate_projectiles(prev: &Snapshot, alpha: f32) -> Vec<mesh::MeshIns
 
 /// Build render instances from two sim snapshots interpolated by `alpha` in `[0,1]` (invariant
 /// #4 — interpolation lives in the renderer, not the sim). Units are matched between the two
-/// snapshots by their stable `entity_index`, **not** by array position: [`core::snapshot`]'s
+/// snapshots by their stable `entity_index`, **not** by array position: [`core::snapshot`](gonedark_core::snapshot)'s
 /// `Snapshot::capture` compacts dead ECS slots out of `units` every tick, so pairing by index
 /// would blend a *different* (or just-despawned) entity's stale pose into a live unit for one
 /// frame on every casualty. A unit present only in `curr` (freshly spawned) snaps to its
@@ -960,9 +960,9 @@ fn project_to_ndc(view_proj: &[[f32; 4]; 4], p: [f32; 3]) -> Option<[f32; 2]> {
 
 /// Command-layer glanceability (CP-9, visual-design WS-C): a small **unit-kind glyph** centred over
 /// each command-view unit token so the player can read composition at a glance on a small screen.
-/// Each non-embodied, non-ring, non-building unit is projected to NDC on the CPU ([`project_to_ndc`])
+/// Each non-embodied, non-ring, non-building unit is projected to NDC on the CPU (`project_to_ndc`)
 /// and emitted as an [`icon::IconItem`] tinted by its faction colour (the instance's own RGB), with
-/// its [`UnitKind`] mapped to an [`icon::IconKind`] ([`icon_for_unit_kind`]).
+/// its [`UnitKind`] mapped to an [`icon::IconKind`] (`icon_for_unit_kind`).
 ///
 /// Fairness (invariant #6): returns an **empty vec while `world_dark`**, exactly like
 /// [`readout::readout_labels`] — a glanceability aid is strategic map intel and must never draw over
@@ -1015,7 +1015,7 @@ pub struct UnitInstance {
     pub r: f32,
     pub g: f32,
     pub b: f32,
-    /// Health fraction in `[0,1]`; negative ([`NO_HEALTH_BAR`]) draws no bar.
+    /// Health fraction in `[0,1]`; negative (`NO_HEALTH_BAR`) draws no bar.
     pub health: f32,
     /// [`FLAG_EMBODIED`] | [`FLAG_RING`] | [`FLAG_SELECTED`].
     pub flags: u32,
@@ -1027,7 +1027,7 @@ pub struct UnitInstance {
     /// trailing CPU-only fields below stay untouched. Presentation only (invariant #1/#4/#6).
     pub shape: u32,
     /// The 3D token mesh this instance draws as ([`mesh::ModelKind`] `as u32`), resolved from the
-    /// snapshot's unit-kind / building flag by [`model_for_unit`]. CPU-side only — [`token_meshes`]
+    /// snapshot's unit-kind / building flag by `model_for_unit`. CPU-side only — `token_meshes`
     /// reads it to bucket the mesh pass; it is a trailing field so the quad pipeline's instance
     /// attributes (locations 1..=5, fixed offsets) are untouched and the GPU never reads it.
     pub model: u32,
@@ -1493,7 +1493,7 @@ impl Renderer {
     /// Also advances the [`death_linger::DeathLinger`] buffer against the same `prev`/`curr` pair
     /// (CP-3 follow-up) and appends its frozen Death-clip instances to the drawn set, so a unit that
     /// vanished from the snapshot this tick still plays its death animation for a short fade window.
-    /// The linger instances go through the exact same [`fog::visible_instances`] filter as every
+    /// The linger instances go through the exact same `fog::visible_instances` filter as every
     /// other instance in [`Renderer::render`] — no special always-drawn exemption — so invariant #6
     /// holds for them too.
     pub fn prepare(&mut self, prev: &Snapshot, curr: &Snapshot, alpha: f32, selected: &[u32]) {
@@ -1517,12 +1517,12 @@ impl Renderer {
     /// leaves (invariant #6). In **command view** the frame is composited in three passes so the 3D
     /// greybox tokens (D44) sit between the ground and the UI:
     ///  1. **ground grid** — CLEARS to the lit slate the field reads against (W6);
-    ///  2. **3D unit/structure tokens** — depth-tested meshes ([`token_meshes`] picks infantry vs
+    ///  2. **3D unit/structure tokens** — depth-tested meshes (`token_meshes` picks infantry vs
     ///     structure, and a tank's hull + turret) LOADed over the grid;
     ///  3. **2D quad UI** — health bars, selection rims, control-point rings — LOADed on top, with
     ///     each token's body fill suppressed ([`FLAG_MESH`]) so the mesh shows through.
     ///
-    /// Either way [`fog::visible_instances`] (worker 1) chooses the draw set, so unseen enemies
+    /// Either way `fog::visible_instances` (worker 1) chooses the draw set, so unseen enemies
     /// vanish in command view and the map collapses to the avatar alone while embodied — the
     /// fairness boundary is unchanged; the 3D tokens are drawn only from that already-fogged set.
     /// `width`/`height` size the depth buffer for the token pass.
@@ -1908,7 +1908,7 @@ impl Renderer {
     /// Draw the embodied **tank** gunner-sight HUD (tank embodiment P8) on top of the current frame (a
     /// LOAD pass — never clears): the hull-relative turret indicator, the dispersion reticle, the LEAD
     /// pip, and the reload ring (geometry via [`tank_hud::TankHudRenderer`]), then the selected-shell
-    /// label through the shared [`text`](crate::text) pass. The host calls this only while the local
+    /// label through the shared [`text`] pass. The host calls this only while the local
     /// player is embodied in a tank. Presentation-only chrome with no world position — it reveals
     /// nothing about unseen enemies and widens no fog beneath it (invariant #6); the renderer only
     /// READS the [`tank_hud::TankHudState`] / `shell_label` it is handed (invariant #4).
@@ -1943,7 +1943,7 @@ impl Renderer {
     /// Draw the embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9) on top of the
     /// current frame (a LOAD pass — never clears): the vignette tunnel, aperture ring, crosshair, and
     /// center dot (geometry via [`scope::ScopeRenderer`]), then the magnification readout (e.g.
-    /// "3.3x") through the shared [`text`](crate::text) pass. The host calls this only while the
+    /// "3.3x") through the shared [`text`] pass. The host calls this only while the
     /// local player is embodied and aiming down sight (`zoom_t > 0`). Presentation-only chrome with
     /// no world position — it reveals nothing about unseen enemies and *narrows* (never widens) the
     /// visible frustum (invariant #6); the renderer only READS the [`scope::ScopeState`] it is handed
@@ -2114,8 +2114,8 @@ impl Renderer {
     /// host fills the [`command_bar::CommandBarView`] from its `command_touch` hit-test layout
     /// (pixel rects → NDC), so the buttons drawn here are the exact shapes the engine hit-tests
     /// taps against (no drift). Box quads through the shared overlay pipeline + centered labels
-    /// through the W4 text pass — the same construction as [`render_command_panel`](Self::
-    /// render_command_panel). Command view only (the caller gates on `!embodied`); a no-op on an
+    /// through the W4 text pass — the same construction as `render_command_panel`.
+    /// Command view only (the caller gates on `!embodied`); a no-op on an
     /// empty bar.
     pub fn render_command_bar(
         &mut self,
@@ -2230,7 +2230,7 @@ impl Renderer {
     /// Draw the command-view **readout** — the top-left unit/enemy/point tally (and the optional,
     /// host-supplied resource/income lines) — on top of the current frame (a LOAD text pass; never
     /// clears). The tally was derived during the preceding [`Renderer::render`] from this frame's
-    /// fog-filtered draw set ([`readout_tally`](Self::readout_tally)); the host hands in the
+    /// fog-filtered draw set (`readout_tally`); the host hands in the
     /// [`readout::EconomyReadout`] economy seam and the live `world_dark` state, and
     /// [`readout::readout_labels`] lays the lines out. **Drawn at NATIVE swapchain resolution** — the
     /// host calls this AFTER [`present_scene`](Self::present_scene), with the rest of the chrome, so
@@ -2382,17 +2382,17 @@ impl Renderer {
     }
 
     /// Draw the embodied first-person WORLD MESHES — the static scenery/cover props
-    /// ([`prop_draw_plan`], from the sim's [`gonedark_core::obstacles`] layout) **and** the dynamic
+    /// (`prop_draw_plan`, from the sim's [`gonedark_core::obstacles`] layout) **and** the dynamic
     /// sim units the avatar can SEE — over the embodied
     /// sky/ground. Both are drawn in a SINGLE mesh pass (one shared depth clear) so they occlude each
     /// other correctly: a unit standing behind a rock is hidden by it, rather than punching through.
     ///
     /// Fairness (invariant #6): "world goes dark" strips the strategic MAP — the overview, the
     /// control points, off-screen intel — NOT the enemy physically in your avatar's line of sight.
-    /// `fog` is the avatar's vision mask; [`fog::visible_instances`] keeps only the units it actually
-    /// sees (plus the avatar, which [`unit_draw_plan`] then drops — you don't render your own body in
+    /// `fog` is the avatar's vision mask; `fog::visible_instances` keeps only the units it actually
+    /// sees (plus the avatar, which `unit_draw_plan` then drops — you don't render your own body in
     /// first person), so nothing beyond direct sight leaks in. The props are a fixed cosmetic layout
-    /// and carry zero intel. The host calls this in the embodied branch AFTER [`render_world_sky`]
+    /// and carry zero intel. The host calls this in the embodied branch AFTER `render_world_sky`
     /// (the clearing pass) and before [`Renderer::render`]'s avatar pass. `view_proj` is the embodied
     /// camera matrix and `eye` its world position (so [`mesh::select_lod`] can pick a tier per mesh by
     /// distance); `width`/`height` size the depth buffer.

@@ -459,7 +459,7 @@ impl DesktopInput {
     }
 
     /// Feed one `winit` [`DeviceEvent`] for raw, unaccelerated mouse-look deltas (the FPS look
-    /// axis). A thin decoder over [`on_mouse_motion`](Self::on_mouse_motion).
+    /// axis). A thin decoder over `on_mouse_motion`.
     pub fn handle_device_event(&mut self, event: &DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event {
             self.on_mouse_motion(delta.0 as f32, delta.1 as f32);

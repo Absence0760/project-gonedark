@@ -4,19 +4,19 @@
 //! [`QueueProduction`](gonedark_core::sim::Command::QueueProduction) command; this module supplies
 //! the numbers the player reads before pressing — per unit type a **cost** and a **production ETA**.
 //!
-//! It is the [`readout`](crate::readout) pattern: pure free fns returning plain data ([`TrainOption`],
-//! [`eta_seconds`]) — unit-testable without a GPU. The contextual [`command_panel`](crate::command_panel)
+//! It is the [`readout`](crate::readout) pattern: pure free fns returning plain data (`TrainOption`,
+//! `eta_seconds`) — unit-testable without a GPU. The contextual [`command_panel`](crate::command_panel)
 //! formats these into its camp panel rows; this module owns only the numbers, not the layout.
 //!
 //! ## Where the numbers come from (and what stays a host input)
 //!
 //! Costs and per-level production times are *static design tables*, so this module reads them
-//! straight from the deterministic [`economy`] const helpers ([`economy::unit_cost`],
-//! [`economy::prod_time`]) — the only `core` calls it makes, and both are pure `const fn`s that
+//! straight from the deterministic `economy` const helpers (`economy::unit_cost`,
+//! `economy::prod_time`) — the only `core` calls it makes, and both are pure `const fn`s that
 //! cannot touch sim state. Everything *dynamic* — the camp's current level, the player's resource
 //! purse, and the live production queue — is **passed in as plain data** by the host (the renderer
 //! is the float boundary and never reads the sim itself, exactly like [`readout`](crate::readout)'s
-//! resource seam). The ETA is converted ticks → seconds at the locked [`TICK_HZ`] (D21).
+//! resource seam). The ETA is converted ticks → seconds at the locked `TICK_HZ` (D21).
 //!
 //! ## Fairness (invariant #6)
 //!

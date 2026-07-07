@@ -16,8 +16,8 @@
 //!    `engine` already uses host-side floats (`world_to_fixed`, the camera math), so this is the
 //!    same allowance.
 //!
-//! **Testable seam.** The decision is a pure function ([`decide_delay`]) plus a pure projection
-//! ([`target_delay_ticks`]) with **no timing, no IO, and no clock** inside — exactly the pattern
+//! **Testable seam.** The decision is a pure function (`decide_delay`) plus a pure projection
+//! (`target_delay_ticks`) with **no timing, no IO, and no clock** inside — exactly the pattern
 //! `engine`'s `map_input_commands` / camera math and `render::interpolate_instances` use to keep
 //! logic unit-testable behind un-constructible platform glue. [`RttDelayEstimator`] wraps those
 //! pure pieces with the EWMA accumulator and the last-change bookkeeping; the caller supplies the

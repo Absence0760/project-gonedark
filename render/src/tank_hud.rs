@@ -5,21 +5,21 @@
 //!
 //! - **Hull-relative turret indicator** — a chevron on a top compass strip showing where the gun
 //!   points relative to the hull, so a driver who has slewed the turret off-axis can still find
-//!   "which way am I actually facing" to drive ([`turret_indicator_offset`] / [`turret_indicator_ndc_x`]).
+//!   "which way am I actually facing" to drive (`turret_indicator_offset` / `turret_indicator_ndc_x`).
 //! - **Dispersion reticle** — a crosshair ring that BLOOMS while moving/traversing and SETTLES at
-//!   rest, so the player waits for it to tighten before firing ([`dispersion_reticle_radius`]).
+//!   rest, so the player waits for it to tighten before firing (`dispersion_reticle_radius`).
 //! - **LEAD pip** — a small ring offset toward where to aim to hit a crossing target, given the
-//!   shell's finite travel time ([`lead_pip_offset`]).
+//!   shell's finite travel time (`lead_pip_offset`).
 //! - **Reload ring** — an arc that fills clockwise as the gun reloads, full when loaded
-//!   ([`reload_ring_fill`]).
+//!   (`reload_ring_fill`).
 //! - **Shell-selector readout** — the selected shell label, drawn through the shared text pass at the
 //!   `lib.rs` boundary (W2 supplies the real `ShellKind`; see [`Renderer::render_tank_hud`]).
 //!
 //! Invariant #4: this is the **float side** — every number here is already `f32` host-side
 //! presentation, never `core` sim state, and the renderer only READS the snapshot/world it is handed.
 //! Like [`hud`](crate::hud) / [`touch_controls`](crate::touch_controls), all the geometry math lives
-//! in pure free fns ([`tank_hud_instances`] and the placement helpers) so it is unit-testable without
-//! a GPU — exactly the `marker_for` / `build_quads` pattern; only [`TankHudRenderer::render`] needs a
+//! in pure free fns (`tank_hud_instances` and the placement helpers) so it is unit-testable without
+//! a GPU — exactly the `marker_for` / `build_quads` pattern; only `TankHudRenderer::render` needs a
 //! device.
 
 use wgpu::util::DeviceExt;
@@ -255,7 +255,7 @@ pub fn tank_hud_instances(state: &TankHudState) -> Vec<TankHudInstance> {
 /// pattern). Only the **chrome sizes** scale — the reticle radius (min AND bloom, so the
 /// dispersion read stays proportionally identical), the reload ring, the chevron glyph, and the
 /// lead-pip glyph. The **positional encodings** stay put: the chevron's strip x (hull-relative
-/// bearing), [`TURRET_STRIP_Y`] (the M1 anchor between the alert ring and the reload ring), and
+/// bearing), `TURRET_STRIP_Y` (the M1 anchor between the alert ring and the reload ring), and
 /// the lead pip's *center* (the actual aim-ahead point — moving it with `ui_scale` would tell the
 /// gunner to aim at the wrong spot). Note the M1 clearances are pinned at `ui_scale == 1.0`; at
 /// extreme scales the grown glyphs may crowd their neighbours — the standard accessibility

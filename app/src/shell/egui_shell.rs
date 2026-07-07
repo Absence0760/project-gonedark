@@ -34,7 +34,7 @@ use winit::window::Window;
 
 /// Which live 3D scene paints behind a shell screen (D103): the title **diorama** (the greybox
 /// city — every general screen), or the campaign **globe** (the conflict atlas earth, pins from
-/// [`atlas_pins`](crate::shell::mission_select::atlas_pins) — the Operations hub + briefing).
+/// [`atlas_pins`] — the Operations hub + briefing).
 /// The per-screen `draw_*` wrapper picks; `run_and_paint` just paints what it's told.
 pub(crate) enum ShellBackdrop<'a> {
     /// The title diorama (the shipped default for every out-of-match screen).

@@ -80,7 +80,7 @@ fn relative_luminance(c: Rgb) -> f32 {
 }
 
 /// The **WCAG 2.x contrast ratio** between two colours, `(L_lighter + 0.05) / (L_darker + 0.05)`
-/// over their [`relative_luminance`]. Ranges from `1.0` (identical) to `21.0` (black on white), and
+/// over their `relative_luminance`. Ranges from `1.0` (identical) to `21.0` (black on white), and
 /// is symmetric in its arguments. Use this — not [`luminance`] — for every text-legibility check:
 /// WCAG AA wants **≥ 4.5:1** for normal text and **≥ 3:1** for large text / UI components.
 pub fn contrast_ratio(a: Rgb, b: Rgb) -> f32 {

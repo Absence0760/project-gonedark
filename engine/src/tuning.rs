@@ -1,9 +1,9 @@
 //! Render quality tuning controller (Phase 4 WS-C) — the engine-side state that owns the active
-//! [`QualityTier`], the running dynamic-resolution scale, and the thermal backoff, driving the pure
+//! `QualityTier`, the running dynamic-resolution scale, and the thermal backoff, driving the pure
 //! `render::tiers` policy fns each frame.
 //!
 //! **Everything here is a RENDERING choice (invariant #1/#4).** The controller reads only frame
-//! timing (a host wall-clock `f32`, fine in this crate) and a [`ThermalState`] *reported through the
+//! timing (a host wall-clock `f32`, fine in this crate) and a `ThermalState` *reported through the
 //! PAL* (invariant #2 — the signal crosses the platform seam, never `core`). It NEVER reads or
 //! mutates sim state and NEVER changes `core::sim::TICK_HZ`: the sim ticks at the same fixed 60 Hz
 //! whatever tier/scale/cap this picks, so the per-tick checksum stream is byte-identical at every

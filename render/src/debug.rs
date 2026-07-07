@@ -7,8 +7,8 @@
 //!
 //! Like [`marquee`](crate::marquee) / [`hud`](crate::hud) it is a screen-composited **LOAD** pass
 //! (never clears) and a **pure presentation derivation** — the renderable line set is built by the
-//! GPU-free [`hitbox_lines`] / [`tracer_lines`] seams (unit-tested without a device) from data the
-//! host reads out of the snapshot; the [`DebugRenderer`] is the thin GPU glue. It reuses the unit
+//! GPU-free `hitbox_lines` / `tracer_lines` seams (unit-tested without a device) from data the
+//! host reads out of the snapshot; the `DebugRenderer` is the thin GPU glue. It reuses the unit
 //! pass's camera bind group (the top-down view-projection), so world points map to clip exactly as
 //! the units do. No depth test, so the lines always read on top.
 //!

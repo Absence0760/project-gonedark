@@ -23,16 +23,16 @@
 //! resources icon can glow amber and a unit-type icon take the faction blue.
 //!
 //! The `ICON_*` consts below are the **contract with the generator** — they MUST match the `grid`
-//! block in `assets/icons/manifest.json`, and [`IconKind`]'s order MUST match the `icons` list there
-//! (each icon's atlas index is its position in that list). The [`atlas_matches_metrics`](tests) test
+//! block in `assets/icons/manifest.json`, and `IconKind`'s order MUST match the `icons` list there
+//! (each icon's atlas index is its position in that list). The `atlas_matches_metrics` test
 //! pins the `include_bytes!`d blob's length to `ATLAS_W * ATLAS_H * 4`, so a generator/metrics drift
 //! fails `cargo test` rather than corrupting icons at runtime.
 //!
 //! ## The pure seam
 //!
 //! All layout math — atlas-UV lookup and the icon → NDC + aspect-corrected half-extent expansion —
-//! lives in free fns ([`icon_uv`], [`half_extents`], [`expand`]) so it is unit-testable without a
-//! GPU, exactly the `layout_glyphs` / `overlay_quads` pattern. [`IconRenderer::render`] is the only
+//! lives in free fns (`icon_uv`, `half_extents`, `expand`) so it is unit-testable without a
+//! GPU, exactly the `layout_glyphs` / `overlay_quads` pattern. `IconRenderer::render` is the only
 //! GPU-touching code and is exercised by the offscreen `viz-runner`, not the no-GPU CI matrix.
 
 use wgpu::util::DeviceExt;
@@ -157,10 +157,10 @@ pub struct IconInstance {
     /// Cell half-extent in NDC.
     pub hw: f32,
     pub hh: f32,
-    /// Atlas UV of the cell's top-left corner ([0,1]).
+    /// Atlas UV of the cell's top-left corner (`[0,1]`).
     pub u0: f32,
     pub v0: f32,
-    /// Atlas UV size of one cell ([0,1]).
+    /// Atlas UV size of one cell (`[0,1]`).
     pub du: f32,
     pub dv: f32,
     pub r: f32,

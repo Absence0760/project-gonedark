@@ -450,8 +450,8 @@ impl App {
 
     /// Resolve a winit physical key to the rebindable [`GameAction`] it currently fires, if any — the
     /// desktop **app boundary** for the rebind editor. The engine `keybind` seam is winit-free
-    /// (invariant #2), so the `winit::KeyCode` → [`KeyId`] conversion ([`keycode_to_keyid`]) lives
-    /// here; the live [`KeyId`] → action lookup is the pure `KeybindMap::action_for` on
+    /// (invariant #2), so the `winit::KeyCode` → `KeyId` conversion ([`keycode_to_keyid`]) lives
+    /// here; the live `KeyId` → action lookup is the pure `KeybindMap::action_for` on
     /// `self.settings.keybinds`. Returns `None` for a non-`Code` key or one bound to nothing.
     fn action_for_key(&self, physical_key: PhysicalKey) -> Option<GameAction> {
         let PhysicalKey::Code(code) = physical_key else {

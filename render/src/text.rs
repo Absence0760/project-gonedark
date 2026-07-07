@@ -22,15 +22,15 @@
 //! unchanged.
 //!
 //! The `FONT_*` consts below are the **contract with the generator** — they MUST match the `grid`
-//! block in `assets/fonts/manifest.json`. The [`atlas_matches_metrics`](tests) test pins the
+//! block in `assets/fonts/manifest.json`. The `atlas_matches_metrics` test pins the
 //! `include_bytes!`d blob's length to `ATLAS_W * ATLAS_H`, so a generator/metrics drift fails
 //! `cargo test` rather than corrupting glyphs at runtime.
 //!
 //! ## The pure seam
 //!
 //! All layout/measure math — glyph advance, line width, anchor positioning, and the glyph → NDC +
-//! atlas-UV expansion — lives in free fns ([`measure`], [`layout_glyphs`]) so it is unit-testable
-//! without a GPU, exactly the `overlay_quads` / `marker_for` pattern. [`TextRenderer::render`] is the
+//! atlas-UV expansion — lives in free fns (`measure`, `layout_glyphs`) so it is unit-testable
+//! without a GPU, exactly the `overlay_quads` / `marker_for` pattern. `TextRenderer::render` is the
 //! only GPU-touching code and is exercised by the offscreen `viz-runner`, not the no-GPU CI matrix.
 
 use wgpu::util::DeviceExt;
@@ -175,10 +175,10 @@ pub struct GlyphInstance {
     /// Cell half-extent in NDC.
     pub hw: f32,
     pub hh: f32,
-    /// Atlas UV of the cell's top-left corner ([0,1]).
+    /// Atlas UV of the cell's top-left corner (`[0,1]`).
     pub u0: f32,
     pub v0: f32,
-    /// Atlas UV size of one cell ([0,1]).
+    /// Atlas UV size of one cell (`[0,1]`).
     pub du: f32,
     pub dv: f32,
     pub r: f32,

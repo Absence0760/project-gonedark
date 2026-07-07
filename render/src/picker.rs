@@ -12,15 +12,15 @@
 //! map intel (invariant #6).
 //!
 //! All geometry is in NDC (`[-1, 1]`, `+y` up), matching the rest of the command-view text chrome.
-//! [`picker_labels`], [`picker_quads`], and [`picker_row_at`] derive every position from the SAME
+//! `picker_labels`, `picker_quads`, and `picker_row_at` derive every position from the SAME
 //! constants below, so the drawn card, its rows, and their hit bands line up 1:1.
 //!
 //! ## `ui_scale` and the hit contract
 //!
-//! The host hit-tests taps with the (unscaled) [`picker_row_at`], so the header/row CENTERS are the
+//! The host hit-tests taps with the (unscaled) `picker_row_at`, so the header/row CENTERS are the
 //! hit contract and never move with `ui_scale`. The glyphs themselves scale (the shared text pass
 //! draws every label at `px * ui_scale`, `Anchor::Center` keeps them on their row centers), and only
-//! the backing card ([`picker_quads_scaled`]) grows to wrap the scaled text — the same reconciliation
+//! the backing card (`picker_quads_scaled`) grows to wrap the scaled text — the same reconciliation
 //! note `command_bar` carries.
 
 use crate::overlay::{OverlayQuad, QuadRole};
@@ -88,7 +88,7 @@ pub struct PickerLabel {
 
 /// Lay the picker out as text labels: a header, then one numbered row per selected unit
 /// (`"[1]  Tank"`, `"[2]  Rifleman"`, …). Embodiable rows read amber, others dimmed. Centered on
-/// `x = 0`, stacked downward from [`FIRST_ROW_Y`]. Pure + GPU-free, so it is unit-tested without a
+/// `x = 0`, stacked downward from `FIRST_ROW_Y`. Pure + GPU-free, so it is unit-tested without a
 /// device. An empty picker yields no labels.
 pub fn picker_labels(picker: &EmbodyPicker) -> Vec<PickerLabel> {
     if picker.rows.is_empty() {
@@ -119,7 +119,7 @@ pub fn picker_labels(picker: &EmbodyPicker) -> Vec<PickerLabel> {
 /// The picker's backing card — the same PANEL fill + RIM the command/train panels wear
 /// ([`crate::theme`] panel spec), so the list reads as a designed card instead of text floating over
 /// the world. Wraps the header and every row vertically; horizontally it spans the tappable band
-/// ([`HALF_WIDTH`]) plus padding, so the visible card and the hit extent agree. Empty picker ⇒ no
+/// (`HALF_WIDTH`) plus padding, so the visible card and the hit extent agree. Empty picker ⇒ no
 /// quads. Pure + GPU-free → unit-tested.
 pub fn picker_quads(picker: &EmbodyPicker) -> Vec<OverlayQuad> {
     picker_quads_scaled(picker, 1.0)

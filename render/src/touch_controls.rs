@@ -1,17 +1,17 @@
 //! On-screen FPS touch-control HUD renderer (the COD-style embodied controls) — a screen-space
 //! overlay drawn over the dark embodied frame, **Android only**. The engine describes WHAT to draw
-//! ([`TouchControlsHud`]: the floating move stick + the Fire/Crouch/Reload/Surface buttons, in
+//! (`TouchControlsHud`: the floating move stick + the Fire/Crouch/Reload/Surface buttons, in
 //! pixels) and this module turns it into alpha-blended quads with shader-drawn glyphs
 //! (`touch_controls.wgsl`). No binary art assets — real icons are a later polish (D46 pipeline).
 //!
 //! Mirrors the [`hud`](crate::hud) pattern: its own pipeline + a unit-quad VBO + a per-instance
 //! buffer, recorded as a LOAD pass so it composites over the frame. `render` is the float boundary
 //! (invariant #1/#4): the pixel→NDC quad math is pure f32 and lives in the host-testable
-//! [`build_quads`]; only the GPU plumbing needs a device.
+//! `build_quads`; only the GPU plumbing needs a device.
 //!
 //! The engine owns the layout (`engine::touch_controls::TouchLayout`); to keep the layering clean
 //! (`engine -> render`, never the reverse — invariant #2) the engine fills this crate's own
-//! [`TouchControlsHud`] description, exactly as the engine fills the contextual
+//! `TouchControlsHud` description, exactly as the engine fills the contextual
 //! [`command_panel::CommandPanelView`](crate::command_panel::CommandPanelView).
 
 use wgpu::util::DeviceExt;
