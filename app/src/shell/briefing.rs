@@ -64,7 +64,10 @@ pub(crate) fn difficulty_label(d: Difficulty) -> &'static str {
 /// launch tier: the host applies its combat tuning (D83: the 4→3 enemy-commander band + the scenario
 /// situation modifiers, via `Game::apply_campaign_tuning`) and records it against `Campaign::clear`
 /// on a win.
-pub(crate) fn apply_briefing_action(action: BriefingAction, selected: &mut Difficulty) -> BriefingOutcome {
+pub(crate) fn apply_briefing_action(
+    action: BriefingAction,
+    selected: &mut Difficulty,
+) -> BriefingOutcome {
     match action {
         BriefingAction::CycleDifficulty => {
             *selected = next_difficulty(*selected);
@@ -95,7 +98,11 @@ pub(crate) fn briefing_ui(
         let Some(b) = campaign.briefing(node) else {
             // The hub only opens playable, in-range nodes, so this is purely defensive.
             screen_banner(ui, "BRIEFING", 110.0);
-            ui.label(RichText::new("No such operation.").color(ASH).size(TYPE_BODY));
+            ui.label(
+                RichText::new("No such operation.")
+                    .color(ASH)
+                    .size(TYPE_BODY),
+            );
             ui.add_space(16.0);
             if footer_button(ui, "BACK", Emphasis::Secondary) {
                 action = Some(BriefingAction::Back);
@@ -126,7 +133,8 @@ pub(crate) fn briefing_ui(
             ui.horizontal(|ui| {
                 for d in Difficulty::ALL {
                     let filled = d <= selected;
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 4.0), egui::Sense::hover());
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(30.0, 4.0), egui::Sense::hover());
                     ui.painter().rect_filled(
                         rect,
                         egui::CornerRadius::same(2),
@@ -139,7 +147,10 @@ pub(crate) fn briefing_ui(
             // Clear status — `replayable` once cleared, with the best tier so far.
             let status = match b.progress {
                 NodeProgress::Cleared { best } => {
-                    format!("Cleared at {} -- replay to raise your best.", difficulty_label(best))
+                    format!(
+                        "Cleared at {} -- replay to raise your best.",
+                        difficulty_label(best)
+                    )
                 }
                 NodeProgress::Available => "Not yet cleared.".to_string(),
                 NodeProgress::Locked => "Locked.".to_string(),

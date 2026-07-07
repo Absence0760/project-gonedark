@@ -400,7 +400,10 @@ mod tests {
         // Aggression: backlog deepens easiest → hardest.
         assert!(r.max_queue_depth <= v.max_queue_depth);
         assert!(v.max_queue_depth <= e.max_queue_depth);
-        assert!(r.max_queue_depth < e.max_queue_depth, "the curve has real spread");
+        assert!(
+            r.max_queue_depth < e.max_queue_depth,
+            "the curve has real spread"
+        );
 
         // Reserve / unit-mix: cushion shrinks easiest → hardest (Elite buys Heavies freely).
         assert!(r.heavy_reserve >= v.heavy_reserve);
@@ -411,7 +414,10 @@ mod tests {
         assert!(r.command_stride >= v.command_stride);
         assert!(v.command_stride >= e.command_stride);
         for d in Difficulty::ALL {
-            assert!(d.params().command_stride >= 1, "stride must never be 0 (no div issues)");
+            assert!(
+                d.params().command_stride >= 1,
+                "stride must never be 0 (no div issues)"
+            );
             assert!(d.params().heavy_reserve >= 0, "reserve is never negative");
         }
     }
@@ -426,8 +432,16 @@ mod tests {
         assert_eq!(m(100).scaled_force(10), 10, "100% is identity");
         assert_eq!(m(200).scaled_force(10), 20, "doubling");
         assert_eq!(m(50).scaled_force(10), 5, "halving");
-        assert_eq!(m(33).scaled_force(10), 3, "integer truncation, not rounding");
-        assert_eq!(m(0).scaled_force(10), 1, "a non-empty base never goes to zero");
+        assert_eq!(
+            m(33).scaled_force(10),
+            3,
+            "integer truncation, not rounding"
+        );
+        assert_eq!(
+            m(0).scaled_force(10),
+            1,
+            "a non-empty base never goes to zero"
+        );
         assert_eq!(m(0).scaled_force(0), 0, "an empty base stays empty");
         // No overflow at the extreme.
         assert_eq!(m(u32::MAX).scaled_force(u32::MAX), u32::MAX);
@@ -453,7 +467,11 @@ mod tests {
     #[test]
     fn modifier_reshapes_scenario_param_deterministically_not_balance() {
         // Balance constants are constants — a modifier can never reach them (asserted for the record).
-        let costs_before = (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST);
+        let costs_before = (
+            economy::RIFLEMAN_COST,
+            economy::HEAVY_COST,
+            economy::CAMP_BUILD_COST,
+        );
 
         // Apply the period modifier, drive a fixed span, return the evolved checksum.
         let run = |period: Option<u32>| -> u64 {
@@ -488,7 +506,11 @@ mod tests {
         // ...and the modifier never reached a balance number.
         assert_eq!(
             costs_before,
-            (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST),
+            (
+                economy::RIFLEMAN_COST,
+                economy::HEAVY_COST,
+                economy::CAMP_BUILD_COST
+            ),
             "modifiers must never touch the D30 balance constants"
         );
     }
@@ -509,8 +531,14 @@ mod tests {
     #[test]
     fn time_limit_from_secs_is_tick_exact() {
         assert_eq!(ScenarioModifiers::time_limit_from_secs(0), None);
-        assert_eq!(ScenarioModifiers::time_limit_from_secs(1), Some(TICK_HZ as u64));
-        assert_eq!(ScenarioModifiers::time_limit_from_secs(120), Some(120 * TICK_HZ as u64));
+        assert_eq!(
+            ScenarioModifiers::time_limit_from_secs(1),
+            Some(TICK_HZ as u64)
+        );
+        assert_eq!(
+            ScenarioModifiers::time_limit_from_secs(120),
+            Some(120 * TICK_HZ as u64)
+        );
     }
 
     /// CP-8: the same `(period, track)` pair always resolves to the same modifiers — the property
@@ -550,11 +578,16 @@ mod tests {
     fn for_rotation_track_one_differs_from_standard() {
         let mut any_diff = false;
         for period in 0..4u64 {
-            if ScenarioModifiers::for_rotation(period, 0) != ScenarioModifiers::for_rotation(period, 1) {
+            if ScenarioModifiers::for_rotation(period, 0)
+                != ScenarioModifiers::for_rotation(period, 1)
+            {
                 any_diff = true;
             }
         }
-        assert!(any_diff, "variant-A track must diverge from standard somewhere in the cycle");
+        assert!(
+            any_diff,
+            "variant-A track must diverge from standard somewhere in the cycle"
+        );
     }
 
     /// Any unrecognized track (not just `0`) safely degrades to the standard catalog — an unknown
@@ -581,7 +614,11 @@ mod tests {
     /// path, exactly like every other `ScenarioModifiers` entry point.
     #[test]
     fn for_rotation_selected_modifiers_are_checksum_deterministic_and_never_touch_balance() {
-        let costs_before = (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST);
+        let costs_before = (
+            economy::RIFLEMAN_COST,
+            economy::HEAVY_COST,
+            economy::CAMP_BUILD_COST,
+        );
 
         let run = |period: u64, track: u32| -> u64 {
             let mut sim = Sim::new(0xA11CE);
@@ -600,7 +637,11 @@ mod tests {
 
         assert_eq!(
             costs_before,
-            (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST),
+            (
+                economy::RIFLEMAN_COST,
+                economy::HEAVY_COST,
+                economy::CAMP_BUILD_COST
+            ),
             "the live-ops rotation bridge must never touch the D30 balance constants"
         );
     }
@@ -622,6 +663,9 @@ mod tests {
         assert_eq!(MISSION_TWO_BRIEFING.modifiers, ScenarioModifiers::default());
         assert!(!MISSION_TWO_BRIEFING.title.is_empty());
         assert!(!MISSION_TWO_BRIEFING.objective_line.is_empty());
-        assert_ne!(MISSION_TWO_BRIEFING.title, MISSION_ONE_BRIEFING.title, "a distinct mission");
+        assert_ne!(
+            MISSION_TWO_BRIEFING.title, MISSION_ONE_BRIEFING.title,
+            "a distinct mission"
+        );
     }
 }

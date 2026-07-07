@@ -186,10 +186,7 @@ pub fn objective_hud_labels_scaled(view: &ObjectiveHudView, ui_scale: f32) -> Ve
         return Vec::new();
     }
     let (_, _, _, _, left, top_inner) = box_geom(view.n_rows(), ui_scale);
-    let state_color = view
-        .state
-        .unwrap_or(ObjectiveStateView::Active)
-        .color();
+    let state_color = view.state.unwrap_or(ObjectiveStateView::Active).color();
 
     let mut out = Vec::with_capacity(3);
     out.push(ObjectiveLabel {
@@ -228,7 +225,11 @@ pub fn objective_hud_labels_scaled(view: &ObjectiveHudView, ui_scale: f32) -> Ve
 mod tests {
     use super::*;
 
-    fn view(objective: &str, state: ObjectiveStateView, progress: Option<(u32, u32)>) -> ObjectiveHudView {
+    fn view(
+        objective: &str,
+        state: ObjectiveStateView,
+        progress: Option<(u32, u32)>,
+    ) -> ObjectiveHudView {
         ObjectiveHudView {
             objective: objective.to_string(),
             state: Some(state),
@@ -246,19 +247,33 @@ mod tests {
 
     #[test]
     fn box_hugs_the_top_left_corner() {
-        let v = view("Take the enemy base", ObjectiveStateView::Active, Some((0, 5)));
+        let v = view(
+            "Take the enemy base",
+            ObjectiveStateView::Active,
+            Some((0, 5)),
+        );
         let q = objective_hud_quads(&v);
         assert_eq!(q.len(), 2, "rim + fill");
         let (rim, fill) = (&q[0], &q[1]);
-        assert!(rim.hw > fill.hw && rim.hh > fill.hh, "rim is larger than the fill");
+        assert!(
+            rim.hw > fill.hw && rim.hh > fill.hh,
+            "rim is larger than the fill"
+        );
         assert!((fill.cx - fill.hw - LEFT).abs() < 1e-6, "left edge at LEFT");
         assert!((fill.cy + fill.hh - TOP).abs() < 1e-6, "top edge at TOP");
-        assert!(fill.cx < 0.0 && fill.cy > 0.0, "sits in the top-left quadrant");
+        assert!(
+            fill.cx < 0.0 && fill.cy > 0.0,
+            "sits in the top-left quadrant"
+        );
     }
 
     #[test]
     fn labels_are_title_objective_then_progress_top_down() {
-        let v = view("Take the enemy base", ObjectiveStateView::Active, Some((2, 5)));
+        let v = view(
+            "Take the enemy base",
+            ObjectiveStateView::Active,
+            Some((2, 5)),
+        );
         let ls = objective_hud_labels(&v);
         assert_eq!(ls.len(), 3, "title + objective + progress");
         assert_eq!(ls[0].text, "OBJECTIVE");
@@ -278,25 +293,51 @@ mod tests {
         let ls = objective_hud_labels(&v);
         assert_eq!(ls.len(), 2, "title + objective only");
         let zero_goal = view("Reach the LZ", ObjectiveStateView::Active, Some((0, 0)));
-        assert_eq!(objective_hud_labels(&zero_goal).len(), 2, "goal 0 is also binary");
+        assert_eq!(
+            objective_hud_labels(&zero_goal).len(),
+            2,
+            "goal 0 is also binary"
+        );
         // The binary box is shorter than a progress box.
-        let with_progress = objective_hud_quads(&view("X", ObjectiveStateView::Active, Some((1, 3))));
+        let with_progress =
+            objective_hud_quads(&view("X", ObjectiveStateView::Active, Some((1, 3))));
         let binary = objective_hud_quads(&v);
-        assert!(binary[1].hh < with_progress[1].hh, "no progress row → shorter box");
+        assert!(
+            binary[1].hh < with_progress[1].hh,
+            "no progress row → shorter box"
+        );
     }
 
     #[test]
     fn state_language_matches_the_shared_theme_palette() {
         // WS-C: the objective card's good/bad/neutral tints are the SAME theme consts the command
         // panel's rows use, so "done / failed / in progress" reads identically across both cards.
-        assert_eq!(ObjectiveStateView::Completed.color(), crate::theme::STATUS_GOOD);
-        assert_eq!(ObjectiveStateView::Failed.color(), crate::theme::STATUS_CRIT);
+        assert_eq!(
+            ObjectiveStateView::Completed.color(),
+            crate::theme::STATUS_GOOD
+        );
+        assert_eq!(
+            ObjectiveStateView::Failed.color(),
+            crate::theme::STATUS_CRIT
+        );
         assert_eq!(ObjectiveStateView::Active.color(), crate::theme::BONE);
         // Title tint + glyph sizes asserted on the actual laid-out labels (covers the wiring).
-        let ls = objective_hud_labels(&view("Take the base", ObjectiveStateView::Active, Some((1, 3))));
+        let ls = objective_hud_labels(&view(
+            "Take the base",
+            ObjectiveStateView::Active,
+            Some((1, 3)),
+        ));
         assert_eq!(ls[0].color, crate::theme::BONE, "title in the primary bone");
-        assert_eq!(ls[0].px_size, crate::theme::TYPE_TITLE, "title on the type scale");
-        assert_eq!(ls[1].px_size, crate::theme::TYPE_BODY, "rows on the type scale");
+        assert_eq!(
+            ls[0].px_size,
+            crate::theme::TYPE_TITLE,
+            "title on the type scale"
+        );
+        assert_eq!(
+            ls[1].px_size,
+            crate::theme::TYPE_BODY,
+            "rows on the type scale"
+        );
     }
 
     #[test]
@@ -304,7 +345,11 @@ mod tests {
         // DPI-scaling containment: at ui_scale = 2.0 / 3.0 the card's inner width grows ~proportionally
         // AND the (scaled) objective line still fits inside it. The card is fixed-width (HALF_W), so a
         // scaled glyph would overflow it unless the box scales too — this pins that it does.
-        let v = view("Take the enemy base", ObjectiveStateView::Active, Some((2, 5)));
+        let v = view(
+            "Take the enemy base",
+            ObjectiveStateView::Active,
+            Some((2, 5)),
+        );
         let inner_w = |q: &[OverlayQuad], s: f32| 2.0 * q[1].hw - 2.0 * (PAD * s);
         let base_inner = inner_w(&objective_hud_quads_scaled(&v, 1.0), 1.0);
         for s in [2.0_f32, 3.0] {
@@ -327,9 +372,16 @@ mod tests {
     #[test]
     fn ui_scale_one_is_byte_identical() {
         // The identity contract the golden tests rely on.
-        let v = view("Take the enemy base", ObjectiveStateView::Active, Some((0, 5)));
+        let v = view(
+            "Take the enemy base",
+            ObjectiveStateView::Active,
+            Some((0, 5)),
+        );
         assert_eq!(objective_hud_quads(&v), objective_hud_quads_scaled(&v, 1.0));
-        assert_eq!(objective_hud_labels(&v), objective_hud_labels_scaled(&v, 1.0));
+        assert_eq!(
+            objective_hud_labels(&v),
+            objective_hud_labels_scaled(&v, 1.0)
+        );
     }
 
     #[test]

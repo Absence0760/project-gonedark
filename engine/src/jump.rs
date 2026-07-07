@@ -65,7 +65,11 @@ mod tests {
         // Grounded + edge → arm the full timer.
         assert_eq!(start_jump(0.0, true), JUMP_DURATION);
         // Mid-air press is ignored (no double jump).
-        assert_eq!(start_jump(0.3, true), 0.3, "a press mid-hop does not re-launch");
+        assert_eq!(
+            start_jump(0.3, true),
+            0.3,
+            "a press mid-hop does not re-launch"
+        );
         // No edge → unchanged.
         assert_eq!(start_jump(0.0, false), 0.0);
     }
@@ -86,12 +90,24 @@ mod tests {
     fn height_is_a_zero_apex_zero_parabola() {
         assert_eq!(jump_height(0.0), 0.0, "grounded → no rise");
         // Launch (timer full) and land (timer ~0) are both near the ground.
-        assert!(jump_height(JUMP_DURATION) < 1e-4, "just launched, still low");
+        assert!(
+            jump_height(JUMP_DURATION) < 1e-4,
+            "just launched, still low"
+        );
         // The apex (timer at half) is the peak.
         let apex = jump_height(JUMP_DURATION * 0.5);
-        assert!((apex - JUMP_HEIGHT).abs() < 1e-4, "apex reaches JUMP_HEIGHT (got {apex})");
+        assert!(
+            (apex - JUMP_HEIGHT).abs() < 1e-4,
+            "apex reaches JUMP_HEIGHT (got {apex})"
+        );
         // Monotone up on the way to the apex.
-        assert!(jump_height(JUMP_DURATION * 0.75) < apex, "rising toward the apex");
-        assert!(jump_height(JUMP_DURATION * 0.25) < apex, "falling from the apex");
+        assert!(
+            jump_height(JUMP_DURATION * 0.75) < apex,
+            "rising toward the apex"
+        );
+        assert!(
+            jump_height(JUMP_DURATION * 0.25) < apex,
+            "falling from the apex"
+        );
     }
 }

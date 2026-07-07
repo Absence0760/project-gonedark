@@ -64,7 +64,11 @@ pub fn zoom_active(embodied: bool, can_ads: bool, aim_held: bool) -> bool {
 #[inline]
 pub fn step_zoom_t(current: f32, active: bool, dt: f32, rate: f32) -> f32 {
     let step = (rate * dt).max(0.0);
-    let next = if active { current + step } else { current - step };
+    let next = if active {
+        current + step
+    } else {
+        current - step
+    };
     next.clamp(0.0, 1.0)
 }
 
@@ -125,10 +129,19 @@ mod tests {
 
     #[test]
     fn zoom_engages_only_embodied_scoped_and_held() {
-        assert!(zoom_active(true, true, true), "embodied tank holding ADS zooms");
+        assert!(
+            zoom_active(true, true, true),
+            "embodied tank holding ADS zooms"
+        );
         assert!(!zoom_active(false, true, true), "command view never zooms");
-        assert!(!zoom_active(true, false, true), "a scope-less unit never zooms");
-        assert!(!zoom_active(true, true, false), "released ADS does not zoom");
+        assert!(
+            !zoom_active(true, false, true),
+            "a scope-less unit never zooms"
+        );
+        assert!(
+            !zoom_active(true, true, false),
+            "released ADS does not zoom"
+        );
     }
 
     // ---- t interpolation: monotone + clamped ----
@@ -157,7 +170,10 @@ mod tests {
         let mut prev = 2.0;
         for _ in 0..240 {
             let next = step_zoom_t(t, false, dt, ZOOM_RATE);
-            assert!(next <= prev + 1e-9, "monotone non-increasing while inactive");
+            assert!(
+                next <= prev + 1e-9,
+                "monotone non-increasing while inactive"
+            );
             assert!((0.0..=1.0).contains(&next), "t stays in [0,1], got {next}");
             prev = next;
             t = next;
@@ -178,7 +194,10 @@ mod tests {
 
     #[test]
     fn fov_is_base_at_hip_and_scoped_at_full_ads() {
-        assert!((zoom_fov_deg(BASE, SCOPED_FOV_DEG, 0.0) - BASE).abs() < 1e-6, "t=0 → base FOV");
+        assert!(
+            (zoom_fov_deg(BASE, SCOPED_FOV_DEG, 0.0) - BASE).abs() < 1e-6,
+            "t=0 → base FOV"
+        );
         assert!(
             (zoom_fov_deg(BASE, SCOPED_FOV_DEG, 1.0) - SCOPED_FOV_DEG).abs() < 1e-6,
             "t=1 → scoped FOV (narrowed)"
@@ -191,7 +210,10 @@ mod tests {
         for i in 0..=20 {
             let t = i as f32 / 20.0;
             let fov = zoom_fov_deg(BASE, SCOPED_FOV_DEG, t);
-            assert!(fov <= prev + 1e-6, "FOV is non-increasing in t: {fov} !<= {prev}");
+            assert!(
+                fov <= prev + 1e-6,
+                "FOV is non-increasing in t: {fov} !<= {prev}"
+            );
             assert!(
                 (SCOPED_FOV_DEG..=BASE).contains(&fov),
                 "FOV {fov} escaped [{SCOPED_FOV_DEG}, {BASE}]"
@@ -211,11 +233,17 @@ mod tests {
 
     #[test]
     fn magnification_is_unity_at_hip_and_grows_when_scoped() {
-        assert!((zoom_magnification(BASE, BASE) - 1.0).abs() < 1e-6, "hip is 1.0×");
+        assert!(
+            (zoom_magnification(BASE, BASE) - 1.0).abs() < 1e-6,
+            "hip is 1.0×"
+        );
         let scoped = zoom_magnification(BASE, SCOPED_FOV_DEG);
         assert!(scoped > 1.0, "scoped magnifies, got {scoped}×");
         // 60° → 20° is ~3.27× (tan30 / tan10).
-        assert!((scoped - 3.27).abs() < 0.1, "≈3.27× from 60°→20°, got {scoped}×");
+        assert!(
+            (scoped - 3.27).abs() < 0.1,
+            "≈3.27× from 60°→20°, got {scoped}×"
+        );
         // Narrower FOV ⇒ strictly more magnification.
         assert!(
             zoom_magnification(BASE, 10.0) > scoped,
@@ -236,11 +264,17 @@ mod tests {
     fn ads_look_scale_is_unity_at_hip_and_drops_when_scoped() {
         // The infantry ADS magnification (60°→42° ≈ 1.7×).
         let mag = zoom_magnification(BASE, ADS_FOV_DEG);
-        assert!((ads_look_scale(0.0, mag) - 1.0).abs() < 1e-6, "hip is full sensitivity");
+        assert!(
+            (ads_look_scale(0.0, mag) - 1.0).abs() < 1e-6,
+            "hip is full sensitivity"
+        );
         let scoped = ads_look_scale(1.0, mag);
         assert!(scoped < 1.0, "ADS slows the look, got {scoped}");
         // ~1/1.7 ≈ 0.59 (above the floor), matched to the angular-travel ramp.
-        assert!((scoped - 1.0 / mag).abs() < 1e-6, "full ADS scales to 1/mag at this magnification");
+        assert!(
+            (scoped - 1.0 / mag).abs() < 1e-6,
+            "full ADS scales to 1/mag at this magnification"
+        );
     }
 
     #[test]
@@ -263,6 +297,9 @@ mod tests {
             "fully zoomed at huge mag floors at ADS_SENS_FLOOR"
         );
         // Degenerate magnification (< 1) is clamped so the scale never exceeds 1.0 (never speeds up).
-        assert!(ads_look_scale(1.0, 0.1) <= 1.0 + 1e-6, "ADS never speeds the look up");
+        assert!(
+            ads_look_scale(1.0, 0.1) <= 1.0 + 1e-6,
+            "ADS never speeds the look up"
+        );
     }
 }

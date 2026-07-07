@@ -337,8 +337,14 @@ mod tests {
         assert_eq!(ls[1].color, crate::theme::BONE, "body copy is theme::BONE");
         assert_eq!(ls[2].color, BODY_COLOR);
         // Distinct tones give distinct title/accent colors.
-        assert_ne!(tone_color(PromptTone::Caution), tone_color(PromptTone::Danger));
-        assert_ne!(tone_color(PromptTone::Danger), tone_color(PromptTone::Reflect));
+        assert_ne!(
+            tone_color(PromptTone::Caution),
+            tone_color(PromptTone::Danger)
+        );
+        assert_ne!(
+            tone_color(PromptTone::Danger),
+            tone_color(PromptTone::Reflect)
+        );
     }
 
     #[test]
@@ -362,7 +368,10 @@ mod tests {
         let panel = &q[1];
         assert!(panel.cy < 0.0, "card is in the lower half");
         // Its top edge stays well below the screen center (clear of the reticle/hitmarker).
-        assert!(panel.cy + panel.hh < 0.0, "whole card is in the bottom half");
+        assert!(
+            panel.cy + panel.hh < 0.0,
+            "whole card is in the bottom half"
+        );
     }
 
     #[test]
@@ -392,7 +401,10 @@ mod tests {
     fn prompt_type_is_phone_legible_and_card_still_clears_center_and_bottom() {
         // M6: the teach copy must read on a phone — a real cap-height, not the old ~7px. The title is
         // the larger step; both clear a legibility floor.
-        assert!(TITLE_SIZE >= 0.06, "title is phone-legible, got {TITLE_SIZE}");
+        assert!(
+            TITLE_SIZE >= 0.06,
+            "title is phone-legible, got {TITLE_SIZE}"
+        );
         assert!(BODY_SIZE >= 0.045, "body is phone-legible, got {BODY_SIZE}");
         assert!(TITLE_SIZE > BODY_SIZE, "title is the larger step");
         // Even at the bumped size the card still hugs the lower third: its top edge stays clear of the
@@ -436,8 +448,14 @@ mod tests {
     #[test]
     fn ui_scale_one_is_byte_identical() {
         // The identity contract the golden tests rely on.
-        assert_eq!(prompt_quads(&prompt(), 0.7), prompt_quads_scaled(&prompt(), 0.7, 1.0));
-        assert_eq!(prompt_labels(&prompt(), 0.7), prompt_labels_scaled(&prompt(), 0.7, 1.0));
+        assert_eq!(
+            prompt_quads(&prompt(), 0.7),
+            prompt_quads_scaled(&prompt(), 0.7, 1.0)
+        );
+        assert_eq!(
+            prompt_labels(&prompt(), 0.7),
+            prompt_labels_scaled(&prompt(), 0.7, 1.0)
+        );
     }
 
     #[test]

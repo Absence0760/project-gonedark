@@ -132,7 +132,9 @@ fn build(which: Which) -> Scenario {
         // The duel + infantry scenes own their own loops + reports; main branches to them before
         // ever calling `build`, so reaching here is a bug.
         Which::Duel => unreachable!("the duel scenario runs via duel::run, not build/run"),
-        Which::Infantry => unreachable!("the infantry scenario runs via infantry::run, not build/run"),
+        Which::Infantry => {
+            unreachable!("the infantry scenario runs via infantry::run, not build/run")
+        }
         Which::Matchup => unreachable!("the matchup scenario runs via matchup::run, not build/run"),
     }
 }
@@ -329,8 +331,8 @@ fn main() {
     let timed = args.iter().any(|a| a == "--time");
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
 
-    let ticks: u64 = parse_ticks(positional.first().map(|s| s.as_str()))
-        .unwrap_or_else(|bad| fatal_ticks(&bad));
+    let ticks: u64 =
+        parse_ticks(positional.first().map(|s| s.as_str())).unwrap_or_else(|bad| fatal_ticks(&bad));
 
     // `--metrics[=<which>]` is a self-contained balance-harness mode: it runs its own canonical
     // fights, prints the metric series/digest to stderr, and exits without touching the stdout
@@ -634,7 +636,10 @@ mod tests {
         // Every scenario in the documented matrix must still round-trip through the CLI parser,
         // so the SAME command re-runs the SAME scene on device.
         for token in ["stress:50", "stress:100", "stress:200"] {
-            assert!(baseline.contains(token), "baseline missing matrix scenario {token}");
+            assert!(
+                baseline.contains(token),
+                "baseline missing matrix scenario {token}"
+            );
             assert!(
                 Which::parse(token).is_some(),
                 "baseline scenario {token} no longer parses — matrix + docs out of sync"

@@ -47,7 +47,8 @@ pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 ///
 /// Kept as a `const` so it can be asserted in a unit test without a database (query *shape* is
 /// pure; only its *execution* needs Postgres).
-pub const INSERT_SQL: &str = "INSERT INTO telemetry_events (event_id, kind, client_ts, properties) \
+pub const INSERT_SQL: &str =
+    "INSERT INTO telemetry_events (event_id, kind, client_ts, properties) \
      VALUES ($1, $2, $3, $4) ON CONFLICT (event_id) DO NOTHING";
 
 /// A [`TelemetrySink`] that persists consent-cleared events to Postgres.
@@ -190,12 +191,13 @@ mod tests {
             .expect("store via trait");
 
         // Read it back and confirm the mapping round-tripped.
-        let row: (String, String, serde_json::Value) =
-            sqlx::query_as("SELECT kind, client_ts, properties FROM telemetry_events WHERE event_id = $1")
-                .bind(&event_id)
-                .fetch_one(sink.pool())
-                .await
-                .expect("fetch stored row");
+        let row: (String, String, serde_json::Value) = sqlx::query_as(
+            "SELECT kind, client_ts, properties FROM telemetry_events WHERE event_id = $1",
+        )
+        .bind(&event_id)
+        .fetch_one(sink.pool())
+        .await
+        .expect("fetch stored row");
         assert_eq!(EventKind::from_db_str(&row.0), Some(EventKind::Embody));
         assert_eq!(row.1, event.client_ts);
         assert_eq!(row.2["unit"], "rifleman");

@@ -436,12 +436,24 @@ struct GroundVertex {
 
 /// The two triangles of the big ground quad spanning ±[`GROUND_FILL_HALF`] on the z = 0 plane.
 const GROUND_VERTS: [GroundVertex; 6] = [
-    GroundVertex { world: [-GROUND_FILL_HALF, -GROUND_FILL_HALF] },
-    GroundVertex { world: [GROUND_FILL_HALF, -GROUND_FILL_HALF] },
-    GroundVertex { world: [GROUND_FILL_HALF, GROUND_FILL_HALF] },
-    GroundVertex { world: [-GROUND_FILL_HALF, -GROUND_FILL_HALF] },
-    GroundVertex { world: [GROUND_FILL_HALF, GROUND_FILL_HALF] },
-    GroundVertex { world: [-GROUND_FILL_HALF, GROUND_FILL_HALF] },
+    GroundVertex {
+        world: [-GROUND_FILL_HALF, -GROUND_FILL_HALF],
+    },
+    GroundVertex {
+        world: [GROUND_FILL_HALF, -GROUND_FILL_HALF],
+    },
+    GroundVertex {
+        world: [GROUND_FILL_HALF, GROUND_FILL_HALF],
+    },
+    GroundVertex {
+        world: [-GROUND_FILL_HALF, -GROUND_FILL_HALF],
+    },
+    GroundVertex {
+        world: [GROUND_FILL_HALF, GROUND_FILL_HALF],
+    },
+    GroundVertex {
+        world: [-GROUND_FILL_HALF, GROUND_FILL_HALF],
+    },
 ];
 
 /// World-space ground-grid renderer. Unlike the screen-space chrome passes it does NOT own a
@@ -676,7 +688,12 @@ impl TerrainRenderer {
     /// GPU render state (core → render; never the reverse — invariant #4). A no-op-to-draw when the
     /// map is open with no props (`overlay_count` stays 0). `create_buffer_init` uploads through the
     /// `device` alone, so this needs no `&Queue`.
-    pub fn set_map_overlay(&mut self, device: &wgpu::Device, terrain: &Terrain, obstacles: &[Obstacle]) {
+    pub fn set_map_overlay(
+        &mut self,
+        device: &wgpu::Device,
+        terrain: &Terrain,
+        obstacles: &[Obstacle],
+    ) {
         let mut quads = cover_fill_quads(terrain);
         quads.extend(prop_markers(obstacles));
         self.overlay_count = quads.len();
@@ -757,8 +774,14 @@ mod tests {
         assert_eq!(lines.len(), per_axis * 2);
         // First half are vertical (long in y, thin in x); second half horizontal (long in x).
         let (vert, horiz) = lines.split_at(per_axis);
-        assert!(vert.iter().all(|l| l.hh > l.hw), "vertical lines are tall+thin");
-        assert!(horiz.iter().all(|l| l.hw > l.hh), "horizontal lines are wide+thin");
+        assert!(
+            vert.iter().all(|l| l.hh > l.hw),
+            "vertical lines are tall+thin"
+        );
+        assert!(
+            horiz.iter().all(|l| l.hw > l.hh),
+            "horizontal lines are wide+thin"
+        );
     }
 
     #[test]
@@ -789,8 +812,14 @@ mod tests {
     fn origin_axes_are_major_lines() {
         let lines = grid_lines(40.0, 8.0);
         // The vertical line at x=0 and the horizontal at y=0 are major (origin index 0).
-        let origin_vert = lines.iter().find(|l| l.cx.abs() < EPS && l.hh > l.hw).unwrap();
-        let origin_horiz = lines.iter().find(|l| l.cy.abs() < EPS && l.hw > l.hh).unwrap();
+        let origin_vert = lines
+            .iter()
+            .find(|l| l.cx.abs() < EPS && l.hh > l.hw)
+            .unwrap();
+        let origin_horiz = lines
+            .iter()
+            .find(|l| l.cy.abs() < EPS && l.hw > l.hh)
+            .unwrap();
         assert!(origin_vert.major, "x=0 axis is major");
         assert!(origin_horiz.major, "y=0 axis is major");
     }
@@ -815,8 +844,14 @@ mod tests {
         // dark enough to sit under the unit bodies — a subtle lattice, not a wall of lines.
         let lines = grid_lines(40.0, 8.0);
         for l in &lines {
-            assert!(l.r > 0.02 && l.g > 0.03 && l.b > 0.05, "grid reads above the clear");
-            assert!(l.r < 0.4 && l.g < 0.4 && l.b < 0.4, "grid stays subtle, under the units");
+            assert!(
+                l.r > 0.02 && l.g > 0.03 && l.b > 0.05,
+                "grid reads above the clear"
+            );
+            assert!(
+                l.r < 0.4 && l.g < 0.4 && l.b < 0.4,
+                "grid stays subtle, under the units"
+            );
         }
     }
 
@@ -868,21 +903,38 @@ mod tests {
         // Majors within ±40 at step 32: indices -1,0,1 -> 3 per axis -> 9 nodes -> 18 arms (2 each).
         let spacing = 8.0;
         let step = MAJOR_EVERY as f32 * spacing;
-        let majors_per_axis = (-((40.0f32 / spacing).floor() as i32)..=((40.0f32 / spacing).floor() as i32))
+        let majors_per_axis = (-((40.0f32 / spacing).floor() as i32)
+            ..=((40.0f32 / spacing).floor() as i32))
             .filter(|&i| is_major(i))
             .count();
         let marks = tick_marks(40.0, spacing);
-        assert_eq!(marks.len(), majors_per_axis * majors_per_axis * 2, "two arms per node");
+        assert_eq!(
+            marks.len(),
+            majors_per_axis * majors_per_axis * 2,
+            "two arms per node"
+        );
         // Each arm is short (well under a major cell) and one axis is the long arm, the other thin.
         for m in &marks {
-            assert!(m.hw.max(m.hh) <= TICK_HALF_LEN + EPS, "arm is short, not a full line");
+            assert!(
+                m.hw.max(m.hh) <= TICK_HALF_LEN + EPS,
+                "arm is short, not a full line"
+            );
             assert!(m.hw.max(m.hh) < step, "arm shorter than a major cell");
             assert!(m.hw.min(m.hh) <= TICK_HALF_THICK + EPS, "arm is thin");
-            assert!((m.hw - m.hh).abs() > EPS, "arm is a line (long on one axis)");
+            assert!(
+                (m.hw - m.hh).abs() > EPS,
+                "arm is a line (long on one axis)"
+            );
         }
         // Per node there is exactly one horizontal arm (hw>hh) and one vertical (hh>hw).
-        assert_eq!(marks.iter().filter(|m| m.hw > m.hh).count(), majors_per_axis * majors_per_axis);
-        assert_eq!(marks.iter().filter(|m| m.hh > m.hw).count(), majors_per_axis * majors_per_axis);
+        assert_eq!(
+            marks.iter().filter(|m| m.hw > m.hh).count(),
+            majors_per_axis * majors_per_axis
+        );
+        assert_eq!(
+            marks.iter().filter(|m| m.hh > m.hw).count(),
+            majors_per_axis * majors_per_axis
+        );
     }
 
     #[test]
@@ -892,10 +944,16 @@ mod tests {
         let marks = tick_marks(40.0, 8.0);
         let tick_lum: f32 = TICK_COLOR.iter().sum();
         let major_lum: f32 = MAJOR_COLOR.iter().sum();
-        assert!(tick_lum > major_lum, "registration marks brighter than major lines");
+        assert!(
+            tick_lum > major_lum,
+            "registration marks brighter than major lines"
+        );
         for m in &marks {
             assert_eq!([m.r, m.g, m.b], TICK_COLOR, "marks carry the tick colour");
-            assert!(m.r < 0.4 && m.g < 0.4 && m.b < 0.45, "marks stay subtle, under the units");
+            assert!(
+                m.r < 0.4 && m.g < 0.4 && m.b < 0.45,
+                "marks stay subtle, under the units"
+            );
             // Cold + low-saturation: blue leads, red trails.
             assert!(m.b > m.g && m.g > m.r, "marks stay cold (blue-leading)");
         }
@@ -908,7 +966,9 @@ mod tests {
         let centers: Vec<(f32, f32)> = marks.iter().map(|m| (m.cx, m.cy)).collect();
         for &(x, y) in &centers {
             assert!(
-                centers.iter().any(|&(ox, oy)| (ox + x).abs() < EPS && (oy - y).abs() < EPS),
+                centers
+                    .iter()
+                    .any(|&(ox, oy)| (ox + x).abs() < EPS && (oy - y).abs() < EPS),
                 "every node has an x-mirror"
             );
         }
@@ -918,8 +978,14 @@ mod tests {
     fn ground_fill_quad_covers_the_camera_framing() {
         // The ground-fill quad must fully cover the ±40 top-down camera framing (and the ±44 grid)
         // with margin, so no flat slate sliver shows at the frame edges.
-        assert!(GROUND_FILL_HALF > GRID_HALF_EXTENT, "ground covers the grid");
-        assert!(GROUND_FILL_HALF >= 60.0, "ground covers the ±40 framing's corners with margin");
+        assert!(
+            GROUND_FILL_HALF > GRID_HALF_EXTENT,
+            "ground covers the grid"
+        );
+        assert!(
+            GROUND_FILL_HALF >= 60.0,
+            "ground covers the ±40 framing's corners with margin"
+        );
         // It is two triangles (6 verts) and every vertex sits on a ±GROUND_FILL_HALF corner.
         assert_eq!(GROUND_VERTS.len(), 6);
         for v in &GROUND_VERTS {
@@ -939,7 +1005,10 @@ mod tests {
                 let x = i as f32 * 2.3 - 70.0;
                 let y = j as f32 * 2.9 - 90.0;
                 let e = elevation(x, y);
-                assert!((-1.0..=1.0).contains(&e), "elevation {e} out of range at ({x},{y})");
+                assert!(
+                    (-1.0..=1.0).contains(&e),
+                    "elevation {e} out of range at ({x},{y})"
+                );
             }
         }
     }
@@ -953,12 +1022,20 @@ mod tests {
         for i in 0..40 {
             let x = i as f32 * 3.1 - 40.0;
             let y = i as f32 * -1.7 + 12.0;
-            assert_eq!(elevation(x, y), elevation(x, y), "relief is stable at ({x},{y})");
+            assert_eq!(
+                elevation(x, y),
+                elevation(x, y),
+                "relief is stable at ({x},{y})"
+            );
             let e = elevation(x, y);
             min = min.min(e);
             max = max.max(e);
         }
-        assert!(max - min > 0.4, "the field must carry relief, spread {}", max - min);
+        assert!(
+            max - min > 0.4,
+            "the field must carry relief, spread {}",
+            max - min
+        );
     }
 
     #[test]
@@ -970,7 +1047,10 @@ mod tests {
                 let x = i as f32 * 1.9 - 76.0;
                 let y = j as f32 * 2.1 - 84.0;
                 let h = hillshade(x, y);
-                assert!((0.90 - EPS..=1.14 + EPS).contains(&h), "hillshade {h} out of band");
+                assert!(
+                    (0.90 - EPS..=1.14 + EPS).contains(&h),
+                    "hillshade {h} out of band"
+                );
             }
         }
     }
@@ -984,12 +1064,20 @@ mod tests {
         for i in 0..60 {
             let x = i as f32 * 2.7 - 60.0;
             let y = i as f32 * 1.3 - 30.0;
-            assert_eq!(hillshade(x, y), hillshade(x, y), "hillshade stable at ({x},{y})");
+            assert_eq!(
+                hillshade(x, y),
+                hillshade(x, y),
+                "hillshade stable at ({x},{y})"
+            );
             let h = hillshade(x, y);
             min = min.min(h);
             max = max.max(h);
         }
-        assert!(max - min > 0.05, "hillshade must vary with the slope, spread {}", max - min);
+        assert!(
+            max - min > 0.05,
+            "hillshade must vary with the slope, spread {}",
+            max - min
+        );
     }
 
     // ---- map overlay: cover wash + prop markers ----
@@ -999,7 +1087,10 @@ mod tests {
 
     #[test]
     fn cover_fill_open_field_draws_nothing() {
-        assert!(cover_fill_quads(&Terrain::open()).is_empty(), "an open map washes nothing");
+        assert!(
+            cover_fill_quads(&Terrain::open()).is_empty(),
+            "an open map washes nothing"
+        );
     }
 
     #[test]
@@ -1012,7 +1103,10 @@ mod tests {
         // Cell (0,0) centre is (-COVER_GRID_HALF + 0.5) on each axis, filled with a 0.5 half-extent.
         assert!((c.cx - (-COVER_GRID_HALF + 0.5)).abs() < EPS);
         assert!((c.cy - (-COVER_GRID_HALF + 0.5)).abs() < EPS);
-        assert!((c.hw - 0.5).abs() < EPS && (c.hh - 0.5).abs() < EPS, "quad exactly fills the cell");
+        assert!(
+            (c.hw - 0.5).abs() < EPS && (c.hh - 0.5).abs() < EPS,
+            "quad exactly fills the cell"
+        );
         assert_eq!(c.rot, 0.0, "cover cells are axis-aligned, not diamonds");
         assert_eq!([c.r, c.g, c.b, c.a], COVER_FILL_HEAVY, "heavy tier tint");
     }
@@ -1028,13 +1122,22 @@ mod tests {
         let rgba = |x: &OverlayQuad| [x.r, x.g, x.b, x.a];
         assert_eq!(q.iter().filter(|x| rgba(x) == COVER_FILL_LIGHT).count(), 1);
         assert_eq!(q.iter().filter(|x| rgba(x) == COVER_FILL_HEAVY).count(), 1);
-        assert_eq!(q.iter().filter(|x| rgba(x) == COVER_FILL_IMPASSABLE).count(), 1);
+        assert_eq!(
+            q.iter()
+                .filter(|x| rgba(x) == COVER_FILL_IMPASSABLE)
+                .count(),
+            1
+        );
         // Alpha rises with the tier so a blocking cell reads strongest, light concealment faintest.
         assert!(COVER_FILL_LIGHT[3] < COVER_FILL_HEAVY[3]);
         assert!(COVER_FILL_HEAVY[3] < COVER_FILL_IMPASSABLE[3]);
         // The wash stays translucent (never hides a unit token drawn on top).
         for x in &q {
-            assert!((0.0..1.0).contains(&x.a), "cover wash is translucent, alpha {}", x.a);
+            assert!(
+                (0.0..1.0).contains(&x.a),
+                "cover wash is translucent, alpha {}",
+                x.a
+            );
         }
     }
 
@@ -1086,8 +1189,14 @@ mod tests {
     #[test]
     fn prop_markers_barricade_is_bigger_than_a_tree() {
         // The marker size tracks the sim collision footprint — a wide berm reads bigger than a tree.
-        let tree = [Obstacle { kind: ObstacleKind::Tree, pos: Vec2::new(Fixed::ZERO, Fixed::ZERO) }];
-        let berm = [Obstacle { kind: ObstacleKind::Barricade, pos: Vec2::new(Fixed::ZERO, Fixed::ZERO) }];
+        let tree = [Obstacle {
+            kind: ObstacleKind::Tree,
+            pos: Vec2::new(Fixed::ZERO, Fixed::ZERO),
+        }];
+        let berm = [Obstacle {
+            kind: ObstacleKind::Barricade,
+            pos: Vec2::new(Fixed::ZERO, Fixed::ZERO),
+        }];
         assert!(prop_markers(&berm)[0].hw > prop_markers(&tree)[0].hw);
     }
 
@@ -1120,7 +1229,10 @@ mod tests {
 
     #[test]
     fn prop_markers_empty_when_no_obstacles() {
-        assert!(prop_markers(&[]).is_empty(), "a prop-less map draws no markers");
+        assert!(
+            prop_markers(&[]).is_empty(),
+            "a prop-less map draws no markers"
+        );
     }
 
     #[test]

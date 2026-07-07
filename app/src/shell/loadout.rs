@@ -40,7 +40,10 @@ pub(crate) enum LoadoutStep {
 /// Pure (no egui/window) — the gunsmith's testable decision seam, mirroring [`resolve_title_action`].
 /// The actual loadout *model* (validation + the sidegrade-fairness proof) lives in `core::gunsmith`
 /// and is consumed through the editor read-only; this never touches the sim.
-pub(crate) fn apply_loadout_action(action: LoadoutAction, editor: &mut LoadoutEditor) -> LoadoutStep {
+pub(crate) fn apply_loadout_action(
+    action: LoadoutAction,
+    editor: &mut LoadoutEditor,
+) -> LoadoutStep {
     match action {
         LoadoutAction::Cycle {
             slot_index,

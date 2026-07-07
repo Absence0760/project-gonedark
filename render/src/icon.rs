@@ -578,7 +578,7 @@ mod tests {
     fn atlas_matches_metrics() {
         // The baked atlas blob length MUST equal the grid metrics × 4 (RGBA) — a guard against the
         // generator and these consts drifting (which would shear every icon's UV).
-        assert!(ICON_COLS * ICON_ROWS >= ICON_COUNT, "grid holds every icon");
+        const _: () = assert!(ICON_COLS * ICON_ROWS >= ICON_COUNT, "grid holds every icon");
         assert_eq!(ATLAS_W, ICON_COLS * CELL);
         assert_eq!(ATLAS_H, ICON_ROWS * CELL);
         assert_eq!(
@@ -719,14 +719,20 @@ mod tests {
         let (hw1, hh1) = half_extents_scaled(0.1, 1.0, 1.0);
         let (hw2, hh2) = half_extents_scaled(0.1, 1.0, 2.0);
         assert!((hw2 - 2.0 * hw1).abs() < EPS, "2× ui_scale → 2× half-width");
-        assert!((hh2 - 2.0 * hh1).abs() < EPS, "2× ui_scale → 2× half-height");
+        assert!(
+            (hh2 - 2.0 * hh1).abs() < EPS,
+            "2× ui_scale → 2× half-height"
+        );
     }
 
     #[test]
     fn ui_scale_one_is_the_legacy_half_extents() {
         // The default scale reproduces the pre-ui_scale geometry exactly, at any aspect.
         for aspect in [1.0_f32, 16.0 / 9.0, 0.5] {
-            assert_eq!(half_extents_scaled(0.1, aspect, 1.0), half_extents(0.1, aspect));
+            assert_eq!(
+                half_extents_scaled(0.1, aspect, 1.0),
+                half_extents(0.1, aspect)
+            );
         }
     }
 

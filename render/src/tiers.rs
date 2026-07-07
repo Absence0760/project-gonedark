@@ -238,9 +238,13 @@ mod tests {
         // Monotonic in the budget knobs: higher tier draws further, denser, more instances.
         assert!(lo.draw_distance < mid.draw_distance && mid.draw_distance < hi.draw_distance);
         assert!(lo.effect_density < mid.effect_density && mid.effect_density <= hi.effect_density);
-        assert!(lo.instance_budget < mid.instance_budget && mid.instance_budget < hi.instance_budget);
+        assert!(
+            lo.instance_budget < mid.instance_budget && mid.instance_budget < hi.instance_budget
+        );
         // Floors rise with the tier; ceilings never exceed native.
-        assert!(lo.res_scale_floor < mid.res_scale_floor && mid.res_scale_floor < hi.res_scale_floor);
+        assert!(
+            lo.res_scale_floor < mid.res_scale_floor && mid.res_scale_floor < hi.res_scale_floor
+        );
         for p in [lo, mid, hi] {
             assert!(p.res_scale_floor > 0.0 && p.res_scale_floor <= p.res_scale_ceiling);
             assert!(p.res_scale_ceiling <= 1.0);
@@ -285,27 +289,30 @@ mod tests {
     #[test]
     fn dynres_clamps_to_floor_and_ceiling() {
         let p = QualityTier::Low.params(); // floor 0.50, ceiling 0.85
-        // Wildly over budget → clamp to floor, not below.
+                                           // Wildly over budget → clamp to floor, not below.
         let down = next_resolution_scale(&[0.100, 0.100], 1.0 / 60.0, 0.55, &p);
-        assert!(approx(down, p.res_scale_floor), "clamps to floor, got {down}");
+        assert!(
+            approx(down, p.res_scale_floor),
+            "clamps to floor, got {down}"
+        );
         // Wildly under budget from the ceiling → clamp to ceiling, not above.
         let up = next_resolution_scale(&[0.001], 1.0 / 60.0, 0.85, &p);
-        assert!(approx(up, p.res_scale_ceiling), "clamps to ceiling, got {up}");
+        assert!(
+            approx(up, p.res_scale_ceiling),
+            "clamps to ceiling, got {up}"
+        );
     }
 
     #[test]
     fn dynres_empty_or_degenerate_holds_clamped() {
         let p = QualityTier::High.params(); // floor 0.80
-        // No samples → hold current, clamped into the band.
+                                            // No samples → hold current, clamped into the band.
         assert!(approx(
             next_resolution_scale(&[], 1.0 / 60.0, 0.5, &p),
             p.res_scale_floor
         ));
         // Non-positive budget → hold, clamped.
-        assert!(approx(
-            next_resolution_scale(&[0.016], 0.0, 0.9, &p),
-            0.9
-        ));
+        assert!(approx(next_resolution_scale(&[0.016], 0.0, 0.9, &p), 0.9));
     }
 
     #[test]

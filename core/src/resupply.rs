@@ -76,8 +76,7 @@ pub fn resupply_system(world: &mut World) {
         let unit_pos = world.pos[i];
         let unit_faction = world.faction[i];
         let near_supply = supply.iter().any(|&b| {
-            world.faction[b] == unit_faction
-                && (world.pos[b] - unit_pos).len_sq() <= range_sq
+            world.faction[b] == unit_faction && (world.pos[b] - unit_pos).len_sq() <= range_sq
         });
         if near_supply {
             let add = RESUPPLY_PER_TICK.min(w.reserve_max - w.reserve);
@@ -98,7 +97,14 @@ mod tests {
 
     /// Spawn a combatant unit at `(x, y)` with a magazine weapon whose reserve is `reserve` of
     /// `reserve_max`.
-    fn spawn_unit(world: &mut World, x: i32, y: i32, faction: Faction, reserve: u16, reserve_max: u16) -> usize {
+    fn spawn_unit(
+        world: &mut World,
+        x: i32,
+        y: i32,
+        faction: Faction,
+        reserve: u16,
+        reserve_max: u16,
+    ) -> usize {
         let e = world.spawn();
         let i = e.index as usize;
         world.pos[i] = Vec2::new(fx(x), fx(y));
@@ -117,7 +123,14 @@ mod tests {
     }
 
     /// Spawn a `kind` building at `(x, y)`, finished unless `build_ticks_left` says otherwise.
-    fn spawn_building(world: &mut World, x: i32, y: i32, faction: Faction, kind: BuildingKind, build_ticks_left: u16) -> usize {
+    fn spawn_building(
+        world: &mut World,
+        x: i32,
+        y: i32,
+        faction: Faction,
+        kind: BuildingKind,
+        build_ticks_left: u16,
+    ) -> usize {
         let e = world.spawn();
         let i = e.index as usize;
         world.pos[i] = Vec2::new(fx(x), fx(y));
@@ -141,11 +154,18 @@ mod tests {
         spawn_building(&mut world, 3, 0, Faction::Player, BuildingKind::Camp, 0);
 
         resupply_system(&mut world);
-        assert_eq!(world.weapon[unit].reserve, 10 + RESUPPLY_PER_TICK, "rearms each tick");
+        assert_eq!(
+            world.weapon[unit].reserve,
+            10 + RESUPPLY_PER_TICK,
+            "rearms each tick"
+        );
         for _ in 0..1000 {
             resupply_system(&mut world);
         }
-        assert_eq!(world.weapon[unit].reserve, 180, "reserve never exceeds reserve_max");
+        assert_eq!(
+            world.weapon[unit].reserve, 180,
+            "reserve never exceeds reserve_max"
+        );
     }
 
     #[test]
@@ -155,7 +175,10 @@ mod tests {
         spawn_building(&mut world, 5, 0, Faction::Player, BuildingKind::Barracks, 0);
 
         resupply_system(&mut world);
-        assert_eq!(world.weapon[unit].reserve, RESUPPLY_PER_TICK, "a forward Barracks rearms too");
+        assert_eq!(
+            world.weapon[unit].reserve, RESUPPLY_PER_TICK,
+            "a forward Barracks rearms too"
+        );
     }
 
     #[test]
@@ -166,7 +189,10 @@ mod tests {
         spawn_building(&mut world, 9, 0, Faction::Player, BuildingKind::Camp, 0);
 
         resupply_system(&mut world);
-        assert_eq!(world.weapon[unit].reserve, 10, "no supply in range → no rearm");
+        assert_eq!(
+            world.weapon[unit].reserve, 10,
+            "no supply in range → no rearm"
+        );
     }
 
     #[test]
@@ -176,7 +202,10 @@ mod tests {
         spawn_building(&mut world, 2, 0, Faction::Enemy, BuildingKind::Camp, 0);
 
         resupply_system(&mut world);
-        assert_eq!(world.weapon[unit].reserve, 10, "you do not rearm at the enemy's base");
+        assert_eq!(
+            world.weapon[unit].reserve, 10,
+            "you do not rearm at the enemy's base"
+        );
     }
 
     #[test]
@@ -187,7 +216,10 @@ mod tests {
         spawn_building(&mut world, 2, 0, Faction::Player, BuildingKind::Camp, 100);
 
         resupply_system(&mut world);
-        assert_eq!(world.weapon[unit].reserve, 10, "a half-built base has no stores yet");
+        assert_eq!(
+            world.weapon[unit].reserve, 10,
+            "a half-built base has no stores yet"
+        );
     }
 
     #[test]
@@ -200,8 +232,14 @@ mod tests {
         spawn_building(&mut world, 2, 0, Faction::Player, BuildingKind::Camp, 0);
 
         resupply_system(&mut world);
-        assert_eq!(world.weapon[full].reserve, 180, "a full reserve is not over-filled");
-        assert_eq!(world.weapon[magless].reserve, 0, "a mag-less weapon has nothing to resupply");
+        assert_eq!(
+            world.weapon[full].reserve, 180,
+            "a full reserve is not over-filled"
+        );
+        assert_eq!(
+            world.weapon[magless].reserve, 0,
+            "a mag-less weapon has nothing to resupply"
+        );
     }
 
     #[test]
@@ -209,6 +247,9 @@ mod tests {
         let mut world = World::new();
         let unit = spawn_unit(&mut world, 0, 0, Faction::Player, 10, 180);
         resupply_system(&mut world);
-        assert_eq!(world.weapon[unit].reserve, 10, "no supply points anywhere → no change");
+        assert_eq!(
+            world.weapon[unit].reserve, 10,
+            "no supply points anywhere → no change"
+        );
     }
 }

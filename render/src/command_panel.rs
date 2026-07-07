@@ -162,12 +162,13 @@ fn box_geom(view: &CommandPanelView, aspect: f32, ui_scale: f32) -> (f32, f32, f
     // Size the box from the SCALED type metrics: the text pass draws each glyph at `px * ui_scale`,
     // so the box must hug the scaled footprint or the rows spill past the panel edge (the bug this
     // fixes). `ui_scale == 1.0` is exactly the legacy geometry (byte-identical) — the golden tests.
-    let widest = std::iter::once(crate::text::measure(&view.title, TITLE_SIZE * ui_scale, aspect).0)
-        .chain(
-            rows.iter()
-                .map(|l| crate::text::measure(&l.text, ROW_SIZE * ui_scale, aspect).0),
-        )
-        .fold(0.0_f32, f32::max);
+    let widest =
+        std::iter::once(crate::text::measure(&view.title, TITLE_SIZE * ui_scale, aspect).0)
+            .chain(
+                rows.iter()
+                    .map(|l| crate::text::measure(&l.text, ROW_SIZE * ui_scale, aspect).0),
+            )
+            .fold(0.0_f32, f32::max);
     let pad = PAD * ui_scale;
     // Scale the clamp bounds too, so a denser display's box can actually grow (a fixed max would
     // re-introduce the overflow at large scales).
@@ -284,10 +285,7 @@ mod tests {
     fn view(title: &str, lines: &[(&str, LineStyle)]) -> CommandPanelView {
         CommandPanelView {
             title: title.to_string(),
-            lines: lines
-                .iter()
-                .map(|&(t, s)| PanelLine::new(t, s))
-                .collect(),
+            lines: lines.iter().map(|&(t, s)| PanelLine::new(t, s)).collect(),
         }
     }
 
@@ -305,11 +303,20 @@ mod tests {
         let q = command_panel_quads(&v, 1.0);
         assert_eq!(q.len(), 2, "rim + fill");
         let (rim, fill) = (&q[0], &q[1]);
-        assert!(rim.hw > fill.hw && rim.hh > fill.hh, "rim is larger than the fill");
+        assert!(
+            rim.hw > fill.hw && rim.hh > fill.hh,
+            "rim is larger than the fill"
+        );
         // Box hugs the top-right corner.
-        assert!((fill.cx + fill.hw - RIGHT).abs() < 1e-6, "right edge at RIGHT");
+        assert!(
+            (fill.cx + fill.hw - RIGHT).abs() < 1e-6,
+            "right edge at RIGHT"
+        );
         assert!((fill.cy + fill.hh - TOP).abs() < 1e-6, "top edge at TOP");
-        assert!(fill.cx > 0.0 && fill.cy > 0.0, "sits in the top-right quadrant");
+        assert!(
+            fill.cx > 0.0 && fill.cy > 0.0,
+            "sits in the top-right quadrant"
+        );
     }
 
     #[test]
@@ -346,7 +353,10 @@ mod tests {
         let ls = command_panel_labels(&v, 1.0);
         assert_eq!(ls.len(), 4, "title + 3 rows");
         assert_eq!(ls[0].text, "SELECTED — 3");
-        assert_eq!(ls[0].color, TITLE_COLOR, "title reads in the primary title tint");
+        assert_eq!(
+            ls[0].color, TITLE_COLOR,
+            "title reads in the primary title tint"
+        );
         assert_eq!(ls[3].color, LineStyle::Dim.color(), "dim row is dimmed");
         // Rows stack downward and sit below the title.
         assert!(ls[1].pos[1] < ls[0].pos[1]);
@@ -362,14 +372,23 @@ mod tests {
         // the left edge — the bug that made it look broken. Both keep the right edge pinned at RIGHT.
         let short = command_panel_quads(&view("SEL", &[("3x RIFLE", LineStyle::Normal)]), 1.0);
         let long = command_panel_quads(
-            &view("SELECTED — 3", &[("STANCE: FIRE AT WILL", LineStyle::Normal)]),
+            &view(
+                "SELECTED — 3",
+                &[("STANCE: FIRE AT WILL", LineStyle::Normal)],
+            ),
             1.0,
         );
         assert!(long[1].hw > short[1].hw, "a longer row makes a wider box");
         for q in long.iter().chain(short.iter()) {
             // Right edge pinned; left edge stays inside the screen (> -1.0) so nothing clips off.
-            assert!((q.cx + q.hw - RIGHT).abs() < 1e-6 || (q.cx + q.hw - (RIGHT + RIM_PAD)).abs() < 1e-6);
-            assert!(q.cx - q.hw > -1.0, "left edge stays on screen (no off-screen clip)");
+            assert!(
+                (q.cx + q.hw - RIGHT).abs() < 1e-6
+                    || (q.cx + q.hw - (RIGHT + RIM_PAD)).abs() < 1e-6
+            );
+            assert!(
+                q.cx - q.hw > -1.0,
+                "left edge stays on screen (no off-screen clip)"
+            );
         }
     }
 
@@ -390,7 +409,11 @@ mod tests {
         let inner_w = 2.0 * fill.hw - 2.0 * PAD;
         for line in &v.lines {
             let w = crate::text::measure(&line.text, ROW_SIZE, 1.0).0;
-            assert!(w <= inner_w + 1e-6, "row {:?} ({w}) fits inner width {inner_w}", line.text);
+            assert!(
+                w <= inner_w + 1e-6,
+                "row {:?} ({w}) fits inner width {inner_w}",
+                line.text
+            );
         }
     }
 
@@ -400,13 +423,19 @@ mod tests {
         // right-padding) — yet every row still fits inside the (now tighter) inner width.
         let v = view(
             "SELECTED — 3",
-            &[("STANCE: FIRE AT WILL", LineStyle::Normal), ("E  EMBODY", LineStyle::Dim)],
+            &[
+                ("STANCE: FIRE AT WILL", LineStyle::Normal),
+                ("E  EMBODY", LineStyle::Dim),
+            ],
         );
         let aspect = 16.0 / 9.0;
         let sq = command_panel_quads(&v, 1.0);
         let wide = command_panel_quads(&v, aspect);
         // Long content isn't clamped, so the wide box is strictly narrower than the square one.
-        assert!(wide[1].hw < sq[1].hw, "box hugs the narrower wide-screen text");
+        assert!(
+            wide[1].hw < sq[1].hw,
+            "box hugs the narrower wide-screen text"
+        );
         let inner_w = 2.0 * wide[1].hw - 2.0 * PAD;
         for line in &v.lines {
             let w = crate::text::measure(&line.text, ROW_SIZE, aspect).0;
@@ -429,7 +458,10 @@ mod tests {
 
         let labels = command_panel_labels(&v, 1.0);
         // title + at most MAX_ROWS rows.
-        assert!(labels.len() <= MAX_ROWS + 1, "rows capped at MAX_ROWS (+title)");
+        assert!(
+            labels.len() <= MAX_ROWS + 1,
+            "rows capped at MAX_ROWS (+title)"
+        );
         assert_eq!(labels.len(), MAX_ROWS + 1, "a 30-row list fills the cap");
         // The last drawn row rolls up the hidden rows as "+N more" (30 lines, MAX_ROWS=5 → +26 more).
         let hidden = 30 - (MAX_ROWS - 1);
@@ -471,7 +503,11 @@ mod tests {
         let inner_w = 2.0 * fill.hw - 2.0 * PAD;
         for line in &v.lines {
             let w = crate::text::measure(&line.text, ROW_SIZE, PORTRAIT_ASPECT).0;
-            assert!(w <= inner_w + 1e-6, "row {:?} fits the portrait box", line.text);
+            assert!(
+                w <= inner_w + 1e-6,
+                "row {:?} fits the portrait box",
+                line.text
+            );
         }
     }
 
@@ -489,8 +525,16 @@ mod tests {
         let v = view("CAMP — TIER 1", &[("Resources 300", LineStyle::Normal)]);
         let ls = command_panel_labels(&v, 1.0);
         assert_eq!(ls[0].color, crate::theme::BONE, "title in the primary bone");
-        assert_eq!(ls[0].px_size, crate::theme::TYPE_TITLE, "title on the type scale");
-        assert_eq!(ls[1].px_size, crate::theme::TYPE_BODY, "rows on the type scale");
+        assert_eq!(
+            ls[0].px_size,
+            crate::theme::TYPE_TITLE,
+            "title on the type scale"
+        );
+        assert_eq!(
+            ls[1].px_size,
+            crate::theme::TYPE_BODY,
+            "rows on the type scale"
+        );
     }
 
     #[test]
@@ -534,15 +578,24 @@ mod tests {
     fn ui_scale_one_is_byte_identical() {
         // The identity contract the golden tests rely on: the scaled entry at 1.0 == the legacy fn.
         let v = view("CAMP — TIER 1", &[("Resources 300", LineStyle::Normal)]);
-        assert_eq!(command_panel_quads(&v, 0.7), command_panel_quads_scaled(&v, 0.7, 1.0));
-        assert_eq!(command_panel_labels(&v, 0.7), command_panel_labels_scaled(&v, 0.7, 1.0));
+        assert_eq!(
+            command_panel_quads(&v, 0.7),
+            command_panel_quads_scaled(&v, 0.7, 1.0)
+        );
+        assert_eq!(
+            command_panel_labels(&v, 0.7),
+            command_panel_labels_scaled(&v, 0.7, 1.0)
+        );
     }
 
     #[test]
     fn good_and_bad_rows_take_distinct_colors() {
         let v = view(
             "CAMP",
-            &[("Upgrade 200", LineStyle::Good), ("Upgrade 200", LineStyle::Bad)],
+            &[
+                ("Upgrade 200", LineStyle::Good),
+                ("Upgrade 200", LineStyle::Bad),
+            ],
         );
         let ls = command_panel_labels(&v, 1.0);
         assert_eq!(ls[1].color, LineStyle::Good.color());

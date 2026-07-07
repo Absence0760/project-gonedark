@@ -284,7 +284,11 @@ pub fn readout_card(labels: &[ReadoutLabel], aspect: f32) -> Vec<OverlayQuad> {
 /// glyph height (`px_size * ui_scale`, what the text pass actually draws) and scales the card's own
 /// paddings so the card wraps the scaled text exactly. `ui_scale == 1.0` is byte-identical to
 /// [`readout_card`].
-pub fn readout_card_scaled(labels: &[ReadoutLabel], aspect: f32, ui_scale: f32) -> Vec<OverlayQuad> {
+pub fn readout_card_scaled(
+    labels: &[ReadoutLabel],
+    aspect: f32,
+    ui_scale: f32,
+) -> Vec<OverlayQuad> {
     let (Some(first), Some(last)) = (labels.first(), labels.last()) else {
         return Vec::new();
     };
@@ -367,7 +371,10 @@ mod tests {
         let t = tally(&set, &crate::theme::Palette::DEFAULT);
         assert_eq!(t.player_units, 2);
         assert_eq!(t.enemy_units, 1);
-        assert_eq!(t.control_points, 2, "both rings counted regardless of owner");
+        assert_eq!(
+            t.control_points, 2,
+            "both rings counted regardless of owner"
+        );
     }
 
     #[test]
@@ -402,7 +409,10 @@ mod tests {
 
     #[test]
     fn empty_set_tallies_zero() {
-        assert_eq!(tally(&[], &crate::theme::Palette::DEFAULT), Tally::default());
+        assert_eq!(
+            tally(&[], &crate::theme::Palette::DEFAULT),
+            Tally::default()
+        );
     }
 
     // ---- readout_labels ----
@@ -424,9 +434,18 @@ mod tests {
         let labels = readout_labels(&t, None, false, &crate::theme::Palette::DEFAULT);
         // Three lines without the economy seam.
         assert_eq!(labels.len(), 3);
-        assert!(labels[0].text.contains('5'), "player count in the units line");
-        assert!(labels[1].text.contains('3'), "enemy count in the enemy line");
-        assert!(labels[2].text.contains('2'), "point count in the points line");
+        assert!(
+            labels[0].text.contains('5'),
+            "player count in the units line"
+        );
+        assert!(
+            labels[1].text.contains('3'),
+            "enemy count in the enemy line"
+        );
+        assert!(
+            labels[2].text.contains('2'),
+            "point count in the points line"
+        );
         assert!(labels[0].text.starts_with("UNITS"));
         assert!(labels[1].text.starts_with("ENEMY"));
         assert!(labels[2].text.starts_with("POINTS"));
@@ -440,7 +459,12 @@ mod tests {
             3,
             "no economy lines by default"
         );
-        let with = readout_labels(&t, Some(econ(250, income_per_tick(0))), false, &crate::theme::Palette::DEFAULT);
+        let with = readout_labels(
+            &t,
+            Some(econ(250, income_per_tick(0))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
         assert_eq!(
             with.len(),
             5,
@@ -453,18 +477,41 @@ mod tests {
     #[test]
     fn resource_line_shows_the_banked_credits() {
         // The banked figure the host hands in is the exact number shown.
-        let labels = readout_labels(&Tally::default(), Some(econ(1337, income_per_tick(0))), false, &crate::theme::Palette::DEFAULT);
+        let labels = readout_labels(
+            &Tally::default(),
+            Some(econ(1337, income_per_tick(0))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
         assert!(labels[3].text.contains("1337"), "banked credits verbatim");
     }
 
     #[test]
     fn income_label_converts_per_tick_to_per_second() {
         // Base income (no points) is 1/tick -> 60/s at TICK_HZ = 60.
-        let base = readout_labels(&Tally::default(), Some(econ(0, income_per_tick(0))), false, &crate::theme::Palette::DEFAULT);
-        assert!(base[4].text.contains("60/s"), "1/tick reads as 60/s, got {:?}", base[4].text);
+        let base = readout_labels(
+            &Tally::default(),
+            Some(econ(0, income_per_tick(0))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
+        assert!(
+            base[4].text.contains("60/s"),
+            "1/tick reads as 60/s, got {:?}",
+            base[4].text
+        );
         // Holding two points: 1 + 2*2 = 5/tick -> 300/s.
-        let held = readout_labels(&Tally::default(), Some(econ(0, income_per_tick(2))), false, &crate::theme::Palette::DEFAULT);
-        assert!(held[4].text.contains("300/s"), "5/tick reads as 300/s, got {:?}", held[4].text);
+        let held = readout_labels(
+            &Tally::default(),
+            Some(econ(0, income_per_tick(2))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
+        assert!(
+            held[4].text.contains("300/s"),
+            "5/tick reads as 300/s, got {:?}",
+            held[4].text
+        );
     }
 
     #[test]
@@ -490,7 +537,13 @@ mod tests {
             control_points: 4,
         };
         assert!(
-            readout_labels(&t, Some(econ(9999, income_per_tick(4))), true, &crate::theme::Palette::DEFAULT).is_empty(),
+            readout_labels(
+                &t,
+                Some(econ(9999, income_per_tick(4))),
+                true,
+                &crate::theme::Palette::DEFAULT
+            )
+            .is_empty(),
             "no labels at all over the dark embodied frame"
         );
         // And with no economy either — the count chrome is also withheld.
@@ -499,16 +552,32 @@ mod tests {
 
     #[test]
     fn economy_lines_carry_the_credits_color() {
-        let labels = readout_labels(&Tally::default(), Some(econ(100, income_per_tick(1))), false, &crate::theme::Palette::DEFAULT);
+        let labels = readout_labels(
+            &Tally::default(),
+            Some(econ(100, income_per_tick(1))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
         // The two economy lines share the credits-gold tint, distinct from the white point line.
-        assert_eq!(labels[3].color, ECON_LABEL, "RESOURCES line is credits-gold");
+        assert_eq!(
+            labels[3].color, ECON_LABEL,
+            "RESOURCES line is credits-gold"
+        );
         assert_eq!(labels[4].color, ECON_LABEL, "INCOME line is credits-gold");
-        assert_ne!(labels[2].color, ECON_LABEL, "points line is not the economy color");
+        assert_ne!(
+            labels[2].color, ECON_LABEL,
+            "points line is not the economy color"
+        );
     }
 
     #[test]
     fn labels_stack_down_the_top_left_corner() {
-        let labels = readout_labels(&Tally::default(), None, false, &crate::theme::Palette::DEFAULT);
+        let labels = readout_labels(
+            &Tally::default(),
+            None,
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
         for w in labels.windows(2) {
             // Each line is left-aligned at the same x and steps DOWN (smaller y) from the last.
             assert_eq!(w[0].pos[0], w[1].pos[0], "same left x");
@@ -528,7 +597,12 @@ mod tests {
             enemy_units: 99,
             control_points: 9,
         };
-        for l in readout_labels(&t, Some(econ(9999, income_per_tick(9))), false, &crate::theme::Palette::DEFAULT) {
+        for l in readout_labels(
+            &t,
+            Some(econ(9999, income_per_tick(9))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        ) {
             assert!(l.pos[0] >= -1.0 && l.pos[0] <= 1.0, "x in NDC");
             assert!(l.pos[1] >= -1.0 && l.pos[1] <= 1.0, "y in NDC");
             assert!(l.px_size > 0.0 && l.alpha > 0.0);
@@ -548,14 +622,30 @@ mod tests {
             enemy_units: 4,
             control_points: 3,
         };
-        let a = readout_labels(&t, Some(econ(500, income_per_tick(3))), false, &crate::theme::Palette::DEFAULT);
-        let b = readout_labels(&t, Some(econ(500, income_per_tick(3))), false, &crate::theme::Palette::DEFAULT);
-        assert_eq!(a, b, "layout is a pure function of the tally/economy — no hidden size input");
+        let a = readout_labels(
+            &t,
+            Some(econ(500, income_per_tick(3))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
+        let b = readout_labels(
+            &t,
+            Some(econ(500, income_per_tick(3))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
+        assert_eq!(
+            a, b,
+            "layout is a pure function of the tally/economy — no hidden size input"
+        );
         for l in &a {
             // NDC chrome with NDC glyph size — nothing here scales with the target's pixel dims, so
             // the native-resolution draw lands in the exact same place the scaled one would have.
             assert!(l.pos[0] >= -1.0 && l.pos[0] <= 1.0 && l.pos[1] >= -1.0 && l.pos[1] <= 1.0);
-            assert!(l.px_size > 0.0 && l.px_size <= 1.0, "glyph height is NDC, not pixels");
+            assert!(
+                l.px_size > 0.0 && l.px_size <= 1.0,
+                "glyph height is NDC, not pixels"
+            );
         }
     }
 
@@ -565,7 +655,16 @@ mod tests {
     fn empty_labels_make_no_card() {
         // The dark embodied frame emits no labels (invariant #6) → no backing card either.
         assert!(readout_card(&[], 1.0).is_empty());
-        assert!(readout_card(&readout_labels(&Tally::default(), None, true, &crate::theme::Palette::DEFAULT), 1.0).is_empty());
+        assert!(readout_card(
+            &readout_labels(
+                &Tally::default(),
+                None,
+                true,
+                &crate::theme::Palette::DEFAULT
+            ),
+            1.0
+        )
+        .is_empty());
     }
 
     #[test]
@@ -590,7 +689,10 @@ mod tests {
         for l in &labels {
             assert!(l.pos[0] >= fill.cx - fill.hw, "label left inside card");
             assert!(l.pos[1] <= fill.cy + fill.hh, "label top inside card");
-            assert!(l.pos[1] - l.px_size >= fill.cy - fill.hh - 1e-6, "label bottom inside card");
+            assert!(
+                l.pos[1] - l.px_size >= fill.cy - fill.hh - 1e-6,
+                "label bottom inside card"
+            );
         }
         // Anchored in the top-left quadrant, on screen.
         assert!(fill.cx - fill.hw > -1.0 && fill.cy + fill.hh < 1.0);
@@ -608,10 +710,17 @@ mod tests {
         let econ_v = econ(1234, income_per_tick(3));
         let aspect = 1.0_f32;
         let inner_w = |q: &[OverlayQuad], s: f32| 2.0 * q[1].hw - 2.0 * (CARD_PAD_X * s);
-        let base_labels = readout_labels_scaled(&t, Some(econ_v), false, &crate::theme::Palette::DEFAULT, 1.0);
+        let base_labels = readout_labels_scaled(
+            &t,
+            Some(econ_v),
+            false,
+            &crate::theme::Palette::DEFAULT,
+            1.0,
+        );
         let base_inner = inner_w(&readout_card_scaled(&base_labels, aspect, 1.0), 1.0);
         for s in [2.0_f32, 3.0] {
-            let labels = readout_labels_scaled(&t, Some(econ_v), false, &crate::theme::Palette::DEFAULT, s);
+            let labels =
+                readout_labels_scaled(&t, Some(econ_v), false, &crate::theme::Palette::DEFAULT, s);
             let q = readout_card_scaled(&labels, aspect, s);
             let scaled_inner = inner_w(&q, s);
             assert!(
@@ -646,13 +755,21 @@ mod tests {
             readout_labels_scaled(&t, e, false, &pal, 1.0)
         );
         let labels = readout_labels(&t, e, false, &pal);
-        assert_eq!(readout_card(&labels, 0.7), readout_card_scaled(&labels, 0.7, 1.0));
+        assert_eq!(
+            readout_card(&labels, 0.7),
+            readout_card_scaled(&labels, 0.7, 1.0)
+        );
     }
 
     #[test]
     fn card_narrows_on_a_wide_viewport() {
         // The labels shrink horizontally on a wide window, so the card tracks them (no dead space).
-        let labels = readout_labels(&Tally::default(), Some(econ(1234, income_per_tick(2))), false, &crate::theme::Palette::DEFAULT);
+        let labels = readout_labels(
+            &Tally::default(),
+            Some(econ(1234, income_per_tick(2))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
         let sq = readout_card(&labels, 1.0);
         let wide = readout_card(&labels, 16.0 / 9.0);
         assert!(wide[1].hw < sq[1].hw, "card is narrower on a wide viewport");
@@ -662,19 +779,52 @@ mod tests {
     fn label_and_card_colors_are_sourced_from_the_shared_theme() {
         // WS-C consistency: the readout speaks the same faction/status language and wears the same
         // card chrome as the command panel + objective HUD — every colour is a `theme` const.
-        let labels = readout_labels(&Tally::default(), Some(econ(100, income_per_tick(1))), false, &crate::theme::Palette::DEFAULT);
-        assert_eq!(labels[0].color, crate::theme::PLAYER, "UNITS line is player-blue");
-        assert_eq!(labels[1].color, crate::theme::ENEMY, "ENEMY line is enemy-red");
-        assert_eq!(labels[2].color, crate::theme::BONE, "POINTS line is neutral bone");
-        assert_eq!(labels[3].color, crate::theme::DATA_RESOURCE, "economy is the resource accent");
-        assert_eq!(labels[0].px_size, crate::theme::TYPE_TITLE, "rides the shared type scale");
+        let labels = readout_labels(
+            &Tally::default(),
+            Some(econ(100, income_per_tick(1))),
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
+        assert_eq!(
+            labels[0].color,
+            crate::theme::PLAYER,
+            "UNITS line is player-blue"
+        );
+        assert_eq!(
+            labels[1].color,
+            crate::theme::ENEMY,
+            "ENEMY line is enemy-red"
+        );
+        assert_eq!(
+            labels[2].color,
+            crate::theme::BONE,
+            "POINTS line is neutral bone"
+        );
+        assert_eq!(
+            labels[3].color,
+            crate::theme::DATA_RESOURCE,
+            "economy is the resource accent"
+        );
+        assert_eq!(
+            labels[0].px_size,
+            crate::theme::TYPE_TITLE,
+            "rides the shared type scale"
+        );
         // The backing card is the shared panel fill + rim — colours, opacities, AND rim thickness
         // (the alphas/pad converged from lighter module-local values; pinned against drift-back).
         let card = readout_card(&labels, 1.0);
         assert_eq!(card[0].r, crate::theme::RIM[0]);
         assert_eq!(card[1].r, crate::theme::PANEL[0]);
-        assert_eq!(card[0].alpha, crate::theme::PANEL_RIM_ALPHA, "rim alpha is the shared spec");
-        assert_eq!(card[1].alpha, crate::theme::PANEL_BG_ALPHA, "fill alpha is the shared spec");
+        assert_eq!(
+            card[0].alpha,
+            crate::theme::PANEL_RIM_ALPHA,
+            "rim alpha is the shared spec"
+        );
+        assert_eq!(
+            card[1].alpha,
+            crate::theme::PANEL_BG_ALPHA,
+            "fill alpha is the shared spec"
+        );
         assert!(
             (card[0].hw - card[1].hw - crate::theme::PANEL_RIM_PAD).abs() < 1e-6,
             "rim thickness is the shared PANEL_RIM_PAD"
@@ -693,18 +843,39 @@ mod tests {
         };
         let cvd = crate::theme::palette(crate::theme::PaletteMode::Deuteranopia);
         let labels = readout_labels(&t, None, false, &cvd);
-        assert_eq!(labels[0].color, crate::faction_color_in(Faction::Player, &cvd));
-        assert_eq!(labels[1].color, crate::faction_color_in(Faction::Enemy, &cvd));
-        assert_ne!(labels[0].color, crate::theme::PLAYER, "the CVD ramp moved the player tint");
+        assert_eq!(
+            labels[0].color,
+            crate::faction_color_in(Faction::Player, &cvd)
+        );
+        assert_eq!(
+            labels[1].color,
+            crate::faction_color_in(Faction::Enemy, &cvd)
+        );
+        assert_ne!(
+            labels[0].color,
+            crate::theme::PLAYER,
+            "the CVD ramp moved the player tint"
+        );
         // The POINTS line is neutral bone (not a faction colour), so it is palette-independent.
         assert_eq!(labels[2].color, crate::theme::BONE);
     }
 
     #[test]
     fn each_side_label_carries_its_faction_color() {
-        let labels = readout_labels(&Tally::default(), None, false, &crate::theme::Palette::DEFAULT);
+        let labels = readout_labels(
+            &Tally::default(),
+            None,
+            false,
+            &crate::theme::Palette::DEFAULT,
+        );
         // The player line leans blue, the enemy line leans red (so each reads as its side).
-        assert!(labels[0].color[2] > labels[0].color[0], "player label is blue-leaning");
-        assert!(labels[1].color[0] > labels[1].color[2], "enemy label is red-leaning");
+        assert!(
+            labels[0].color[2] > labels[0].color[0],
+            "player label is blue-leaning"
+        );
+        assert!(
+            labels[1].color[0] > labels[1].color[2],
+            "enemy label is red-leaning"
+        );
     }
 }

@@ -106,13 +106,27 @@ pub const BATTLE_PIN_SCALE: f32 = 1.6;
 impl GlobePin {
     /// A conflict pin on the atlas — the D103/D104 vocabulary (amber, full size).
     pub fn conflict(lat_deg: f32, lon_deg: f32, focused: bool, active: bool) -> GlobePin {
-        GlobePin { lat_deg, lon_deg, focused, active, tone: PinTone::Neutral, scale: 1.0 }
+        GlobePin {
+            lat_deg,
+            lon_deg,
+            focused,
+            active,
+            tone: PinTone::Neutral,
+            scale: 1.0,
+        }
     }
 
     /// A battle pin on the zoomed battlefield overview (D106): smaller, always in-era (the hub
     /// has no year scrubber), toned by its node's progress.
     pub fn battle(lat_deg: f32, lon_deg: f32, focused: bool, tone: PinTone) -> GlobePin {
-        GlobePin { lat_deg, lon_deg, focused, active: true, tone, scale: BATTLE_PIN_SCALE }
+        GlobePin {
+            lat_deg,
+            lon_deg,
+            focused,
+            active: true,
+            tone,
+            scale: BATTLE_PIN_SCALE,
+        }
     }
 }
 
@@ -143,7 +157,11 @@ impl GlobeView {
     /// The backdrop's automatic view: settled on the focused conflict ([`globe_yaw`]) with a
     /// gentle sway, a slight fixed tilt, no zoom — exactly the pre-D104 framing.
     pub fn settled(focus_lon_deg: f32, time: f32) -> Self {
-        GlobeView { yaw: globe_yaw(focus_lon_deg, time), pitch: 0.0, zoom: 1.0 }
+        GlobeView {
+            yaw: globe_yaw(focus_lon_deg, time),
+            pitch: 0.0,
+            zoom: 1.0,
+        }
     }
 
     /// The battlefield-overview view (D106): centered on a latitude/longitude — yaw brings the
@@ -199,7 +217,11 @@ impl GlobeFlight {
 
     /// A flight from `from` to `to`, at its start.
     pub fn new(from: GlobeView, to: GlobeView) -> GlobeFlight {
-        GlobeFlight { from, to, elapsed: 0.0 }
+        GlobeFlight {
+            from,
+            to,
+            elapsed: 0.0,
+        }
     }
 
     /// Advance by a frame's wall-clock `dt` (negative dt is treated as zero — a clock hiccup
@@ -213,7 +235,7 @@ impl GlobeFlight {
     pub fn view(&self) -> GlobeView {
         let t = (self.elapsed / Self::DURATION).clamp(0.0, 1.0);
         let e = t * t * (3.0 - 2.0 * t); // smoothstep ease-in-out
-        // Shortest-arc yaw: wrap the difference into [-pi, pi] before scaling.
+                                         // Shortest-arc yaw: wrap the difference into [-pi, pi] before scaling.
         let dyaw = wrap_pi(self.to.yaw - self.from.yaw);
         // Zoom in eye-distance space: view_eye scales the eye by 1/zoom, so lerping the
         // reciprocal moves the camera linearly along its ray.
@@ -311,7 +333,11 @@ fn globe_model(view: GlobeView) -> [[f32; 4]; 4] {
 /// never disagree with drawing.
 fn view_eye(view: GlobeView, parallax: [f32; 2]) -> [f32; 3] {
     let k = 1.0 / view.zoom;
-    [EYE[0] * k - parallax[0], EYE[1] * k + parallax[1] * 0.6, EYE[2] * k]
+    [
+        EYE[0] * k - parallax[0],
+        EYE[1] * k + parallax[1] * 0.6,
+        EYE[2] * k,
+    ]
 }
 
 /// Apply a column-major mat4 to a point (w = 1), returning the transformed `[x, y, z, w]`. Pure.
@@ -334,12 +360,20 @@ pub fn project_pin(view: GlobeView, aspect: f32, lat_deg: f32, lon_deg: f32) -> 
     let world = mat4_apply(model, unit);
     let eye = view_eye(view, [0.0, 0.0]);
     // Facing test — the world-space surface normal against the eye ray (the shader's fade gate).
-    let wn = [world[0] - GLOBE_CENTER[0], world[1] - GLOBE_CENTER[1], world[2] - GLOBE_CENTER[2]];
+    let wn = [
+        world[0] - GLOBE_CENTER[0],
+        world[1] - GLOBE_CENTER[1],
+        world[2] - GLOBE_CENTER[2],
+    ];
     let to_eye = [eye[0] - world[0], eye[1] - world[1], eye[2] - world[2]];
     if wn[0] * to_eye[0] + wn[1] * to_eye[1] + wn[2] * to_eye[2] <= 0.0 {
         return None;
     }
-    let aspect = if aspect.is_finite() && aspect > 1e-3 { aspect } else { 1.0 };
+    let aspect = if aspect.is_finite() && aspect > 1e-3 {
+        aspect
+    } else {
+        1.0
+    };
     let proj = perspective_rh_zo(FOVY, aspect, NEAR, FAR);
     let view_mat = look_at_rh(eye, TARGET, [0.0, 1.0, 0.0]);
     let vp = mat4_mul(proj, view_mat);
@@ -562,8 +596,11 @@ impl GlobeBackdrop {
                 cache: None,
             })
         };
-        let sky_pipeline =
-            fullscreen("gonedark.globe_backdrop_sky", "fs_sky", wgpu::BlendState::REPLACE);
+        let sky_pipeline = fullscreen(
+            "gonedark.globe_backdrop_sky",
+            "fs_sky",
+            wgpu::BlendState::REPLACE,
+        );
         let vignette_pipeline = fullscreen(
             "gonedark.globe_backdrop_vignette",
             "fs_vignette",
@@ -655,7 +692,10 @@ impl GlobeBackdrop {
         });
 
         let (positions, indices) = sphere_mesh(SPHERE_RINGS, SPHERE_SEGS);
-        let verts: Vec<SphereVertex> = positions.into_iter().map(|pos| SphereVertex { pos }).collect();
+        let verts: Vec<SphereVertex> = positions
+            .into_iter()
+            .map(|pos| SphereVertex { pos })
+            .collect();
         let sphere_vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("gonedark.globe_backdrop_sphere_vbuf"),
             contents: bytemuck::cast_slice(&verts),
@@ -883,10 +923,22 @@ mod tests {
     #[test]
     fn latlon_maps_the_cardinal_points() {
         let close = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
-        assert!(close(latlon_to_unit(90.0, 0.0), [0.0, 1.0, 0.0]), "north pole is +Y");
-        assert!(close(latlon_to_unit(-90.0, 0.0), [0.0, -1.0, 0.0]), "south pole is -Y");
-        assert!(close(latlon_to_unit(0.0, 0.0), [0.0, 0.0, 1.0]), "lon 0 faces +Z");
-        assert!(close(latlon_to_unit(0.0, 90.0), [1.0, 0.0, 0.0]), "east is +X");
+        assert!(
+            close(latlon_to_unit(90.0, 0.0), [0.0, 1.0, 0.0]),
+            "north pole is +Y"
+        );
+        assert!(
+            close(latlon_to_unit(-90.0, 0.0), [0.0, -1.0, 0.0]),
+            "south pole is -Y"
+        );
+        assert!(
+            close(latlon_to_unit(0.0, 0.0), [0.0, 0.0, 1.0]),
+            "lon 0 faces +Z"
+        );
+        assert!(
+            close(latlon_to_unit(0.0, 90.0), [1.0, 0.0, 0.0]),
+            "east is +X"
+        );
         // Every output is unit-length (the mesh IS its normals).
         for (lat, lon) in [(37.0, -122.0), (-45.0, 170.0), (89.0, 13.0)] {
             let p = latlon_to_unit(lat, lon);
@@ -918,18 +970,36 @@ mod tests {
         // eye). Evaluate at sway-neutral times (sin(t*rate)=0 → t=0).
         for lon in [-122.0_f32, -1.5, 0.0, 13.4, 139.7] {
             let p = rotate_y(latlon_to_unit(50.0, lon), globe_yaw(lon, 0.0));
-            assert!(p[0].abs() < 1e-4, "lon {lon}: x should vanish, got {}", p[0]);
-            assert!(p[2] > 0.6, "lon {lon}: focus should face +Z, got z={}", p[2]);
+            assert!(
+                p[0].abs() < 1e-4,
+                "lon {lon}: x should vanish, got {}",
+                p[0]
+            );
+            assert!(
+                p[2] > 0.6,
+                "lon {lon}: focus should face +Z, got z={}",
+                p[2]
+            );
         }
     }
 
     #[test]
     fn the_view_clamps_pitch_and_zoom_but_lets_yaw_wrap() {
-        let v = GlobeView { yaw: 27.3, pitch: 9.9, zoom: 100.0 }.clamped();
+        let v = GlobeView {
+            yaw: 27.3,
+            pitch: 9.9,
+            zoom: 100.0,
+        }
+        .clamped();
         assert_eq!(v.yaw, 27.3, "yaw wraps free");
         assert_eq!(v.pitch, GlobeView::PITCH_LIMIT);
         assert_eq!(v.zoom, GlobeView::ZOOM_MAX);
-        let v = GlobeView { yaw: -3.0, pitch: -9.9, zoom: 0.0 }.clamped();
+        let v = GlobeView {
+            yaw: -3.0,
+            pitch: -9.9,
+            zoom: 0.0,
+        }
+        .clamped();
         assert_eq!(v.pitch, -GlobeView::PITCH_LIMIT);
         assert_eq!(v.zoom, GlobeView::ZOOM_MIN);
     }
@@ -939,13 +1009,24 @@ mod tests {
         // The pin the view settled on projects onto the visible face, roughly centred in x…
         let view = GlobeView::settled(-1.5, 0.0);
         let p = project_pin(view, 1.6, 50.0, -1.5).expect("the settled focus is visible");
-        assert!(p[0].abs() < 0.30, "focus x should be near centre, got {}", p[0]);
-        assert!(p[1].abs() <= 1.0, "focus y should be on screen, got {}", p[1]);
+        assert!(
+            p[0].abs() < 0.30,
+            "focus x should be near centre, got {}",
+            p[0]
+        );
+        assert!(
+            p[1].abs() <= 1.0,
+            "focus y should be on screen, got {}",
+            p[1]
+        );
         // …the far side of the globe hides (the click-picking gate) — the equatorial point
         // opposite the focus is fully back-facing under the settled view.
         assert!(project_pin(view, 1.6, 0.0, 178.5).is_none());
         // Yaw the globe half a turn: the focus rotates away and hides; the far point appears.
-        let away = GlobeView { yaw: view.yaw + std::f32::consts::PI, ..view };
+        let away = GlobeView {
+            yaw: view.yaw + std::f32::consts::PI,
+            ..view
+        };
         assert!(project_pin(away, 1.6, 50.0, -1.5).is_none());
         assert!(project_pin(away, 1.6, 0.0, 178.5).is_some());
         // A positive pitch tips the northern hemisphere toward the viewer (the drag-down feel):
@@ -954,7 +1035,12 @@ mod tests {
         // break click-picking the moment a player drags vertically.
         let tipped = GlobeView { pitch: 0.3, ..view };
         let pt = project_pin(tipped, 1.6, 50.0, -1.5).expect("a tipped focus stays visible");
-        assert!(pt[1] < p[1], "positive pitch must lower the northern pin (got {} vs {})", pt[1], p[1]);
+        assert!(
+            pt[1] < p[1],
+            "positive pitch must lower the northern pin (got {} vs {})",
+            pt[1],
+            p[1]
+        );
     }
 
     /// `wrap_pi`'s boundaries: exact multiples of 2π collapse to zero, the antipodal tie at
@@ -984,8 +1070,16 @@ mod tests {
     /// in zoom, monotonic under accumulated frame dts, and clock-hiccup safe.
     #[test]
     fn the_camera_flight_lands_exactly_and_takes_the_short_way_round() {
-        let from = GlobeView { yaw: 3.0, pitch: 0.1, zoom: 1.0 };
-        let to = GlobeView { yaw: -3.0, pitch: 0.6, zoom: 2.4 };
+        let from = GlobeView {
+            yaw: 3.0,
+            pitch: 0.1,
+            zoom: 1.0,
+        };
+        let to = GlobeView {
+            yaw: -3.0,
+            pitch: 0.6,
+            zoom: 2.4,
+        };
         let flight = GlobeFlight::new(from, to);
 
         // Endpoints exact: t=0 is `from`; at/after DURATION it is `to` (bitwise for yaw wrap:
@@ -996,14 +1090,21 @@ mod tests {
         landed.step(GlobeFlight::DURATION + 0.1);
         assert!(landed.done());
         let v = landed.view();
-        assert!(wrap_pi(v.yaw - to.yaw).abs() < 1e-5, "landed yaw is the target orientation");
+        assert!(
+            wrap_pi(v.yaw - to.yaw).abs() < 1e-5,
+            "landed yaw is the target orientation"
+        );
         assert!((v.pitch - to.pitch).abs() < 1e-6 && (v.zoom - to.zoom).abs() < 1e-5);
 
         // Shortest arc: 3.0 → -3.0 crosses pi (a +0.28 rad hop), never back through 0 — so the
         // midpoint yaw sits beyond +3.0, not between -3.0 and 3.0.
         let mut mid = GlobeFlight::new(from, to);
         mid.step(GlobeFlight::DURATION / 2.0);
-        assert!(mid.view().yaw > 3.0, "midpoint takes the date-line hop, got {}", mid.view().yaw);
+        assert!(
+            mid.view().yaw > 3.0,
+            "midpoint takes the date-line hop, got {}",
+            mid.view().yaw
+        );
 
         // Zoom is linear in eye distance at the eased midpoint (smoothstep(0.5) == 0.5):
         // k = (1/1.0 + 1/2.4) / 2 → zoom = 1/k.
@@ -1033,7 +1134,11 @@ mod tests {
     #[test]
     fn the_near_plane_never_cuts_the_globe_at_legal_zoom() {
         for zoom in [GlobeView::ZOOM_MIN, 1.0, 1.9, 2.0, 2.4, GlobeView::ZOOM_MAX] {
-            let view = GlobeView { yaw: 0.0, pitch: 0.0, zoom };
+            let view = GlobeView {
+                yaw: 0.0,
+                pitch: 0.0,
+                zoom,
+            };
             let eye = view_eye(view, [0.0, 0.0]);
             let rel = [
                 eye[0] - GLOBE_CENTER[0],
@@ -1059,10 +1164,19 @@ mod tests {
         for &(lat, zoom) in &[(0.0f32, 1.0f32), (50.0, 2.4), (-15.5, 1.6), (57.6, 2.6)] {
             let view = GlobeView::over(lat, 0.0, zoom);
             let recovered = (view.pitch + eye_elevation(zoom)).to_degrees();
-            assert!((recovered - lat).abs() < 1e-3, "lat {lat} zoom {zoom}: got {recovered}");
+            assert!(
+                (recovered - lat).abs() < 1e-3,
+                "lat {lat} zoom {zoom}: got {recovered}"
+            );
         }
-        assert!(eye_elevation(1.0) > 0.0, "the eye always sits above the +Z axis");
-        assert!(eye_elevation(2.6) > eye_elevation(1.0), "elevation grows as zoom pulls in");
+        assert!(
+            eye_elevation(1.0) > 0.0,
+            "the eye always sits above the +Z axis"
+        );
+        assert!(
+            eye_elevation(2.6) > eye_elevation(1.0),
+            "elevation grows as zoom pulls in"
+        );
         // Out-of-range zooms clamp exactly like the views that consume them.
         assert_eq!(eye_elevation(99.0), eye_elevation(GlobeView::ZOOM_MAX));
     }
@@ -1072,9 +1186,13 @@ mod tests {
     /// wars live in, and a polar target clamps to the closest legal pitch instead of flipping.
     #[test]
     fn the_overview_camera_centers_its_target() {
-        for &(lat, lon) in
-            &[(50.0f32, -1.5f32), (6.2, 0.6), (57.6, 18.3), (-15.5, 167.2), (0.0, 0.0)]
-        {
+        for &(lat, lon) in &[
+            (50.0f32, -1.5f32),
+            (6.2, 0.6),
+            (57.6, 18.3),
+            (-15.5, 167.2),
+            (0.0, 0.0),
+        ] {
             let view = GlobeView::over(lat, lon, 2.4);
             assert_eq!(view.zoom, 2.4, "an in-range zoom passes through");
             let p = project_pin(view, 16.0 / 9.0, lat, lon)
@@ -1098,7 +1216,10 @@ mod tests {
         let (pos, idx) = sphere_mesh(SPHERE_RINGS, SPHERE_SEGS);
         assert_eq!(pos.len(), ((SPHERE_RINGS + 1) * (SPHERE_SEGS + 1)) as usize);
         assert_eq!(idx.len(), (SPHERE_RINGS * SPHERE_SEGS * 6) as usize);
-        assert!(idx.iter().all(|&i| (i as usize) < pos.len()), "indices in bounds");
+        assert!(
+            idx.iter().all(|&i| (i as usize) < pos.len()),
+            "indices in bounds"
+        );
         for p in &pos {
             let len = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
             assert!((len - 1.0).abs() < 1e-4, "every vertex is a unit normal");

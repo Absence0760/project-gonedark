@@ -174,7 +174,10 @@ mod tests {
         let i = spawn_tank(&mut world);
         assert_eq!(world.weapon[i].dispersion, Fixed::ZERO, "starts settled");
         bloom(&mut world, i, DISPERSION_BLOOM_MOVE);
-        assert_eq!(world.weapon[i].dispersion, DISPERSION_BLOOM_MOVE, "one move bloom");
+        assert_eq!(
+            world.weapon[i].dispersion, DISPERSION_BLOOM_MOVE,
+            "one move bloom"
+        );
         bloom(&mut world, i, DISPERSION_BLOOM_TRAVERSE);
         assert_eq!(
             world.weapon[i].dispersion,
@@ -185,7 +188,10 @@ mod tests {
         for _ in 0..100 {
             bloom(&mut world, i, DISPERSION_BLOOM_MOVE);
         }
-        assert_eq!(world.weapon[i].dispersion, DISPERSION_MAX, "bloom clamps at the cap");
+        assert_eq!(
+            world.weapon[i].dispersion, DISPERSION_MAX,
+            "bloom clamps at the cap"
+        );
     }
 
     #[test]
@@ -202,7 +208,11 @@ mod tests {
             ..Weapon::default()
         };
         bloom(&mut world, i, DISPERSION_BLOOM_MOVE);
-        assert_eq!(world.weapon[i].dispersion, Fixed::ZERO, "infantry never blooms");
+        assert_eq!(
+            world.weapon[i].dispersion,
+            Fixed::ZERO,
+            "infantry never blooms"
+        );
     }
 
     #[test]
@@ -218,11 +228,19 @@ mod tests {
             assert!(now <= prev, "bloom never grows while holding");
             prev = now;
         }
-        assert_eq!(world.weapon[i].dispersion, Fixed::ZERO, "settles fully to pinpoint");
+        assert_eq!(
+            world.weapon[i].dispersion,
+            Fixed::ZERO,
+            "settles fully to pinpoint"
+        );
         // Below one step → clamps to zero, never negative.
         world.weapon[i].dispersion = DISPERSION_SETTLE - Fixed::from_ratio(1, 256);
         dispersion_system(&mut world);
-        assert_eq!(world.weapon[i].dispersion, Fixed::ZERO, "a sub-step remainder snaps to zero");
+        assert_eq!(
+            world.weapon[i].dispersion,
+            Fixed::ZERO,
+            "a sub-step remainder snaps to zero"
+        );
     }
 
     #[test]
@@ -235,7 +253,10 @@ mod tests {
         world.weapon[i].muzzle_vel = Fixed::ZERO;
         world.weapon[i].dispersion = DISPERSION_MAX; // shouldn't happen in practice, but must not move
         dispersion_system(&mut world);
-        assert_eq!(world.weapon[i].dispersion, DISPERSION_MAX, "infantry dispersion is never settled");
+        assert_eq!(
+            world.weapon[i].dispersion, DISPERSION_MAX,
+            "infantry dispersion is never settled"
+        );
     }
 
     #[test]
@@ -247,7 +268,11 @@ mod tests {
         let before = rng.checksum_state();
         let out = scatter_dir(aim, Fixed::ZERO, &mut rng);
         assert_eq!(out, aim, "settled gun fires dead-on the aim");
-        assert_eq!(rng.checksum_state(), before, "a settled shot draws no RNG (no perturbation)");
+        assert_eq!(
+            rng.checksum_state(),
+            before,
+            "a settled shot draws no RNG (no perturbation)"
+        );
     }
 
     #[test]
@@ -270,7 +295,10 @@ mod tests {
                 assert!(da.y.abs() <= bound, "scatter stays inside the bloom cone");
             }
         }
-        assert!(deflected_at_least_once, "a fully-blown gun actually scatters across many shots");
+        assert!(
+            deflected_at_least_once,
+            "a fully-blown gun actually scatters across many shots"
+        );
     }
 
     #[test]

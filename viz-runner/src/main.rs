@@ -299,7 +299,14 @@ fn count_center(rgba: &[u8], half: u32, f: impl Fn([u8; 4]) -> bool) -> usize {
 /// frame). Localizes a color signal in space when the same color also appears in fixed screen
 /// chrome elsewhere (e.g. the marquee box's theme-RIM colour is shared by the corner-panel and
 /// command-bar rims, so the marquee count is taken over the central band only).
-fn count_rect(rgba: &[u8], x0: u32, y0: u32, x1: u32, y1: u32, f: impl Fn([u8; 4]) -> bool) -> usize {
+fn count_rect(
+    rgba: &[u8],
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+    f: impl Fn([u8; 4]) -> bool,
+) -> usize {
     let mut n = 0;
     for y in y0..y1.min(H) {
         for x in x0..x1.min(W) {
@@ -407,15 +414,20 @@ fn backdrop_scene(gpu: &Gpu, failures: &mut u32) {
         failures,
         "title_backdrop_not_flat",
         hi - lo > 30.0,
-        format!("luminance spread {:.1} (>30 — a 3D scene, not a flat fill)", hi - lo),
+        format!(
+            "luminance spread {:.1} (>30 — a 3D scene, not a flat fill)",
+            hi - lo
+        ),
     );
 
     // (2) Warm amber accents present (the embers + box rim — the signature warm-over-cold motif):
     // pixels where red clearly dominates green dominates blue and the pixel is reasonably warm/bright.
-    let is_amber = |p: [u8; 4]| {
-        p[0] as i32 > p[1] as i32 + 18 && p[1] as i32 >= p[2] as i32 && p[0] > 90
-    };
-    let amber = a.chunks_exact(4).filter(|c| is_amber([c[0], c[1], c[2], c[3]])).count();
+    let is_amber =
+        |p: [u8; 4]| p[0] as i32 > p[1] as i32 + 18 && p[1] as i32 >= p[2] as i32 && p[0] > 90;
+    let amber = a
+        .chunks_exact(4)
+        .filter(|c| is_amber([c[0], c[1], c[2], c[3]]))
+        .count();
     check(
         failures,
         "title_backdrop_has_amber_accents",
@@ -447,7 +459,9 @@ fn backdrop_scene(gpu: &Gpu, failures: &mut u32) {
     );
 
     // Sanity: a non-trivial PNG was written.
-    let sz = std::fs::metadata("target/viz/title_backdrop.png").map(|m| m.len()).unwrap_or(0);
+    let sz = std::fs::metadata("target/viz/title_backdrop.png")
+        .map(|m| m.len())
+        .unwrap_or(0);
     check(
         failures,
         "title_backdrop_png_written",
@@ -491,7 +505,12 @@ fn spectate_capture_ticks(total: u64, samples: usize) -> Vec<u64> {
 /// player + enemy tokens, not a cleared buffer). Feeds the sim from the replay's **merged,
 /// ascending-peer-id** command stream (D93 `merged_for`), so the spectate is faithful to what
 /// lockstep produced.
-fn spectator_scene(gpu: &Gpu, target: &wgpu::Texture, view: &wgpu::TextureView, failures: &mut u32) {
+fn spectator_scene(
+    gpu: &Gpu,
+    target: &wgpu::Texture,
+    view: &wgpu::TextureView,
+    failures: &mut u32,
+) {
     use gonedark_replay_runner::{round_trip_multi, MultiReplay, Scenario, CANONICAL_SEED};
 
     // The replay-runner's canonical seed. `Game::new_scene(Scene::Skirmish, SEED)` seeds the sim
@@ -564,7 +583,11 @@ fn spectator_scene(gpu: &Gpu, target: &wgpu::Texture, view: &wgpu::TextureView, 
         rendered_stream == rendered_stream_2,
         format!(
             "two rendered spectates of the same seed+log produced {} checksum streams",
-            if rendered_stream == rendered_stream_2 { "identical" } else { "DIVERGING" }
+            if rendered_stream == rendered_stream_2 {
+                "identical"
+            } else {
+                "DIVERGING"
+            }
         ),
     );
     // Sanity: the sim actually advanced over the replay (a frozen stream would trivially "match").
@@ -604,15 +627,26 @@ fn spectator_scene(gpu: &Gpu, target: &wgpu::Texture, view: &wgpu::TextureView, 
             failures,
             "spectator_frame_draws_enemy_units",
             red > 50,
-            format!("tick {t}: {red} enemy-red px (>50 — the Enemy faction renders in the spectate)"),
+            format!(
+                "tick {t}: {red} enemy-red px (>50 — the Enemy faction renders in the spectate)"
+            ),
         );
     } else {
-        check(failures, "spectator_frame_captured", false, "no spectate frame was captured".to_string());
+        check(
+            failures,
+            "spectator_frame_captured",
+            false,
+            "no spectate frame was captured".to_string(),
+        );
     }
 
     println!(
         "  PNGs: target/viz/spectator/tick_{{{}}}.png",
-        frames.iter().map(|(t, _)| format!("{t:03}")).collect::<Vec<_>>().join(",")
+        frames
+            .iter()
+            .map(|(t, _)| format!("{t:03}"))
+            .collect::<Vec<_>>()
+            .join(",")
     );
 }
 
@@ -684,7 +718,9 @@ fn main() {
         &mut failures,
         "command_draws_kind_glyphs",
         kind_glyphs > 150,
-        format!("{kind_glyphs} flat unit-kind-glyph px (>150 — the CP-9 kind icons render over tokens)"),
+        format!(
+            "{kind_glyphs} flat unit-kind-glyph px (>150 — the CP-9 kind icons render over tokens)"
+        ),
     );
     // Baseline: with nothing selected the command frame draws no bright selection rim.
     let baseline_rim = count(&cmd, is_select_rim);
@@ -814,7 +850,7 @@ fn main() {
     advance(&mut g, 2, InputFrame::default(), &gpu, &view);
     let pre_drag = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let pre_rim = count_rect(&pre_drag, 150, 150, 380, 380, is_marquee_rim); // no box yet → ~0
-                                                   // Press at one corner, then a second frame still HELD at the opposite corner (no pointer_up).
+                                                                             // Press at one corner, then a second frame still HELD at the opposite corner (no pointer_up).
     let press = InputFrame {
         pointer: Some((150.0, 150.0)),
         pointer_down: true,
@@ -872,7 +908,9 @@ fn main() {
     // embodied and drops the whole-faction strategic union vision and the control-point rings. So
     // the load-bearing fairness signal is the disappearance of the *rest of the map*, captured by
     // the player-blue (own-squad/ally/intel) collapse below.
-    println!("[embodied_dark] possessing a unit shows an FPS world but the strategic map is gone (#6)");
+    println!(
+        "[embodied_dark] possessing a unit shows an FPS world but the strategic map is gone (#6)"
+    );
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     g.frame(
         &embody,
@@ -895,7 +933,9 @@ fn main() {
         &mut failures,
         "embodied_world_drawn",
         dark_dk < 0.5,
-        format!("dark fraction {dark_dk:.4} (<0.5 — a real ground/sky FPS world is drawn, not a void)"),
+        format!(
+            "dark fraction {dark_dk:.4} (<0.5 — a real ground/sky FPS world is drawn, not a void)"
+        ),
     );
     // (b) THE fairness assertion (invariant #6): the strategic map collapsed to avatar-only vision.
     // The player faction's whole-map intel — its off-screen squad, every ally, the control-point
@@ -931,7 +971,9 @@ fn main() {
     // player unit (the RTS "pick another unit" loop — engine `embody_target` falls back to a live
     // unit), and assert on the best GENUINELY-embodied combat frame (guarded by `is_embodied()` and
     // no shell overlay) once alerts have accrued.
-    println!("[embodied_hud] after combat, the alert HUD draws markers over the FPS world (no intel)");
+    println!(
+        "[embodied_hud] after combat, the alert HUD draws markers over the FPS world (no intel)"
+    );
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     g.frame(
         &embody,
@@ -1047,7 +1089,10 @@ fn main() {
         &mut failures,
         "cvd_command_not_dark",
         dark_fraction(&cmd_cvd) < 0.5,
-        format!("dark fraction {:.3} (<0.5 — the CVD command frame is still a lit field)", dark_fraction(&cmd_cvd)),
+        format!(
+            "dark fraction {:.3} (<0.5 — the CVD command frame is still a lit field)",
+            dark_fraction(&cmd_cvd)
+        ),
     );
     // The palette swap must actually recolour the faction tokens: under tritanopia the player ramp is
     // green, so the strong player-blue signature of the default command frame (`cmd`, same seed + 40
@@ -1062,10 +1107,21 @@ fn main() {
         format!("{green_cvd} faction-green px under the tritanopia ramp vs {green_default} default (the player tokens render GREEN under the CVD ramp — the alternate ramp is baked into the command view)"),
     );
 
-    println!("[a11y_alert] the embodied alert HUD reads under the CVD cue mode (pings, still no intel)");
+    println!(
+        "[a11y_alert] the embodied alert HUD reads under the CVD cue mode (pings, still no intel)"
+    );
     let mut g = Game::new(&gpu.device, FORMAT, DEFAULT_SEED);
     g.set_accessibility_prefs(true, true, PaletteMode::Deuteranopia);
-    g.frame(&embody, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio, &NullThermal);
+    g.frame(
+        &embody,
+        TICK_DT,
+        (W, H),
+        &gpu.device,
+        &gpu.queue,
+        &view,
+        &mut NullAudio,
+        &NullThermal,
+    );
     let a11y_pre = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let a11y_pre_marker = count(&a11y_pre, is_alert_marker);
     let mut a11y_marker = 0usize;
@@ -1077,7 +1133,16 @@ fn main() {
         } else {
             embody.clone()
         };
-        g.frame(&input, TICK_DT, (W, H), &gpu.device, &gpu.queue, &view, &mut NullAudio, &NullThermal);
+        g.frame(
+            &input,
+            TICK_DT,
+            (W, H),
+            &gpu.device,
+            &gpu.queue,
+            &view,
+            &mut NullAudio,
+            &NullThermal,
+        );
         if g.is_embodied() && !g.shell_overlay_active() {
             let f = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
             let m = count(&f, is_alert_marker);
@@ -1093,7 +1158,8 @@ fn main() {
         &mut failures,
         "a11y_embodied_frame_captured",
         a11y_captured,
-        "held a genuinely embodied combat frame under the CVD cue mode to assert against".to_string(),
+        "held a genuinely embodied combat frame under the CVD cue mode to assert against"
+            .to_string(),
     );
     check(
         &mut failures,
@@ -1111,12 +1177,14 @@ fn main() {
     // ticks (command-view only, invariant #6). Boot the demo skirmish, turn the overlay on (F3),
     // let the squads close and trade fire, and prove the flash actually draws — the visual proof
     // that "units are firing" reads on screen, which the headless sim harnesses cannot see.
-    println!("[combat_muzzle] AI units firing draw a muzzle flash in the command-view debug overlay");
+    println!(
+        "[combat_muzzle] AI units firing draw a muzzle flash in the command-view debug overlay"
+    );
     let mut g = Game::new_scene(&gpu.device, FORMAT, DEFAULT_SEED, Scene::Default);
     g.toggle_debug_hitboxes(); // Scene::Default boots the overlay OFF — turn it on (the F3 overlay)
-    // Baseline BEFORE anyone is in range: the overlay (range rings / cones / LoS lines) is already
-    // drawn, but no shot has fired — so the muzzle-flash count must be ~0 here. This makes the check
-    // a real delta and proves the predicate isn't just catching static overlay chrome.
+                               // Baseline BEFORE anyone is in range: the overlay (range rings / cones / LoS lines) is already
+                               // drawn, but no shot has fired — so the muzzle-flash count must be ~0 here. This makes the check
+                               // a real delta and proves the predicate isn't just catching static overlay chrome.
     advance(&mut g, 8, InputFrame::default(), &gpu, &view);
     let pre = read_pixels_sized(&gpu.device, &gpu.queue, &target, W, H);
     let pre_muzzle = count(&pre, is_muzzle_flash);
@@ -1348,27 +1416,53 @@ mod tests {
     fn spectate_capture_ticks_are_spread_and_in_range() {
         let ticks = spectate_capture_ticks(300, 3);
         assert_eq!(ticks.len(), 3, "three samples requested");
-        assert_eq!(ticks.first(), Some(&1), "first sample is the opening stepped tick");
-        assert_eq!(ticks.last(), Some(&299), "last sample is the final stepped tick (total-1)");
+        assert_eq!(
+            ticks.first(),
+            Some(&1),
+            "first sample is the opening stepped tick"
+        );
+        assert_eq!(
+            ticks.last(),
+            Some(&299),
+            "last sample is the final stepped tick (total-1)"
+        );
         // Ascending, unique, and every tick inside the played range 1..total.
         for w in ticks.windows(2) {
             assert!(w[0] < w[1], "ticks must be strictly ascending: {ticks:?}");
         }
-        assert!(ticks.iter().all(|&t| (1..300).contains(&t)), "every tick in 1..total: {ticks:?}");
+        assert!(
+            ticks.iter().all(|&t| (1..300).contains(&t)),
+            "every tick in 1..total: {ticks:?}"
+        );
     }
 
     #[test]
     fn spectate_capture_ticks_handles_degenerate_inputs() {
-        assert!(spectate_capture_ticks(0, 3).is_empty(), "no ticks in an empty replay");
-        assert!(spectate_capture_ticks(1, 3).is_empty(), "a seed-only replay steps nothing");
-        assert!(spectate_capture_ticks(300, 0).is_empty(), "zero samples → no captures");
+        assert!(
+            spectate_capture_ticks(0, 3).is_empty(),
+            "no ticks in an empty replay"
+        );
+        assert!(
+            spectate_capture_ticks(1, 3).is_empty(),
+            "a seed-only replay steps nothing"
+        );
+        assert!(
+            spectate_capture_ticks(300, 0).is_empty(),
+            "zero samples → no captures"
+        );
         // A single sample lands on the final stepped tick (the most-evolved frame).
         assert_eq!(spectate_capture_ticks(50, 1), vec![49]);
         // More samples than steps clamps to the available ticks (de-duplicated, no repeats).
         let ticks = spectate_capture_ticks(4, 10);
         for w in ticks.windows(2) {
-            assert!(w[0] < w[1], "clamped ticks stay strictly ascending: {ticks:?}");
+            assert!(
+                w[0] < w[1],
+                "clamped ticks stay strictly ascending: {ticks:?}"
+            );
         }
-        assert!(ticks.iter().all(|&t| (1..4).contains(&t)), "clamped ticks in range: {ticks:?}");
+        assert!(
+            ticks.iter().all(|&t| (1..4).contains(&t)),
+            "clamped ticks in range: {ticks:?}"
+        );
     }
 }

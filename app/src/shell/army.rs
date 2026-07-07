@@ -35,7 +35,9 @@ pub(crate) fn army_label(army: Army) -> &'static str {
 pub(crate) fn army_flavor(army: Army) -> &'static str {
     match army {
         Army::Us => "M4 carbines, M1 Abrams armour, combat medics -- the US Army roster.",
-        Army::Fr => "FAMAS rifles, Leclerc armour, auxiliaires sanitaires -- the French Army roster.",
+        Army::Fr => {
+            "FAMAS rifles, Leclerc armour, auxiliaires sanitaires -- the French Army roster."
+        }
         // WW2 cost-vs-power doctrines (D120): cheap mass vs pricey elite armour.
         Army::UsWw2 => "Cheap, mass-produced Shermans -- field MORE, each one lighter (WW2).",
         Army::Germany => "Pricey Panther/Tiger armour -- field FEWER, each one a wall (WW2).",
@@ -55,9 +57,7 @@ pub(crate) struct ArmySelectState {
 
 impl Default for ArmySelectState {
     fn default() -> Self {
-        ArmySelectState {
-            selected: Army::Us,
-        }
+        ArmySelectState { selected: Army::Us }
     }
 }
 
@@ -125,11 +125,20 @@ pub(crate) fn army_card(ui: &mut egui::Ui, army: Army, selected: bool) -> Option
         let w = ui.available_width();
         ui.set_width(w);
         let resp = ui.add(Button::new(label).frame(false).min_size([w, 28.0].into()));
-        ui.label(RichText::new(army_flavor(army)).color(ASH).size(TYPE_CAPTION));
+        ui.label(
+            RichText::new(army_flavor(army))
+                .color(ASH)
+                .size(TYPE_CAPTION),
+        );
         // Always reserve the marker row (an empty label still takes one line height) so selecting a
         // roster never changes the card's height — the column no longer jumps as you compare rosters.
         let marker = if selected { "SELECTED" } else { "" };
-        ui.label(RichText::new(marker).color(AMBER).size(TYPE_CAPTION).strong());
+        ui.label(
+            RichText::new(marker)
+                .color(AMBER)
+                .size(TYPE_CAPTION)
+                .strong(),
+        );
         clicked = resp.clicked();
     });
     clicked.then_some(ArmySelectAction::Choose(army))
@@ -140,7 +149,10 @@ pub(crate) fn army_card(ui: &mut egui::Ui, army: Army, selected: bool) -> Option
 /// [`ArmySelectState`] to highlight the current pick; each card's click routes through the pure
 /// [`apply_army_select_action`] seam, and the confirmed pick reaches the sim via the `core::shell`
 /// SelectArmy seam (`Game::select_army`) at match start. Glue.
-pub(crate) fn army_select_ui(ui: &mut egui::Ui, state: &ArmySelectState) -> Option<ArmySelectAction> {
+pub(crate) fn army_select_ui(
+    ui: &mut egui::Ui,
+    state: &ArmySelectState,
+) -> Option<ArmySelectAction> {
     use egui::RichText;
     let mut action = None;
 

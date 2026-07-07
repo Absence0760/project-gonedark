@@ -380,7 +380,7 @@ mod tests {
         w.order[fi] = Order::MoveTo(target);
         w.order[bi] = Order::MoveTo(target);
         w.weapon[fi].move_speed_delta = Fixed::from_ratio(1, 32); // faster stock
-        // base unit keeps move_speed_delta == 0 (Weapon::default)
+                                                                  // base unit keeps move_speed_delta == 0 (Weapon::default)
         run(&mut w, 5);
         assert!(
             w.pos[fi].x > w.pos[bi].x,

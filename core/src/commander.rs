@@ -35,8 +35,8 @@
 
 use crate::components::{Army, EntityKind, Faction, Order, Stance, UnitKind, Vec2};
 use crate::detection::Tell;
-use crate::ecs::World;
 use crate::economy::{self, Resources};
+use crate::ecs::World;
 use crate::fixed::Fixed;
 use crate::mission_tuning::{Difficulty, DifficultyParams};
 use crate::rng::Rng;
@@ -267,8 +267,8 @@ pub fn commander_orders(
     // of sim state (so it is identical on every peer regardless of frame pacing). Stride `1`
     // (Veteran) ⇒ every cycle ⇒ the original behavior; a larger stride makes an easier commander
     // reconsider its orders less often. Reinforcement is intentionally *not* strided.
-    let retask_this_cycle =
-        params.command_stride <= 1 || (tick / COMMANDER_PERIOD).is_multiple_of(params.command_stride);
+    let retask_this_cycle = params.command_stride <= 1
+        || (tick / COMMANDER_PERIOD).is_multiple_of(params.command_stride);
 
     let mut commands = Vec::new();
 
@@ -366,9 +366,10 @@ pub fn commander_orders(
                 && !matches!(world.order[i], Order::FallBack(_))
                 && world.health[i].fraction() < Fixed::from_ratio(style.retreat_hp_pct as i32, 100)
             {
-                if let (Some(e), Some(rally)) =
-                    (world.entity(i), nearest_friendly_building(world, pos, faction))
-                {
+                if let (Some(e), Some(rally)) = (
+                    world.entity(i),
+                    nearest_friendly_building(world, pos, faction),
+                ) {
                     commands.push(Command::SetOrder {
                         entity: e,
                         order: Order::FallBack(rally),
@@ -511,7 +512,9 @@ fn choose_open_point(
     let (_, best_pos) = best?;
     // A real choice (a distinct second option) → roll for exploration; otherwise take the nearest.
     match second {
-        Some((_, second_pos)) if explore_pct > 0 && rng.below(100) < explore_pct => Some(second_pos),
+        Some((_, second_pos)) if explore_pct > 0 && rng.below(100) < explore_pct => {
+            Some(second_pos)
+        }
         _ => Some(best_pos),
     }
 }
@@ -692,14 +695,38 @@ mod tests {
         let res = Resources::new(500);
 
         let mut rng_a = Rng::new(123);
-        let a = commander_orders(&world, &terr, &res, &mut rng_a, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
+        let a = commander_orders(
+            &world,
+            &terr,
+            &res,
+            &mut rng_a,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            Army::Neutral,
+            60,
+        );
         let mut rng_b = Rng::new(123);
-        let b = commander_orders(&world, &terr, &res, &mut rng_b, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
+        let b = commander_orders(
+            &world,
+            &terr,
+            &res,
+            &mut rng_b,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            Army::Neutral,
+            60,
+        );
 
         assert_eq!(a.len(), b.len(), "same inputs → same number of commands");
         // Commands are Copy/Debug; compare their debug forms field-for-field.
         for (x, y) in a.iter().zip(b.iter()) {
-            assert_eq!(format!("{x:?}"), format!("{y:?}"), "command streams diverged");
+            assert_eq!(
+                format!("{x:?}"),
+                format!("{y:?}"),
+                "command streams diverged"
+            );
         }
     }
 
@@ -718,7 +745,17 @@ mod tests {
         let res = Resources::new(0); // no money → no production noise
 
         let mut rng = Rng::new(1);
-        let cmds = commander_orders(&world, &terr, &res, &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &res,
+            &mut rng,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            Army::Neutral,
+            60,
+        );
 
         let captured = cmds.iter().any(|c| {
             matches!(c, Command::AttackMove { entity, target }
@@ -730,9 +767,9 @@ mod tests {
         );
         // And it must NOT have been pointed at the far player instead.
         assert!(
-            !cmds.iter().any(
-                |c| matches!(c, Command::AttackMove { target, .. } if *target == at(-50, 0))
-            ),
+            !cmds
+                .iter()
+                .any(|c| matches!(c, Command::AttackMove { target, .. } if *target == at(-50, 0))),
             "the open point outranks the distant foe as a target"
         );
     }
@@ -759,7 +796,17 @@ mod tests {
         let res = Resources::new(0);
 
         let mut rng = Rng::new(1);
-        let cmds = commander_orders(&world, &terr, &res, &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &res,
+            &mut rng,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            Army::Neutral,
+            60,
+        );
         let attacked_near = cmds.iter().any(|c| {
             matches!(c, Command::AttackMove { entity, target } if *entity == u && *target == near)
         });
@@ -777,8 +824,7 @@ mod tests {
         let _second = spawn_unit(&mut world, Faction::Player, at(-10, 0)); // same dist
         let chosen = nearest_hostile(&world, at(0, 0), Faction::Enemy).unwrap();
         assert_eq!(
-            chosen,
-            world.pos[first.index as usize],
+            chosen, world.pos[first.index as usize],
             "equal distance → earliest index wins (stable tie-break)"
         );
 
@@ -839,9 +885,13 @@ mod tests {
             "should queue a Rifleman when just affordable: {afford:?}"
         );
         assert!(
-            !afford.iter().any(
-                |c| matches!(c, Command::QueueProduction { unit: UnitKind::Heavy, .. })
-            ),
+            !afford.iter().any(|c| matches!(
+                c,
+                Command::QueueProduction {
+                    unit: UnitKind::Heavy,
+                    ..
+                }
+            )),
             "not flush enough for a Heavy"
         );
     }
@@ -866,9 +916,13 @@ mod tests {
             60,
         );
         assert!(
-            cmds.iter().any(
-                |c| matches!(c, Command::QueueProduction { unit: UnitKind::Heavy, .. })
-            ),
+            cmds.iter().any(|c| matches!(
+                c,
+                Command::QueueProduction {
+                    unit: UnitKind::Heavy,
+                    ..
+                }
+            )),
             "flush commander should buy a Heavy: {cmds:?}"
         );
     }
@@ -909,8 +963,17 @@ mod tests {
             points: vec![ControlPoint::neutral(at(0, 0))], // unit sits exactly on it
         };
         let mut rng = Rng::new(1);
-        let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            Army::Neutral,
+            60,
+        );
         assert!(
             !cmds.iter().any(|c| matches!(c, Command::AttackMove { .. })),
             "a unit already on its capture point should be left alone: {cmds:?}"
@@ -927,8 +990,17 @@ mod tests {
             points: vec![ControlPoint::neutral(at(5, 0))],
         };
         let mut rng = Rng::new(1);
-        let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            Army::Neutral,
+            60,
+        );
         assert!(
             !cmds
                 .iter()
@@ -946,11 +1018,22 @@ mod tests {
         world.stance[u.index as usize] = Stance::HoldFire;
         let terr = Territory::empty();
         let mut rng = Rng::new(1);
-        let cmds =
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &CommanderConfig::default(), &[], Faction::Enemy, Army::Neutral, 60);
+        let cmds = commander_orders(
+            &world,
+            &terr,
+            &Resources::new(0),
+            &mut rng,
+            &CommanderConfig::default(),
+            &[],
+            Faction::Enemy,
+            Army::Neutral,
+            60,
+        );
         assert!(
-            cmds.iter().any(|c| matches!(c, Command::SetStance { entity, stance: Stance::FireAtWill }
-                if *entity == u)),
+            cmds.iter().any(
+                |c| matches!(c, Command::SetStance { entity, stance: Stance::FireAtWill }
+                if *entity == u)
+            ),
             "a HoldFire unit should be set to FireAtWill: {cmds:?}"
         );
     }
@@ -1039,7 +1122,10 @@ mod tests {
         let (world, terrain, terr, _hero, _point) = hunt_scene();
         let res = Resources::new(0); // no production noise
         let tells = tells_for(&world, &terrain, TellMode::Subtle, Faction::Enemy);
-        assert!(!tells.is_empty(), "scene precondition: the hero IS detectable");
+        assert!(
+            !tells.is_empty(),
+            "scene precondition: the hero IS detectable"
+        );
 
         let mut rng = Rng::new(7);
         let baseline = commander_orders(
@@ -1098,7 +1184,10 @@ mod tests {
         let (world, terrain, terr, hero, point) = hunt_scene();
         let res = Resources::new(0);
         let tells = tells_for(&world, &terrain, TellMode::Subtle, Faction::Enemy);
-        assert!(!tells.is_empty(), "scene precondition: the hero IS detectable");
+        assert!(
+            !tells.is_empty(),
+            "scene precondition: the hero IS detectable"
+        );
 
         let mut rng = Rng::new(7);
         let cmds = commander_orders(
@@ -1168,9 +1257,9 @@ mod tests {
             "with no tell, the commander reverts to capturing the point: {cmds:?}"
         );
         assert!(
-            !cmds.iter().any(
-                |c| matches!(c, Command::AttackMove { target, .. } if *target == at(60, 0))
-            ),
+            !cmds
+                .iter()
+                .any(|c| matches!(c, Command::AttackMove { target, .. } if *target == at(60, 0))),
             "the commander must NOT know the secret hero position (no omniscient peek): {cmds:?}"
         );
     }
@@ -1257,13 +1346,27 @@ mod tests {
         };
         let run = || {
             let mut rng = Rng::new(99);
-            commander_orders(&world, &terr, &Resources::new(0), &mut rng, &cfg, &tells, Faction::Enemy, Army::Neutral, 60)
+            commander_orders(
+                &world,
+                &terr,
+                &Resources::new(0),
+                &mut rng,
+                &cfg,
+                &tells,
+                Faction::Enemy,
+                Army::Neutral,
+                60,
+            )
         };
         let a = run();
         let b = run();
         assert_eq!(a.len(), b.len(), "same inputs → same command count");
         for (x, y) in a.iter().zip(b.iter()) {
-            assert_eq!(format!("{x:?}"), format!("{y:?}"), "hunt command stream diverged");
+            assert_eq!(
+                format!("{x:?}"),
+                format!("{y:?}"),
+                "hunt command stream diverged"
+            );
         }
     }
 
@@ -1324,13 +1427,27 @@ mod tests {
 
         let run = |cfg: &CommanderConfig| {
             let mut rng = Rng::new(42);
-            commander_orders(&world, &terr, &res, &mut rng, cfg, &[], Faction::Enemy, Army::Neutral, 0)
+            commander_orders(
+                &world,
+                &terr,
+                &res,
+                &mut rng,
+                cfg,
+                &[],
+                Faction::Enemy,
+                Army::Neutral,
+                0,
+            )
         };
         let default = run(&CommanderConfig::default());
         let veteran = run(&tier_cfg(Difficulty::Veteran));
         assert_eq!(default.len(), veteran.len());
         for (x, y) in default.iter().zip(veteran.iter()) {
-            assert_eq!(format!("{x:?}"), format!("{y:?}"), "default must equal explicit Veteran");
+            assert_eq!(
+                format!("{x:?}"),
+                format!("{y:?}"),
+                "default must equal explicit Veteran"
+            );
         }
     }
 
@@ -1347,13 +1464,23 @@ mod tests {
 
         let queued = |cfg: &CommanderConfig| -> Vec<UnitKind> {
             let mut rng = Rng::new(1);
-            commander_orders(&world, &terr, &Resources::new(purse), &mut rng, cfg, &[], Faction::Enemy, Army::Neutral, 0)
-                .into_iter()
-                .filter_map(|c| match c {
-                    Command::QueueProduction { camp: cc, unit } if cc == camp => Some(unit),
-                    _ => None,
-                })
-                .collect()
+            commander_orders(
+                &world,
+                &terr,
+                &Resources::new(purse),
+                &mut rng,
+                cfg,
+                &[],
+                Faction::Enemy,
+                Army::Neutral,
+                0,
+            )
+            .into_iter()
+            .filter_map(|c| match c {
+                Command::QueueProduction { camp: cc, unit } if cc == camp => Some(unit),
+                _ => None,
+            })
+            .collect()
         };
 
         assert_eq!(
@@ -1377,10 +1504,12 @@ mod tests {
             let mut world = World::new();
             let _camp = spawn_built_camp(&mut world, Faction::Enemy, at(0, 0));
             // Pre-load one item so the depth check is what decides a second.
-            world.building[_camp.index as usize].queue.push(ProductionItem {
-                kind: UnitKind::Rifleman,
-                ticks_left: 10,
-            });
+            world.building[_camp.index as usize]
+                .queue
+                .push(ProductionItem {
+                    kind: UnitKind::Rifleman,
+                    ticks_left: 10,
+                });
             let terr = Territory::empty();
             let mut rng = Rng::new(1);
             commander_orders(
@@ -1397,9 +1526,18 @@ mod tests {
             .iter()
             .any(|c| matches!(c, Command::QueueProduction { .. }))
         };
-        assert!(!queues_more(Difficulty::Recruit), "Recruit (depth 1) won't stack a second");
-        assert!(queues_more(Difficulty::Veteran), "Veteran (depth 2) stacks a second");
-        assert!(queues_more(Difficulty::Elite), "Elite (depth 3) stacks a second");
+        assert!(
+            !queues_more(Difficulty::Recruit),
+            "Recruit (depth 1) won't stack a second"
+        );
+        assert!(
+            queues_more(Difficulty::Veteran),
+            "Veteran (depth 2) stacks a second"
+        );
+        assert!(
+            queues_more(Difficulty::Elite),
+            "Elite (depth 3) stacks a second"
+        );
     }
 
     /// **Cadence knob.** `Recruit` (stride 2) re-tasks its army only on even commander cycles, so on
@@ -1436,8 +1574,14 @@ mod tests {
         };
 
         // Cycle 0 (tick 0): both tiers re-task.
-        assert!(has_attackmove(Difficulty::Recruit, 0), "on-cycle: Recruit re-tasks");
-        assert!(has_attackmove(Difficulty::Veteran, 0), "Veteran always re-tasks");
+        assert!(
+            has_attackmove(Difficulty::Recruit, 0),
+            "on-cycle: Recruit re-tasks"
+        );
+        assert!(
+            has_attackmove(Difficulty::Veteran, 0),
+            "Veteran always re-tasks"
+        );
         // Cycle 1 (tick = one period): Recruit skips (stride 2), Veteran still acts (stride 1).
         assert!(
             !has_attackmove(Difficulty::Recruit, COMMANDER_PERIOD),
@@ -1489,7 +1633,11 @@ mod tests {
         };
 
         for d in Difficulty::ALL {
-            assert_eq!(plan(d), plan(d), "same (mission, tier, seed) ⇒ identical stream");
+            assert_eq!(
+                plan(d),
+                plan(d),
+                "same (mission, tier, seed) ⇒ identical stream"
+            );
         }
         // ...and distinct tiers really do reshape the plan (Veteran rifle vs Elite heavy here).
         assert_ne!(
@@ -1515,7 +1663,11 @@ mod tests {
                 difficulty: d,
                 ..CommanderConfig::default()
             };
-            assert_eq!(cfg.resolved_params(), d.params(), "no override ⇒ the tier's params");
+            assert_eq!(
+                cfg.resolved_params(),
+                d.params(),
+                "no override ⇒ the tier's params"
+            );
         }
 
         let cfg = CommanderConfig {
@@ -1528,7 +1680,10 @@ mod tests {
         let p = cfg.resolved_params();
         assert_eq!(p.max_queue_depth, 5, "backlog override applied");
         assert_eq!(p.heavy_reserve, 0, "negative reserve clamped to 0");
-        assert_eq!(p.command_stride, 1, "stride clamped to >= 1 (no div-by-zero)");
+        assert_eq!(
+            p.command_stride, 1,
+            "stride clamped to >= 1 (no div-by-zero)"
+        );
     }
 
     /// The override has real teeth in the planner: a per-node backlog override lets an otherwise
@@ -1539,10 +1694,12 @@ mod tests {
         let mut world = World::new();
         let camp = spawn_built_camp(&mut world, Faction::Enemy, at(0, 0));
         // Pre-load one item so the depth cap is what decides a second.
-        world.building[camp.index as usize].queue.push(ProductionItem {
-            kind: UnitKind::Rifleman,
-            ticks_left: 10,
-        });
+        world.building[camp.index as usize]
+            .queue
+            .push(ProductionItem {
+                kind: UnitKind::Rifleman,
+                ticks_left: 10,
+            });
         let terr = Territory::empty();
         // Recruit's depth cap is 1 (declines a second) — but a per-node override to 3 stacks one.
         let cfg = CommanderConfig {
@@ -1563,7 +1720,8 @@ mod tests {
             0,
         );
         assert!(
-            cmds.iter().any(|c| matches!(c, Command::QueueProduction { .. })),
+            cmds.iter()
+                .any(|c| matches!(c, Command::QueueProduction { .. })),
             "the override lets Recruit stack a second item: {cmds:?}"
         );
     }
@@ -1591,10 +1749,22 @@ mod tests {
         };
 
         // 0% ⇒ pure greedy-nearest (byte-identical to the old behavior); 100% ⇒ always the second.
-        assert_eq!(choose(1, 0), Some(near), "explore_pct 0 is always the nearest");
-        assert_eq!(choose(1, 100), Some(far), "explore_pct 100 is always the second-nearest");
+        assert_eq!(
+            choose(1, 0),
+            Some(near),
+            "explore_pct 0 is always the nearest"
+        );
+        assert_eq!(
+            choose(1, 100),
+            Some(far),
+            "explore_pct 100 is always the second-nearest"
+        );
         // Deterministic for a fixed (seed, pct).
-        assert_eq!(choose(9, 25), choose(9, 25), "same seed + pct ⇒ same choice");
+        assert_eq!(
+            choose(9, 25),
+            choose(9, 25),
+            "same seed + pct ⇒ same choice"
+        );
         // A moderate percentage takes BOTH branches over a run of the seeded stream (drawn from one
         // evolving generator, the way the live commander does — a fresh generator's very first
         // draw is not well distributed across nearby seeds).
@@ -1607,7 +1777,10 @@ mod tests {
                 _ => {}
             }
         }
-        assert!(saw_near && saw_far, "a moderate explore_pct must reach both the nearest and second");
+        assert!(
+            saw_near && saw_far,
+            "a moderate explore_pct must reach both the nearest and second"
+        );
     }
 
     /// A single open point is not a *choice*, so `choose_open_point` returns it WITHOUT drawing —
@@ -1625,7 +1798,11 @@ mod tests {
             choose_open_point(&terr, at(0, 0), Faction::Enemy, 40, &mut rng),
             Some(only)
         );
-        assert_eq!(rng.checksum_state(), before, "no real choice → no draw → stream untouched");
+        assert_eq!(
+            rng.checksum_state(),
+            before,
+            "no real choice → no draw → stream untouched"
+        );
     }
 
     /// End-to-end: a fixed seed replays bit-identically, and *some* different seed produces a
@@ -1667,10 +1844,17 @@ mod tests {
             .map(|c| format!("{c:?}"))
             .collect()
         };
-        assert_eq!(plan(42), plan(42), "a fixed seed must replay bit-identically");
+        assert_eq!(
+            plan(42),
+            plan(42),
+            "a fixed seed must replay bit-identically"
+        );
         let base = plan(1);
         let varied = (2..512u64).any(|s| plan(s) != base);
-        assert!(varied, "a different seed must be able to yield a different plan");
+        assert!(
+            varied,
+            "a different seed must be able to yield a different plan"
+        );
     }
 
     // --- Preserve (retreat): pull damaged units back instead of feeding them in ----------------
@@ -1707,7 +1891,9 @@ mod tests {
         );
         // And it must NOT also be handed an attack/capture order this cycle (retreat wins).
         assert!(
-            !cmds.iter().any(|c| matches!(c, Command::AttackMove { entity, .. } if *entity == u)),
+            !cmds
+                .iter()
+                .any(|c| matches!(c, Command::AttackMove { entity, .. } if *entity == u)),
             "a retreating unit is not simultaneously sent to attack: {cmds:?}"
         );
     }
@@ -1736,7 +1922,13 @@ mod tests {
             0,
         );
         assert!(
-            !cmds.iter().any(|c| matches!(c, Command::SetOrder { order: Order::FallBack(_), .. })),
+            !cmds.iter().any(|c| matches!(
+                c,
+                Command::SetOrder {
+                    order: Order::FallBack(_),
+                    ..
+                }
+            )),
             "Recruit never retreats — it has no preservation instinct: {cmds:?}"
         );
     }
@@ -1765,7 +1957,13 @@ mod tests {
             60,
         );
         assert!(
-            !cmds.iter().any(|c| matches!(c, Command::SetOrder { order: Order::FallBack(_), .. })),
+            !cmds.iter().any(|c| matches!(
+                c,
+                Command::SetOrder {
+                    order: Order::FallBack(_),
+                    ..
+                }
+            )),
             "with no rally the commander must not retreat the unit: {cmds:?}"
         );
     }
@@ -1889,12 +2087,24 @@ mod tests {
         // Veteran concentrates: both units converge on the nearest contact (foe A).
         let vet = plan(&CommanderConfig::default());
         assert_eq!(target_of(&vet, u1), Some(a_pos), "u1 → priority target A");
-        assert_eq!(target_of(&vet, u2), Some(a_pos), "u2 also focus-fires the priority target A");
+        assert_eq!(
+            target_of(&vet, u2),
+            Some(a_pos),
+            "u2 also focus-fires the priority target A"
+        );
 
         // Recruit scatters: each unit presses its own nearest foe (u1→A, u2→B).
         let rec = plan(&tier_cfg(Difficulty::Recruit));
-        assert_eq!(target_of(&rec, u1), Some(a_pos), "Recruit u1 → its own nearest (A)");
-        assert_eq!(target_of(&rec, u2), Some(b_pos), "Recruit u2 → its own nearest (B), scattered");
+        assert_eq!(
+            target_of(&rec, u1),
+            Some(a_pos),
+            "Recruit u1 → its own nearest (A)"
+        );
+        assert_eq!(
+            target_of(&rec, u2),
+            Some(b_pos),
+            "Recruit u2 → its own nearest (B), scattered"
+        );
     }
 
     /// `nearest_contact` is the focus-fire target picker: the hostile closest to *any* of our units

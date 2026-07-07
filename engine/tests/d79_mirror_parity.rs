@@ -74,29 +74,51 @@ fn canonical_facts() -> Vec<(String, String)> {
     let conflicts = campaign.conflicts();
     let operations = campaign.operations();
 
-    push("campaign.conflict_count".into(), conflicts.len().to_string());
-    push("campaign.operation_count".into(), operations.len().to_string());
+    push(
+        "campaign.conflict_count".into(),
+        conflicts.len().to_string(),
+    );
+    push(
+        "campaign.operation_count".into(),
+        operations.len().to_string(),
+    );
     push("campaign.node_count".into(), campaign.len().to_string());
 
     for (i, c) in conflicts.iter().enumerate() {
         push(format!("campaign.conflict.{i:02}.name"), c.name.clone());
-        push(format!("campaign.conflict.{i:02}.start_year"), c.start_year.to_string());
-        push(format!("campaign.conflict.{i:02}.end_year"), c.end_year.to_string());
+        push(
+            format!("campaign.conflict.{i:02}.start_year"),
+            c.start_year.to_string(),
+        );
+        push(
+            format!("campaign.conflict.{i:02}.end_year"),
+            c.end_year.to_string(),
+        );
     }
     for (i, op) in operations.iter().enumerate() {
         push(format!("campaign.operation.{i:02}.name"), op.name.clone());
-        push(format!("campaign.operation.{i:02}.conflict"), op.conflict.0.to_string());
+        push(
+            format!("campaign.operation.{i:02}.conflict"),
+            op.conflict.0.to_string(),
+        );
     }
     for i in 0..campaign.len() {
         let node = campaign.node(NodeId(i as u32)).expect("node id in range");
-        push(format!("campaign.node.{i:02}.scene_token"), scene_token(node.mission).into());
+        push(
+            format!("campaign.node.{i:02}.scene_token"),
+            scene_token(node.mission).into(),
+        );
         push(
             format!("campaign.node.{i:02}.operation"),
             node.operation.map(|o| o.0.to_string()).unwrap_or_default(),
         );
         let mut prereqs: Vec<u32> = node.prerequisites.iter().map(|p| p.0).collect();
         prereqs.sort_unstable();
-        let prereqs = prereqs.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+        let prereqs = prereqs
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
         push(format!("campaign.node.{i:02}.prerequisites"), prereqs);
     }
 

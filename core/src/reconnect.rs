@@ -137,10 +137,7 @@ mod tests {
     /// Drive a single-peer lockstep session (delay 0, so every submitted tick executes) to `len`,
     /// taking a snapshot at `snap_at`, and return: the control checksum stream, the snapshot bytes,
     /// the live `Lockstep` (with `retain_from(snap_at)` installed), and the camp handle.
-    fn drive(
-        len: u64,
-        snap_at: u64,
-    ) -> (Vec<u64>, Vec<u8>, Lockstep, crate::ecs::Entity) {
+    fn drive(len: u64, snap_at: u64) -> (Vec<u64>, Vec<u8>, Lockstep, crate::ecs::Entity) {
         let mut sim = Sim::new(SCENE_SEED);
         let camp = scene(&mut sim);
         let mut ls = Lockstep::new(1, 0, 0);
@@ -148,7 +145,9 @@ mod tests {
         let mut snapshot = Vec::new();
         for t in 0..len {
             ls.submit(script(camp, t));
-            let cmds = ls.try_advance().expect("single-peer session always advances");
+            let cmds = ls
+                .try_advance()
+                .expect("single-peer session always advances");
             sim.step(&cmds);
             control.push(sim.checksum());
             if t + 1 == snap_at {
@@ -286,7 +285,9 @@ mod tests {
         let snap_at = 15;
         let (_control, snapshot, ls, _camp) = drive(len, snap_at);
         // Claim the snapshot is from a different tick than it actually is.
-        let err = resume_from_snapshot(&snapshot, snap_at + 1, len, &ls).err().expect("expected an error");
+        let err = resume_from_snapshot(&snapshot, snap_at + 1, len, &ls)
+            .err()
+            .expect("expected an error");
         assert_eq!(
             err,
             ReconnectError::SnapshotTickMismatch {
@@ -301,7 +302,9 @@ mod tests {
         let len = 20;
         let snap_at = 10;
         let (_control, _snapshot, ls, _camp) = drive(len, snap_at);
-        let err = resume_from_snapshot(&[0xFF, 0x00, 0x01], snap_at, len, &ls).err().expect("expected an error");
+        let err = resume_from_snapshot(&[0xFF, 0x00, 0x01], snap_at, len, &ls)
+            .err()
+            .expect("expected an error");
         assert!(matches!(err, ReconnectError::Snapshot(_)), "got {err:?}");
     }
 }

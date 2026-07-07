@@ -432,10 +432,16 @@ mod tests {
         let fill = q[0];
         let border = q[1];
         for c in [fill, border] {
-            assert!(c.b > c.r && c.b > c.g, "marquee colour reads cool (player-blue lineage)");
+            assert!(
+                c.b > c.r && c.b > c.g,
+                "marquee colour reads cool (player-blue lineage)"
+            );
         }
         // Border is the higher mix toward bone → lighter than the fill on every channel.
-        assert!(border.r > fill.r && border.g > fill.g, "border is the brighter edge");
+        assert!(
+            border.r > fill.r && border.g > fill.g,
+            "border is the brighter edge"
+        );
         // Exact derivation: the fill/border are mixes of PLAYER toward BONE (one source of truth).
         assert_eq!(
             [fill.r, fill.g, fill.b],
@@ -474,7 +480,11 @@ mod tests {
         // Every border edge keeps its midline (cx, cy) and its long half-span; only the thin
         // half-thickness axis grows 1.5x.
         for (b, g) in base[1..].iter().zip(big[1..].iter()) {
-            assert_eq!((g.cx, g.cy), (b.cx, b.cy), "edge midline stays on the drag corner");
+            assert_eq!(
+                (g.cx, g.cy),
+                (b.cx, b.cy),
+                "edge midline stays on the drag corner"
+            );
             if b.hh < b.hw {
                 // Horizontal edge: thin in y.
                 assert_eq!(g.hw, b.hw, "edge still spans the rect width");

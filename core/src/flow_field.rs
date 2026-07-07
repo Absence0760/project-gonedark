@@ -228,7 +228,8 @@ impl<'t> FlowFieldCache<'t> {
         let idx = match self.fields.iter().position(|(g, _)| *g == goal) {
             Some(i) => i,
             None => {
-                self.fields.push((goal, FlowField::build(goal, self.terrain)));
+                self.fields
+                    .push((goal, FlowField::build(goal, self.terrain)));
                 self.fields.len() - 1
             }
         };

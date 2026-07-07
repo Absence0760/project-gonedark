@@ -204,7 +204,11 @@ impl RttDelayEstimator {
     /// [`Lockstep::propose_delay`]: gonedark_core::lockstep::Lockstep::propose_delay
     pub fn guard_ticks(&self) -> u64 {
         let rtt = self.smoothed_rtt_secs.unwrap_or(0.0);
-        let rtt = if rtt.is_finite() && rtt > 0.0 { rtt } else { 0.0 };
+        let rtt = if rtt.is_finite() && rtt > 0.0 {
+            rtt
+        } else {
+            0.0
+        };
         let full_rtt_ticks = (rtt * self.cfg.tick_hz as f64).ceil();
         let ticks = full_rtt_ticks.min((2 * self.cfg.max_delay) as f64) as u64;
         ticks.saturating_add(self.cfg.safety_margin_ticks).max(1)
@@ -236,7 +240,10 @@ mod tests {
         assert_eq!(target_delay_ticks(0.0, &cfg), cfg.safety_margin_ticks);
         assert!(target_delay_ticks(0.0, &cfg) >= cfg.min_delay);
         // Any non-zero RTT rounds UP to at least one latency tick (never under-cover), plus margin.
-        assert_eq!(target_delay_ticks(0.0001, &cfg), 1 + cfg.safety_margin_ticks);
+        assert_eq!(
+            target_delay_ticks(0.0001, &cfg),
+            1 + cfg.safety_margin_ticks
+        );
         // A huge RTT clamps to the ceiling, never unbounded.
         assert_eq!(target_delay_ticks(10.0, &cfg), cfg.max_delay);
     }
@@ -353,7 +360,11 @@ mod tests {
     #[test]
     fn estimator_is_inert_without_samples() {
         let mut est = RttDelayEstimator::new(DelayPolicy::default());
-        assert_eq!(est.poll_decision(0, 10_000), None, "no sample → no proposal");
+        assert_eq!(
+            est.poll_decision(0, 10_000),
+            None,
+            "no sample → no proposal"
+        );
     }
 
     #[test]
@@ -463,7 +474,15 @@ mod tests {
         // DelayChange frame).
         drive_two_peer_to(&mut ls, &mut peer, effective + 2);
         assert_eq!(ls.delay(), target, "proposer committed the new delay");
-        assert_eq!(peer.delay(), target, "peer committed the identical new delay");
-        assert_eq!(ls.pending_delay(), None, "no change left pending after commit");
+        assert_eq!(
+            peer.delay(),
+            target,
+            "peer committed the identical new delay"
+        );
+        assert_eq!(
+            ls.pending_delay(),
+            None,
+            "no change left pending after commit"
+        );
     }
 }

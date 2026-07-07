@@ -235,13 +235,17 @@ fn resolve_move_to(
     kind: &str,
 ) -> Result<(), String> {
     if !in_world_bounds(dest) {
-        return Err(format!("{kind} destination {dest:?} is out of world bounds"));
+        return Err(format!(
+            "{kind} destination {dest:?} is out of world bounds"
+        ));
     }
     if radius <= Fixed::ZERO {
         return Err(format!("{kind} arrival radius {radius:?} must be positive"));
     }
     if !entity_present(sim, who) {
-        return Err(format!("{kind} target entity {who:?} is absent from the seeded world"));
+        return Err(format!(
+            "{kind} target entity {who:?} is absent from the seeded world"
+        ));
     }
     Ok(())
 }
@@ -260,11 +264,16 @@ fn check_campaign_wellformed(reg: &MissionRegistry, campaign: &Campaign) -> Resu
     for i in 0..campaign.len() {
         let id = NodeId(i as u32);
         let node = campaign.node(id).ok_or_else(|| {
-            format!("node {id:?} is missing from a campaign of len {}", campaign.len())
+            format!(
+                "node {id:?} is missing from a campaign of len {}",
+                campaign.len()
+            )
         })?;
         for &prereq in &node.prerequisites {
             if campaign.node(prereq).is_none() {
-                return Err(format!("node {id:?} has a dangling prerequisite edge to {prereq:?}"));
+                return Err(format!(
+                    "node {id:?} has a dangling prerequisite edge to {prereq:?}"
+                ));
             }
         }
     }
@@ -343,7 +352,10 @@ fn every_objective_target_resolves_in_the_seeded_world() {
         }
     }
     assert!(missions >= 2, "the shipped registry covers Seize + Hold");
-    assert!(objectives >= missions, "each mission contributes at least one objective");
+    assert!(
+        objectives >= missions,
+        "each mission contributes at least one objective"
+    );
 }
 
 #[test]
@@ -353,7 +365,10 @@ fn the_default_campaign_graph_is_well_formed() {
     check_campaign_wellformed(&reg, &campaign)
         .unwrap_or_else(|e| panic!("shipped campaign graph must be well-formed: {e}"));
     // Belt-and-suspenders: the registry's own coverage predicate agrees (graph ⊆ registry).
-    assert!(reg.covers(&campaign), "every campaign node must resolve to a registered mission");
+    assert!(
+        reg.covers(&campaign),
+        "every campaign node must resolve to a registered mission"
+    );
 }
 
 // --- teeth: the lint MUST reject dangling targets -----------------------------------------------
@@ -363,7 +378,10 @@ fn the_lint_catches_deliberately_broken_targets() {
     // A bare Sim with no entities, no control points, no factions fielded — every "must resolve"
     // target is dangling against it, so the lint must reject each with a precise diagnostic.
     let empty = Sim::new(0xBAD);
-    let ghost = Entity { index: 999, generation: 1 };
+    let ghost = Entity {
+        index: 999,
+        generation: 1,
+    };
     let pt = Vec2::new(Fixed::from_int(5), Fixed::from_int(5));
     let out_of_bounds = Vec2::new(Fixed::from_int(10_000), Fixed::ZERO);
 
@@ -373,7 +391,10 @@ fn the_lint_catches_deliberately_broken_targets() {
         &Objective::eliminate_entity(Faction::Player, ghost, "kill the ghost"),
     )
     .expect_err("a dangling entity target must be caught");
-    assert!(e.contains("absent"), "diagnostic should name the absent entity: {e}");
+    assert!(
+        e.contains("absent"),
+        "diagnostic should name the absent entity: {e}"
+    );
 
     // 2. Capture a control point that does not exist in the (empty) territory.
     let e = objective_target_resolves(
@@ -381,7 +402,10 @@ fn the_lint_catches_deliberately_broken_targets() {
         &Objective::capture(Faction::Player, Faction::Player, pt, "take the hill"),
     )
     .expect_err("a capture target with no control point must be caught");
-    assert!(e.contains("no control point"), "diagnostic should name the missing point: {e}");
+    assert!(
+        e.contains("no control point"),
+        "diagnostic should name the missing point: {e}"
+    );
 
     // 3. Eliminate a faction that fields nothing (empty world) → complete on tick 0.
     let e = objective_target_resolves(
@@ -389,20 +413,35 @@ fn the_lint_catches_deliberately_broken_targets() {
         &Objective::eliminate_faction(Faction::Player, Faction::Enemy, "wipe them out", 5),
     )
     .expect_err("an eliminate-faction target with no forces must be caught");
-    assert!(e.contains("no units or buildings"), "diagnostic should explain the empty faction: {e}");
+    assert!(
+        e.contains("no units or buildings"),
+        "diagnostic should explain the empty faction: {e}"
+    );
 
     // 4. Survive with a zero-tick window → completes immediately, a nonsense target.
     let e = objective_target_resolves(&empty, &Objective::survive(Faction::Player, 0, "hold"))
         .expect_err("a zero-tick survive window must be caught");
-    assert!(e.contains("until_tick"), "diagnostic should name the bad window: {e}");
+    assert!(
+        e.contains("until_tick"),
+        "diagnostic should name the bad window: {e}"
+    );
 
     // 5. Reach a destination outside the playfield bounds.
     let e = objective_target_resolves(
         &empty,
-        &Objective::reach(Faction::Player, ghost, out_of_bounds, Fixed::from_int(2), "reach the LZ"),
+        &Objective::reach(
+            Faction::Player,
+            ghost,
+            out_of_bounds,
+            Fixed::from_int(2),
+            "reach the LZ",
+        ),
     )
     .expect_err("an out-of-bounds reach destination must be caught");
-    assert!(e.contains("out of world bounds"), "diagnostic should name the OOB dest: {e}");
+    assert!(
+        e.contains("out of world bounds"),
+        "diagnostic should name the OOB dest: {e}"
+    );
 
     // 6. Escort with a non-positive arrival radius (dest in-bounds so the radius check is what bites).
     let e = objective_target_resolves(
@@ -410,7 +449,10 @@ fn the_lint_catches_deliberately_broken_targets() {
         &Objective::escort(Faction::Player, ghost, pt, Fixed::ZERO, "escort the VIP"),
     )
     .expect_err("a non-positive escort radius must be caught");
-    assert!(e.contains("radius"), "diagnostic should name the bad radius: {e}");
+    assert!(
+        e.contains("radius"),
+        "diagnostic should name the bad radius: {e}"
+    );
 
     // Green control: the SAME lint passes on a real seeded mission's objectives, proving the checks
     // above reject only genuinely-broken content, not everything.
@@ -428,9 +470,18 @@ fn shipped_ron_content_loads_clean_and_is_non_empty() {
     // The CT-F standing guard: every shipped `*.mission.ron` / `*.map.ron` parses, validates, and
     // cross-references. Non-empty so the data battery below can't be vacuously green.
     let reg = load_shipped_content();
-    assert!(!reg.missions().is_empty(), "the repo ships at least one authored mission");
-    assert!(!reg.maps().is_empty(), "the repo ships at least one authored battlefield");
-    assert!(!data_built_targets().is_empty(), "the data lint enumerates shipped missions");
+    assert!(
+        !reg.missions().is_empty(),
+        "the repo ships at least one authored mission"
+    );
+    assert!(
+        !reg.maps().is_empty(),
+        "the repo ships at least one authored battlefield"
+    );
+    assert!(
+        !data_built_targets().is_empty(),
+        "the data lint enumerates shipped missions"
+    );
 }
 
 #[test]
@@ -474,7 +525,11 @@ fn every_data_objective_target_resolves_in_the_seeded_world() {
     let mut objectives = 0usize;
     for t in data_built_targets() {
         let (sim, objs) = (t.seed)(SEED);
-        assert!(!objs.is_empty(), "{}: an authored mission must carry at least one objective", t.label);
+        assert!(
+            !objs.is_empty(),
+            "{}: an authored mission must carry at least one objective",
+            t.label
+        );
         for o in &objs.objectives {
             objectives += 1;
             if let Err(e) = objective_target_resolves(&sim, o) {
@@ -482,7 +537,10 @@ fn every_data_objective_target_resolves_in_the_seeded_world() {
             }
         }
     }
-    assert!(objectives >= 1, "at least one authored objective was linted");
+    assert!(
+        objectives >= 1,
+        "at least one authored objective was linted"
+    );
 }
 
 #[test]
@@ -521,8 +579,10 @@ impl TempDir {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir()
-            .join(format!("gonedark-ctf-lint-{}-{n}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "gonedark-ctf-lint-{}-{n}-{nanos}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         TempDir(dir)
     }
@@ -579,12 +639,31 @@ fn the_content_lint_rejects_a_deliberately_broken_ron_fixture() {
 
     let scan = ContentRegistry::load_dirs(vec![dir.0.clone()]);
     // Fail-soft: the good mission loaded; the broken one did not down the registry.
-    assert!(scan.registry.get(gonedark_core::campaign::MissionId(10)).is_some(), "good mission loads");
-    assert!(scan.registry.get(gonedark_core::campaign::MissionId(11)).is_none(), "broken mission excluded");
+    assert!(
+        scan.registry
+            .get(gonedark_core::campaign::MissionId(10))
+            .is_some(),
+        "good mission loads"
+    );
+    assert!(
+        scan.registry
+            .get(gonedark_core::campaign::MissionId(11))
+            .is_none(),
+        "broken mission excluded"
+    );
     // …and it is reported with a precise, path-scoped diagnostic.
-    assert_eq!(scan.errors.len(), 1, "exactly the broken file is reported: {:?}", scan.errors);
+    assert_eq!(
+        scan.errors.len(),
+        1,
+        "exactly the broken file is reported: {:?}",
+        scan.errors
+    );
     let e = &scan.errors[0];
-    assert!(e.path.ends_with("broken.mission.ron"), "names the file: {}", e.path.display());
+    assert!(
+        e.path.ends_with("broken.mission.ron"),
+        "names the file: {}",
+        e.path.display()
+    );
     assert!(
         e.message.contains("out of bounds"),
         "diagnostic pinpoints the invalid cell: {}",
@@ -614,7 +693,15 @@ fn the_content_lint_rejects_a_float_literal_in_authored_ron() {
 )"#,
     );
     let scan = ContentRegistry::load_dirs(vec![dir.0.clone()]);
-    assert!(scan.registry.is_empty(), "a float literal must keep the mission out of the sim");
-    assert_eq!(scan.errors.len(), 1, "the float file is reported: {:?}", scan.errors);
+    assert!(
+        scan.registry.is_empty(),
+        "a float literal must keep the mission out of the sim"
+    );
+    assert_eq!(
+        scan.errors.len(),
+        1,
+        "the float file is reported: {:?}",
+        scan.errors
+    );
     assert!(scan.errors[0].path.ends_with("floaty.mission.ron"));
 }

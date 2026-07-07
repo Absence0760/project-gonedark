@@ -91,7 +91,10 @@ pub fn train_commands(unit_slot: Option<u8>, camp: Option<Entity>) -> Vec<Comman
 /// form the sim command.
 pub fn rally_point(target_world: Option<(f32, f32)>) -> Option<Vec2> {
     let (x, y) = target_world?;
-    Some(Vec2::new(crate::world_to_fixed(x), crate::world_to_fixed(y)))
+    Some(Vec2::new(
+        crate::world_to_fixed(x),
+        crate::world_to_fixed(y),
+    ))
 }
 
 /// Map a troop-training rally-point choice onto the [`Command::SetCampRally`] for the selected camp.

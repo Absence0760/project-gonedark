@@ -23,7 +23,9 @@
 //! shell is part of the lockstep state. A hard [`MAX_PROJECTILES`] cap bounds the pool against the
 //! Phase-3 thermal budget; an overflow shot is dropped deterministically.
 
-use crate::combat::{facing_penetration_multiplier, is_enemy, SUPPRESSION_MAX, SUPPRESSION_PER_HIT};
+use crate::combat::{
+    facing_penetration_multiplier, is_enemy, SUPPRESSION_MAX, SUPPRESSION_PER_HIT,
+};
 use crate::components::{Faction, ShellKind, Vec2};
 use crate::dispersion;
 use crate::ecs::{Entity, World};
@@ -434,7 +436,10 @@ mod tests {
             vel2d: Vec2::new(speed, Fixed::ZERO),
             height: MUZZLE_HEIGHT,
             vz: LAUNCH_VZ,
-            owner: Entity { index: 0, generation: 0 },
+            owner: Entity {
+                index: 0,
+                generation: 0,
+            },
             faction: Faction::Player,
             damage: fx(damage),
             penetration: Fixed::ZERO,
@@ -445,7 +450,12 @@ mod tests {
         }
     }
 
-    fn run(world: &mut World, pool: &mut Vec<Projectile>, events: &mut Vec<SimEvent>, gravity: Fixed) {
+    fn run(
+        world: &mut World,
+        pool: &mut Vec<Projectile>,
+        events: &mut Vec<SimEvent>,
+        gravity: Fixed,
+    ) {
         let terrain = Terrain::open();
         projectile_system(world, &terrain, pool, events, gravity);
     }
@@ -479,7 +489,10 @@ mod tests {
         }
         assert!(world2.health[near].cur < fx(100));
         assert_eq!(ticks2, 3, "6 / 2 = 3 ticks");
-        assert!(ticks2 < ticks, "the nearer target is hit sooner than the far one");
+        assert!(
+            ticks2 < ticks,
+            "the nearer target is hit sooner than the far one"
+        );
     }
 
     #[test]
@@ -497,10 +510,16 @@ mod tests {
             if pool.is_empty() {
                 break;
             }
-            assert!(pool[0].height <= prev, "height never rises under gravity (flat launch)");
+            assert!(
+                pool[0].height <= prev,
+                "height never rises under gravity (flat launch)"
+            );
             prev = pool[0].height;
         }
-        assert!(prev < start, "the shell has dropped below its muzzle height");
+        assert!(
+            prev < start,
+            "the shell has dropped below its muzzle height"
+        );
     }
 
     #[test]
@@ -516,7 +535,11 @@ mod tests {
         while !pool.is_empty() {
             run(&mut world, &mut pool, &mut events, steep);
         }
-        assert_eq!(world.health[target].cur, fx(100), "undershoot deals no damage");
+        assert_eq!(
+            world.health[target].cur,
+            fx(100),
+            "undershoot deals no damage"
+        );
         assert!(events.is_empty(), "a dirt hit emits no Damaged event");
     }
 
@@ -526,10 +549,17 @@ mod tests {
         let mut world = World::new();
         let target = spawn_target(&mut world, 2, 0, Faction::Enemy, 100);
         let owner = world.spawn(); // a real owner handle the impact attributes to
-        let mut pool = vec![Projectile { owner, ..shell(0, 0, fx(2), 25) }];
+        let mut pool = vec![Projectile {
+            owner,
+            ..shell(0, 0, fx(2), 25)
+        }];
         let mut events = Vec::new();
         run(&mut world, &mut pool, &mut events, Fixed::ZERO);
-        assert_eq!(world.health[target].cur, fx(75), "open terrain = full 25 damage");
+        assert_eq!(
+            world.health[target].cur,
+            fx(75),
+            "open terrain = full 25 damage"
+        );
         assert_eq!(world.last_attacker[target], Some(owner));
         assert_eq!(events.len(), 1);
         assert!(matches!(events[0], SimEvent::Damaged { amount, .. } if amount == fx(25)));
@@ -560,10 +590,17 @@ mod tests {
         let mut world = World::new();
         let target = spawn_target(&mut world, 2, 0, Faction::Enemy, 100);
         // Above the band, travelling +X to land exactly on the target's cell after one tick.
-        let mut pool = vec![Projectile { height: HULL_HEIGHT + Fixed::ONE, ..shell(0, 0, fx(2), 25) }];
+        let mut pool = vec![Projectile {
+            height: HULL_HEIGHT + Fixed::ONE,
+            ..shell(0, 0, fx(2), 25)
+        }];
         let mut events = Vec::new();
         run(&mut world, &mut pool, &mut events, Fixed::ZERO);
-        assert_eq!(world.health[target].cur, fx(100), "an overflying shell deals no damage");
+        assert_eq!(
+            world.health[target].cur,
+            fx(100),
+            "an overflying shell deals no damage"
+        );
         assert_eq!(pool.len(), 1, "the shell flew over, not consumed");
         assert!(events.is_empty(), "no impact, no Damaged event");
     }
@@ -579,9 +616,17 @@ mod tests {
         let mut pool = vec![shell(0, 0, fx(2), 25)];
         let mut events = Vec::new();
         run(&mut world, &mut pool, &mut events, Fixed::ZERO);
-        assert_eq!(world.health[dead].cur, Fixed::ZERO, "a dead target takes no further damage");
+        assert_eq!(
+            world.health[dead].cur,
+            Fixed::ZERO,
+            "a dead target takes no further damage"
+        );
         assert!(events.is_empty(), "no Damaged event for a dead target");
-        assert_eq!(pool.len(), 1, "the shell passes through and stays in flight");
+        assert_eq!(
+            pool.len(),
+            1,
+            "the shell passes through and stays in flight"
+        );
     }
 
     #[test]
@@ -620,7 +665,10 @@ mod tests {
     fn shell_despawns_on_lifetime_expiry() {
         // A shell that hits nothing dies when its lifetime runs out (the hard cap), not forever.
         let mut world = World::new();
-        let mut pool = vec![Projectile { lifetime: 3, ..shell(0, 0, fx(1), 25) }];
+        let mut pool = vec![Projectile {
+            lifetime: 3,
+            ..shell(0, 0, fx(1), 25)
+        }];
         let mut events = Vec::new();
         for _ in 0..3 {
             run(&mut world, &mut pool, &mut events, Fixed::ZERO);
@@ -642,7 +690,10 @@ mod tests {
             run(&mut world, &mut pool, &mut events, Fixed::ZERO);
             ticks += 1;
         }
-        assert!(pool.is_empty(), "the shell despawns after crossing the map edge");
+        assert!(
+            pool.is_empty(),
+            "the shell despawns after crossing the map edge"
+        );
         assert!(ticks <= 2, "it leaves quickly from near the border");
     }
 
@@ -683,7 +734,11 @@ mod tests {
         );
         assert!(fired);
         assert_eq!(pool.len(), 1);
-        assert_eq!(pool[0].vel2d, Vec2::new(fx(2), Fixed::ZERO), "aim scaled to muzzle_vel");
+        assert_eq!(
+            pool[0].vel2d,
+            Vec2::new(fx(2), Fixed::ZERO),
+            "aim scaled to muzzle_vel"
+        );
         assert_eq!(pool[0].height, MUZZLE_HEIGHT);
         assert_eq!(world.weapon[i].ammo, 2, "one round spent");
         assert_eq!(world.weapon[i].cooldown_left, 12, "cooldown set");
@@ -715,21 +770,33 @@ mod tests {
         let mut pool = Vec::new();
         let mut rng = Rng::new(1);
         let east = Vec2::new(Fixed::ONE, Fixed::ZERO);
-        assert!(!fire_ballistic(&mut world, i, east, &mut pool, &mut rng), "no fire while hot");
+        assert!(
+            !fire_ballistic(&mut world, i, east, &mut pool, &mut rng),
+            "no fire while hot"
+        );
         // Cooldown clear but empty mag → still no fire.
         world.weapon[i].cooldown_left = 0;
         world.weapon[i].ammo = 0;
-        assert!(!fire_ballistic(&mut world, i, east, &mut pool, &mut rng), "empty mag dry-clicks");
+        assert!(
+            !fire_ballistic(&mut world, i, east, &mut pool, &mut rng),
+            "empty mag dry-clicks"
+        );
         // Mid-reload (ammo spent, reload_left counting down): a magazine weapon that is currently
         // reloading dry-clicks too — the same gate resolve_fire applies — no shell, no spend.
         world.weapon[i].reload_left = 10;
-        assert!(!fire_ballistic(&mut world, i, east, &mut pool, &mut rng), "mid-reload dry-clicks");
+        assert!(
+            !fire_ballistic(&mut world, i, east, &mut pool, &mut rng),
+            "mid-reload dry-clicks"
+        );
         assert_eq!(world.weapon[i].ammo, 0, "a mid-reload click spends nothing");
         assert!(pool.is_empty(), "no shell spawned mid-reload");
         world.weapon[i].reload_left = 0;
         // Reload it; a zero dir has no bearing → still no fire (and no spend).
         world.weapon[i].ammo = 3;
-        assert!(!fire_ballistic(&mut world, i, Vec2::ZERO, &mut pool, &mut rng), "zero aim → no shot");
+        assert!(
+            !fire_ballistic(&mut world, i, Vec2::ZERO, &mut pool, &mut rng),
+            "zero aim → no shot"
+        );
         assert_eq!(world.weapon[i].ammo, 3, "a dry/zero click spends nothing");
         assert!(pool.is_empty());
     }
@@ -765,15 +832,24 @@ mod tests {
                 .map(|_| shell(0, 0, fx(2), 10))
                 .collect();
             let mut rng = Rng::new(1);
-            let fired =
-                fire_ballistic(&mut world, i, Vec2::new(Fixed::ONE, Fixed::ZERO), &mut pool, &mut rng);
+            let fired = fire_ballistic(
+                &mut world,
+                i,
+                Vec2::new(Fixed::ONE, Fixed::ZERO),
+                &mut pool,
+                &mut rng,
+            );
             (fired, pool.len(), world.weapon[i].ammo)
         }
         let (fired, len, ammo) = attempt();
         assert!(!fired, "the overflow shot is dropped");
         assert_eq!(len, MAX_PROJECTILES, "pool never exceeds the cap");
         assert_eq!(ammo, 5, "a dropped shot spends no ammo");
-        assert_eq!(attempt(), (false, MAX_PROJECTILES, 5), "the drop is deterministic");
+        assert_eq!(
+            attempt(),
+            (false, MAX_PROJECTILES, 5),
+            "the drop is deterministic"
+        );
     }
 
     // --- tank embodiment P6: ShellKind pen / damage / splash ------------------------------------
@@ -812,10 +888,18 @@ mod tests {
         assert!(fire_ballistic(&mut world, i, east, &mut pool, &mut rng));
         let he = pool[0];
         assert_eq!(he.shell, ShellKind::He);
-        assert_eq!(he.penetration, fx(40) * Fixed::from_ratio(1, 8), "HE pen ×1/8 = 5");
+        assert_eq!(
+            he.penetration,
+            fx(40) * Fixed::from_ratio(1, 8),
+            "HE pen ×1/8 = 5"
+        );
         assert_eq!(he.damage, fx(80), "HE direct damage ×1");
         assert_eq!(he.splash_radius, fx(4), "HE splash radius");
-        assert_eq!(he.splash_damage, fx(80) * Fixed::from_ratio(3, 4), "HE splash ×3/4 = 60");
+        assert_eq!(
+            he.splash_damage,
+            fx(80) * Fixed::from_ratio(3, 4),
+            "HE splash ×3/4 = 60"
+        );
 
         // Swap to AP: full pen, full point damage, and NO splash — the pre-P6 shell exactly.
         world.weapon[i].shell = ShellKind::Ap;
@@ -840,7 +924,11 @@ mod tests {
         let mut events = Vec::new();
         run(&mut world, &mut pool, &mut events, Fixed::ZERO);
         assert_eq!(world.health[primary].cur, fx(975), "AP point hit lands");
-        assert_eq!(world.health[neighbour].cur, fx(1000), "AP never splashes a neighbour");
+        assert_eq!(
+            world.health[neighbour].cur,
+            fx(1000),
+            "AP never splashes a neighbour"
+        );
     }
 
     /// `He` deals its point hit, then a frag burst that damages in-radius hostiles and spares
@@ -861,8 +949,16 @@ mod tests {
         let mut events = Vec::new();
         run(&mut world, &mut pool, &mut events, Fixed::ZERO);
         assert_eq!(world.health[primary].cur, fx(950), "HE direct point hit");
-        assert_eq!(world.health[near].cur, fx(980), "in-radius neighbour takes the splash");
-        assert_eq!(world.health[far].cur, fx(1000), "out-of-radius unit takes no HE splash");
+        assert_eq!(
+            world.health[near].cur,
+            fx(980),
+            "in-radius neighbour takes the splash"
+        );
+        assert_eq!(
+            world.health[far].cur,
+            fx(1000),
+            "out-of-radius unit takes no HE splash"
+        );
     }
 
     /// `Aphe` against an unarmoured body **penetrates**, so its post-pen HE filler bursts: the body
@@ -883,7 +979,11 @@ mod tests {
         let mut events = Vec::new();
         run(&mut world, &mut pool, &mut events, Fixed::ZERO);
         assert_eq!(world.health[primary].cur, fx(960), "APHE direct pen");
-        assert_eq!(world.health[near].cur, fx(985), "post-pen HE filler splashes the neighbour");
+        assert_eq!(
+            world.health[near].cur,
+            fx(985),
+            "post-pen HE filler splashes the neighbour"
+        );
     }
 
     /// `Aphe`'s post-pen burst is gated on the direct hit penetrating: a shell that **bounces** off a
@@ -893,7 +993,11 @@ mod tests {
         let mut world = World::new();
         let primary = spawn_target(&mut world, 2, 0, Faction::Enemy, 1000);
         // Armour it and face it −X, so a +X shell strikes the thick front facet.
-        world.armor[primary] = Armor { front: fx(40), side: fx(16), rear: fx(8) };
+        world.armor[primary] = Armor {
+            front: fx(40),
+            side: fx(16),
+            rear: fx(8),
+        };
         world.hull_heading[primary] = Angle(ANGLE_FULL / 2);
         let near = spawn_target(&mut world, 2, 2, Faction::Enemy, 1000); // unarmoured neighbour in radius
         let aphe = Projectile {
@@ -906,8 +1010,16 @@ mod tests {
         let mut pool = vec![aphe];
         let mut events = Vec::new();
         run(&mut world, &mut pool, &mut events, Fixed::ZERO);
-        assert_eq!(world.health[primary].cur, fx(1000), "a frontal bounce deals no direct damage");
-        assert_eq!(world.health[near].cur, fx(1000), "no penetration ⇒ no post-pen splash");
+        assert_eq!(
+            world.health[primary].cur,
+            fx(1000),
+            "a frontal bounce deals no direct damage"
+        );
+        assert_eq!(
+            world.health[near].cur,
+            fx(1000),
+            "no penetration ⇒ no post-pen splash"
+        );
         // (The direct hit still emits a 0-damage `Damaged` on a bounce — pre-existing P4 behaviour —
         // but the post-pen splash never fires, which is the property under test here.)
         assert!(pool.is_empty(), "the shell is still consumed on impact");
@@ -937,7 +1049,10 @@ mod tests {
         run(&mut w1, &mut vec![he()], &mut ev, Fixed::ZERO);
         run(&mut w2, &mut vec![he()], &mut ev, Fixed::ZERO);
         for i in 0..w1.capacity() {
-            assert_eq!(w1.health[i].cur, w2.health[i].cur, "slot {i} health must match");
+            assert_eq!(
+                w1.health[i].cur, w2.health[i].cur,
+                "slot {i} health must match"
+            );
         }
     }
 }

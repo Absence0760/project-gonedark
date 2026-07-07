@@ -666,9 +666,15 @@ mod tests {
         // Slot 1 (3 o'clock) is purely a horizontal offset; slot 0 (12 o'clock) purely vertical.
         let x_off = (w[1].cx - c[0]).abs();
         let y_off = (w[0].cy - c[1]).abs();
-        assert!((x_off * aspect - y_off).abs() < 1e-5, "x-offset·aspect == y-offset (circular)");
+        assert!(
+            (x_off * aspect - y_off).abs() < 1e-5,
+            "x-offset·aspect == y-offset (circular)"
+        );
         // Wedge slots are narrower in NDC by aspect (square in pixels).
-        assert!((w[0].hw * aspect - w[0].hh).abs() < 1e-5, "wedge is square in pixels");
+        assert!(
+            (w[0].hw * aspect - w[0].hh).abs() < 1e-5,
+            "wedge is square in pixels"
+        );
     }
 
     #[test]

@@ -267,10 +267,18 @@ mod tests {
         let mut g = CommandGesture::new();
         // Capture frame: two fingers land, no delta.
         let out = g.update(&[t(1, 100.0, 100.0), t(2, 200.0, 100.0)], 0);
-        assert_eq!(out, CommandGestureOutput::default(), "no jump on the capture frame");
+        assert_eq!(
+            out,
+            CommandGestureOutput::default(),
+            "no jump on the capture frame"
+        );
         // Both fingers slide +48 px right (spread fixed at 100 px): pans +x, no zoom.
         let out = g.update(&[t(1, 148.0, 100.0), t(2, 248.0, 100.0)], 16);
-        assert!(out.move_axis.0 > 0.0, "centroid moved right → +x pan: {:?}", out.move_axis);
+        assert!(
+            out.move_axis.0 > 0.0,
+            "centroid moved right → +x pan: {:?}",
+            out.move_axis
+        );
         assert!((out.move_axis.1).abs() < 1e-6, "no vertical motion");
         assert_eq!(out.scroll, 0.0, "a rigid translation must not zoom");
         assert!(!out.embody);
@@ -287,12 +295,20 @@ mod tests {
         g.update(&[t(1, 120.0, 100.0), t(2, 180.0, 100.0)], 0);
         // Spread grows to 120 px (each finger 30 px further out), centroid unchanged: zoom IN.
         let out = g.update(&[t(1, 90.0, 100.0), t(2, 210.0, 100.0)], 16);
-        assert!(out.scroll > 0.0, "fingers apart = zoom IN = positive scroll: {}", out.scroll);
+        assert!(
+            out.scroll > 0.0,
+            "fingers apart = zoom IN = positive scroll: {}",
+            out.scroll
+        );
         assert_eq!(out.move_axis, (0.0, 0.0), "a symmetric pinch must not pan");
         assert!(!out.embody);
         // Now pinch back together to 40 px: zoom OUT (negative scroll).
         let out = g.update(&[t(1, 130.0, 100.0), t(2, 170.0, 100.0)], 32);
-        assert!(out.scroll < 0.0, "fingers together = zoom OUT = negative scroll: {}", out.scroll);
+        assert!(
+            out.scroll < 0.0,
+            "fingers together = zoom OUT = negative scroll: {}",
+            out.scroll
+        );
     }
 
     /// A genuine two-finger TAP — both down, then up, quickly and near-motionless — raises exactly one
@@ -302,7 +318,10 @@ mod tests {
         let mut g = CommandGesture::new();
         let down = [t(1, 100.0, 100.0), t(2, 200.0, 100.0)];
         let out = g.update(&down, 0);
-        assert!(!out.embody, "no embody while the fingers are still down (capture frame)");
+        assert!(
+            !out.embody,
+            "no embody while the fingers are still down (capture frame)"
+        );
         // A tiny bit of jitter, still within slop and the tap window.
         let out = g.update(&[t(1, 101.0, 100.0), t(2, 200.0, 101.0)], 40);
         assert!(!out.embody, "still down → still no embody");
@@ -354,9 +373,15 @@ mod tests {
         let mut g = CommandGesture::new();
         g.update(&[t(1, 100.0, 100.0), t(2, 200.0, 100.0)], 0);
         // A third finger joins (still, quick).
-        g.update(&[t(1, 100.0, 100.0), t(2, 200.0, 100.0), t(3, 150.0, 150.0)], 20);
+        g.update(
+            &[t(1, 100.0, 100.0), t(2, 200.0, 100.0), t(3, 150.0, 150.0)],
+            20,
+        );
         let out = g.update(&[], 40);
-        assert!(!out.embody, "more than two fingers → not the two-finger embody tap");
+        assert!(
+            !out.embody,
+            "more than two fingers → not the two-finger embody tap"
+        );
     }
 
     /// A single finger never engages the gesture seam at all (that is the command-layer tap/drag
@@ -367,7 +392,11 @@ mod tests {
         let out = g.update(&[t(1, 100.0, 100.0)], 0);
         assert_eq!(out, CommandGestureOutput::default());
         let out = g.update(&[t(1, 140.0, 120.0)], 16);
-        assert_eq!(out, CommandGestureOutput::default(), "a one-finger drag is not a command gesture");
+        assert_eq!(
+            out,
+            CommandGestureOutput::default(),
+            "a one-finger drag is not a command gesture"
+        );
         let out = g.update(&[], 32);
         assert!(!out.embody, "lifting a single finger never embodies");
     }
@@ -387,16 +416,30 @@ mod tests {
             &[t(1, 100.0, 100.0), t(2, 200.0, 100.0), t(3, 500.0, 400.0)],
             16,
         );
-        assert_eq!(out.move_axis, (0.0, 0.0), "a joining 3rd finger must not pan");
+        assert_eq!(
+            out.move_axis,
+            (0.0, 0.0),
+            "a joining 3rd finger must not pan"
+        );
         assert_eq!(out.scroll, 0.0, "a joining 3rd finger must not zoom");
         // Finger 1 lifts; the compacted slice is [2, 3], whose centroid/spread differ wildly from
         // (1, 2)'s. Pair composition changed → re-anchor, NO delta this frame.
         let out = g.update(&[t(2, 200.0, 100.0), t(3, 500.0, 400.0)], 32);
-        assert_eq!(out, CommandGestureOutput::default(), "pair change re-anchors without a delta");
+        assert_eq!(
+            out,
+            CommandGestureOutput::default(),
+            "pair change re-anchors without a delta"
+        );
         // From the next frame the re-anchored pair (2, 3) drives pan/zoom normally.
         let out = g.update(&[t(2, 248.0, 100.0), t(3, 548.0, 400.0)], 48);
-        assert_eq!(out.move_axis.0, 1.0, "the new pair pans after the re-anchor frame");
-        assert_eq!(out.scroll, 0.0, "a rigid translation of the new pair must not zoom");
+        assert_eq!(
+            out.move_axis.0, 1.0,
+            "the new pair pans after the re-anchor frame"
+        );
+        assert_eq!(
+            out.scroll, 0.0,
+            "a rigid translation of the new pair must not zoom"
+        );
     }
 
     /// REGRESSION (id-tracking): the tracked pair is found BY ID, not by slice position — a 3rd
@@ -412,15 +455,29 @@ mod tests {
             &[t(3, 500.0, 400.0), t(1, 100.0, 100.0), t(2, 200.0, 100.0)],
             16,
         );
-        assert_eq!(out.move_axis, (0.0, 0.0), "a still tracked pair must not pan on re-order");
-        assert_eq!(out.scroll, 0.0, "a still tracked pair must not zoom on re-order");
+        assert_eq!(
+            out.move_axis,
+            (0.0, 0.0),
+            "a still tracked pair must not pan on re-order"
+        );
+        assert_eq!(
+            out.scroll, 0.0,
+            "a still tracked pair must not zoom on re-order"
+        );
         // The true pair sliding +48 px still saturates the pan, unaffected by the interloper.
         let out = g.update(
             &[t(3, 500.0, 400.0), t(1, 148.0, 100.0), t(2, 248.0, 100.0)],
             32,
         );
-        assert_eq!(out.move_axis, (1.0, 0.0), "the tracked pair's motion drives the pan");
-        assert_eq!(out.scroll, 0.0, "the tracked pair's rigid translation must not zoom");
+        assert_eq!(
+            out.move_axis,
+            (1.0, 0.0),
+            "the tracked pair's motion drives the pan"
+        );
+        assert_eq!(
+            out.scroll, 0.0,
+            "the tracked pair's rigid translation must not zoom"
+        );
     }
 
     /// REGRESSION (cross-identity tap): a platform delivering a simultaneous lift+land in ONE poll
@@ -437,7 +494,11 @@ mod tests {
         // In a single poll finger 2 is gone and finger 3 has landed in its place: the slice is
         // still length 2, near-motionless, so max_pointers stays at 2 and moved stays tiny.
         let out = g.update(&[t(1, 100.0, 100.0), t(3, 200.0, 100.0)], 16);
-        assert_eq!(out, CommandGestureOutput::default(), "pair swap re-anchors without a delta");
+        assert_eq!(
+            out,
+            CommandGestureOutput::default(),
+            "pair swap re-anchors without a delta"
+        );
         // Both lift quickly, well within the tap window and slop budget — but the "tap"'s start
         // and end were different physical fingers, so it must NOT embody.
         let out = g.update(&[], 40);
@@ -445,7 +506,10 @@ mod tests {
         // A fresh, clean two-finger tap afterwards still embodies normally.
         g.update(&[t(4, 100.0, 100.0), t(5, 200.0, 100.0)], 100);
         let out = g.update(&[], 140);
-        assert!(out.embody, "a clean same-pair tap after the swap still qualifies");
+        assert!(
+            out.embody,
+            "a clean same-pair tap after the swap still qualifies"
+        );
     }
 
     /// Sub-deadzone jitter on a held two-finger contact produces neither pan nor zoom (so a resting
@@ -456,7 +520,11 @@ mod tests {
         g.update(&[t(1, 100.0, 100.0), t(2, 200.0, 100.0)], 0);
         // Half-pixel wobble on both fingers: below both deadzones.
         let out = g.update(&[t(1, 100.4, 100.0), t(2, 200.4, 100.0)], 16);
-        assert_eq!(out.move_axis, (0.0, 0.0), "jitter under the pan deadzone → no pan");
+        assert_eq!(
+            out.move_axis,
+            (0.0, 0.0),
+            "jitter under the pan deadzone → no pan"
+        );
         assert_eq!(out.scroll, 0.0, "jitter under the pinch deadzone → no zoom");
     }
 }

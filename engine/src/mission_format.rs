@@ -372,7 +372,10 @@ pub fn validate(spec: &MissionSpec) -> Result<(), MissionLoadError> {
         return err("`income_period` must be >= 1 (0 would stall income accrual)".into());
     }
     if spec.starting_purse < 0 {
-        return err(format!("`starting_purse` must be >= 0 (got {})", spec.starting_purse));
+        return err(format!(
+            "`starting_purse` must be >= 0 (got {})",
+            spec.starting_purse
+        ));
     }
 
     let half = world_half_extent();
@@ -419,7 +422,10 @@ pub fn validate(spec: &MissionSpec) -> Result<(), MissionLoadError> {
         match o {
             ObjectiveSpec::Capture { point, .. } => {
                 if !in_bounds(*point) {
-                    return err(bounds_msg(&format!("objectives[{i}] Capture point"), *point));
+                    return err(bounds_msg(
+                        &format!("objectives[{i}] Capture point"),
+                        *point,
+                    ));
                 }
                 if !spec.control_points.contains(point) {
                     return err(format!(
@@ -439,7 +445,12 @@ pub fn validate(spec: &MissionSpec) -> Result<(), MissionLoadError> {
                 force_ref(&format!("objectives[{i}] EliminateEntity"), *target_force)?;
             }
             ObjectiveSpec::Survive { .. } => {}
-            ObjectiveSpec::Reach { who, dest, radius_mu, .. } => {
+            ObjectiveSpec::Reach {
+                who,
+                dest,
+                radius_mu,
+                ..
+            } => {
                 force_ref(&format!("objectives[{i}] Reach"), *who)?;
                 if !in_bounds(*dest) {
                     return err(bounds_msg(&format!("objectives[{i}] Reach dest"), *dest));
@@ -450,7 +461,12 @@ pub fn validate(spec: &MissionSpec) -> Result<(), MissionLoadError> {
                     ));
                 }
             }
-            ObjectiveSpec::Escort { vip, dest, radius_mu, .. } => {
+            ObjectiveSpec::Escort {
+                vip,
+                dest,
+                radius_mu,
+                ..
+            } => {
                 force_ref(&format!("objectives[{i}] Escort"), *vip)?;
                 if !in_bounds(*dest) {
                     return err(bounds_msg(&format!("objectives[{i}] Escort dest"), *dest));
@@ -533,13 +549,22 @@ fn build_objectives(spec: &MissionSpec, forces: &[Entity]) -> ObjectiveSet {
     let mut out = Vec::with_capacity(spec.objectives.len());
     for o in &spec.objectives {
         let obj = match o {
-            ObjectiveSpec::Capture { owner, who, point, label } => Objective::capture(
+            ObjectiveSpec::Capture {
+                owner,
+                who,
+                point,
+                label,
+            } => Objective::capture(
                 owner.to_core(),
                 who.to_core(),
                 cell_to_world(*point),
                 label.clone(),
             ),
-            ObjectiveSpec::EliminateFaction { owner, target, label } => {
+            ObjectiveSpec::EliminateFaction {
+                owner,
+                target,
+                label,
+            } => {
                 // Goal = the target faction's destroyable strength (units + camps), the HUD bar.
                 let goal = spec
                     .forces
@@ -548,22 +573,36 @@ fn build_objectives(spec: &MissionSpec, forces: &[Entity]) -> ObjectiveSet {
                     .count() as u32;
                 Objective::eliminate_faction(owner.to_core(), target.to_core(), label.clone(), goal)
             }
-            ObjectiveSpec::EliminateEntity { owner, target_force, label } => {
-                Objective::eliminate_entity(owner.to_core(), forces[*target_force], label.clone())
-            }
-            ObjectiveSpec::Survive { who, seconds, label } => Objective::survive(
-                who.to_core(),
-                seconds * TICK_HZ as u64,
-                label.clone(),
-            ),
-            ObjectiveSpec::Reach { owner, who, dest, radius_mu, label } => Objective::reach(
+            ObjectiveSpec::EliminateEntity {
+                owner,
+                target_force,
+                label,
+            } => Objective::eliminate_entity(owner.to_core(), forces[*target_force], label.clone()),
+            ObjectiveSpec::Survive {
+                who,
+                seconds,
+                label,
+            } => Objective::survive(who.to_core(), seconds * TICK_HZ as u64, label.clone()),
+            ObjectiveSpec::Reach {
+                owner,
+                who,
+                dest,
+                radius_mu,
+                label,
+            } => Objective::reach(
                 owner.to_core(),
                 forces[*who],
                 cell_to_world(*dest),
                 Fixed::from_ratio(*radius_mu, 1000),
                 label.clone(),
             ),
-            ObjectiveSpec::Escort { owner, vip, dest, radius_mu, label } => Objective::escort(
+            ObjectiveSpec::Escort {
+                owner,
+                vip,
+                dest,
+                radius_mu,
+                label,
+            } => Objective::escort(
                 owner.to_core(),
                 forces[*vip],
                 cell_to_world(*dest),
@@ -602,11 +641,20 @@ mod tests {
         assert_eq!(spec.map, "seize_outpost");
         assert_eq!(spec.income_period, 600);
         assert_eq!(spec.starting_purse, 0);
-        assert_eq!(spec.armies, ArmiesSpec { player: ArmySpec::Us, enemy: ArmySpec::Fr });
+        assert_eq!(
+            spec.armies,
+            ArmiesSpec {
+                player: ArmySpec::Us,
+                enemy: ArmySpec::Fr
+            }
+        );
         // 10 player troops + 1 enemy camp + 4 garrison = 15 forces, in spawn order.
         assert_eq!(spec.forces.len(), 15);
         assert_eq!(spec.difficulty, DifficultySpec::Recruit);
-        assert!(validate(&spec).is_ok(), "the shipped file is semantically valid");
+        assert!(
+            validate(&spec).is_ok(),
+            "the shipped file is semantically valid"
+        );
     }
 
     // ---- THE byte-identical Seize oracle ------------------------------------------------------
@@ -687,7 +735,10 @@ mod tests {
 
     #[test]
     fn the_template_itself_loads() {
-        assert!(try_load(&valid_ron()).is_ok(), "the rejection-test template must be valid");
+        assert!(
+            try_load(&valid_ron()).is_ok(),
+            "the rejection-test template must be valid"
+        );
     }
 
     #[test]
@@ -695,7 +746,10 @@ mod tests {
         // The airlock's core promise: a float where an integer is expected cannot deserialize.
         let src = valid_ron().replace("income_period: 600,", "income_period: 600.5,");
         let e = try_load(&src).expect_err("a float literal must be rejected");
-        assert!(matches!(e, MissionLoadError::Parse(_)), "float → a parse-time airlock failure");
+        assert!(
+            matches!(e, MissionLoadError::Parse(_)),
+            "float → a parse-time airlock failure"
+        );
     }
 
     #[test]
@@ -720,7 +774,9 @@ mod tests {
         let src = valid_ron().replace("cell: (10, 0)", "cell: (200, 0)");
         let e = try_load(&src).expect_err("an out-of-bounds cell must be rejected");
         match e {
-            MissionLoadError::Validation(m) => assert!(m.contains("out of bounds"), "clear msg: {m}"),
+            MissionLoadError::Validation(m) => {
+                assert!(m.contains("out of bounds"), "clear msg: {m}")
+            }
             other => panic!("expected a validation error, got {other:?}"),
         }
     }
@@ -745,7 +801,8 @@ mod tests {
             "EliminateFaction(owner: Player, target: Enemy, label: \"Take it\"),",
             "Capture(owner: Player, who: Player, point: (5, 5), label: \"Cap\"),",
         );
-        let e = try_load(&src).expect_err("a Capture with no matching control_point must be rejected");
+        let e =
+            try_load(&src).expect_err("a Capture with no matching control_point must be rejected");
         match e {
             MissionLoadError::Validation(m) => {
                 assert!(m.contains("not a declared control_point"), "clear msg: {m}")
@@ -804,7 +861,8 @@ mod tests {
     fn rejects_eliminate_faction_with_no_forces() {
         // Target a faction (Neutral) that fields no forces — a dangling objective target.
         let src = valid_ron().replace("target: Enemy,", "target: Neutral,");
-        let e = try_load(&src).expect_err("an EliminateFaction with no target forces must be rejected");
+        let e =
+            try_load(&src).expect_err("an EliminateFaction with no target forces must be rejected");
         assert!(matches!(e, MissionLoadError::Validation(m) if m.contains("fields no forces")));
     }
 }

@@ -227,15 +227,27 @@ mod tests {
 
     /// Embodied at `tick`, no death.
     fn embodied(tick: u64) -> TeachInput {
-        TeachInput { embodied: true, avatar_died: false, tick }
+        TeachInput {
+            embodied: true,
+            avatar_died: false,
+            tick,
+        }
     }
     /// In command view at `tick`, no death.
     fn command(tick: u64) -> TeachInput {
-        TeachInput { embodied: false, avatar_died: false, tick }
+        TeachInput {
+            embodied: false,
+            avatar_died: false,
+            tick,
+        }
     }
     /// The avatar died this tick (auto-surface → command view).
     fn died(tick: u64) -> TeachInput {
-        TeachInput { embodied: false, avatar_died: true, tick }
+        TeachInput {
+            embodied: false,
+            avatar_died: true,
+            tick,
+        }
     }
 
     // --- gating ---------------------------------------------------------------------------------
@@ -262,7 +274,10 @@ mod tests {
         // The prompt is live and tells you how to come back.
         let p = o.current_prompt(1).expect("a prompt is up");
         assert_eq!(p.tone, PromptTone::Caution);
-        assert!(p.body.iter().any(|l| l.contains("SURFACE")), "teaches the control");
+        assert!(
+            p.body.iter().any(|l| l.contains("SURFACE")),
+            "teaches the control"
+        );
         // It does not re-fire on subsequent embodied ticks.
         assert_eq!(o.observe(embodied(2)), None);
     }
@@ -272,7 +287,7 @@ mod tests {
         let mut o = Onboarding::new(true);
         assert_eq!(o.observe(embodied(1)), Some(TeachBeat::WentDark));
         assert_eq!(o.observe(command(2)), None); // voluntary surface
-        // Re-embodying later must NOT replay the intro (fired once per match).
+                                                 // Re-embodying later must NOT replay the intro (fired once per match).
         assert_eq!(o.observe(embodied(3)), None);
     }
 
@@ -285,12 +300,22 @@ mod tests {
         // Just short of the dwell: nothing.
         assert_eq!(o.observe(embodied(LINGER_TICKS - 1)), None);
         // At the dwell: the nudge fires.
-        assert_eq!(o.observe(embodied(LINGER_TICKS)), Some(TeachBeat::Lingering));
+        assert_eq!(
+            o.observe(embodied(LINGER_TICKS)),
+            Some(TeachBeat::Lingering)
+        );
         let p = o.current_prompt(LINGER_TICKS).expect("nudge is up");
         // Fairness (invariant #6): the copy is a time-cost, never a position. A crude intel guard:
         // none of the danger words a leak would use appear.
         let blob = format!("{} {}", p.title, p.body.join(" ")).to_lowercase();
-        for banned in ["enemy at", "position", "coordinates", "spotted at", "north", "south"] {
+        for banned in [
+            "enemy at",
+            "position",
+            "coordinates",
+            "spotted at",
+            "north",
+            "south",
+        ] {
             assert!(!blob.contains(banned), "no intel leak: {banned:?}");
         }
         // Fires once.
@@ -301,14 +326,17 @@ mod tests {
     fn the_dwell_clock_resets_on_a_voluntary_surface() {
         let mut o = Onboarding::new(true);
         o.observe(embodied(0)); // WentDark
-        // Dip in and out before the dwell elapses.
+                                // Dip in and out before the dwell elapses.
         o.observe(embodied(100));
         o.observe(command(110)); // surface — clock resets
         o.observe(embodied(120)); // re-embody — dwell restarts here
-        // 120 + (LINGER_TICKS - 1) is short of the *new* dwell window → no nudge yet.
+                                  // 120 + (LINGER_TICKS - 1) is short of the *new* dwell window → no nudge yet.
         assert_eq!(o.observe(embodied(120 + LINGER_TICKS - 1)), None);
         // One more tick clears the restarted window.
-        assert_eq!(o.observe(embodied(120 + LINGER_TICKS)), Some(TeachBeat::Lingering));
+        assert_eq!(
+            o.observe(embodied(120 + LINGER_TICKS)),
+            Some(TeachBeat::Lingering)
+        );
     }
 
     // --- the death payoff -----------------------------------------------------------------------
@@ -317,11 +345,14 @@ mod tests {
     fn first_embodied_death_fires_the_framing_payoff() {
         let mut o = Onboarding::new(true);
         o.observe(embodied(10)); // WentDark
-        // The avatar dies → auto-surface. The payoff frames it as the player's overstay.
+                                 // The avatar dies → auto-surface. The payoff frames it as the player's overstay.
         assert_eq!(o.observe(died(50)), Some(TeachBeat::StayedTooLong));
         let p = o.current_prompt(50).expect("payoff is up");
         assert_eq!(p.tone, PromptTone::Reflect);
-        assert!(p.title.contains("STAYED TOO LONG"), "frames it as the player's choice");
+        assert!(
+            p.title.contains("STAYED TOO LONG"),
+            "frames it as the player's choice"
+        );
         // It shows in the command view (you're ejected) and does not re-fire.
         assert_eq!(o.observe(died(200)), None);
     }
@@ -330,10 +361,10 @@ mod tests {
     fn a_manual_surface_is_not_a_death_payoff() {
         let mut o = Onboarding::new(true);
         o.observe(embodied(10)); // WentDark
-        // A clean voluntary return is NOT framed as overstaying.
+                                 // A clean voluntary return is NOT framed as overstaying.
         assert_eq!(o.observe(command(40)), None);
         assert_eq!(o.current_prompt(40), o.current_prompt(40)); // (no panic) — WentDark may still fade
-        // A real death later still earns the payoff.
+                                                                // A real death later still earns the payoff.
         o.observe(embodied(60));
         assert_eq!(o.observe(died(80)), Some(TeachBeat::StayedTooLong));
     }
@@ -343,7 +374,11 @@ mod tests {
     #[test]
     fn fade_alpha_is_full_then_ramps_to_zero() {
         assert_eq!(fade_alpha(0), 1.0);
-        assert_eq!(fade_alpha(PROMPT_TICKS - FADE_TICKS), 1.0, "full until the fade slice");
+        assert_eq!(
+            fade_alpha(PROMPT_TICKS - FADE_TICKS),
+            1.0,
+            "full until the fade slice"
+        );
         let mid = fade_alpha(PROMPT_TICKS - FADE_TICKS / 2);
         assert!(mid > 0.0 && mid < 1.0, "ramping down");
         assert_eq!(fade_alpha(PROMPT_TICKS), 0.0, "gone at the window end");
@@ -355,8 +390,14 @@ mod tests {
         let mut o = Onboarding::new(true);
         o.observe(embodied(0)); // WentDark raised at tick 0
         assert!(o.current_prompt(0).is_some());
-        assert!(o.current_prompt(PROMPT_TICKS - 1).is_some(), "still up near the end");
-        assert!(o.current_prompt(PROMPT_TICKS).is_none(), "expired at the window end");
+        assert!(
+            o.current_prompt(PROMPT_TICKS - 1).is_some(),
+            "still up near the end"
+        );
+        assert!(
+            o.current_prompt(PROMPT_TICKS).is_none(),
+            "expired at the window end"
+        );
         // And `observe` drops it from `active` once elapsed (no stale prompt lingers).
         o.observe(embodied(PROMPT_TICKS + 1));
         assert!(o.current_prompt(PROMPT_TICKS + 1).is_none());
@@ -364,7 +405,10 @@ mod tests {
 
     #[test]
     fn each_beat_maps_to_a_distinct_tone() {
-        assert_ne!(prompt_for(TeachBeat::WentDark, 1.0).tone, prompt_for(TeachBeat::Lingering, 1.0).tone);
+        assert_ne!(
+            prompt_for(TeachBeat::WentDark, 1.0).tone,
+            prompt_for(TeachBeat::Lingering, 1.0).tone
+        );
         assert_ne!(
             prompt_for(TeachBeat::Lingering, 1.0).tone,
             prompt_for(TeachBeat::StayedTooLong, 1.0).tone

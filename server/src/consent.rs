@@ -134,7 +134,10 @@ mod tests {
             99
         });
         assert_eq!(out, None);
-        assert!(!built.get(), "payload must NOT be constructed without consent");
+        assert!(
+            !built.get(),
+            "payload must NOT be constructed without consent"
+        );
     }
 
     #[test]

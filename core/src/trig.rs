@@ -58,7 +58,11 @@ pub fn atan2(y: Fixed, x: Fixed) -> Angle {
     // Base angle in the first octant: atan(smaller / larger) ∈ [0, ANGLE_FULL/8]. `swapped`
     // means |y| > |x|, i.e. the vector is steeper than 45°, so the looked-up angle is measured
     // from the Y axis and we take its complement (ANGLE_FULL/4 − base) to measure from +X.
-    let (smaller, larger, swapped) = if ay <= ax { (ay, ax, false) } else { (ax, ay, true) };
+    let (smaller, larger, swapped) = if ay <= ax {
+        (ay, ax, false)
+    } else {
+        (ax, ay, true)
+    };
     let base = if larger == Fixed::ZERO {
         0 // zero vector: ratio undefined → angle 0 (with the sign reflection below, still 0).
     } else {
@@ -66,13 +70,17 @@ pub fn atan2(y: Fixed, x: Fixed) -> Angle {
         let idx = ((ratio.to_bits() as i64 * (ATAN_LUT_LEN as i64 - 1)) >> ANGLE_BITS) as usize;
         ATAN_LUT[idx.min(ATAN_LUT_LEN - 1)]
     };
-    let first_quadrant = if swapped { (ANGLE_FULL / 4) - base } else { base };
+    let first_quadrant = if swapped {
+        (ANGLE_FULL / 4) - base
+    } else {
+        base
+    };
     // Reflect the first-quadrant angle into the vector's actual quadrant by component signs.
     let a = match (x.to_bits() >= 0, y.to_bits() >= 0) {
-        (true, true) => first_quadrant,                 // Q1: [0, 90°)
-        (false, true) => ANGLE_FULL / 2 - first_quadrant, // Q2: (90°, 180°]
+        (true, true) => first_quadrant,                    // Q1: [0, 90°)
+        (false, true) => ANGLE_FULL / 2 - first_quadrant,  // Q2: (90°, 180°]
         (false, false) => ANGLE_FULL / 2 + first_quadrant, // Q3: (180°, 270°]
-        (true, false) => ANGLE_FULL - first_quadrant,   // Q4: (270°, 360°)
+        (true, false) => ANGLE_FULL - first_quadrant,      // Q4: (270°, 360°)
     };
     Angle(a & (ANGLE_FULL - 1))
 }
@@ -87,7 +95,11 @@ pub fn rotate_toward(from: Angle, target: Angle, max_step: i32) -> Angle {
     let step = max_step.max(0);
     // Signed shortest delta in (−ANGLE_FULL/2, ANGLE_FULL/2].
     let raw = (target.0 - from.0) & (ANGLE_FULL - 1);
-    let delta = if raw > ANGLE_FULL / 2 { raw - ANGLE_FULL } else { raw };
+    let delta = if raw > ANGLE_FULL / 2 {
+        raw - ANGLE_FULL
+    } else {
+        raw
+    };
     if delta.abs() <= step {
         Angle(target.wrap())
     } else if delta > 0 {
@@ -136,16 +148,32 @@ mod tests {
         assert_eq!(atan2(fx(0), fx(1)).0, 0, "+X = 0");
         assert_eq!(atan2(fx(1), fx(0)).0, ANGLE_FULL / 4, "+Y = quarter turn");
         assert_eq!(atan2(fx(0), fx(-1)).0, ANGLE_FULL / 2, "-X = half turn");
-        assert_eq!(atan2(fx(-1), fx(0)).0, 3 * ANGLE_FULL / 4, "-Y = three-quarter turn");
+        assert_eq!(
+            atan2(fx(-1), fx(0)).0,
+            3 * ANGLE_FULL / 4,
+            "-Y = three-quarter turn"
+        );
     }
 
     #[test]
     fn atan2_diagonals_are_exact_eighths() {
         // atan(1) = 45° sits exactly on the last LUT entry, so the diagonals land on exact eighths.
         assert_eq!(atan2(fx(1), fx(1)).0, ANGLE_FULL / 8, "Q1 diagonal = 45°");
-        assert_eq!(atan2(fx(1), fx(-1)).0, 3 * ANGLE_FULL / 8, "Q2 diagonal = 135°");
-        assert_eq!(atan2(fx(-1), fx(-1)).0, 5 * ANGLE_FULL / 8, "Q3 diagonal = 225°");
-        assert_eq!(atan2(fx(-1), fx(1)).0, 7 * ANGLE_FULL / 8, "Q4 diagonal = 315°");
+        assert_eq!(
+            atan2(fx(1), fx(-1)).0,
+            3 * ANGLE_FULL / 8,
+            "Q2 diagonal = 135°"
+        );
+        assert_eq!(
+            atan2(fx(-1), fx(-1)).0,
+            5 * ANGLE_FULL / 8,
+            "Q3 diagonal = 225°"
+        );
+        assert_eq!(
+            atan2(fx(-1), fx(1)).0,
+            7 * ANGLE_FULL / 8,
+            "Q4 diagonal = 315°"
+        );
     }
 
     #[test]
@@ -178,7 +206,10 @@ mod tests {
         let mut a = 0;
         while a < ANGLE_FULL {
             let ang = Angle(a);
-            let v = Vec2 { x: cos(ang), y: sin(ang) };
+            let v = Vec2 {
+                x: cos(ang),
+                y: sin(ang),
+            };
             // Skip degenerate (the table can produce an exact-zero component, still fine here).
             let back = atan2(v.y, v.x);
             let d = shortest_diff(back, ang).abs();
@@ -220,10 +251,16 @@ mod tests {
         // Within a generous step → snaps straight onto target.
         assert_eq!(rotate_toward(from, target, 100), target);
         // Smaller step → moves the short way (decreasing through 0, wrapping).
-        assert_eq!(rotate_toward(from, target, 5), Angle((10 - 5) & (ANGLE_FULL - 1)));
+        assert_eq!(
+            rotate_toward(from, target, 5),
+            Angle((10 - 5) & (ANGLE_FULL - 1))
+        );
         // Mirror: from just below the seam, target just above → short way is +.
         let from2 = Angle(ANGLE_FULL - 6);
-        assert_eq!(rotate_toward(from2, Angle(10), 5), Angle((from2.0 + 5) & (ANGLE_FULL - 1)));
+        assert_eq!(
+            rotate_toward(from2, Angle(10), 5),
+            Angle((from2.0 + 5) & (ANGLE_FULL - 1))
+        );
     }
 
     #[test]
@@ -307,7 +344,11 @@ mod tests {
         assert_eq!(SIN_LUT[0], 0, "sin(0) = 0");
         assert_eq!(SIN_LUT[SIN_LUT_LEN / 4], one, "sin(quarter turn) = 1");
         assert_eq!(SIN_LUT[SIN_LUT_LEN / 2], 0, "sin(half turn) = 0");
-        assert_eq!(SIN_LUT[3 * SIN_LUT_LEN / 4], -one, "sin(three-quarter turn) = -1");
+        assert_eq!(
+            SIN_LUT[3 * SIN_LUT_LEN / 4],
+            -one,
+            "sin(three-quarter turn) = -1"
+        );
     }
 
     #[test]
@@ -322,18 +363,29 @@ mod tests {
     fn sin_lut_quarter_wave_symmetry() {
         // sin(half − x) = sin(x): the second quarter mirrors the first.
         for i in 0..=SIN_LUT_LEN / 4 {
-            assert_eq!(SIN_LUT[SIN_LUT_LEN / 2 - i], SIN_LUT[i], "mirror broken at {i}");
+            assert_eq!(
+                SIN_LUT[SIN_LUT_LEN / 2 - i],
+                SIN_LUT[i],
+                "mirror broken at {i}"
+            );
         }
         // sin(x + half) = −sin(x): the back half is the front half negated.
         for i in 0..SIN_LUT_LEN / 2 {
-            assert_eq!(SIN_LUT[i + SIN_LUT_LEN / 2], -SIN_LUT[i], "antisymmetry broken at {i}");
+            assert_eq!(
+                SIN_LUT[i + SIN_LUT_LEN / 2],
+                -SIN_LUT[i],
+                "antisymmetry broken at {i}"
+            );
         }
     }
 
     #[test]
     fn sin_lut_first_quarter_is_monotonic() {
         for i in 0..SIN_LUT_LEN / 4 {
-            assert!(SIN_LUT[i + 1] >= SIN_LUT[i], "sin not non-decreasing at {i}");
+            assert!(
+                SIN_LUT[i + 1] >= SIN_LUT[i],
+                "sin not non-decreasing at {i}"
+            );
         }
     }
 
@@ -341,9 +393,16 @@ mod tests {
     fn atan_lut_endpoints_and_monotonicity() {
         assert_eq!(ATAN_LUT[0], 0, "atan(0) = 0");
         // atan(1) = 45° = an exact eighth of a turn — what makes the diagonal tests exact.
-        assert_eq!(ATAN_LUT[ATAN_LUT_LEN - 1], ANGLE_FULL / 8, "atan(1) = eighth turn");
+        assert_eq!(
+            ATAN_LUT[ATAN_LUT_LEN - 1],
+            ANGLE_FULL / 8,
+            "atan(1) = eighth turn"
+        );
         for i in 0..ATAN_LUT_LEN - 1 {
-            assert!(ATAN_LUT[i + 1] >= ATAN_LUT[i], "atan not non-decreasing at {i}");
+            assert!(
+                ATAN_LUT[i + 1] >= ATAN_LUT[i],
+                "atan not non-decreasing at {i}"
+            );
         }
     }
 }

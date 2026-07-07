@@ -231,7 +231,10 @@ pub(crate) enum SettingsStep {
 /// Apply a [`SettingsAction`] to the preferences and report the resulting screen step. `ResetDefaults`
 /// mutates state and stays; the rest are screen/host transitions. Pure (no egui/window) — the
 /// Settings testable decision seam, mirroring [`apply_loadout_action`].
-pub(crate) fn apply_settings_action(action: SettingsAction, state: &mut SettingsState) -> SettingsStep {
+pub(crate) fn apply_settings_action(
+    action: SettingsAction,
+    state: &mut SettingsState,
+) -> SettingsStep {
     match action {
         SettingsAction::ResetDefaults => {
             state.reset();
@@ -346,223 +349,234 @@ pub(crate) fn settings_ui(
         // different lengths (the "sliders far-left, headings centred" screenshot). The banner above
         // and the footer buttons below stay outside this `vertical`, so they remain centred.
         ui.vertical(|ui| {
-        section_label(ui, "AUDIO");
-        egui::Grid::new("settings.audio")
-            .num_columns(2)
-            .min_col_width(SETTINGS_LABEL_W)
-            .spacing([16.0, 10.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Master").color(BONE).size(TYPE_BODY));
-                ui.add(Slider::new(&mut state.master_volume, 0.0..=1.0).fixed_decimals(2));
-                ui.end_row();
-                ui.label(RichText::new("SFX").color(BONE).size(TYPE_BODY));
-                ui.add(Slider::new(&mut state.sfx_volume, 0.0..=1.0).fixed_decimals(2));
-                ui.end_row();
-                ui.label(RichText::new("Music").color(BONE).size(TYPE_BODY));
-                ui.add(Slider::new(&mut state.music_volume, 0.0..=1.0).fixed_decimals(2));
-                ui.end_row();
-            });
+            section_label(ui, "AUDIO");
+            egui::Grid::new("settings.audio")
+                .num_columns(2)
+                .min_col_width(SETTINGS_LABEL_W)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Master").color(BONE).size(TYPE_BODY));
+                    ui.add(Slider::new(&mut state.master_volume, 0.0..=1.0).fixed_decimals(2));
+                    ui.end_row();
+                    ui.label(RichText::new("SFX").color(BONE).size(TYPE_BODY));
+                    ui.add(Slider::new(&mut state.sfx_volume, 0.0..=1.0).fixed_decimals(2));
+                    ui.end_row();
+                    ui.label(RichText::new("Music").color(BONE).size(TYPE_BODY));
+                    ui.add(Slider::new(&mut state.music_volume, 0.0..=1.0).fixed_decimals(2));
+                    ui.end_row();
+                });
 
-        section_divider(ui);
-        section_label(ui, "CONTROLS");
-        // Embodied hip FOV (PC-1) — a seated mouse player expects a wider field than the 60° that
-        // reads as tunnel-vision on a monitor. `clamp` re-bounds to the engine's embodied-FOV band;
-        // `main.rs` pushes it to `Game::set_base_fov` each match frame (camera only, never the sim).
-        egui::Grid::new("settings.controls")
-            .num_columns(2)
-            .min_col_width(SETTINGS_LABEL_W)
-            .spacing([16.0, 10.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Look sensitivity").color(BONE).size(TYPE_BODY));
-                ui.add(
-                    Slider::new(
-                        &mut state.mouse_sensitivity,
-                        SettingsState::SENS_MIN..=SettingsState::SENS_MAX,
-                    )
-                    .fixed_decimals(2),
-                );
-                ui.end_row();
-                ui.label(RichText::new("Field of view").color(BONE).size(TYPE_BODY));
-                ui.add(
-                    Slider::new(&mut state.fov_deg, SettingsState::FOV_MIN..=SettingsState::FOV_MAX)
+            section_divider(ui);
+            section_label(ui, "CONTROLS");
+            // Embodied hip FOV (PC-1) — a seated mouse player expects a wider field than the 60° that
+            // reads as tunnel-vision on a monitor. `clamp` re-bounds to the engine's embodied-FOV band;
+            // `main.rs` pushes it to `Game::set_base_fov` each match frame (camera only, never the sim).
+            egui::Grid::new("settings.controls")
+                .num_columns(2)
+                .min_col_width(SETTINGS_LABEL_W)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new("Look sensitivity")
+                            .color(BONE)
+                            .size(TYPE_BODY),
+                    );
+                    ui.add(
+                        Slider::new(
+                            &mut state.mouse_sensitivity,
+                            SettingsState::SENS_MIN..=SettingsState::SENS_MAX,
+                        )
+                        .fixed_decimals(2),
+                    );
+                    ui.end_row();
+                    ui.label(RichText::new("Field of view").color(BONE).size(TYPE_BODY));
+                    ui.add(
+                        Slider::new(
+                            &mut state.fov_deg,
+                            SettingsState::FOV_MIN..=SettingsState::FOV_MAX,
+                        )
                         .suffix("°")
                         .fixed_decimals(0),
-                );
-                ui.end_row();
-            });
-        // A boolean toggle, not a label:value row — sits under the two sliders rather than inside
-        // the grid.
-        ui.checkbox(&mut state.invert_look_y, "Invert look Y");
+                    );
+                    ui.end_row();
+                });
+            // A boolean toggle, not a label:value row — sits under the two sliders rather than inside
+            // the grid.
+            ui.checkbox(&mut state.invert_look_y, "Invert look Y");
 
-        section_divider(ui);
-        // The key-rebind editor (D90, widened by Q27). One row per rebindable action — the host
-        // toggles (pause / fullscreen / debug overlay — the keys `main.rs` owns) AND the gameplay
-        // keymap (move/embody/build/train/… — decoded by `pal-desktop` through this same map): its
-        // label + a button showing the current binding. Clicking a button arms capture ("press a
-        // key…"); the next mappable key press rebinds through the pure `KeybindMap::rebind`, which
-        // rejects a key an overlapping-layer action already owns and reports the owner for conflict
-        // feedback (a command-view and an embodied action MAY share a key — they are never live
-        // together; the shipped R = train rifleman / reload). Direct-mutates `state.keybinds` (like
-        // the sliders); persisted with the other prefs, read by `main.rs` each key event, and pushed
-        // into `DesktopInput` each match frame.
-        section_label(ui, "KEY BINDINGS");
-        ui.label(
-            RichText::new(
-                "Command-view and embodied actions may share one key (they are never active \
-                 together). Esc cancels a capture.",
-            )
-            .color(BONE)
-            .size(TYPE_CAPTION),
-        );
-        for act in GameAction::ALL {
-            let capturing = *rebinding == Some(act);
-            ui.horizontal(|ui| {
-                ui.add_sized(
-                    [180.0, 28.0],
-                    egui::Label::new(RichText::new(act.label()).color(BONE).size(TYPE_BODY)),
-                );
-                let btn_label = if capturing {
-                    "press a key...".to_string()
-                } else {
-                    state.keybinds.key_for(act).label().to_string()
-                };
-                // The armed row reads amber (it's the lone accent + signals "waiting for input").
-                let color = if capturing { AMBER } else { BONE };
-                if ui
-                    .add_sized(
-                        [120.0, 28.0],
-                        egui::Button::new(RichText::new(btn_label).color(color).size(TYPE_BODY)),
-                    )
-                    .clicked()
-                {
-                    // Toggle capture for this row (clicking the armed row cancels), clearing any stale
-                    // conflict notice.
-                    *rebinding = if capturing { None } else { Some(act) };
-                    *rebind_conflict = None;
-                }
-            });
-        }
-        // While a row is armed, consume the first mappable key press this frame and apply it. The
-        // egui `Key` → engine `KeyId` conversion is the app boundary (invariant #2: the engine seam
-        // is winit/egui-free); `rebind` upholds the no-shared-keys invariant.
-        if let Some(act) = *rebinding {
-            let pressed = ui.input(|i| {
-                i.events.iter().find_map(|e| match e {
-                    egui::Event::Key {
-                        key,
-                        pressed: true,
-                        ..
-                    } => egui_key_to_keyid(*key),
-                    _ => None,
-                })
-            });
-            if let Some(key) = pressed {
-                if key == KeyId::Escape {
-                    // Escape is the universal "never mind" — cancel the capture instead of binding
-                    // Escape itself (which is the shipped Pause key). The row reverts unchanged.
-                    *rebinding = None;
-                    *rebind_conflict = None;
-                } else {
-                    match state.keybinds.rebind(act, key) {
-                        RebindOutcome::Conflict(owner) => *rebind_conflict = Some((act, owner)),
-                        // Bound or Unchanged: the edit took (or was a no-op) — clear any prior notice.
-                        _ => *rebind_conflict = None,
-                    }
-                    *rebinding = None;
-                }
-            }
-        }
-        // Conflict feedback: name the action that already owns the key the player tried to bind.
-        if let Some((act, owner)) = *rebind_conflict {
+            section_divider(ui);
+            // The key-rebind editor (D90, widened by Q27). One row per rebindable action — the host
+            // toggles (pause / fullscreen / debug overlay — the keys `main.rs` owns) AND the gameplay
+            // keymap (move/embody/build/train/… — decoded by `pal-desktop` through this same map): its
+            // label + a button showing the current binding. Clicking a button arms capture ("press a
+            // key…"); the next mappable key press rebinds through the pure `KeybindMap::rebind`, which
+            // rejects a key an overlapping-layer action already owns and reports the owner for conflict
+            // feedback (a command-view and an embodied action MAY share a key — they are never live
+            // together; the shipped R = train rifleman / reload). Direct-mutates `state.keybinds` (like
+            // the sliders); persisted with the other prefs, read by `main.rs` each key event, and pushed
+            // into `DesktopInput` each match frame.
+            section_label(ui, "KEY BINDINGS");
             ui.label(
-                RichText::new(format!(
-                    "That key already runs {} -- couldn't bind it to {}. Rebind {} first.",
-                    owner.label(),
-                    act.label(),
-                    owner.label()
-                ))
-                .color(AMBER)
+                RichText::new(
+                    "Command-view and embodied actions may share one key (they are never active \
+                 together). Esc cancels a capture.",
+                )
+                .color(BONE)
                 .size(TYPE_CAPTION),
             );
-        }
-        // Reset only the bindings to the shipped defaults (a direct in-place edit — no action needed);
-        // clears any in-flight capture / conflict. The screen's RESET DEFAULTS also covers these.
-        // Sized to the full key/value row width so it reads as a footer action for the bindings
-        // section rather than a stray shrink-wrapped button.
-        if ui
-            .add_sized(
-                [SETTINGS_LABEL_W + 16.0 + 140.0, 28.0],
-                egui::Button::new(RichText::new("Reset bindings").color(BONE).size(TYPE_BODY)),
-            )
-            .clicked()
-        {
-            state.keybinds.reset();
-            *rebinding = None;
-            *rebind_conflict = None;
-        }
-
-        section_divider(ui);
-        // The going-dark fairness floor (invariant #6): the embodied alert channel is directional
-        // flash + positioned audio. These two opt-in cues give colorblind / hard-of-hearing players a
-        // non-color / visual equivalent so the core mechanic stays fair. Direct-mutate checkboxes (the
-        // `invert_look_y` pattern), fed to the engine each match frame via `set_accessibility_prefs`.
-        // The cycling palette / alert-cue buttons keep their TEXT labels (`.label()`) — the state is
-        // never communicated by colour alone, which is the whole point of these controls.
-        section_label(ui, "ACCESSIBILITY");
-        ui.checkbox(&mut state.colorblind_cues, "Colorblind cues");
-        ui.checkbox(&mut state.visual_sound_cues, "Visual sound cues");
-        // Colourblind-safe faction palette + cross-modal alert cues (WS-D): cycling buttons over the
-        // modes (direct edits — no action needed). A two-column grid so both buttons start at the
-        // same x as the sliders above.
-        egui::Grid::new("settings.accessibility")
-            .num_columns(2)
-            .min_col_width(SETTINGS_LABEL_W)
-            .spacing([16.0, 10.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Colorblind palette").color(BONE).size(TYPE_BODY));
-                if value_chip(ui, state.cvd_palette.label(), 140.0) {
-                    state.cvd_palette = state.cvd_palette.next();
+            for act in GameAction::ALL {
+                let capturing = *rebinding == Some(act);
+                ui.horizontal(|ui| {
+                    ui.add_sized(
+                        [180.0, 28.0],
+                        egui::Label::new(RichText::new(act.label()).color(BONE).size(TYPE_BODY)),
+                    );
+                    let btn_label = if capturing {
+                        "press a key...".to_string()
+                    } else {
+                        state.keybinds.key_for(act).label().to_string()
+                    };
+                    // The armed row reads amber (it's the lone accent + signals "waiting for input").
+                    let color = if capturing { AMBER } else { BONE };
+                    if ui
+                        .add_sized(
+                            [120.0, 28.0],
+                            egui::Button::new(
+                                RichText::new(btn_label).color(color).size(TYPE_BODY),
+                            ),
+                        )
+                        .clicked()
+                    {
+                        // Toggle capture for this row (clicking the armed row cancels), clearing any stale
+                        // conflict notice.
+                        *rebinding = if capturing { None } else { Some(act) };
+                        *rebind_conflict = None;
+                    }
+                });
+            }
+            // While a row is armed, consume the first mappable key press this frame and apply it. The
+            // egui `Key` → engine `KeyId` conversion is the app boundary (invariant #2: the engine seam
+            // is winit/egui-free); `rebind` upholds the no-shared-keys invariant.
+            if let Some(act) = *rebinding {
+                let pressed = ui.input(|i| {
+                    i.events.iter().find_map(|e| match e {
+                        egui::Event::Key {
+                            key, pressed: true, ..
+                        } => egui_key_to_keyid(*key),
+                        _ => None,
+                    })
+                });
+                if let Some(key) = pressed {
+                    if key == KeyId::Escape {
+                        // Escape is the universal "never mind" — cancel the capture instead of binding
+                        // Escape itself (which is the shipped Pause key). The row reverts unchanged.
+                        *rebinding = None;
+                        *rebind_conflict = None;
+                    } else {
+                        match state.keybinds.rebind(act, key) {
+                            RebindOutcome::Conflict(owner) => *rebind_conflict = Some((act, owner)),
+                            // Bound or Unchanged: the edit took (or was a no-op) — clear any prior notice.
+                            _ => *rebind_conflict = None,
+                        }
+                        *rebinding = None;
+                    }
                 }
-                ui.end_row();
-                ui.label(RichText::new("Alert cues").color(BONE).size(TYPE_BODY));
-                if value_chip(ui, state.alert_cue_mode.label(), 140.0) {
-                    state.alert_cue_mode = state.alert_cue_mode.next();
-                }
-                ui.end_row();
-            });
+            }
+            // Conflict feedback: name the action that already owns the key the player tried to bind.
+            if let Some((act, owner)) = *rebind_conflict {
+                ui.label(
+                    RichText::new(format!(
+                        "That key already runs {} -- couldn't bind it to {}. Rebind {} first.",
+                        owner.label(),
+                        act.label(),
+                        owner.label()
+                    ))
+                    .color(AMBER)
+                    .size(TYPE_CAPTION),
+                );
+            }
+            // Reset only the bindings to the shipped defaults (a direct in-place edit — no action needed);
+            // clears any in-flight capture / conflict. The screen's RESET DEFAULTS also covers these.
+            // Sized to the full key/value row width so it reads as a footer action for the bindings
+            // section rather than a stray shrink-wrapped button.
+            if ui
+                .add_sized(
+                    [SETTINGS_LABEL_W + 16.0 + 140.0, 28.0],
+                    egui::Button::new(RichText::new("Reset bindings").color(BONE).size(TYPE_BODY)),
+                )
+                .clicked()
+            {
+                state.keybinds.reset();
+                *rebinding = None;
+                *rebind_conflict = None;
+            }
 
-        section_divider(ui);
-        section_label(ui, "VIDEO");
-        // The window-mode source of truth is the host: reflect it, and emit the toggle action rather
-        // than editing a second copy here.
-        let mut fs = fullscreen;
-        if ui.checkbox(&mut fs, "Fullscreen").clicked() {
-            action = Some(SettingsAction::ToggleFullscreen);
-        }
-        egui::Grid::new("settings.video")
-            .num_columns(2)
-            .min_col_width(SETTINGS_LABEL_W)
-            .spacing([16.0, 10.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Quality").color(BONE).size(TYPE_BODY));
-                // A single cycling chip over the discrete tiers (a direct edit — no action needed).
-                if value_chip(ui, state.quality.label(), 140.0) {
-                    state.quality = state.quality.next();
-                }
-                ui.end_row();
-            });
+            section_divider(ui);
+            // The going-dark fairness floor (invariant #6): the embodied alert channel is directional
+            // flash + positioned audio. These two opt-in cues give colorblind / hard-of-hearing players a
+            // non-color / visual equivalent so the core mechanic stays fair. Direct-mutate checkboxes (the
+            // `invert_look_y` pattern), fed to the engine each match frame via `set_accessibility_prefs`.
+            // The cycling palette / alert-cue buttons keep their TEXT labels (`.label()`) — the state is
+            // never communicated by colour alone, which is the whole point of these controls.
+            section_label(ui, "ACCESSIBILITY");
+            ui.checkbox(&mut state.colorblind_cues, "Colorblind cues");
+            ui.checkbox(&mut state.visual_sound_cues, "Visual sound cues");
+            // Colourblind-safe faction palette + cross-modal alert cues (WS-D): cycling buttons over the
+            // modes (direct edits — no action needed). A two-column grid so both buttons start at the
+            // same x as the sliders above.
+            egui::Grid::new("settings.accessibility")
+                .num_columns(2)
+                .min_col_width(SETTINGS_LABEL_W)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new("Colorblind palette")
+                            .color(BONE)
+                            .size(TYPE_BODY),
+                    );
+                    if value_chip(ui, state.cvd_palette.label(), 140.0) {
+                        state.cvd_palette = state.cvd_palette.next();
+                    }
+                    ui.end_row();
+                    ui.label(RichText::new("Alert cues").color(BONE).size(TYPE_BODY));
+                    if value_chip(ui, state.alert_cue_mode.label(), 140.0) {
+                        state.alert_cue_mode = state.alert_cue_mode.next();
+                    }
+                    ui.end_row();
+                });
 
-        // Defensive re-clamp after the slider writes (sliders already bound, but a future edit path
-        // might not).
-        state.clamp();
+            section_divider(ui);
+            section_label(ui, "VIDEO");
+            // The window-mode source of truth is the host: reflect it, and emit the toggle action rather
+            // than editing a second copy here.
+            let mut fs = fullscreen;
+            if ui.checkbox(&mut fs, "Fullscreen").clicked() {
+                action = Some(SettingsAction::ToggleFullscreen);
+            }
+            egui::Grid::new("settings.video")
+                .num_columns(2)
+                .min_col_width(SETTINGS_LABEL_W)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Quality").color(BONE).size(TYPE_BODY));
+                    // A single cycling chip over the discrete tiers (a direct edit — no action needed).
+                    if value_chip(ui, state.quality.label(), 140.0) {
+                        state.quality = state.quality.next();
+                    }
+                    ui.end_row();
+                });
 
-        section_divider(ui);
-        // The gunsmith lives here now (D81): customization-only, reached from Settings, not a play
-        // gate. Its edits persist for the next match.
-        section_label(ui, "LOADOUT");
-        if footer_button(ui, "GUNSMITH", Emphasis::Secondary) {
-            action = Some(SettingsAction::OpenLoadout);
-        }
+            // Defensive re-clamp after the slider writes (sliders already bound, but a future edit path
+            // might not).
+            state.clamp();
+
+            section_divider(ui);
+            // The gunsmith lives here now (D81): customization-only, reached from Settings, not a play
+            // gate. Its edits persist for the next match.
+            section_label(ui, "LOADOUT");
+            if footer_button(ui, "GUNSMITH", Emphasis::Secondary) {
+                action = Some(SettingsAction::OpenLoadout);
+            }
         }); // end of the left-anchored settings body
 
         // Footer navigation — outside the `vertical` above so it stays centred under the card. A

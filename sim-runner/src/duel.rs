@@ -101,7 +101,9 @@ fn simulate(ticks: u64) -> DuelLog {
         // fire (HoldFire, literal executor — invariant #3) so the only shells are the player's.
         let mut cmds: Vec<Command> = Vec::new();
         if tick == EMBODY_TICK {
-            cmds.push(Command::Embody { entity: duel.player });
+            cmds.push(Command::Embody {
+                entity: duel.player,
+            });
         }
         if tick > EMBODY_TICK && fire_tick(tick) && alive(&sim, duel.enemy) {
             cmds.push(Command::Fire {
@@ -189,7 +191,8 @@ pub fn run(ticks: u64) {
     }
 
     // The watchable report (stderr).
-    eprintln!("== tank duel ==  (two {}-HP tanks; gun pen {} vs front {} / side {} / rear {})",
+    eprintln!(
+        "== tank duel ==  (two {}-HP tanks; gun pen {} vs front {} / side {} / rear {})",
         show(DUEL_TANK_HP),
         show(scenario::DUEL_GUN_PENETRATION),
         show(scenario::DUEL_ARMOR_FRONT),
@@ -225,7 +228,9 @@ pub fn run(ticks: u64) {
     );
     match log.enemy_killed_tick {
         Some(t) => eprintln!("phase B verdict: enemy destroyed on t{t} via flank pens"),
-        None => eprintln!("phase B verdict: enemy SURVIVED (flank shots failed to pen — unexpected)"),
+        None => {
+            eprintln!("phase B verdict: enemy SURVIVED (flank shots failed to pen — unexpected)")
+        }
     }
 }
 
@@ -257,7 +262,11 @@ mod tests {
                     assert_eq!(*facet, Facet::Front, "pre-flank hits strike the front");
                     assert_eq!(*amount, Fixed::ZERO, "front hits bounce for 0 damage");
                 } else {
-                    assert_eq!(*facet, Facet::Side, "post-flank hits strike the exposed side");
+                    assert_eq!(
+                        *facet,
+                        Facet::Side,
+                        "post-flank hits strike the exposed side"
+                    );
                     assert!(*amount > Fixed::ZERO, "side hits penetrate for real damage");
                 }
             }
@@ -293,7 +302,9 @@ mod tests {
     fn fires_on_the_cooldown_cadence() {
         assert!(fire_tick(FIRST_FIRE_TICK));
         assert!(!fire_tick(FIRST_FIRE_TICK + 1));
-        assert!(fire_tick(FIRST_FIRE_TICK + scenario::DUEL_GUN_COOLDOWN as u64));
+        assert!(fire_tick(
+            FIRST_FIRE_TICK + scenario::DUEL_GUN_COOLDOWN as u64
+        ));
         // At least one pre-flank and one post-flank shot exist, or the scene proves nothing.
         let log = simulate(200);
         let shots: Vec<u64> = log

@@ -386,7 +386,11 @@ mod tests {
         // ping/pong must carry exactly 4 sequence bytes.
         assert_eq!(decode(&[TAG_PING]), None, "ping missing sequence");
         assert_eq!(decode(&[TAG_PING, 1, 2, 3]), None, "ping seq too short");
-        assert_eq!(decode(&[TAG_PONG, 1, 2, 3, 4, 5]), None, "pong seq too long");
+        assert_eq!(
+            decode(&[TAG_PONG, 1, 2, 3, 4, 5]),
+            None,
+            "pong seq too long"
+        );
     }
 
     // ----- RttMeter (pure) -----
@@ -502,7 +506,10 @@ mod tests {
 
         // t=0.05: a polls again, receives b's pong, and records RTT = 0.05 - 0.0.
         ca.set(0.05);
-        assert!(a.poll().is_empty(), "ping/pong are never surfaced as lockstep frames");
+        assert!(
+            a.poll().is_empty(),
+            "ping/pong are never surfaced as lockstep frames"
+        );
         let got = samples.drain();
         assert_eq!(got.len(), 1, "exactly one RTT sample measured");
         assert!(
@@ -556,7 +563,11 @@ mod tests {
         assert_eq!(a.meter.outstanding_len(), 1, "interval not elapsed");
         clock.set(1.0);
         a.poll(); // exactly one interval later — a fresh ping
-        assert_eq!(a.meter.outstanding_len(), 2, "ping emitted after the interval");
+        assert_eq!(
+            a.meter.outstanding_len(),
+            2,
+            "ping emitted after the interval"
+        );
     }
 
     #[test]

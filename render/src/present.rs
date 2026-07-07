@@ -133,8 +133,16 @@ mod tests {
     #[test]
     fn uniform_clamps_dark() {
         assert_eq!(PresentUniform::new(0.4).params[0], 0.4);
-        assert_eq!(PresentUniform::new(5.0).params[0], 1.0, "over-range clamps to 1");
-        assert_eq!(PresentUniform::new(-2.0).params[0], 0.0, "under-range clamps to 0");
+        assert_eq!(
+            PresentUniform::new(5.0).params[0],
+            1.0,
+            "over-range clamps to 1"
+        );
+        assert_eq!(
+            PresentUniform::new(-2.0).params[0],
+            0.0,
+            "under-range clamps to 0"
+        );
         assert_eq!(
             [
                 PresentUniform::new(0.4).params[1],
@@ -149,12 +157,20 @@ mod tests {
     #[test]
     fn command_view_is_the_untouched_base_grade() {
         let uvs = [[0.5, 0.5], [0.0, 0.0], [1.0, 1.0], [0.2, 0.8]];
-        for c in [[0.1, 0.1, 0.1], [0.5, 0.4, 0.3], [0.9, 0.9, 0.9], [0.3, 0.6, 0.2]] {
+        for c in [
+            [0.1, 0.1, 0.1],
+            [0.5, 0.4, 0.3],
+            [0.9, 0.9, 0.9],
+            [0.3, 0.6, 0.2],
+        ] {
             for uv in uvs {
                 let base = theme::present_grade(c, uv);
                 let got = going_dark_grade(c, uv, 0.0);
                 for i in 0..3 {
-                    assert!((base[i] - got[i]).abs() < EPS, "dark=0 must equal present_grade");
+                    assert!(
+                        (base[i] - got[i]).abs() < EPS,
+                        "dark=0 must equal present_grade"
+                    );
                 }
             }
         }
@@ -192,12 +208,18 @@ mod tests {
         // Corner: full-dark must be dimmer than command view at the same corner.
         let cmd_corner = theme::luminance(going_dark_grade(mid, [1.0, 1.0], 0.0));
         let dark_corner = theme::luminance(going_dark_grade(mid, [1.0, 1.0], 1.0));
-        assert!(dark_corner < cmd_corner, "dark corner {dark_corner} !< command {cmd_corner}");
+        assert!(
+            dark_corner < cmd_corner,
+            "dark corner {dark_corner} !< command {cmd_corner}"
+        );
 
         // Centre: a lit mid-grey at screen centre stays clearly visible under full dark (the tunnel
         // leaves the centre alone and the shadow crush barely touches a mid pixel).
         let centre = theme::luminance(going_dark_grade([0.6, 0.6, 0.6], [0.5, 0.5], 1.0));
-        assert!(centre > 0.3, "lit centre must stay readable under dark, got {centre}");
+        assert!(
+            centre > 0.3,
+            "lit centre must stay readable under dark, got {centre}"
+        );
     }
 
     /// The going-dark effect is monotone in `dark`: more dark, dimmer corner. Guards against a sign
@@ -208,7 +230,10 @@ mod tests {
         let l0 = theme::luminance(going_dark_grade(mid, [0.95, 0.95], 0.0));
         let l5 = theme::luminance(going_dark_grade(mid, [0.95, 0.95], 0.5));
         let l1 = theme::luminance(going_dark_grade(mid, [0.95, 0.95], 1.0));
-        assert!(l0 > l5 && l5 > l1, "edge must darken monotonically with dark ({l0},{l5},{l1})");
+        assert!(
+            l0 > l5 && l5 > l1,
+            "edge must darken monotonically with dark ({l0},{l5},{l1})"
+        );
     }
 
     /// The dark intensification is **subtractive on the warm channels only** — it never RAISES blue
@@ -218,7 +243,12 @@ mod tests {
     #[test]
     fn dark_term_never_raises_blue_over_the_base_grade() {
         let uvs = [[0.5, 0.5], [0.1, 0.1], [0.9, 0.9], [0.3, 0.7]];
-        for c in [[0.12, 0.12, 0.12], [0.2, 0.15, 0.1], [0.4, 0.4, 0.5], [0.05, 0.05, 0.05]] {
+        for c in [
+            [0.12, 0.12, 0.12],
+            [0.2, 0.15, 0.1],
+            [0.4, 0.4, 0.5],
+            [0.05, 0.05, 0.05],
+        ] {
             for uv in uvs {
                 let base = theme::present_grade(c, uv);
                 let dark = going_dark_grade(c, uv, 1.0);

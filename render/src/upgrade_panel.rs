@@ -92,7 +92,6 @@ pub fn upgrade_view(level: u8, resources: i64) -> UpgradeView {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     //! `render` is the float boundary, so f32 layout math is fair game. The pure view + layout
@@ -122,9 +121,18 @@ mod tests {
     #[test]
     fn view_affordability_tracks_the_purse() {
         let cost = economy::upgrade_cost(0); // 200
-        assert!(!upgrade_view(0, cost - 1).affordable, "one short → not affordable");
-        assert!(upgrade_view(0, cost).affordable, "exact balance → affordable");
-        assert!(upgrade_view(0, cost + 1000).affordable, "surplus → affordable");
+        assert!(
+            !upgrade_view(0, cost - 1).affordable,
+            "one short → not affordable"
+        );
+        assert!(
+            upgrade_view(0, cost).affordable,
+            "exact balance → affordable"
+        );
+        assert!(
+            upgrade_view(0, cost + 1000).affordable,
+            "surplus → affordable"
+        );
     }
 
     #[test]
@@ -153,5 +161,4 @@ mod tests {
         // Cost still grows even at the speed floor.
         assert_eq!(v.next_cost, economy::upgrade_cost(254));
     }
-
 }

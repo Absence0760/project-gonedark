@@ -209,8 +209,13 @@ impl Army {
     /// table). Iterating this is deterministic by construction, mirroring [`Faction::ALL`]. The WW2
     /// armies ([`UsWw2`](Army::UsWw2)/[`Germany`](Army::Germany), D120) are appended AFTER `Fr`, so
     /// every existing index/tag is unchanged.
-    pub const ALL: [Army; ARMY_COUNT] =
-        [Army::Neutral, Army::Us, Army::Fr, Army::UsWw2, Army::Germany];
+    pub const ALL: [Army; ARMY_COUNT] = [
+        Army::Neutral,
+        Army::Us,
+        Army::Fr,
+        Army::UsWw2,
+        Army::Germany,
+    ];
 
     /// Dense index into per-army arrays (`[_; ARMY_COUNT]`). The tag order is load-bearing: it MUST
     /// match the persist/wire codecs ([`sim`](crate::sim) `army_tag` + [`lockstep`](crate::lockstep)

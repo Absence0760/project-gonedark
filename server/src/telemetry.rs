@@ -157,7 +157,10 @@ impl InMemorySink {
 
 impl TelemetrySink for InMemorySink {
     fn store(&self, event: TelemetryEvent) -> Result<(), StoreError> {
-        self.events.lock().expect("telemetry sink mutex").push(event);
+        self.events
+            .lock()
+            .expect("telemetry sink mutex")
+            .push(event);
         Ok(())
     }
 }

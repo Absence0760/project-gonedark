@@ -45,14 +45,12 @@ const DESKTOP_DEFAULT_TIER: QualityTier = QualityTier::High;
 
 mod shell;
 use shell::{
-    apply_army_select_action, apply_briefing_action, apply_loadout_action, apply_profile_action,
-    apply_settings_action, apply_skirmish_setup_action, build_channel, build_stamp,
-    apply_atlas_action, conflict_index_of, resolve_title_action, AboutReturn, ArmySelectState,
-    ArmySelectStep,
-    AtlasState, AtlasStep, BattlefieldPick,
-    BriefingOutcome, EguiShell, HostTransition, LoadoutStep, MissionSelectAction, ProfileState,
-    ProfileStep, PvpAction, SettingsState, SettingsStep, SkirmishConfig, SkirmishSetupState,
-    SkirmishSetupStep,
+    apply_army_select_action, apply_atlas_action, apply_briefing_action, apply_loadout_action,
+    apply_profile_action, apply_settings_action, apply_skirmish_setup_action, build_channel,
+    build_stamp, conflict_index_of, resolve_title_action, AboutReturn, ArmySelectState,
+    ArmySelectStep, AtlasState, AtlasStep, BattlefieldPick, BriefingOutcome, EguiShell,
+    HostTransition, LoadoutStep, MissionSelectAction, ProfileState, ProfileStep, PvpAction,
+    SettingsState, SettingsStep, SkirmishConfig, SkirmishSetupState, SkirmishSetupStep,
 };
 
 /// Which host screen is up: the out-of-match title shell, the pre-match gunsmith, or a running
@@ -329,7 +327,10 @@ impl App {
             // never a per-platform fork, invariant #2), so the *selected* node boots its own scene
             // rather than a hardcoded Mission1. A node that doesn't resolve (defensively
             // unplayable/unregistered) tunes nothing and falls back to Mission1.
-            let mission = self.registry.resolve_node(&self.campaign, node).map(|def| def.id);
+            let mission = self
+                .registry
+                .resolve_node(&self.campaign, node)
+                .map(|def| def.id);
             // Seed each node from its own index (deterministic, shared match config) so two nodes on
             // the same archetype are distinct battles rather than the byte-identical DEFAULT_SEED
             // replay — the honest per-node variety the campaign is supposed to have.
@@ -343,7 +344,9 @@ impl App {
             let mut game = match spec {
                 Some(spec) => Game::new_battle(device, format, seed, spec, loadout),
                 None => {
-                    let scene = mission.and_then(Scene::for_mission).unwrap_or(Scene::Mission1);
+                    let scene = mission
+                        .and_then(Scene::for_mission)
+                        .unwrap_or(Scene::Mission1);
                     Game::new_scene_with_loadout(device, format, seed, scene, loadout)
                 }
             };
@@ -472,7 +475,8 @@ impl App {
         let embodied = matches!(&self.screen, Screen::InMatch(game) if game.is_embodied());
         // A shell overlay (pause / reconnect / post-match summary) must free the cursor so the
         // player can click its buttons — even though they may have opened it while embodied.
-        let overlay_up = matches!(&self.screen, Screen::InMatch(game) if game.shell_overlay_active());
+        let overlay_up =
+            matches!(&self.screen, Screen::InMatch(game) if game.shell_overlay_active());
         let cursor_free = self.alt_held || overlay_up;
         let want = want_cursor_capture(embodied, cursor_free);
         if want == self.cursor_captured {
@@ -574,11 +578,14 @@ impl App {
                 if let Some(sh) = self.shell.as_mut() {
                     // The video checkbox reflects the host's live window mode; pref edits mutate
                     // `self.settings` in place (the Stay case).
-                    if let Some(action) = sh.draw_settings(surface, &mut self.settings, self.fullscreen)
+                    if let Some(action) =
+                        sh.draw_settings(surface, &mut self.settings, self.fullscreen)
                     {
                         transition = match apply_settings_action(action, &mut self.settings) {
                             SettingsStep::Stay => None,
-                            SettingsStep::ToggleFullscreen => Some(HostTransition::ToggleFullscreen),
+                            SettingsStep::ToggleFullscreen => {
+                                Some(HostTransition::ToggleFullscreen)
+                            }
                             SettingsStep::OpenLoadout => Some(HostTransition::OpenLoadout),
                             SettingsStep::About => {
                                 Some(HostTransition::OpenAbout(AboutReturn::Settings))
@@ -669,7 +676,9 @@ impl App {
                     let target = only.and_then(|c| shell::overview_view(&self.campaign, c));
                     let base = shell::hub_backdrop_view(&mut self.hub_flight, target, dt);
                     let view = shell::hub_effective_view(base, self.hub_look);
-                    if let Some(action) = sh.draw_mission_select(surface, &self.campaign, only, view) {
+                    if let Some(action) =
+                        sh.draw_mission_select(surface, &self.campaign, only, view)
+                    {
                         transition = match action {
                             // A playable tile → open that node's briefing (the click was already
                             // gated to playable nodes by the pure `playable_node` seam).
@@ -699,14 +708,14 @@ impl App {
                     {
                         // The difficulty cycler edits the live selection in place (Stay); Deploy
                         // queues the launch through the gunsmith; Back returns to the hub.
-                        transition = match apply_briefing_action(action, &mut self.briefing_difficulty)
-                        {
-                            BriefingOutcome::Stay => None,
-                            BriefingOutcome::Launch { difficulty } => {
-                                Some(HostTransition::LaunchMission { node, difficulty })
-                            }
-                            BriefingOutcome::Back => Some(HostTransition::OpenMissionSelect),
-                        };
+                        transition =
+                            match apply_briefing_action(action, &mut self.briefing_difficulty) {
+                                BriefingOutcome::Stay => None,
+                                BriefingOutcome::Launch { difficulty } => {
+                                    Some(HostTransition::LaunchMission { node, difficulty })
+                                }
+                                BriefingOutcome::Back => Some(HostTransition::OpenMissionSelect),
+                            };
                     }
                 }
             }
@@ -889,7 +898,12 @@ impl App {
                 Screen::Settings | Screen::Profile | Screen::Loadout | Screen::ArmySelect
             )
         {
-            persist_shell_prefs(&self.settings, &self.profile, &self.loadout, &self.army_select);
+            persist_shell_prefs(
+                &self.settings,
+                &self.profile,
+                &self.loadout,
+                &self.army_select,
+            );
         }
 
         match transition {
@@ -1168,7 +1182,10 @@ impl ApplicationHandler for App {
         let window: Arc<Window> = Arc::new(window);
 
         let surface = DesktopRenderSurface::new(window);
-        let stamp = build_stamp(build_channel(cfg!(debug_assertions)), env!("CARGO_PKG_VERSION"));
+        let stamp = build_stamp(
+            build_channel(cfg!(debug_assertions)),
+            env!("CARGO_PKG_VERSION"),
+        );
         // The backdrop targets the sRGB `format` (renders into the sRGB view); egui targets the
         // linear `shell_format` (renders into the linear view) — it blends in gamma space and renders
         // invisibly into an sRGB view (see `shell_format`).
@@ -1419,7 +1436,10 @@ fn persist_shell_prefs(
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(&path, shell::encode_shell_prefs(settings, profile, loadout, army));
+    let _ = std::fs::write(
+        &path,
+        shell::encode_shell_prefs(settings, profile, loadout, army),
+    );
 }
 
 struct DiagLogger;
@@ -1545,8 +1565,16 @@ mod flight_nav_tests {
     use super::{atlas_return_from, enter_hub_camera, seed_hub_flight, Screen};
     use gonedark_render::globe_backdrop::{GlobeFlight, GlobeView};
 
-    const ATLAS_VIEW: GlobeView = GlobeView { yaw: 0.3, pitch: 0.0, zoom: 1.0 };
-    const OVERVIEW: GlobeView = GlobeView { yaw: -1.2, pitch: 0.8, zoom: 2.4 };
+    const ATLAS_VIEW: GlobeView = GlobeView {
+        yaw: 0.3,
+        pitch: 0.0,
+        zoom: 1.0,
+    };
+    const OVERVIEW: GlobeView = GlobeView {
+        yaw: -1.2,
+        pitch: 0.8,
+        zoom: 2.4,
+    };
 
     #[test]
     fn the_fly_in_seeds_only_from_the_atlas_toward_a_real_battlefield() {
@@ -1558,7 +1586,10 @@ mod flight_nav_tests {
         assert_eq!(seed_hub_flight(&Screen::Atlas, ATLAS_VIEW, None), None);
         // Entering the hub from anywhere else (a briefing backing out, a CONTINUE deep-link)
         // has no globe camera on screen to fly from — cut.
-        for prev in [Screen::Title, Screen::Briefing(gonedark_core::campaign::NodeId(0))] {
+        for prev in [
+            Screen::Title,
+            Screen::Briefing(gonedark_core::campaign::NodeId(0)),
+        ] {
             assert_eq!(seed_hub_flight(&prev, ATLAS_VIEW, Some(OVERVIEW)), None);
         }
     }
@@ -1609,11 +1640,17 @@ mod flight_nav_tests {
         let from = atlas_return_from(&Screen::MissionSelect, Some(&airborne), Some(OVERVIEW))
             .expect("an airborne hub still flies back");
         assert_eq!(from, airborne.view());
-        assert!(from != OVERVIEW, "the return starts mid-flight, not at the target");
+        assert!(
+            from != OVERVIEW,
+            "the return starts mid-flight, not at the target"
+        );
         // A hub with no battlefield (settled fallback) has nothing to fly back from — cut.
         assert_eq!(atlas_return_from(&Screen::MissionSelect, None, None), None);
         // Entering the atlas from anywhere but the hub (the title's CAMPAIGN) opens settled.
-        assert_eq!(atlas_return_from(&Screen::Title, None, Some(OVERVIEW)), None);
+        assert_eq!(
+            atlas_return_from(&Screen::Title, None, Some(OVERVIEW)),
+            None
+        );
     }
 }
 
@@ -1655,8 +1692,14 @@ mod scene_arg_tests {
 
     #[test]
     fn extracts_scene_token_in_both_forms() {
-        assert_eq!(scene_token(&args(&["--scene", "duel"])).as_deref(), Some("duel"));
-        assert_eq!(scene_token(&args(&["--scene=duel"])).as_deref(), Some("duel"));
+        assert_eq!(
+            scene_token(&args(&["--scene", "duel"])).as_deref(),
+            Some("duel")
+        );
+        assert_eq!(
+            scene_token(&args(&["--scene=duel"])).as_deref(),
+            Some("duel")
+        );
         // Other flags around it don't interfere.
         assert_eq!(
             scene_token(&args(&["--foo", "--scene", "default", "--bar"])).as_deref(),

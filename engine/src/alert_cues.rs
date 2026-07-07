@@ -463,9 +463,15 @@ mod tests {
         let l = haptic_pulse_ms(HapticSide::Left);
         let c = haptic_pulse_ms(HapticSide::Center);
         let r = haptic_pulse_ms(HapticSide::Right);
-        assert!(l < c && c < r, "left<center<right coded lengths: {l},{c},{r}");
-        assert!(BUTTON_TICK_MS < l, "the button tick is shorter than any alert pulse");
-        assert!(BUTTON_TICK_MS > 0, "a tick must actually buzz");
+        assert!(
+            l < c && c < r,
+            "left<center<right coded lengths: {l},{c},{r}"
+        );
+        assert!(
+            BUTTON_TICK_MS < l,
+            "the button tick is shorter than any alert pulse"
+        );
+        const _: () = assert!(BUTTON_TICK_MS > 0, "a tick must actually buzz");
     }
 
     #[test]
