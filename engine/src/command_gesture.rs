@@ -17,16 +17,16 @@
 //! a map **hijacked embody**, and there was no way to pan or zoom the command camera at all. This seam
 //! decomposes a two-finger gesture into its orthogonal parts each frame:
 //!
-//! - **PAN** — the two-finger *centroid* translating drives [`move_axis`](CommandGestureOutput::move_axis)
+//! - **PAN** — the two-finger *centroid* translating drives `move_axis`
 //!   from the per-frame centroid delta (the same host screen convention the WASD/edge-pan stick uses:
 //!   `+x` right, `+y` down), fed to the command camera's `pan_focus`.
 //! - **PINCH/ZOOM** — the *inter-finger distance* changing drives
-//!   [`scroll`](CommandGestureOutput::scroll) from the per-frame spread delta (fingers apart = zoom IN
+//!   `scroll` from the per-frame spread delta (fingers apart = zoom IN
 //!   = positive scroll, matching the wheel), fed to `zoom_half_extent`.
 //! - **EMBODY** — a genuine two-finger **tap** (both fingers down AND back up within
-//!   [`TAP_MAX_MS`], with total movement under [`TAP_SLOP_PX`], never more than two fingers, and the
+//!   `TAP_MAX_MS`, with total movement under `TAP_SLOP_PX`, never more than two fingers, and the
 //!   SAME two fingers throughout — any pair re-anchor disqualifies it) raises
-//!   the one-shot [`embody`](CommandGestureOutput::embody) edge. A pan or a pinch moves too far / holds
+//!   the one-shot `embody` edge. A pan or a pinch moves too far / holds
 //!   too long, so it can NEVER be mistaken for the embody tap (the mis-tap resistance, P1-4).
 //!
 //! Pan and pinch are emitted together (they are orthogonal — a pure translation changes the centroid
@@ -39,7 +39,7 @@
 //! while already embodied), so it is harmless that this seam keeps tracking the twin-stick fingers
 //! while embodied — those fields are ignored there. Floats are fine (host-side input/presentation, the
 //! platform side of the PAL seam); nothing here touches `core` or the per-tick checksum (invariants
-//! #1/#2/#7). The mapping *scales* ([`PAN_GAIN`], [`PINCH_GAIN`]) are a first-cut device feel and are
+//! #1/#2/#7). The mapping *scales* (`PAN_GAIN`, `PINCH_GAIN`) are a first-cut device feel and are
 //! owed an on-device tuning pass; the *classification* (pan vs pinch vs tap) is what this seam locks.
 
 use gonedark_pal::TouchSample;

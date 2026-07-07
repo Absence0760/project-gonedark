@@ -10,7 +10,7 @@
 //!
 //! ## Fairness (invariant #6)
 //!
-//! A lingering instance is appended to the SAME draw list [`crate::fog::visible_instances`] filters
+//! A lingering instance is appended to the SAME draw list `crate::fog::visible_instances` filters
 //! every other instance from, so it is gated by the identical visibility mask as a living unit — it
 //! can never outlive what the viewer would have been able to see. It carries no
 //! [`crate::FLAG_EMBODIED`]/[`crate::FLAG_RING`] always-keep flag, so it gets no special fog
@@ -18,7 +18,7 @@
 //!
 //! ## Embodiment (invariant #5)
 //!
-//! The possessed avatar's own death is never lingered ([`DeathLinger::update`] skips any vanished
+//! The possessed avatar's own death is never lingered (`DeathLinger::update` skips any vanished
 //! unit that was `embodied` in the previous snapshot) — ejecting to command is the engine's job, and
 //! drawing a frozen "body" for the very entity the player was just controlling reads too close to a
 //! respawn/character system this game deliberately does not have. Every other unit (AI-controlled,

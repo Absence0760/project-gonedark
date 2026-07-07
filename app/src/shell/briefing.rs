@@ -23,7 +23,7 @@ pub(crate) enum BriefingAction {
 
 /// The screen-level outcome of a [`BriefingAction`] once applied — what the host run loop switches
 /// on. Separated from the egui glue so it is unit-testable without a window, mirroring
-/// [`LoadoutStep`] / [`SettingsStep`].
+/// `LoadoutStep` / `SettingsStep`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum BriefingOutcome {
     /// Stay on the briefing (a difficulty edit, or nothing this frame).
@@ -60,7 +60,7 @@ pub(crate) fn difficulty_label(d: Difficulty) -> &'static str {
 
 /// Apply a [`BriefingAction`], advancing the host-side `selected` replay tier in place on a cycle and
 /// reporting the resulting screen step. Pure (no egui/window) — the briefing's testable decision
-/// seam, mirroring [`apply_loadout_action`]. `Deploy` carries the *current* selection out as the
+/// seam, mirroring `apply_loadout_action`. `Deploy` carries the *current* selection out as the
 /// launch tier: the host applies its combat tuning (D83: the 4→3 enemy-commander band + the scenario
 /// situation modifiers, via `Game::apply_campaign_tuning`) and records it against `Campaign::clear`
 /// on a win.

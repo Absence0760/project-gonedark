@@ -104,7 +104,7 @@ pub struct Projectile {
     /// could be drawn per shell type. The pen/damage/splash *magnitudes* are already baked into
     /// `penetration`/`damage`/`splash_*` at launch; this is the identity tag.
     pub shell: ShellKind,
-    /// Area-burst radius in world units (`0` ⇒ no splash — `Ap`). From [`ShellStats::splash_radius`]
+    /// Area-burst radius in world units (`0` ⇒ no splash — `Ap`). From `ShellStats::splash_radius`
     /// at launch (tank embodiment P6).
     pub splash_radius: Fixed,
     /// Damage dealt to each hostile (other than the directly-hit body) inside `splash_radius`, before

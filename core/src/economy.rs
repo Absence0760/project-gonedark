@@ -826,9 +826,9 @@ const fn faction_power_tilt(army: Army, kind: UnitKind) -> Option<PowerTilt> {
 /// Per-(army, archetype) combat stats a produced unit spawns with (factions-plan WS-B + the WW2
 /// cost-vs-power fork, D120). The [`Army::Neutral`] baseline is exactly [`unit_stats`] (every legacy
 /// scene unchanged); the modern `Us`/`Fr` apply the fairness-banded, power-NEUTRAL **logistics tilt**
-/// ([`faction_logistics_tilt`]) — magazine/reload/reserve/turret only, so the snowball-sensitive gun
+/// (`faction_logistics_tilt`) — magazine/reload/reserve/turret only, so the snowball-sensitive gun
 /// stats (damage/cooldown/range/HP) stay shared and the equal-COUNT mirror trade stays fair. The WW2
-/// `UsWw2`/`Germany` instead apply the **power tilt** ([`faction_power_tilt`]) to the shared tank —
+/// `UsWw2`/`Germany` instead apply the **power tilt** (`faction_power_tilt`) to the shared tank —
 /// replacing HP + penetration — which is compensated by the per-army [`unit_cost_for`] price so the
 /// trade balances at equal BUDGET. Every army fields every archetype — no missing role. Determinism:
 /// the table is fixed-point and identical on every peer, so a given `(army, kind)` spawns the
@@ -974,7 +974,7 @@ pub fn queue_production(
 
 /// Set a producing building's **spawn rally point** — the troop-training rally seam. Units produced
 /// at `camp` thereafter inherit `rally` as their first order ([`economy_system`] spawns them with
-/// [`Order::MoveTo(rally)`](Order::MoveTo) instead of [`Order::Idle`](Order::Idle)). A literal-executor
+/// [`Order::MoveTo(rally)`](Order::MoveTo) instead of [`Order::Idle`]). A literal-executor
 /// move (invariant #3): the unit just walks to the point, it decides nothing. Returns whether it was
 /// set. A no-op (returns `false`) for a dead handle or a non-building entity; a rally may be set on a
 /// still-constructing building (it takes effect once it produces). Deterministic: a plain fixed-point

@@ -4,7 +4,7 @@
 //! ## The discipline (mirrors `engine::objectives`)
 //!
 //! An [`Onboarding`] is advanced **after `Sim::step`** from the same already-checksummed signals the
-//! objective layer reads — the embody/surface/death edges + the elapsed tick. It owns no [`Sim`], can
+//! objective layer reads — the embody/surface/death edges + the elapsed tick. It owns no `Sim`, can
 //! never be handed `&mut Sim`, and mutates only its own small state, so it adds **zero** per-tick
 //! checksum surface (invariants #1/#7): the teach layer is authored and tuned with no lockstep risk.
 //! It is the exact footing [`ObjectiveSet`](crate::objectives::ObjectiveSet) and
@@ -87,7 +87,7 @@ pub struct Onboarding {
 }
 
 impl Onboarding {
-    /// A teach machine for a scene. `enabled` is set only for the campaign mission ([`Scene::Mission1`]
+    /// A teach machine for a scene. `enabled` is set only for the campaign mission (`Scene::Mission1`
     /// (crate::Scene::Mission1)); every other scene gets a disabled, no-op machine.
     pub fn new(enabled: bool) -> Self {
         Onboarding {

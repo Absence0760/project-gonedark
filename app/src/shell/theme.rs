@@ -48,7 +48,7 @@ pub(crate) const TYPE_CAPTION: f32 = 12.0;
 /// Build the shell's cohesive dark [`egui::Style`] — the single source of truth for the title /
 /// gunsmith / settings chrome's look (fills, widget ramp, corner radii, spacing, and the
 /// heading->caption type scale). Pure data: `egui::Style`/`Visuals` are plain structs with no GPU or
-/// window, so this is unit-tested below (unlike the [`EguiShell`] glue that *applies* it). Keeping it
+/// window, so this is unit-tested below (unlike the `EguiShell` glue that *applies* it). Keeping it
 /// pure also means a retune is one function, asserted by tests, rather than scattered `set_*` calls.
 pub(crate) fn shell_style() -> egui::Style {
     use egui::{CornerRadius, FontFamily, FontId, Stroke, TextStyle};

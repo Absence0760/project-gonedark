@@ -130,7 +130,7 @@ impl Mixer {
     /// Sum one stereo frame from all live voices **plus the looping music bed**, advancing +
     /// low-passing each voice and advancing (wrapping) the music cursor. Finished voices contribute
     /// nothing (pruned lazily on [`push`](Self::push)). The music bed is added centred (equal to both
-    /// ears) at [`music_gain`]; output is soft-clamped to `[-1, 1]` so stacked cues + music never clip.
+    /// ears) at `music_gain`; output is soft-clamped to `[-1, 1]` so stacked cues + music never clip.
     pub fn next_frame(&mut self) -> (f32, f32) {
         let (mut l, mut r) = (0.0f32, 0.0f32);
         for v in &mut self.voices {

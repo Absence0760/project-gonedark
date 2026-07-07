@@ -5,20 +5,20 @@
 //! caller-supplied view, clears it itself) whose only data is one tiny embedded blob.
 //!
 //! ## The scene
-//! A slowly turning stylized earth — land/sea from the equirectangular [`LANDMASK`] (Natural
+//! A slowly turning stylized earth — land/sea from the equirectangular `LANDMASK` (Natural
 //! Earth 1:50m since D106, public domain; regenerable via `tools/earth/gen_landmask.py`,
 //! provenance in `assets/earth/manifest.json`), a faint 30° graticule, an amber fresnel rim —
 //! with one glowing
-//! **pin per conflict** ([`GlobePin`], authored `Conflict::lat_x10/lon_x10`). The globe settles
-//! with the *focused* conflict facing the camera ([`globe_yaw`]) and sways gently; the cursor
+//! **pin per conflict** (`GlobePin`, authored `Conflict::lat_x10/lon_x10`). The globe settles
+//! with the *focused* conflict facing the camera (`globe_yaw`) and sways gently; the cursor
 //! parallax reuses [`title_backdrop::parallax_offset`] so the two backdrops feel like one family.
 //!
 //! ## Float boundary (invariant #1/#4)
 //! `render` is the float side: the shells hand over integer tenth-degrees from `core::campaign`
 //! and this module converts at its boundary. All camera/placement math is factored into pure,
-//! GPU-free, unit-tested free functions ([`latlon_to_unit`], [`land_at`], [`globe_yaw`],
-//! [`sphere_mesh`]) — hand-rolled matrices, no `glam` (D19), so the crate stays `wgpu` +
-//! `bytemuck`. The WGSL mask lookup mirrors [`latlon_to_unit`]; the two must stay inverses.
+//! GPU-free, unit-tested free functions (`latlon_to_unit`, `land_at`, `globe_yaw`,
+//! `sphere_mesh`) — hand-rolled matrices, no `glam` (D19), so the crate stays `wgpu` +
+//! `bytemuck`. The WGSL mask lookup mirrors `latlon_to_unit`; the two must stay inverses.
 
 use wgpu::util::DeviceExt;
 
@@ -167,8 +167,8 @@ impl GlobeView {
     /// The battlefield-overview view (D106): centered on a latitude/longitude — yaw brings the
     /// longitude to face the camera (no sway; a stable ground for picking), pitch tips the
     /// latitude toward the **eye**, not the equator line: the backdrop camera sits above the
-    /// globe axis ([`EYE`]), so the anchor must land at the eye's elevation off `+Z` or the
-    /// facing gate ([`project_pin`]) swallows it at close zoom. Under [`globe_model`]'s
+    /// globe axis (`EYE`), so the anchor must land at the eye's elevation off `+Z` or the
+    /// facing gate ([`project_pin`]) swallows it at close zoom. Under `globe_model`'s
     /// `R_x(pitch)·R_y(yaw)`, a point at latitude `φ` ends up `φ − pitch` above `+Z`, so
     /// `pitch = φ − `[`eye_elevation`]`(zoom)` points its surface normal straight up the eye
     /// ray. Clamped like every other view (unit-tested via [`project_pin`]).
@@ -200,7 +200,7 @@ impl GlobeView {
 ///
 /// Interpolation choices (each unit-tested): **yaw takes the shortest arc** (a war at +170°
 /// entered from −170° crosses the date line, not the whole planet), pitch eases linearly, and
-/// **zoom interpolates in eye distance** (`1/zoom` — the term [`view_eye`] scales by), so the
+/// **zoom interpolates in eye distance** (`1/zoom` — the term `view_eye` scales by), so the
 /// camera travels at a perceptually steady rate instead of lurching at the near end. Progress is
 /// smoothstepped (ease-in-out).
 #[derive(Clone, Copy, PartialEq, Debug)]

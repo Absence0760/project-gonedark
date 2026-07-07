@@ -4,7 +4,7 @@
 //! next to the `.glb`. This module owns the **runtime** side: it `include_bytes!`s those cooked
 //! meshes (so they ride into the binary/APK with no on-device file IO or asset-pack plumbing),
 //! parses the dead-simple format into a CPU triangle soup, and uploads it to GPU vertex/index
-//! buffers, and owns the shared instanced, depth-tested [`MeshPipeline`] that *draws* them. The
+//! buffers, and owns the shared instanced, depth-tested `MeshPipeline` that *draws* them. The
 //! per-pass placement math is the caller's: [`crate::world::weapon_view_model`] for the embodied
 //! weapon viewmodel, and the command-view unit-token pass for world-space tokens.
 //!
@@ -27,7 +27,7 @@
 //! This is the **float boundary** (invariant #1): every number here is already `f32`, and none of
 //! it touches `core`/the sim — meshes are render-only. The crate stays `glam`/windowing-free (D19):
 //! the host hands matrices in as plain column-major `[[f32; 4]; 4]` arrays; the small amount of
-//! transform math we *do* need ([`model_matrix`]) is hand-rolled scalar `f32`.
+//! transform math we *do* need (`model_matrix`) is hand-rolled scalar `f32`.
 
 use wgpu::util::DeviceExt;
 
@@ -164,7 +164,7 @@ impl MeshCpu {
 pub enum ModelKind {
     Trooper,
     Tank,
-    /// The tank's turret + barrel as its own mesh node, drawn atop the [`Tank`] hull and yawed
+    /// The tank's turret + barrel as its own mesh node, drawn atop the [`Tank`](ModelKind::Tank) hull and yawed
     /// independently by the sim's `turret_yaw` (tank embodiment P7, D55).
     TankTurret,
     CampHq,
@@ -206,12 +206,12 @@ pub enum ModelKind {
     TurretFr,
     /// Support-role infantry silhouette (D65) — the shared trooper body plus a boxy medical pack and
     /// a raised cross motif, so a Medic reads as "support, not a shooter" instead of drawing as a
-    /// plain rifleman ([`crate::model_for_unit`] resolves the sim's Medic archetype here, army-agnostic
+    /// plain rifleman (`crate::model_for_unit` resolves the sim's Medic archetype here, army-agnostic
     /// for now). Appended after the WS-C faction silhouettes so their existing discriminants stay put.
     Medic,
     /// AntiTank/bazooka team infantry silhouette (D73) — the shared trooper body plus a long
     /// shoulder-launcher tube, so an AT team reads as "AT team, not a rifleman" instead of drawing as
-    /// a plain rifleman ([`crate::model_for_unit`] resolves the sim's AntiTank archetype here,
+    /// a plain rifleman (`crate::model_for_unit` resolves the sim's AntiTank archetype here,
     /// army-agnostic for now).
     AntiTank,
     // --- WW2 cost-vs-power tank silhouettes (D120). Presentation-only per-army WW2 tanks, resolved by

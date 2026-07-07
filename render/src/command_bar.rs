@@ -5,7 +5,7 @@
 //! of the command view, hit-tested per tap by the engine's `command_touch` seam, that arm exactly
 //! those intents.
 //!
-//! PRESENTATION ONLY (invariant #2/#4): the engine fills [`CommandBarView`] from its pixel layout
+//! PRESENTATION ONLY (invariant #2/#4): the engine fills `CommandBarView` from its pixel layout
 //! (the hit shapes), converting to NDC so the drawn shapes can never drift from the hit shapes; this
 //! module only turns that view into overlay quads + text labels and feeds the **same** overlay-quad
 //! and W4 text pipelines `command_panel` / `objective_hud` use — no new shader, no sim touch. Pure +
@@ -158,7 +158,7 @@ fn icon_for_label(label: &str, palette: &crate::theme::Palette) -> Option<(IconK
 }
 
 /// The bar's icons — one small glyph tucked into each button's left inset, beside its centered label.
-/// A button whose label has no mapped icon ([`icon_for_label`]) simply contributes none. Empty view ⇒
+/// A button whose label has no mapped icon (`icon_for_label`) simply contributes none. Empty view ⇒
 /// no icons. The icon center sits `ICON_CENTER_FRAC` of the half-width left of the button center; the
 /// icon pass aspect-corrects the width so it stays square in pixels. Pure + GPU-free → unit-tested.
 pub fn command_bar_icons(view: &CommandBarView, palette: &crate::theme::Palette) -> Vec<IconItem> {

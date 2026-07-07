@@ -133,7 +133,7 @@ const fn plan_style(difficulty: Difficulty) -> PlanStyle {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct CommanderConfig {
     /// How aggressively this commander plays — a deterministic difficulty tier
-    /// ([`mission_tuning::Difficulty`]) that scales the planner's **choices** (production backlog
+    /// (`mission_tuning::Difficulty`) that scales the planner's **choices** (production backlog
     /// depth, the Heavy reserve, and the army re-plan cadence), never its **knowledge**. A harder
     /// tier issues orders sooner and spends more freely; it reads *nothing* about the player going
     /// dark — invariant #6 is structural, not a discipline (the gone-dark consult stays gated

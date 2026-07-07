@@ -12,17 +12,17 @@
 //!   moves. So this module adds **zero** lockstep / cross-arch surface (invariant #1/#2/#7).
 //! - **Placement, never information (invariant #6).** The editor configures *where controls sit*. It
 //!   can NEVER surface strategic intel while embodied: an element that reveals the map / unit roster
-//!   / economy ([`HudElement::surfaces_strategic_intel`]) is structurally not editable in the
-//!   [`HudLayer::Embodied`] layer — [`HudPreset::set_placement`] *rejects* it, so "the world goes
+//!   / economy (`HudElement::surfaces_strategic_intel`) is structurally not editable in the
+//!   `HudLayer::Embodied` layer — `HudPreset::set_placement` *rejects* it, so "the world goes
 //!   dark" stays fair by construction, not by discipline. Accessibility cues (colour-blind palettes,
 //!   text scale) are a SEPARATE settings surface and out of scope here.
 //!
 //! ## The pure seam (host-testable, no winit / Android types)
-//! [`HudLayoutProfile::resolve_embodied`] maps the active preset's embodied layer → a concrete
-//! [`TouchLayout`] (control geometry) + per-control [`Opacity`]. That [`TouchLayout`] feeds the
+//! `HudLayoutProfile::resolve_embodied` maps the active preset's embodied layer → a concrete
+//! `TouchLayout` (control geometry) + per-control `Opacity`. That `TouchLayout` feeds the
 //! existing [`TouchControls::update`](crate::touch_controls::TouchControls::update) unchanged, so a
 //! saved layout drives the raw-touch→intent mapping with no new code path. A profile with no
-//! overrides resolves **bit-identically** to the shipped [`TouchLayout::new`] (resolution only
+//! overrides resolves **bit-identically** to the shipped `TouchLayout::new` (resolution only
 //! mutates elements that carry an explicit override), so enabling the editor changes nothing until
 //! the player actually moves something.
 //!

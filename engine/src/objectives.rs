@@ -2,7 +2,7 @@
 //!
 //! ## The load-bearing architecture call (pve-campaign-plan)
 //!
-//! An [`ObjectiveSet`] is evaluated **after `Sim::step`**, reading the per-tick deterministic
+//! An `ObjectiveSet` is evaluated **after `Sim::step`**, reading the per-tick deterministic
 //! [`SimEvent`] stream + the already-derived per-faction [`FactionForces`] — the **exact footing**
 //! the win/lose evaluator already stands on
 //! ([`evaluate_outcome`](crate::session_shell::evaluate_outcome), D38) and the same footing as
@@ -15,11 +15,11 @@
 //!
 //! ## The model
 //!
-//! An [`Objective`] is `{ kind, owner, progress, state }` (the WS-A shape; the *target* is carried
-//! inside the [`ObjectiveKind`] variant, since each kind targets a different thing — a point, an
-//! entity, a faction, a duration). [`ObjectiveKind`] ∈ `{Capture, Eliminate(entity|faction),
-//! Survive(ticks), Reach, Escort}`. [`Objective::observe`] folds one tick's events + faction reads
-//! into [`Objective::progress`] and may flip [`Objective::state`] → `Completed`/`Failed`, returning
+//! An `Objective` is `{ kind, owner, progress, state }` (the WS-A shape; the *target* is carried
+//! inside the `ObjectiveKind` variant, since each kind targets a different thing — a point, an
+//! entity, a faction, a duration). `ObjectiveKind` ∈ `{Capture, Eliminate(entity|faction),
+//! Survive(ticks), Reach, Escort}`. `Objective::observe` folds one tick's events + faction reads
+//! into `Objective::progress` and may flip `Objective::state` → `Completed`/`Failed`, returning
 //! the transition so the host can drive the summary + HUD.
 //!
 //! ## Reuse, not duplication
@@ -540,7 +540,7 @@ pub fn skirmish_objectives(sim: &Sim) -> ObjectiveSet {
 /// Gather the live positions of every entity a [`Reach`](ObjectiveKind::Reach)/
 /// [`Escort`](ObjectiveKind::Escort) objective in `set` tracks, for the host to hand to
 /// [`ObserveCtx::tracked`]. A dead or stale-handle entity is simply omitted — its objective then
-/// reads as "not there yet", the same fair rule [`within`] follows (never a spurious completion).
+/// reads as "not there yet", the same fair rule `within` follows (never a spurious completion).
 /// Empty for a set with no Reach/Escort objective (the common case — Seize/Hold/Push/skirmish use
 /// none), so those missions pay nothing. Read-only sim scan; folds nothing (invariants #1/#7).
 pub fn tracked_positions(sim: &Sim, set: &ObjectiveSet) -> Vec<(Entity, Vec2)> {

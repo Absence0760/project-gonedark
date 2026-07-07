@@ -2,9 +2,9 @@
 //!
 //! [`Sim::step`] advances the world by exactly one tick: it clears the per-tick event stream,
 //! applies that tick's commands, then runs the game systems in a fixed order —
-//! [`orders`](crate::orders) (literal-executor movement + retreat triggers) →
-//! [`combat`](crate::combat) (fire/suppress/die) → [`territory`](crate::territory) (capture) →
-//! [`economy`](crate::economy) (income/build/production). The renderer reads
+//! [`orders`] (literal-executor movement + retreat triggers) →
+//! [`combat`] (fire/suppress/die) → [`territory`] (capture) →
+//! [`economy`] (income/build/production). The renderer reads
 //! [`Sim::snapshot`] and interpolates but never mutates state. Fog/alerts are derived
 //! presentation views computed outside the tick (see [`fog`](crate::fog),
 //! [`alerts`](crate::alerts)) and are deliberately not part of the checksum.
@@ -31,7 +31,7 @@ use crate::terrain::{MapId, Terrain};
 use crate::territory::{self, ControlPoint, Territory};
 use crate::trig::Angle;
 
-/// Sim tick rate (Hz). Locked at a single global 60 Hz for Phase 1 ([`decisions.md`] D21,
+/// Sim tick rate (Hz). Locked at a single global 60 Hz for Phase 1 (`decisions.md` D21,
 /// closing Q10); 30 Hz proved too coarse for embodied combat (D16). Dual-rate is deferred to
 /// Phase 3's 200-unit thermal re-evaluation, not killed — kept a single named constant so the
 /// rate stays trivially re-tunable.
@@ -68,8 +68,8 @@ pub enum Command {
     QueueProduction { camp: Entity, unit: UnitKind },
     /// Set a producing building's **spawn rally point** (the troop-training UI's rally seam). Units
     /// produced at `camp` thereafter inherit `rally` as their FIRST order
-    /// ([`Order::MoveTo`](crate::components::Order::MoveTo)) instead of spawning
-    /// [`Order::Idle`](crate::components::Order::Idle) on the pad — a literal-executor move
+    /// ([`Order::MoveTo`]) instead of spawning
+    /// [`Order::Idle`] on the pad — a literal-executor move
     /// (invariant #3), not autonomous AI. `rally` is already quantized to `Fixed` bits at the host
     /// boundary (invariant #1), exactly like a [`Move`](Self::Move) target. Writes the per-building
     /// `rally` field, which folds into the per-tick checksum + serializes, so a peer that set a
@@ -86,7 +86,7 @@ pub enum Command {
     /// twin-stick / WASD avatar mover). `dir` is the desired heading already quantized to `Fixed`
     /// at the host boundary (invariant #1, exactly like [`Fire`](Self::Fire)'s aim); its magnitude
     /// is the analog deflection so a half-pushed stick walks at half speed. Applied via
-    /// [`systems::step_along`](crate::systems::step_along) at the base
+    /// [`systems::step_along`] at the base
     /// [`MOVE_SPEED`](crate::systems::MOVE_SPEED) and **only** for a unit whose `input_source` is
     /// `Embodied` — a `Locomote` for an order-driven (or dead) unit is a no-op, mirroring how
     /// `combat` ignores embodied units. One such command is emitted per embodied unit per tick the
@@ -135,7 +135,7 @@ pub enum Command {
     /// Select the [`ShellKind`] an embodied tank's gun loads for its **next** shot (tank embodiment
     /// P6, D55). Cycles AP / APHE / HE, changing the launched shell's penetration / damage / splash
     /// ([`ShellKind::stats`], applied at fire time in
-    /// [`projectile::fire_ballistic`](crate::projectile::fire_ballistic)). Writes the per-weapon
+    /// [`projectile::fire_ballistic`]). Writes the per-weapon
     /// `shell` field — folded per-tank sim state — so the decode is identical on every peer (the wire
     /// codec carries the [`ShellKind`] tag, invariant #7). A **no-op mid-reload** (you can't swap the
     /// chambered round while reloading) and on a dead/handle-stale unit. Harmless for a hitscan
@@ -226,7 +226,7 @@ impl Sim {
     }
 
     /// The full per-side army map, indexed by [`Faction::index`]. The host threads this into the
-    /// army-aware spend paths ([`economy::queue_production`](crate::economy::queue_production), D120)
+    /// army-aware spend paths ([`economy::queue_production`], D120)
     /// so a Tank is charged the producing faction's army price (the WW2 cost-vs-power fork).
     #[inline]
     pub fn armies(&self) -> &[Army; FACTION_COUNT] {
@@ -549,7 +549,7 @@ impl Sim {
     }
 
     /// Fold the whole world into a per-tick checksum in stable index order (invariant #7).
-    /// Drives the shared [`fold`](Self::fold) walk through a [`Checksum`] sink; every per-entity
+    /// Drives the shared `fold` walk through a [`Checksum`] sink; every per-entity
     /// component, plus the global resources, territory, and RNG state, is folded; the transient
     /// event stream and the derived fog/alerts are deliberately excluded.
     pub fn checksum(&self) -> u64 {
@@ -691,7 +691,7 @@ impl Sim {
     }
 
     /// Serialize the **authoritative** sim state a reconnecting peer resumes from (D28). The bytes
-    /// capture everything the checksum hashes (via the shared [`fold`](Self::fold) walk) **plus**
+    /// capture everything the checksum hashes (via the shared `fold` walk) **plus**
     /// the resume-only liveness extras the checksum does not hash (`generation[]` and the
     /// free-list *order*), so a deserialized sim is byte-identical state — its checksum stream
     /// stays bit-identical to a never-interrupted run.
@@ -744,7 +744,7 @@ impl Sim {
     }
 
     /// Reconstruct a [`Sim`] from [`serialize`](Self::serialize) bytes. The exact inverse of the
-    /// serialize walk: it mirrors the shared [`fold`](Self::fold) field order to read back every
+    /// serialize walk: it mirrors the shared `fold` field order to read back every
     /// component slot, the global state, and the RNG, then reads the liveness extras and rebuilds
     /// the world (re-deriving `terrain` from the `map_id`). Never panics — malformed input is a
     /// [`DeserializeError`] (bad version/tag, short buffer, inconsistent liveness, trailing bytes).

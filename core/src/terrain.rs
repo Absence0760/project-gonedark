@@ -79,7 +79,7 @@ pub struct Terrain {
 /// Terrain is static map data (never mutated by a system, never in the per-tick checksum), so the
 /// authoritative snapshot (D28) carries this small id rather than the whole `GRID×GRID` grid: the
 /// resuming peer rebuilds the identical terrain from the id via [`Terrain::from_map_id`]. The
-/// only scene today is the open playfield, which is map id `0` ([`MapId::SCENE`]).
+/// only scene today is the open playfield, which is map id `0` (`MapId::SCENE`).
 pub type MapId = u16;
 
 impl Terrain {

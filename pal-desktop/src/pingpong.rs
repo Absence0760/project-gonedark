@@ -76,7 +76,7 @@ pub enum Decoded {
     Pong(u32),
 }
 
-/// Envelope an opaque outbound lockstep frame: prepend the [`TAG_LOCKSTEP`] byte. The peer's
+/// Envelope an opaque outbound lockstep frame: prepend the `TAG_LOCKSTEP` byte. The peer's
 /// [`decode`] strips it back to the original bytes, so the lockstep wire format is untouched.
 pub fn wrap_lockstep(frame: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + frame.len());
@@ -260,8 +260,8 @@ pub struct PingPongTransport<T: Transport, C: Clock> {
 }
 
 impl<T: Transport, C: Clock> PingPongTransport<T, C> {
-    /// Wrap `inner` with the default cadence ([`DEFAULT_PING_INTERVAL_SECS`]) and outstanding bound
-    /// ([`DEFAULT_MAX_OUTSTANDING`]), driving timing off `clock`.
+    /// Wrap `inner` with the default cadence (`DEFAULT_PING_INTERVAL_SECS`) and outstanding bound
+    /// (`DEFAULT_MAX_OUTSTANDING`), driving timing off `clock`.
     pub fn new(inner: T, clock: C) -> Self {
         Self::with_config(
             inner,

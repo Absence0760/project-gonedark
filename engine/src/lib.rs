@@ -2531,7 +2531,7 @@ impl Game {
     /// except the world + objective set come from the node's authored spec (distinct forces, and for
     /// the Assassinate/Extract Seize nodes a distinct **win condition**) via the GPU-free
     /// [`seed_battle_spec`](crate::mission_registry::seed_battle_spec) dispatch, rather than the
-    /// archetype default. The presentation flags follow the spec's [`Scene`](crate::Scene). The host
+    /// archetype default. The presentation flags follow the spec's [`Scene`]. The host
     /// then applies the replay tier ([`apply_campaign_tuning`](Game::apply_campaign_tuning)) and the
     /// node's commander flavor ([`CommanderFlavor::apply_to`](crate::mission_registry::CommanderFlavor::apply_to))
     /// before tick 0 — all deterministic match-setup input (invariant #7).
@@ -2806,7 +2806,7 @@ impl Game {
     /// Toggle the in-session pause overlay from the host (desktop **Esc**; the natural Android
     /// back-gesture binding too): open the pause menu while playing, dismiss it while paused. A
     /// no-op once the match has ended or a reconnect prompt owns the screen — those surfaces are
-    /// dismissed by their own buttons, not the pause key (see [`pause_toggle_action`]). Once the
+    /// dismissed by their own buttons, not the pause key (see `pause_toggle_action`). Once the
     /// pause overlay is up, the existing `overlay_click` seam reaches its **Resume** / **Surrender**
     /// buttons, so this trigger is all that was missing for the pause + in-match surrender loop.
     ///
@@ -2840,7 +2840,7 @@ impl Game {
     /// #1/#2/#4).
     ///
     /// The renderer's text/icon + chrome-box scaling is a SEPARATE, currently-pinned scale — see
-    /// [`render_ui_scale`](Self::render_ui_scale). The full box-scaling machinery + per-panel
+    /// `render_ui_scale`. The full box-scaling machinery + per-panel
     /// containment tests are in place, but forwarding the *raw* display scale is a regression for
     /// tiling rows (the command-bar buttons overflow/overlap the screen at phone densities — proven
     /// by `command_touch::scaled_hit_test_*`), so the render scale is pinned to `1.0` until a
@@ -2875,7 +2875,7 @@ impl Game {
     /// currently up — i.e. the match is *not* in the plain `Playing` surface. The host reads this
     /// to free the OS cursor (so the overlay's buttons are clickable) and to stop feeding
     /// world-driving input to the match frozen underneath. Read-only presentation state; the
-    /// decision is the pure [`overlay_active`] seam.
+    /// decision is the pure `overlay_active` seam.
     pub fn shell_overlay_active(&self) -> bool {
         overlay_active(self.shell.surface())
     }
@@ -3051,7 +3051,7 @@ impl Game {
     /// [`mission_tuning::Difficulty`](gonedark_core::mission_tuning::Difficulty)). The tier scales
     /// the *seeded* planner's choices — production aggression, the Heavy reserve, and the army
     /// re-plan cadence — never its knowledge (it reads nothing about the player going dark;
-    /// invariant #6 is structural). Default [`Veteran`] reproduces the original commander
+    /// invariant #6 is structural). Default `Veteran` reproduces the original commander
     /// byte-for-byte. A pure host-side planning knob — never sim state — so changing it perturbs
     /// only future orders, not the running checksum stream. The Operations hub sets this per node.
     pub fn set_commander_difficulty(
@@ -3123,11 +3123,11 @@ impl Game {
     /// — the shared `core` mapping, so every platform lands on the identical rotation for the same
     /// `(period, track)` (invariant #2) — and applies the one lever `core` owns
     /// ([`apply_to_sim`](gonedark_core::mission_tuning::ScenarioModifiers::apply_to_sim), the
-    /// reinforcement cadence) before tick 0, exactly like [`apply_campaign_tuning`]'s scenario half.
+    /// reinforcement cadence) before tick 0, exactly like `apply_campaign_tuning`'s scenario half.
     /// Because the mapping can only ever select among the fixed, authored
     /// [`ScenarioModifiers`](gonedark_core::mission_tuning::ScenarioModifiers) presets, a live-ops
     /// payload can never reach a balance number or grant power (invariants #1/#6) — the same
-    /// structural bound [`apply_campaign_tuning`] rests on.
+    /// structural bound `apply_campaign_tuning` rests on.
     pub fn apply_live_ops_modifiers(&mut self, period: u64, track: u32) {
         let modifiers =
             gonedark_core::mission_tuning::ScenarioModifiers::for_rotation(period, track);
@@ -3285,7 +3285,7 @@ impl Game {
 
     /// Set the **hip embodied camera FOV** (degrees), clamped to
     /// [`EMBODIED_FOV_MIN_DEG`]`..=`[`EMBODIED_FOV_MAX_DEG`] (PC-1). The desktop host calls this
-    /// each match frame from the player's Settings; Android leaves the [`EMBODIED_FOV_DEG`] default.
+    /// each match frame from the player's Settings; Android leaves the `EMBODIED_FOV_DEG` default.
     /// PRESENTATION ONLY — the camera frustum, never sim state; adds no checksum surface
     /// (invariants #4/#5/#7) and only widens the avatar's own view, not the map (invariant #6).
     /// A non-finite value is ignored so a bad host read can never NaN the projection.

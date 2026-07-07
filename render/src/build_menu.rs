@@ -8,8 +8,8 @@
 //!
 //! This mirrors [`readout`](crate::readout): it is a pure layout function over plain inputs, not a
 //! sim read. The renderer is the float boundary and **never calls back into `core`** for live state.
-//! The only `core` touch here is the *const* cost table ([`economy::build_cost`] /
-//! [`economy::CAMP_BUILD_COST`]) — compile-time constants, not a per-frame sim read — so the palette
+//! The only `core` touch here is the *const* cost table (`economy::build_cost` /
+//! `economy::CAMP_BUILD_COST`) — compile-time constants, not a per-frame sim read — so the palette
 //! shows the true, single-source-of-truth cost without coupling the renderer to the sim economy.
 //!
 //! Affordability is computed from a **host-supplied plain number** (the player's current resource
@@ -26,8 +26,8 @@
 //!
 //! ## The pure seam
 //!
-//! [`build_menu_entries`] is a free fn, unit-testable without a GPU — the `readout_labels` pattern.
-//! The host turns each [`BuildMenuEntry`] into a [`text::TextRenderer::queue`] call (and, when it
+//! `build_menu_entries` is a free fn, unit-testable without a GPU — the `readout_labels` pattern.
+//! The host turns each `BuildMenuEntry` into a [`text::TextRenderer::queue`] call (and, when it
 //! wires input, the entry index doubles as the `build_ui` slot the player picked).
 
 use crate::text::Anchor;

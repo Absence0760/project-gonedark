@@ -1,12 +1,12 @@
 //! Host-side `MissionId → mission` registry (PvE WS-B) — the WS-A integration seam.
 //!
 //! [`gonedark_core::campaign`] models the Operations hub as an **opaque** node graph: each
-//! [`OperationNode`] names a mission by [`MissionId`] only, never carrying its body (the scenario
+//! `OperationNode` names a mission by `MissionId` only, never carrying its body (the scenario
 //! seed, the `ObjectiveSet`, the tuning). That keeps the campaign model platform- and
 //! GPU-free shared `core` data with **zero** mission machinery. This module is the other half it
 //! documents: the **host-side registry** that plug-resolves a `MissionId` to a concrete, runnable
-//! [`MissionDef`] — the scenario seed + the [`ObjectiveSet`](crate::objectives::ObjectiveSet) that
-//! watches it + the WS-E [`Briefing`] (commander difficulty + scenario modifiers + narrative).
+//! `MissionDef` — the scenario seed + the [`ObjectiveSet`](crate::objectives::ObjectiveSet) that
+//! watches it + the WS-E `Briefing` (commander difficulty + scenario modifiers + narrative).
 //!
 //! ## Why it lives in `engine`, not `core`
 //!
@@ -21,9 +21,9 @@
 //!
 //! The registry only **selects** which already-deterministic [`gonedark_core::scenario`] seeder to
 //! run and which [`ObjectiveSet`](crate::objectives::ObjectiveSet) (a host-side OBSERVE-only layer)
-//! to attach. It folds nothing into the sim. [`MissionDef::launch`] seeds a `Sim` exactly as the
+//! to attach. It folds nothing into the sim. `MissionDef::launch` seeds a `Sim` exactly as the
 //! engine's existing scene path already does and then applies only the **one** scenario lever
-//! `core` owns ([`ScenarioModifiers::apply_to_sim`] — the reinforcement cadence), resolved from the
+//! `core` owns (`ScenarioModifiers::apply_to_sim` — the reinforcement cadence), resolved from the
 //! player's chosen **campaign replay tier** (D83, resolving Q21); at the neutral `Regular` tier that
 //! is a no-op, so a `Regular` launch is **byte-identical** to the bare seed (asserted in the tests),
 //! while the other tiers reshape the situation deliberately. The enemy commander difficulty it
@@ -71,7 +71,7 @@ pub const MISSION_PUSH: MissionId = MissionId(3);
 /// Seeds a `Sim` for a mission and hands back the runnable handles, matching the engine's existing
 /// GPU-free scene seeders (e.g. the crate-private `seed_seize_mission_scene`): the embodiable/
 /// selectable player entity, whether the scene boots embodied, and the host-side
-/// [`ObjectiveSet`](crate::objectives::ObjectiveSet) that OBSERVES it. The player's pre-match
+/// [`ObjectiveSet`] that OBSERVES it. The player's pre-match
 /// gunsmith [`Loadout`] is applied at match start (WS-C); `Loadout::STANDARD` is the no-op default.
 pub type MissionSeedFn = fn(&mut Sim, Loadout) -> (Entity, bool, ObjectiveSet);
 
@@ -127,7 +127,7 @@ impl MissionDef {
     /// `replay_tier` (D83, resolving Q21).
     ///
     /// The replay tier — not the mission's *authored* [`Briefing::difficulty`]/[`Briefing::modifiers`]
-    /// — drives the fight: the tier's [`ScenarioModifiers`](gonedark_core::mission_tuning::ScenarioModifiers)
+    /// — drives the fight: the tier's [`ScenarioModifiers`]
     /// (from [`Difficulty::scenario_modifiers`](gonedark_core::campaign::Difficulty::scenario_modifiers))
     /// are applied after seeding (the reinforcement cadence is the one lever `core` owns —
     /// [`ScenarioModifiers::apply_to_sim`]; force/time-limit/fog are host-owned and read off
@@ -139,7 +139,7 @@ impl MissionDef {
     /// The `Regular` tier maps to the neutral baseline (no modifiers, Veteran commander band), so a
     /// `Regular` launch is **byte-identical** to the bare `core::scenario` seed (invariants #1/#7 —
     /// asserted in the tests); the other tiers deviate deliberately. The commander difficulty it
-    /// reports back is a host-side planning knob ([`Game::set_commander_difficulty`]), never sim state.
+    /// reports back is a host-side planning knob (`Game::set_commander_difficulty`), never sim state.
     pub fn launch(
         &self,
         sim: &mut Sim,
@@ -273,7 +273,7 @@ pub fn default_registry() -> MissionRegistry {
 /// *The Santo Crisis* (2033–2034, Melanesia), and finally *Normandy '44* (1944, the first
 /// **historical** conflict — the WW2 cost-vs-power armies debut here: a mass of cheap [`Army::UsWw2`]
 /// Shermans against fewer, far tougher [`Army::Germany`] Panthers/Tigers, per-node via the
-/// [`authored_battle_spec`] army seam) — each with its own per-node titles/situations
+/// `authored_battle_spec` army seam) — each with its own per-node titles/situations
 /// authored inline. Every conflict's root is open from the start ("pick a war"); gating runs
 /// only *within* a conflict, so clearing one war never unlocks another. Each node names its
 /// mission by [`MissionId`] only — the three archetypes are deliberately **reused** across

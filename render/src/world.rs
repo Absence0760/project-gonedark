@@ -2,7 +2,7 @@
 //! strategic map is dark (invariant #6). This is **render-only**: it draws a believable
 //! first-person *space* (a floor, a horizon, a held weapon) but reveals **no map intel** — no
 //! enemy units, no enemy buildings, no control points. Those are filtered out upstream by
-//! [`crate::fog::visible_instances`] (the avatar quad is the only world instance that survives the
+//! `crate::fog::visible_instances` (the avatar quad is the only world instance that survives the
 //! dark frame); this module only ever draws the *environment*, which carries zero intel.
 //!
 //! ## What it draws, in order (all in the embodied pass, before the avatar + HUD)
@@ -11,14 +11,14 @@
 //!    plane (`z = 0`) get a gridded floor (so motion + heading read); rays above the horizon get a
 //!    sky gradient. This replaces the bare near-black `CLEAR_DARK` void with a real space while
 //!    staying a pure function of the *camera* — it has no access to sim entities, so it cannot leak
-//!    intel even in principle. This module owns that pass ([`WorldRenderer`]).
+//!    intel even in principle. This module owns that pass (`WorldRenderer`).
 //! 2. **Weapon viewmodel** — the first-person gun. As of D44 this is the real `weapon_rifle`
 //!    greybox **3D mesh** drawn through the shared [`crate::mesh::MeshPipeline`] (the
 //!    [`crate::Renderer`] owns that pipeline + the mesh library + the depth buffer and drives the
 //!    pass — see `Renderer::render_world_weapon`), anchored in *view space* by
-//!    [`weapon_view_model`] so it stays glued to the lower-right of the screen regardless of camera
+//!    `weapon_view_model` so it stays glued to the lower-right of the screen regardless of camera
 //!    yaw. A muzzle-flash term flares the gun for a few ticks after the player fires; this module
-//!    still owns the flash *intensity* curve ([`muzzle_flash_intensity`]) and the placement math.
+//!    still owns the flash *intensity* curve (`muzzle_flash_intensity`) and the placement math.
 //!
 //! The float boundary lives here (invariant #1/#4): every value is already `f32`, the renderer
 //! never mutates sim state and never calls back into `core`. Like the rest of this crate it takes
@@ -31,7 +31,7 @@ pub const MUZZLE_FLASH_TICKS: u64 = 8;
 
 /// Edge length (px) of the square ground detail map (`assets/textures/ground.gray`). The contract
 /// with `tools/textures/gen_textures.py` (`SIZE` there MUST match): the baked file is
-/// `GROUND_TEX_SIZE * GROUND_TEX_SIZE` raw R8 bytes. The [`ground_tex_matches_metrics`](tests) test
+/// `GROUND_TEX_SIZE * GROUND_TEX_SIZE` raw R8 bytes. The `ground_tex_matches_metrics` test
 /// pins the `include_bytes!`d blob length so a generator/metrics drift fails `cargo test`.
 pub const GROUND_TEX_SIZE: u32 = 256;
 

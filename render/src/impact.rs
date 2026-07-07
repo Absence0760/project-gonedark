@@ -12,7 +12,7 @@
 //! burst sits at a point the player *just shot at* (their own action), not intel about an unseen
 //! enemy — feedback, never a reveal. Like [`scope`](crate::scope)/[`hud`](crate::hud) all the
 //! geometry math lives in pure free fns so it is unit-testable without a GPU; only
-//! [`ImpactRenderer::render`] needs a device.
+//! `ImpactRenderer::render` needs a device.
 
 use wgpu::util::DeviceExt;
 

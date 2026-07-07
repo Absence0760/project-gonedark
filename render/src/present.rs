@@ -3,9 +3,9 @@
 //! crisp native-resolution HUD/text chrome is drawn on top.
 //!
 //! Two pieces live here:
-//!  - [`PresentUniform`] — the tiny uniform the blit shader reads, carrying the **"going dark"**
+//!  - `PresentUniform` — the tiny uniform the blit shader reads, carrying the **"going dark"**
 //!    amount (`0` in command view, `1` while embodied).
-//!  - [`going_dark_grade`] — the **off-GPU reference twin** of `present.wgsl`'s `fs_present`: the base
+//!  - `going_dark_grade` — the **off-GPU reference twin** of `present.wgsl`'s `fs_present`: the base
 //!    grade ([`crate::theme::present_grade`]) followed by the embodied dark intensification. WGSL
 //!    cannot import Rust, so the grade math is duplicated in the shader; this mirror is unit-tested so
 //!    a regression (a crushed centre, a runaway tint, an out-of-range output) fails CI rather than
@@ -17,7 +17,7 @@
 //! hides map intel. It is safe because:
 //!  - it is edge-weighted (a **tunnel vignette**) and shadow-weighted, so the **lit centre stays
 //!    readable** — going dark reads as tunnel vision closing in, not a black screen you can't play;
-//!  - while embodied the fog filter already draws **only the avatar** ([`crate::fog::visible_instances`])
+//!  - while embodied the fog filter already draws **only the avatar** (`crate::fog::visible_instances`)
 //!    — there are no enemy units in the frame to hide in a deepened shadow;
 //!  - the amber avatar is bright (high luminance), so the shadow crush leaves it untouched;
 //!  - the HUD, hitmarker, and directional-alert cues are drawn AFTER this pass onto the native
@@ -87,7 +87,7 @@ fn apply_dark(mut c: Rgb, uv: [f32; 2], dark: f32) -> Rgb {
 }
 
 /// The full present grade for the scene: the base [`theme::present_grade`] then, when `dark > 0`, the
-/// embodied [`apply_dark`] intensification. `rgb` is the scene colour, `uv` the fullscreen `[0,1]`
+/// embodied `apply_dark` intensification. `rgb` is the scene colour, `uv` the fullscreen `[0,1]`
 /// coordinate (v=0 at the top), `dark` the [`dark_amount`]. At `dark = 0` this is exactly
 /// `theme::present_grade` (command view unchanged). Unit-tested; keep in lockstep with `present.wgsl`.
 pub fn going_dark_grade(rgb: Rgb, uv: [f32; 2], dark: f32) -> Rgb {

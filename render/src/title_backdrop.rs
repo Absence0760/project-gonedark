@@ -5,7 +5,7 @@
 //! it itself.
 //!
 //! ## The scene (a dark "Going Dark" diorama)
-//! Drawn back-to-front in [`TitleBackdrop::render`] (see `title_backdrop.wgsl` for the shading):
+//! Drawn back-to-front in `TitleBackdrop::render` (see `title_backdrop.wgsl` for the shading):
 //!  1. a fullscreen **sky** gradient (deep blue-black ink overhead → warmer dark horizon) — clears;
 //!  2. a large **ground plane** with a grid receding to a vanishing point, dimming into horizon fog;
 //!  3. a procedural **silhouette skyline** of ~13 extruded boxes (a distant camp/city), near-black
@@ -20,7 +20,7 @@
 //! ## Float boundary (invariant #1/#4)
 //! `render` is the float side: floats are forbidden only in `core`/the sim, never here. The
 //! camera/parallax/animation math is factored into the pure, GPU-free, unit-tested free functions
-//! [`parallax_offset`] and [`backdrop_view_proj`] (plus the small scalar matrix helpers below) — no
+//! `parallax_offset` and `backdrop_view_proj` (plus the small scalar matrix helpers below) — no
 //! `glam` dependency (D19): like `mesh::model_matrix`, the matrices are hand-rolled column-major
 //! `[[f32; 4]; 4]` (the `glam Mat4::to_cols_array_2d` layout) so the crate stays `wgpu` + `bytemuck`.
 //! Palette colours come from [`crate::theme`]; WGSL bakes the few it needs with a name pointing back.
@@ -81,7 +81,7 @@ fn camera_eye(time: f32, cursor: [f32; 2]) -> [f32; 3] {
 
 /// The full **view-projection** matrix for the backdrop camera at `(time, cursor, aspect)`, as a
 /// column-major `[[f32; 4]; 4]` (the `glam Mat4::to_cols_array_2d()` layout the GPU expects). It
-/// combines the slow automatic drift + cursor parallax of [`camera_eye`] with a right-handed
+/// combines the slow automatic drift + cursor parallax of `camera_eye` with a right-handed
 /// perspective projection (wgpu's `z ∈ [0, 1]` clip convention). A non-finite or near-zero `aspect`
 /// falls back to `1.0` so the matrix is always finite. Pure + GPU-free (no `glam`, D19) and
 /// unit-tested.

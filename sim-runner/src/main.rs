@@ -88,10 +88,10 @@ enum Which {
     /// own phased loop + report rather than the generic [`run`], so it never reaches [`build`].
     Duel,
     /// The infantry sandbox ([`infantry`]) — a hitscan debug validation scene (range/cone/cover/LoS/
-    /// crouch + the auto-combat battery). Like [`Duel`], owns its own loop and never reaches [`build`].
+    /// crouch + the auto-combat battery). Like `Duel`, owns its own loop and never reaches [`build`].
     Infantry,
     /// The cross-type matchup battery ([`matchup`]) — AI-vs-AI tank/rifleman RPS + armour/penetration
-    /// checks. Like [`Duel`]/[`Infantry`], owns its own loop and never reaches [`build`].
+    /// checks. Like `Duel`/`Infantry`, owns its own loop and never reaches [`build`].
     Matchup,
 }
 

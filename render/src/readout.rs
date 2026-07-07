@@ -20,20 +20,20 @@
 //! True resource/economy numbers (banked credits, income) live in the sim and are never sent to
 //! the renderer, which is the float boundary and never calls back into `core` at runtime
 //! (invariant #4). So the renderer cannot *read* them — but it can *lay them out* once a host
-//! hands them in as plain data. [`readout_labels`] takes an optional [`EconomyReadout`] (banked
+//! hands them in as plain data. `readout_labels` takes an optional `EconomyReadout` (banked
 //! `resources` + an `income_per_tick` rate); when present it appends a `RESOURCES:` line and an
 //! `INCOME: <n>/s` line so cost and income are legible at a glance. The integrator supplies those
 //! figures from the sim's `economy_system` (the [`Resources`](gonedark_core::economy::Resources)
 //! purse + held-point count); render only formats them. A host that has only a held-point count
-//! can derive the rate with [`income_per_tick`] (the same `BASE_INCOME + PER_POINT_INCOME * points`
-//! shape the sim uses), and [`income_per_second`] converts a per-tick rate to the per-second figure
+//! can derive the rate with `income_per_tick` (the same `BASE_INCOME + PER_POINT_INCOME * points`
+//! shape the sim uses), and `income_per_second` converts a per-tick rate to the per-second figure
 //! shown to the player (`TICK_HZ` = 60). These reference `core`'s economy/tick CONSTS at compile
 //! time only — there is still no runtime sim read and no engine plumbing inside render.
 //!
 //! ## Fairness (invariant #6)
 //!
 //! The labels are screen-space NDC chrome (the W4 text pass), carry no world position, and are
-//! emitted only for the command view: [`readout_labels`] takes a `world_dark` flag and returns an
+//! emitted only for the command view: `readout_labels` takes a `world_dark` flag and returns an
 //! EMPTY label set while embodied, so the count/economy chrome can NEVER draw over the dark frame
 //! (that would hand back exactly the strategic intel "going dark" removes — banked credits and
 //! income are pure command-layer information). On the command frame the labels report only
@@ -41,9 +41,9 @@
 //!
 //! ## The pure seam
 //!
-//! [`tally`] (count the draw set) and [`readout_labels`] (lay out the label strings + NDC anchors)
+//! `tally` (count the draw set) and `readout_labels` (lay out the label strings + NDC anchors)
 //! are free fns, unit-testable without a GPU — the `marquee_quads` / `grid_lines` pattern. The host
-//! turns each [`ReadoutLabel`] into a [`text::TextRenderer::queue`] call.
+//! turns each `ReadoutLabel` into a [`text::TextRenderer::queue`] call.
 
 use crate::overlay::{OverlayQuad, QuadRole};
 use crate::text::{measure, Anchor};

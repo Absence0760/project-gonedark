@@ -4,7 +4,7 @@
 //! full determinism treatment (invariants #1/#7). An attachment is a **sidegrade**: it spends one
 //! tracked weapon stat to buy another, never a flat upgrade. A player picks a *shape*
 //! (long-range marksman vs. close-quarters runner), not a *tier* — the same anti-degeneracy
-//! discipline the D30 balance harness enforces on units ([`economy::unit_stats`] — a strictly
+//! discipline the D30 balance harness enforces on units (`economy::unit_stats` — a strictly
 //! dominated Heavy was a *bug*).
 //!
 //! ## How it reaches the sim
@@ -26,7 +26,7 @@
 //! axis strictly worse. Because the slot pairs are **disjoint**, any two distinct loadouts differ
 //! in at least one slot, and that slot contributes one strictly-good and one strictly-bad component
 //! that **no other slot can cancel** — so neither loadout is "at least as good on every axis."
-//! That is the definition of *no strict domination*. [`tests`] proves it exhaustively over the full
+//! That is the definition of *no strict domination*. `tests` proves it exhaustively over the full
 //! build space as well, so a future re-tune that breaks the property trips a test.
 //!
 //! Fixed-point only (range/damage are [`Fixed`]; the count stats are integer ticks/rounds), no
@@ -138,7 +138,7 @@ impl StatDelta {
 
     /// Does `self` **strictly dominate** `other` — at least as good on every tracked axis and
     /// strictly better on at least one? This is the relation the sidegrade rule forbids between any
-    /// two real loadouts ([`tests::no_loadout_strictly_dominates_another`]).
+    /// two real loadouts (`tests::no_loadout_strictly_dominates_another`).
     #[inline]
     pub fn strictly_dominates(&self, other: &StatDelta) -> bool {
         self.no_axis_worse(other) && self.some_axis_better(other)
@@ -470,7 +470,7 @@ impl Grip {
 ///
 /// A pool only varies the *magnitudes* of the D60 trades; it preserves the disjoint-axis sidegrade
 /// structure, so the no-strict-domination property holds inside every pool (see the module-level
-/// note above and [`tests::no_pool_build_strictly_dominates_another`]).
+/// note above and `tests::no_pool_build_strictly_dominates_another`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GunsmithPool {
     /// [`Optic::Marksman`] — +range ↔ slower fire (longer cooldown).
@@ -513,7 +513,7 @@ pub struct GunsmithPool {
 ///   cone), paid for with the slowest tempo. Same slots, same trade *axes*, a distinct WW2 feel.
 ///
 /// All five obey the per-pool sidegrade rule by construction (each option a pure trade on its
-/// slot's disjoint axis pair); the property is proven exhaustively per army in [`tests`].
+/// slot's disjoint axis pair); the property is proven exhaustively per army in `tests`.
 pub const fn pool_for(army: Army) -> GunsmithPool {
     match army {
         // The baseline pool IS the slot enums' own deltas — zero behavioural change off-faction.
@@ -696,7 +696,7 @@ impl Loadout {
     /// [`Army::Neutral`] this is byte-identical to [`Loadout::total_delta`] (the pool reproduces the
     /// slot enums' own deltas); `Us`/`Fr` draw their per-faction magnitudes. Still a pure function
     /// of the *(army, selection)* pair — the per-pool no-strict-domination property is proven on it
-    /// in [`tests::no_pool_build_strictly_dominates_another`].
+    /// in `tests::no_pool_build_strictly_dominates_another`.
     #[inline]
     pub fn total_delta_for(self, army: Army) -> StatDelta {
         let pool = pool_for(army);
@@ -719,9 +719,9 @@ impl Loadout {
     ///   untouched — a sidegrade never *arms* a non-combatant.
     /// - The magazine/handling/reserve axes apply **only** to a magazine weapon (`mag_size > 0`);
     ///   a magazine-less weapon (infinite ammo) keeps that property.
-    /// - Every field saturates to a sensible floor ([`MIN_RANGE`]/[`MIN_DAMAGE`] for the [`Fixed`]
+    /// - Every field saturates to a sensible floor (`MIN_RANGE`/`MIN_DAMAGE` for the [`Fixed`]
     ///   axes; `0`/`1` for the counts) so an extreme stack can never produce an invalid weapon.
-    ///   For the Rifleman this WS targets, no floor is ever hit (see [`tests`]).
+    ///   For the Rifleman this WS targets, no floor is ever hit (see `tests`).
     ///
     /// Ammo bookkeeping: if the weapon was at a **full** magazine going in (the just-spawned case),
     /// it stays full at the new capacity; otherwise the loaded count is only clamped down to the

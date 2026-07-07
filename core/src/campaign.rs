@@ -1,10 +1,10 @@
 //! The Operations-hub campaign — host-side meta-progression (PvE plan WS-B).
 //!
-//! This is the node-graph campaign model the native out-of-match shell ([D32]) reaches through
-//! the [`core::shell`](crate::shell) seam ([D34]): a graph of [`OperationNode`]s, each pointing at
+//! This is the node-graph campaign model the native out-of-match shell (`D32`) reaches through
+//! the [`core::shell`](crate::shell) seam (`D34`): a graph of [`OperationNode`]s, each pointing at
 //! a mission, with **unlock state** (clearing a node opens its successors) and
 //! **replay-at-higher-difficulty** support. It is the meta-progression analogue of a CoH /
-//! Delta-Force *Operations* hub ([`docs/pve-campaign.md`], D58).
+//! Delta-Force *Operations* hub (`docs/pve-campaign.md`, D58).
 //!
 //! The graph can additionally carry a **conflict atlas** (Q28's `conflict → operation → battle`
 //! hierarchy, [`Campaign::with_atlas`]): [`Conflict`]s (a war, placed in time by integer years)
@@ -17,7 +17,7 @@
 //!
 //! Campaign progress is the same footing as everything else on the [`shell`](crate::shell) read
 //! side: a **derived/owned host state**, not sim state. A tick never reads or mutates it; it is
-//! **never folded into [`Sim::fold`](crate::sim::Sim::fold)** and so can never perturb the per-tick
+//! **never folded into `Sim::fold`** and so can never perturb the per-tick
 //! checksum or desync lockstep. The campaign module deliberately does **not** import
 //! [`Sim`](crate::sim::Sim) at all — that absence is the structural guarantee. Progress is
 //! persisted to its **own host blob** ([`Campaign::serialize_progress`]), *separate* from the
@@ -158,7 +158,7 @@ impl Difficulty {
     /// easiest→hardest, so every tier feels different even where two share a commander band. Every
     /// lever is integer, so the mapping stays fixed-point and checksum-folded (invariants #1/#7).
     ///
-    /// `Regular` returns *exactly* [`ScenarioModifiers::default`] (the neutral baseline), so the
+    /// `Regular` returns *exactly* [`ScenarioModifiers::default`](crate::mission_tuning::ScenarioModifiers::default) (the neutral baseline), so the
     /// shipped default fight is byte-identical; the other three deviate deliberately. The levers,
     /// easiest→hardest (these are situation dials, tunable in playtest, **not** per-unit balance):
     ///

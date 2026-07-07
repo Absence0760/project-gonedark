@@ -52,7 +52,7 @@ pub struct UnitSnapshot {
     /// yaws the tank's turret mesh by it (P7). Presentation copy, not checksummed.
     pub turret_yaw: Angle,
     /// Did this unit fire within the last [`MUZZLE_FLASH_TICKS`] ticks? Derived purely from the
-    /// (checksummed) weapon cooldown at capture (see [`weapon_recently_fired`]) — the debug overlay
+    /// (checksummed) weapon cooldown at capture (see `weapon_recently_fired`) — the debug overlay
     /// lights a muzzle flash on it so you can *see* a unit shooting from the command view, the
     /// AI-side analogue of the embodied viewmodel's `render::world::muzzle_flash_intensity`.
     /// Presentation only: adds no sim state and never enters the checksum fold (invariant #4/#7).

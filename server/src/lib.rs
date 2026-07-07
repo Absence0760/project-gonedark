@@ -10,7 +10,7 @@
 //! in-memory fake — `cargo test` stays green WITHOUT Docker/Postgres running (CI floor /
 //! clone-and-run). A real Postgres-backed sink (`DATABASE_URL`, docs/infrastructure.md) slots
 //! in behind the same trait later (the optional `postgres` feature lands exactly that — see
-//! [`postgres`]). No `core`/`engine` deps leak in (server is not in the deterministic sim path;
+//! `postgres`). No `core`/`engine` deps leak in (server is not in the deterministic sim path;
 //! invariant #2 layering stays clean), and no secret is committed anywhere (invariant #8) —
 //! only the non-secret `.env.development` defaults are read.
 

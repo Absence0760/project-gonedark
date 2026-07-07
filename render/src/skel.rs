@@ -1,7 +1,7 @@
 //! Runtime skeletal playback of the authored trooper rig (CP-3 / WS-B, D84 follow-up).
 //!
 //! This is the *runtime skeletal player* owed by [D84](../../docs/decisions.md): it consumes the
-//! authored rig ([`tools/models/gen_trooper_rig.py`]) and plays the clip picked by
+//! authored rig (`tools/models/gen_trooper_rig.py`) and plays the clip picked by
 //! [`crate::anim::select_clip`] on the trooper, superseding the procedural pose stand-in for the
 //! generic infantry token.
 //!

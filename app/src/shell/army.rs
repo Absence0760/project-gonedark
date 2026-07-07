@@ -83,7 +83,7 @@ pub(crate) enum ArmySelectStep {
 
 /// Apply an [`ArmySelectAction`] to the army-select state and report the resulting screen step.
 /// `Choose` records the selection and stays; `Confirm` is the screen transition the run loop acts on.
-/// Pure (no egui/window) — the army-select testable decision seam, mirroring [`apply_profile_action`].
+/// Pure (no egui/window) — the army-select testable decision seam, mirroring `apply_profile_action`.
 /// It never touches the sim; the sim only sees the pick via the `core::shell` SelectArmy seam that the
 /// host resolves at match start (`Game::select_army`).
 pub(crate) fn apply_army_select_action(
@@ -101,7 +101,7 @@ pub(crate) fn apply_army_select_action(
 
 /// One army card: the army name over its one-line identity blurb, in a framed card whose name is
 /// clickable to select it. The currently-selected army reads amber with a SELECTED marker (legible
-/// beyond colour alone); clicking a card emits [`ArmySelectAction::Choose`]. Mirrors [`mode_tile`].
+/// beyond colour alone); clicking a card emits [`ArmySelectAction::Choose`]. Mirrors `mode_tile`.
 /// Glue (needs a live `Ui`) — the decision seam is the pure [`apply_army_select_action`]. ASCII only.
 pub(crate) fn army_card(ui: &mut egui::Ui, army: Army, selected: bool) -> Option<ArmySelectAction> {
     use egui::{Button, RichText};

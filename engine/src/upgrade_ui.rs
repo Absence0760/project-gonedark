@@ -1,5 +1,5 @@
 //! The **camp-upgrade** half of "command and grow your camps" (roadmap: upgrade trees — the
-//! "growth" half), as a pure presentation→intent mapping — the [`command_ui`](crate::command_ui)
+//! "growth" half), as a pure presentation→intent mapping — the `command_ui`
 //! sibling for the order/stance vocabulary.
 //!
 //! Tapping the on-screen "Upgrade" button on the selected camp turns into the single
@@ -28,7 +28,7 @@ use gonedark_core::sim::Command;
 
 /// Map an "upgrade the selected camp" UI intent onto sim commands.
 ///
-/// Pure intent → `Command`s (mirrors [`command_ui::commands_for`](crate::command_ui::commands_for)):
+/// Pure intent → `Command`s (mirrors `command_ui::commands_for`):
 /// emits exactly **one** [`Command::Upgrade`] when the player triggered the action *and* a camp is
 /// selected, and **nothing** otherwise.
 ///
