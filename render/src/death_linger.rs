@@ -10,7 +10,7 @@
 //!
 //! ## Fairness (invariant #6)
 //!
-//! A lingering instance is appended to the SAME draw list [`crate::fog::visible_instances`] filters
+//! A lingering instance is appended to the SAME draw list `crate::fog::visible_instances` filters
 //! every other instance from, so it is gated by the identical visibility mask as a living unit — it
 //! can never outlive what the viewer would have been able to see. It carries no
 //! [`crate::FLAG_EMBODIED`]/[`crate::FLAG_RING`] always-keep flag, so it gets no special fog
@@ -18,7 +18,7 @@
 //!
 //! ## Embodiment (invariant #5)
 //!
-//! The possessed avatar's own death is never lingered ([`DeathLinger::update`] skips any vanished
+//! The possessed avatar's own death is never lingered (`DeathLinger::update` skips any vanished
 //! unit that was `embodied` in the previous snapshot) — ejecting to command is the engine's job, and
 //! drawing a frozen "body" for the very entity the player was just controlling reads too close to a
 //! respawn/character system this game deliberately does not have. Every other unit (AI-controlled,
@@ -115,7 +115,13 @@ impl DeathLinger {
     /// `prev` (exactly how `engine`'s `self.prev = self.curr.clone()` step keeps them) — a vanished
     /// unit then appears in exactly one `prev`-but-not-`curr` pair, ever, so discovery only fires
     /// once per death and never re-adds an entry this fn already evicted for staying too long.
-    pub fn update(&mut self, prev: &Snapshot, curr: &Snapshot, tick_f: f32, palette: &Palette) -> Vec<UnitInstance> {
+    pub fn update(
+        &mut self,
+        prev: &Snapshot,
+        curr: &Snapshot,
+        tick_f: f32,
+        palette: &Palette,
+    ) -> Vec<UnitInstance> {
         // 1. Evict: the index reappeared alive in curr (reuse), or the fade window elapsed.
         self.entries.retain(|e| {
             !alive_in_curr(curr, e.entity_index)
@@ -132,7 +138,11 @@ impl DeathLinger {
             if alive_in_curr(curr, u.entity_index) {
                 continue;
             }
-            if self.entries.iter().any(|e| e.entity_index == u.entity_index) {
+            if self
+                .entries
+                .iter()
+                .any(|e| e.entity_index == u.entity_index)
+            {
                 continue;
             }
             let color = faction_color_in(u.faction, palette);
@@ -149,7 +159,11 @@ impl DeathLinger {
                 // Angle→radians conversion.
                 hull_yaw: interp_angle(u.hull_heading, u.hull_heading, 0.0),
                 turret_yaw: interp_angle(u.turret_yaw, u.turret_yaw, 0.0),
-                kind: if u.building { NO_TOKEN_ICON } else { u.unit_kind as u32 },
+                kind: if u.building {
+                    NO_TOKEN_ICON
+                } else {
+                    u.unit_kind as u32
+                },
                 start_tick: curr.tick,
             });
         }
@@ -258,7 +272,10 @@ mod tests {
         let curr_mid = snapshot(11, vec![]);
         let mid = linger.update(&prev_mid, &curr_mid, 20.0, &Palette::DEFAULT);
         assert_eq!(mid.len(), 1, "still lingering mid-window");
-        assert!(mid[0].anim_phase > early_phase, "death phase advances with the clock");
+        assert!(
+            mid[0].anim_phase > early_phase,
+            "death phase advances with the clock"
+        );
 
         // Past the total window (measured from the tick it was first found missing), the entry is
         // evicted.
@@ -301,7 +318,10 @@ mod tests {
         let prev1 = curr1.clone();
         let curr2 = snapshot(2, vec![unit(9, false)]);
         let out2 = linger.update(&prev1, &curr2, 2.0, &Palette::DEFAULT);
-        assert!(out2.is_empty(), "reused index draws only via interpolate_instances, never a linger");
+        assert!(
+            out2.is_empty(),
+            "reused index draws only via interpolate_instances, never a linger"
+        );
         assert!(linger.is_empty());
     }
 

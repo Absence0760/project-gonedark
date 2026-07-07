@@ -2,7 +2,7 @@
 //!
 //! ## The load-bearing architecture call (pve-campaign-plan)
 //!
-//! An [`ObjectiveSet`] is evaluated **after `Sim::step`**, reading the per-tick deterministic
+//! An `ObjectiveSet` is evaluated **after `Sim::step`**, reading the per-tick deterministic
 //! [`SimEvent`] stream + the already-derived per-faction [`FactionForces`] — the **exact footing**
 //! the win/lose evaluator already stands on
 //! ([`evaluate_outcome`](crate::session_shell::evaluate_outcome), D38) and the same footing as
@@ -15,11 +15,11 @@
 //!
 //! ## The model
 //!
-//! An [`Objective`] is `{ kind, owner, progress, state }` (the WS-A shape; the *target* is carried
-//! inside the [`ObjectiveKind`] variant, since each kind targets a different thing — a point, an
-//! entity, a faction, a duration). [`ObjectiveKind`] ∈ `{Capture, Eliminate(entity|faction),
-//! Survive(ticks), Reach, Escort}`. [`Objective::observe`] folds one tick's events + faction reads
-//! into [`Objective::progress`] and may flip [`Objective::state`] → `Completed`/`Failed`, returning
+//! An `Objective` is `{ kind, owner, progress, state }` (the WS-A shape; the *target* is carried
+//! inside the `ObjectiveKind` variant, since each kind targets a different thing — a point, an
+//! entity, a faction, a duration). `ObjectiveKind` ∈ `{Capture, Eliminate(entity|faction),
+//! Survive(ticks), Reach, Escort}`. `Objective::observe` folds one tick's events + faction reads
+//! into `Objective::progress` and may flip `Objective::state` → `Completed`/`Failed`, returning
 //! the transition so the host can drive the summary + HUD.
 //!
 //! ## Reuse, not duplication
@@ -65,9 +65,17 @@ pub enum ObjectiveKind {
     /// `who` is wiped out before then (the universal owner-eliminated rule — set `owner == who`).
     Survive { who: Faction, until_tick: u64 },
     /// Move `who` within `radius` of `dest` (read from the host-supplied tracked positions).
-    Reach { who: Entity, dest: Vec2, radius: Fixed },
+    Reach {
+        who: Entity,
+        dest: Vec2,
+        radius: Fixed,
+    },
     /// Escort `vip` to within `radius` of `dest` — it must arrive ALIVE (a `Killed` for it fails).
-    Escort { vip: Entity, dest: Vec2, radius: Fixed },
+    Escort {
+        vip: Entity,
+        dest: Vec2,
+        radius: Fixed,
+    },
 }
 
 /// Where an objective is in its lifecycle. Terminal states (`Completed`/`Failed`) stick.
@@ -127,12 +135,22 @@ impl Objective {
         label: impl Into<String>,
         goal: u32,
     ) -> Self {
-        Objective::new(ObjectiveKind::Eliminate(EliminateTarget::Faction(target)), owner, label, goal)
+        Objective::new(
+            ObjectiveKind::Eliminate(EliminateTarget::Faction(target)),
+            owner,
+            label,
+            goal,
+        )
     }
 
     /// Eliminate a single VIP `entity` (binary — done the tick it is killed).
     pub fn eliminate_entity(owner: Faction, entity: Entity, label: impl Into<String>) -> Self {
-        Objective::new(ObjectiveKind::Eliminate(EliminateTarget::Entity(entity)), owner, label, 1)
+        Objective::new(
+            ObjectiveKind::Eliminate(EliminateTarget::Entity(entity)),
+            owner,
+            label,
+            1,
+        )
     }
 
     /// Capture (flip to `who`) the control point at `point` (binary).
@@ -148,12 +166,24 @@ impl Objective {
     }
 
     /// Move `who` within `radius` of `dest` (binary).
-    pub fn reach(owner: Faction, who: Entity, dest: Vec2, radius: Fixed, label: impl Into<String>) -> Self {
+    pub fn reach(
+        owner: Faction,
+        who: Entity,
+        dest: Vec2,
+        radius: Fixed,
+        label: impl Into<String>,
+    ) -> Self {
         Objective::new(ObjectiveKind::Reach { who, dest, radius }, owner, label, 1)
     }
 
     /// Escort `vip` to within `radius` of `dest` — alive (binary).
-    pub fn escort(owner: Faction, vip: Entity, dest: Vec2, radius: Fixed, label: impl Into<String>) -> Self {
+    pub fn escort(
+        owner: Faction,
+        vip: Entity,
+        dest: Vec2,
+        radius: Fixed,
+        label: impl Into<String>,
+    ) -> Self {
         Objective::new(ObjectiveKind::Escort { vip, dest, radius }, owner, label, 1)
     }
 
@@ -173,10 +203,9 @@ impl Objective {
         }
 
         let done = match self.kind {
-            ObjectiveKind::Capture { who, point } => ctx
-                .events
-                .iter()
-                .any(|e| matches!(*e, SimEvent::Captured { to, pos, .. } if to == who && pos == point)),
+            ObjectiveKind::Capture { who, point } => ctx.events.iter().any(
+                |e| matches!(*e, SimEvent::Captured { to, pos, .. } if to == who && pos == point),
+            ),
 
             ObjectiveKind::Eliminate(EliminateTarget::Faction(f)) => {
                 let force = &ctx.forces[f.index()];
@@ -192,7 +221,8 @@ impl Objective {
                 .any(|ev| matches!(*ev, SimEvent::Killed { entity, .. } if entity == e)),
 
             ObjectiveKind::Survive { until_tick, .. } => {
-                self.progress.current = ctx.elapsed_ticks.min(until_tick).min(u32::MAX as u64) as u32;
+                self.progress.current =
+                    ctx.elapsed_ticks.min(until_tick).min(u32::MAX as u64) as u32;
                 ctx.elapsed_ticks >= until_tick
             }
 
@@ -367,7 +397,11 @@ impl ObjectiveSet {
     /// [`Killed`](SimEvent::Killed); FAILS if `who` is wiped out first. Pure composition of the
     /// existing entity-elimination evaluator — **no new sim**.
     pub fn mission_assassinate(who: Faction, vip: Entity) -> Self {
-        ObjectiveSet::new(vec![Objective::eliminate_entity(who, vip, "Eliminate the VIP")])
+        ObjectiveSet::new(vec![Objective::eliminate_entity(
+            who,
+            vip,
+            "Eliminate the VIP",
+        )])
     }
 
     /// The *Extract* archetype ([`pve-campaign.md`](../../docs/pve-campaign.md) §3): move `who`'s
@@ -380,7 +414,13 @@ impl ObjectiveSet {
     /// the set (e.g. an [`mission_assassinate`](Self::mission_assassinate) objective + this Reach);
     /// [`ObjectiveSet::new`] takes an arbitrary objective vector for exactly that.
     pub fn mission_extract(who: Faction, runner: Entity, dest: Vec2, radius: Fixed) -> Self {
-        ObjectiveSet::new(vec![Objective::reach(who, runner, dest, radius, "Reach the extraction point")])
+        ObjectiveSet::new(vec![Objective::reach(
+            who,
+            runner,
+            dest,
+            radius,
+            "Reach the extraction point",
+        )])
     }
 
     /// The default **skirmish** victory: defeat every enemy combatant. One required
@@ -500,7 +540,7 @@ pub fn skirmish_objectives(sim: &Sim) -> ObjectiveSet {
 /// Gather the live positions of every entity a [`Reach`](ObjectiveKind::Reach)/
 /// [`Escort`](ObjectiveKind::Escort) objective in `set` tracks, for the host to hand to
 /// [`ObserveCtx::tracked`]. A dead or stale-handle entity is simply omitted — its objective then
-/// reads as "not there yet", the same fair rule [`within`] follows (never a spurious completion).
+/// reads as "not there yet", the same fair rule `within` follows (never a spurious completion).
 /// Empty for a set with no Reach/Escort objective (the common case — Seize/Hold/Push/skirmish use
 /// none), so those missions pay nothing. Read-only sim scan; folds nothing (invariants #1/#7).
 pub fn tracked_positions(sim: &Sim, set: &ObjectiveSet) -> Vec<(Entity, Vec2)> {
@@ -582,7 +622,10 @@ mod tests {
     use gonedark_core::sim::{Command, Sim};
 
     fn ent(i: u32) -> Entity {
-        Entity { index: i, generation: 1 }
+        Entity {
+            index: i,
+            generation: 1,
+        }
     }
 
     fn at(x: i32, y: i32) -> Vec2 {
@@ -619,13 +662,24 @@ mod tests {
         let f = forces(alive(2, 0), alive(2, 1));
 
         // A capture of a DIFFERENT point (or to a different faction) does not complete it.
-        let other = [SimEvent::Captured { pos: at(9, 9), from: Faction::Neutral, to: Faction::Player }];
+        let other = [SimEvent::Captured {
+            pos: at(9, 9),
+            from: Faction::Neutral,
+            to: Faction::Player,
+        }];
         assert_eq!(o.observe(&ObserveCtx::new(&other, &f, 1)), None);
         assert_eq!(o.state, ObjectiveState::Active);
 
         // The right point flipping to the owner completes it (capture flips).
-        let evs = [SimEvent::Captured { pos: point, from: Faction::Neutral, to: Faction::Player }];
-        assert_eq!(o.observe(&ObserveCtx::new(&evs, &f, 2)), Some(ObjectiveState::Completed));
+        let evs = [SimEvent::Captured {
+            pos: point,
+            from: Faction::Neutral,
+            to: Faction::Player,
+        }];
+        assert_eq!(
+            o.observe(&ObserveCtx::new(&evs, &f, 2)),
+            Some(ObjectiveState::Completed)
+        );
         assert_eq!(o.state, ObjectiveState::Completed);
         // Terminal sticks: a later tick reports no further transition.
         assert_eq!(o.observe(&ObserveCtx::new(&evs, &f, 3)), None);
@@ -638,11 +692,24 @@ mod tests {
         let f = forces(alive(3, 0), alive(2, 1));
 
         // Some OTHER entity dying does not complete it (VIP-killed keys on the named entity).
-        let other = [SimEvent::Killed { entity: ent(8), faction: Faction::Enemy, source: ent(1), pos: at(0, 0) }];
+        let other = [SimEvent::Killed {
+            entity: ent(8),
+            faction: Faction::Enemy,
+            source: ent(1),
+            pos: at(0, 0),
+        }];
         assert_eq!(o.observe(&ObserveCtx::new(&other, &f, 1)), None);
 
-        let evs = [SimEvent::Killed { entity: vip, faction: Faction::Enemy, source: ent(1), pos: at(1, 1) }];
-        assert_eq!(o.observe(&ObserveCtx::new(&evs, &f, 2)), Some(ObjectiveState::Completed));
+        let evs = [SimEvent::Killed {
+            entity: vip,
+            faction: Faction::Enemy,
+            source: ent(1),
+            pos: at(1, 1),
+        }];
+        assert_eq!(
+            o.observe(&ObserveCtx::new(&evs, &f, 2)),
+            Some(ObjectiveState::Completed)
+        );
     }
 
     #[test]
@@ -656,7 +723,10 @@ mod tests {
         assert_eq!(o.state, ObjectiveState::Active);
 
         // At the timer: completed (survive-to-timeout).
-        assert_eq!(o.observe(&ObserveCtx::new(&[], &f, 100)), Some(ObjectiveState::Completed));
+        assert_eq!(
+            o.observe(&ObserveCtx::new(&[], &f, 100)),
+            Some(ObjectiveState::Completed)
+        );
         assert_eq!(o.progress.current, o.progress.goal);
     }
 
@@ -665,23 +735,33 @@ mod tests {
         // Overstaying — the protected force is wiped out before the clock runs out → an honest fail.
         let mut o = Objective::survive(Faction::Player, 1000, "Hold the line");
         let f = forces(wiped(), alive(3, 1));
-        assert_eq!(o.observe(&ObserveCtx::new(&[], &f, 200)), Some(ObjectiveState::Failed));
+        assert_eq!(
+            o.observe(&ObserveCtx::new(&[], &f, 200)),
+            Some(ObjectiveState::Failed)
+        );
         assert_eq!(o.state, ObjectiveState::Failed);
     }
 
     #[test]
     fn eliminate_faction_completes_when_the_target_is_wiped_and_tracks_progress() {
         // Eliminate the Enemy (goal 5 = 4 garrison + 1 base). Progress = how much is gone.
-        let mut o = Objective::eliminate_faction(Faction::Player, Faction::Enemy, "Take the base", 5);
+        let mut o =
+            Objective::eliminate_faction(Faction::Player, Faction::Enemy, "Take the base", 5);
 
         // 2 enemy units + 1 building remain → 3 of 5 cleared, still active.
         let f = forces(alive(8, 0), alive(2, 1));
         assert_eq!(o.observe(&ObserveCtx::new(&[], &f, 1)), None);
-        assert_eq!(o.progress.current, 2, "5 - (2 units + 1 building) = 2 cleared");
+        assert_eq!(
+            o.progress.current, 2,
+            "5 - (2 units + 1 building) = 2 cleared"
+        );
 
         // Enemy wiped → completed.
         let f = forces(alive(8, 0), wiped());
-        assert_eq!(o.observe(&ObserveCtx::new(&[], &f, 2)), Some(ObjectiveState::Completed));
+        assert_eq!(
+            o.observe(&ObserveCtx::new(&[], &f, 2)),
+            Some(ObjectiveState::Completed)
+        );
         assert_eq!(o.progress.current, o.progress.goal);
     }
 
@@ -689,9 +769,13 @@ mod tests {
     fn any_objective_fails_when_its_owner_loses_all_units() {
         // The mission-1 fail path ("lose all ten"): the Player owner is wiped → the eliminate-Enemy
         // objective fails (generalized `evaluate_outcome` elimination, reused not duplicated).
-        let mut o = Objective::eliminate_faction(Faction::Player, Faction::Enemy, "Take the base", 5);
+        let mut o =
+            Objective::eliminate_faction(Faction::Player, Faction::Enemy, "Take the base", 5);
         let f = forces(wiped(), alive(3, 1));
-        assert_eq!(o.observe(&ObserveCtx::new(&[], &f, 50)), Some(ObjectiveState::Failed));
+        assert_eq!(
+            o.observe(&ObserveCtx::new(&[], &f, 50)),
+            Some(ObjectiveState::Failed)
+        );
         assert_eq!(o.state, ObjectiveState::Failed);
     }
 
@@ -699,25 +783,60 @@ mod tests {
     fn reach_and_escort_use_tracked_positions() {
         let runner = ent(2);
         let dest = at(10, 0);
-        let mut reach = Objective::reach(Faction::Player, runner, dest, Fixed::from_int(2), "Reach the LZ");
+        let mut reach = Objective::reach(
+            Faction::Player,
+            runner,
+            dest,
+            Fixed::from_int(2),
+            "Reach the LZ",
+        );
         let f = forces(alive(1, 0), alive(1, 0));
 
         // Far away → not yet.
         let far = [(runner, at(0, 0))];
-        assert_eq!(reach.observe(&ObserveCtx { events: &[], forces: &f, elapsed_ticks: 1, tracked: &far }), None);
+        assert_eq!(
+            reach.observe(&ObserveCtx {
+                events: &[],
+                forces: &f,
+                elapsed_ticks: 1,
+                tracked: &far
+            }),
+            None
+        );
         // Within radius → completed.
         let near = [(runner, at(11, 0))];
         assert_eq!(
-            reach.observe(&ObserveCtx { events: &[], forces: &f, elapsed_ticks: 2, tracked: &near }),
+            reach.observe(&ObserveCtx {
+                events: &[],
+                forces: &f,
+                elapsed_ticks: 2,
+                tracked: &near
+            }),
             Some(ObjectiveState::Completed)
         );
 
         // Escort fails if the VIP dies en route.
         let vip = ent(5);
-        let mut escort = Objective::escort(Faction::Player, vip, dest, Fixed::from_int(2), "Escort the VIP");
-        let dead = [SimEvent::Killed { entity: vip, faction: Faction::Player, source: ent(9), pos: at(3, 3) }];
+        let mut escort = Objective::escort(
+            Faction::Player,
+            vip,
+            dest,
+            Fixed::from_int(2),
+            "Escort the VIP",
+        );
+        let dead = [SimEvent::Killed {
+            entity: vip,
+            faction: Faction::Player,
+            source: ent(9),
+            pos: at(3, 3),
+        }];
         assert_eq!(
-            escort.observe(&ObserveCtx { events: &dead, forces: &f, elapsed_ticks: 3, tracked: &[(vip, at(3, 3))] }),
+            escort.observe(&ObserveCtx {
+                events: &dead,
+                forces: &f,
+                elapsed_ticks: 3,
+                tracked: &[(vip, at(3, 3))]
+            }),
             Some(ObjectiveState::Failed)
         );
     }
@@ -762,7 +881,10 @@ mod tests {
     /// onto the enemy base, stepping the bare `Sim` (no GPU) while the host-side `ObjectiveSet`
     /// observes each tick — exactly the `Sim` + objective loop the live host runs, minus the
     /// renderer. Returns the final `MissionStatus` after up to `max_ticks`.
-    fn run_mission_one(player_stance: gonedark_core::components::Stance, max_ticks: u64) -> MissionStatus {
+    fn run_mission_one(
+        player_stance: gonedark_core::components::Stance,
+        max_ticks: u64,
+    ) -> MissionStatus {
         use gonedark_core::components::Order;
         let mut sim = Sim::new(0xA11CE);
         let m = gonedark_core::scenario::seed_seize_mission(&mut sim);
@@ -772,8 +894,14 @@ mod tests {
         let base = sim.world.pos[m.enemy_base.index as usize];
         let mut opening: Vec<Command> = Vec::with_capacity(m.troops.len() * 2);
         for &t in &m.troops {
-            opening.push(Command::SetStance { entity: t, stance: player_stance });
-            opening.push(Command::AttackMove { entity: t, target: base });
+            opening.push(Command::SetStance {
+                entity: t,
+                stance: player_stance,
+            });
+            opening.push(Command::AttackMove {
+                entity: t,
+                target: base,
+            });
         }
         sim.step(&opening);
 
@@ -783,8 +911,13 @@ mod tests {
             let mut cmds: Vec<Command> = Vec::new();
             for &t in &m.troops {
                 let i = t.index as usize;
-                if sim.world.is_alive(t) && matches!(sim.world.order[i], Order::Idle | Order::HoldPosition) {
-                    cmds.push(Command::AttackMove { entity: t, target: base });
+                if sim.world.is_alive(t)
+                    && matches!(sim.world.order[i], Order::Idle | Order::HoldPosition)
+                {
+                    cmds.push(Command::AttackMove {
+                        entity: t,
+                        target: base,
+                    });
                 }
             }
             sim.step(&cmds);
@@ -805,7 +938,11 @@ mod tests {
         // Ten FireAtWill troops storm the base: they clear the garrison and raze the camp →
         // the Enemy is eliminated → the mission is WON.
         let status = run_mission_one(Stance::FireAtWill, 60 * 60);
-        assert_eq!(status, MissionStatus::Won, "ten troops should take the base");
+        assert_eq!(
+            status,
+            MissionStatus::Won,
+            "ten troops should take the base"
+        );
     }
 
     #[test]
@@ -814,7 +951,11 @@ mod tests {
         // Ten HoldFire troops march in without firing a shot: the FireAtWill garrison cuts them down
         // → the Player force is wiped → the mission is LOST (the "lose all ten" fail path).
         let status = run_mission_one(Stance::HoldFire, 60 * 60);
-        assert_eq!(status, MissionStatus::Lost, "ten troops that won't fight are wiped out");
+        assert_eq!(
+            status,
+            MissionStatus::Lost,
+            "ten troops that won't fight are wiped out"
+        );
     }
 
     // --- Mission 2 — "Hold the Line" (the Survive/defense archetype) ---------------------------
@@ -824,7 +965,10 @@ mod tests {
     /// same `Sim` + objective loop the live host runs, minus the renderer. The defenders keep their
     /// seeded `HoldPosition` order (a rooted defence); only the stance is overridden. Returns the
     /// final `MissionStatus` after up to `max_ticks`.
-    fn run_mission_hold(defender_stance: gonedark_core::components::Stance, max_ticks: u64) -> MissionStatus {
+    fn run_mission_hold(
+        defender_stance: gonedark_core::components::Stance,
+        max_ticks: u64,
+    ) -> MissionStatus {
         use gonedark_core::scenario::HOLD_TICKS;
         let mut sim = Sim::new(0xD00D);
         let m = gonedark_core::scenario::seed_hold_mission(&mut sim);
@@ -834,7 +978,10 @@ mod tests {
         let opening: Vec<Command> = m
             .defenders
             .iter()
-            .map(|&d| Command::SetStance { entity: d, stance: defender_stance })
+            .map(|&d| Command::SetStance {
+                entity: d,
+                stance: defender_stance,
+            })
             .collect();
         sim.step(&opening);
 
@@ -856,7 +1003,11 @@ mod tests {
         use gonedark_core::scenario::HOLD_TICKS;
         // A dug-in FireAtWill defence holds its Light-cover line and survives to the timer → WON.
         let status = run_mission_hold(Stance::FireAtWill, HOLD_TICKS + 1);
-        assert_eq!(status, MissionStatus::Won, "a firing defence holds the line to the timer");
+        assert_eq!(
+            status,
+            MissionStatus::Won,
+            "a firing defence holds the line to the timer"
+        );
     }
 
     #[test]
@@ -866,14 +1017,22 @@ mod tests {
         // A passive HoldFire defence squanders its cover, is overrun before the timer → LOST (the
         // survive-fail-on-owner-wipe path — the going-dark-cost teach made mechanical).
         let status = run_mission_hold(Stance::HoldFire, HOLD_TICKS);
-        assert_eq!(status, MissionStatus::Lost, "a defence that won't fire is overrun before the timer");
+        assert_eq!(
+            status,
+            MissionStatus::Lost,
+            "a defence that won't fire is overrun before the timer"
+        );
     }
 
     // --- Push — capture a chain of control points down a lane (composition of Capture) ----------
 
     /// Emit a `Captured` flip of `point` to the Player.
     fn captured(point: Vec2) -> SimEvent {
-        SimEvent::Captured { pos: point, from: Faction::Neutral, to: Faction::Player }
+        SimEvent::Captured {
+            pos: point,
+            from: Faction::Neutral,
+            to: Faction::Player,
+        }
     }
 
     #[test]
@@ -888,7 +1047,11 @@ mod tests {
         // Capturing the first two points (order need not match the lane) leaves the push active.
         set.observe(&ObserveCtx::new(&[captured(lane[2])], &f, 10));
         set.observe(&ObserveCtx::new(&[captured(lane[0])], &f, 20));
-        assert_eq!(set.status(), MissionStatus::Active, "one point still uncaptured");
+        assert_eq!(
+            set.status(),
+            MissionStatus::Active,
+            "one point still uncaptured"
+        );
 
         // The last point flips → every required Capture is complete → WON.
         set.observe(&ObserveCtx::new(&[captured(lane[1])], &f, 30));
@@ -901,7 +1064,11 @@ mod tests {
         let mut set = ObjectiveSet::mission_push(Faction::Player, &lane);
 
         // Take the first point, then lose the whole force → a still-Active Capture fails → LOST.
-        set.observe(&ObserveCtx::new(&[captured(lane[0])], &forces(alive(6, 0), alive(3, 1)), 10));
+        set.observe(&ObserveCtx::new(
+            &[captured(lane[0])],
+            &forces(alive(6, 0), alive(3, 1)),
+            10,
+        ));
         assert_eq!(set.status(), MissionStatus::Active);
         set.observe(&ObserveCtx::new(&[], &forces(wiped(), alive(3, 1)), 20));
         assert_eq!(set.status(), MissionStatus::Lost, "owner wiped mid-lane");
@@ -916,12 +1083,22 @@ mod tests {
         let f = forces(alive(4, 0), alive(3, 1));
 
         // Some other death does not complete it.
-        let noise = [SimEvent::Killed { entity: ent(9), faction: Faction::Enemy, source: ent(1), pos: at(0, 0) }];
+        let noise = [SimEvent::Killed {
+            entity: ent(9),
+            faction: Faction::Enemy,
+            source: ent(1),
+            pos: at(0, 0),
+        }];
         set.observe(&ObserveCtx::new(&noise, &f, 10));
         assert_eq!(set.status(), MissionStatus::Active);
 
         // The VIP's death wins it.
-        let kill = [SimEvent::Killed { entity: vip, faction: Faction::Enemy, source: ent(1), pos: at(5, 5) }];
+        let kill = [SimEvent::Killed {
+            entity: vip,
+            faction: Faction::Enemy,
+            source: ent(1),
+            pos: at(5, 5),
+        }];
         set.observe(&ObserveCtx::new(&kill, &f, 20));
         assert_eq!(set.status(), MissionStatus::Won, "VIP eliminated");
     }
@@ -932,7 +1109,11 @@ mod tests {
         let mut set = ObjectiveSet::mission_assassinate(Faction::Player, vip);
         // The hunting force is wiped before reaching the VIP → LOST (universal owner-eliminated rule).
         set.observe(&ObserveCtx::new(&[], &forces(wiped(), alive(3, 1)), 30));
-        assert_eq!(set.status(), MissionStatus::Lost, "hunters wiped before the kill");
+        assert_eq!(
+            set.status(),
+            MissionStatus::Lost,
+            "hunters wiped before the kill"
+        );
     }
 
     // --- Extract — reach an extraction point (composition of Reach) -----------------------------
@@ -941,15 +1122,26 @@ mod tests {
     fn mission_extract_is_won_when_the_runner_reaches_the_lz() {
         let runner = ent(3);
         let lz = at(20, 0);
-        let mut set = ObjectiveSet::mission_extract(Faction::Player, runner, lz, Fixed::from_int(2));
+        let mut set =
+            ObjectiveSet::mission_extract(Faction::Player, runner, lz, Fixed::from_int(2));
         let f = forces(alive(2, 0), alive(1, 0));
 
         // Still en route → active.
-        set.observe(&ObserveCtx { events: &[], forces: &f, elapsed_ticks: 10, tracked: &[(runner, at(0, 0))] });
+        set.observe(&ObserveCtx {
+            events: &[],
+            forces: &f,
+            elapsed_ticks: 10,
+            tracked: &[(runner, at(0, 0))],
+        });
         assert_eq!(set.status(), MissionStatus::Active);
 
         // Within radius of the LZ → WON.
-        set.observe(&ObserveCtx { events: &[], forces: &f, elapsed_ticks: 20, tracked: &[(runner, at(21, 0))] });
+        set.observe(&ObserveCtx {
+            events: &[],
+            forces: &f,
+            elapsed_ticks: 20,
+            tracked: &[(runner, at(21, 0))],
+        });
         assert_eq!(set.status(), MissionStatus::Won, "runner reached the LZ");
     }
 
@@ -957,10 +1149,20 @@ mod tests {
     fn mission_extract_is_lost_when_the_owner_is_wiped_before_the_lz() {
         let runner = ent(3);
         let lz = at(20, 0);
-        let mut set = ObjectiveSet::mission_extract(Faction::Player, runner, lz, Fixed::from_int(2));
+        let mut set =
+            ObjectiveSet::mission_extract(Faction::Player, runner, lz, Fixed::from_int(2));
         // Owner wiped while the runner is still short of the LZ → LOST.
-        set.observe(&ObserveCtx { events: &[], forces: &forces(wiped(), alive(1, 0)), elapsed_ticks: 30, tracked: &[(runner, at(0, 0))] });
-        assert_eq!(set.status(), MissionStatus::Lost, "owner wiped before extraction");
+        set.observe(&ObserveCtx {
+            events: &[],
+            forces: &forces(wiped(), alive(1, 0)),
+            elapsed_ticks: 30,
+            tracked: &[(runner, at(0, 0))],
+        });
+        assert_eq!(
+            set.status(),
+            MissionStatus::Lost,
+            "owner wiped before extraction"
+        );
     }
 
     // --- Skirmish victory (defeat all enemy forces) ---------------------------------------------
@@ -969,11 +1171,19 @@ mod tests {
     fn skirmish_eliminate_wins_on_enemy_wipe_loses_on_player_wipe() {
         let mut win = ObjectiveSet::skirmish_eliminate(5);
         win.observe(&ObserveCtx::new(&[], &forces(alive(8, 1), wiped()), 10));
-        assert_eq!(win.status(), MissionStatus::Won, "enemy wiped → skirmish won");
+        assert_eq!(
+            win.status(),
+            MissionStatus::Won,
+            "enemy wiped → skirmish won"
+        );
 
         let mut lose = ObjectiveSet::skirmish_eliminate(5);
         lose.observe(&ObserveCtx::new(&[], &forces(wiped(), alive(3, 1)), 10));
-        assert_eq!(lose.status(), MissionStatus::Lost, "player wiped → skirmish lost");
+        assert_eq!(
+            lose.status(),
+            MissionStatus::Lost,
+            "player wiped → skirmish lost"
+        );
     }
 
     #[test]
@@ -989,7 +1199,11 @@ mod tests {
         let set = skirmish_objectives(&sim);
         let hud = objective_hud_view(&set);
         assert_eq!(hud.objective, "Defeat all enemy forces");
-        assert_eq!(hud.progress, Some((0, expected)), "bar goal == seeded enemy strength");
+        assert_eq!(
+            hud.progress,
+            Some((0, expected)),
+            "bar goal == seeded enemy strength"
+        );
     }
 
     // --- tracked_positions: the Reach/Escort live-position feed ---------------------------------
@@ -1003,7 +1217,11 @@ mod tests {
 
         // A Reach set for a live entity yields its live position.
         let reach = ObjectiveSet::new(vec![Objective::reach(
-            Faction::Player, runner, at(50, 50), Fixed::from_int(2), "Reach",
+            Faction::Player,
+            runner,
+            at(50, 50),
+            Fixed::from_int(2),
+            "Reach",
         )]);
         assert_eq!(tracked_positions(&sim, &reach), vec![(runner, want)]);
 
@@ -1011,7 +1229,11 @@ mod tests {
         let ghost = ent(9999);
         assert!(!sim.world.is_alive(ghost));
         let stale = ObjectiveSet::new(vec![Objective::reach(
-            Faction::Player, ghost, at(50, 50), Fixed::from_int(2), "Reach",
+            Faction::Player,
+            ghost,
+            at(50, 50),
+            Fixed::from_int(2),
+            "Reach",
         )]);
         assert!(tracked_positions(&sim, &stale).is_empty());
 
@@ -1030,7 +1252,11 @@ mod tests {
 
         // Destination = the runner's own current cell, generous radius → it is "there" immediately.
         let mut set = ObjectiveSet::new(vec![Objective::reach(
-            Faction::Player, runner, here, Fixed::from_int(4), "Reach the marker",
+            Faction::Player,
+            runner,
+            here,
+            Fixed::from_int(4),
+            "Reach the marker",
         )]);
         let forces = faction_forces_all(&sim);
         let tracked = tracked_positions(&sim, &set);
@@ -1040,6 +1266,10 @@ mod tests {
             elapsed_ticks: sim.tick_count(),
             tracked: &tracked,
         });
-        assert_eq!(set.status(), MissionStatus::Won, "runner already at the marker");
+        assert_eq!(
+            set.status(),
+            MissionStatus::Won,
+            "runner already at the marker"
+        );
     }
 }

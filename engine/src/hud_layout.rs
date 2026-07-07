@@ -12,17 +12,17 @@
 //!   moves. So this module adds **zero** lockstep / cross-arch surface (invariant #1/#2/#7).
 //! - **Placement, never information (invariant #6).** The editor configures *where controls sit*. It
 //!   can NEVER surface strategic intel while embodied: an element that reveals the map / unit roster
-//!   / economy ([`HudElement::surfaces_strategic_intel`]) is structurally not editable in the
-//!   [`HudLayer::Embodied`] layer — [`HudPreset::set_placement`] *rejects* it, so "the world goes
+//!   / economy (`HudElement::surfaces_strategic_intel`) is structurally not editable in the
+//!   `HudLayer::Embodied` layer — `HudPreset::set_placement` *rejects* it, so "the world goes
 //!   dark" stays fair by construction, not by discipline. Accessibility cues (colour-blind palettes,
 //!   text scale) are a SEPARATE settings surface and out of scope here.
 //!
 //! ## The pure seam (host-testable, no winit / Android types)
-//! [`HudLayoutProfile::resolve_embodied`] maps the active preset's embodied layer → a concrete
-//! [`TouchLayout`] (control geometry) + per-control [`Opacity`]. That [`TouchLayout`] feeds the
+//! `HudLayoutProfile::resolve_embodied` maps the active preset's embodied layer → a concrete
+//! `TouchLayout` (control geometry) + per-control `Opacity`. That `TouchLayout` feeds the
 //! existing [`TouchControls::update`](crate::touch_controls::TouchControls::update) unchanged, so a
 //! saved layout drives the raw-touch→intent mapping with no new code path. A profile with no
-//! overrides resolves **bit-identically** to the shipped [`TouchLayout::new`] (resolution only
+//! overrides resolves **bit-identically** to the shipped `TouchLayout::new` (resolution only
 //! mutates elements that carry an explicit override), so enabling the editor changes nothing until
 //! the player actually moves something.
 //!
@@ -318,7 +318,9 @@ impl HudPreset {
             HudLayer::Command => &mut self.command,
             HudLayer::Embodied => &mut self.embodied,
         };
-        target.overrides.insert(element, placement.clamped_for(element));
+        target
+            .overrides
+            .insert(element, placement.clamped_for(element));
         Ok(())
     }
 
@@ -623,11 +625,7 @@ pub enum HudConfigError {
 /// Resolve one embodied [`LayerConfig`] to [`TouchLayout`] geometry + [`Opacity`]. Only overridden
 /// elements move; everything else keeps its stock geometry, so the default case is byte-identical to
 /// [`TouchLayout::new`]. Free function so the seam is testable without a `Game`.
-pub fn resolve_embodied_layer(
-    cfg: &LayerConfig,
-    width: u32,
-    height: u32,
-) -> ResolvedEmbodiedHud {
+pub fn resolve_embodied_layer(cfg: &LayerConfig, width: u32, height: u32) -> ResolvedEmbodiedHud {
     resolve_embodied_over_base(cfg, TouchLayout::new(width, height), width, height)
 }
 
@@ -641,7 +639,12 @@ pub fn resolve_embodied_layer_with_density(
     height: u32,
     density: f32,
 ) -> ResolvedEmbodiedHud {
-    resolve_embodied_over_base(cfg, TouchLayout::with_density(width, height, density), width, height)
+    resolve_embodied_over_base(
+        cfg,
+        TouchLayout::with_density(width, height, density),
+        width,
+        height,
+    )
 }
 
 /// Apply a layer's placement overrides on top of a supplied base [`TouchLayout`] — the shared body
@@ -740,8 +743,7 @@ mod tests {
         let stock = TouchLayout::new(W, H);
         for element in HudElement::EMBODIED_CONTROLS {
             let mut cfg = LayerConfig::default();
-            cfg.overrides
-                .insert(element, element.default_placement());
+            cfg.overrides.insert(element, element.default_placement());
             let r = resolve_embodied_layer(&cfg, W, H);
             match element {
                 HudElement::Fire => {
@@ -777,7 +779,9 @@ mod tests {
         let mut preset = HudPreset::new("p");
         let mut p = HudElement::Fire.default_placement();
         p.scale = 2.0;
-        preset.set_placement(HudLayer::Embodied, HudElement::Fire, p).unwrap();
+        preset
+            .set_placement(HudLayer::Embodied, HudElement::Fire, p)
+            .unwrap();
         let mut profile = HudLayoutProfile::default();
         profile.push_preset(preset);
         let r = profile.resolve_embodied(W, H);
@@ -790,12 +794,17 @@ mod tests {
         let mut preset = HudPreset::new("dim");
         let mut p = HudElement::Fire.default_placement();
         p.opacity = 0.3;
-        preset.set_placement(HudLayer::Embodied, HudElement::Fire, p).unwrap();
+        preset
+            .set_placement(HudLayer::Embodied, HudElement::Fire, p)
+            .unwrap();
         let mut profile = HudLayoutProfile::default();
         profile.push_preset(preset);
         let r = profile.resolve_embodied(W, H);
         assert!((r.opacity.fire - 0.3).abs() < 1e-6);
-        assert_eq!(r.opacity.crouch, 1.0, "un-edited controls stay fully opaque");
+        assert_eq!(
+            r.opacity.crouch, 1.0,
+            "un-edited controls stay fully opaque"
+        );
     }
 
     // ---- The pure seam: saved layout → raw-touch → intent ----
@@ -812,7 +821,9 @@ mod tests {
         // Upper area of the right (look) half — clear of the stock lower-right spot, and NOT inside
         // the left stick zone (a finger there would be claimed by the move stick, not the button).
         p.center = (0.60, 0.25);
-        preset.set_placement(HudLayer::Embodied, HudElement::Fire, p).unwrap();
+        preset
+            .set_placement(HudLayer::Embodied, HudElement::Fire, p)
+            .unwrap();
         let mut profile = HudLayoutProfile::default();
         profile.push_preset(preset);
 
@@ -839,7 +850,9 @@ mod tests {
         let mut preset = HudPreset::new("flip");
         let mut p = HudElement::MoveStick.default_placement();
         p.center = (0.80, 0.20);
-        preset.set_placement(HudLayer::Embodied, HudElement::MoveStick, p).unwrap();
+        preset
+            .set_placement(HudLayer::Embodied, HudElement::MoveStick, p)
+            .unwrap();
         let mut profile = HudLayoutProfile::default();
         profile.push_preset(preset);
         let resolved = profile.resolve_embodied(W, H);
@@ -850,12 +863,21 @@ mod tests {
 
         let mut tc = TouchControls::new();
         let out = tc.update(&resolved.layout, &[t(1, ring.cx, ring.cy)]);
-        assert!(out.hud.stick_active, "finger in the relocated ring claims the stick");
+        assert!(
+            out.hud.stick_active,
+            "finger in the relocated ring claims the stick"
+        );
 
         // A finger at the ring's OLD stock home no longer claims the stick.
         let mut tc2 = TouchControls::new();
-        let out2 = tc2.update(&resolved.layout, &[t(1, stock.stick_base.cx, stock.stick_base.cy)]);
-        assert!(!out2.hud.stick_active, "the stock lower-left spot no longer claims the stick");
+        let out2 = tc2.update(
+            &resolved.layout,
+            &[t(1, stock.stick_base.cx, stock.stick_base.cy)],
+        );
+        assert!(
+            !out2.hud.stick_active,
+            "the stock lower-left spot no longer claims the stick"
+        );
     }
 
     // ---- Invariant #6: placement not information ----
@@ -877,7 +899,11 @@ mod tests {
     #[test]
     fn intel_elements_cannot_be_placed_in_the_embodied_layer() {
         let mut preset = HudPreset::new("cheat");
-        for intel in [HudElement::Minimap, HudElement::UnitRoster, HudElement::ResourceReadout] {
+        for intel in [
+            HudElement::Minimap,
+            HudElement::UnitRoster,
+            HudElement::ResourceReadout,
+        ] {
             assert!(intel.surfaces_strategic_intel());
             let err = preset
                 .set_placement(HudLayer::Embodied, intel, intel.default_placement())
@@ -900,7 +926,9 @@ mod tests {
             opacity: 1.0,
         };
         for ctrl in HudElement::EMBODIED_CONTROLS {
-            preset.set_placement(HudLayer::Embodied, ctrl, tiny).unwrap();
+            preset
+                .set_placement(HudLayer::Embodied, ctrl, tiny)
+                .unwrap();
         }
         let resolved = resolve_embodied_layer(&preset.embodied, 1280, 720);
         // Every control's radius stays at least the floor fraction of its stock size (never the
@@ -932,7 +960,10 @@ mod tests {
         let bare = profile.resolve_embodied(w, h);
         let floored = profile.resolve_embodied_with_density(w, h, density);
         // Every round control is at least as large, and the small ones (Surface) strictly larger.
-        assert!(floored.layout.surface.r > bare.layout.surface.r, "dense floor grows Surface");
+        assert!(
+            floored.layout.surface.r > bare.layout.surface.r,
+            "dense floor grows Surface"
+        );
         assert!(floored.layout.fire.r >= bare.layout.fire.r);
         // Density 1.0 (a non-dense display) reproduces the bare layout — no gratuitous change.
         let unit = profile.resolve_embodied_with_density(1280, 720, 1.0);
@@ -973,14 +1004,21 @@ mod tests {
             )
             .unwrap();
         let r2 = resolve_embodied_layer(&preset2.embodied, 1280, 720);
-        assert_eq!(r2.opacity.fire, 0.0, "non-panic controls keep the looser bound");
+        assert_eq!(
+            r2.opacity.fire, 0.0,
+            "non-panic controls keep the looser bound"
+        );
     }
 
     #[test]
     fn embodied_controls_cannot_be_placed_in_the_command_layer() {
         let mut preset = HudPreset::new("x");
         let err = preset
-            .set_placement(HudLayer::Command, HudElement::Fire, HudElement::Fire.default_placement())
+            .set_placement(
+                HudLayer::Command,
+                HudElement::Fire,
+                HudElement::Fire.default_placement(),
+            )
             .unwrap_err();
         assert_eq!(err, HudEditError::NotInLayer);
     }
@@ -1005,7 +1043,10 @@ mod tests {
             .unwrap();
         assert!(!profile.active().is_default());
         profile.reset_active_to_default();
-        assert!(profile.active().is_default(), "reset restores the shipped layout");
+        assert!(
+            profile.active().is_default(),
+            "reset restores the shipped layout"
+        );
 
         // Select back to the original.
         assert!(profile.select(0));
@@ -1020,9 +1061,16 @@ mod tests {
         profile.add_preset("b"); // active = 2
         assert_eq!(profile.len(), 3);
         assert!(profile.remove(2));
-        assert_eq!(profile.active_index(), 1, "active re-clamped after removing it");
+        assert_eq!(
+            profile.active_index(),
+            1,
+            "active re-clamped after removing it"
+        );
         assert!(profile.remove(0));
-        assert!(!profile.remove(0), "never removes the last surviving preset");
+        assert!(
+            !profile.remove(0),
+            "never removes the last surviving preset"
+        );
         assert_eq!(profile.len(), 1);
     }
 

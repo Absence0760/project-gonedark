@@ -43,7 +43,9 @@ use gonedark_pal::{Audio, Input, InputFrame, SoundId, Storage, TouchSample, Wind
 // lives on `AudioStreamBase`, `request_start` on `AudioStream`).
 use oboe::{AudioStream, AudioStreamBase};
 
-use android_activity::input::{InputEvent, KeyAction, KeyEvent, Keycode, MotionAction, MotionEvent};
+use android_activity::input::{
+    InputEvent, KeyAction, KeyEvent, Keycode, MotionAction, MotionEvent,
+};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use log::{info, warn};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
@@ -514,7 +516,12 @@ fn finish_activity(app: &AndroidApp, result_code: Option<i32>) {
         // still fall through to finish() (fail-safe: the match must still tear down).
         if let Some(code) = result_code {
             if env
-                .call_method(&activity, jni_str!("setResult"), jni_sig!("(I)V"), &[JValue::Int(code)])
+                .call_method(
+                    &activity,
+                    jni_str!("setResult"),
+                    jni_sig!("(I)V"),
+                    &[JValue::Int(code)],
+                )
                 .is_err()
             {
                 env.exception_clear();
@@ -570,21 +577,28 @@ fn build_match_game(
     // battle-variation seam the desktop host uses (never a per-platform fork, invariant #2), instead
     // of the archetype default on the shared DEFAULT_SEED.
     let campaign = gonedark_engine::mission_registry::default_campaign();
-    let campaign_node = (!launch.skirmish && scene.is_campaign_mission()).then(|| NodeId(launch.node));
+    let campaign_node =
+        (!launch.skirmish && scene.is_campaign_mission()).then(|| NodeId(launch.node));
     let campaign_spec = campaign_node
         .and_then(|node| gonedark_engine::mission_registry::resolve_battle_spec(&campaign, node));
 
     let mut game = if launch.skirmish && !launch.map.is_empty() {
-        Game::new_map_skirmish_with_loadout(rhi.device(), rhi.format(), DEFAULT_SEED, &launch.map, loadout)
-            .unwrap_or_else(|| {
-                Game::new_scene_with_loadout(
-                    rhi.device(),
-                    rhi.format(),
-                    DEFAULT_SEED,
-                    Scene::Skirmish,
-                    loadout,
-                )
-            })
+        Game::new_map_skirmish_with_loadout(
+            rhi.device(),
+            rhi.format(),
+            DEFAULT_SEED,
+            &launch.map,
+            loadout,
+        )
+        .unwrap_or_else(|| {
+            Game::new_scene_with_loadout(
+                rhi.device(),
+                rhi.format(),
+                DEFAULT_SEED,
+                Scene::Skirmish,
+                loadout,
+            )
+        })
     } else if let (Some(node), Some(spec)) = (campaign_node, campaign_spec) {
         Game::new_battle(
             rhi.device(),
@@ -1160,7 +1174,9 @@ impl Input for AndroidInput {
         // is device-validation-owed.
         let n = (self.frame.touch_count as usize).min(self.frame.touches.len());
         let now_ms = self.gesture_epoch.elapsed().as_millis() as u64;
-        let g = self.command_gesture.update(&self.frame.touches[..n], now_ms);
+        let g = self
+            .command_gesture
+            .update(&self.frame.touches[..n], now_ms);
         self.frame.move_axis = g.move_axis;
         self.frame.scroll = g.scroll;
         self.frame.embody_pressed |= g.embody;

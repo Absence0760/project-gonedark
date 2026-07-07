@@ -1,9 +1,9 @@
 //! Render quality tuning controller (Phase 4 WS-C) — the engine-side state that owns the active
-//! [`QualityTier`], the running dynamic-resolution scale, and the thermal backoff, driving the pure
+//! `QualityTier`, the running dynamic-resolution scale, and the thermal backoff, driving the pure
 //! `render::tiers` policy fns each frame.
 //!
 //! **Everything here is a RENDERING choice (invariant #1/#4).** The controller reads only frame
-//! timing (a host wall-clock `f32`, fine in this crate) and a [`ThermalState`] *reported through the
+//! timing (a host wall-clock `f32`, fine in this crate) and a `ThermalState` *reported through the
 //! PAL* (invariant #2 — the signal crosses the platform seam, never `core`). It NEVER reads or
 //! mutates sim state and NEVER changes `core::sim::TICK_HZ`: the sim ticks at the same fixed 60 Hz
 //! whatever tier/scale/cap this picks, so the per-tick checksum stream is byte-identical at every
@@ -114,8 +114,12 @@ impl RenderTuning {
 
         // `next_resolution_scale` takes a `&[f32]`; the window only ever pushes/pops by one, so it
         // stays contiguous and `make_contiguous` is O(1) here.
-        self.scale =
-            next_resolution_scale(self.recent.make_contiguous(), budget_secs, self.scale, &effective);
+        self.scale = next_resolution_scale(
+            self.recent.make_contiguous(),
+            budget_secs,
+            self.scale,
+            &effective,
+        );
         self.scale
     }
 
@@ -235,8 +239,8 @@ mod tests {
     fn thermal_critical_caps_fps_and_lets_scale_drop_below_tier_floor() {
         let mut t = RenderTuning::new(QualityTier::High);
         let tier_floor = QualityTier::High.params().res_scale_floor; // 0.80
-        // Critical heat + over-budget frames: the cap appears and the scale is allowed below the
-        // comfortable High floor (survival).
+                                                                     // Critical heat + over-budget frames: the cap appears and the scale is allowed below the
+                                                                     // comfortable High floor (survival).
         for _ in 0..40 {
             t.observe_frame(0.040, ThermalState::Critical, 1.0 / 30.0);
         }
@@ -261,7 +265,7 @@ mod tests {
     #[test]
     fn set_tier_reclamps_running_scale() {
         let mut t = RenderTuning::new(QualityTier::High); // scale starts 1.0
-        // Drop to Low (ceiling 0.85): the running scale must re-clamp into Low's band at once.
+                                                          // Drop to Low (ceiling 0.85): the running scale must re-clamp into Low's band at once.
         t.set_tier(QualityTier::Low);
         assert_eq!(t.tier(), QualityTier::Low);
         assert!(t.resolution_scale() <= QualityTier::Low.params().res_scale_ceiling + EPS);
@@ -344,7 +348,11 @@ mod tests {
         for _ in 0..40 {
             t.observe_frame_from_sensor(&sensor, 0.040, 60);
         }
-        assert_eq!(t.fps_cap(), Some(30), "critical heat from the sensor must cap FPS");
+        assert_eq!(
+            t.fps_cap(),
+            Some(30),
+            "critical heat from the sensor must cap FPS"
+        );
         assert!(
             t.resolution_scale() < tier_floor,
             "critical heat may drop dyn-res below the tier floor, got {}",

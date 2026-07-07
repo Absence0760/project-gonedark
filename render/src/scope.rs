@@ -1,22 +1,22 @@
 //! Embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9) — the screen-space scope
 //! chrome drawn over the dark embodied frame while the local player aims down sight in a tank. It is
 //! the render half of the zoom view; the FOV-narrowing + input→zoom-intent math is the engine's
-//! [`gonedark_engine::scope`] seam. Five alpha-blended elements turn "the player is scoped at zoom
+//! `gonedark_engine::scope` seam. Five alpha-blended elements turn "the player is scoped at zoom
 //! `t`" into a recognizable gun-sight:
 //!
 //! - **Vignette tunnel** — a full-screen darken everywhere *outside* the round aperture, so the
-//!   periphery blacks out into the classic scope tunnel ([`scope_instances`], shape `VIGNETTE`).
-//! - **Aperture ring** — the bright circular sight edge ([`scope_instances`], shape `RING`).
+//!   periphery blacks out into the classic scope tunnel (`scope_instances`, shape `VIGNETTE`).
+//! - **Aperture ring** — the bright circular sight edge (`scope_instances`, shape `RING`).
 //! - **Crosshair bars** — a horizontal + vertical reticle line through center (shape `BAR`).
 //! - **Center dot** — the aiming pip (shape `DOT`).
 //!
-//! The whole overlay **fades in with the zoom** ([`scope_fade`]) so it eases on with the FOV rather
+//! The whole overlay **fades in with the zoom** (`scope_fade`) so it eases on with the FOV rather
 //! than popping. Invariant #4: this is the **float side** — every number here is `f32` host-side
-//! presentation, never `core` sim state, and the renderer only READS the [`ScopeState`] it is
+//! presentation, never `core` sim state, and the renderer only READS the `ScopeState` it is
 //! handed. Invariant #6: it is avatar-only chrome with no world position — it reveals nothing about
 //! unseen enemies and narrows (never widens) the visible frustum. Like [`tank_hud`](crate::tank_hud)
 //! all the geometry math lives in pure free fns so it is unit-testable without a GPU; only
-//! [`ScopeRenderer::render`] needs a device.
+//! `ScopeRenderer::render` needs a device.
 
 use wgpu::util::DeviceExt;
 
@@ -63,7 +63,10 @@ pub struct ScopeState {
 
 impl Default for ScopeState {
     fn default() -> Self {
-        ScopeState { aspect: 1.0, zoom_t: 0.0 }
+        ScopeState {
+            aspect: 1.0,
+            zoom_t: 0.0,
+        }
     }
 }
 
@@ -91,8 +94,8 @@ pub struct ScopeInstance {
     pub p1: f32,
 }
 
-/// The scope's opacity fade for a given zoom `t`: `0` below [`SCOPE_FADE_LO`], easing (smoothstep) to
-/// `1` at [`SCOPE_FADE_HI`]. So the overlay eases on with the FOV narrowing rather than popping in.
+/// The scope's opacity fade for a given zoom `t`: `0` below `SCOPE_FADE_LO`, easing (smoothstep) to
+/// `1` at `SCOPE_FADE_HI`. So the overlay eases on with the FOV narrowing rather than popping in.
 /// Pure, host-testable.
 pub fn scope_fade(zoom_t: f32) -> f32 {
     smoothstep(SCOPE_FADE_LO, SCOPE_FADE_HI, zoom_t)
@@ -121,14 +124,18 @@ fn round_half(r: f32, aspect: f32) -> (f32, f32) {
 /// host-testable without a GPU; [`ScopeRenderer::render`] just uploads + draws whatever this returns.
 /// Returns **empty** when the zoom is too shallow to show ([`scope_fade`] `== 0`), so the renderer
 /// no-ops at hip. Every element's alpha is scaled by the fade so the whole sight eases in with the
-/// FOV. Round elements are aspect-corrected via [`round_half`]; the crosshair bars are sized so both
+/// FOV. Round elements are aspect-corrected via `round_half`; the crosshair bars are sized so both
 /// lines share one on-screen thickness regardless of aspect.
 pub fn scope_instances(state: &ScopeState) -> Vec<ScopeInstance> {
     let fade = scope_fade(state.zoom_t);
     if fade <= 0.0 {
         return Vec::new();
     }
-    let aspect = if state.aspect.abs() < 1.0e-6 { 1.0 } else { state.aspect };
+    let aspect = if state.aspect.abs() < 1.0e-6 {
+        1.0
+    } else {
+        state.aspect
+    };
     let mut out = Vec::with_capacity(5);
 
     let reticle = |ndc_x, ndc_y, half_x, half_y, shape, p0, p1| ScopeInstance {
@@ -167,11 +174,27 @@ pub fn scope_instances(state: &ScopeState) -> Vec<ScopeInstance> {
 
     // 3. Horizontal crosshair bar — reaches the aperture (half_x = APERTURE_R in NDC-x = /aspect),
     //    thin in y.
-    out.push(reticle(0.0, 0.0, APERTURE_R / aspect, BAR_THICK, SHAPE_BAR, 0.0, 0.0));
+    out.push(reticle(
+        0.0,
+        0.0,
+        APERTURE_R / aspect,
+        BAR_THICK,
+        SHAPE_BAR,
+        0.0,
+        0.0,
+    ));
 
     // 4. Vertical crosshair bar — thin in x (BAR_THICK/aspect, so its on-screen width matches the
     //    horizontal bar's NDC-y thickness), reaches the aperture in y.
-    out.push(reticle(0.0, 0.0, BAR_THICK / aspect, APERTURE_R, SHAPE_BAR, 0.0, 0.0));
+    out.push(reticle(
+        0.0,
+        0.0,
+        BAR_THICK / aspect,
+        APERTURE_R,
+        SHAPE_BAR,
+        0.0,
+        0.0,
+    ));
 
     // 5. Center aiming dot (round via per-axis half).
     let (dhx, dhy) = round_half(DOT_R, aspect);
@@ -188,12 +211,20 @@ struct QuadVertex {
 }
 
 const QUAD_VERTS: [QuadVertex; 6] = [
-    QuadVertex { corner: [-1.0, -1.0] },
-    QuadVertex { corner: [1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
+    QuadVertex {
+        corner: [1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, 1.0] },
+    QuadVertex {
+        corner: [-1.0, 1.0],
+    },
 ];
 
 const INITIAL_CAP: usize = 5;
@@ -364,8 +395,15 @@ mod tests {
     #[test]
     fn fade_is_zero_at_hip_and_one_when_fully_scoped() {
         assert_eq!(scope_fade(0.0), 0.0, "hip draws nothing");
-        assert_eq!(scope_fade(SCOPE_FADE_LO - 0.01), 0.0, "below the threshold draws nothing");
-        assert!((scope_fade(1.0) - 1.0).abs() < 1e-6, "full ADS is fully opaque");
+        assert_eq!(
+            scope_fade(SCOPE_FADE_LO - 0.01),
+            0.0,
+            "below the threshold draws nothing"
+        );
+        assert!(
+            (scope_fade(1.0) - 1.0).abs() < 1e-6,
+            "full ADS is fully opaque"
+        );
     }
 
     #[test]
@@ -383,7 +421,10 @@ mod tests {
 
     #[test]
     fn builder_is_empty_at_hip() {
-        assert!(scope_instances(&state(1.0, 0.0)).is_empty(), "no scope at hip");
+        assert!(
+            scope_instances(&state(1.0, 0.0)).is_empty(),
+            "no scope at hip"
+        );
         assert!(
             scope_instances(&state(1.0, SCOPE_FADE_LO - 0.01)).is_empty(),
             "no scope below the fade threshold"
@@ -410,8 +451,16 @@ mod tests {
         let full = scope_instances(&state(1.0, 1.0));
         assert!(!mid.is_empty() && !full.is_empty());
         // Ring is element [1] in both.
-        assert!(mid[1].a < full[1].a, "scope is dimmer partway in: {} < {}", mid[1].a, full[1].a);
-        assert!((full[1].a - RETICLE_ALPHA).abs() < 1e-6, "full ADS is full base alpha");
+        assert!(
+            mid[1].a < full[1].a,
+            "scope is dimmer partway in: {} < {}",
+            mid[1].a,
+            full[1].a
+        );
+        assert!(
+            (full[1].a - RETICLE_ALPHA).abs() < 1e-6,
+            "full ADS is full base alpha"
+        );
     }
 
     // ---- the aspect / NDC gotcha: a 16:9 case must stay round, not stretch ----
@@ -424,8 +473,14 @@ mod tests {
         let inst = scope_instances(&state(aspect, 1.0));
         let ring = inst[1];
         let dot = inst[4];
-        assert!((ring.half_x - ring.half_y / aspect).abs() < 1e-6, "ring round per-axis");
-        assert!((dot.half_x - dot.half_y / aspect).abs() < 1e-6, "dot round per-axis");
+        assert!(
+            (ring.half_x - ring.half_y / aspect).abs() < 1e-6,
+            "ring round per-axis"
+        );
+        assert!(
+            (dot.half_x - dot.half_y / aspect).abs() < 1e-6,
+            "dot round per-axis"
+        );
     }
 
     #[test]
@@ -437,7 +492,10 @@ mod tests {
         let inst = scope_instances(&state(aspect, 1.0));
         let h_bar = inst[2]; // thin in y
         let v_bar = inst[3]; // thin in x
-        assert!((h_bar.half_y - BAR_THICK).abs() < 1e-6, "h-bar thickness is BAR_THICK in y");
+        assert!(
+            (h_bar.half_y - BAR_THICK).abs() < 1e-6,
+            "h-bar thickness is BAR_THICK in y"
+        );
         assert!(
             (v_bar.half_x * aspect - h_bar.half_y).abs() < 1e-6,
             "v-bar on-screen thickness ({}·aspect) matches the h-bar ({})",
@@ -445,7 +503,10 @@ mod tests {
             h_bar.half_y
         );
         // And both bars reach the same on-screen aperture extent.
-        assert!((h_bar.half_x * aspect - v_bar.half_y).abs() < 1e-6, "both bars reach the aperture");
+        assert!(
+            (h_bar.half_x * aspect - v_bar.half_y).abs() < 1e-6,
+            "both bars reach the aperture"
+        );
     }
 
     #[test]
@@ -453,10 +514,20 @@ mod tests {
         let aspect = 16.0 / 9.0;
         let v = scope_instances(&state(aspect, 1.0))[0];
         assert_eq!(v.shape, SHAPE_VIGNETTE);
-        assert!((v.p0 - aspect).abs() < 1e-6, "vignette p0 is the aspect for the round-tunnel rebuild");
-        assert!((v.p1 - APERTURE_R).abs() < 1e-6, "vignette p1 is the aperture radius");
+        assert!(
+            (v.p0 - aspect).abs() < 1e-6,
+            "vignette p0 is the aspect for the round-tunnel rebuild"
+        );
+        assert!(
+            (v.p1 - APERTURE_R).abs() < 1e-6,
+            "vignette p1 is the aperture radius"
+        );
         // The vignette is a full-screen quad.
-        assert_eq!((v.half_x, v.half_y), (1.0, 1.0), "vignette covers the whole screen");
+        assert_eq!(
+            (v.half_x, v.half_y),
+            (1.0, 1.0),
+            "vignette covers the whole screen"
+        );
     }
 
     #[test]
@@ -464,7 +535,10 @@ mod tests {
         // A mid-resize zero-height surface (aspect ~0) falls back to 1.0 — no NaN/inf half-sizes.
         let inst = scope_instances(&state(0.0, 1.0));
         for i in &inst {
-            assert!(i.half_x.is_finite() && i.half_y.is_finite(), "no inf half-size at aspect 0");
+            assert!(
+                i.half_x.is_finite() && i.half_y.is_finite(),
+                "no inf half-size at aspect 0"
+            );
         }
     }
 
@@ -478,6 +552,8 @@ mod tests {
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         );
-        validator.validate(&module).expect("scope.wgsl must validate");
+        validator
+            .validate(&module)
+            .expect("scope.wgsl must validate");
     }
 }

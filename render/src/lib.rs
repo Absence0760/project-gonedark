@@ -29,7 +29,7 @@
 //! first-person space underneath — a sky gradient, a gridded ground, and a weapon viewmodel (W5,
 //! [`world::WorldRenderer`]) — BEFORE this unit pass loads. That world is a pure function of the
 //! *camera* (it has no access to sim entities), so no enemy/building/control-point intel can leak
-//! through it; the fairness boundary stays exactly where the [`fog`] filter draws it. The embodied
+//! through it; the fairness boundary stays exactly where the `fog` filter draws it. The embodied
 //! frame is therefore: `world sky/ground (clears)` → this avatar pass (LOADs) → weapon viewmodel →
 //! alert HUD.
 
@@ -41,12 +41,6 @@ use gonedark_core::snapshot::Snapshot;
 use gonedark_core::trig::{Angle, ANGLE_FULL};
 use wgpu::util::DeviceExt;
 
-/// The canonical visual theme — palette, type scale, spacing. The single source of truth for the
-/// renderer's colour language (replaces the scattered per-module colour consts).
-pub mod theme;
-/// The full-screen present grade (WS-E). Owns `PresentUniform` + `going_dark_grade`: the cinematic
-/// tonemap applied over the scene as it upscales, plus the embodied "world goes dark" intensification.
-pub mod present;
 /// Shared linear fade-out clock. Owns [`fade::fade_out_since`]: the one tick-stamped
 /// full-bright→dark ramp the muzzle flash, impact burst, and hitmarker all read from.
 pub mod fade;
@@ -56,39 +50,20 @@ mod fog;
 /// Embodied directional alert HUD (worker 2). Owns `HudRenderer`: the screen-space alert overlay
 /// drawn on top of the embodied frame.
 pub mod hud;
+/// The full-screen present grade (WS-E). Owns `PresentUniform` + `going_dark_grade`: the cinematic
+/// tonemap applied over the scene as it upscales, plus the embodied "world goes dark" intensification.
+pub mod present;
+/// The canonical visual theme — palette, type scale, spacing. The single source of truth for the
+/// renderer's colour language (replaces the scattered per-module colour consts).
+pub mod theme;
 
 /// Glyph cell height (NDC) for the embodied CVD alert labels — small enough to ride under a ring
 /// marker without crowding the thin thread back, large enough to stay legible over a lit frame.
 const ALERT_LABEL_PX: f32 = 0.045;
-/// On-screen FPS touch controls (the COD-style embodied HUD, Android only). Owns
-/// `TouchControlsRenderer`: the move stick + Fire/Crouch/Reload/Surface buttons, drawn as a LOAD
-/// pass over the dark embodied frame. Public so the host describes them via [`touch_controls::TouchControlsHud`].
-pub mod touch_controls;
-/// Embodied **player vitals** HUD (H4) — the avatar's OWN health bar + ammo count, drawn over the
-/// dark first-person frame while embodied in infantry. Pure layout of a host-supplied
-/// [`player_hud::PlayerHudState`] through the shared overlay-quad + text passes (the [`prompt`] /
-/// [`objective_hud`] pattern, no new pipeline). Health/ammo is the avatar's own state, never map
-/// intel, so it is fair over the dark frame (invariant #6). Public so the layout seams are reachable.
-pub mod player_hud;
-/// Embodied **tank** gunner-sight HUD (tank embodiment P8, D55). Owns `TankHudRenderer`: the
-/// hull-relative turret indicator, the dispersion reticle, the LEAD pip, and the reload ring, drawn
-/// as a LOAD pass over the dark embodied frame while the local player drives a tank. Public so the
-/// host fills the [`tank_hud::TankHudState`] from the embodied tank's (read-only) sim state.
-pub mod tank_hud;
-/// Embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9). Owns `ScopeRenderer`:
-/// the scope vignette tunnel + aperture ring + crosshair + center dot, drawn as a LOAD pass over the
-/// dark embodied frame while the local player aims down sight. Pairs with the engine's
-/// `scope` seam (the FOV-narrowing + input→zoom-intent math). Public so the host fills the
-/// [`scope::ScopeState`] from the embodied zoom state.
-pub mod scope;
-/// Embodied **bullet-impact VFX** (WS-A, CP-2 game-feel bar). Owns `ImpactRenderer`: the additive
-/// spark/dust burst at the point the avatar's own shot landed, drawn as a LOAD pass over the dark
-/// embodied frame. Pairs with the engine's hit-feedback seam (the host projects the world hit point
-/// to NDC + derives the fade clock). Public so the host fills the burst params.
-pub mod impact;
-/// Band-select marquee. Owns `MarqueeRenderer`: the selection rectangle drawn in the command view
-/// while a band-drag is in flight. Public so the host can describe the box via [`marquee::Marquee`].
-pub mod marquee;
+/// Contextual command panel (command view). A boxed top-right panel whose rows change with the
+/// selection (camp → train/upgrade, troops → composition/stance, nothing → build palette). Public so
+/// the host can describe it via [`command_panel::CommandPanelView`].
+pub mod command_panel;
 /// Debug hitbox / facet overlay. Owns `DebugRenderer`: the command-view, world-space line pass that
 /// draws each unit's hit-radius ring (colored by armour facet for tanks), a hull-heading spoke, and
 /// shell tracers — the visual "see the hitboxes" half of the duel sandbox, behind a developer
@@ -100,22 +75,47 @@ pub mod debug;
 /// ages. Drawn as a LOAD pass by [`Renderer::render_detection`]. Public so the host (engine) builds
 /// the markers via [`detection::DetectionMarker`]. Command-view only (invariant #6).
 pub mod detection;
+/// Embodied **bullet-impact VFX** (WS-A, CP-2 game-feel bar). Owns `ImpactRenderer`: the additive
+/// spark/dust burst at the point the avatar's own shot landed, drawn as a LOAD pass over the dark
+/// embodied frame. Pairs with the engine's hit-feedback seam (the host projects the world hit point
+/// to NDC + derives the fade clock). Public so the host fills the burst params.
+pub mod impact;
+/// Band-select marquee. Owns `MarqueeRenderer`: the selection rectangle drawn in the command view
+/// while a band-drag is in flight. Public so the host can describe the box via [`marquee::Marquee`].
+pub mod marquee;
 /// In-session shell overlay (Phase 4 WS-B). Owns `OverlayRenderer`: the pause / reconnect-prompt /
 /// post-match-summary chrome, drawn on top of the (possibly dark) match frame. Public so the host
 /// can describe which surface to draw via [`overlay::Overlay`].
 pub mod overlay;
-/// Radial command menu. Owns `RadialRenderer`: the wedge ring a held long-press opens over the
-/// command vocabulary, drawn as a LOAD pass in the command view. Public so the host can describe the
-/// open menu via [`radial::RadialMenu`].
-pub mod radial;
 /// Embody-unit picker (command view). A text-pass list of the selected units so the player chooses
 /// which one to possess. Public so the host can describe the open list via [`picker::EmbodyPicker`]
 /// and hit-test taps with [`picker::picker_row_at`].
 pub mod picker;
-/// Contextual command panel (command view). A boxed top-right panel whose rows change with the
-/// selection (camp → train/upgrade, troops → composition/stance, nothing → build palette). Public so
-/// the host can describe it via [`command_panel::CommandPanelView`].
-pub mod command_panel;
+/// Embodied **player vitals** HUD (H4) — the avatar's OWN health bar + ammo count, drawn over the
+/// dark first-person frame while embodied in infantry. Pure layout of a host-supplied
+/// [`player_hud::PlayerHudState`] through the shared overlay-quad + text passes (the [`prompt`] /
+/// [`objective_hud`] pattern, no new pipeline). Health/ammo is the avatar's own state, never map
+/// intel, so it is fair over the dark frame (invariant #6). Public so the layout seams are reachable.
+pub mod player_hud;
+/// Radial command menu. Owns `RadialRenderer`: the wedge ring a held long-press opens over the
+/// command vocabulary, drawn as a LOAD pass in the command view. Public so the host can describe the
+/// open menu via [`radial::RadialMenu`].
+pub mod radial;
+/// Embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9). Owns `ScopeRenderer`:
+/// the scope vignette tunnel + aperture ring + crosshair + center dot, drawn as a LOAD pass over the
+/// dark embodied frame while the local player aims down sight. Pairs with the engine's
+/// `scope` seam (the FOV-narrowing + input→zoom-intent math). Public so the host fills the
+/// [`scope::ScopeState`] from the embodied zoom state.
+pub mod scope;
+/// Embodied **tank** gunner-sight HUD (tank embodiment P8, D55). Owns `TankHudRenderer`: the
+/// hull-relative turret indicator, the dispersion reticle, the LEAD pip, and the reload ring, drawn
+/// as a LOAD pass over the dark embodied frame while the local player drives a tank. Public so the
+/// host fills the [`tank_hud::TankHudState`] from the embodied tank's (read-only) sim state.
+pub mod tank_hud;
+/// On-screen FPS touch controls (the COD-style embodied HUD, Android only). Owns
+/// `TouchControlsRenderer`: the move stick + Fire/Crouch/Reload/Surface buttons, drawn as a LOAD
+/// pass over the dark embodied frame. Public so the host describes them via [`touch_controls::TouchControlsHud`].
+pub mod touch_controls;
 
 /// Command-view **touch button bar** (build / train / upgrade). The mobile affordance for the RTS
 /// half: a row of labelled buttons along the bottom that arm the command intents the desktop drives
@@ -167,26 +167,22 @@ pub mod skel;
 /// gun, never any sim entity). Public so the host can build the [`world::WorldUniform`].
 pub mod world;
 
+/// The campaign atlas globe backdrop (D103) — the earth + conflict pins behind the desktop
+/// Operations hub, `title_backdrop`'s self-contained sibling (own pipelines, procedural sphere,
+/// one embedded land-mask blob). Q28's presentation increment; the endstate fork stays open.
+pub mod globe_backdrop;
 /// Animated 3D parallax **title backdrop** (Phase 4 app-shell). Owns [`title_backdrop::TitleBackdrop`]:
 /// a self-contained, asset-free dark "Going Dark" diorama (sky gradient + receding ground grid +
 /// procedural silhouette skyline + drifting amber embers + vignette) that drifts slowly and follows
 /// the cursor with a clamped parallax — the live mood-setting background behind the desktop title
 /// screen. Render-only (invariant #1/#4); reads no sim state. Public so the app shell drives it.
 pub mod title_backdrop;
-/// The campaign atlas globe backdrop (D103) — the earth + conflict pins behind the desktop
-/// Operations hub, `title_backdrop`'s self-contained sibling (own pipelines, procedural sphere,
-/// one embedded land-mask blob). Q28's presentation increment; the endstate fork stays open.
-pub mod globe_backdrop;
 
 /// Command-view ground grid (W6). Owns `TerrainRenderer`: a world-space lattice drawn under the units
 /// (first in the command pass) so position/motion read against a fixed reference instead of flat
 /// slate. Public so the pure `grid_lines` layout seam is reachable; the `Renderer` drives the pass.
 pub mod terrain;
 
-/// Command-view readouts (W6). Pure derivation of a unit/point/objective tally from the draw set the
-/// renderer already holds, laid out as corner labels for the W4 text pass — no new sim read. Public
-/// so the `tally` / `readout_labels` seams are reachable; the `Renderer` drives the text.
-pub mod readout;
 /// In-match objective HUD (PvE WS-A) — a thin top-left presentation surface for the current mission
 /// objective + progress, drawn through the W4 text pass + the overlay quad pipeline (the
 /// [`command_panel`] pattern, opposite corner). Pure layout of a host-supplied [`objective_hud::
@@ -199,6 +195,10 @@ pub mod objective_hud;
 /// sim (it folds nothing) to decide which prompt is up, so nothing here reads/folds sim state
 /// (invariant #1/#6/#7). Public so the layout seams are reachable.
 pub mod prompt;
+/// Command-view readouts (W6). Pure derivation of a unit/point/objective tally from the draw set the
+/// renderer already holds, laid out as corner labels for the W4 text pass — no new sim read. Public
+/// so the `tally` / `readout_labels` seams are reachable; the `Renderer` drives the text.
+pub mod readout;
 /// Command-view upgrade panel — the readable per-camp tier display ("growth" half of command-and-
 /// grow). Pure derivation of current tier / next-tier cost / production-speed effect / affordability
 /// from a camp level + resources. No sim read (invariant #4); public so the `upgrade_view` seam (the
@@ -224,8 +224,8 @@ pub mod tiers;
 /// native). Render-only — never a sim input (invariant #1/#4).
 pub mod scene_target;
 
-pub use tiers::{next_resolution_scale, thermal_backoff, Backoff, QualityTier, TierParams};
 pub use scene_target::{needs_realloc, scene_target_dims, SceneTarget};
+pub use tiers::{next_resolution_scale, thermal_backoff, Backoff, QualityTier, TierParams};
 
 /// Convert a Q16.16 fixed value to `f32` for the GPU. The ONLY sanctioned fixed→float hop.
 #[inline]
@@ -254,7 +254,11 @@ pub fn f32_to_fixed(v: f32) -> Fixed {
 pub fn interp_angle(prev: Angle, curr: Angle, alpha: f32) -> f32 {
     // Signed shortest delta in (−ANGLE_FULL/2, ANGLE_FULL/2], as in `trig::rotate_toward`.
     let raw = (curr.0 - prev.0) & (ANGLE_FULL - 1);
-    let delta = if raw > ANGLE_FULL / 2 { raw - ANGLE_FULL } else { raw };
+    let delta = if raw > ANGLE_FULL / 2 {
+        raw - ANGLE_FULL
+    } else {
+        raw
+    };
     let units = prev.0 as f32 + delta as f32 * alpha;
     units * (std::f32::consts::TAU / ANGLE_FULL as f32)
 }
@@ -266,7 +270,7 @@ pub const FLAG_SELECTED: u32 = 4; // command-layer selected — drawn with a bri
 pub const FLAG_MESH: u32 = 8; // a 3D token mesh draws this body — the quad is UI decals only (D44)
 
 /// Command-view faction **shape tags** (visual-design WS-D — non-colour redundancy). The quad shader
-/// ([`shader.wgsl`]) draws a per-faction footprint marker in this silhouette under each 3D token, so a
+/// (`shader.wgsl`) draws a per-faction footprint marker in this silhouette under each 3D token, so a
 /// colourblind player tells factions apart by *shape*, not hue alone. Redundant with the faction
 /// colour ([`faction_color_in`]) — same information in a second channel, never new strategic intel, so
 /// it stays inside invariant #6 (a faction identity tag the colour already conveyed). **Always-on**:
@@ -416,7 +420,7 @@ pub fn weapon_model_for(army: Army) -> mesh::ModelKind {
 /// steel emplacement ([`Turret`](mesh::ModelKind::Turret)). Pure presentation — a fortified-point
 /// silhouette, never sim state (the emplacements are fixed cosmetic environment dressing with no ECS
 /// entity behind them, so they stay fair under "world goes dark", invariant #6). Mirrors the WS-C
-/// [`weapon_model_for`] / [`model_for_unit`] faction-cosmetic pattern so a future per-faction structure
+/// [`weapon_model_for`] / `model_for_unit` faction-cosmetic pattern so a future per-faction structure
 /// system has a tested seam. Pure + testable.
 pub fn structure_turret_for(army: Army) -> mesh::ModelKind {
     match army {
@@ -654,7 +658,7 @@ fn prop_draw_plan(
 /// allies and enemies standing in its line of sight (the missing half of the dark frame: losing the
 /// strategic MAP is intel loss, but the soldier in front of your rifle is a fair physical target —
 /// invariant #6). `instances` is the ALREADY fog-filtered draw set, so only units inside the
-/// avatar's vision survive upstream ([`fog::visible_instances`]) and this never re-checks intel. It
+/// avatar's vision survive upstream (`fog::visible_instances`) and this never re-checks intel. It
 /// drops the avatar's own body ([`FLAG_EMBODIED`] — you don't render yourself in first person) and
 /// any non-mesh instance ([`token_meshes`] is empty for control-point rings, which are map intel
 /// and never appear in the dark frame anyway), then stands each remaining unit on the ground
@@ -735,7 +739,7 @@ fn tracer_color(faction: Faction) -> [f32; 4] {
 /// current-tick position, while a just-spawned shell simply appears one tick later and a spent one
 /// plays out its final segment — no fragile cross-tick index matching. Each bolt is yawed to its
 /// travel heading (`atan2(vel)`, matching [`mesh::model_matrix`]'s `+X = 0`/CCW convention) and stood
-/// at its `(x, y, height)`; a hot per-shell tint ([`tracer_color`]) drives the shader glow. These are
+/// at its `(x, y, height)`; a hot per-shell tint (`tracer_color`) drives the shader glow. These are
 /// embodied-only by construction (invariant #3 — only an embodied unit fires a ballistic shell), so
 /// every bolt is the firing player's own physical round, never strategic map intel (invariant #6).
 /// Pure + GPU-free, so it is unit-tested without a device.
@@ -760,7 +764,7 @@ pub fn interpolate_projectiles(prev: &Snapshot, alpha: f32) -> Vec<mesh::MeshIns
 
 /// Build render instances from two sim snapshots interpolated by `alpha` in `[0,1]` (invariant
 /// #4 — interpolation lives in the renderer, not the sim). Units are matched between the two
-/// snapshots by their stable `entity_index`, **not** by array position: [`core::snapshot`]'s
+/// snapshots by their stable `entity_index`, **not** by array position: [`core::snapshot`](gonedark_core::snapshot)'s
 /// `Snapshot::capture` compacts dead ECS slots out of `units` every tick, so pairing by index
 /// would blend a *different* (or just-despawned) entity's stale pose into a live unit for one
 /// frame on every casualty. A unit present only in `curr` (freshly spawned) snaps to its
@@ -901,7 +905,7 @@ pub fn interpolate_instances(
             flags: FLAG_RING,
             shape: SHAPE_NONE, // a control point already reads as a hollow ring — no footprint marker
             model: 0, // unused: FLAG_RING makes `token_meshes` empty (rings stay hollow quads)
-            hull_yaw: 0.0,    // unused for rings (no mesh)
+            hull_yaw: 0.0, // unused for rings (no mesh)
             turret_yaw: 0.0,
             kind: NO_TOKEN_ICON, // a control point is map intel, not a unit — no kind glyph
             anim_clip: 0,        // unused for rings (no mesh to pose)
@@ -956,9 +960,9 @@ fn project_to_ndc(view_proj: &[[f32; 4]; 4], p: [f32; 3]) -> Option<[f32; 2]> {
 
 /// Command-layer glanceability (CP-9, visual-design WS-C): a small **unit-kind glyph** centred over
 /// each command-view unit token so the player can read composition at a glance on a small screen.
-/// Each non-embodied, non-ring, non-building unit is projected to NDC on the CPU ([`project_to_ndc`])
+/// Each non-embodied, non-ring, non-building unit is projected to NDC on the CPU (`project_to_ndc`)
 /// and emitted as an [`icon::IconItem`] tinted by its faction colour (the instance's own RGB), with
-/// its [`UnitKind`] mapped to an [`icon::IconKind`] ([`icon_for_unit_kind`]).
+/// its [`UnitKind`] mapped to an [`icon::IconKind`] (`icon_for_unit_kind`).
 ///
 /// Fairness (invariant #6): returns an **empty vec while `world_dark`**, exactly like
 /// [`readout::readout_labels`] — a glanceability aid is strategic map intel and must never draw over
@@ -1011,7 +1015,7 @@ pub struct UnitInstance {
     pub r: f32,
     pub g: f32,
     pub b: f32,
-    /// Health fraction in `[0,1]`; negative ([`NO_HEALTH_BAR`]) draws no bar.
+    /// Health fraction in `[0,1]`; negative (`NO_HEALTH_BAR`) draws no bar.
     pub health: f32,
     /// [`FLAG_EMBODIED`] | [`FLAG_RING`] | [`FLAG_SELECTED`].
     pub flags: u32,
@@ -1023,7 +1027,7 @@ pub struct UnitInstance {
     /// trailing CPU-only fields below stay untouched. Presentation only (invariant #1/#4/#6).
     pub shape: u32,
     /// The 3D token mesh this instance draws as ([`mesh::ModelKind`] `as u32`), resolved from the
-    /// snapshot's unit-kind / building flag by [`model_for_unit`]. CPU-side only — [`token_meshes`]
+    /// snapshot's unit-kind / building flag by `model_for_unit`. CPU-side only — `token_meshes`
     /// reads it to bucket the mesh pass; it is a trailing field so the quad pipeline's instance
     /// attributes (locations 1..=5, fixed offsets) are untouched and the GPU never reads it.
     pub model: u32,
@@ -1477,7 +1481,8 @@ impl Renderer {
         view: &wgpu::TextureView,
     ) {
         // The WS-E dark amount was stashed by the immediately-preceding `render` call this frame.
-        self.scene_target.present(device, queue, view, self.scene_dark);
+        self.scene_target
+            .present(device, queue, view, self.scene_dark);
     }
 
     /// Build render instances by interpolating between the previous and current sim snapshots
@@ -1488,7 +1493,7 @@ impl Renderer {
     /// Also advances the [`death_linger::DeathLinger`] buffer against the same `prev`/`curr` pair
     /// (CP-3 follow-up) and appends its frozen Death-clip instances to the drawn set, so a unit that
     /// vanished from the snapshot this tick still plays its death animation for a short fade window.
-    /// The linger instances go through the exact same [`fog::visible_instances`] filter as every
+    /// The linger instances go through the exact same `fog::visible_instances` filter as every
     /// other instance in [`Renderer::render`] — no special always-drawn exemption — so invariant #6
     /// holds for them too.
     pub fn prepare(&mut self, prev: &Snapshot, curr: &Snapshot, alpha: f32, selected: &[u32]) {
@@ -1512,12 +1517,12 @@ impl Renderer {
     /// leaves (invariant #6). In **command view** the frame is composited in three passes so the 3D
     /// greybox tokens (D44) sit between the ground and the UI:
     ///  1. **ground grid** — CLEARS to the lit slate the field reads against (W6);
-    ///  2. **3D unit/structure tokens** — depth-tested meshes ([`token_meshes`] picks infantry vs
+    ///  2. **3D unit/structure tokens** — depth-tested meshes (`token_meshes` picks infantry vs
     ///     structure, and a tank's hull + turret) LOADed over the grid;
     ///  3. **2D quad UI** — health bars, selection rims, control-point rings — LOADed on top, with
     ///     each token's body fill suppressed ([`FLAG_MESH`]) so the mesh shows through.
     ///
-    /// Either way [`fog::visible_instances`] (worker 1) chooses the draw set, so unseen enemies
+    /// Either way `fog::visible_instances` (worker 1) chooses the draw set, so unseen enemies
     /// vanish in command view and the map collapses to the avatar alone while embodied — the
     /// fairness boundary is unchanged; the 3D tokens are drawn only from that already-fogged set.
     /// `width`/`height` size the depth buffer for the token pass.
@@ -1576,8 +1581,9 @@ impl Renderer {
         //    decals over them. One bucket per `ModelKind` so any token mesh (incl. the Heavy tank)
         //    draws without special-casing. Command-view tokens use LOD0 — top-down close scrutiny.
         self.ensure_depth(device, width, height);
-        let mut buckets: Vec<Vec<mesh::MeshInstance>> =
-            (0..mesh::ModelKind::ALL.len()).map(|_| Vec::new()).collect();
+        let mut buckets: Vec<Vec<mesh::MeshInstance>> = (0..mesh::ModelKind::ALL.len())
+            .map(|_| Vec::new())
+            .collect();
         // Runtime skeletal-playback buckets, one per rig part (CP-3/WS-B): the generic infantry token
         // draws here through the shared mesh pipeline instead of as a single static mesh + procedural
         // pose, so troopers actually animate.
@@ -1902,7 +1908,7 @@ impl Renderer {
     /// Draw the embodied **tank** gunner-sight HUD (tank embodiment P8) on top of the current frame (a
     /// LOAD pass — never clears): the hull-relative turret indicator, the dispersion reticle, the LEAD
     /// pip, and the reload ring (geometry via [`tank_hud::TankHudRenderer`]), then the selected-shell
-    /// label through the shared [`text`](crate::text) pass. The host calls this only while the local
+    /// label through the shared [`text`] pass. The host calls this only while the local
     /// player is embodied in a tank. Presentation-only chrome with no world position — it reveals
     /// nothing about unseen enemies and widens no fog beneath it (invariant #6); the renderer only
     /// READS the [`tank_hud::TankHudState`] / `shell_label` it is handed (invariant #4).
@@ -1937,7 +1943,7 @@ impl Renderer {
     /// Draw the embodied **sniper / zoom gun-sight** scope overlay (tank embodiment P9) on top of the
     /// current frame (a LOAD pass — never clears): the vignette tunnel, aperture ring, crosshair, and
     /// center dot (geometry via [`scope::ScopeRenderer`]), then the magnification readout (e.g.
-    /// "3.3x") through the shared [`text`](crate::text) pass. The host calls this only while the
+    /// "3.3x") through the shared [`text`] pass. The host calls this only while the
     /// local player is embodied and aiming down sight (`zoom_t > 0`). Presentation-only chrome with
     /// no world position — it reveals nothing about unseen enemies and *narrows* (never widens) the
     /// visible frustum (invariant #6); the renderer only READS the [`scope::ScopeState`] it is handed
@@ -2092,9 +2098,12 @@ impl Renderer {
         if panel.is_empty() {
             return;
         }
-        let quads = command_panel::command_panel_quads_scaled(panel, self.chrome_aspect, self.ui_scale);
+        let quads =
+            command_panel::command_panel_quads_scaled(panel, self.chrome_aspect, self.ui_scale);
         self.overlay.draw_quads(device, queue, view, &quads);
-        for l in command_panel::command_panel_labels_scaled(panel, self.chrome_aspect, self.ui_scale) {
+        for l in
+            command_panel::command_panel_labels_scaled(panel, self.chrome_aspect, self.ui_scale)
+        {
             self.text
                 .queue(l.text, l.pos, l.px_size, l.anchor, l.color, l.alpha);
         }
@@ -2105,8 +2114,8 @@ impl Renderer {
     /// host fills the [`command_bar::CommandBarView`] from its `command_touch` hit-test layout
     /// (pixel rects → NDC), so the buttons drawn here are the exact shapes the engine hit-tests
     /// taps against (no drift). Box quads through the shared overlay pipeline + centered labels
-    /// through the W4 text pass — the same construction as [`render_command_panel`](Self::
-    /// render_command_panel). Command view only (the caller gates on `!embodied`); a no-op on an
+    /// through the W4 text pass — the same construction as `render_command_panel`.
+    /// Command view only (the caller gates on `!embodied`); a no-op on an
     /// empty bar.
     pub fn render_command_bar(
         &mut self,
@@ -2221,7 +2230,7 @@ impl Renderer {
     /// Draw the command-view **readout** — the top-left unit/enemy/point tally (and the optional,
     /// host-supplied resource/income lines) — on top of the current frame (a LOAD text pass; never
     /// clears). The tally was derived during the preceding [`Renderer::render`] from this frame's
-    /// fog-filtered draw set ([`readout_tally`](Self::readout_tally)); the host hands in the
+    /// fog-filtered draw set (`readout_tally`); the host hands in the
     /// [`readout::EconomyReadout`] economy seam and the live `world_dark` state, and
     /// [`readout::readout_labels`] lays the lines out. **Drawn at NATIVE swapchain resolution** — the
     /// host calls this AFTER [`present_scene`](Self::present_scene), with the rest of the chrome, so
@@ -2317,8 +2326,14 @@ impl Renderer {
             },
         ];
         self.overlay.draw_quads(device, queue, view, &card);
-        self.text
-            .queue(text, [0.0, TOP_Y], SIZE, text::Anchor::TopCenter, color, alpha);
+        self.text.queue(
+            text,
+            [0.0, TOP_Y],
+            SIZE,
+            text::Anchor::TopCenter,
+            color,
+            alpha,
+        );
         self.text.render(device, queue, view);
     }
 
@@ -2367,17 +2382,17 @@ impl Renderer {
     }
 
     /// Draw the embodied first-person WORLD MESHES — the static scenery/cover props
-    /// ([`prop_draw_plan`], from the sim's [`gonedark_core::obstacles`] layout) **and** the dynamic
+    /// (`prop_draw_plan`, from the sim's [`gonedark_core::obstacles`] layout) **and** the dynamic
     /// sim units the avatar can SEE — over the embodied
     /// sky/ground. Both are drawn in a SINGLE mesh pass (one shared depth clear) so they occlude each
     /// other correctly: a unit standing behind a rock is hidden by it, rather than punching through.
     ///
     /// Fairness (invariant #6): "world goes dark" strips the strategic MAP — the overview, the
     /// control points, off-screen intel — NOT the enemy physically in your avatar's line of sight.
-    /// `fog` is the avatar's vision mask; [`fog::visible_instances`] keeps only the units it actually
-    /// sees (plus the avatar, which [`unit_draw_plan`] then drops — you don't render your own body in
+    /// `fog` is the avatar's vision mask; `fog::visible_instances` keeps only the units it actually
+    /// sees (plus the avatar, which `unit_draw_plan` then drops — you don't render your own body in
     /// first person), so nothing beyond direct sight leaks in. The props are a fixed cosmetic layout
-    /// and carry zero intel. The host calls this in the embodied branch AFTER [`render_world_sky`]
+    /// and carry zero intel. The host calls this in the embodied branch AFTER `render_world_sky`
     /// (the clearing pass) and before [`Renderer::render`]'s avatar pass. `view_proj` is the embodied
     /// camera matrix and `eye` its world position (so [`mesh::select_lod`] can pick a tier per mesh by
     /// distance); `width`/`height` size the depth buffer.
@@ -2510,7 +2525,9 @@ mod tests {
 
     use super::*;
     use gonedark_core::components::{Army, Faction, Vec2};
-    use gonedark_core::snapshot::{ControlPointSnapshot, ProjectileSnapshot, Snapshot, UnitSnapshot};
+    use gonedark_core::snapshot::{
+        ControlPointSnapshot, ProjectileSnapshot, Snapshot, UnitSnapshot,
+    };
 
     const EPS: f32 = 1e-4;
 
@@ -2579,7 +2596,13 @@ mod tests {
         let mut trooper = uinst(3.0, 4.0, 0, mesh::ModelKind::Trooper, theme::PLAYER);
         trooper.anim_clip = anim::AnimClip::Walk.as_u32();
         trooper.anim_phase = 0.3;
-        let posed = token_part_matrix(&trooper, mesh::ModelKind::Trooper, [3.0, 4.0, 0.0], TOKEN_SCALE, 0.0);
+        let posed = token_part_matrix(
+            &trooper,
+            mesh::ModelKind::Trooper,
+            [3.0, 4.0, 0.0],
+            TOKEN_SCALE,
+            0.0,
+        );
         let plain = mesh::model_matrix([3.0, 4.0, 0.0], TOKEN_SCALE, 0.0);
         assert_ne!(posed, plain, "a walking trooper token animates");
 
@@ -2587,7 +2610,13 @@ mod tests {
         let mut tank = uinst(3.0, 4.0, 0, mesh::ModelKind::Tank, theme::PLAYER);
         tank.anim_clip = anim::AnimClip::Walk.as_u32();
         tank.anim_phase = 0.3;
-        let tank_m = token_part_matrix(&tank, mesh::ModelKind::Tank, [3.0, 4.0, 0.0], TOKEN_SCALE, 0.0);
+        let tank_m = token_part_matrix(
+            &tank,
+            mesh::ModelKind::Tank,
+            [3.0, 4.0, 0.0],
+            TOKEN_SCALE,
+            0.0,
+        );
         assert_eq!(tank_m, plain, "vehicles keep the plain model_matrix");
     }
 
@@ -2596,7 +2625,13 @@ mod tests {
     #[test]
     fn token_part_matrix_idle_phase_zero_is_static() {
         let trooper = uinst(1.0, 2.0, 0, mesh::ModelKind::Trooper, theme::PLAYER); // anim_clip=Idle, phase=0 via Default
-        let posed = token_part_matrix(&trooper, mesh::ModelKind::Trooper, [1.0, 2.0, 0.0], TOKEN_SCALE, 0.5);
+        let posed = token_part_matrix(
+            &trooper,
+            mesh::ModelKind::Trooper,
+            [1.0, 2.0, 0.0],
+            TOKEN_SCALE,
+            0.5,
+        );
         let plain = mesh::model_matrix([1.0, 2.0, 0.0], TOKEN_SCALE, 0.5);
         assert_eq!(posed, plain, "idle trooper at phase 0 is inert");
     }
@@ -2691,7 +2726,11 @@ mod tests {
         // alpha=0 should render each survivor at ITS OWN prev pose. The old index-pairing bug
         // put curr[1] (entity 2) against prev[1] (entity 1 @ 100), drawing entity 2 at (100,100).
         let out = interpolate_instances(&prev, &curr, 0.0, &[], &theme::Palette::DEFAULT);
-        assert_eq!(out.len(), 2, "only the two survivors are drawn (linger owns the corpse)");
+        assert_eq!(
+            out.len(),
+            2,
+            "only the two survivors are drawn (linger owns the corpse)"
+        );
         assert!((out[0].x - 0.0).abs() < EPS, "entity 0 at its own prev x");
         assert!(
             (out[1].x - 200.0).abs() < EPS,
@@ -2714,7 +2753,10 @@ mod tests {
         );
         let out = interpolate_instances(&prev, &curr, 0.5, &[], &theme::Palette::DEFAULT);
         assert_eq!(out.len(), 2);
-        assert!((out[1].x - 90.0).abs() < EPS, "spawned unit snaps to curr, no half-lerp");
+        assert!(
+            (out[1].x - 90.0).abs() < EPS,
+            "spawned unit snaps to curr, no half-lerp"
+        );
         assert!((out[1].y - 90.0).abs() < EPS);
     }
 
@@ -2799,9 +2841,18 @@ mod tests {
         // The corner (0.9, 0.9): inside the SQUARE (max=0.9<1), outside the CIRCLE (len≈1.27>1) and
         // outside the up-TRIANGLE (right edge 2*0.9+0.9-1=1.7>0). One local point already separates
         // all three silhouettes — proof the shapes are not the same footprint.
-        assert!(shape_signed(SHAPE_SQUARE, 0.9, 0.9) <= 0.0, "square covers its corner");
-        assert!(shape_signed(SHAPE_CIRCLE, 0.9, 0.9) > 0.0, "circle excludes the corner");
-        assert!(shape_signed(SHAPE_TRIANGLE, 0.9, 0.9) > 0.0, "triangle excludes the corner");
+        assert!(
+            shape_signed(SHAPE_SQUARE, 0.9, 0.9) <= 0.0,
+            "square covers its corner"
+        );
+        assert!(
+            shape_signed(SHAPE_CIRCLE, 0.9, 0.9) > 0.0,
+            "circle excludes the corner"
+        );
+        assert!(
+            shape_signed(SHAPE_TRIANGLE, 0.9, 0.9) > 0.0,
+            "triangle excludes the corner"
+        );
 
         // A point low-and-wide (0.8, -0.9): inside square & triangle (near its base) but outside the
         // circle — separates the circle from the polygons on a second, independent point.
@@ -2811,24 +2862,48 @@ mod tests {
 
         // The triangle pinches toward its apex: it contains the apex column (0.0, 0.9) but excludes a
         // point that is high AND off-axis (0.6, 0.6) — a shape the square/circle both still cover.
-        assert!(shape_signed(SHAPE_TRIANGLE, 0.0, 0.9) <= 0.0, "triangle contains its apex column");
-        assert!(shape_signed(SHAPE_TRIANGLE, 0.6, 0.6) > 0.0, "triangle pinches in toward the apex");
+        assert!(
+            shape_signed(SHAPE_TRIANGLE, 0.0, 0.9) <= 0.0,
+            "triangle contains its apex column"
+        );
+        assert!(
+            shape_signed(SHAPE_TRIANGLE, 0.6, 0.6) > 0.0,
+            "triangle pinches in toward the apex"
+        );
 
         // Every real shape contains the centre; SHAPE_NONE never does (no marker ever draws).
         for s in [SHAPE_CIRCLE, SHAPE_TRIANGLE, SHAPE_SQUARE] {
-            assert!(shape_signed(s, 0.0, 0.0) <= 0.0, "shape {s} covers the centre");
+            assert!(
+                shape_signed(s, 0.0, 0.0) <= 0.0,
+                "shape {s} covers the centre"
+            );
         }
-        assert!(shape_signed(SHAPE_NONE, 0.0, 0.0) > 0.0, "SHAPE_NONE is never inside");
+        assert!(
+            shape_signed(SHAPE_NONE, 0.0, 0.0) > 0.0,
+            "SHAPE_NONE is never inside"
+        );
     }
 
     #[test]
     fn shape_band_is_an_outline_not_a_fill() {
         // The band is the outer SHAPE_BAND of the shape: on the boundary and just inside → true; deep
         // in the interior (the centre) → false, so the 3D mesh shows through the marker.
-        assert!(shape_on_band(SHAPE_CIRCLE, 1.0, 0.0), "the circle boundary is on the band");
-        assert!(shape_on_band(SHAPE_SQUARE, 1.0, 0.0), "the square edge is on the band");
-        assert!(!shape_on_band(SHAPE_CIRCLE, 0.0, 0.0), "the centre is hollow (mesh shows through)");
-        assert!(!shape_on_band(SHAPE_SQUARE, 0.0, 0.0), "the centre is hollow (mesh shows through)");
+        assert!(
+            shape_on_band(SHAPE_CIRCLE, 1.0, 0.0),
+            "the circle boundary is on the band"
+        );
+        assert!(
+            shape_on_band(SHAPE_SQUARE, 1.0, 0.0),
+            "the square edge is on the band"
+        );
+        assert!(
+            !shape_on_band(SHAPE_CIRCLE, 0.0, 0.0),
+            "the centre is hollow (mesh shows through)"
+        );
+        assert!(
+            !shape_on_band(SHAPE_SQUARE, 0.0, 0.0),
+            "the centre is hollow (mesh shows through)"
+        );
         // Well outside any boundary never bands.
         assert!(!shape_on_band(SHAPE_CIRCLE, 2.0, 2.0));
         // SHAPE_NONE bands nowhere.
@@ -2848,7 +2923,10 @@ mod tests {
         let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[0].shape, SHAPE_TRIANGLE, "enemy → triangle");
         assert_eq!(out[1].shape, SHAPE_CIRCLE, "player → circle");
-        assert_eq!(out[2].shape, SHAPE_NONE, "the embodied avatar gets no footprint marker");
+        assert_eq!(
+            out[2].shape, SHAPE_NONE,
+            "the embodied avatar gets no footprint marker"
+        );
     }
 
     #[test]
@@ -2861,13 +2939,18 @@ mod tests {
         }];
         let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
         assert_eq!(out[1].flags & FLAG_RING, FLAG_RING);
-        assert_eq!(out[1].shape, SHAPE_NONE, "a ring already reads as a shape — no extra marker");
+        assert_eq!(
+            out[1].shape, SHAPE_NONE,
+            "a ring already reads as a shape — no extra marker"
+        );
     }
 
     #[test]
     fn empty_snapshots_yield_empty() {
         let empty = snapshot(0, vec![]);
-        assert!(interpolate_instances(&empty, &empty, 0.5, &[], &theme::Palette::DEFAULT).is_empty());
+        assert!(
+            interpolate_instances(&empty, &empty, 0.5, &[], &theme::Palette::DEFAULT).is_empty()
+        );
     }
 
     // ---- selection highlight (command-view presentation) ----
@@ -2966,11 +3049,17 @@ mod tests {
     fn model_for_unit_resolves_each_army_to_its_silhouette() {
         use mesh::ModelKind as M;
         // US side.
-        assert_eq!(model_for_unit(Army::Us, false, UnitKind::Rifleman), M::TrooperUs);
+        assert_eq!(
+            model_for_unit(Army::Us, false, UnitKind::Rifleman),
+            M::TrooperUs
+        );
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Heavy), M::TankUs);
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Tank), M::TankUs);
         // French side.
-        assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Rifleman), M::TrooperFr);
+        assert_eq!(
+            model_for_unit(Army::Fr, false, UnitKind::Rifleman),
+            M::TrooperFr
+        );
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Heavy), M::TankFr);
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Tank), M::TankFr);
         // Medic/AntiTank (D65/D73): distinct from the trooper/tank silhouettes, and army-agnostic —
@@ -3004,18 +3093,30 @@ mod tests {
         }
         // WW2 infantry now get bespoke per-army silhouettes (D129), distinct from each other, from
         // the shared/modern troopers, and from the neutral greybox.
-        assert_eq!(model_for_unit(Army::UsWw2, false, UnitKind::Rifleman), M::TrooperUsWw2);
-        assert_eq!(model_for_unit(Army::Germany, false, UnitKind::Rifleman), M::TrooperGermany);
+        assert_eq!(
+            model_for_unit(Army::UsWw2, false, UnitKind::Rifleman),
+            M::TrooperUsWw2
+        );
+        assert_eq!(
+            model_for_unit(Army::Germany, false, UnitKind::Rifleman),
+            M::TrooperGermany
+        );
         assert_ne!(M::TrooperUsWw2, M::TrooperGermany, "WW2 GI ≠ Wehrmacht");
         for w in [M::TrooperUsWw2, M::TrooperGermany] {
             for o in [M::Trooper, M::TrooperUs, M::TrooperFr] {
-                assert_ne!(w, o, "WW2 trooper {w:?} differs from modern/shared trooper {o:?}");
+                assert_ne!(
+                    w, o,
+                    "WW2 trooper {w:?} differs from modern/shared trooper {o:?}"
+                );
             }
         }
         // Modern/Neutral routing is byte-for-byte unchanged.
         assert_eq!(model_for_unit(Army::Us, false, UnitKind::Tank), M::TankUs);
         assert_eq!(model_for_unit(Army::Fr, false, UnitKind::Tank), M::TankFr);
-        assert_eq!(model_for_unit(Army::Neutral, false, UnitKind::Tank), M::Tank);
+        assert_eq!(
+            model_for_unit(Army::Neutral, false, UnitKind::Tank),
+            M::Tank
+        );
     }
 
     /// WS-C: the full `(Army, kind)` × building matrix resolves to *some* committed mesh and never
@@ -3023,7 +3124,13 @@ mod tests {
     /// point of cosmetic identity). Exercises every combination (the "no panic on unmapped" floor).
     #[test]
     fn model_for_unit_total_distinct_and_panic_free() {
-        for &kind in &[UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic, UnitKind::AntiTank] {
+        for &kind in &[
+            UnitKind::Rifleman,
+            UnitKind::Heavy,
+            UnitKind::Tank,
+            UnitKind::Medic,
+            UnitKind::AntiTank,
+        ] {
             for &building in &[false, true] {
                 let neutral = model_for_unit(Army::Neutral, building, kind);
                 let us = model_for_unit(Army::Us, building, kind);
@@ -3039,13 +3146,25 @@ mod tests {
                 } else if matches!(kind, UnitKind::Medic | UnitKind::AntiTank) {
                     // Medic/AntiTank are army-agnostic for now (D65/D73) — the same silhouette for
                     // every army, unlike the faction-cosmetic archetypes below.
-                    assert_eq!(us, neutral, "{kind:?}: army-agnostic silhouette (US == Neutral)");
-                    assert_eq!(fr, neutral, "{kind:?}: army-agnostic silhouette (FR == Neutral)");
+                    assert_eq!(
+                        us, neutral,
+                        "{kind:?}: army-agnostic silhouette (US == Neutral)"
+                    );
+                    assert_eq!(
+                        fr, neutral,
+                        "{kind:?}: army-agnostic silhouette (FR == Neutral)"
+                    );
                 } else {
                     // A faction unit reads as a *different* silhouette from the shared greybox and
                     // from the other army.
-                    assert_ne!(us, neutral, "{kind:?}: US unit differs from the shared greybox");
-                    assert_ne!(fr, neutral, "{kind:?}: FR unit differs from the shared greybox");
+                    assert_ne!(
+                        us, neutral,
+                        "{kind:?}: US unit differs from the shared greybox"
+                    );
+                    assert_ne!(
+                        fr, neutral,
+                        "{kind:?}: FR unit differs from the shared greybox"
+                    );
                     assert_ne!(us, fr, "{kind:?}: US and FR units differ from each other");
                 }
             }
@@ -3062,12 +3181,23 @@ mod tests {
         assert_eq!(structure_turret_for(Army::Neutral), M::Turret);
         // The WW2 cost-vs-power armies (D120) reuse the shared emplacement for now (bespoke silhouettes
         // are the content stage, deferred) — so distinctness is asserted over the MODERN armies only.
-        assert_eq!(structure_turret_for(Army::UsWw2), M::Turret, "WW2 armies reuse the shared emplacement");
-        assert_eq!(structure_turret_for(Army::Germany), M::Turret, "WW2 armies reuse the shared emplacement");
+        assert_eq!(
+            structure_turret_for(Army::UsWw2),
+            M::Turret,
+            "WW2 armies reuse the shared emplacement"
+        );
+        assert_eq!(
+            structure_turret_for(Army::Germany),
+            M::Turret,
+            "WW2 armies reuse the shared emplacement"
+        );
         let modern = [Army::Neutral, Army::Us, Army::Fr];
         let all: Vec<M> = modern.iter().map(|&a| structure_turret_for(a)).collect();
         for (i, a) in all.iter().enumerate() {
-            assert!((*a as usize) < M::ALL.len(), "resolves to a registered mesh");
+            assert!(
+                (*a as usize) < M::ALL.len(),
+                "resolves to a registered mesh"
+            );
             for b in &all[i + 1..] {
                 assert_ne!(a, b, "each modern army's emplacement is a distinct mesh");
             }
@@ -3079,7 +3209,10 @@ mod tests {
     #[test]
     fn prop_layout_places_both_faction_turrets() {
         use mesh::ModelKind as M;
-        let plan = prop_draw_plan([0.0, 0.0, 1.5], &gonedark_core::obstacles::skirmish_obstacles());
+        let plan = prop_draw_plan(
+            [0.0, 0.0, 1.5],
+            &gonedark_core::obstacles::skirmish_obstacles(),
+        );
         let kinds: Vec<M> = plan.iter().map(|&(k, _, _)| k).collect();
         assert!(kinds.contains(&M::TurretUs), "US emplacement is drawn");
         assert!(kinds.contains(&M::TurretFr), "FR emplacement is drawn");
@@ -3138,28 +3271,43 @@ mod tests {
         };
         assert_eq!(
             token(M::TankUs),
-            vec![(M::TankUs, TOKEN_SCALE, 0.5), (M::TankTurretUs, TOKEN_SCALE, 1.2)],
+            vec![
+                (M::TankUs, TOKEN_SCALE, 0.5),
+                (M::TankTurretUs, TOKEN_SCALE, 1.2)
+            ],
             "a US tank emits the US hull + US turret"
         );
         assert_eq!(
             token(M::TankFr),
-            vec![(M::TankFr, TOKEN_SCALE, 0.5), (M::TankTurretFr, TOKEN_SCALE, 1.2)],
+            vec![
+                (M::TankFr, TOKEN_SCALE, 0.5),
+                (M::TankTurretFr, TOKEN_SCALE, 1.2)
+            ],
             "a French tank emits the French hull + French turret"
         );
         assert_eq!(
             token(M::Tank),
-            vec![(M::Tank, TOKEN_SCALE, 0.5), (M::TankTurret, TOKEN_SCALE, 1.2)],
+            vec![
+                (M::Tank, TOKEN_SCALE, 0.5),
+                (M::TankTurret, TOKEN_SCALE, 1.2)
+            ],
             "the shared tank keeps the shared turret"
         );
         // D120: the WW2 tanks each emit their own bespoke hull + turret pair.
         assert_eq!(
             token(M::TankSherman),
-            vec![(M::TankSherman, TOKEN_SCALE, 0.5), (M::TankTurretSherman, TOKEN_SCALE, 1.2)],
+            vec![
+                (M::TankSherman, TOKEN_SCALE, 0.5),
+                (M::TankTurretSherman, TOKEN_SCALE, 1.2)
+            ],
             "a Sherman emits the Sherman hull + rounded Sherman turret"
         );
         assert_eq!(
             token(M::TankTiger),
-            vec![(M::TankTiger, TOKEN_SCALE, 0.5), (M::TankTurretTiger, TOKEN_SCALE, 1.2)],
+            vec![
+                (M::TankTiger, TOKEN_SCALE, 0.5),
+                (M::TankTurretTiger, TOKEN_SCALE, 1.2)
+            ],
             "the German heavy emits its hull + big boxy turret"
         );
         // Faction infantry is a single body part (no turret).
@@ -3295,16 +3443,29 @@ mod tests {
         // Neutral (unaligned/legacy) stays on the shared greybox — the pre-WS-C default from `unit()`.
         let neutral_rifle = unit(Fixed::from_int(4), Fixed::ZERO, false);
 
-        let s = snapshot(
-            0,
-            vec![us_rifle, us_tank, fr_rifle, fr_tank, neutral_rifle],
-        );
+        let s = snapshot(0, vec![us_rifle, us_tank, fr_rifle, fr_tank, neutral_rifle]);
         let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
 
-        assert_eq!(out[0].model, mesh::ModelKind::TrooperUs as u32, "US rifleman");
-        assert_eq!(out[1].model, mesh::ModelKind::TankUs as u32, "US heavy → US tank");
-        assert_eq!(out[2].model, mesh::ModelKind::TrooperFr as u32, "FR rifleman");
-        assert_eq!(out[3].model, mesh::ModelKind::TankFr as u32, "FR heavy → FR tank");
+        assert_eq!(
+            out[0].model,
+            mesh::ModelKind::TrooperUs as u32,
+            "US rifleman"
+        );
+        assert_eq!(
+            out[1].model,
+            mesh::ModelKind::TankUs as u32,
+            "US heavy → US tank"
+        );
+        assert_eq!(
+            out[2].model,
+            mesh::ModelKind::TrooperFr as u32,
+            "FR rifleman"
+        );
+        assert_eq!(
+            out[3].model,
+            mesh::ModelKind::TankFr as u32,
+            "FR heavy → FR tank"
+        );
         assert_eq!(
             out[4].model,
             mesh::ModelKind::Trooper as u32,
@@ -3339,8 +3500,16 @@ mod tests {
         avatar.army = Army::Fr;
         let s = snapshot(0, vec![avatar]);
         let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
-        assert_eq!(out[0].flags & FLAG_EMBODIED, FLAG_EMBODIED, "still flagged embodied");
-        assert_eq!(out[0].model, mesh::ModelKind::TrooperFr as u32, "avatar keeps its FR silhouette");
+        assert_eq!(
+            out[0].flags & FLAG_EMBODIED,
+            FLAG_EMBODIED,
+            "still flagged embodied"
+        );
+        assert_eq!(
+            out[0].model,
+            mesh::ModelKind::TrooperFr as u32,
+            "avatar keeps its FR silhouette"
+        );
     }
 
     // ---- token_icons: CP-9 command-view unit-kind glyphs (WS-C) --------------------------------
@@ -3369,8 +3538,15 @@ mod tests {
         base.building = true;
         let s = snapshot(0, vec![at, base]);
         let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
-        assert_eq!(out[0].kind, UnitKind::AntiTank as u32, "AT infantry keeps its kind");
-        assert_eq!(out[1].kind, NO_TOKEN_ICON, "a building carries no kind glyph");
+        assert_eq!(
+            out[0].kind,
+            UnitKind::AntiTank as u32,
+            "AT infantry keeps its kind"
+        );
+        assert_eq!(
+            out[1].kind, NO_TOKEN_ICON,
+            "a building carries no kind glyph"
+        );
     }
 
     /// A control-point ring is map intel, not a unit — `interpolate_instances` gives it the
@@ -3384,8 +3560,14 @@ mod tests {
             progress: Fixed::ZERO,
         }];
         let out = interpolate_instances(&s, &s, 0.0, &[], &theme::Palette::DEFAULT);
-        let ring = out.iter().find(|i| i.flags & FLAG_RING != 0).expect("a ring is appended");
-        assert_eq!(ring.kind, NO_TOKEN_ICON, "a control-point ring carries no kind glyph");
+        let ring = out
+            .iter()
+            .find(|i| i.flags & FLAG_RING != 0)
+            .expect("a ring is appended");
+        assert_eq!(
+            ring.kind, NO_TOKEN_ICON,
+            "a control-point ring carries no kind glyph"
+        );
     }
 
     /// The unit-kind → glyph mapping (CP-9): Rifleman→Infantry, Heavy/Tank→Armor, Medic→Medic,
@@ -3393,11 +3575,17 @@ mod tests {
     #[test]
     fn icon_for_unit_kind_maps_every_archetype() {
         use icon::IconKind as I;
-        assert_eq!(icon_for_unit_kind(UnitKind::Rifleman as u32), Some(I::Infantry));
+        assert_eq!(
+            icon_for_unit_kind(UnitKind::Rifleman as u32),
+            Some(I::Infantry)
+        );
         assert_eq!(icon_for_unit_kind(UnitKind::Heavy as u32), Some(I::Armor));
         assert_eq!(icon_for_unit_kind(UnitKind::Tank as u32), Some(I::Armor));
         assert_eq!(icon_for_unit_kind(UnitKind::Medic as u32), Some(I::Medic));
-        assert_eq!(icon_for_unit_kind(UnitKind::AntiTank as u32), Some(I::AntiTank));
+        assert_eq!(
+            icon_for_unit_kind(UnitKind::AntiTank as u32),
+            Some(I::AntiTank)
+        );
         assert_eq!(icon_for_unit_kind(NO_TOKEN_ICON), None);
     }
 
@@ -3410,11 +3598,21 @@ mod tests {
         let ndc = project_to_ndc(&cam.view_proj, [0.4, -0.3, 0.0]).unwrap();
         assert!((ndc[0] - 0.4).abs() < EPS && (ndc[1] - (-0.3)).abs() < EPS);
         // A w=2 matrix halves the projected coordinate (perspective divide).
-        let half_w = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 2.]];
+        let half_w = [
+            [1., 0., 0., 0.],
+            [0., 1., 0., 0.],
+            [0., 0., 1., 0.],
+            [0., 0., 0., 2.],
+        ];
         let ndc = project_to_ndc(&half_w, [1.0, 0.5, 0.0]).unwrap();
         assert!((ndc[0] - 0.5).abs() < EPS && (ndc[1] - 0.25).abs() < EPS);
         // A negative w-row → the point is behind the camera → culled.
-        let behind = [[1., 0., 0., 0.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., -1.]];
+        let behind = [
+            [1., 0., 0., 0.],
+            [0., 1., 0., 0.],
+            [0., 0., 1., 0.],
+            [0., 0., 0., -1.],
+        ];
         assert!(project_to_ndc(&behind, [0.0, 0.0, 0.0]).is_none());
     }
 
@@ -3468,8 +3666,15 @@ mod tests {
     fn token_icons_are_withheld_over_the_dark_frame() {
         let cam = ortho_camera(1.0);
         let units = [token(0.2, 0.1, 0, UnitKind::Rifleman as u32, theme::PLAYER)];
-        assert!(token_icons(&units, &cam, true).is_empty(), "no kind glyphs when embodied");
-        assert_eq!(token_icons(&units, &cam, false).len(), 1, "but present in command view");
+        assert!(
+            token_icons(&units, &cam, true).is_empty(),
+            "no kind glyphs when embodied"
+        );
+        assert_eq!(
+            token_icons(&units, &cam, false).len(),
+            1,
+            "but present in command view"
+        );
     }
 
     /// `token_icons` drops the avatar's own body (FLAG_EMBODIED), control-point rings (FLAG_RING, map
@@ -3478,7 +3683,13 @@ mod tests {
     fn token_icons_skips_avatar_rings_and_buildings() {
         let cam = ortho_camera(1.0);
         let set = [
-            token(0.0, 0.0, FLAG_EMBODIED, UnitKind::Rifleman as u32, theme::AVATAR),
+            token(
+                0.0,
+                0.0,
+                FLAG_EMBODIED,
+                UnitKind::Rifleman as u32,
+                theme::AVATAR,
+            ),
             token(0.1, 0.0, FLAG_RING, NO_TOKEN_ICON, theme::NEUTRAL),
             token(0.2, 0.0, 0, NO_TOKEN_ICON, theme::PLAYER), // a building
             token(0.3, 0.0, 0, UnitKind::Heavy as u32, theme::PLAYER), // a real unit
@@ -3505,7 +3716,10 @@ mod tests {
         let min_lod = plan.iter().map(|(_, l, _)| *l).min().unwrap();
         let max_lod = plan.iter().map(|(_, l, _)| *l).max().unwrap();
         assert_eq!(min_lod, 0, "the prop under the eye keeps LOD0");
-        assert_eq!(max_lod, 2, "a prop across the field drops to the coarsest LOD2");
+        assert_eq!(
+            max_lod, 2,
+            "a prop across the field drops to the coarsest LOD2"
+        );
     }
 
     // ---- unit_draw_plan: embodied first-person dynamic units ----
@@ -3536,11 +3750,33 @@ mod tests {
         // control-point ring (FLAG_RING — map intel), and an in-sight enemy. Only the enemy is drawn.
         // The enemy is a faction silhouette (TrooperFr) — the generic Trooper is rig-driven and drops
         // out of this plan (see `unit_draw_plan_excludes_the_rig_driven_generic_trooper`).
-        let avatar = uinst(0.0, 0.0, FLAG_EMBODIED, mesh::ModelKind::TrooperFr, theme::AVATAR);
-        let ring = uinst(1.0, 0.0, FLAG_RING, mesh::ModelKind::TrooperFr, [0.5, 0.5, 0.6]);
-        let enemy = uinst(5.0, 0.0, 0, mesh::ModelKind::TrooperFr, faction_color(Faction::Enemy));
+        let avatar = uinst(
+            0.0,
+            0.0,
+            FLAG_EMBODIED,
+            mesh::ModelKind::TrooperFr,
+            theme::AVATAR,
+        );
+        let ring = uinst(
+            1.0,
+            0.0,
+            FLAG_RING,
+            mesh::ModelKind::TrooperFr,
+            [0.5, 0.5, 0.6],
+        );
+        let enemy = uinst(
+            5.0,
+            0.0,
+            0,
+            mesh::ModelKind::TrooperFr,
+            faction_color(Faction::Enemy),
+        );
         let plan = unit_draw_plan(&[avatar, ring, enemy], [0.0, 0.0, 1.6]);
-        assert_eq!(plan.len(), 1, "only the visible non-avatar, non-ring unit is drawn");
+        assert_eq!(
+            plan.len(),
+            1,
+            "only the visible non-avatar, non-ring unit is drawn"
+        );
         assert_eq!(plan[0].0, mesh::ModelKind::TrooperFr);
     }
 
@@ -3548,14 +3784,30 @@ mod tests {
     fn unit_draw_plan_excludes_the_rig_driven_generic_trooper() {
         // The generic Trooper is now drawn by the skeletal rig (`trooper_rig_plan`), not as a static
         // mesh — so `unit_draw_plan` emits nothing for it, and the faction silhouette still draws.
-        let generic = uinst(5.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Enemy));
+        let generic = uinst(
+            5.0,
+            0.0,
+            0,
+            mesh::ModelKind::Trooper,
+            faction_color(Faction::Enemy),
+        );
         assert!(
             unit_draw_plan(&[generic], [0.0, 0.0, 1.6]).is_empty(),
             "the generic Trooper draws via the rig, not the static-mesh plan"
         );
-        let faction = uinst(5.0, 0.0, 0, mesh::ModelKind::TrooperUs, faction_color(Faction::Enemy));
+        let faction = uinst(
+            5.0,
+            0.0,
+            0,
+            mesh::ModelKind::TrooperUs,
+            faction_color(Faction::Enemy),
+        );
         let plan = unit_draw_plan(&[faction], [0.0, 0.0, 1.6]);
-        assert_eq!(plan.len(), 1, "faction silhouettes still draw as a static mesh");
+        assert_eq!(
+            plan.len(),
+            1,
+            "faction silhouettes still draw as a static mesh"
+        );
         assert_eq!(plan[0].0, mesh::ModelKind::TrooperUs);
     }
 
@@ -3587,10 +3839,9 @@ mod tests {
     /// and (unlike a static mesh) actually differs between clips — the skeletal player is live.
     #[test]
     fn trooper_rig_instances_places_parts_and_animates_by_clip() {
-        let rig = skel::SkeletonCpu::parse(include_bytes!(
-            "../../assets/models/rigs/trooper_rig.skel"
-        ))
-        .expect("committed rig parses");
+        let rig =
+            skel::SkeletonCpu::parse(include_bytes!("../../assets/models/rigs/trooper_rig.skel"))
+                .expect("committed rig parses");
 
         let color = faction_color(Faction::Enemy);
         let tint = [color[0], color[1], color[2], 0.0];
@@ -3623,16 +3874,45 @@ mod tests {
     /// every part bucket, and never collects a faction silhouette (which stays on the procedural floor).
     #[test]
     fn trooper_rig_plan_collects_generic_troopers_and_drops_avatar() {
-        let rig = skel::SkeletonCpu::parse(include_bytes!(
-            "../../assets/models/rigs/trooper_rig.skel"
-        ))
-        .expect("committed rig parses");
+        let rig =
+            skel::SkeletonCpu::parse(include_bytes!("../../assets/models/rigs/trooper_rig.skel"))
+                .expect("committed rig parses");
 
-        let avatar = uinst(0.0, 0.0, FLAG_EMBODIED, mesh::ModelKind::Trooper, theme::AVATAR);
-        let ring = uinst(1.0, 0.0, FLAG_RING, mesh::ModelKind::Trooper, [0.5, 0.5, 0.6]);
-        let ally = uinst(4.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Player));
-        let enemy = uinst(6.0, 0.0, 0, mesh::ModelKind::Trooper, faction_color(Faction::Enemy));
-        let faction = uinst(8.0, 0.0, 0, mesh::ModelKind::TrooperUs, faction_color(Faction::Enemy));
+        let avatar = uinst(
+            0.0,
+            0.0,
+            FLAG_EMBODIED,
+            mesh::ModelKind::Trooper,
+            theme::AVATAR,
+        );
+        let ring = uinst(
+            1.0,
+            0.0,
+            FLAG_RING,
+            mesh::ModelKind::Trooper,
+            [0.5, 0.5, 0.6],
+        );
+        let ally = uinst(
+            4.0,
+            0.0,
+            0,
+            mesh::ModelKind::Trooper,
+            faction_color(Faction::Player),
+        );
+        let enemy = uinst(
+            6.0,
+            0.0,
+            0,
+            mesh::ModelKind::Trooper,
+            faction_color(Faction::Enemy),
+        );
+        let faction = uinst(
+            8.0,
+            0.0,
+            0,
+            mesh::ModelKind::TrooperUs,
+            faction_color(Faction::Enemy),
+        );
 
         let buckets = trooper_rig_plan(&rig, &[avatar, ring, ally, enemy, faction]);
         assert_eq!(buckets.len(), rig.parts.len(), "one bucket per rig part");
@@ -3647,11 +3927,21 @@ mod tests {
     fn unit_draw_plan_carries_faction_tint_kind_and_grounds_at_z0() {
         // A Heavy → tank token: hull + turret (P7), tinted by faction with no flash (a=0), both
         // standing on the ground (z=0) at the unit's world (x, y).
-        let tank = uinst(3.0, -1.0, 0, mesh::ModelKind::Tank, faction_color(Faction::Enemy));
+        let tank = uinst(
+            3.0,
+            -1.0,
+            0,
+            mesh::ModelKind::Tank,
+            faction_color(Faction::Enemy),
+        );
         let plan = unit_draw_plan(&[tank], [0.0, 0.0, 1.6]);
         assert_eq!(plan.len(), 2, "a tank draws as hull + turret");
         assert_eq!(plan[0].0, mesh::ModelKind::Tank, "first part is the hull");
-        assert_eq!(plan[1].0, mesh::ModelKind::TankTurret, "second part is the turret");
+        assert_eq!(
+            plan[1].0,
+            mesh::ModelKind::TankTurret,
+            "second part is the turret"
+        );
         let c = faction_color(Faction::Enemy);
         for (_kind, _lod, inst) in &plan {
             assert_eq!(
@@ -3671,7 +3961,7 @@ mod tests {
     fn interp_angle_is_shortest_arc_and_matches_convention() {
         use std::f32::consts::{FRAC_PI_2, PI, TAU};
         let q = ANGLE_FULL / 4; // a quarter turn in binary radians
-        // alpha endpoints return the endpoints (mod TAU).
+                                // alpha endpoints return the endpoints (mod TAU).
         assert!((interp_angle(Angle(0), Angle(q), 0.0)).abs() < 1e-5);
         assert!((interp_angle(Angle(0), Angle(q), 1.0) - FRAC_PI_2).abs() < 1e-5);
         // Half-way from 0 → 90° is 45°.
@@ -3715,7 +4005,13 @@ mod tests {
     // ---- interpolate_projectiles: tank-shell tracers (P7) ----
 
     /// Build a snapshot carrying one in-flight shell.
-    fn shell_snapshot(pos: (i32, i32), vel: (i32, i32), height: Fixed, vz: Fixed, f: Faction) -> Snapshot {
+    fn shell_snapshot(
+        pos: (i32, i32),
+        vel: (i32, i32),
+        height: Fixed,
+        vz: Fixed,
+        f: Faction,
+    ) -> Snapshot {
         Snapshot {
             tick: 0,
             units: Vec::new(),
@@ -3753,14 +4049,23 @@ mod tests {
         let out = interpolate_projectiles(&s, 0.0);
         // model_matrix col0 = [s·cos, s·sin, 0, 0]; yaw=90° → [0, TRACER_SCALE, 0, 0].
         assert!(out[0].model[0][0].abs() < EPS, "cos(90°)≈0");
-        assert!((out[0].model[0][1] - TRACER_SCALE).abs() < EPS, "sin(90°)≈1");
+        assert!(
+            (out[0].model[0][1] - TRACER_SCALE).abs() < EPS,
+            "sin(90°)≈1"
+        );
     }
 
     /// A shell that has dipped below the ground plane clamps to z=0 (never drawn underground).
     #[test]
     fn interpolate_projectiles_clamps_to_ground() {
         // height -0.25, vz 0 → z = max(0, -0.25) = 0.
-        let s = shell_snapshot((1, 1), (1, 0), Fixed::ZERO - Fixed::from_ratio(1, 4), Fixed::ZERO, Faction::Player);
+        let s = shell_snapshot(
+            (1, 1),
+            (1, 0),
+            Fixed::ZERO - Fixed::from_ratio(1, 4),
+            Fixed::ZERO,
+            Faction::Player,
+        );
         let out = interpolate_projectiles(&s, 0.0);
         assert_eq!(out[0].model[3][2], 0.0, "below-ground shell clamps to z=0");
     }

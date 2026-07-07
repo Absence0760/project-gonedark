@@ -1,7 +1,7 @@
 //! Runtime skeletal playback of the authored trooper rig (CP-3 / WS-B, D84 follow-up).
 //!
 //! This is the *runtime skeletal player* owed by [D84](../../docs/decisions.md): it consumes the
-//! authored rig ([`tools/models/gen_trooper_rig.py`]) and plays the clip picked by
+//! authored rig (`tools/models/gen_trooper_rig.py`) and plays the clip picked by
 //! [`crate::anim::select_clip`] on the trooper, superseding the procedural pose stand-in for the
 //! generic infantry token.
 //!
@@ -567,7 +567,11 @@ mod tests {
             s: [1.0, 1.0, 1.0],
         });
         // Column 0 is the image of local +X → should be +Y.
-        assert!((m[0][0]).abs() < EPS && (m[0][1] - 1.0).abs() < EPS, "X→Y: {:?}", m[0]);
+        assert!(
+            (m[0][0]).abs() < EPS && (m[0][1] - 1.0).abs() < EPS,
+            "X→Y: {:?}",
+            m[0]
+        );
     }
 
     #[test]
@@ -614,7 +618,11 @@ mod tests {
         }
         // Clips present, named, non-empty, every frame poses every joint.
         for name in ["idle", "walk", "fire", "death"] {
-            let c = s.clips.iter().find(|c| c.name == name).expect("clip present");
+            let c = s
+                .clips
+                .iter()
+                .find(|c| c.name == name)
+                .expect("clip present");
             assert!(!c.frames.is_empty(), "{name} has frames");
             assert!(c.fps > 0.0);
             for f in &c.frames {
@@ -633,7 +641,10 @@ mod tests {
         ver[4] = 9; // version bump
         assert_eq!(SkeletonCpu::parse(&ver), Err(SkelParseError::BadVersion));
         let truncated = &RIG_BYTES[..RIG_BYTES.len() - 8];
-        assert_eq!(SkeletonCpu::parse(truncated), Err(SkelParseError::Malformed));
+        assert_eq!(
+            SkeletonCpu::parse(truncated),
+            Err(SkelParseError::Malformed)
+        );
     }
 
     // ---- clip sampling ----
@@ -647,7 +658,10 @@ mod tests {
         let pose = idle.sample(0.0);
         let skin = s.skin_matrices(&pose);
         for (j, m) in skin.iter().enumerate() {
-            assert!(approx(*m, IDENT, 2e-3), "joint {j} skin ≈ identity at idle t=0: {m:?}");
+            assert!(
+                approx(*m, IDENT, 2e-3),
+                "joint {j} skin ≈ identity at idle t=0: {m:?}"
+            );
         }
     }
 
@@ -704,7 +718,10 @@ mod tests {
         let past = death.sample(death.duration() + 5.0);
         for (a, b) in end.iter().zip(past.iter()) {
             assert!((a.t[2] - b.t[2]).abs() < EPS, "death holds its final drop");
-            assert!((a.r[0] - b.r[0]).abs() < EPS, "death holds its final topple");
+            assert!(
+                (a.r[0] - b.r[0]).abs() < EPS,
+                "death holds its final topple"
+            );
         }
     }
 
@@ -716,7 +733,10 @@ mod tests {
         let p0 = idle.sample(0.0);
         let pwrap = idle.sample(idle.duration());
         for (a, b) in p0.iter().zip(pwrap.iter()) {
-            assert!((a.t[2] - b.t[2]).abs() < 5e-3, "idle loop returns near start");
+            assert!(
+                (a.t[2] - b.t[2]).abs() < 5e-3,
+                "idle loop returns near start"
+            );
         }
     }
 

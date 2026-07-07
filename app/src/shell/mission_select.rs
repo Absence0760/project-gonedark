@@ -7,9 +7,9 @@
 //! [`Campaign::mission_select`] and the atlas accessors (host-side, never the sim — invariants
 //! #1/#7).
 
+use crate::shell::briefing::difficulty_label;
 use crate::shell::theme::*;
 use crate::shell::widgets::*;
-use crate::shell::briefing::difficulty_label;
 use gonedark_core::campaign::{
     Campaign, Conflict, ConflictId, GroupProgress, MissionSelectEntry, NodeId, NodeProgress,
     Operation, OperationId,
@@ -143,7 +143,11 @@ pub(crate) fn hub_sections(campaign: &Campaign) -> Vec<HubSection> {
         .filter(|&id| campaign.node(id).is_some_and(|n| n.operation.is_none()))
         .collect();
     if !ungrouped.is_empty() {
-        sections.push(HubSection { conflict: None, operation: None, nodes: ungrouped });
+        sections.push(HubSection {
+            conflict: None,
+            operation: None,
+            nodes: ungrouped,
+        });
     }
     sections
 }
@@ -367,7 +371,14 @@ pub(crate) fn apply_hub_look(look: &mut (f32, f32), dx: f32, dy: f32, base: Glob
 /// so the three can never disagree (the D104 discipline). A `None` base (no battlefield) stays
 /// `None`: there is nothing to peek around. Pure.
 pub(crate) fn hub_effective_view(base: Option<GlobeView>, look: (f32, f32)) -> Option<GlobeView> {
-    base.map(|v| GlobeView { yaw: v.yaw + look.0, pitch: v.pitch + look.1, zoom: v.zoom }.clamped())
+    base.map(|v| {
+        GlobeView {
+            yaw: v.yaw + look.0,
+            pitch: v.pitch + look.1,
+            zoom: v.zoom,
+        }
+        .clamped()
+    })
 }
 
 /// One battle site on the operations-map overlay: its 1-based progression `order` within the
@@ -403,8 +414,12 @@ pub(crate) fn site_waypoints(
     let mut out = Vec::new();
     for op in campaign.operations_in(conflict) {
         for n in campaign.nodes_in(op) {
-            let Some(node) = campaign.node(n) else { continue };
-            let Some((lat, lon)) = node.anchor else { continue };
+            let Some(node) = campaign.node(n) else {
+                continue;
+            };
+            let Some((lat, lon)) = node.anchor else {
+                continue;
+            };
             let ndc = project_pin(view, aspect, lat as f32 / 10.0, lon as f32 / 10.0)
                 .filter(|p| p[0].abs() <= SITE_NDC_MARGIN && p[1].abs() <= SITE_NDC_MARGIN);
             out.push(SiteWaypoint {
@@ -481,7 +496,11 @@ pub(crate) fn label_side_for(sites: &[SiteWaypoint], i: usize) -> bool {
             }
             let Some(q) = s.ndc else { return false };
             let dx = q[0] - p[0];
-            let toward = if right { dx > LABEL_LANE_EPS } else { dx < -LABEL_LANE_EPS };
+            let toward = if right {
+                dx > LABEL_LANE_EPS
+            } else {
+                dx < -LABEL_LANE_EPS
+            };
             toward && dx.abs() < LABEL_LANE_DX && (q[1] - p[1]).abs() < LABEL_LANE_DY
         })
     };
@@ -550,7 +569,10 @@ pub(crate) fn list_viewport_cap(available: f32) -> f32 {
 /// enabled button that emits [`MissionSelectAction::OpenNode`]; a **Locked** node renders disabled and
 /// cannot be clicked. The launchable decision is the pure [`playable_node`] seam (double-guarded on
 /// the click), so this is the exempt egui glue. Returns the action on a click. ASCII status text only.
-pub(crate) fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Option<MissionSelectAction> {
+pub(crate) fn mission_tile(
+    ui: &mut egui::Ui,
+    entry: &MissionSelectEntry,
+) -> Option<MissionSelectAction> {
     use egui::RichText;
     let playable = playable_node(entry).is_some();
     let (status, status_color) = match entry.progress {
@@ -566,7 +588,10 @@ pub(crate) fn mission_tile(ui: &mut egui::Ui, entry: &MissionSelectEntry) -> Opt
     let clicked = selectable_row(ui, ("mission_tile", entry.node), playable, |ui| {
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new(entry.title.clone()).color(title_color).size(TYPE_SUBHEAD).strong(),
+                RichText::new(entry.title.clone())
+                    .color(title_color)
+                    .size(TYPE_SUBHEAD)
+                    .strong(),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 status_chip(ui, &status, status_color);
@@ -600,8 +625,15 @@ pub(crate) fn mission_select_ui(
     // look-around gesture (a clamped peek, applied by the host through `apply_hub_look` — never a
     // free spin); a click picks a battle.
     if let (Some(view), Some(conflict)) = (overview, only) {
-        let screen = ui.ctx().input(|i| i.raw.screen_rect).unwrap_or_else(|| ui.clip_rect());
-        let aspect = if screen.height() > 1.0 { screen.width() / screen.height() } else { 1.0 };
+        let screen = ui
+            .ctx()
+            .input(|i| i.raw.screen_rect)
+            .unwrap_or_else(|| ui.clip_rect());
+        let aspect = if screen.height() > 1.0 {
+            screen.width() / screen.height()
+        } else {
+            1.0
+        };
         let surface = ui.interact(
             screen,
             ui.id().with("battlefield_surface"),
@@ -741,7 +773,11 @@ fn draw_operations_overlay(
     // leads TO — cleared green (taken), the live battle's amber, locked slate dimmed further
     // (visible, not yet reachable — the Normandy read).
     for (a, b, progress) in site_path_legs(&sites) {
-        let dim = if progress == NodeProgress::Locked { 0.45 } else { 0.8 };
+        let dim = if progress == NodeProgress::Locked {
+            0.45
+        } else {
+            0.8
+        };
         let stroke = Stroke::new(1.5, site_color(progress).gamma_multiply(dim));
         painter.extend(Shape::dashed_line(&[to_px(a), to_px(b)], stroke, 6.0, 5.0));
     }
@@ -767,8 +803,18 @@ fn draw_operations_overlay(
             draw_padlock(painter, pos2(x + dir * 5.0, chip.y), color);
             x += dir * 13.0;
         }
-        let anchor = if right { Align2::LEFT_CENTER } else { Align2::RIGHT_CENTER };
-        painter.text(pos2(x, chip.y), anchor, &site.title, FontId::proportional(TYPE_CAPTION), color);
+        let anchor = if right {
+            Align2::LEFT_CENTER
+        } else {
+            Align2::RIGHT_CENTER
+        };
+        painter.text(
+            pos2(x, chip.y),
+            anchor,
+            &site.title,
+            FontId::proportional(TYPE_CAPTION),
+            color,
+        );
     }
 }
 

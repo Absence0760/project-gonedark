@@ -22,7 +22,7 @@
 //! Two shapes ride this same seed+log foundation:
 //!
 //! - **single-peer** ([`Replay`]) — one ordered command stream per tick (a solo match or a
-//!   spectator of one). This is the [D89] foundation.
+//!   spectator of one). This is the `D89` foundation.
 //! - **multi-peer** ([`MultiReplay`]) — a lockstep PvP match, where each tick's inputs come from
 //!   several peers. The record keeps every peer's set *separately* (`tick -> peer -> commands`)
 //!   and merges them at playback in a **deterministic per-peer order** — ascending peer id,
@@ -108,8 +108,10 @@ impl Replay {
             return Err(ReplayError::BadVersion(version));
         }
         let tag = r.u8()?;
-        let scenario =
-            Scenario::from_tag(tag).ok_or(ReplayError::BadTag { what: "scenario", tag })?;
+        let scenario = Scenario::from_tag(tag).ok_or(ReplayError::BadTag {
+            what: "scenario",
+            tag,
+        })?;
         let seed = r.u64()?;
         let ticks = r.u64()?;
         let entries = r.u32()?;
@@ -376,8 +378,10 @@ impl MultiReplay {
             return Err(ReplayError::BadVersion(version));
         }
         let tag = r.u8()?;
-        let scenario =
-            Scenario::from_tag(tag).ok_or(ReplayError::BadTag { what: "scenario", tag })?;
+        let scenario = Scenario::from_tag(tag).ok_or(ReplayError::BadTag {
+            what: "scenario",
+            tag,
+        })?;
         let peer_count = r.u32()?;
         let seed = r.u64()?;
         let ticks = r.u64()?;
@@ -594,11 +598,17 @@ mod tests {
 
     #[test]
     fn decode_rejects_garbage() {
-        assert_eq!(Replay::decode(b"not a replay").unwrap_err(), ReplayError::BadMagic);
+        assert_eq!(
+            Replay::decode(b"not a replay").unwrap_err(),
+            ReplayError::BadMagic
+        );
         // Right magic, wrong version.
         let mut bad = MAGIC.to_vec();
         bad.extend_from_slice(&999u16.to_le_bytes());
-        assert_eq!(Replay::decode(&bad).unwrap_err(), ReplayError::BadVersion(999));
+        assert_eq!(
+            Replay::decode(&bad).unwrap_err(),
+            ReplayError::BadVersion(999)
+        );
         // Truncated body (valid header start, then EOF).
         let (_s, replay) = record(Scenario::SkirmishScript, SEED, 50);
         let bytes = replay.encode();
@@ -609,7 +619,10 @@ mod tests {
         // Trailing junk.
         let mut extra = bytes.clone();
         extra.push(0xAB);
-        assert_eq!(Replay::decode(&extra).unwrap_err(), ReplayError::TrailingBytes);
+        assert_eq!(
+            Replay::decode(&extra).unwrap_err(),
+            ReplayError::TrailingBytes
+        );
     }
 
     #[test]
@@ -618,13 +631,20 @@ mod tests {
         // placeholder — so we deliberately feed tags that are NOT 0xFF (the old hardcode)
         // and assert the reported tag round-trips the fed byte.
         for bad_tag in [0x01u8, 0x7C, 0xFF] {
-            assert_eq!(Scenario::from_tag(bad_tag), None, "test needs an unknown tag");
+            assert_eq!(
+                Scenario::from_tag(bad_tag),
+                None,
+                "test needs an unknown tag"
+            );
             let mut bytes = MAGIC.to_vec();
             bytes.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
             bytes.push(bad_tag);
             assert_eq!(
                 Replay::decode(&bytes).unwrap_err(),
-                ReplayError::BadTag { what: "scenario", tag: bad_tag },
+                ReplayError::BadTag {
+                    what: "scenario",
+                    tag: bad_tag
+                },
                 "decode must report the scenario tag it actually read ({bad_tag:#04x})"
             );
         }
@@ -689,7 +709,10 @@ mod tests {
         // peer 0's), so the test isn't vacuous.
         assert_ne!(
             forward.iter().map(|(t, p, _)| (*t, *p)).collect::<Vec<_>>(),
-            backward.iter().map(|(t, p, _)| (*t, *p)).collect::<Vec<_>>(),
+            backward
+                .iter()
+                .map(|(t, p, _)| (*t, *p))
+                .collect::<Vec<_>>(),
             "the reversed arrivals must differ in order"
         );
 
@@ -709,7 +732,10 @@ mod tests {
         // The load-bearing bit: both replay to the identical checksum stream, equal to the record.
         let pf = playback_multi(&fa);
         let pb = playback_multi(&ba);
-        assert_eq!(pf, pb, "differently-ordered peer logs must replay identically");
+        assert_eq!(
+            pf, pb,
+            "differently-ordered peer logs must replay identically"
+        );
         assert_eq!(
             pf, rec_stream,
             "arrival-order-independent playback must reproduce the record run bit-identically"
@@ -741,7 +767,10 @@ mod tests {
         let mut want = Vec::new();
         codec::put_command(&mut want, &a);
         codec::put_command(&mut want, &b);
-        assert_eq!(got, want, "merge must be ascending peer order (lockstep's rule)");
+        assert_eq!(
+            got, want,
+            "merge must be ascending peer order (lockstep's rule)"
+        );
     }
 
     #[test]
@@ -810,7 +839,11 @@ mod tests {
             SEED,
             10,
             1, // one-peer session …
-            [(1u64, 5 as PeerId, vec![Command::Reload { entity: ent(1, 0) }])], // … but peer 5 appears
+            [(
+                1u64,
+                5 as PeerId,
+                vec![Command::Reload { entity: ent(1, 0) }],
+            )], // … but peer 5 appears
         );
         assert_eq!(
             MultiReplay::decode(&oob.encode()).unwrap_err(),
@@ -836,6 +869,9 @@ mod tests {
     fn multi_different_seed_is_a_different_replay() {
         let (a, _) = record_multi(Scenario::SkirmishScript, SEED, 200);
         let (b, _) = record_multi(Scenario::SkirmishScript, SEED ^ 0x1234_5678, 200);
-        assert_ne!(a, b, "distinct seeds should produce distinct multi-peer streams");
+        assert_ne!(
+            a, b,
+            "distinct seeds should produce distinct multi-peer streams"
+        );
     }
 }

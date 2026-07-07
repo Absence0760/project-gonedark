@@ -1,17 +1,17 @@
 //! On-screen FPS touch-control HUD renderer (the COD-style embodied controls) — a screen-space
 //! overlay drawn over the dark embodied frame, **Android only**. The engine describes WHAT to draw
-//! ([`TouchControlsHud`]: the floating move stick + the Fire/Crouch/Reload/Surface buttons, in
+//! (`TouchControlsHud`: the floating move stick + the Fire/Crouch/Reload/Surface buttons, in
 //! pixels) and this module turns it into alpha-blended quads with shader-drawn glyphs
 //! (`touch_controls.wgsl`). No binary art assets — real icons are a later polish (D46 pipeline).
 //!
 //! Mirrors the [`hud`](crate::hud) pattern: its own pipeline + a unit-quad VBO + a per-instance
 //! buffer, recorded as a LOAD pass so it composites over the frame. `render` is the float boundary
 //! (invariant #1/#4): the pixel→NDC quad math is pure f32 and lives in the host-testable
-//! [`build_quads`]; only the GPU plumbing needs a device.
+//! `build_quads`; only the GPU plumbing needs a device.
 //!
 //! The engine owns the layout (`engine::touch_controls::TouchLayout`); to keep the layering clean
 //! (`engine -> render`, never the reverse — invariant #2) the engine fills this crate's own
-//! [`TouchControlsHud`] description, exactly as the engine fills the contextual
+//! `TouchControlsHud` description, exactly as the engine fills the contextual
 //! [`command_panel::CommandPanelView`](crate::command_panel::CommandPanelView).
 
 use wgpu::util::DeviceExt;
@@ -247,12 +247,20 @@ struct QuadVertex {
 }
 
 const QUAD_VERTS: [QuadVertex; 6] = [
-    QuadVertex { corner: [-1.0, -1.0] },
-    QuadVertex { corner: [1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
+    QuadVertex {
+        corner: [1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, 1.0] },
+    QuadVertex {
+        corner: [-1.0, 1.0],
+    },
 ];
 
 const INITIAL_CAP: usize = 10;
@@ -457,7 +465,11 @@ mod tests {
         h.fire_mode = btn(840.0, 230.0, TouchGlyph::FireAuto);
         let q = build_quads(&h);
         assert_eq!(q[5].shape, 9.0, "auto fire-mode is shape id 9");
-        assert_eq!([q[5].r, q[5].g, q[5].b], FIREMODE_COL, "and carries the fire-mode colour");
+        assert_eq!(
+            [q[5].r, q[5].g, q[5].b],
+            FIREMODE_COL,
+            "and carries the fire-mode colour"
+        );
     }
 
     #[test]
@@ -534,7 +546,10 @@ mod tests {
         let mut h = hud();
         h.fire.opacity = 0.5;
         let q = build_quads(&h);
-        assert!((q[0].a - IDLE_ALPHA * 0.5).abs() < 1e-6, "idle fire faded to half alpha");
+        assert!(
+            (q[0].a - IDLE_ALPHA * 0.5).abs() < 1e-6,
+            "idle fire faded to half alpha"
+        );
         // A pressed-but-faded button scales the HOT alpha, not the idle one.
         h.fire.pressed = true;
         assert!((build_quads(&h)[0].a - HOT_ALPHA * 0.5).abs() < 1e-6);
@@ -554,8 +569,14 @@ mod tests {
             opacity: 0.25,
         });
         let q = build_quads(&h);
-        assert!((q[0].a - STICK_BASE_ALPHA * 0.25).abs() < 1e-6, "ring faded");
-        assert!((q[1].a - STICK_THUMB_ALPHA * 0.25).abs() < 1e-6, "thumb faded");
+        assert!(
+            (q[0].a - STICK_BASE_ALPHA * 0.25).abs() < 1e-6,
+            "ring faded"
+        );
+        assert!(
+            (q[1].a - STICK_THUMB_ALPHA * 0.25).abs() < 1e-6,
+            "thumb faded"
+        );
     }
 
     #[test]

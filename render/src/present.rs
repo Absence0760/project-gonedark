@@ -3,9 +3,9 @@
 //! crisp native-resolution HUD/text chrome is drawn on top.
 //!
 //! Two pieces live here:
-//!  - [`PresentUniform`] — the tiny uniform the blit shader reads, carrying the **"going dark"**
+//!  - `PresentUniform` — the tiny uniform the blit shader reads, carrying the **"going dark"**
 //!    amount (`0` in command view, `1` while embodied).
-//!  - [`going_dark_grade`] — the **off-GPU reference twin** of `present.wgsl`'s `fs_present`: the base
+//!  - `going_dark_grade` — the **off-GPU reference twin** of `present.wgsl`'s `fs_present`: the base
 //!    grade ([`crate::theme::present_grade`]) followed by the embodied dark intensification. WGSL
 //!    cannot import Rust, so the grade math is duplicated in the shader; this mirror is unit-tested so
 //!    a regression (a crushed centre, a runaway tint, an out-of-range output) fails CI rather than
@@ -17,7 +17,7 @@
 //! hides map intel. It is safe because:
 //!  - it is edge-weighted (a **tunnel vignette**) and shadow-weighted, so the **lit centre stays
 //!    readable** — going dark reads as tunnel vision closing in, not a black screen you can't play;
-//!  - while embodied the fog filter already draws **only the avatar** ([`crate::fog::visible_instances`])
+//!  - while embodied the fog filter already draws **only the avatar** (`crate::fog::visible_instances`)
 //!    — there are no enemy units in the frame to hide in a deepened shadow;
 //!  - the amber avatar is bright (high luminance), so the shadow crush leaves it untouched;
 //!  - the HUD, hitmarker, and directional-alert cues are drawn AFTER this pass onto the native
@@ -87,7 +87,7 @@ fn apply_dark(mut c: Rgb, uv: [f32; 2], dark: f32) -> Rgb {
 }
 
 /// The full present grade for the scene: the base [`theme::present_grade`] then, when `dark > 0`, the
-/// embodied [`apply_dark`] intensification. `rgb` is the scene colour, `uv` the fullscreen `[0,1]`
+/// embodied `apply_dark` intensification. `rgb` is the scene colour, `uv` the fullscreen `[0,1]`
 /// coordinate (v=0 at the top), `dark` the [`dark_amount`]. At `dark = 0` this is exactly
 /// `theme::present_grade` (command view unchanged). Unit-tested; keep in lockstep with `present.wgsl`.
 pub fn going_dark_grade(rgb: Rgb, uv: [f32; 2], dark: f32) -> Rgb {
@@ -133,8 +133,16 @@ mod tests {
     #[test]
     fn uniform_clamps_dark() {
         assert_eq!(PresentUniform::new(0.4).params[0], 0.4);
-        assert_eq!(PresentUniform::new(5.0).params[0], 1.0, "over-range clamps to 1");
-        assert_eq!(PresentUniform::new(-2.0).params[0], 0.0, "under-range clamps to 0");
+        assert_eq!(
+            PresentUniform::new(5.0).params[0],
+            1.0,
+            "over-range clamps to 1"
+        );
+        assert_eq!(
+            PresentUniform::new(-2.0).params[0],
+            0.0,
+            "under-range clamps to 0"
+        );
         assert_eq!(
             [
                 PresentUniform::new(0.4).params[1],
@@ -149,12 +157,20 @@ mod tests {
     #[test]
     fn command_view_is_the_untouched_base_grade() {
         let uvs = [[0.5, 0.5], [0.0, 0.0], [1.0, 1.0], [0.2, 0.8]];
-        for c in [[0.1, 0.1, 0.1], [0.5, 0.4, 0.3], [0.9, 0.9, 0.9], [0.3, 0.6, 0.2]] {
+        for c in [
+            [0.1, 0.1, 0.1],
+            [0.5, 0.4, 0.3],
+            [0.9, 0.9, 0.9],
+            [0.3, 0.6, 0.2],
+        ] {
             for uv in uvs {
                 let base = theme::present_grade(c, uv);
                 let got = going_dark_grade(c, uv, 0.0);
                 for i in 0..3 {
-                    assert!((base[i] - got[i]).abs() < EPS, "dark=0 must equal present_grade");
+                    assert!(
+                        (base[i] - got[i]).abs() < EPS,
+                        "dark=0 must equal present_grade"
+                    );
                 }
             }
         }
@@ -192,12 +208,18 @@ mod tests {
         // Corner: full-dark must be dimmer than command view at the same corner.
         let cmd_corner = theme::luminance(going_dark_grade(mid, [1.0, 1.0], 0.0));
         let dark_corner = theme::luminance(going_dark_grade(mid, [1.0, 1.0], 1.0));
-        assert!(dark_corner < cmd_corner, "dark corner {dark_corner} !< command {cmd_corner}");
+        assert!(
+            dark_corner < cmd_corner,
+            "dark corner {dark_corner} !< command {cmd_corner}"
+        );
 
         // Centre: a lit mid-grey at screen centre stays clearly visible under full dark (the tunnel
         // leaves the centre alone and the shadow crush barely touches a mid pixel).
         let centre = theme::luminance(going_dark_grade([0.6, 0.6, 0.6], [0.5, 0.5], 1.0));
-        assert!(centre > 0.3, "lit centre must stay readable under dark, got {centre}");
+        assert!(
+            centre > 0.3,
+            "lit centre must stay readable under dark, got {centre}"
+        );
     }
 
     /// The going-dark effect is monotone in `dark`: more dark, dimmer corner. Guards against a sign
@@ -208,7 +230,10 @@ mod tests {
         let l0 = theme::luminance(going_dark_grade(mid, [0.95, 0.95], 0.0));
         let l5 = theme::luminance(going_dark_grade(mid, [0.95, 0.95], 0.5));
         let l1 = theme::luminance(going_dark_grade(mid, [0.95, 0.95], 1.0));
-        assert!(l0 > l5 && l5 > l1, "edge must darken monotonically with dark ({l0},{l5},{l1})");
+        assert!(
+            l0 > l5 && l5 > l1,
+            "edge must darken monotonically with dark ({l0},{l5},{l1})"
+        );
     }
 
     /// The dark intensification is **subtractive on the warm channels only** — it never RAISES blue
@@ -218,7 +243,12 @@ mod tests {
     #[test]
     fn dark_term_never_raises_blue_over_the_base_grade() {
         let uvs = [[0.5, 0.5], [0.1, 0.1], [0.9, 0.9], [0.3, 0.7]];
-        for c in [[0.12, 0.12, 0.12], [0.2, 0.15, 0.1], [0.4, 0.4, 0.5], [0.05, 0.05, 0.05]] {
+        for c in [
+            [0.12, 0.12, 0.12],
+            [0.2, 0.15, 0.1],
+            [0.4, 0.4, 0.5],
+            [0.05, 0.05, 0.05],
+        ] {
             for uv in uvs {
                 let base = theme::present_grade(c, uv);
                 let dark = going_dark_grade(c, uv, 1.0);

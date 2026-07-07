@@ -1,4 +1,4 @@
-//! The **map card** — picker-preview metrics derived at runtime from a [`MapSpec`]
+//! The **map card** — picker-preview metrics derived at runtime from a `MapSpec`
 //! (`modes.md` §3's "see what you're getting into", shipped v1).
 //!
 //! The target model puts the baker's lint PNG + balance metrics in the picker; both stay
@@ -80,7 +80,7 @@ pub struct MapCard {
     pub covered_cells: u32,
     /// Cover density: occupied cells as integer permille of the `GRID`² field.
     pub cover_permille: u32,
-    /// Occupied cover cells per quadrant (see [`quadrant_of`] for the index order).
+    /// Occupied cover cells per quadrant (see `quadrant_of` for the index order).
     pub quadrant_cells: [u32; 4],
     /// Per-quadrant cover density, permille of that quadrant's `(GRID/2)`² cells.
     pub quadrant_permille: [u32; 4],
@@ -159,7 +159,10 @@ mod tests {
     }
 
     fn prop(kind: CoverPropKind, x: i32, y: i32) -> CoverPropSpec {
-        CoverPropSpec { kind, cell: CellRef { x, y } }
+        CoverPropSpec {
+            kind,
+            cell: CellRef { x, y },
+        }
     }
 
     #[test]

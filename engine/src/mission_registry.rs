@@ -1,12 +1,12 @@
 //! Host-side `MissionId → mission` registry (PvE WS-B) — the WS-A integration seam.
 //!
 //! [`gonedark_core::campaign`] models the Operations hub as an **opaque** node graph: each
-//! [`OperationNode`] names a mission by [`MissionId`] only, never carrying its body (the scenario
+//! `OperationNode` names a mission by `MissionId` only, never carrying its body (the scenario
 //! seed, the `ObjectiveSet`, the tuning). That keeps the campaign model platform- and
 //! GPU-free shared `core` data with **zero** mission machinery. This module is the other half it
 //! documents: the **host-side registry** that plug-resolves a `MissionId` to a concrete, runnable
-//! [`MissionDef`] — the scenario seed + the [`ObjectiveSet`](crate::objectives::ObjectiveSet) that
-//! watches it + the WS-E [`Briefing`] (commander difficulty + scenario modifiers + narrative).
+//! `MissionDef` — the scenario seed + the [`ObjectiveSet`](crate::objectives::ObjectiveSet) that
+//! watches it + the WS-E `Briefing` (commander difficulty + scenario modifiers + narrative).
 //!
 //! ## Why it lives in `engine`, not `core`
 //!
@@ -21,9 +21,9 @@
 //!
 //! The registry only **selects** which already-deterministic [`gonedark_core::scenario`] seeder to
 //! run and which [`ObjectiveSet`](crate::objectives::ObjectiveSet) (a host-side OBSERVE-only layer)
-//! to attach. It folds nothing into the sim. [`MissionDef::launch`] seeds a `Sim` exactly as the
+//! to attach. It folds nothing into the sim. `MissionDef::launch` seeds a `Sim` exactly as the
 //! engine's existing scene path already does and then applies only the **one** scenario lever
-//! `core` owns ([`ScenarioModifiers::apply_to_sim`] — the reinforcement cadence), resolved from the
+//! `core` owns (`ScenarioModifiers::apply_to_sim` — the reinforcement cadence), resolved from the
 //! player's chosen **campaign replay tier** (D83, resolving Q21); at the neutral `Regular` tier that
 //! is a no-op, so a `Regular` launch is **byte-identical** to the bare seed (asserted in the tests),
 //! while the other tiers reshape the situation deliberately. The enemy commander difficulty it
@@ -71,7 +71,7 @@ pub const MISSION_PUSH: MissionId = MissionId(3);
 /// Seeds a `Sim` for a mission and hands back the runnable handles, matching the engine's existing
 /// GPU-free scene seeders (e.g. the crate-private `seed_seize_mission_scene`): the embodiable/
 /// selectable player entity, whether the scene boots embodied, and the host-side
-/// [`ObjectiveSet`](crate::objectives::ObjectiveSet) that OBSERVES it. The player's pre-match
+/// [`ObjectiveSet`] that OBSERVES it. The player's pre-match
 /// gunsmith [`Loadout`] is applied at match start (WS-C); `Loadout::STANDARD` is the no-op default.
 pub type MissionSeedFn = fn(&mut Sim, Loadout) -> (Entity, bool, ObjectiveSet);
 
@@ -127,7 +127,7 @@ impl MissionDef {
     /// `replay_tier` (D83, resolving Q21).
     ///
     /// The replay tier — not the mission's *authored* [`Briefing::difficulty`]/[`Briefing::modifiers`]
-    /// — drives the fight: the tier's [`ScenarioModifiers`](gonedark_core::mission_tuning::ScenarioModifiers)
+    /// — drives the fight: the tier's [`ScenarioModifiers`]
     /// (from [`Difficulty::scenario_modifiers`](gonedark_core::campaign::Difficulty::scenario_modifiers))
     /// are applied after seeding (the reinforcement cadence is the one lever `core` owns —
     /// [`ScenarioModifiers::apply_to_sim`]; force/time-limit/fog are host-owned and read off
@@ -139,8 +139,13 @@ impl MissionDef {
     /// The `Regular` tier maps to the neutral baseline (no modifiers, Veteran commander band), so a
     /// `Regular` launch is **byte-identical** to the bare `core::scenario` seed (invariants #1/#7 —
     /// asserted in the tests); the other tiers deviate deliberately. The commander difficulty it
-    /// reports back is a host-side planning knob ([`Game::set_commander_difficulty`]), never sim state.
-    pub fn launch(&self, sim: &mut Sim, loadout: Loadout, replay_tier: ReplayTier) -> LaunchedMission {
+    /// reports back is a host-side planning knob (`Game::set_commander_difficulty`), never sim state.
+    pub fn launch(
+        &self,
+        sim: &mut Sim,
+        loadout: Loadout,
+        replay_tier: ReplayTier,
+    ) -> LaunchedMission {
         let (player, start_embodied, objectives) = (self.seed)(sim, loadout);
         let (commander_difficulty, modifiers) = replay_tier.combat_tuning();
         // The single scenario lever `core` owns (reinforcement cadence). Regular ⇒ neutral (`None`)
@@ -242,9 +247,21 @@ impl MissionRegistry {
 /// through the graph, and its Android `CampaignModel` mirror moved with it (`compose-shell-parity.md`).
 pub fn default_registry() -> MissionRegistry {
     MissionRegistry::new(vec![
-        MissionDef::new(MISSION_SEIZE, crate::seed_seize_mission_scene, MISSION_ONE_BRIEFING),
-        MissionDef::new(MISSION_HOLD, crate::seed_hold_mission_scene, MISSION_TWO_BRIEFING),
-        MissionDef::new(MISSION_PUSH, crate::seed_push_mission_scene, MISSION_THREE_BRIEFING),
+        MissionDef::new(
+            MISSION_SEIZE,
+            crate::seed_seize_mission_scene,
+            MISSION_ONE_BRIEFING,
+        ),
+        MissionDef::new(
+            MISSION_HOLD,
+            crate::seed_hold_mission_scene,
+            MISSION_TWO_BRIEFING,
+        ),
+        MissionDef::new(
+            MISSION_PUSH,
+            crate::seed_push_mission_scene,
+            MISSION_THREE_BRIEFING,
+        ),
     ])
 }
 
@@ -256,7 +273,7 @@ pub fn default_registry() -> MissionRegistry {
 /// *The Santo Crisis* (2033–2034, Melanesia), and finally *Normandy '44* (1944, the first
 /// **historical** conflict — the WW2 cost-vs-power armies debut here: a mass of cheap [`Army::UsWw2`]
 /// Shermans against fewer, far tougher [`Army::Germany`] Panthers/Tigers, per-node via the
-/// [`authored_battle_spec`] army seam) — each with its own per-node titles/situations
+/// `authored_battle_spec` army seam) — each with its own per-node titles/situations
 /// authored inline. Every conflict's root is open from the start ("pick a war"); gating runs
 /// only *within* a conflict, so clearing one war never unlocks another. Each node names its
 /// mission by [`MissionId`] only — the three archetypes are deliberately **reused** across
@@ -777,11 +794,19 @@ pub fn seed_battle_spec(
         }
         NodeSetup::Hold(setup) => {
             let m = gonedark_core::scenario::seed_hold_mission_with_setup(sim, loadout, setup);
-            (m.defenders[0], false, ObjectiveSet::mission_hold(m.hold_ticks()))
+            (
+                m.defenders[0],
+                false,
+                ObjectiveSet::mission_hold(m.hold_ticks()),
+            )
         }
         NodeSetup::Push(setup) => {
             let m = gonedark_core::scenario::seed_push_mission_with_setup(sim, loadout, setup);
-            (m.troops[0], false, ObjectiveSet::mission_push(Faction::Player, &m.posts))
+            (
+                m.troops[0],
+                false,
+                ObjectiveSet::mission_push(Faction::Player, &m.posts),
+            )
         }
     };
 
@@ -822,33 +847,53 @@ fn authored_battle_spec(node: NodeId) -> Option<BattleSpec> {
     Some(match node.0 {
         // ---- The Channel Crisis (conflict 0) — the shipped baselines ----
         0 => spec(
-            NodeSetup::Seize(SeizeSetup { troops: 10, garrison: 4 }),
+            NodeSetup::Seize(SeizeSetup {
+                troops: 10,
+                garrison: 4,
+            }),
             ObjectiveVariant::Standard,
             plain,
         ),
         1 => spec(
-            NodeSetup::Hold(HoldSetup { defender_cols: 5, attacker_cols: 4, hold_secs: 45 }),
+            NodeSetup::Hold(HoldSetup {
+                defender_cols: 5,
+                attacker_cols: 4,
+                hold_secs: 45,
+            }),
             ObjectiveVariant::Standard,
             plain,
         ),
         2 => spec(
-            NodeSetup::Push(PushSetup { troops: 8, guards_per_post: 2 }),
+            NodeSetup::Push(PushSetup {
+                troops: 8,
+                guards_per_post: 2,
+            }),
             ObjectiveVariant::Standard,
             plain,
         ),
         // ---- The Meridian Crisis (conflict 1) — bigger, and an Extract ----
         3 => spec(
-            NodeSetup::Seize(SeizeSetup { troops: 11, garrison: 4 }),
+            NodeSetup::Seize(SeizeSetup {
+                troops: 11,
+                garrison: 4,
+            }),
             ObjectiveVariant::Extract,
             plain,
         ),
         4 => spec(
-            NodeSetup::Hold(HoldSetup { defender_cols: 6, attacker_cols: 5, hold_secs: 50 }),
+            NodeSetup::Hold(HoldSetup {
+                defender_cols: 6,
+                attacker_cols: 5,
+                hold_secs: 50,
+            }),
             ObjectiveVariant::Standard,
             plain,
         ),
         5 => spec(
-            NodeSetup::Push(PushSetup { troops: 9, guards_per_post: 2 }),
+            NodeSetup::Push(PushSetup {
+                troops: 9,
+                guards_per_post: 2,
+            }),
             ObjectiveVariant::Standard,
             plain,
         ),
@@ -857,33 +902,62 @@ fn authored_battle_spec(node: NodeId) -> Option<BattleSpec> {
         // (Assassinate) rather than grinding the whole force, while the commander hunts a gone-dark
         // player through the snow — a distinct fight from the two earlier Seizes (Standard/Extract).
         6 => spec(
-            NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 5 }),
+            NodeSetup::Seize(SeizeSetup {
+                troops: 12,
+                garrison: 5,
+            }),
             ObjectiveVariant::Assassinate,
-            CommanderFlavor { hunt_embodied: true, ..CommanderFlavor::default() },
+            CommanderFlavor {
+                hunt_embodied: true,
+                ..CommanderFlavor::default()
+            },
         ),
         7 => spec(
-            NodeSetup::Hold(HoldSetup { defender_cols: 7, attacker_cols: 6, hold_secs: 55 }),
+            NodeSetup::Hold(HoldSetup {
+                defender_cols: 7,
+                attacker_cols: 6,
+                hold_secs: 55,
+            }),
             ObjectiveVariant::Standard,
             plain,
         ),
         8 => spec(
-            NodeSetup::Push(PushSetup { troops: 10, guards_per_post: 3 }),
+            NodeSetup::Push(PushSetup {
+                troops: 10,
+                guards_per_post: 3,
+            }),
             ObjectiveVariant::Standard,
-            CommanderFlavor { command_stride: Some(1), ..CommanderFlavor::default() },
+            CommanderFlavor {
+                command_stride: Some(1),
+                ..CommanderFlavor::default()
+            },
         ),
         // ---- The Santo Crisis (conflict 3) — the hardest; an Assassinate + a hunting commander ----
         9 => spec(
-            NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 6 }),
+            NodeSetup::Seize(SeizeSetup {
+                troops: 12,
+                garrison: 6,
+            }),
             ObjectiveVariant::Assassinate,
-            CommanderFlavor { hunt_embodied: true, ..CommanderFlavor::default() },
+            CommanderFlavor {
+                hunt_embodied: true,
+                ..CommanderFlavor::default()
+            },
         ),
         10 => spec(
-            NodeSetup::Hold(HoldSetup { defender_cols: 8, attacker_cols: 7, hold_secs: 60 }),
+            NodeSetup::Hold(HoldSetup {
+                defender_cols: 8,
+                attacker_cols: 7,
+                hold_secs: 60,
+            }),
             ObjectiveVariant::Standard,
             plain,
         ),
         11 => spec(
-            NodeSetup::Push(PushSetup { troops: 12, guards_per_post: 3 }),
+            NodeSetup::Push(PushSetup {
+                troops: 12,
+                guards_per_post: 3,
+            }),
             ObjectiveVariant::Standard,
             CommanderFlavor {
                 hunt_embodied: true,
@@ -896,21 +970,34 @@ fn authored_battle_spec(node: NodeId) -> Option<BattleSpec> {
         // kill the officer directing the guns (Assassinate), while the Panzer commander hunts a
         // gone-dark player. Sherman mass (`UsWw2`) vs Panther/Tiger elite (`Germany`).
         12 => ww2(
-            NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 6 }),
+            NodeSetup::Seize(SeizeSetup {
+                troops: 12,
+                garrison: 6,
+            }),
             ObjectiveVariant::Assassinate,
-            CommanderFlavor { hunt_embodied: true, ..CommanderFlavor::default() },
+            CommanderFlavor {
+                hunt_embodied: true,
+                ..CommanderFlavor::default()
+            },
         ),
         // Hold the bocage crossroads against the counterattack — the proven 8-vs-7 / 60 s dug-in
         // firing line (same winnable setup as node 10), now German armor testing the hedgerow.
         13 => ww2(
-            NodeSetup::Hold(HoldSetup { defender_cols: 8, attacker_cols: 7, hold_secs: 60 }),
+            NodeSetup::Hold(HoldSetup {
+                defender_cols: 8,
+                attacker_cols: 7,
+                hold_secs: 60,
+            }),
             ObjectiveVariant::Standard,
             plain,
         ),
         // The Cobra breakout climax: the densest lane in the campaign under an Elite, hunting
         // commander — you out-mass and out-flank the dug-in Panthers, you never out-gun them.
         14 => ww2(
-            NodeSetup::Push(PushSetup { troops: 12, guards_per_post: 3 }),
+            NodeSetup::Push(PushSetup {
+                troops: 12,
+                guards_per_post: 3,
+            }),
             ObjectiveVariant::Standard,
             CommanderFlavor {
                 hunt_embodied: true,
@@ -1272,7 +1359,11 @@ mod tests {
     const MISSION_ALT: MissionId = MissionId(2);
 
     fn alt_def() -> MissionDef {
-        MissionDef::new(MISSION_ALT, crate::seed_seize_mission_scene, MISSION_ONE_BRIEFING)
+        MissionDef::new(
+            MISSION_ALT,
+            crate::seed_seize_mission_scene,
+            MISSION_ONE_BRIEFING,
+        )
     }
 
     // ---- the shipped registry + campaign ------------------------------------------------------
@@ -1280,26 +1371,42 @@ mod tests {
     #[test]
     fn default_registry_holds_the_shipped_missions() {
         let reg = default_registry();
-        assert_eq!(reg.len(), 3, "the Seize assault + the Hold defense + the Push lane");
+        assert_eq!(
+            reg.len(),
+            3,
+            "the Seize assault + the Hold defense + the Push lane"
+        );
 
-        let seize = reg.get(MISSION_SEIZE).expect("the Seize mission is registered");
+        let seize = reg
+            .get(MISSION_SEIZE)
+            .expect("the Seize mission is registered");
         assert_eq!(seize.id, MISSION_SEIZE);
         // Seize is briefed at the Recruit tier with neutral modifiers.
         assert_eq!(seize.briefing.difficulty, CommanderDifficulty::Recruit);
         assert_eq!(seize.modifiers(), ScenarioModifiers::default());
 
-        let hold = reg.get(MISSION_HOLD).expect("the Hold mission is registered");
+        let hold = reg
+            .get(MISSION_HOLD)
+            .expect("the Hold mission is registered");
         assert_eq!(hold.id, MISSION_HOLD);
         // Hold is briefed a step up (Veteran) with neutral modifiers.
         assert_eq!(hold.briefing.difficulty, CommanderDifficulty::Veteran);
         assert_eq!(hold.modifiers(), ScenarioModifiers::default());
-        let push = reg.get(MISSION_PUSH).expect("the Push mission is registered");
+        let push = reg
+            .get(MISSION_PUSH)
+            .expect("the Push mission is registered");
         assert_eq!(push.id, MISSION_PUSH);
         // Push tops the opening ramp (Elite) with neutral modifiers.
         assert_eq!(push.briefing.difficulty, CommanderDifficulty::Elite);
         assert_eq!(push.modifiers(), ScenarioModifiers::default());
-        assert_ne!(seize.briefing.title, hold.briefing.title, "distinct missions");
-        assert_ne!(hold.briefing.title, push.briefing.title, "distinct missions");
+        assert_ne!(
+            seize.briefing.title, hold.briefing.title,
+            "distinct missions"
+        );
+        assert_ne!(
+            hold.briefing.title, push.briefing.title,
+            "distinct missions"
+        );
 
         // An unregistered id resolves to nothing (a content gap, never guessed).
         assert!(reg.get(MissionId(999)).is_none());
@@ -1315,7 +1422,11 @@ mod tests {
         let def = reg.get(MISSION_HOLD).unwrap();
 
         let mut launched_sim = Sim::new(0xD00D);
-        let launched = def.launch(&mut launched_sim, Loadout::STANDARD, CampaignDifficulty::Regular);
+        let launched = def.launch(
+            &mut launched_sim,
+            Loadout::STANDARD,
+            CampaignDifficulty::Regular,
+        );
 
         let mut bare_sim = Sim::new(0xD00D);
         seed_hold_mission(&mut bare_sim);
@@ -1325,8 +1436,14 @@ mod tests {
             "a Regular-tier Hold launch adds no checksum surface over the bare seed",
         );
 
-        assert!(!launched.objectives.is_empty(), "the Hold mission has a live objective set");
-        assert!(!launched.start_embodied, "a campaign mission boots in the command view");
+        assert!(
+            !launched.objectives.is_empty(),
+            "the Hold mission has a live objective set"
+        );
+        assert!(
+            !launched.start_embodied,
+            "a campaign mission boots in the command view"
+        );
         assert_eq!(launched.mission, MISSION_HOLD);
         assert_eq!(
             launched_sim.world.faction[launched.player.index as usize],
@@ -1340,7 +1457,10 @@ mod tests {
     fn default_registry_covers_the_default_campaign() {
         let reg = default_registry();
         let campaign = default_campaign();
-        assert!(reg.covers(&campaign), "every campaign node must resolve to a mission");
+        assert!(
+            reg.covers(&campaign),
+            "every campaign node must resolve to a mission"
+        );
         // And the root node resolves to the Seize mission specifically.
         let def = reg
             .resolve_node(&campaign, NodeId(0))
@@ -1354,32 +1474,59 @@ mod tests {
     fn default_campaign_is_seize_then_hold_then_push() {
         let reg = default_registry();
         let mut campaign = default_campaign();
-        assert_eq!(campaign.mission_select().len(), 15, "five conflicts x three battles (D105/D120)");
+        assert_eq!(
+            campaign.mission_select().len(),
+            15,
+            "five conflicts x three battles (D105/D120)"
+        );
 
         // Node 0 is the root Seize; node 1 is the gated Hold, framed from MISSION_TWO_BRIEFING.
         assert_eq!(campaign.node(NodeId(0)).unwrap().mission, MISSION_SEIZE);
         let hold_node = campaign.node(NodeId(1)).expect("the second node is placed");
         assert_eq!(hold_node.mission, MISSION_HOLD);
         assert_eq!(hold_node.title, MISSION_TWO_BRIEFING.title);
-        assert_eq!(hold_node.prerequisites, vec![NodeId(0)], "Hold is gated behind Seize");
+        assert_eq!(
+            hold_node.prerequisites,
+            vec![NodeId(0)],
+            "Hold is gated behind Seize"
+        );
         let push_node = campaign.node(NodeId(2)).expect("the third node is placed");
         assert_eq!(push_node.mission, MISSION_PUSH);
         assert_eq!(push_node.title, MISSION_THREE_BRIEFING.title);
-        assert_eq!(push_node.prerequisites, vec![NodeId(1)], "Push is gated behind Hold");
+        assert_eq!(
+            push_node.prerequisites,
+            vec![NodeId(1)],
+            "Push is gated behind Hold"
+        );
 
         // Locked until the one before clears: neither gated node launches at the start.
         assert_eq!(campaign.progress(NodeId(0)), NodeProgress::Available);
         assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Locked);
         assert_eq!(campaign.progress(NodeId(2)), NodeProgress::Locked);
-        assert!(reg.resolve_node(&campaign, NodeId(1)).is_none(), "Hold is locked at the start");
-        assert!(reg.resolve_node(&campaign, NodeId(2)).is_none(), "Push is locked at the start");
+        assert!(
+            reg.resolve_node(&campaign, NodeId(1)).is_none(),
+            "Hold is locked at the start"
+        );
+        assert!(
+            reg.resolve_node(&campaign, NodeId(2)).is_none(),
+            "Push is locked at the start"
+        );
 
         // Clear Seize → Hold unlocks and resolves to MISSION_HOLD; Push stays locked (its gate is
         // Hold, not Seize); Seize stays replayable.
-        campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
+        campaign
+            .clear(NodeId(0), CampaignDifficulty::Recruit)
+            .unwrap();
         assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Available);
-        assert_eq!(campaign.progress(NodeId(2)), NodeProgress::Locked, "Push waits on Hold");
-        assert_eq!(reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id), Some(MISSION_HOLD));
+        assert_eq!(
+            campaign.progress(NodeId(2)),
+            NodeProgress::Locked,
+            "Push waits on Hold"
+        );
+        assert_eq!(
+            reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id),
+            Some(MISSION_HOLD)
+        );
         assert_eq!(
             reg.resolve_node(&campaign, NodeId(0)).map(|m| m.id),
             Some(MISSION_SEIZE),
@@ -1387,11 +1534,22 @@ mod tests {
         );
 
         // Clear Hold → Push finally unlocks and resolves; the cleared nodes stay replayable.
-        campaign.clear(NodeId(1), CampaignDifficulty::Veteran).unwrap();
-        assert!(matches!(campaign.progress(NodeId(1)), NodeProgress::Cleared { .. }));
+        campaign
+            .clear(NodeId(1), CampaignDifficulty::Veteran)
+            .unwrap();
+        assert!(matches!(
+            campaign.progress(NodeId(1)),
+            NodeProgress::Cleared { .. }
+        ));
         assert_eq!(campaign.progress(NodeId(2)), NodeProgress::Available);
-        assert_eq!(reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id), Some(MISSION_HOLD));
-        assert_eq!(reg.resolve_node(&campaign, NodeId(2)).map(|m| m.id), Some(MISSION_PUSH));
+        assert_eq!(
+            reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id),
+            Some(MISSION_HOLD)
+        );
+        assert_eq!(
+            reg.resolve_node(&campaign, NodeId(2)).map(|m| m.id),
+            Some(MISSION_PUSH)
+        );
     }
 
     /// The shipped graph carries the Q28 conflict-atlas grouping, grown to five conflicts (the D105
@@ -1408,16 +1566,39 @@ mod tests {
         // cost-vs-power armies give it a real roster).
         assert_eq!(campaign.conflicts().len(), 5);
         assert_eq!(campaign.operations().len(), 5);
-        assert_eq!(campaign.conflict(ConflictId(0)).unwrap().name, "The Channel Crisis");
-        assert_eq!(campaign.conflict(ConflictId(1)).unwrap().name, "The Meridian Crisis");
-        assert_eq!(campaign.conflict(ConflictId(2)).unwrap().name, "The Gotland Winter");
-        assert_eq!(campaign.conflict(ConflictId(3)).unwrap().name, "The Santo Crisis");
-        assert_eq!(campaign.conflict(ConflictId(4)).unwrap().name, "Normandy '44");
+        assert_eq!(
+            campaign.conflict(ConflictId(0)).unwrap().name,
+            "The Channel Crisis"
+        );
+        assert_eq!(
+            campaign.conflict(ConflictId(1)).unwrap().name,
+            "The Meridian Crisis"
+        );
+        assert_eq!(
+            campaign.conflict(ConflictId(2)).unwrap().name,
+            "The Gotland Winter"
+        );
+        assert_eq!(
+            campaign.conflict(ConflictId(3)).unwrap().name,
+            "The Santo Crisis"
+        );
+        assert_eq!(
+            campaign.conflict(ConflictId(4)).unwrap().name,
+            "Normandy '44"
+        );
         for i in 0..5u16 {
             let op = campaign.operation(OperationId(i)).unwrap();
-            assert_eq!(op.conflict, ConflictId(i), "operations link to their conflicts in order");
+            assert_eq!(
+                op.conflict,
+                ConflictId(i),
+                "operations link to their conflicts in order"
+            );
             assert_eq!(campaign.operations_in(ConflictId(i)), vec![OperationId(i)]);
-            assert_eq!(campaign.nodes_in(OperationId(i)).len(), 3, "three battles per war");
+            assert_eq!(
+                campaign.nodes_in(OperationId(i)).len(),
+                3,
+                "three battles per war"
+            );
         }
         // The four modern conflicts stay inside the Q28 lean; Normandy '44 is the lone historical one.
         for i in 0..4u16 {
@@ -1439,17 +1620,32 @@ mod tests {
             .collect();
         assert_eq!(
             spans,
-            vec![(2027, 2028), (2029, 2030), (2031, 2032), (2033, 2034), (1944, 1944)]
+            vec![
+                (2027, 2028),
+                (2029, 2030),
+                (2031, 2032),
+                (2033, 2034),
+                (1944, 1944)
+            ]
         );
 
         // The Channel chain still sits in its operation; the rollup tracks it end-to-end — and
         // completing one war completes only that war.
-        assert_eq!(campaign.nodes_in(OperationId(0)), vec![NodeId(0), NodeId(1), NodeId(2)]);
+        assert_eq!(
+            campaign.nodes_in(OperationId(0)),
+            vec![NodeId(0), NodeId(1), NodeId(2)]
+        );
         let fresh = campaign.operation_progress(OperationId(0));
         assert_eq!((fresh.cleared, fresh.total, fresh.playable), (0, 3, true));
-        campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
-        campaign.clear(NodeId(1), CampaignDifficulty::Recruit).unwrap();
-        campaign.clear(NodeId(2), CampaignDifficulty::Recruit).unwrap();
+        campaign
+            .clear(NodeId(0), CampaignDifficulty::Recruit)
+            .unwrap();
+        campaign
+            .clear(NodeId(1), CampaignDifficulty::Recruit)
+            .unwrap();
+        campaign
+            .clear(NodeId(2), CampaignDifficulty::Recruit)
+            .unwrap();
         assert!(campaign.operation_progress(OperationId(0)).is_complete());
         assert!(campaign.conflict_progress(ConflictId(0)).is_complete());
         assert!(!campaign.conflict_progress(ConflictId(1)).is_complete());
@@ -1468,7 +1664,10 @@ mod tests {
                 })
                 .collect(),
         );
-        assert_eq!(default_campaign().serialize_progress(), ungrouped.serialize_progress());
+        assert_eq!(
+            default_campaign().serialize_progress(),
+            ungrouped.serialize_progress()
+        );
     }
 
     /// Every conflict on the D105 atlas is a self-contained Seize → Hold → Push chain: the root is
@@ -1488,7 +1687,10 @@ mod tests {
                 assert_eq!(n.mission, mission, "each war runs Seize -> Hold -> Push");
                 let want: Vec<NodeId> = if j == 0 { vec![] } else { vec![nodes[j - 1]] };
                 assert_eq!(n.prerequisites, want, "gating chains within the war only");
-                assert!(reg.get(n.mission).is_some(), "every node resolves to a seeder");
+                assert!(
+                    reg.get(n.mission).is_some(),
+                    "every node resolves to a seeder"
+                );
             }
             // Every war's root is open before anything anywhere has been cleared.
             assert_eq!(campaign.progress(nodes[0]), NodeProgress::Available);
@@ -1516,16 +1718,15 @@ mod tests {
         for i in 0..5u16 {
             let conflict = campaign.conflict(ConflictId(i)).unwrap();
             let nodes = campaign.nodes_in(OperationId(i));
-            let anchors: Vec<(i16, i16)> = nodes
-                .iter()
-                .map(|&n| {
-                    campaign
-                        .node(n)
-                        .unwrap()
-                        .anchor
-                        .unwrap_or_else(|| panic!("shipped node {n:?} has no battlefield anchor"))
-                })
-                .collect();
+            let anchors: Vec<(i16, i16)> =
+                nodes
+                    .iter()
+                    .map(|&n| {
+                        campaign.node(n).unwrap().anchor.unwrap_or_else(|| {
+                            panic!("shipped node {n:?} has no battlefield anchor")
+                        })
+                    })
+                    .collect();
             for (j, &(lat, lon)) in anchors.iter().enumerate() {
                 // Within ~1.5 degrees of the war's pin (tenths-of-a-degree units).
                 assert!(
@@ -1536,7 +1737,12 @@ mod tests {
                     conflict.lon_x10,
                 );
                 for &other in &anchors[..j] {
-                    assert_ne!((lat, lon), other, "two battles of {} share ground", conflict.name);
+                    assert_ne!(
+                        (lat, lon),
+                        other,
+                        "two battles of {} share ground",
+                        conflict.name
+                    );
                 }
             }
         }
@@ -1547,15 +1753,28 @@ mod tests {
     #[test]
     fn default_campaign_progress_round_trips() {
         let mut campaign = default_campaign();
-        campaign.clear(NodeId(0), CampaignDifficulty::Veteran).unwrap();
+        campaign
+            .clear(NodeId(0), CampaignDifficulty::Veteran)
+            .unwrap();
         let blob = campaign.serialize_progress();
 
         let mut restored = default_campaign();
-        restored.apply_progress(&blob).expect("a same-topology blob applies cleanly");
-        assert!(matches!(restored.progress(NodeId(0)), NodeProgress::Cleared { .. }));
-        assert_eq!(restored.progress(NodeId(1)), NodeProgress::Available, "Hold stays unlocked");
+        restored
+            .apply_progress(&blob)
+            .expect("a same-topology blob applies cleanly");
+        assert!(matches!(
+            restored.progress(NodeId(0)),
+            NodeProgress::Cleared { .. }
+        ));
         assert_eq!(
-            default_registry().resolve_node(&restored, NodeId(1)).map(|m| m.id),
+            restored.progress(NodeId(1)),
+            NodeProgress::Available,
+            "Hold stays unlocked"
+        );
+        assert_eq!(
+            default_registry()
+                .resolve_node(&restored, NodeId(1))
+                .map(|m| m.id),
             Some(MISSION_HOLD),
         );
     }
@@ -1565,8 +1784,16 @@ mod tests {
     fn covers_detects_an_unregistered_node_mission() {
         let reg = default_registry();
         // A campaign whose node names a MissionId with no definition.
-        let orphan = Campaign::new(vec![OperationNode::new(NodeId(0), MissionId(42), "Orphan", "")]);
-        assert!(!reg.covers(&orphan), "an unregistered MissionId must fail coverage");
+        let orphan = Campaign::new(vec![OperationNode::new(
+            NodeId(0),
+            MissionId(42),
+            "Orphan",
+            "",
+        )]);
+        assert!(
+            !reg.covers(&orphan),
+            "an unregistered MissionId must fail coverage"
+        );
         assert!(reg.resolve_node(&orphan, NodeId(0)).is_none());
     }
 
@@ -1576,7 +1803,11 @@ mod tests {
     fn resolve_node_honours_locked_available_and_cleared() {
         // A two-node chain A -> B, both wired to registered missions.
         let reg = MissionRegistry::new(vec![
-            MissionDef::new(MISSION_SEIZE, crate::seed_seize_mission_scene, MISSION_ONE_BRIEFING),
+            MissionDef::new(
+                MISSION_SEIZE,
+                crate::seed_seize_mission_scene,
+                MISSION_ONE_BRIEFING,
+            ),
             alt_def(),
         ]);
         let mut campaign = Campaign::new(vec![
@@ -1589,14 +1820,28 @@ mod tests {
         // play), even though its mission IS registered.
         assert_eq!(campaign.progress(NodeId(0)), NodeProgress::Available);
         assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Locked);
-        assert_eq!(reg.resolve_node(&campaign, NodeId(0)).map(|m| m.id), Some(MISSION_SEIZE));
-        assert!(reg.resolve_node(&campaign, NodeId(1)).is_none(), "a locked node won't launch");
+        assert_eq!(
+            reg.resolve_node(&campaign, NodeId(0)).map(|m| m.id),
+            Some(MISSION_SEIZE)
+        );
+        assert!(
+            reg.resolve_node(&campaign, NodeId(1)).is_none(),
+            "a locked node won't launch"
+        );
 
         // Clear A → its successor B unlocks and now resolves; A stays replayable and still resolves.
-        campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
-        assert!(matches!(campaign.progress(NodeId(0)), NodeProgress::Cleared { .. }));
+        campaign
+            .clear(NodeId(0), CampaignDifficulty::Recruit)
+            .unwrap();
+        assert!(matches!(
+            campaign.progress(NodeId(0)),
+            NodeProgress::Cleared { .. }
+        ));
         assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Available);
-        assert_eq!(reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id), Some(MISSION_ALT));
+        assert_eq!(
+            reg.resolve_node(&campaign, NodeId(1)).map(|m| m.id),
+            Some(MISSION_ALT)
+        );
         assert_eq!(
             reg.resolve_node(&campaign, NodeId(0)).map(|m| m.id),
             Some(MISSION_SEIZE),
@@ -1612,8 +1857,16 @@ mod tests {
     fn duplicate_mission_ids_are_rejected() {
         // Two defs under the same id is an ambiguous resolution — rejected loudly at construction.
         MissionRegistry::new(vec![
-            MissionDef::new(MISSION_SEIZE, crate::seed_seize_mission_scene, MISSION_ONE_BRIEFING),
-            MissionDef::new(MISSION_SEIZE, crate::seed_seize_mission_scene, MISSION_ONE_BRIEFING),
+            MissionDef::new(
+                MISSION_SEIZE,
+                crate::seed_seize_mission_scene,
+                MISSION_ONE_BRIEFING,
+            ),
+            MissionDef::new(
+                MISSION_SEIZE,
+                crate::seed_seize_mission_scene,
+                MISSION_ONE_BRIEFING,
+            ),
         ]);
     }
 
@@ -1632,7 +1885,11 @@ mod tests {
         // The neutral `Regular` replay tier reproduces the baseline (D83): no modifiers, Veteran
         // commander band — so the seeded world matches the bare `core::scenario` seed byte-for-byte.
         let mut launched_sim = Sim::new(0xA11CE);
-        let launched = def.launch(&mut launched_sim, Loadout::STANDARD, CampaignDifficulty::Regular);
+        let launched = def.launch(
+            &mut launched_sim,
+            Loadout::STANDARD,
+            CampaignDifficulty::Regular,
+        );
 
         let mut bare_sim = Sim::new(0xA11CE);
         seed_seize_mission(&mut bare_sim);
@@ -1645,8 +1902,14 @@ mod tests {
 
         // The launch hands back a runnable mission: a live objective set, the command-view boot, the
         // commander band the host applies (Regular → Veteran, the baseline), and a real player entity.
-        assert!(!launched.objectives.is_empty(), "the mission has a live objective set");
-        assert!(!launched.start_embodied, "a campaign mission boots in the command view");
+        assert!(
+            !launched.objectives.is_empty(),
+            "the mission has a live objective set"
+        );
+        assert!(
+            !launched.start_embodied,
+            "a campaign mission boots in the command view"
+        );
         assert_eq!(launched.commander_difficulty, CommanderDifficulty::Veteran);
         assert_eq!(launched.mission, MISSION_SEIZE);
         assert_eq!(
@@ -1666,7 +1929,11 @@ mod tests {
 
         // The authored briefing is preserved (declared default/baseline) and is NOT what the launch
         // applies once a replay tier is chosen.
-        assert_eq!(def.briefing.difficulty, Cmd::Recruit, "authored tier preserved for display");
+        assert_eq!(
+            def.briefing.difficulty,
+            Cmd::Recruit,
+            "authored tier preserved for display"
+        );
 
         // Each replay tier → its D83 commander band + its scenario cadence on the sim.
         let cases = [
@@ -1685,9 +1952,16 @@ mod tests {
         for (tier, band, period_override) in cases {
             let mut sim = Sim::new(1);
             let launched = def.launch(&mut sim, Loadout::STANDARD, tier);
-            assert_eq!(launched.commander_difficulty, band, "commander band for {tier:?}");
+            assert_eq!(
+                launched.commander_difficulty, band,
+                "commander band for {tier:?}"
+            );
             let expected = period_override.unwrap_or(baseline_period);
-            assert_eq!(sim.income_period(), expected, "reinforcement cadence for {tier:?}");
+            assert_eq!(
+                sim.income_period(),
+                expected,
+                "reinforcement cadence for {tier:?}"
+            );
         }
     }
 
@@ -1733,7 +2007,11 @@ mod tests {
             }
             cs
         };
-        assert_eq!(stream(CampaignDifficulty::Regular), baseline, "Regular == neutral baseline fight");
+        assert_eq!(
+            stream(CampaignDifficulty::Regular),
+            baseline,
+            "Regular == neutral baseline fight"
+        );
 
         // Different tiers diverge by the final tick (the cadence lever bit the checksummed sim).
         let last = |tier| *stream(tier).last().unwrap();
@@ -1741,8 +2019,14 @@ mod tests {
         let regular = last(CampaignDifficulty::Regular);
         let veteran = last(CampaignDifficulty::Veteran);
         let elite = last(CampaignDifficulty::Elite);
-        assert_ne!(recruit, regular, "Recruit (slower drip) diverges from Regular");
-        assert_ne!(veteran, regular, "Veteran (faster drip) diverges from Regular");
+        assert_ne!(
+            recruit, regular,
+            "Recruit (slower drip) diverges from Regular"
+        );
+        assert_ne!(
+            veteran, regular,
+            "Veteran (faster drip) diverges from Regular"
+        );
         assert_ne!(elite, regular, "Elite (fastest drip) diverges from Regular");
         assert_ne!(veteran, elite, "Veteran and Elite field distinct cadences");
         assert_ne!(recruit, veteran, "the easiest and a harder tier diverge");
@@ -1754,7 +2038,9 @@ mod tests {
     fn resolve_then_launch_composes_end_to_end() {
         let reg = default_registry();
         let campaign = default_campaign();
-        let def = reg.resolve_node(&campaign, NodeId(0)).expect("root resolves");
+        let def = reg
+            .resolve_node(&campaign, NodeId(0))
+            .expect("root resolves");
 
         let mut sim = Sim::new(0xC0FFEE);
         let launched = def.launch(&mut sim, Loadout::STANDARD, CampaignDifficulty::Regular);
@@ -1787,8 +2073,16 @@ mod tests {
             let spec = battle_spec_for_node(&campaign, node)
                 .unwrap_or_else(|| panic!("node {i} must have a battle spec"));
             let mission = campaign.node(node).unwrap().mission;
-            assert_eq!(spec.setup.mission(), mission, "node {i} setup archetype must match its mission");
-            assert_eq!(spec.scene(), crate::Scene::for_mission(mission).unwrap(), "spec scene matches mission");
+            assert_eq!(
+                spec.setup.mission(),
+                mission,
+                "node {i} setup archetype must match its mission"
+            );
+            assert_eq!(
+                spec.scene(),
+                crate::Scene::for_mission(mission).unwrap(),
+                "spec scene matches mission"
+            );
         }
         // Out of range → None on both accessors.
         assert!(battle_spec_for_node(&campaign, NodeId(999)).is_none());
@@ -1803,13 +2097,27 @@ mod tests {
         let mut campaign = default_campaign();
         // Node 0 (a conflict root) is Available fresh → resolves; node 1 (gated Hold) is Locked.
         assert_eq!(campaign.progress(NodeId(0)), NodeProgress::Available);
-        assert!(resolve_battle_spec(&campaign, NodeId(0)).is_some(), "a root resolves");
+        assert!(
+            resolve_battle_spec(&campaign, NodeId(0)).is_some(),
+            "a root resolves"
+        );
         assert_eq!(campaign.progress(NodeId(1)), NodeProgress::Locked);
-        assert!(resolve_battle_spec(&campaign, NodeId(1)).is_none(), "a locked node yields no spec");
+        assert!(
+            resolve_battle_spec(&campaign, NodeId(1)).is_none(),
+            "a locked node yields no spec"
+        );
         // Clearing node 0 unlocks node 1 → it now resolves; node 0 stays replayable.
-        campaign.clear(NodeId(0), CampaignDifficulty::Recruit).unwrap();
-        assert!(resolve_battle_spec(&campaign, NodeId(1)).is_some(), "the unlocked node resolves");
-        assert!(resolve_battle_spec(&campaign, NodeId(0)).is_some(), "a cleared node is replayable");
+        campaign
+            .clear(NodeId(0), CampaignDifficulty::Recruit)
+            .unwrap();
+        assert!(
+            resolve_battle_spec(&campaign, NodeId(1)).is_some(),
+            "the unlocked node resolves"
+        );
+        assert!(
+            resolve_battle_spec(&campaign, NodeId(0)).is_some(),
+            "a cleared node is replayable"
+        );
     }
 
     /// A node with a custom setup fields the authored force counts — not the archetype baseline.
@@ -1820,18 +2128,36 @@ mod tests {
         // Seize node 6 → 12 player troops, 5 garrison + 1 base = enemy strength 6.
         let campaign = default_campaign();
         let s6 = battle_spec_for_node(&campaign, NodeId(6)).unwrap();
-        assert_eq!(s6.setup, NodeSetup::Seize(SeizeSetup { troops: 12, garrison: 5 }));
+        assert_eq!(
+            s6.setup,
+            NodeSetup::Seize(SeizeSetup {
+                troops: 12,
+                garrison: 5
+            })
+        );
         let mut sim = Sim::new(0x5EED_0006);
         seed_battle_spec(&mut sim, s6, Loadout::STANDARD);
-        assert_eq!(player_unit_count(&sim), 12, "node 6 fields its authored 12 troops");
+        assert_eq!(
+            player_unit_count(&sim),
+            12,
+            "node 6 fields its authored 12 troops"
+        );
         let enemy = crate::objectives::faction_forces(&sim, Faction::Enemy);
-        assert_eq!((enemy.alive_units, enemy.buildings), (5, 1), "5 garrison + the base camp");
+        assert_eq!(
+            (enemy.alive_units, enemy.buildings),
+            (5, 1),
+            "5 garrison + the base camp"
+        );
 
         // Hold node 10 → 8 defender columns (16 defenders), 60 s window.
         let s10 = battle_spec_for_node(&campaign, NodeId(10)).unwrap();
         assert_eq!(
             s10.setup,
-            NodeSetup::Hold(HoldSetup { defender_cols: 8, attacker_cols: 7, hold_secs: 60 })
+            NodeSetup::Hold(HoldSetup {
+                defender_cols: 8,
+                attacker_cols: 7,
+                hold_secs: 60
+            })
         );
         let mut sim = Sim::new(0x5EED_0010);
         let (_p, _e, obj) = seed_battle_spec(&mut sim, s10, Loadout::STANDARD);
@@ -1845,10 +2171,20 @@ mod tests {
 
         // Push node 8 → 10 squad troops.
         let s8 = battle_spec_for_node(&campaign, NodeId(8)).unwrap();
-        assert_eq!(s8.setup, NodeSetup::Push(PushSetup { troops: 10, guards_per_post: 3 }));
+        assert_eq!(
+            s8.setup,
+            NodeSetup::Push(PushSetup {
+                troops: 10,
+                guards_per_post: 3
+            })
+        );
         let mut sim = Sim::new(0x5EED_0008);
         seed_battle_spec(&mut sim, s8, Loadout::STANDARD);
-        assert_eq!(player_unit_count(&sim), 10, "node 8 fields its authored 10-troop squad");
+        assert_eq!(
+            player_unit_count(&sim),
+            10,
+            "node 8 fields its authored 10-troop squad"
+        );
     }
 
     /// The two previously-unshipped objective archetypes now ship on live nodes: node 3 (Extract)
@@ -1864,10 +2200,13 @@ mod tests {
         let mut sim = Sim::new(0x5EED_0003);
         let (player, _e, obj) = seed_battle_spec(&mut sim, s3, Loadout::STANDARD);
         assert_eq!(obj.objectives.len(), 1);
-        assert!(matches!(
-            obj.objectives[0].kind,
-            ObjectiveKind::Reach { who, .. } if who == player
-        ), "Extract builds a Reach objective for the lead trooper");
+        assert!(
+            matches!(
+                obj.objectives[0].kind,
+                ObjectiveKind::Reach { who, .. } if who == player
+            ),
+            "Extract builds a Reach objective for the lead trooper"
+        );
 
         // Node 9 — Assassinate: one Eliminate(Entity) objective on a garrison VIP (an Enemy unit).
         let s9 = battle_spec_for_node(&campaign, NodeId(9)).unwrap();
@@ -1879,20 +2218,30 @@ mod tests {
             ObjectiveKind::Eliminate(EliminateTarget::Entity(e)) => e,
             other => panic!("Assassinate must build an Eliminate(Entity) objective, got {other:?}"),
         };
-        assert_eq!(sim.world.faction[vip.index as usize], Faction::Enemy, "the VIP is an enemy");
+        assert_eq!(
+            sim.world.faction[vip.index as usize],
+            Faction::Enemy,
+            "the VIP is an enemy"
+        );
 
         // Node 6 — the Gotland opener is now also an Assassinate (the added per-node variety): a
         // distinct win condition on a live enemy VIP, under a hunting commander.
         let s6 = battle_spec_for_node(&campaign, NodeId(6)).unwrap();
         assert_eq!(s6.objective, ObjectiveVariant::Assassinate);
-        assert!(s6.commander.hunt_embodied, "the Gotland opener commander hunts the gone-dark player");
+        assert!(
+            s6.commander.hunt_embodied,
+            "the Gotland opener commander hunts the gone-dark player"
+        );
         let mut sim = Sim::new(0x5EED_0006);
         let (_p, _e, obj) = seed_battle_spec(&mut sim, s6, Loadout::STANDARD);
         let vip6 = match obj.objectives[0].kind {
             ObjectiveKind::Eliminate(EliminateTarget::Entity(e)) => e,
             other => panic!("node 6 Assassinate must build an Eliminate(Entity), got {other:?}"),
         };
-        assert!(sim.world.is_alive(vip6), "the node-6 VIP is present in the seeded world");
+        assert!(
+            sim.world.is_alive(vip6),
+            "the node-6 VIP is present in the seeded world"
+        );
         assert_eq!(sim.world.faction[vip6.index as usize], Faction::Enemy);
     }
 
@@ -1920,7 +2269,11 @@ mod tests {
                 ObjectiveKind::Eliminate(EliminateTarget::Entity(e)) => sim.world.is_alive(e),
                 ObjectiveKind::Survive { until_tick, .. } => until_tick > 0,
                 ObjectiveKind::Reach { who, dest, radius }
-                | ObjectiveKind::Escort { vip: who, dest, radius } => {
+                | ObjectiveKind::Escort {
+                    vip: who,
+                    dest,
+                    radius,
+                } => {
                     let in_bounds = dest.x >= -HALF_EXTENT
                         && dest.x < HALF_EXTENT
                         && dest.y >= -HALF_EXTENT
@@ -1946,7 +2299,11 @@ mod tests {
             // A live objective set whose every target resolves against THIS node's world.
             assert!(!objs.is_empty(), "node {i}: no objective");
             for o in &objs.objectives {
-                assert!(resolves(&a, o), "node {i}: objective {:?} does not resolve", o.kind);
+                assert!(
+                    resolves(&a, o),
+                    "node {i}: objective {:?} does not resolve",
+                    o.kind
+                );
             }
         }
     }
@@ -1963,14 +2320,22 @@ mod tests {
         let mut b = Sim::new(0xABCD);
         seed_battle_spec(&mut a, s6, Loadout::STANDARD);
         seed_battle_spec(&mut b, s6, Loadout::STANDARD);
-        assert_eq!(a.checksum(), b.checksum(), "same seed + same spec ⇒ bit-identical");
+        assert_eq!(
+            a.checksum(),
+            b.checksum(),
+            "same seed + same spec ⇒ bit-identical"
+        );
 
         // Node 9 fields a different Seize force (12/6 vs 12/5) → the opening world differs even at
         // the identical seed. (The objective variant is host-side and never folds.)
         let s9 = battle_spec_for_node(&campaign, NodeId(9)).unwrap();
         let mut c = Sim::new(0xABCD);
         seed_battle_spec(&mut c, s9, Loadout::STANDARD);
-        assert_ne!(a.checksum(), c.checksum(), "distinct setups ⇒ distinct opening worlds");
+        assert_ne!(
+            a.checksum(),
+            c.checksum(),
+            "distinct setups ⇒ distinct opening worlds"
+        );
     }
 
     /// The authored commander flavor is carried per node (the config the shell applies at launch):
@@ -1981,18 +2346,30 @@ mod tests {
         let campaign = default_campaign();
         // A plain node: no flavor.
         assert_eq!(
-            battle_spec_for_node(&campaign, NodeId(0)).unwrap().commander,
+            battle_spec_for_node(&campaign, NodeId(0))
+                .unwrap()
+                .commander,
             CommanderFlavor::default()
         );
         // Node 8 — relentless cadence.
         assert_eq!(
-            battle_spec_for_node(&campaign, NodeId(8)).unwrap().commander.command_stride,
+            battle_spec_for_node(&campaign, NodeId(8))
+                .unwrap()
+                .commander
+                .command_stride,
             Some(1)
         );
         // Node 9 — hunts the gone-dark player.
-        assert!(battle_spec_for_node(&campaign, NodeId(9)).unwrap().commander.hunt_embodied);
+        assert!(
+            battle_spec_for_node(&campaign, NodeId(9))
+                .unwrap()
+                .commander
+                .hunt_embodied
+        );
         // Node 11 — hunts AND fights at the Elite band regardless of replay tier.
-        let f11 = battle_spec_for_node(&campaign, NodeId(11)).unwrap().commander;
+        let f11 = battle_spec_for_node(&campaign, NodeId(11))
+            .unwrap()
+            .commander;
         assert!(f11.hunt_embodied);
         assert_eq!(f11.difficulty, Some(CommanderDifficulty::Elite));
     }
@@ -2026,7 +2403,11 @@ mod tests {
         ];
         for (i, mission, objective) in expected {
             let spec = battle_spec_for_node(&campaign, NodeId(i)).unwrap();
-            assert_eq!(spec.armies, (Army::UsWw2, Army::Germany), "node {i} fields the WW2 armies");
+            assert_eq!(
+                spec.armies,
+                (Army::UsWw2, Army::Germany),
+                "node {i} fields the WW2 armies"
+            );
             assert_eq!(spec.setup.mission(), mission, "node {i} archetype");
             assert_eq!(spec.objective, objective, "node {i} objective variant");
 
@@ -2034,14 +2415,23 @@ mod tests {
             // `seed_battle_spec`), so the enemy commander's produced tanks are charged the German price.
             let mut sim = Sim::new(0x2A44_0000 ^ i as u64);
             seed_battle_spec(&mut sim, spec, Loadout::STANDARD);
-            assert_eq!(sim.army_of(Faction::Player), Army::UsWw2, "node {i}: player is UsWw2");
-            assert_eq!(sim.army_of(Faction::Enemy), Army::Germany, "node {i}: enemy is Germany");
+            assert_eq!(
+                sim.army_of(Faction::Player),
+                Army::UsWw2,
+                "node {i}: player is UsWw2"
+            );
+            assert_eq!(
+                sim.army_of(Faction::Enemy),
+                Army::Germany,
+                "node {i}: enemy is Germany"
+            );
         }
 
         // The whole point (D120): the Sherman is cheaper than the Panther/Tiger, so the player wins
         // by numbers, never gun-to-gun. This ties the conflict to the shipped cost model.
         assert!(
-            unit_cost_for(Army::UsWw2, UnitKind::Tank) < unit_cost_for(Army::Germany, UnitKind::Tank),
+            unit_cost_for(Army::UsWw2, UnitKind::Tank)
+                < unit_cost_for(Army::Germany, UnitKind::Tank),
             "the WW2 conflict rests on the Sherman being the cheaper, more numerous tank",
         );
     }
@@ -2183,12 +2573,18 @@ mod content_tests {
         dir.write("seize_outpost.map.ron", SEIZE_MAP);
 
         let scan = ContentRegistry::load_dir(dir.path());
-        assert!(scan.errors.is_empty(), "shipped content must load clean: {:?}", scan.errors);
+        assert!(
+            scan.errors.is_empty(),
+            "shipped content must load clean: {:?}",
+            scan.errors
+        );
         let reg = scan.registry;
         assert_eq!(reg.len(), 1, "one authored mission (Seize)");
 
         // Resolves under MISSION_SEIZE — the same id the code-built default_registry uses.
-        let data = reg.get(MISSION_SEIZE).expect("Seize resolves in the data registry");
+        let data = reg
+            .get(MISSION_SEIZE)
+            .expect("Seize resolves in the data registry");
         assert_eq!(data.id, MISSION_SEIZE);
 
         // (a) data-loaded Seize == bare seed == the CT-A golden.
@@ -2197,15 +2593,24 @@ mod content_tests {
         assert_eq!(loaded.forces.len(), 15, "ten troops + camp + four garrison");
         let mut bare = golden_seed();
         seed_seize_mission(&mut bare);
-        assert_eq!(data_sim.checksum(), bare.checksum(), "data Seize == bare seed");
-        assert_eq!(data_sim.checksum(), SEIZE_OPENING_GOLDEN, "data Seize == CT-A golden");
+        assert_eq!(
+            data_sim.checksum(),
+            bare.checksum(),
+            "data Seize == bare seed"
+        );
+        assert_eq!(
+            data_sim.checksum(),
+            SEIZE_OPENING_GOLDEN,
+            "data Seize == CT-A golden"
+        );
 
         // (b) data-loaded Seize == code-built default_registry Seize launch (Regular = neutral).
         let mut code_sim = golden_seed();
-        default_registry()
-            .get(MISSION_SEIZE)
-            .unwrap()
-            .launch(&mut code_sim, Loadout::STANDARD, ReplayTier::Regular);
+        default_registry().get(MISSION_SEIZE).unwrap().launch(
+            &mut code_sim,
+            Loadout::STANDARD,
+            ReplayTier::Regular,
+        );
         assert_eq!(
             data_sim.checksum(),
             code_sim.checksum(),
@@ -2234,10 +2639,16 @@ mod content_tests {
         dir.write("arena.map.ron", ARENA_MAP);
         dir.write("arena.mission.ron", &arena_mission("Arena"));
         let scan = reg.reload();
-        assert!(scan.errors.is_empty(), "the added files must load clean: {:?}", scan.errors);
+        assert!(
+            scan.errors.is_empty(),
+            "the added files must load clean: {:?}",
+            scan.errors
+        );
         let reg = scan.registry;
         assert_eq!(reg.len(), 2, "reload picked up the added mission");
-        let arena = reg.get(MissionId(2)).expect("the added mission resolves after reload");
+        let arena = reg
+            .get(MissionId(2))
+            .expect("the added mission resolves after reload");
         assert_eq!(arena.spec.briefing.title, "Arena");
         // Seize is still present and still byte-identical after the reload.
         let mut s = golden_seed();
@@ -2248,7 +2659,10 @@ mod content_tests {
         dir.write("arena.mission.ron", &arena_mission("Arena Reforged"));
         let scan = reg.reload();
         assert!(scan.errors.is_empty(), "{:?}", scan.errors);
-        let arena = scan.registry.get(MissionId(2)).expect("still present after edit");
+        let arena = scan
+            .registry
+            .get(MissionId(2))
+            .expect("still present after edit");
         assert_eq!(
             arena.spec.briefing.title, "Arena Reforged",
             "reload reflected the edited briefing",
@@ -2272,7 +2686,11 @@ mod content_tests {
         let scan = ContentRegistry::load_dir(dir.path());
 
         // The good mission still loaded — the registry did NOT go down.
-        assert_eq!(scan.registry.len(), 1, "the good Seize mission survives a malformed sibling");
+        assert_eq!(
+            scan.registry.len(),
+            1,
+            "the good Seize mission survives a malformed sibling"
+        );
         assert!(scan.registry.get(MISSION_SEIZE).is_some());
         assert!(
             scan.registry.get(MissionId(7)).is_none(),
@@ -2280,9 +2698,17 @@ mod content_tests {
         );
 
         // The malformed file is reported with a precise, path-scoped diagnostic.
-        assert_eq!(scan.errors.len(), 1, "exactly the one broken file is reported");
+        assert_eq!(
+            scan.errors.len(),
+            1,
+            "exactly the one broken file is reported"
+        );
         let e = &scan.errors[0];
-        assert!(e.path.ends_with("broken.mission.ron"), "names the offending file: {}", e.path.display());
+        assert!(
+            e.path.ends_with("broken.mission.ron"),
+            "names the offending file: {}",
+            e.path.display()
+        );
         assert!(
             e.message.contains("bogus_field") || e.message.to_lowercase().contains("unknown"),
             "diagnostic names the parse failure: {}",
@@ -2298,10 +2724,17 @@ mod content_tests {
         dir.write("seize.mission.ron", SEIZE_MISSION);
         dir.write("seize_outpost.map.ron", SEIZE_MAP);
         // A mission whose map names a battlefield that is not present in the dir.
-        dir.write("orphan.mission.ron", &arena_mission("Orphan").replace(r#"map: "arena""#, r#"map: "nonexistent""#));
+        dir.write(
+            "orphan.mission.ron",
+            &arena_mission("Orphan").replace(r#"map: "arena""#, r#"map: "nonexistent""#),
+        );
 
         let scan = ContentRegistry::load_dir(dir.path());
-        assert_eq!(scan.registry.len(), 1, "Seize still loads; the orphan is rejected");
+        assert_eq!(
+            scan.registry.len(),
+            1,
+            "Seize still loads; the orphan is rejected"
+        );
         assert_eq!(scan.errors.len(), 1);
         assert!(
             scan.errors[0].message.contains("nonexistent")
@@ -2322,13 +2755,19 @@ mod content_tests {
         dir.write("clash.map.ron", ARENA_MAP);
         dir.write(
             "clash.mission.ron",
-            &arena_mission("Clash").replace("id: 2,", "id: 1,").replace(r#"map: "arena""#, r#"map: "clash""#),
+            &arena_mission("Clash")
+                .replace("id: 2,", "id: 1,")
+                .replace(r#"map: "arena""#, r#"map: "clash""#),
         );
 
         // Must not panic (unlike MissionRegistry::new, which panics on a dup — a data scan is fail-soft).
         let scan = ContentRegistry::load_dir(dir.path());
         assert_eq!(scan.registry.len(), 1, "exactly one mission keeps id 1");
-        assert_eq!(scan.errors.len(), 1, "the clashing file is reported, not fatal");
+        assert_eq!(
+            scan.errors.len(),
+            1,
+            "the clashing file is reported, not fatal"
+        );
         assert!(
             scan.errors[0].message.contains("duplicate MissionId"),
             "diagnostic names the id clash: {}",
@@ -2340,12 +2779,15 @@ mod content_tests {
 
     #[test]
     fn a_missing_content_dir_is_a_soft_error_not_a_crash() {
-        let missing = std::env::temp_dir().join(format!("gonedark-ctd-missing-{}", std::process::id()));
+        let missing =
+            std::env::temp_dir().join(format!("gonedark-ctd-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&missing);
         let scan = ContentRegistry::load_dir(&missing);
         assert!(scan.registry.is_empty(), "no missions from a missing dir");
         assert_eq!(scan.errors.len(), 1, "the unreadable dir is reported");
-        assert!(scan.errors[0].message.contains("cannot read content directory"));
+        assert!(scan.errors[0]
+            .message
+            .contains("cannot read content directory"));
     }
 
     // ---- CT-D test 7: reload re-scans the SAME dirs the registry was built from ------------------
@@ -2363,6 +2805,10 @@ mod content_tests {
         let scan = reg.reload();
         assert!(scan.registry.is_empty(), "reload reflects a removed file");
         // The dangling map alone is not an error (an unused map is fine).
-        assert!(scan.errors.is_empty(), "an unreferenced map is not an error: {:?}", scan.errors);
+        assert!(
+            scan.errors.is_empty(),
+            "an unreferenced map is not an error: {:?}",
+            scan.errors
+        );
     }
 }

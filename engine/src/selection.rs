@@ -3,7 +3,7 @@
 //! Selection is pure *presentation* state — which of the player's units the next order applies
 //! to. It is computed from the command-view pointer (tap to pick the nearest unit; drag a
 //! rectangle to band-select several) and never touches sim state (invariant #1) — it only ever
-//! produces, downstream in [`crate::command_ui`], `Command`s the sim already understands.
+//! produces, downstream in `crate::command_ui`, `Command`s the sim already understands.
 //!
 //! The engine does the camera unprojection at the input boundary and hands this layer
 //! WORLD-space points + the candidate units' world positions, so the logic here is float-only
@@ -164,10 +164,7 @@ pub enum GestureOutcome {
     /// A TAP resolved at `at`. `hit` is the unit it selected, or `None` when it landed on empty
     /// ground. In `tap_commands` mode an empty-ground tap is the engine's cue to issue the default
     /// order to the (kept) selection; a `hit` tap is a plain selection change.
-    Tapped {
-        hit: Option<Entity>,
-        at: (f32, f32),
-    },
+    Tapped { hit: Option<Entity>, at: (f32, f32) },
     /// A DRAG resolved into a band-selection. Never a command (you were selecting, not ordering).
     Banded,
 }
@@ -353,8 +350,26 @@ mod tests {
         scale: GestureScale,
         candidates: &[(Entity, (f32, f32))],
     ) {
-        sel.update_ex(Some(down), true, false, false, additive, false, scale, candidates);
-        sel.update_ex(Some(up), false, true, false, additive, false, scale, candidates);
+        sel.update_ex(
+            Some(down),
+            true,
+            false,
+            false,
+            additive,
+            false,
+            scale,
+            candidates,
+        );
+        sel.update_ex(
+            Some(up),
+            false,
+            true,
+            false,
+            additive,
+            false,
+            scale,
+            candidates,
+        );
     }
 
     /// A press→release TAP in `tap_commands` (touch) mode, returning the release outcome.
@@ -843,8 +858,18 @@ mod tests {
         // Now tap far away on empty ground: in tap_commands mode this KEEPS the selection (so the
         // engine can order it there) and reports an empty-ground tap.
         let out = touch_tap(&mut sel, (40.0, 40.0), &candidates);
-        assert_eq!(sel.units, vec![a], "empty-ground tap keeps the selection (it's a command)");
-        assert_eq!(out, GestureOutcome::Tapped { hit: None, at: (40.0, 40.0) });
+        assert_eq!(
+            sel.units,
+            vec![a],
+            "empty-ground tap keeps the selection (it's a command)"
+        );
+        assert_eq!(
+            out,
+            GestureOutcome::Tapped {
+                hit: None,
+                at: (40.0, 40.0)
+            }
+        );
     }
 
     #[test]
@@ -856,7 +881,10 @@ mod tests {
         tap(&mut sel, (0.0, 0.0), (0.0, 0.0), &candidates);
         assert_eq!(sel.units, vec![a]);
         tap(&mut sel, (40.0, 40.0), (40.0, 40.0), &candidates);
-        assert!(sel.is_empty(), "non-tap_commands empty tap clears (deselect)");
+        assert!(
+            sel.is_empty(),
+            "non-tap_commands empty tap clears (deselect)"
+        );
     }
 
     #[test]
@@ -866,10 +894,36 @@ mod tests {
         let candidates = vec![(a, (1.0, 1.0)), (b, (2.0, 2.0))];
         let mut sel = Selection::new();
         let s = GestureScale::world_floor();
-        sel.update_ex(Some((0.0, 0.0)), true, false, false, false, true, s, &candidates);
-        let out = sel.update_ex(Some((5.0, 5.0)), false, true, false, false, true, s, &candidates);
-        assert_eq!(sel.units, vec![a, b], "drag band-selects even in tap_commands mode");
-        assert_eq!(out, GestureOutcome::Banded, "a drag is a selection, never a command");
+        sel.update_ex(
+            Some((0.0, 0.0)),
+            true,
+            false,
+            false,
+            false,
+            true,
+            s,
+            &candidates,
+        );
+        let out = sel.update_ex(
+            Some((5.0, 5.0)),
+            false,
+            true,
+            false,
+            false,
+            true,
+            s,
+            &candidates,
+        );
+        assert_eq!(
+            sel.units,
+            vec![a, b],
+            "drag band-selects even in tap_commands mode"
+        );
+        assert_eq!(
+            out,
+            GestureOutcome::Banded,
+            "a drag is a selection, never a command"
+        );
     }
 
     #[test]
@@ -879,7 +933,16 @@ mod tests {
         let mut sel = Selection::new();
         let s = GestureScale::world_floor();
         // Press only (no pointer_up) → nothing resolved this frame.
-        let out = sel.update_ex(Some((0.0, 0.0)), true, false, false, false, true, s, &candidates);
+        let out = sel.update_ex(
+            Some((0.0, 0.0)),
+            true,
+            false,
+            false,
+            false,
+            true,
+            s,
+            &candidates,
+        );
         assert_eq!(out, GestureOutcome::None);
     }
 }

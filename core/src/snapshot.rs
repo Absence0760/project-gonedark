@@ -7,7 +7,9 @@
 //! snapshot lists the territory control points. None of this is sim state — it is a copy
 //! taken for rendering, so it is not checksummed (invariant #7 covers the world itself).
 
-use crate::components::{Army, EntityKind, Faction, InputSource, UnitKind, Vec2, Weapon, FACTION_COUNT};
+use crate::components::{
+    Army, EntityKind, Faction, InputSource, UnitKind, Vec2, Weapon, FACTION_COUNT,
+};
 use crate::ecs::World;
 use crate::fixed::Fixed;
 use crate::projectile::Projectile;
@@ -50,7 +52,7 @@ pub struct UnitSnapshot {
     /// yaws the tank's turret mesh by it (P7). Presentation copy, not checksummed.
     pub turret_yaw: Angle,
     /// Did this unit fire within the last [`MUZZLE_FLASH_TICKS`] ticks? Derived purely from the
-    /// (checksummed) weapon cooldown at capture (see [`weapon_recently_fired`]) — the debug overlay
+    /// (checksummed) weapon cooldown at capture (see `weapon_recently_fired`) — the debug overlay
     /// lights a muzzle flash on it so you can *see* a unit shooting from the command view, the
     /// AI-side analogue of the embodied viewmodel's `render::world::muzzle_flash_intensity`.
     /// Presentation only: adds no sim state and never enters the checksum fold (invariant #4/#7).
@@ -202,7 +204,10 @@ mod tests {
     #[test]
     fn never_fired_or_unarmed_is_not_firing() {
         assert!(!weapon_recently_fired(&gun(30, 0)), "ready, never fired");
-        assert!(!weapon_recently_fired(&gun(0, 0)), "unarmed: no cooldown to flash from");
+        assert!(
+            !weapon_recently_fired(&gun(0, 0)),
+            "unarmed: no cooldown to flash from"
+        );
     }
 
     #[test]

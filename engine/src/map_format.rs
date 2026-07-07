@@ -21,7 +21,7 @@
 //! this module the same as any sim code. Integers cross into `core` only through
 //! [`Fixed::from_int`] (cell → world). `#[serde(deny_unknown_fields)]` rejects typos/unknown keys,
 //! the loader range-validates every cell and spawn zone, and it **fails loud** (a returned
-//! [`MapError`], never a silent clamp) on an out-of-bounds cell, an out-of-bounds or overlapping
+//! `MapError`, never a silent clamp) on an out-of-bounds cell, an out-of-bounds or overlapping
 //! spawn zone, or a dangling terrain reference — a bad file errors host-side, never silently
 //! desyncs.
 //!
@@ -232,7 +232,10 @@ impl fmt::Display for MapError {
         match self {
             MapError::Parse(e) => write!(f, "map parse error: {e}"),
             MapError::UnknownTerrain(id) => {
-                write!(f, "unknown terrain map id {id} (no such map in the registry)")
+                write!(
+                    f,
+                    "unknown terrain map id {id} (no such map in the registry)"
+                )
             }
             MapError::ControlPointOutOfBounds { index, cell } => write!(
                 f,
@@ -245,7 +248,10 @@ impl fmt::Display for MapError {
                 cell.x, cell.y
             ),
             MapError::SpawnZoneOutOfBounds { name } => {
-                write!(f, "spawn zone {name:?} extends outside the 0..{GRID} playfield")
+                write!(
+                    f,
+                    "spawn zone {name:?} extends outside the 0..{GRID} playfield"
+                )
             }
             MapError::SpawnZonesOverlap { a, b } => {
                 write!(f, "spawn zones {a:?} and {b:?} overlap")
@@ -460,7 +466,11 @@ MapSpec(
         // Cover props landed at exactly their authored cells: light kinds lay their authored
         // cover; solid kinds are upgraded to the collision tier under the visible body (Q24).
         for prop in &m.cover_props {
-            let expected = if prop.kind.is_solid() { Cover::Impassable } else { prop.kind.cover() };
+            let expected = if prop.kind.is_solid() {
+                Cover::Impassable
+            } else {
+                prop.kind.cover()
+            };
             assert_eq!(
                 sim.terrain.cover_at_cell(prop.cell.x, prop.cell.y),
                 expected,
@@ -519,7 +529,12 @@ MapSpec(
                 assert_eq!(c.blocks_sight(), prop.kind.cover().blocks_sight());
                 assert_eq!(c.damage_multiplier(), prop.kind.cover().damage_multiplier());
             } else {
-                assert_eq!(c, Cover::Light, "{:?} stays authored concealment", prop.kind);
+                assert_eq!(
+                    c,
+                    Cover::Light,
+                    "{:?} stays authored concealment",
+                    prop.kind
+                );
                 assert!(!c.blocks_movement());
                 assert!(!c.blocks_sight());
             }
@@ -540,8 +555,14 @@ MapSpec(
         assert_eq!(CoverPropKind::Crate.obstacle_kind(), ObstacleKind::Crate);
         assert_eq!(CoverPropKind::Tree.obstacle_kind(), ObstacleKind::Tree);
         assert_eq!(CoverPropKind::Rock.obstacle_kind(), ObstacleKind::Rock);
-        assert_eq!(CoverPropKind::Barricade.obstacle_kind(), ObstacleKind::Barricade);
-        assert_eq!(CoverPropKind::Turret.obstacle_kind(), ObstacleKind::TurretUs);
+        assert_eq!(
+            CoverPropKind::Barricade.obstacle_kind(),
+            ObstacleKind::Barricade
+        );
+        assert_eq!(
+            CoverPropKind::Turret.obstacle_kind(),
+            ObstacleKind::TurretUs
+        );
     }
 
     #[test]
@@ -616,8 +637,7 @@ MapSpec(
 
     #[test]
     fn out_of_bounds_cover_prop_is_rejected() {
-        let ron =
-            r#"MapSpec(terrain: 0, cover_props: [CoverPropSpec(kind: Rock, cell: CellRef(x: 0, y: -1))])"#;
+        let ron = r#"MapSpec(terrain: 0, cover_props: [CoverPropSpec(kind: Rock, cell: CellRef(x: 0, y: -1))])"#;
         let err = MapSpec::load(ron).unwrap_err();
         assert!(
             matches!(err, MapError::CoverPropOutOfBounds { index: 0, .. }),
@@ -644,7 +664,10 @@ MapSpec(
             SpawnZoneSpec(name: "b", min: CellRef(x: 15, y: 15), max: CellRef(x: 25, y: 25)),
         ])"#;
         let err = MapSpec::load(ron).unwrap_err();
-        assert!(matches!(err, MapError::SpawnZonesOverlap { .. }), "got {err:?}");
+        assert!(
+            matches!(err, MapError::SpawnZonesOverlap { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -688,8 +711,15 @@ MapSpec(
         }
         assert_eq!(sim.territory.points.len(), 3);
         for prop in &m.cover_props {
-            let expected = if prop.kind.is_solid() { Cover::Impassable } else { prop.kind.cover() };
-            assert_eq!(sim.terrain.cover_at_cell(prop.cell.x, prop.cell.y), expected);
+            let expected = if prop.kind.is_solid() {
+                Cover::Impassable
+            } else {
+                prop.kind.cover()
+            };
+            assert_eq!(
+                sim.terrain.cover_at_cell(prop.cell.x, prop.cell.y),
+                expected
+            );
         }
         // And the shipped map's props all registered for drawing.
         assert_eq!(sim.obstacles.len(), m.cover_props.len());

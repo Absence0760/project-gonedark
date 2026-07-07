@@ -1,5 +1,5 @@
 //! WS-E — difficulty tiers, scenario modifiers, and light per-node briefing framing for the
-//! PvE Operations campaign ([`docs/plans/pve-campaign-plan.md`], [D58]/[D60]).
+//! PvE Operations campaign (`docs/plans/pve-campaign-plan.md`, `D58`/`D60`).
 //!
 //! Three small, **deterministic, float-free** value types (invariant #1):
 //!
@@ -13,12 +13,12 @@
 //!
 //! - [`ScenarioModifiers`]: reshape the **situation** through scenario-local levers only —
 //!   force size, reinforcement cadence (income period), fog rules ([`TellMode`]), and a match
-//!   time limit. They **never** touch the locked [D30] balance constants
-//!   ([`economy`](crate::economy)): a Rifleman costs the same and hits as hard at every tier,
+//!   time limit. They **never** touch the locked `D30` balance constants
+//!   ([`economy`]): a Rifleman costs the same and hits as hard at every tier,
 //!   so the measured balance baseline and cross-arch determinism (invariant #7) hold. Modifiers
 //!   change the *board*, not the *pieces*.
 //!
-//! - [`Briefing`]: minimal narrative framing per campaign node ([Q16] keeps depth deferred) —
+//! - [`Briefing`]: minimal narrative framing per campaign node (`Q16` keeps depth deferred) —
 //!   pure static text plus the tuning that node runs at. No sim state, no logic.
 //!
 //! - [`ScenarioModifiers::for_rotation`] (CP-8): the live-ops rotation bridge —
@@ -113,7 +113,7 @@ impl Difficulty {
     }
 }
 
-/// Scenario-parameter modifiers — reshape the **situation**, never the [D30] balance numbers.
+/// Scenario-parameter modifiers — reshape the **situation**, never the `D30` balance numbers.
 ///
 /// Each field maps to a scenario-local lever the sim/host already exposes (income period, the
 /// detection [`TellMode`], the starting force count, the host-side timeout) — *not* to a per-unit
@@ -142,7 +142,7 @@ pub struct ScenarioModifiers {
 
 impl Default for ScenarioModifiers {
     /// Neutral: force unchanged (100%), scenario's own reinforcement cadence, the `Subtle` fog
-    /// baseline ([D33]), no time limit. Applying the default modifies nothing.
+    /// baseline (`D33`), no time limit. Applying the default modifies nothing.
     fn default() -> Self {
         ScenarioModifiers {
             force_scale_pct: 100,
@@ -285,9 +285,9 @@ impl ScenarioModifiers {
     /// - `period` selects the entry by wrapping (`period % catalog.len()`), so the rotation simply
     ///   repeats — the server can hand out an ever-increasing week counter forever without `core`
     ///   growing a table.
-    /// - `track` selects the catalog: `1` ⇒ [`VARIANT_A_ROTATION`] (the consent-gated experiment
+    /// - `track` selects the catalog: `1` ⇒ `VARIANT_A_ROTATION` (the consent-gated experiment
     ///   catalog); anything else (including the `0` baseline and any unrecognized/future wire
-    ///   value) ⇒ [`STANDARD_ROTATION`] — an unknown track degrades to the safe public baseline,
+    ///   value) ⇒ `STANDARD_ROTATION` — an unknown track degrades to the safe public baseline,
     ///   never to a guess (mirrors [`ConsentGate::guard`](crate)'s "absent/unknown ⇒ the safe
     ///   default" posture).
     pub fn for_rotation(period: u64, track: u32) -> ScenarioModifiers {
@@ -300,7 +300,7 @@ impl ScenarioModifiers {
     }
 }
 
-/// Light per-node briefing framing ([Q16]: campaign-narrative depth is deferred — this is the
+/// Light per-node briefing framing (`Q16`: campaign-narrative depth is deferred — this is the
 /// minimal seam). Pure static text plus the [`Difficulty`] and [`ScenarioModifiers`] the node runs
 /// at; no sim state and no logic, so it carries zero determinism surface. The shell renders these
 /// strings; the host applies the tuning.
@@ -400,7 +400,10 @@ mod tests {
         // Aggression: backlog deepens easiest → hardest.
         assert!(r.max_queue_depth <= v.max_queue_depth);
         assert!(v.max_queue_depth <= e.max_queue_depth);
-        assert!(r.max_queue_depth < e.max_queue_depth, "the curve has real spread");
+        assert!(
+            r.max_queue_depth < e.max_queue_depth,
+            "the curve has real spread"
+        );
 
         // Reserve / unit-mix: cushion shrinks easiest → hardest (Elite buys Heavies freely).
         assert!(r.heavy_reserve >= v.heavy_reserve);
@@ -411,7 +414,10 @@ mod tests {
         assert!(r.command_stride >= v.command_stride);
         assert!(v.command_stride >= e.command_stride);
         for d in Difficulty::ALL {
-            assert!(d.params().command_stride >= 1, "stride must never be 0 (no div issues)");
+            assert!(
+                d.params().command_stride >= 1,
+                "stride must never be 0 (no div issues)"
+            );
             assert!(d.params().heavy_reserve >= 0, "reserve is never negative");
         }
     }
@@ -426,8 +432,16 @@ mod tests {
         assert_eq!(m(100).scaled_force(10), 10, "100% is identity");
         assert_eq!(m(200).scaled_force(10), 20, "doubling");
         assert_eq!(m(50).scaled_force(10), 5, "halving");
-        assert_eq!(m(33).scaled_force(10), 3, "integer truncation, not rounding");
-        assert_eq!(m(0).scaled_force(10), 1, "a non-empty base never goes to zero");
+        assert_eq!(
+            m(33).scaled_force(10),
+            3,
+            "integer truncation, not rounding"
+        );
+        assert_eq!(
+            m(0).scaled_force(10),
+            1,
+            "a non-empty base never goes to zero"
+        );
         assert_eq!(m(0).scaled_force(0), 0, "an empty base stays empty");
         // No overflow at the extreme.
         assert_eq!(m(u32::MAX).scaled_force(u32::MAX), u32::MAX);
@@ -453,7 +467,11 @@ mod tests {
     #[test]
     fn modifier_reshapes_scenario_param_deterministically_not_balance() {
         // Balance constants are constants — a modifier can never reach them (asserted for the record).
-        let costs_before = (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST);
+        let costs_before = (
+            economy::RIFLEMAN_COST,
+            economy::HEAVY_COST,
+            economy::CAMP_BUILD_COST,
+        );
 
         // Apply the period modifier, drive a fixed span, return the evolved checksum.
         let run = |period: Option<u32>| -> u64 {
@@ -488,7 +506,11 @@ mod tests {
         // ...and the modifier never reached a balance number.
         assert_eq!(
             costs_before,
-            (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST),
+            (
+                economy::RIFLEMAN_COST,
+                economy::HEAVY_COST,
+                economy::CAMP_BUILD_COST
+            ),
             "modifiers must never touch the D30 balance constants"
         );
     }
@@ -509,8 +531,14 @@ mod tests {
     #[test]
     fn time_limit_from_secs_is_tick_exact() {
         assert_eq!(ScenarioModifiers::time_limit_from_secs(0), None);
-        assert_eq!(ScenarioModifiers::time_limit_from_secs(1), Some(TICK_HZ as u64));
-        assert_eq!(ScenarioModifiers::time_limit_from_secs(120), Some(120 * TICK_HZ as u64));
+        assert_eq!(
+            ScenarioModifiers::time_limit_from_secs(1),
+            Some(TICK_HZ as u64)
+        );
+        assert_eq!(
+            ScenarioModifiers::time_limit_from_secs(120),
+            Some(120 * TICK_HZ as u64)
+        );
     }
 
     /// CP-8: the same `(period, track)` pair always resolves to the same modifiers — the property
@@ -550,11 +578,16 @@ mod tests {
     fn for_rotation_track_one_differs_from_standard() {
         let mut any_diff = false;
         for period in 0..4u64 {
-            if ScenarioModifiers::for_rotation(period, 0) != ScenarioModifiers::for_rotation(period, 1) {
+            if ScenarioModifiers::for_rotation(period, 0)
+                != ScenarioModifiers::for_rotation(period, 1)
+            {
                 any_diff = true;
             }
         }
-        assert!(any_diff, "variant-A track must diverge from standard somewhere in the cycle");
+        assert!(
+            any_diff,
+            "variant-A track must diverge from standard somewhere in the cycle"
+        );
     }
 
     /// Any unrecognized track (not just `0`) safely degrades to the standard catalog — an unknown
@@ -581,7 +614,11 @@ mod tests {
     /// path, exactly like every other `ScenarioModifiers` entry point.
     #[test]
     fn for_rotation_selected_modifiers_are_checksum_deterministic_and_never_touch_balance() {
-        let costs_before = (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST);
+        let costs_before = (
+            economy::RIFLEMAN_COST,
+            economy::HEAVY_COST,
+            economy::CAMP_BUILD_COST,
+        );
 
         let run = |period: u64, track: u32| -> u64 {
             let mut sim = Sim::new(0xA11CE);
@@ -600,7 +637,11 @@ mod tests {
 
         assert_eq!(
             costs_before,
-            (economy::RIFLEMAN_COST, economy::HEAVY_COST, economy::CAMP_BUILD_COST),
+            (
+                economy::RIFLEMAN_COST,
+                economy::HEAVY_COST,
+                economy::CAMP_BUILD_COST
+            ),
             "the live-ops rotation bridge must never touch the D30 balance constants"
         );
     }
@@ -622,6 +663,9 @@ mod tests {
         assert_eq!(MISSION_TWO_BRIEFING.modifiers, ScenarioModifiers::default());
         assert!(!MISSION_TWO_BRIEFING.title.is_empty());
         assert!(!MISSION_TWO_BRIEFING.objective_line.is_empty());
-        assert_ne!(MISSION_TWO_BRIEFING.title, MISSION_ONE_BRIEFING.title, "a distinct mission");
+        assert_ne!(
+            MISSION_TWO_BRIEFING.title, MISSION_ONE_BRIEFING.title,
+            "a distinct mission"
+        );
     }
 }

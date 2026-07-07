@@ -3,7 +3,7 @@
 //!
 //! Like [`hud`](crate::hud), this is a screen-space LOAD pass (it composites over the already-
 //! rendered frame, never clears) and a **pure presentation derivation** — it reads only the small,
-//! already-presentation-safe overlay description the host hands it ([`Overlay`]) and emits
+//! already-presentation-safe overlay description the host hands it (`Overlay`) and emits
 //! screen-space quads. It is checksum-neutral by construction: it never touches sim state and the
 //! host computes it from `core::shell`/`engine::session_shell` views, not from `&World`.
 //!
@@ -18,7 +18,7 @@
 //! has no spatial data to leak.
 //!
 //! The testable layout math (which panels appear, their rects, the summary bar lengths) lives in
-//! the free [`overlay_quads`] so it is unit-testable without a GPU — exactly the `interpolate_
+//! the free `overlay_quads` so it is unit-testable without a GPU — exactly the `interpolate_
 //! instances` / `marker_for` pattern.
 
 use crate::text::{Anchor, TextRenderer};
@@ -423,14 +423,14 @@ fn push_button_row(out: &mut Vec<OverlayQuad>, choices: &[QuadRole], ui_scale: f
 /// Hit-test a point in NDC (`x` rightward, `y` upward — the same screen space [`overlay_quads`]
 /// lays the chrome out in) against the overlay's choice-button row, returning the 0-based slot
 /// index of the button under the point, or `None` if it misses every button (or the overlay has
-/// none). The geometry mirrors [`push_button_row`] exactly, so a hit here corresponds 1:1 to a
+/// none). The geometry mirrors `push_button_row` exactly, so a hit here corresponds 1:1 to a
 /// drawn button — this is the seam the native/touch layer calls to turn a tap into a slot.
 pub fn button_slot_at(overlay: &Overlay, ndc_x: f32, ndc_y: f32) -> Option<usize> {
     button_slot_at_scaled(overlay, ndc_x, ndc_y, 1.0)
 }
 
 /// [`button_slot_at`] with the physical `ui_scale` applied — the hit-test twin of
-/// [`push_button_row`]'s scaled DRAW. Both scale the button half-extents / gap / row-center by
+/// `push_button_row`'s scaled DRAW. Both scale the button half-extents / gap / row-center by
 /// `ui_scale`, so the tappable region always tracks the drawn button: without this, at `ui_scale != 1`
 /// (retina desktop, dense phone) the button would draw large but hit-test at its 1.0 size, and a
 /// click on the visible button would miss. `ui_scale == 1.0` is byte-identical to the legacy hit-test
@@ -1141,7 +1141,9 @@ mod tests {
     /// button would miss at `ui_scale != 1` (retina desktop, dense phone). Proves draw==hit at 2×.
     #[test]
     fn scaled_button_hit_test_tracks_the_scaled_draw() {
-        let overlay = Overlay::Paused { single_player: false };
+        let overlay = Overlay::Paused {
+            single_player: false,
+        };
         for &ui_scale in &[1.0_f32, 2.0, 3.0] {
             // Each drawn button quad's center (from the SCALED draw) must resolve to a slot via the
             // SCALED hit-test — and the slots come out in left-to-right draw order.
@@ -1216,7 +1218,9 @@ mod tests {
 
     #[test]
     fn paused_is_scrim_shadow_rim_panel() {
-        let q = overlay_quads(&Overlay::Paused { single_player: true });
+        let q = overlay_quads(&Overlay::Paused {
+            single_player: true,
+        });
         // Scrim, then the soft drop shadow, then the panel rim, then the panel (back-to-front so
         // each composites over the last — shadow/border = outer quad first).
         assert_eq!(q[0].role, QuadRole::Scrim);
@@ -1316,7 +1320,9 @@ mod tests {
     #[test]
     fn every_drawn_surface_dims_the_frame_first() {
         for ov in [
-            Overlay::Paused { single_player: true },
+            Overlay::Paused {
+                single_player: true,
+            },
             Overlay::ReconnectPrompt { desynced: false },
             Overlay::ReconnectPrompt { desynced: true },
             Overlay::Summary(summary_with_kills(
@@ -1342,7 +1348,9 @@ mod tests {
     #[test]
     fn modal_surfaces_share_one_heavy_scrim() {
         let alphas: Vec<f32> = [
-            Overlay::Paused { single_player: true },
+            Overlay::Paused {
+                single_player: true,
+            },
             Overlay::ReconnectPrompt { desynced: true },
             Overlay::Summary(summary_with_kills(
                 1,
@@ -1463,7 +1471,9 @@ mod tests {
     #[test]
     fn button_captions_fit_their_slots() {
         for ov in [
-            Overlay::Paused { single_player: true },
+            Overlay::Paused {
+                single_player: true,
+            },
             Overlay::ReconnectPrompt { desynced: true },
             Overlay::Summary(summary_with_kills(
                 1,
@@ -1505,9 +1515,15 @@ mod tests {
         // The identity contract the golden tests + the engine's unscaled `button_slot_at` rely on:
         // the scaled entry at 1.0 reproduces the legacy no-arg fns exactly.
         for ov in [
-            Overlay::Paused { single_player: false },
+            Overlay::Paused {
+                single_player: false,
+            },
             Overlay::ReconnectPrompt { desynced: true },
-            Overlay::Summary(summary_with_kills(4, 2, MatchOutcome::Victory(Faction::Player))),
+            Overlay::Summary(summary_with_kills(
+                4,
+                2,
+                MatchOutcome::Victory(Faction::Player),
+            )),
         ] {
             assert_eq!(overlay_quads(&ov), overlay_quads_scaled(&ov, 1.0));
             assert_eq!(overlay_labels(&ov), overlay_labels_scaled(&ov, 1.0));
@@ -1623,7 +1639,11 @@ mod tests {
         // A track is drawn for the three facts of every *shown* faction row. Player + Enemy scored;
         // Neutral did nothing and is filtered out (L4), so two rows × three facts = six tracks.
         let tracks = q.iter().filter(|q| q.role == QuadRole::BarTrack).count();
-        assert_eq!(tracks, 3 * 2, "one track per stat for the two non-neutral rows");
+        assert_eq!(
+            tracks,
+            3 * 2,
+            "one track per stat for the two non-neutral rows"
+        );
     }
 
     /// L4: an all-zero Neutral faction is dropped from the summary — a two-faction match shows two
@@ -1650,22 +1670,18 @@ mod tests {
             .map(|l| l.text.as_str())
             .filter(|t| matches!(*t, "YOU" | "ENEMY" | "NEUT."))
             .collect();
-        assert_eq!(tags, ["YOU", "ENEMY"], "only the two active rows are tagged");
+        assert_eq!(
+            tags,
+            ["YOU", "ENEMY"],
+            "only the two active rows are tagged"
+        );
     }
 
     /// L4 keeps a row that *holds territory* even with zero kills and zero resources — that's
     /// informative. Here Neutral holds ground, so all three faction rows show.
     #[test]
     fn neutral_row_holding_territory_is_kept() {
-        let mut summary = summary_full(
-            MatchOutcome::Victory(Faction::Player),
-            4,
-            2,
-            0,
-            0,
-            0,
-            0,
-        );
+        let mut summary = summary_full(MatchOutcome::Victory(Faction::Player), 4, 2, 0, 0, 0, 0);
         summary.per_faction[Faction::Neutral.index()].territory_held = 2;
         let q = overlay_quads(&Overlay::Summary(summary));
         let tracks = q.iter().filter(|q| q.role == QuadRole::BarTrack).count();
@@ -1708,7 +1724,9 @@ mod tests {
     #[test]
     fn panel_rim_precedes_each_panel() {
         for ov in [
-            Overlay::Paused { single_player: true },
+            Overlay::Paused {
+                single_player: true,
+            },
             Overlay::ReconnectPrompt { desynced: false },
             Overlay::Summary(summary_with_kills(
                 1,
@@ -1738,7 +1756,9 @@ mod tests {
     #[test]
     fn surfaces_lay_out_their_choice_buttons() {
         // Paused: Resume (primary) + Surrender.
-        let paused = overlay_quads(&Overlay::Paused { single_player: true });
+        let paused = overlay_quads(&Overlay::Paused {
+            single_player: true,
+        });
         assert_eq!(
             paused
                 .iter()
@@ -1795,7 +1815,9 @@ mod tests {
     /// native/touch layer can hit-test them.
     #[test]
     fn button_slots_are_deterministic_and_disjoint() {
-        let q = overlay_quads(&Overlay::Paused { single_player: true });
+        let q = overlay_quads(&Overlay::Paused {
+            single_player: true,
+        });
         let mut buttons: Vec<&OverlayQuad> = q
             .iter()
             .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
@@ -1826,7 +1848,9 @@ mod tests {
     #[test]
     fn button_slot_at_matches_drawn_quads() {
         // Two-button surface (Resume / Surrender): every drawn slot center maps to its own index.
-        let overlay = Overlay::Paused { single_player: true };
+        let overlay = Overlay::Paused {
+            single_player: true,
+        };
         let mut buttons: Vec<OverlayQuad> = overlay_quads(&overlay)
             .into_iter()
             .filter(|q| matches!(q.role, QuadRole::Button | QuadRole::ButtonPrimary))
@@ -1969,7 +1993,9 @@ mod tests {
 
     #[test]
     fn paused_labels_its_buttons() {
-        let labels = overlay_labels(&Overlay::Paused { single_player: true });
+        let labels = overlay_labels(&Overlay::Paused {
+            single_player: true,
+        });
         let texts: Vec<&str> = labels.iter().map(|l| l.text.as_str()).collect();
         assert!(texts.contains(&"RESUME"), "paused labels Resume");
         assert!(
@@ -2025,7 +2051,10 @@ mod tests {
         assert!(texts.contains(&"7"), "kills count labelled");
         assert!(texts.contains(&"3"), "territory count labelled");
         assert!(texts.contains(&"1234"), "resources count labelled");
-        assert!(texts.contains(&"REMATCH"), "summary rematch button labelled");
+        assert!(
+            texts.contains(&"REMATCH"),
+            "summary rematch button labelled"
+        );
     }
 
     #[test]
@@ -2053,15 +2082,7 @@ mod tests {
     /// per shown faction row (the '/' keeps it out of the pure-numeric readout column).
     #[test]
     fn summary_labels_produced_and_lost() {
-        let mut summary = summary_full(
-            MatchOutcome::Victory(Faction::Player),
-            4,
-            2,
-            0,
-            0,
-            0,
-            0,
-        );
+        let mut summary = summary_full(MatchOutcome::Victory(Faction::Player), 4, 2, 0, 0, 0, 0);
         summary.per_faction[Faction::Player.index()].units_produced = 12;
         summary.per_faction[Faction::Player.index()].units_lost = 8;
         summary.per_faction[Faction::Enemy.index()].units_produced = 9;
@@ -2100,8 +2121,12 @@ mod tests {
     /// reconnect prompt uses.
     #[test]
     fn multiplayer_pause_warns_the_match_keeps_running() {
-        let mp = Overlay::Paused { single_player: false };
-        let sp = Overlay::Paused { single_player: true };
+        let mp = Overlay::Paused {
+            single_player: false,
+        };
+        let sp = Overlay::Paused {
+            single_player: true,
+        };
 
         // Quads: the multiplayer pause carries a Warning accent strip; the single-player one doesn't.
         assert!(roles(&overlay_quads(&mp)).contains(&QuadRole::Warning));
@@ -2125,8 +2150,16 @@ mod tests {
     fn overlay_type_rides_the_shared_scale() {
         use crate::theme;
         // The role consts derive from the scale.
-        assert_eq!(TITLE_SIZE, theme::TYPE_TITLE, "title is the section-title step");
-        assert_eq!(LABEL_SIZE, theme::TYPE_CAPTION, "row labels are the caption step");
+        assert_eq!(
+            TITLE_SIZE,
+            theme::TYPE_TITLE,
+            "title is the section-title step"
+        );
+        assert_eq!(
+            LABEL_SIZE,
+            theme::TYPE_CAPTION,
+            "row labels are the caption step"
+        );
         assert_eq!(
             BUTTON_LABEL_SIZE,
             theme::TYPE_BODY * BUTTON_LABEL_SCALE,
@@ -2134,15 +2167,20 @@ mod tests {
         );
         // The grown caption stays a step BETWEEN body and title — if a `TYPE_BODY` retune pushes it
         // past the title step, the multiplier must be re-audited, not silently leapfrog the ramp.
-        assert!(
+        // (`const` assert: pure const comparison, enforced at compile time on any build.)
+        const _: () = assert!(
             BUTTON_LABEL_SIZE > theme::TYPE_BODY && BUTTON_LABEL_SIZE < theme::TYPE_TITLE,
-            "button caption ({BUTTON_LABEL_SIZE}) must sit between TYPE_BODY and TYPE_TITLE"
+            "button caption must sit between TYPE_BODY and TYPE_TITLE"
         );
         // Every label any surface emits uses one of the three derived sizes (no orphan literals).
         let allowed = [TITLE_SIZE, LABEL_SIZE, BUTTON_LABEL_SIZE];
         for ov in [
-            Overlay::Paused { single_player: false },
-            Overlay::Paused { single_player: true },
+            Overlay::Paused {
+                single_player: false,
+            },
+            Overlay::Paused {
+                single_player: true,
+            },
             Overlay::ReconnectPrompt { desynced: false },
             Overlay::ReconnectPrompt { desynced: true },
             Overlay::Summary(summary_full(
@@ -2244,7 +2282,14 @@ mod tests {
     #[test]
     fn scrim_is_flat_and_only_shadow_is_soft() {
         let scrim = quad_style(QuadRole::Scrim, 1.0, 1.0);
-        assert_eq!(scrim, QuadStyle { radius: 0.0, gradient: 0.0, softness: 0.0 });
+        assert_eq!(
+            scrim,
+            QuadStyle {
+                radius: 0.0,
+                gradient: 0.0,
+                softness: 0.0
+            }
+        );
         for &role in ALL_ROLES {
             let s = quad_style(role, 0.5, 0.32);
             if role == QuadRole::PanelShadow {
@@ -2289,7 +2334,10 @@ mod tests {
         assert_eq!(inst.softness, style.softness);
         assert_eq!(inst.aspect, 1.6);
         // The geometry/color still passes straight through (layout/anchors unchanged).
-        assert_eq!((inst.cx, inst.cy, inst.hw, inst.hh), (0.0, 0.0, PANEL_HW, PANEL_HH));
+        assert_eq!(
+            (inst.cx, inst.cy, inst.hw, inst.hh),
+            (0.0, 0.0, PANEL_HW, PANEL_HH)
+        );
         assert_eq!(inst.alpha, 0.9);
     }
 

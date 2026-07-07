@@ -90,7 +90,7 @@ pub(crate) fn confirm_menu_button(
 
 /// Draw one emphasis-styled action button at an explicit width — the body of [`footer_button`].
 /// Only the primary button sets an explicit fill; secondary/tertiary leave the fill to the widget
-/// ramp in [`shell_style`](crate::shell::theme::shell_style) so they visibly lift on hover. Glue.
+/// ramp in [`shell_style`] so they visibly lift on hover. Glue.
 fn emphasis_button(ui: &mut egui::Ui, text: &str, emphasis: Emphasis, width: f32) -> bool {
     use egui::{Button, RichText};
     let fg = match emphasis {
@@ -135,7 +135,8 @@ pub(crate) fn value_chip(ui: &mut egui::Ui, value: &str, width: f32) -> bool {
 /// the title and gunsmith screens together. Pure presentation glue (needs a `Ui`/painter).
 pub(crate) fn accent_rule(ui: &mut egui::Ui, width: f32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 2.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, egui::CornerRadius::same(1), AMBER);
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(1), AMBER);
 }
 
 /// The framed "card" the menu/content column sits in — a PANEL fill with a RIM hairline, rounded,
@@ -157,7 +158,7 @@ pub(crate) fn glass_card_frame() -> egui::Frame {
 
 /// A compact secondary "chip" button for the title screen's top-right utility cluster
 /// (SETTINGS / PROFILE) — smaller than the full-width [`footer_button`] so it reads as utility chrome
-/// rather than a primary action. Rides the [`shell_style`](crate::shell::theme::shell_style) widget
+/// rather than a primary action. Rides the [`shell_style`] widget
 /// ramp (lifts to PANEL_RAISED + an amber rim on hover). Glue (needs a live `Ui`); the click→action
 /// mapping it feeds is what the pure
 /// [`resolve_title_action`](crate::shell::transitions::resolve_title_action) seam covers. Text-only,
@@ -166,8 +167,7 @@ pub(crate) fn glass_card_frame() -> egui::Frame {
 pub(crate) fn chip_button(ui: &mut egui::Ui, text: &str, width: f32) -> bool {
     use egui::{Button, RichText};
     ui.add(
-        Button::new(RichText::new(text).color(BONE).size(TYPE_BODY))
-            .min_size([width, 32.0].into()),
+        Button::new(RichText::new(text).color(BONE).size(TYPE_BODY)).min_size([width, 32.0].into()),
     )
     .clicked()
 }
@@ -176,12 +176,7 @@ pub(crate) fn chip_button(ui: &mut egui::Ui, text: &str, width: f32) -> bool {
 /// screens share, so they read as one family. Glue (needs a `Ui`).
 pub(crate) fn screen_banner(ui: &mut egui::Ui, title: &str, rule_w: f32) {
     use egui::RichText;
-    ui.label(
-        RichText::new(title)
-            .color(BONE)
-            .size(TYPE_HEADING)
-            .strong(),
-    );
+    ui.label(RichText::new(title).color(BONE).size(TYPE_HEADING).strong());
     ui.add_space(8.0);
     accent_rule(ui, rule_w);
     ui.add_space(16.0);
@@ -203,7 +198,8 @@ pub(crate) fn section_divider(ui: &mut egui::Ui) {
     ui.add_space(4.0);
     let w = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 1.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, egui::CornerRadius::ZERO, RIM);
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::ZERO, RIM);
     ui.add_space(10.0);
 }
 
@@ -219,8 +215,10 @@ const CARD_OPTICAL_CENTRE: f32 = 0.42;
 /// — the one placement decision in the scaffold, extracted from the egui glue so it's unit-tested.
 pub(crate) fn over_backdrop_top(viewport_h: f32, last_card_h: Option<f32>) -> f32 {
     match last_card_h {
-        Some(card_h) => ((viewport_h - card_h) * CARD_OPTICAL_CENTRE)
-            .clamp(SHELL_CARD_MARGIN, (viewport_h - SHELL_CARD_MARGIN).max(SHELL_CARD_MARGIN)),
+        Some(card_h) => ((viewport_h - card_h) * CARD_OPTICAL_CENTRE).clamp(
+            SHELL_CARD_MARGIN,
+            (viewport_h - SHELL_CARD_MARGIN).max(SHELL_CARD_MARGIN),
+        ),
         None => viewport_h * 0.10,
     }
 }
@@ -383,6 +381,11 @@ pub(crate) fn status_chip(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
         .corner_radius(egui::CornerRadius::same(4))
         .inner_margin(egui::Margin::symmetric(8, 3))
         .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).color(color).size(TYPE_CAPTION).strong());
+            ui.label(
+                egui::RichText::new(text)
+                    .color(color)
+                    .size(TYPE_CAPTION)
+                    .strong(),
+            );
         });
 }

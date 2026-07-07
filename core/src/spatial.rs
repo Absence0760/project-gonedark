@@ -247,19 +247,18 @@ mod tests {
             |_| true,
             |i| (world.pos[i] - origin).len_sq(),
         );
-        assert_eq!(got, Some(low), "lowest index must win a tie regardless of cell order");
+        assert_eq!(
+            got,
+            Some(low),
+            "lowest index must win a tie regardless of cell order"
+        );
     }
 
     #[test]
     fn empty_world_yields_none() {
         let world = World::new();
         let hash = SpatialHash::build(&world);
-        let got = hash.nearest_within(
-            Vec2::new(fx(0), fx(0)),
-            fx(10),
-            |_| true,
-            |_| Fixed::ZERO,
-        );
+        let got = hash.nearest_within(Vec2::new(fx(0), fx(0)), fx(10), |_| true, |_| Fixed::ZERO);
         assert_eq!(got, None);
     }
 
@@ -283,11 +282,21 @@ mod tests {
             }
         });
         matched.sort_unstable();
-        assert_eq!(matched, vec![inside_a, inside_b], "precise filter yields exactly the in-radius slots");
+        assert_eq!(
+            matched,
+            vec![inside_a, inside_b],
+            "precise filter yields exactly the in-radius slots"
+        );
         // Superset property: every in-radius slot was visited; `outside` may or may not be visited
         // (it is far enough to fall outside the cell window here), but must never be a false match.
-        assert!(visited.contains(&inside_a) && visited.contains(&inside_b), "all in-radius slots visited");
-        assert!(!matched.contains(&outside), "out-of-radius slot is never a match");
+        assert!(
+            visited.contains(&inside_a) && visited.contains(&inside_b),
+            "all in-radius slots visited"
+        );
+        assert!(
+            !matched.contains(&outside),
+            "out-of-radius slot is never a match"
+        );
     }
 
     #[test]
@@ -349,7 +358,11 @@ mod tests {
                 }
             }
             let got = hash.nearest_within(pos, range, accept, dist);
-            assert_eq!(got, want.map(|(i, _)| i), "shooter {shooter}: spatial != brute-force");
+            assert_eq!(
+                got,
+                want.map(|(i, _)| i),
+                "shooter {shooter}: spatial != brute-force"
+            );
         }
     }
 }

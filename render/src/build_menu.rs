@@ -8,8 +8,8 @@
 //!
 //! This mirrors [`readout`](crate::readout): it is a pure layout function over plain inputs, not a
 //! sim read. The renderer is the float boundary and **never calls back into `core`** for live state.
-//! The only `core` touch here is the *const* cost table ([`economy::build_cost`] /
-//! [`economy::CAMP_BUILD_COST`]) — compile-time constants, not a per-frame sim read — so the palette
+//! The only `core` touch here is the *const* cost table (`economy::build_cost` /
+//! `economy::CAMP_BUILD_COST`) — compile-time constants, not a per-frame sim read — so the palette
 //! shows the true, single-source-of-truth cost without coupling the renderer to the sim economy.
 //!
 //! Affordability is computed from a **host-supplied plain number** (the player's current resource
@@ -26,8 +26,8 @@
 //!
 //! ## The pure seam
 //!
-//! [`build_menu_entries`] is a free fn, unit-testable without a GPU — the `readout_labels` pattern.
-//! The host turns each [`BuildMenuEntry`] into a [`text::TextRenderer::queue`] call (and, when it
+//! `build_menu_entries` is a free fn, unit-testable without a GPU — the `readout_labels` pattern.
+//! The host turns each `BuildMenuEntry` into a [`text::TextRenderer::queue`] call (and, when it
 //! wires input, the entry index doubles as the `build_ui` slot the player picked).
 
 use crate::text::Anchor;
@@ -137,11 +137,21 @@ mod tests {
     #[test]
     fn lists_every_placeable_structure_with_its_const_cost() {
         let entries = build_menu_entries(10_000);
-        assert_eq!(entries.len(), PALETTE.len(), "one entry per placeable structure");
+        assert_eq!(
+            entries.len(),
+            PALETTE.len(),
+            "one entry per placeable structure"
+        );
         // Camp is the first (and only) palette slot, carrying the core const cost.
         assert_eq!(entries[0].kind, BuildingKind::Camp);
-        assert_eq!(entries[0].cost, CAMP_BUILD_COST, "cost from the core const table");
-        assert!(entries[0].text.starts_with("Camp"), "label names the structure");
+        assert_eq!(
+            entries[0].cost, CAMP_BUILD_COST,
+            "cost from the core const table"
+        );
+        assert!(
+            entries[0].text.starts_with("Camp"),
+            "label names the structure"
+        );
         assert!(
             entries[0].text.contains(&CAMP_BUILD_COST.to_string()),
             "label shows the cost"
@@ -152,7 +162,10 @@ mod tests {
     fn affordability_flag_tracks_the_supplied_balance() {
         // Exactly affordable (balance == cost), comfortably affordable, and too poor.
         let exact = build_menu_entries(CAMP_BUILD_COST);
-        assert!(exact[0].affordable, "balance == cost is affordable (no debt needed)");
+        assert!(
+            exact[0].affordable,
+            "balance == cost is affordable (no debt needed)"
+        );
 
         let rich = build_menu_entries(CAMP_BUILD_COST + 1);
         assert!(rich[0].affordable);
@@ -189,8 +202,14 @@ mod tests {
         }
         // The last entry hugs the bottom-left corner (inside the screen).
         let last = entries.last().unwrap();
-        assert!(last.pos[0] < 0.0 && last.pos[0] > -1.0, "left side, on screen");
-        assert!(last.pos[1] < 0.0 && last.pos[1] > -1.0, "bottom region, on screen");
+        assert!(
+            last.pos[0] < 0.0 && last.pos[0] > -1.0,
+            "left side, on screen"
+        );
+        assert!(
+            last.pos[1] < 0.0 && last.pos[1] > -1.0,
+            "bottom region, on screen"
+        );
     }
 
     #[test]
@@ -207,10 +226,18 @@ mod tests {
     fn slot_index_matches_build_ui_palette_order() {
         // The entry index is the build_ui slot, and MUST match `build_ui::slot_kind`: slot 0 = Camp,
         // slot 1 = Barracks (D65). A drift here would place the wrong structure for a tapped slot.
-        assert_eq!(PALETTE.len(), 2, "Camp + Barracks (D65) are the placeable structures");
+        assert_eq!(
+            PALETTE.len(),
+            2,
+            "Camp + Barracks (D65) are the placeable structures"
+        );
         let entries = build_menu_entries(0);
         assert_eq!(entries.len(), 2, "one entry per palette slot");
         assert_eq!(entries[0].kind, BuildingKind::Camp, "slot 0 is the Camp");
-        assert_eq!(entries[1].kind, BuildingKind::Barracks, "slot 1 is the Barracks");
+        assert_eq!(
+            entries[1].kind,
+            BuildingKind::Barracks,
+            "slot 1 is the Barracks"
+        );
     }
 }

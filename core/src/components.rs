@@ -209,8 +209,13 @@ impl Army {
     /// table). Iterating this is deterministic by construction, mirroring [`Faction::ALL`]. The WW2
     /// armies ([`UsWw2`](Army::UsWw2)/[`Germany`](Army::Germany), D120) are appended AFTER `Fr`, so
     /// every existing index/tag is unchanged.
-    pub const ALL: [Army; ARMY_COUNT] =
-        [Army::Neutral, Army::Us, Army::Fr, Army::UsWw2, Army::Germany];
+    pub const ALL: [Army; ARMY_COUNT] = [
+        Army::Neutral,
+        Army::Us,
+        Army::Fr,
+        Army::UsWw2,
+        Army::Germany,
+    ];
 
     /// Dense index into per-army arrays (`[_; ARMY_COUNT]`). The tag order is load-bearing: it MUST
     /// match the persist/wire codecs ([`sim`](crate::sim) `army_tag` + [`lockstep`](crate::lockstep)
@@ -258,7 +263,7 @@ pub enum UnitKind {
     /// A support unit: it carries no offensive weapon and instead **heals** nearby friendly units
     /// each tick (`crate::heal`). Built from a [`Barracks`](BuildingKind::Barracks).
     Medic,
-    /// Dedicated **anti-tank infantry** (a bazooka / AT team) — the answer to armour ([D73]). Carries
+    /// Dedicated **anti-tank infantry** (a bazooka / AT team) — the answer to armour (`D73`). Carries
     /// a slow, penetrating gun (`penetration ≥ TANK_ARMOR_FRONT`) so it cracks a produced
     /// [`Tank`](UnitKind::Tank)'s frontal facet head-on, but is **fragile** (low HP), **slow**
     /// (few ready rounds, long cooldown — D67 logistics), and **poor anti-personnel** (so equal-cost
@@ -418,8 +423,8 @@ impl ShellKind {
 /// never fires, so non-combatants and the Phase 1 mover are inert in `combat_system`.
 ///
 /// **Ammo is all-unit logistics (D67), not an embodied-only toggle.** A weapon with `mag_size > 0`
-/// rations rounds for *both* the embodied player ([`combat::resolve_fire`]) **and** every
-/// AI/auto-combat unit ([`combat::combat_system`]): firing spends a round, an empty magazine can't
+/// rations rounds for *both* the embodied player (`combat::resolve_fire`) **and** every
+/// AI/auto-combat unit (`combat::combat_system`): firing spends a round, an empty magazine can't
 /// fire, and a depleted unit must rearm (`reserve` → magazine via reload; an empty `reserve` is
 /// refilled at a friendly camp by `crate::resupply`). `mag_size == 0` still means *no* magazine —
 /// infinite ammo, no reload — which is what the Medic (disarmed) and the float-free combat unit

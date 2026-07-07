@@ -23,16 +23,16 @@
 //! resources icon can glow amber and a unit-type icon take the faction blue.
 //!
 //! The `ICON_*` consts below are the **contract with the generator** — they MUST match the `grid`
-//! block in `assets/icons/manifest.json`, and [`IconKind`]'s order MUST match the `icons` list there
-//! (each icon's atlas index is its position in that list). The [`atlas_matches_metrics`](tests) test
+//! block in `assets/icons/manifest.json`, and `IconKind`'s order MUST match the `icons` list there
+//! (each icon's atlas index is its position in that list). The `atlas_matches_metrics` test
 //! pins the `include_bytes!`d blob's length to `ATLAS_W * ATLAS_H * 4`, so a generator/metrics drift
 //! fails `cargo test` rather than corrupting icons at runtime.
 //!
 //! ## The pure seam
 //!
 //! All layout math — atlas-UV lookup and the icon → NDC + aspect-corrected half-extent expansion —
-//! lives in free fns ([`icon_uv`], [`half_extents`], [`expand`]) so it is unit-testable without a
-//! GPU, exactly the `layout_glyphs` / `overlay_quads` pattern. [`IconRenderer::render`] is the only
+//! lives in free fns (`icon_uv`, `half_extents`, `expand`) so it is unit-testable without a
+//! GPU, exactly the `layout_glyphs` / `overlay_quads` pattern. `IconRenderer::render` is the only
 //! GPU-touching code and is exercised by the offscreen `viz-runner`, not the no-GPU CI matrix.
 
 use wgpu::util::DeviceExt;
@@ -157,10 +157,10 @@ pub struct IconInstance {
     /// Cell half-extent in NDC.
     pub hw: f32,
     pub hh: f32,
-    /// Atlas UV of the cell's top-left corner ([0,1]).
+    /// Atlas UV of the cell's top-left corner (`[0,1]`).
     pub u0: f32,
     pub v0: f32,
-    /// Atlas UV size of one cell ([0,1]).
+    /// Atlas UV size of one cell (`[0,1]`).
     pub du: f32,
     pub dv: f32,
     pub r: f32,
@@ -578,7 +578,7 @@ mod tests {
     fn atlas_matches_metrics() {
         // The baked atlas blob length MUST equal the grid metrics × 4 (RGBA) — a guard against the
         // generator and these consts drifting (which would shear every icon's UV).
-        assert!(ICON_COLS * ICON_ROWS >= ICON_COUNT, "grid holds every icon");
+        const _: () = assert!(ICON_COLS * ICON_ROWS >= ICON_COUNT, "grid holds every icon");
         assert_eq!(ATLAS_W, ICON_COLS * CELL);
         assert_eq!(ATLAS_H, ICON_ROWS * CELL);
         assert_eq!(
@@ -719,14 +719,20 @@ mod tests {
         let (hw1, hh1) = half_extents_scaled(0.1, 1.0, 1.0);
         let (hw2, hh2) = half_extents_scaled(0.1, 1.0, 2.0);
         assert!((hw2 - 2.0 * hw1).abs() < EPS, "2× ui_scale → 2× half-width");
-        assert!((hh2 - 2.0 * hh1).abs() < EPS, "2× ui_scale → 2× half-height");
+        assert!(
+            (hh2 - 2.0 * hh1).abs() < EPS,
+            "2× ui_scale → 2× half-height"
+        );
     }
 
     #[test]
     fn ui_scale_one_is_the_legacy_half_extents() {
         // The default scale reproduces the pre-ui_scale geometry exactly, at any aspect.
         for aspect in [1.0_f32, 16.0 / 9.0, 0.5] {
-            assert_eq!(half_extents_scaled(0.1, aspect, 1.0), half_extents(0.1, aspect));
+            assert_eq!(
+                half_extents_scaled(0.1, aspect, 1.0),
+                half_extents(0.1, aspect)
+            );
         }
     }
 

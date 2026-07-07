@@ -3,13 +3,13 @@
 //! [`crate`]) leans on so a selection reads at a glance on a small (phone-aspect) screen.
 //!
 //! Two decisions live here, extracted as free fns so they are unit-testable without a `Game` (the
-//! CLAUDE.md "extract the pure logic to a testable seam" rule, exactly like [`crate::command_ui`] /
+//! CLAUDE.md "extract the pure logic to a testable seam" rule, exactly like `crate::command_ui` /
 //! [`crate::command_touch`]):
 //!
-//! - [`composition_rows`] — collapse a selection's per-kind counts into **at most `budget`** rows,
+//! - `composition_rows` — collapse a selection's per-kind counts into **at most `budget`** rows,
 //!   with a trailing `"+N more"` roll-up when the composition would otherwise overflow the panel on
 //!   a short screen. Depth stays in what the player *reads*, never in unit AI (invariant #3).
-//! - [`hp_line_style`] — map an average-health percentage to the shared [`LineStyle`] state language
+//! - `hp_line_style` — map an average-health percentage to the shared `LineStyle` state language
 //!   (green when healthy, red when hurt) so a wounded group reads as *hurt* at a glance instead of
 //!   as a flat neutral number.
 //!
@@ -80,9 +80,17 @@ mod tests {
     #[test]
     fn full_health_reads_good_and_low_reads_bad() {
         assert_eq!(hp_line_style(100), LineStyle::Good);
-        assert_eq!(hp_line_style(HP_GOOD_PCT), LineStyle::Good, "boundary is inclusive-good");
+        assert_eq!(
+            hp_line_style(HP_GOOD_PCT),
+            LineStyle::Good,
+            "boundary is inclusive-good"
+        );
         assert_eq!(hp_line_style(0), LineStyle::Bad);
-        assert_eq!(hp_line_style(HP_BAD_PCT), LineStyle::Bad, "boundary is inclusive-bad");
+        assert_eq!(
+            hp_line_style(HP_BAD_PCT),
+            LineStyle::Bad,
+            "boundary is inclusive-bad"
+        );
     }
 
     #[test]
@@ -105,7 +113,10 @@ mod tests {
     #[test]
     fn zero_count_kinds_are_skipped() {
         // The caller can pass the full kind table; only present kinds get a row.
-        let rows = composition_rows(&[("Rifleman", 0), ("Heavy", 2), ("Tank", 0), ("Medic", 1)], 4);
+        let rows = composition_rows(
+            &[("Rifleman", 0), ("Heavy", 2), ("Tank", 0), ("Medic", 1)],
+            4,
+        );
         assert_eq!(rows, vec!["2x Heavy", "1x Medic"]);
     }
 
@@ -120,12 +131,21 @@ mod tests {
         // 5 present kinds, budget 4 → show 3 kinds + a "+N more" row summing the hidden units
         // (Medic 4 + AntiTank 5 = 9), so the panel stays a fixed 4 rows tall on a phone.
         let rows = composition_rows(
-            &[("Rifleman", 3), ("Heavy", 1), ("Tank", 2), ("Medic", 4), ("AntiTank", 5)],
+            &[
+                ("Rifleman", 3),
+                ("Heavy", 1),
+                ("Tank", 2),
+                ("Medic", 4),
+                ("AntiTank", 5),
+            ],
             4,
         );
         assert_eq!(rows.len(), 4, "capped at the budget");
         assert_eq!(&rows[..3], &["3x Rifleman", "1x Heavy", "2x Tank"]);
-        assert_eq!(rows[3], "+9 more", "the tail rolls up as a unit total, not a kind count");
+        assert_eq!(
+            rows[3], "+9 more",
+            "the tail rolls up as a unit total, not a kind count"
+        );
     }
 
     #[test]

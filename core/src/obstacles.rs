@@ -6,7 +6,7 @@
 //! walked straight through everything they saw. D50 itself flagged the fix: *"if props ever need to
 //! be gameplay cover they must become sim … data (never a render-side back-channel to the sim —
 //! invariant #4)."* This module is that source of truth, living in `core` so the sim owns it: the
-//! scenario paints [`Cover::Impassable`](crate::terrain::Cover::Impassable) under each obstacle
+//! scenario paints [`Cover::Impassable`] under each obstacle
 //! (real collision), and the renderer *reads* this same list to draw the props (core → render, the
 //! allowed direction). One list, so a prop can never again be visible-but-passable.
 //!
@@ -198,8 +198,14 @@ mod tests {
 
     #[test]
     fn a_wider_barricade_paints_more_cells_than_a_tree() {
-        let tree = [Obstacle { kind: ObstacleKind::Tree, pos: iv(0, 0) }];
-        let berm = [Obstacle { kind: ObstacleKind::Barricade, pos: iv(0, 0) }];
+        let tree = [Obstacle {
+            kind: ObstacleKind::Tree,
+            pos: iv(0, 0),
+        }];
+        let berm = [Obstacle {
+            kind: ObstacleKind::Barricade,
+            pos: iv(0, 0),
+        }];
         let count = |list: &[Obstacle]| {
             let mut t = Terrain::open();
             paint_impassable(&mut t, list);

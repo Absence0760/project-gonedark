@@ -89,7 +89,7 @@ const MAX_DATAGRAM: usize = 64 * 1024;
 /// arrived datagram is exactly one polled frame.
 ///
 /// **Framing:** one frame ↔ one datagram. Frames are assumed to fit in a single datagram (see
-/// [`MAX_DATAGRAM`]); the small lockstep frames always do. Oversized frames are a future
+/// `MAX_DATAGRAM`); the small lockstep frames always do. Oversized frames are a future
 /// fragmentation concern, not handled here.
 ///
 /// Per D27 this is **UDP now**; a QUIC transport (for Wi-Fi↔cellular path migration) is the

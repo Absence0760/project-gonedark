@@ -7,8 +7,8 @@
 //!
 //! Like [`marquee`](crate::marquee) / [`hud`](crate::hud) it is a screen-composited **LOAD** pass
 //! (never clears) and a **pure presentation derivation** — the renderable line set is built by the
-//! GPU-free [`hitbox_lines`] / [`tracer_lines`] seams (unit-tested without a device) from data the
-//! host reads out of the snapshot; the [`DebugRenderer`] is the thin GPU glue. It reuses the unit
+//! GPU-free `hitbox_lines` / `tracer_lines` seams (unit-tested without a device) from data the
+//! host reads out of the snapshot; the `DebugRenderer` is the thin GPU glue. It reuses the unit
 //! pass's camera bind group (the top-down view-projection), so world points map to clip exactly as
 //! the units do. No depth test, so the lines always read on top.
 //!
@@ -448,8 +448,14 @@ pub fn covergrid_lines(terrain: &Terrain) -> Vec<DebugVertex> {
             let y1 = y0 + 1.0;
             let corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
             for i in 0..4 {
-                v.push(DebugVertex { world: corners[i], color });
-                v.push(DebugVertex { world: corners[(i + 1) % 4], color });
+                v.push(DebugVertex {
+                    world: corners[i],
+                    color,
+                });
+                v.push(DebugVertex {
+                    world: corners[(i + 1) % 4],
+                    color,
+                });
             }
         }
     }
@@ -549,7 +555,10 @@ mod tests {
         let spoke_head = v[v.len() - 1];
         assert_eq!(spoke_tail.world, [0.0, 0.0]);
         assert_eq!(spoke_tail.color, COLOR_SPOKE);
-        assert!((spoke_head.world[0] - 1.0).abs() < 1e-5, "front spoke points +X");
+        assert!(
+            (spoke_head.world[0] - 1.0).abs() < 1e-5,
+            "front spoke points +X"
+        );
         assert!(spoke_head.world[1].abs() < 1e-5);
     }
 
@@ -620,7 +629,10 @@ mod tests {
         // RING_SEGS ring segments + 2 cone edge spokes + CONE_ARC_SEGS arc segments, 2 verts each.
         assert_eq!(v.len(), (RING_SEGS + 2 + CONE_ARC_SEGS) * 2);
         // The ring is faction-tinted; the cone is the warm fire-arc color.
-        assert!(v.iter().any(|p| p.color == [0.3, 0.5, 1.0]), "range ring tinted");
+        assert!(
+            v.iter().any(|p| p.color == [0.3, 0.5, 1.0]),
+            "range ring tinted"
+        );
         assert!(v.iter().any(|p| p.color == COLOR_CONE), "cone wedge drawn");
         // Every ring/cone point sits within the range radius (+epsilon) of the unit.
         assert!(v
@@ -653,7 +665,10 @@ mod tests {
             size: 1.0,
         }]);
         assert_eq!(v.len(), (MUZZLE_SPOKES + 1) * 2);
-        assert!(v.iter().all(|p| p.color == COLOR_MUZZLE), "all hot muzzle tint");
+        assert!(
+            v.iter().all(|p| p.color == COLOR_MUZZLE),
+            "all hot muzzle tint"
+        );
         let tip = v[v.len() - 1].world;
         assert!(
             (tip[0] - 2.0).abs() < 1e-5 && tip[1].abs() < 1e-5,

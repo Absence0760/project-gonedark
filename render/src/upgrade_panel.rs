@@ -3,15 +3,15 @@
 //!
 //! When the player selects one of their camps, this lays out a small screen-space panel that tells
 //! the truth about *growth*: the camp's current tier, what the **next** tier costs
-//! ([`economy::upgrade_cost`]), what it actually *improves* (faster production —
-//! [`economy::LEVEL_PROD_SPEEDUP`] off the per-unit build time, down to [`economy::PROD_TICKS_FLOOR`]),
+//! (`economy::upgrade_cost`), what it actually *improves* (faster production —
+//! `economy::LEVEL_PROD_SPEEDUP` off the per-unit build time, down to `economy::PROD_TICKS_FLOOR`),
 //! and whether the player can afford it right now. It is the visual companion to the engine's
 //! `upgrade_ui::upgrade_commands` intent: the panel shows the cost/effect, the button issues the
 //! command.
 //!
 //! ## Pure data seam (the `readout` / `tiers` pattern)
 //!
-//! [`upgrade_view`] derives the numbers — current tier, next-tier cost, and the production-speed
+//! `upgrade_view` derives the numbers — current tier, next-tier cost, and the production-speed
 //! effect — as a free fn, unit-testable without a GPU. The contextual
 //! [`command_panel`](crate::command_panel) formats these into its camp-panel rows; this module owns
 //! only the numbers, not the layout. It never reads or mutates sim state (invariant #4) — it is a
@@ -92,7 +92,6 @@ pub fn upgrade_view(level: u8, resources: i64) -> UpgradeView {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     //! `render` is the float boundary, so f32 layout math is fair game. The pure view + layout
@@ -122,9 +121,18 @@ mod tests {
     #[test]
     fn view_affordability_tracks_the_purse() {
         let cost = economy::upgrade_cost(0); // 200
-        assert!(!upgrade_view(0, cost - 1).affordable, "one short → not affordable");
-        assert!(upgrade_view(0, cost).affordable, "exact balance → affordable");
-        assert!(upgrade_view(0, cost + 1000).affordable, "surplus → affordable");
+        assert!(
+            !upgrade_view(0, cost - 1).affordable,
+            "one short → not affordable"
+        );
+        assert!(
+            upgrade_view(0, cost).affordable,
+            "exact balance → affordable"
+        );
+        assert!(
+            upgrade_view(0, cost + 1000).affordable,
+            "surplus → affordable"
+        );
     }
 
     #[test]
@@ -153,5 +161,4 @@ mod tests {
         // Cost still grows even at the speed floor.
         assert_eq!(v.next_cost, economy::upgrade_cost(254));
     }
-
 }

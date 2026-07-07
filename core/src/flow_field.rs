@@ -82,7 +82,7 @@ impl FlowField {
     ///
     /// **Obstacle-aware (Q24).** The expansion never relaxes *into* a cell that
     /// [`Cover::blocks_movement`](crate::terrain::Cover::blocks_movement) (an
-    /// `Impassable` cell), so those cells stay [`UNREACHED`] and units route *around* them
+    /// `Impassable` cell), so those cells stay `UNREACHED` and units route *around* them
     /// instead of straight through — the Phase-2 generalisation the module doc anticipated. On
     /// an open field (no impassable cells) this is byte-identical to the obstacle-free build, so
     /// existing replays/checksums are unchanged.
@@ -228,7 +228,8 @@ impl<'t> FlowFieldCache<'t> {
         let idx = match self.fields.iter().position(|(g, _)| *g == goal) {
             Some(i) => i,
             None => {
-                self.fields.push((goal, FlowField::build(goal, self.terrain)));
+                self.fields
+                    .push((goal, FlowField::build(goal, self.terrain)));
                 self.fields.len() - 1
             }
         };

@@ -5,7 +5,7 @@
 //! of the command view, hit-tested per tap by the engine's `command_touch` seam, that arm exactly
 //! those intents.
 //!
-//! PRESENTATION ONLY (invariant #2/#4): the engine fills [`CommandBarView`] from its pixel layout
+//! PRESENTATION ONLY (invariant #2/#4): the engine fills `CommandBarView` from its pixel layout
 //! (the hit shapes), converting to NDC so the drawn shapes can never drift from the hit shapes; this
 //! module only turns that view into overlay quads + text labels and feeds the **same** overlay-quad
 //! and W4 text pipelines `command_panel` / `objective_hud` use — no new shader, no sim touch. Pure +
@@ -158,7 +158,7 @@ fn icon_for_label(label: &str, palette: &crate::theme::Palette) -> Option<(IconK
 }
 
 /// The bar's icons — one small glyph tucked into each button's left inset, beside its centered label.
-/// A button whose label has no mapped icon ([`icon_for_label`]) simply contributes none. Empty view ⇒
+/// A button whose label has no mapped icon (`icon_for_label`) simply contributes none. Empty view ⇒
 /// no icons. The icon center sits `ICON_CENTER_FRAC` of the half-width left of the button center; the
 /// icon pass aspect-corrects the width so it stays square in pixels. Pure + GPU-free → unit-tested.
 pub fn command_bar_icons(view: &CommandBarView, palette: &crate::theme::Palette) -> Vec<IconItem> {
@@ -315,25 +315,59 @@ mod tests {
         );
         // Unit tokens take faction blue; the build + upgrade actions take the amber accent.
         assert_eq!(icons[2].tint, crate::theme::PLAYER, "medic → faction blue");
-        assert_eq!(icons[3].tint, crate::theme::PLAYER, "anti-tank → faction blue");
-        assert_eq!(icons[4].tint, crate::theme::AMBER, "build → amber action accent");
-        assert_eq!(icons[5].tint, crate::theme::AMBER, "upgrade → amber action accent");
+        assert_eq!(
+            icons[3].tint,
+            crate::theme::PLAYER,
+            "anti-tank → faction blue"
+        );
+        assert_eq!(
+            icons[4].tint,
+            crate::theme::AMBER,
+            "build → amber action accent"
+        );
+        assert_eq!(
+            icons[5].tint,
+            crate::theme::AMBER,
+            "upgrade → amber action accent"
+        );
     }
 
     #[test]
     fn bar_chrome_is_sourced_from_the_shared_theme() {
         // The drawn rim + fill + label are `theme` colours (one designed set with the panel/readout
         // cards) — asserted on the actual emitted quads/labels so the wiring is covered.
-        let v = CommandBarView { buttons: vec![btn("RIFLE")] };
+        let v = CommandBarView {
+            buttons: vec![btn("RIFLE")],
+        };
         let q = command_bar_quads(&v);
         let (rim, fill) = (&q[0], &q[1]);
-        assert_eq!([rim.r, rim.g, rim.b], crate::theme::RIM, "rim is theme::RIM");
-        assert_eq!([fill.r, fill.g, fill.b], crate::theme::PANEL_RAISED, "fill is theme::PANEL_RAISED");
-        assert_eq!(command_bar_labels(&v)[0].color, crate::theme::BONE, "label is theme::BONE");
+        assert_eq!(
+            [rim.r, rim.g, rim.b],
+            crate::theme::RIM,
+            "rim is theme::RIM"
+        );
+        assert_eq!(
+            [fill.r, fill.g, fill.b],
+            crate::theme::PANEL_RAISED,
+            "fill is theme::PANEL_RAISED"
+        );
+        assert_eq!(
+            command_bar_labels(&v)[0].color,
+            crate::theme::BONE,
+            "label is theme::BONE"
+        );
         // The chrome's opacities + rim thickness ride the shared panel spec (they converged from
         // module-local 0.82/0.9/0.006 — pinned on the emitted quads so a drift-back is caught).
-        assert_eq!(rim.alpha, crate::theme::PANEL_RIM_ALPHA, "rim alpha is the shared spec");
-        assert_eq!(fill.alpha, crate::theme::PANEL_BG_ALPHA, "fill alpha is the shared spec");
+        assert_eq!(
+            rim.alpha,
+            crate::theme::PANEL_RIM_ALPHA,
+            "rim alpha is the shared spec"
+        );
+        assert_eq!(
+            fill.alpha,
+            crate::theme::PANEL_BG_ALPHA,
+            "fill alpha is the shared spec"
+        );
         assert!(
             (rim.hw - fill.hw - crate::theme::PANEL_RIM_PAD).abs() < 1e-6,
             "rim thickness is the shared PANEL_RIM_PAD"
@@ -376,7 +410,10 @@ mod tests {
             let q = command_bar_quads_scaled(&v, s);
             let fill = &q[1];
             // The button box scaled about its center by ~s.
-            assert!((fill.hw - half_x * s).abs() < 1e-6, "button half-width grows ~{s}x");
+            assert!(
+                (fill.hw - half_x * s).abs() < 1e-6,
+                "button half-width grows ~{s}x"
+            );
             let button_w = 2.0 * fill.hw;
             for label in ["RIFLE", "HEAVY", "UPGRADE"] {
                 let w = crate::text::measure(label, LABEL_SIZE * s, PORTRAIT_ASPECT).0;
@@ -396,7 +433,10 @@ mod tests {
         };
         let pal = crate::theme::Palette::DEFAULT;
         assert_eq!(command_bar_quads(&v), command_bar_quads_scaled(&v, 1.0));
-        assert_eq!(command_bar_icons(&v, &pal), command_bar_icons_scaled(&v, &pal, 1.0));
+        assert_eq!(
+            command_bar_icons(&v, &pal),
+            command_bar_icons_scaled(&v, &pal, 1.0)
+        );
     }
 
     #[test]
@@ -419,7 +459,11 @@ mod tests {
             crate::theme::PLAYER,
             "the CVD ramp actually moved the player tint off the default"
         );
-        assert_eq!(icons[1].tint, crate::theme::AMBER, "amber action accent is palette-independent");
+        assert_eq!(
+            icons[1].tint,
+            crate::theme::AMBER,
+            "amber action accent is palette-independent"
+        );
     }
 
     #[test]

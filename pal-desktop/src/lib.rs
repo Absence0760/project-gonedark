@@ -459,7 +459,7 @@ impl DesktopInput {
     }
 
     /// Feed one `winit` [`DeviceEvent`] for raw, unaccelerated mouse-look deltas (the FPS look
-    /// axis). A thin decoder over [`on_mouse_motion`](Self::on_mouse_motion).
+    /// axis). A thin decoder over `on_mouse_motion`.
     pub fn handle_device_event(&mut self, event: &DeviceEvent) {
         if let DeviceEvent::MouseMotion { delta } = event {
             self.on_mouse_motion(delta.0 as f32, delta.1 as f32);
@@ -949,7 +949,10 @@ mod input_tests {
         assert!(!f.fire, "Space does NOT fire");
         assert!(f.jump_pressed, "Space latches a jump edge");
         // The jump edge is one-shot: cleared on the next drain.
-        assert!(!input.drain_frame().jump_pressed, "jump edge clears after one drain");
+        assert!(
+            !input.drain_frame().jump_pressed,
+            "jump edge clears after one drain"
+        );
     }
 
     #[test]
@@ -960,11 +963,24 @@ mod input_tests {
         input.on_key(KeyId::R, true, false);
         let f = input.drain_frame();
         assert!(f.reload_pressed, "R reloads while embodied");
-        assert_eq!(f.train_slot, Some(0), "and queues a Rifleman in the command view");
-        assert!(!input.drain_frame().reload_pressed, "reload edge clears after one drain");
+        assert_eq!(
+            f.train_slot,
+            Some(0),
+            "and queues a Rifleman in the command view"
+        );
+        assert!(
+            !input.drain_frame().reload_pressed,
+            "reload edge clears after one drain"
+        );
         input.on_key(KeyId::X, true, false);
-        assert!(input.drain_frame().select_fire_pressed, "X toggles fire mode");
-        assert!(!input.drain_frame().select_fire_pressed, "select-fire edge clears after one drain");
+        assert!(
+            input.drain_frame().select_fire_pressed,
+            "X toggles fire mode"
+        );
+        assert!(
+            !input.drain_frame().select_fire_pressed,
+            "select-fire edge clears after one drain"
+        );
     }
 
     #[test]
@@ -1048,7 +1064,11 @@ mod input_tests {
         );
 
         input.on_key(KeyId::R, true, false);
-        assert_eq!(input.drain_frame().train_slot, Some(0), "R → train Rifleman");
+        assert_eq!(
+            input.drain_frame().train_slot,
+            Some(0),
+            "R → train Rifleman"
+        );
         input.on_key(KeyId::H, true, false);
         assert_eq!(input.drain_frame().train_slot, Some(1), "H → train Heavy");
         assert_eq!(
@@ -1104,7 +1124,10 @@ mod input_tests {
         // The pre-Q27 hardcoded V *secondary* reload is retired: reload is one rebindable action
         // (default R). An unbound key does nothing.
         input.on_key(KeyId::V, true, false);
-        assert!(!input.drain_frame().reload_pressed, "V is unbound by default");
+        assert!(
+            !input.drain_frame().reload_pressed,
+            "V is unbound by default"
+        );
     }
 
     #[test]
@@ -1128,7 +1151,10 @@ mod input_tests {
         // share; only the embodied half moved).
         let mut input = DesktopInput::new();
         let mut map = KeybindMap::default();
-        assert_eq!(map.rebind(GameAction::Reload, KeyId::V), RebindOutcome::Bound);
+        assert_eq!(
+            map.rebind(GameAction::Reload, KeyId::V),
+            RebindOutcome::Bound
+        );
         input.set_keybinds(map);
 
         input.on_key(KeyId::V, true, false);
@@ -1148,15 +1174,29 @@ mod input_tests {
         // the Up arrow and Embody to T, then check the old defaults are inert.
         let mut input = DesktopInput::new();
         let mut map = KeybindMap::default();
-        assert_eq!(map.rebind(GameAction::MoveUp, KeyId::Up), RebindOutcome::Bound);
-        assert_eq!(map.rebind(GameAction::Embody, KeyId::T), RebindOutcome::Bound);
+        assert_eq!(
+            map.rebind(GameAction::MoveUp, KeyId::Up),
+            RebindOutcome::Bound
+        );
+        assert_eq!(
+            map.rebind(GameAction::Embody, KeyId::T),
+            RebindOutcome::Bound
+        );
         input.set_keybinds(map);
 
         input.on_key(KeyId::Up, true, false);
-        assert_eq!(input.drain_frame().move_axis, (0.0, -1.0), "Up arrow moves up");
+        assert_eq!(
+            input.drain_frame().move_axis,
+            (0.0, -1.0),
+            "Up arrow moves up"
+        );
         input.on_key(KeyId::Up, false, false);
         input.on_key(KeyId::W, true, false);
-        assert_eq!(input.drain_frame().move_axis, (0.0, 0.0), "W is unbound now");
+        assert_eq!(
+            input.drain_frame().move_axis,
+            (0.0, 0.0),
+            "W is unbound now"
+        );
 
         input.on_key(KeyId::T, true, false);
         assert!(input.drain_frame().embody_pressed, "T embodies");
@@ -1188,9 +1228,8 @@ mod input_tests {
 
     #[test]
     fn scale_look_multiplies_and_inverts() {
-        let approx = |a: (f32, f32), b: (f32, f32)| {
-            (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6
-        };
+        let approx =
+            |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6;
         // Stock prefs are a pure pass-through.
         assert!(approx(scale_look((3.0, -2.0), 1.0, false), (3.0, -2.0)));
         // Sensitivity scales both axes.
@@ -1210,8 +1249,16 @@ mod input_tests {
         input.set_look_prefs(2.0, true);
         input.on_mouse_motion(2.0, -3.0);
         let f = input.drain_frame();
-        assert!((f.look_axis.0 - 4.0).abs() < 1e-6, "x scaled 2x: {:?}", f.look_axis);
-        assert!((f.look_axis.1 - 6.0).abs() < 1e-6, "y inverted+scaled: {:?}", f.look_axis);
+        assert!(
+            (f.look_axis.0 - 4.0).abs() < 1e-6,
+            "x scaled 2x: {:?}",
+            f.look_axis
+        );
+        assert!(
+            (f.look_axis.1 - 6.0).abs() < 1e-6,
+            "y inverted+scaled: {:?}",
+            f.look_axis
+        );
     }
 }
 
@@ -1234,7 +1281,7 @@ mod keycode_boundary_tests {
         assert_eq!(keycode_to_keyid(KeyCode::Digit5), Some(KeyId::Digit5));
         assert_eq!(keycode_to_keyid(KeyCode::ArrowUp), Some(KeyId::Up));
         assert_eq!(keycode_to_keyid(KeyCode::Equal), Some(KeyId::Equals)); // names differ
-        // A non-bindable key (a modifier) resolves to nothing.
+                                                                           // A non-bindable key (a modifier) resolves to nothing.
         assert_eq!(keycode_to_keyid(KeyCode::ShiftLeft), None);
         assert_eq!(keycode_to_keyid(KeyCode::AltLeft), None);
     }
@@ -1246,19 +1293,71 @@ mod keycode_boundary_tests {
         // key can ever fire).
         use std::collections::HashSet;
         let reachable: HashSet<KeyId> = [
-            KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4, KeyCode::F5, KeyCode::F6,
-            KeyCode::F7, KeyCode::F8, KeyCode::F9, KeyCode::F10, KeyCode::F11, KeyCode::F12,
-            KeyCode::KeyA, KeyCode::KeyB, KeyCode::KeyC, KeyCode::KeyD, KeyCode::KeyE,
-            KeyCode::KeyF, KeyCode::KeyG, KeyCode::KeyH, KeyCode::KeyI, KeyCode::KeyJ,
-            KeyCode::KeyK, KeyCode::KeyL, KeyCode::KeyM, KeyCode::KeyN, KeyCode::KeyO,
-            KeyCode::KeyP, KeyCode::KeyQ, KeyCode::KeyR, KeyCode::KeyS, KeyCode::KeyT,
-            KeyCode::KeyU, KeyCode::KeyV, KeyCode::KeyW, KeyCode::KeyX, KeyCode::KeyY,
-            KeyCode::KeyZ, KeyCode::Digit0, KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
-            KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8,
-            KeyCode::Digit9, KeyCode::Escape, KeyCode::Tab, KeyCode::Space, KeyCode::Enter,
-            KeyCode::Backspace, KeyCode::Insert, KeyCode::Delete, KeyCode::Home, KeyCode::End,
-            KeyCode::PageUp, KeyCode::PageDown, KeyCode::ArrowUp, KeyCode::ArrowDown,
-            KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::Minus, KeyCode::Equal,
+            KeyCode::F1,
+            KeyCode::F2,
+            KeyCode::F3,
+            KeyCode::F4,
+            KeyCode::F5,
+            KeyCode::F6,
+            KeyCode::F7,
+            KeyCode::F8,
+            KeyCode::F9,
+            KeyCode::F10,
+            KeyCode::F11,
+            KeyCode::F12,
+            KeyCode::KeyA,
+            KeyCode::KeyB,
+            KeyCode::KeyC,
+            KeyCode::KeyD,
+            KeyCode::KeyE,
+            KeyCode::KeyF,
+            KeyCode::KeyG,
+            KeyCode::KeyH,
+            KeyCode::KeyI,
+            KeyCode::KeyJ,
+            KeyCode::KeyK,
+            KeyCode::KeyL,
+            KeyCode::KeyM,
+            KeyCode::KeyN,
+            KeyCode::KeyO,
+            KeyCode::KeyP,
+            KeyCode::KeyQ,
+            KeyCode::KeyR,
+            KeyCode::KeyS,
+            KeyCode::KeyT,
+            KeyCode::KeyU,
+            KeyCode::KeyV,
+            KeyCode::KeyW,
+            KeyCode::KeyX,
+            KeyCode::KeyY,
+            KeyCode::KeyZ,
+            KeyCode::Digit0,
+            KeyCode::Digit1,
+            KeyCode::Digit2,
+            KeyCode::Digit3,
+            KeyCode::Digit4,
+            KeyCode::Digit5,
+            KeyCode::Digit6,
+            KeyCode::Digit7,
+            KeyCode::Digit8,
+            KeyCode::Digit9,
+            KeyCode::Escape,
+            KeyCode::Tab,
+            KeyCode::Space,
+            KeyCode::Enter,
+            KeyCode::Backspace,
+            KeyCode::Insert,
+            KeyCode::Delete,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::ArrowUp,
+            KeyCode::ArrowDown,
+            KeyCode::ArrowLeft,
+            KeyCode::ArrowRight,
+            KeyCode::Minus,
+            KeyCode::Equal,
             KeyCode::Backquote,
         ]
         .into_iter()

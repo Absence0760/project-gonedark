@@ -387,7 +387,10 @@ mod tests {
     fn music_gain_is_zero_when_any_bus_is_muted() {
         // Muting master OR music (OR the track itself) silences the bus — the "off" end of the
         // Settings slider must reach true silence.
-        assert!(music_gain(1.0, 0.0, 1.0).abs() < EPS, "master mute → silent");
+        assert!(
+            music_gain(1.0, 0.0, 1.0).abs() < EPS,
+            "master mute → silent"
+        );
         assert!(music_gain(1.0, 1.0, 0.0).abs() < EPS, "music mute → silent");
         assert!(music_gain(0.0, 1.0, 1.0).abs() < EPS, "track mute → silent");
     }

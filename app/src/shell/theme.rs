@@ -28,7 +28,8 @@ pub(crate) const MUTED: egui::Color32 = egui::Color32::from_rgb(0x61, 0x68, 0x75
 // opaque PANEL. `Color32` stores PREMULTIPLIED alpha and only `from_rgba_premultiplied` is `const`,
 // so the channels here are PANEL (0x12/0x18/0x20) already multiplied by 224/255 (→ 16/21/28); this
 // is the const-fn equivalent of `from_rgba_unmultiplied(0x12, 0x18, 0x20, 224)`.
-pub(crate) const PANEL_GLASS: egui::Color32 = egui::Color32::from_rgba_premultiplied(16, 21, 28, 224);
+pub(crate) const PANEL_GLASS: egui::Color32 =
+    egui::Color32::from_rgba_premultiplied(16, 21, 28, 224);
 
 // The desktop-shell type scale (egui point sizes). One small, fixed ramp so every screen shares a
 // heading/body/caption hierarchy instead of each call site picking an ad-hoc glyph size — the
@@ -47,7 +48,7 @@ pub(crate) const TYPE_CAPTION: f32 = 12.0;
 /// Build the shell's cohesive dark [`egui::Style`] — the single source of truth for the title /
 /// gunsmith / settings chrome's look (fills, widget ramp, corner radii, spacing, and the
 /// heading->caption type scale). Pure data: `egui::Style`/`Visuals` are plain structs with no GPU or
-/// window, so this is unit-tested below (unlike the [`EguiShell`] glue that *applies* it). Keeping it
+/// window, so this is unit-tested below (unlike the `EguiShell` glue that *applies* it). Keeping it
 /// pure also means a retune is one function, asserted by tests, rather than scattered `set_*` calls.
 pub(crate) fn shell_style() -> egui::Style {
     use egui::{CornerRadius, FontFamily, FontId, Stroke, TextStyle};

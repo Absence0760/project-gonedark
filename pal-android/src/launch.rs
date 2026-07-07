@@ -263,8 +263,8 @@ fn clamp_u32(value: &str, fallback: u32) -> u32 {
 /// the neutral default rather than silently to French. A field always holds `1` or `2` after decode.
 fn clamp_army(value: &str, fallback: u8) -> u8 {
     match value.parse::<i64>() {
-        Ok(1) => 1, // US Army
-        Ok(2) => 2, // French Army
+        Ok(1) => 1,            // US Army
+        Ok(2) => 2,            // French Army
         Ok(_) => ARMY_DEFAULT, // Neutral (0) / out-of-range → US (never a player pick)
         Err(_) => fallback,
     }
@@ -276,8 +276,8 @@ fn clamp_army(value: &str, fallback: u8) -> u8 {
 /// Unparseable keeps `fallback`, like every other key.
 fn clamp_enemy_army(value: &str, fallback: u8) -> u8 {
     match value.parse::<i64>() {
-        Ok(1) => 1, // US Army
-        Ok(2) => 2, // French Army
+        Ok(1) => 1,                // US Army
+        Ok(2) => 2,                // French Army
         Ok(_) => ENEMY_ARMY_UNSET, // Neutral (0) / out-of-range → no explicit pick
         Err(_) => fallback,
     }
@@ -379,7 +379,7 @@ mod tests {
         assert_eq!(cfg.map, "crossroads");
         assert!(cfg.skirmish);
         assert_eq!(cfg.scene, "skirmish"); // the graceful-degradation scene rides alongside
-        // Empty/missing keeps the default (no library map).
+                                           // Empty/missing keeps the default (no library map).
         assert!(parse_launch_config("map=").map.is_empty());
         assert!(parse_launch_config("v=1;scene=skirmish").map.is_empty());
     }
@@ -403,7 +403,10 @@ mod tests {
         assert_eq!(parse_launch_config("earmy=0").enemy_army, ENEMY_ARMY_UNSET);
         assert_eq!(parse_launch_config("earmy=7").enemy_army, ENEMY_ARMY_UNSET);
         assert_eq!(parse_launch_config("earmy=-1").enemy_army, ENEMY_ARMY_UNSET);
-        assert_eq!(parse_launch_config("earmy=junk").enemy_army, ENEMY_ARMY_UNSET); // unparseable → default (unset)
+        assert_eq!(
+            parse_launch_config("earmy=junk").enemy_army,
+            ENEMY_ARMY_UNSET
+        ); // unparseable → default (unset)
         assert_eq!(parse_launch_config("earmy=2").enemy_army, 2);
         // An old emitter that never writes the keys behaves exactly as before.
         let old = parse_launch_config("v=1;scene=skirmish;army=1");
@@ -415,7 +418,10 @@ mod tests {
     fn empty_or_garbage_yields_default() {
         assert_eq!(parse_launch_config(""), LaunchConfig::default());
         assert_eq!(parse_launch_config("   "), LaunchConfig::default());
-        assert_eq!(parse_launch_config("not a config at all"), LaunchConfig::default());
+        assert_eq!(
+            parse_launch_config("not a config at all"),
+            LaunchConfig::default()
+        );
         assert_eq!(parse_launch_config(";;;==;"), LaunchConfig::default());
     }
 
@@ -454,7 +460,7 @@ mod tests {
         // The two real combatant picks round-trip.
         assert_eq!(parse_launch_config("army=1").army, 1); // US
         assert_eq!(parse_launch_config("army=2").army, 2); // French
-        // Neutral (0) is never a player pick → US default (mirrors desktop decode_army).
+                                                           // Neutral (0) is never a player pick → US default (mirrors desktop decode_army).
         assert_eq!(parse_launch_config("army=0").army, ARMY_DEFAULT);
         // Out-of-range does NOT clamp to French — it degrades to the US default.
         assert_eq!(parse_launch_config("army=9").army, ARMY_DEFAULT);
@@ -532,7 +538,10 @@ mod tests {
         assert_eq!(campaign_result_code(0, 0), 1);
         assert_eq!(campaign_result_code(0, 3), 4);
         // Out-of-range tier clamps rather than overflowing into the next node's range.
-        assert_eq!(campaign_result_code(0, 99), campaign_result_code(0, DIFF_MAX));
+        assert_eq!(
+            campaign_result_code(0, 99),
+            campaign_result_code(0, DIFF_MAX)
+        );
     }
 
     #[test]

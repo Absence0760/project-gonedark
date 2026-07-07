@@ -1059,7 +1059,11 @@ fn snapshot_carries_in_flight_projectiles_for_tracers() {
         splash_damage: Fixed::from_int(20),
     });
     let snap = sim.snapshot();
-    assert_eq!(snap.projectiles.len(), 1, "the shell appears in the snapshot");
+    assert_eq!(
+        snap.projectiles.len(),
+        1,
+        "the shell appears in the snapshot"
+    );
     let s = &snap.projectiles[0];
     assert_eq!(s.pos, Vec2::new(Fixed::from_int(3), Fixed::from_int(-4)));
     assert_eq!(s.vel, Vec2::new(Fixed::ONE, Fixed::ZERO));
@@ -1112,18 +1116,36 @@ fn crouch_command_sets_posture_and_halves_embodied_locomotion() {
     let dir = Vec2::new(Fixed::ONE, Fixed::ZERO);
     let start = sim.world.pos[i];
     sim.step(&[Command::Locomote { entity: e, dir }]);
-    assert_eq!(sim.world.pos[i].x - start.x, MOVE_SPEED, "standing walks at base speed");
+    assert_eq!(
+        sim.world.pos[i].x - start.x,
+        MOVE_SPEED,
+        "standing walks at base speed"
+    );
 
     // Crouch, then a locomotion tick advances by only the crouched (half) speed.
-    sim.step(&[Command::Crouch { entity: e, crouched: true }]);
-    assert_eq!(sim.world.posture[i], Posture::Crouched, "crouch command set posture");
+    sim.step(&[Command::Crouch {
+        entity: e,
+        crouched: true,
+    }]);
+    assert_eq!(
+        sim.world.posture[i],
+        Posture::Crouched,
+        "crouch command set posture"
+    );
     let before = sim.world.pos[i];
     sim.step(&[Command::Locomote { entity: e, dir }]);
-    assert_eq!(sim.world.pos[i].x - before.x, CROUCH_MOVE_SPEED, "crouch walks at half speed");
+    assert_eq!(
+        sim.world.pos[i].x - before.x,
+        CROUCH_MOVE_SPEED,
+        "crouch walks at half speed"
+    );
     assert!(CROUCH_MOVE_SPEED < MOVE_SPEED);
 
     // Standing again restores full speed.
-    sim.step(&[Command::Crouch { entity: e, crouched: false }]);
+    sim.step(&[Command::Crouch {
+        entity: e,
+        crouched: false,
+    }]);
     assert_eq!(sim.world.posture[i], Posture::Standing);
 }
 
@@ -1143,19 +1165,34 @@ fn reload_command_starts_reload_then_upkeep_refills_the_magazine() {
     // `step` applies the command THEN runs combat upkeep, so the timer is armed to 4 and
     // immediately ticked to 3 within this same step.
     sim.step(&[Command::Reload { entity: e }]);
-    assert_eq!(sim.world.weapon[i].reload_left, 3, "reload armed (4) then upkeep ticked it to 3");
+    assert_eq!(
+        sim.world.weapon[i].reload_left, 3,
+        "reload armed (4) then upkeep ticked it to 3"
+    );
     // A second Reload while one is in flight is ignored (no restart); it only ticks 3 -> 2.
     sim.step(&[Command::Reload { entity: e }]);
-    assert_eq!(sim.world.weapon[i].reload_left, 2, "in-flight reload not restarted");
+    assert_eq!(
+        sim.world.weapon[i].reload_left, 2,
+        "in-flight reload not restarted"
+    );
     sim.step(&[]); // 2 -> 1
     sim.step(&[]); // 1 -> 0: refill
     assert_eq!(sim.world.weapon[i].reload_left, 0);
-    assert_eq!(sim.world.weapon[i].ammo, 30, "magazine refilled to capacity");
-    assert_eq!(sim.world.weapon[i].reserve, 60, "the loaded magazine came out of reserve");
+    assert_eq!(
+        sim.world.weapon[i].ammo, 30,
+        "magazine refilled to capacity"
+    );
+    assert_eq!(
+        sim.world.weapon[i].reserve, 60,
+        "the loaded magazine came out of reserve"
+    );
 
     // Reloading a full magazine is a no-op (no wasted reload).
     sim.step(&[Command::Reload { entity: e }]);
-    assert_eq!(sim.world.weapon[i].reload_left, 0, "no reload starts on a full mag");
+    assert_eq!(
+        sim.world.weapon[i].reload_left, 0,
+        "no reload starts on a full mag"
+    );
 }
 
 #[test]
@@ -1404,9 +1441,17 @@ fn snapshot_round_trips_a_non_default_income_period() {
     }
     let bytes = sim.serialize();
     let restored = Sim::deserialize(&bytes).expect("slow-economy sim round-trips");
-    assert_eq!(restored.income_period(), 18, "the pace lever must survive resume");
+    assert_eq!(
+        restored.income_period(),
+        18,
+        "the pace lever must survive resume"
+    );
     assert_eq!(restored.checksum(), sim.checksum());
-    assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
+    assert_eq!(
+        restored.serialize(),
+        bytes,
+        "re-serialize is byte-identical"
+    );
 }
 
 /// The D65 kinds (Tank, Medic, Barracks) survive the snapshot round-trip: their serialize tags
@@ -1444,10 +1489,23 @@ fn snapshot_round_trips_the_new_d65_kinds() {
     let bytes = sim.serialize();
     let restored = Sim::deserialize(&bytes).expect("the new kinds round-trip");
     assert_eq!(restored.checksum(), sim.checksum());
-    assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
-    assert_eq!(restored.world.unit_kind[tank.index as usize], UnitKind::Tank);
-    assert_eq!(restored.world.unit_kind[medic.index as usize], UnitKind::Medic);
-    assert_eq!(restored.world.unit_kind[antitank.index as usize], UnitKind::AntiTank);
+    assert_eq!(
+        restored.serialize(),
+        bytes,
+        "re-serialize is byte-identical"
+    );
+    assert_eq!(
+        restored.world.unit_kind[tank.index as usize],
+        UnitKind::Tank
+    );
+    assert_eq!(
+        restored.world.unit_kind[medic.index as usize],
+        UnitKind::Medic
+    );
+    assert_eq!(
+        restored.world.unit_kind[antitank.index as usize],
+        UnitKind::AntiTank
+    );
     assert_eq!(
         restored.world.building[bar.index as usize].kind,
         BuildingKind::Barracks
@@ -1508,7 +1566,10 @@ fn two_peers_agree_producing_and_fighting_an_antitank_unit() {
             kind: BuildingKind::Barracks,
             level: 0,
             build_ticks_left: 0,
-            queue: vec![ProductionItem { kind: UnitKind::AntiTank, ticks_left: 30 }],
+            queue: vec![ProductionItem {
+                kind: UnitKind::AntiTank,
+                ticks_left: 30,
+            }],
             rally: None,
         };
     }
@@ -1517,7 +1578,11 @@ fn two_peers_agree_producing_and_fighting_an_antitank_unit() {
     let mut b = Sim::new(0xA7);
     scene(&mut a);
     scene(&mut b);
-    assert_eq!(a.checksum(), b.checksum(), "pre-step peers must already agree");
+    assert_eq!(
+        a.checksum(),
+        b.checksum(),
+        "pre-step peers must already agree"
+    );
     for t in 0..300u32 {
         a.step(&[]);
         b.step(&[]);
@@ -1532,10 +1597,12 @@ fn two_peers_agree_producing_and_fighting_an_antitank_unit() {
                 && a.world.unit_kind[i] == UnitKind::AntiTank
         })
         .count();
-    assert!(at_count >= 2, "the Barracks must have produced an AntiTank (live AT + produced one)");
-    let tank_idx = (0..a.world.capacity()).find(|&i| {
-        a.world.is_index_alive(i) && a.world.unit_kind[i] == UnitKind::Tank
-    });
+    assert!(
+        at_count >= 2,
+        "the Barracks must have produced an AntiTank (live AT + produced one)"
+    );
+    let tank_idx = (0..a.world.capacity())
+        .find(|&i| a.world.is_index_alive(i) && a.world.unit_kind[i] == UnitKind::Tank);
     let ti = tank_idx.expect("the enemy tank survives the 300-tick window (it dies ~tick 434)");
     let (full_tank, _) = economy::unit_stats(UnitKind::Tank);
     assert!(
@@ -1559,9 +1626,15 @@ fn snapshot_preserves_unit_kind_render_metadata() {
 
     let restored = Sim::deserialize(&sim.serialize()).expect("round-trip deserialize");
     assert_eq!(restored.world.unit_kind, sim.world.unit_kind);
-    assert_eq!(restored.world.unit_kind[r0.index as usize], UnitKind::Rifleman);
+    assert_eq!(
+        restored.world.unit_kind[r0.index as usize],
+        UnitKind::Rifleman
+    );
     assert_eq!(restored.world.unit_kind[h0.index as usize], UnitKind::Heavy);
-    assert_eq!(restored.world.unit_kind[r1.index as usize], UnitKind::Rifleman);
+    assert_eq!(
+        restored.world.unit_kind[r1.index as usize],
+        UnitKind::Rifleman
+    );
 
     // And `unit_kind` is NOT in the checksum: flipping it leaves the per-tick checksum unchanged.
     let before = sim.checksum();
@@ -1590,12 +1663,23 @@ fn snapshot_preserves_posture_and_magazine_and_they_are_checksummed() {
     sim.world.weapon[i].reload_left = 44;
 
     let restored = Sim::deserialize(&sim.serialize()).expect("round-trip deserialize");
-    assert_eq!(restored.world.posture[i], Posture::Crouched, "posture round-trips");
+    assert_eq!(
+        restored.world.posture[i],
+        Posture::Crouched,
+        "posture round-trips"
+    );
     assert_eq!(restored.world.weapon[i].ammo, 12, "ammo round-trips");
     assert_eq!(restored.world.weapon[i].mag_size, 30);
     assert_eq!(restored.world.weapon[i].reload_ticks, 90);
-    assert_eq!(restored.world.weapon[i].reload_left, 44, "reload timer round-trips");
-    assert_eq!(restored.checksum(), sim.checksum(), "restored state checksums identically");
+    assert_eq!(
+        restored.world.weapon[i].reload_left, 44,
+        "reload timer round-trips"
+    );
+    assert_eq!(
+        restored.checksum(),
+        sim.checksum(),
+        "restored state checksums identically"
+    );
 
     // Each new field perturbs the checksum — it is genuinely folded (unlike `unit_kind`).
     let base = sim.checksum();
@@ -1626,11 +1710,30 @@ fn snapshot_preserves_hull_turret_heading_and_they_are_checksummed() {
     sim.world.weapon[i].turret_speed = 250;
 
     let restored = Sim::deserialize(&sim.serialize()).expect("round-trip deserialize");
-    assert_eq!(restored.world.hull_heading[i], Angle(12_345), "hull_heading round-trips");
-    assert_eq!(restored.world.turret_yaw[i], Angle(54_321), "turret_yaw round-trips");
-    assert_eq!(restored.world.hull_speed[i], Fixed::from_ratio(1, 16), "hull_speed round-trips");
-    assert_eq!(restored.world.weapon[i].turret_speed, 250, "turret_speed round-trips");
-    assert_eq!(restored.checksum(), sim.checksum(), "restored state checksums identically");
+    assert_eq!(
+        restored.world.hull_heading[i],
+        Angle(12_345),
+        "hull_heading round-trips"
+    );
+    assert_eq!(
+        restored.world.turret_yaw[i],
+        Angle(54_321),
+        "turret_yaw round-trips"
+    );
+    assert_eq!(
+        restored.world.hull_speed[i],
+        Fixed::from_ratio(1, 16),
+        "hull_speed round-trips"
+    );
+    assert_eq!(
+        restored.world.weapon[i].turret_speed, 250,
+        "turret_speed round-trips"
+    );
+    assert_eq!(
+        restored.checksum(),
+        sim.checksum(),
+        "restored state checksums identically"
+    );
 
     // Each new field genuinely perturbs the checksum (it is folded, not ignored like unit_kind).
     let base = sim.checksum();
@@ -1743,7 +1846,14 @@ fn deserialize_rejects_malformed_input() {
 
 /// An embodied "tank": a unit firing a ballistic gun (`muzzle_vel > 0`) along the aim. `muzzle_vel`
 /// of `0` makes it an embodied infantry weapon (hitscan) instead, to exercise the fallback path.
-fn embodied_tank(sim: &mut Sim, x: i32, y: i32, muzzle_vel: i32, damage: i32, range: i32) -> Entity {
+fn embodied_tank(
+    sim: &mut Sim,
+    x: i32,
+    y: i32,
+    muzzle_vel: i32,
+    damage: i32,
+    range: i32,
+) -> Entity {
     let e = sim.world.spawn();
     let i = e.index as usize;
     sim.world.kind[i] = EntityKind::Unit;
@@ -1803,13 +1913,19 @@ fn embodied_tank_shell_has_travel_time_near_hit_before_far() {
             sim.step(&[]);
             t += 1;
         }
-        assert!(sim.world.health[ei].cur < full, "the shell must eventually hit");
+        assert!(
+            sim.world.health[ei].cur < full,
+            "the shell must eventually hit"
+        );
         t
     }
     let far = ticks_to_hit(10);
     let near = ticks_to_hit(6);
     assert!(near < far, "a nearer target is hit sooner ({near} < {far})");
-    assert!(far > 1, "finite muzzle velocity means travel time, not an instant hitscan");
+    assert!(
+        far > 1,
+        "finite muzzle velocity means travel time, not an instant hitscan"
+    );
 }
 
 #[test]
@@ -1887,7 +2003,11 @@ fn two_sims_agree_with_in_flight_projectiles() {
         dir: v(1, 0),
     }]);
     c.step(&[]);
-    assert_eq!(a.checksum(), b.checksum(), "identical fire → identical state");
+    assert_eq!(
+        a.checksum(),
+        b.checksum(),
+        "identical fire → identical state"
+    );
     assert!(!a.projectiles.is_empty(), "a shell is genuinely in flight");
     assert_ne!(
         a.checksum(),
@@ -1919,7 +2039,10 @@ fn snapshot_round_trip_preserves_in_flight_projectile_pool() {
     for _ in 0..3 {
         sim.step(&[]);
     }
-    assert!(!sim.projectiles.is_empty(), "a shell is mid-flight to snapshot");
+    assert!(
+        !sim.projectiles.is_empty(),
+        "a shell is mid-flight to snapshot"
+    );
 
     let bytes = sim.serialize();
     let restored = Sim::deserialize(&bytes).expect("round-trip with a live shell");
@@ -1966,7 +2089,11 @@ fn tank_dispersion_is_checksummed_and_round_trips() {
         Fixed::from_ratio(3, 8),
         "dispersion round-trips through serialize/deserialize",
     );
-    assert_eq!(restored.checksum(), sim.checksum(), "restored state checksums identically");
+    assert_eq!(
+        restored.checksum(),
+        sim.checksum(),
+        "restored state checksums identically"
+    );
 
     // It is genuinely folded, not ignored.
     let base = sim.checksum();
@@ -1985,23 +2112,37 @@ fn embodied_tank_dispersion_blooms_on_drive_and_settles_at_rest() {
     let mut sim = Sim::new(0xB1009);
     let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30); // muzzle_vel 2 ⇒ a real ballistic tank gun
     let ti = tank.index as usize;
-    assert_eq!(sim.world.weapon[ti].dispersion, Fixed::ZERO, "starts settled");
+    assert_eq!(
+        sim.world.weapon[ti].dispersion,
+        Fixed::ZERO,
+        "starts settled"
+    );
 
     // Drive forward for several ticks: dispersion must climb (each tick blooms more than it settles).
     let mut prev = Fixed::ZERO;
     for _ in 0..6 {
-        sim.step(&[Command::DriveHull { entity: tank, dir: v(1, 0) }]);
+        sim.step(&[Command::DriveHull {
+            entity: tank,
+            dir: v(1, 0),
+        }]);
         let now = sim.world.weapon[ti].dispersion;
         assert!(now > prev, "bloom grows while driving: {prev:?} -> {now:?}");
         prev = now;
     }
     let bloomed = sim.world.weapon[ti].dispersion;
-    assert!(bloomed > Fixed::ZERO, "a driving tank's reticle is blown open");
+    assert!(
+        bloomed > Fixed::ZERO,
+        "a driving tank's reticle is blown open"
+    );
 
     // Release the stick: dispersion settles back down, by exactly one settle step per idle tick.
     sim.step(&[]);
     let after_one = sim.world.weapon[ti].dispersion;
-    assert_eq!(after_one, bloomed - DISPERSION_SETTLE, "settles one step at rest");
+    assert_eq!(
+        after_one,
+        bloomed - DISPERSION_SETTLE,
+        "settles one step at rest"
+    );
     for _ in 0..64 {
         sim.step(&[]);
     }
@@ -2020,7 +2161,10 @@ fn embodied_tank_turret_traverse_blooms() {
     let ti = tank.index as usize;
     assert_eq!(sim.world.weapon[ti].dispersion, Fixed::ZERO);
     // Aim 90° off the hull: the turret slews (turret_speed > 0) → it traversed → bloom.
-    sim.step(&[Command::AimTurret { entity: tank, dir: v(0, 1) }]);
+    sim.step(&[Command::AimTurret {
+        entity: tank,
+        dir: v(0, 1),
+    }]);
     assert!(
         sim.world.weapon[ti].dispersion > Fixed::ZERO,
         "a traversing turret blooms the reticle",
@@ -2036,7 +2180,10 @@ fn fully_settled_tank_fires_dead_on() {
     let tank = embodied_tank(&mut sim, 0, 0, 2, 50, 30);
     let ti = tank.index as usize;
     assert_eq!(sim.world.weapon[ti].dispersion, Fixed::ZERO, "settled");
-    sim.step(&[Command::Fire { entity: tank, dir: v(1, 0) }]);
+    sim.step(&[Command::Fire {
+        entity: tank,
+        dir: v(1, 0),
+    }]);
     assert_eq!(sim.projectiles.len(), 1, "a shell launched");
     assert_eq!(
         sim.projectiles[0].vel2d,
@@ -2059,16 +2206,29 @@ fn scattered_fire_is_bit_identical_across_two_sims() {
     // Drive to bloom the reticle, then fire — on both peers identically.
     let drive_then_fire = |sim: &mut Sim, tank: Entity| {
         for _ in 0..8 {
-            sim.step(&[Command::DriveHull { entity: tank, dir: v(1, 0) }]);
+            sim.step(&[Command::DriveHull {
+                entity: tank,
+                dir: v(1, 0),
+            }]);
         }
-        assert!(sim.world.weapon[tank.index as usize].dispersion > Fixed::ZERO, "blown open");
-        sim.step(&[Command::Fire { entity: tank, dir: v(1, 0) }]);
+        assert!(
+            sim.world.weapon[tank.index as usize].dispersion > Fixed::ZERO,
+            "blown open"
+        );
+        sim.step(&[Command::Fire {
+            entity: tank,
+            dir: v(1, 0),
+        }]);
     };
     let (mut a, ta) = build();
     let (mut b, tb) = build();
     drive_then_fire(&mut a, ta);
     drive_then_fire(&mut b, tb);
-    assert_eq!(a.checksum(), b.checksum(), "scattered fire is bit-identical across peers");
+    assert_eq!(
+        a.checksum(),
+        b.checksum(),
+        "scattered fire is bit-identical across peers"
+    );
     assert_eq!(a.projectiles.len(), 1, "a scattered shell is in flight");
     // The bloomed shot is deflected off the dead-on +X line (a settled shot would be (2, 0) exactly).
     assert_ne!(
@@ -2080,7 +2240,11 @@ fn scattered_fire_is_bit_identical_across_two_sims() {
     for _ in 0..12 {
         a.step(&[]);
         b.step(&[]);
-        assert_eq!(a.checksum(), b.checksum(), "in-flight scattered shell stays peer-identical");
+        assert_eq!(
+            a.checksum(),
+            b.checksum(),
+            "in-flight scattered shell stays peer-identical"
+        );
     }
 }
 
@@ -2145,7 +2309,11 @@ fn shell_resolves_armor_facet_at_impact_not_at_fire() {
         }
         before - world.health[ti].cur
     }
-    assert_eq!(run(false), Fixed::ZERO, "hull left front-on → frontal impact bounces");
+    assert_eq!(
+        run(false),
+        Fixed::ZERO,
+        "hull left front-on → frontal impact bounces"
+    );
     assert_eq!(
         run(true),
         Fixed::from_int(50),

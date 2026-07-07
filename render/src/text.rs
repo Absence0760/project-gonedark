@@ -22,15 +22,15 @@
 //! unchanged.
 //!
 //! The `FONT_*` consts below are the **contract with the generator** — they MUST match the `grid`
-//! block in `assets/fonts/manifest.json`. The [`atlas_matches_metrics`](tests) test pins the
+//! block in `assets/fonts/manifest.json`. The `atlas_matches_metrics` test pins the
 //! `include_bytes!`d blob's length to `ATLAS_W * ATLAS_H`, so a generator/metrics drift fails
 //! `cargo test` rather than corrupting glyphs at runtime.
 //!
 //! ## The pure seam
 //!
 //! All layout/measure math — glyph advance, line width, anchor positioning, and the glyph → NDC +
-//! atlas-UV expansion — lives in free fns ([`measure`], [`layout_glyphs`]) so it is unit-testable
-//! without a GPU, exactly the `overlay_quads` / `marker_for` pattern. [`TextRenderer::render`] is the
+//! atlas-UV expansion — lives in free fns (`measure`, `layout_glyphs`) so it is unit-testable
+//! without a GPU, exactly the `overlay_quads` / `marker_for` pattern. `TextRenderer::render` is the
 //! only GPU-touching code and is exercised by the offscreen `viz-runner`, not the no-GPU CI matrix.
 
 use wgpu::util::DeviceExt;
@@ -175,10 +175,10 @@ pub struct GlyphInstance {
     /// Cell half-extent in NDC.
     pub hw: f32,
     pub hh: f32,
-    /// Atlas UV of the cell's top-left corner ([0,1]).
+    /// Atlas UV of the cell's top-left corner (`[0,1]`).
     pub u0: f32,
     pub v0: f32,
-    /// Atlas UV size of one cell ([0,1]).
+    /// Atlas UV size of one cell (`[0,1]`).
     pub du: f32,
     pub dv: f32,
     pub r: f32,
@@ -332,28 +332,27 @@ impl TextRenderer {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("gonedark.text_atlas_bgl"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("gonedark.text_atlas_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
         let atlas_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("gonedark.text_atlas_bg"),
             layout: &bind_group_layout,
@@ -535,12 +534,7 @@ impl TextRenderer {
     /// Flush all queued strings: expand each to its glyph quads, upload, and record one LOAD render
     /// pass so the text composites over the already-rendered frame. Drains the queue (so the next
     /// frame starts empty) even when nothing is drawn. No-op (beyond draining) if no glyphs result.
-    pub fn render(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        view: &wgpu::TextureView,
-    ) {
+    pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
         let items = std::mem::take(&mut self.queued);
         let aspect = self.aspect;
         let ui_scale = self.ui_scale;
@@ -632,7 +626,10 @@ mod tests {
         // The baked atlas blob length MUST equal the grid metrics — a guard against the generator
         // and these consts drifting (which would shear every glyph's UV).
         assert_eq!(GLYPH_COUNT, LAST_CP - FIRST_CP + 1);
-        assert!(ATLAS_COLS * ATLAS_ROWS >= GLYPH_COUNT, "grid holds every glyph");
+        const _: () = assert!(
+            ATLAS_COLS * ATLAS_ROWS >= GLYPH_COUNT,
+            "grid holds every glyph"
+        );
         assert_eq!(ATLAS_W, ATLAS_COLS * CELL_W);
         assert_eq!(ATLAS_H, ATLAS_ROWS * CELL_H);
         assert_eq!(
@@ -657,8 +654,14 @@ mod tests {
     fn every_glyph_uv_lies_inside_the_atlas() {
         for idx in 0..GLYPH_COUNT {
             let ([u0, v0], [du, dv]) = glyph_uv(idx);
-            assert!(u0 >= 0.0 && u0 + du <= 1.0 + EPS, "u in [0,1] for glyph {idx}");
-            assert!(v0 >= 0.0 && v0 + dv <= 1.0 + EPS, "v in [0,1] for glyph {idx}");
+            assert!(
+                u0 >= 0.0 && u0 + du <= 1.0 + EPS,
+                "u in [0,1] for glyph {idx}"
+            );
+            assert!(
+                v0 >= 0.0 && v0 + dv <= 1.0 + EPS,
+                "v in [0,1] for glyph {idx}"
+            );
         }
     }
 
@@ -694,7 +697,10 @@ mod tests {
         let (cell_w, _) = cell_size(0.07, 1.0);
         let (w1, _) = measure("A", 0.07, 1.0);
         let (w2, _) = measure("AB", 0.07, 1.0);
-        assert!((w2 - w1 - cell_w).abs() < EPS, "monospace advance is one cell");
+        assert!(
+            (w2 - w1 - cell_w).abs() < EPS,
+            "monospace advance is one cell"
+        );
     }
 
     #[test]
@@ -711,7 +717,10 @@ mod tests {
         let (w_ab, _) = measure("AB", 0.07, 1.0);
         let (w_a_b, _) = measure("A B", 0.07, 1.0);
         let (cell_w, _) = cell_size(0.07, 1.0);
-        assert!((w_a_b - w_ab - cell_w).abs() < EPS, "the space is one cell of advance");
+        assert!(
+            (w_a_b - w_ab - cell_w).abs() < EPS,
+            "the space is one cell of advance"
+        );
     }
 
     // ---- aspect correction (the fat-text-on-a-wide-window fix) ----
@@ -732,7 +741,10 @@ mod tests {
         let (w_sq, h_sq) = measure("STANCE", 0.04, 1.0);
         let (w_wide, h_wide) = measure("STANCE", 0.04, 16.0 / 9.0);
         assert!(w_wide < w_sq, "string is narrower in NDC on a wide screen");
-        assert!((w_wide - w_sq * 9.0 / 16.0).abs() < EPS, "width scales by 1/aspect");
+        assert!(
+            (w_wide - w_sq * 9.0 / 16.0).abs() < EPS,
+            "width scales by 1/aspect"
+        );
         assert!((h_sq - h_wide).abs() < EPS, "height is aspect-independent");
     }
 
@@ -741,8 +753,14 @@ mod tests {
         let sq = layout_glyphs(&item("ABC", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
         let wide = layout_glyphs(&item("ABC", [0.0, 0.0], 0.07, Anchor::TopLeft), 16.0 / 9.0);
         assert_eq!(sq.len(), wide.len(), "same glyphs regardless of aspect");
-        assert!(wide[0].hw < sq[0].hw, "glyphs are narrower on a wide screen");
-        assert!((wide[0].hh - sq[0].hh).abs() < EPS, "glyph height is aspect-independent");
+        assert!(
+            wide[0].hw < sq[0].hw,
+            "glyphs are narrower on a wide screen"
+        );
+        assert!(
+            (wide[0].hh - sq[0].hh).abs() < EPS,
+            "glyph height is aspect-independent"
+        );
     }
 
     #[test]
@@ -783,10 +801,20 @@ mod tests {
             ..it.clone()
         };
         let scaled = layout_glyphs(&scaled_item, 1.0);
-        assert_eq!(base.len(), scaled.len(), "same glyphs regardless of ui_scale");
+        assert_eq!(
+            base.len(),
+            scaled.len(),
+            "same glyphs regardless of ui_scale"
+        );
         for (b, s) in base.iter().zip(scaled.iter()) {
-            assert!((s.hw - 2.0 * b.hw).abs() < EPS, "glyph width doubles with ui_scale");
-            assert!((s.hh - 2.0 * b.hh).abs() < EPS, "glyph height doubles with ui_scale");
+            assert!(
+                (s.hw - 2.0 * b.hw).abs() < EPS,
+                "glyph width doubles with ui_scale"
+            );
+            assert!(
+                (s.hh - 2.0 * b.hh).abs() < EPS,
+                "glyph height doubles with ui_scale"
+            );
         }
     }
 
@@ -795,14 +823,20 @@ mod tests {
     #[test]
     fn top_left_anchor_is_identity() {
         let size = measure("HI", 0.07, 1.0);
-        assert_eq!(anchor_top_left([0.2, 0.3], size, Anchor::TopLeft), [0.2, 0.3]);
+        assert_eq!(
+            anchor_top_left([0.2, 0.3], size, Anchor::TopLeft),
+            [0.2, 0.3]
+        );
     }
 
     #[test]
     fn top_center_centers_horizontally_keeps_top() {
         let size = measure("HI", 0.07, 1.0);
         let tl = anchor_top_left([0.0, 0.5], size, Anchor::TopCenter);
-        assert!((tl[0] + size.0 * 0.5).abs() < EPS, "left edge is -w/2 from center");
+        assert!(
+            (tl[0] + size.0 * 0.5).abs() < EPS,
+            "left edge is -w/2 from center"
+        );
         assert!((tl[1] - 0.5).abs() < EPS, "top y unchanged");
     }
 
@@ -819,7 +853,10 @@ mod tests {
         let size = measure("HI", 0.07, 1.0);
         let tl = anchor_top_left([0.1, -0.4], size, Anchor::BottomCenter);
         assert!((tl[0] + size.0 * 0.5 - 0.1).abs() < EPS);
-        assert!((tl[1] - size.1 - (-0.4)).abs() < EPS, "bottom edge at pos.y");
+        assert!(
+            (tl[1] - size.1 - (-0.4)).abs() < EPS,
+            "bottom edge at pos.y"
+        );
     }
 
     // ---- layout_glyphs ----
@@ -847,7 +884,10 @@ mod tests {
         let g = layout_glyphs(&item("A A", [0.0, 0.0], 0.07, Anchor::TopLeft), 1.0);
         assert_eq!(g.len(), 2);
         let (cell_w, _) = cell_size(0.07, 1.0);
-        assert!((g[1].cx - g[0].cx - 2.0 * cell_w).abs() < EPS, "second A is two cells over");
+        assert!(
+            (g[1].cx - g[0].cx - 2.0 * cell_w).abs() < EPS,
+            "second A is two cells over"
+        );
     }
 
     #[test]
@@ -905,8 +945,14 @@ mod tests {
         let (cell_w, cell_h) = cell_size(it.px_size, 1.0);
         let g = layout_glyphs(&it, 1.0);
         assert_eq!(g.len(), 1);
-        assert!((g[0].cx - cell_w * 0.5).abs() < EPS, "first glyph half-cell from left");
-        assert!((g[0].cy - (-cell_h * 0.5)).abs() < EPS, "first glyph half-cell down from top");
+        assert!(
+            (g[0].cx - cell_w * 0.5).abs() < EPS,
+            "first glyph half-cell from left"
+        );
+        assert!(
+            (g[0].cy - (-cell_h * 0.5)).abs() < EPS,
+            "first glyph half-cell down from top"
+        );
     }
 
     #[test]
@@ -917,6 +963,8 @@ mod tests {
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         );
-        validator.validate(&module).expect("text.wgsl must validate");
+        validator
+            .validate(&module)
+            .expect("text.wgsl must validate");
     }
 }

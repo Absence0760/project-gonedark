@@ -229,7 +229,14 @@ mod tests {
         spawn(&mut world, 0, 0, Faction::Player, InputSource::Orders); // observer's own unit
         spawn(&mut world, 2, 0, Faction::Enemy, InputSource::Embodied); // the hero, in plain sight
         let mut mem = DetectionMemory::new();
-        let tells = detectable_embodiment(&world, &terrain, &cfg(TellMode::Hidden), Faction::Player, 0, &mut mem);
+        let tells = detectable_embodiment(
+            &world,
+            &terrain,
+            &cfg(TellMode::Hidden),
+            Faction::Player,
+            0,
+            &mut mem,
+        );
         assert!(tells.is_empty(), "Hidden must reveal nothing");
     }
 
@@ -240,7 +247,14 @@ mod tests {
         spawn(&mut world, 0, 0, Faction::Player, InputSource::Orders);
         let hero = spawn(&mut world, 5, 0, Faction::Enemy, InputSource::Embodied);
         let mut mem = DetectionMemory::new();
-        let tells = detectable_embodiment(&world, &terrain, &cfg(TellMode::Subtle), Faction::Player, 0, &mut mem);
+        let tells = detectable_embodiment(
+            &world,
+            &terrain,
+            &cfg(TellMode::Subtle),
+            Faction::Player,
+            0,
+            &mut mem,
+        );
         assert_eq!(tells.len(), 1);
         assert_eq!(tells[0].unit, hero);
         assert_eq!(tells[0].age_ticks, 0, "in sight now");
@@ -255,7 +269,14 @@ mod tests {
         // Far beyond the default tell_range (28).
         spawn(&mut world, 60, 0, Faction::Enemy, InputSource::Embodied);
         let mut mem = DetectionMemory::new();
-        let tells = detectable_embodiment(&world, &terrain, &cfg(TellMode::Subtle), Faction::Player, 0, &mut mem);
+        let tells = detectable_embodiment(
+            &world,
+            &terrain,
+            &cfg(TellMode::Subtle),
+            Faction::Player,
+            0,
+            &mut mem,
+        );
         assert!(tells.is_empty(), "out of range, never seen → no tell");
     }
 
@@ -270,7 +291,14 @@ mod tests {
         // Sanity: the wall really blocks the sightline.
         assert!(!terrain.line_of_sight(Vec2::new(fx(0), fx(0)), Vec2::new(fx(10), fx(0))));
         let mut mem = DetectionMemory::new();
-        let tells = detectable_embodiment(&world, &terrain, &cfg(TellMode::Subtle), Faction::Player, 0, &mut mem);
+        let tells = detectable_embodiment(
+            &world,
+            &terrain,
+            &cfg(TellMode::Subtle),
+            Faction::Player,
+            0,
+            &mut mem,
+        );
         assert!(tells.is_empty(), "in range but no LoS → no tell");
     }
 
@@ -297,7 +325,11 @@ mod tests {
         let t = detectable_embodiment(&world, &terrain, &config, Faction::Player, 6, &mut mem);
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].age_ticks, 6);
-        assert_eq!(t[0].pos, Vec2::new(fx(5), fx(0)), "linger marks where it was last seen");
+        assert_eq!(
+            t[0].pos,
+            Vec2::new(fx(5), fx(0)),
+            "linger marks where it was last seen"
+        );
         // Tick 11: past tell_linger_ticks (10) → expired, no tell.
         let t = detectable_embodiment(&world, &terrain, &config, Faction::Player, 11, &mut mem);
         assert!(t.is_empty(), "linger expired");
@@ -312,7 +344,14 @@ mod tests {
         // Far AND blocked — Marked still reveals it.
         let hero = spawn(&mut world, 60, 0, Faction::Enemy, InputSource::Embodied);
         let mut mem = DetectionMemory::new();
-        let tells = detectable_embodiment(&world, &terrain, &cfg(TellMode::Marked), Faction::Player, 0, &mut mem);
+        let tells = detectable_embodiment(
+            &world,
+            &terrain,
+            &cfg(TellMode::Marked),
+            Faction::Player,
+            0,
+            &mut mem,
+        );
         assert_eq!(tells.len(), 1);
         assert_eq!(tells[0].unit, hero);
         assert_eq!(tells[0].age_ticks, 0);
@@ -375,7 +414,14 @@ mod tests {
         spawn(&mut world, 4, 0, Faction::Neutral, InputSource::Embodied); // neutral embodied
         let mut mem = DetectionMemory::new();
         // Marked is the most permissive mode, so if anything wrongly leaks it shows here.
-        let tells = detectable_embodiment(&world, &terrain, &cfg(TellMode::Marked), Faction::Player, 0, &mut mem);
+        let tells = detectable_embodiment(
+            &world,
+            &terrain,
+            &cfg(TellMode::Marked),
+            Faction::Player,
+            0,
+            &mut mem,
+        );
         assert!(
             tells.is_empty(),
             "only hostile, embodied units are told — not friendly, not non-embodied, not neutral"

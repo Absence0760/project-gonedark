@@ -527,11 +527,19 @@ mod tests {
             let lo = at_24k.get(&id).unwrap_or_else(|| panic!("{id:?} at 24k"));
             let hi = at_48k.get(&id).unwrap_or_else(|| panic!("{id:?} at 48k"));
             // …and upsampled longer at the higher rate.
-            assert!(hi.len() > lo.len(), "{id:?}: 48k ({}) > 24k ({})", hi.len(), lo.len());
+            assert!(
+                hi.len() > lo.len(),
+                "{id:?}: 48k ({}) > 24k ({})",
+                hi.len(),
+                lo.len()
+            );
         }
         // At the authored rate the served bed is exactly the decoded asset (identity resample).
         let (_, bed) = decode_wav_pcm16_mono(MUSIC_ASSETS[0].1).unwrap();
-        assert_eq!(at_24k.get(&MusicId::CombatBed).unwrap().as_slice(), bed.as_slice());
+        assert_eq!(
+            at_24k.get(&MusicId::CombatBed).unwrap().as_slice(),
+            bed.as_slice()
+        );
     }
 
     #[test]

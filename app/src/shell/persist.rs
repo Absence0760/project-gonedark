@@ -208,7 +208,7 @@ pub(crate) fn parse_or<T: std::str::FromStr>(value: Option<&&str>, fallback: T) 
 
 /// Decode a stored boolean: `"1"`/`"true"` → true, `"0"`/`"false"` → false, anything else → fallback.
 pub(crate) fn parse_bool(value: Option<&&str>, fallback: bool) -> bool {
-    match value.map(|s| *s) {
+    match value.copied() {
         Some("1") | Some("true") => true,
         Some("0") | Some("false") => false,
         _ => fallback,

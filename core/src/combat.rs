@@ -2,7 +2,7 @@
 //!
 //! `combat_system` is the deterministic per-tick weapons resolver. For each living, armed
 //! unit it acquires a target (nearest enemy in weapon range with line of sight), respecting
-//! the unit's [`Stance`](crate::components::Stance), fires on cooldown, applies
+//! the unit's [`Stance`] [^stance], fires on cooldown, applies
 //! cover-mitigated damage, accumulates **suppression** on the target, decays suppression
 //! over time, and despawns anything reduced to zero health — emitting [`SimEvent`]s for the
 //! alert/audio channel as it goes.
@@ -15,7 +15,7 @@
 //! The literal-executor rule (invariant #3) still binds: combat acts on the *stance* the
 //! player set, it does not invent targets the stance forbids or chase beyond weapon range.
 //!
-//! The generational [`Entity`] handle for the shooter/target (needed by `last_attacker` and
+//! The generational `Entity` handle for the shooter/target (needed by `last_attacker` and
 //! the `SimEvent`s) comes from the O(1) [`World::entity`] accessor.
 
 use crate::components::{Armor, EntityKind, Faction, InputSource, Posture, Stance, Vec2};
@@ -227,7 +227,7 @@ fn acquire_target(
 /// 2. **Engage** — armed, non-embodied, non-pinned units acquire a target by stance and fire on a
 ///    ready cooldown. A **hitscan** gun (`muzzle_vel == 0` — rifles, the D65 unarmoured tank)
 ///    applies cover-mitigated damage + suppression instantly. A **ballistic** gun (`muzzle_vel > 0`
-///    — the produced armoured tank, P9) instead launches a real traveling [`Projectile`] via the
+///    — the produced armoured tank, P9) instead launches a real traveling `Projectile` via the
 ///    same [`projectile::fire_ballistic`](crate::projectile::fire_ballistic) the embodied path uses
 ///    (D72): the AI fires along the bearing to the target's *current* position — it never leads or
 ///    solves a firing solution (invariant #3) — and impact resolves the damage later, in
@@ -391,8 +391,11 @@ pub fn combat_system(
         // (falloff_delta == 0) returns ONE at every range, so this multiplies damage by exactly one
         // and the existing balance is byte-neutral.
         let dist_sq = (world.pos[target_idx] - world.pos[i]).len_sq();
-        let falloff =
-            falloff_multiplier(world.weapon[i].falloff_delta, dist_sq, world.weapon[i].range);
+        let falloff = falloff_multiplier(
+            world.weapon[i].falloff_delta,
+            dist_sq,
+            world.weapon[i].range,
+        );
         let damage = world.weapon[i].damage * mult * facing * falloff;
 
         world.health[target_idx].cur -= damage;
@@ -649,7 +652,9 @@ pub fn resolve_fire(
     let cos_half = if cone_delta == Fixed::ZERO {
         cos_half_base
     } else {
-        (cos_half_base + cone_delta).max(Fixed::ZERO).min(Fixed::ONE)
+        (cos_half_base + cone_delta)
+            .max(Fixed::ZERO)
+            .min(Fixed::ONE)
     };
     let cos_half_sq = cos_half * cos_half;
 
@@ -951,7 +956,10 @@ mod tests {
         for _ in 0..600 {
             run(&mut world, &terrain, &mut events);
         }
-        assert_eq!(world.turret_yaw[si], bearing, "turret settles on the target");
+        assert_eq!(
+            world.turret_yaw[si], bearing,
+            "turret settles on the target"
+        );
         assert_eq!(world.hull_heading[si], Angle(0), "hull never moved to aim");
     }
 
@@ -1024,16 +1032,34 @@ mod tests {
         let a = spawn_unit(&mut world, 0, 0, Faction::Player, 100, rifle(10, 10, 0));
         let b = spawn_unit(&mut world, 3, 0, Faction::Enemy, 100, rifle(10, 10, 0));
         // The default really is the engaging stance, and nobody is possessed.
-        assert_eq!(world.stance[a.index as usize], Stance::FireAtWill, "default stance engages");
+        assert_eq!(
+            world.stance[a.index as usize],
+            Stance::FireAtWill,
+            "default stance engages"
+        );
         assert_eq!(world.stance[b.index as usize], Stance::FireAtWill);
-        assert_eq!(world.input_source[a.index as usize], crate::components::InputSource::Orders);
-        assert_eq!(world.input_source[b.index as usize], crate::components::InputSource::Orders);
+        assert_eq!(
+            world.input_source[a.index as usize],
+            crate::components::InputSource::Orders
+        );
+        assert_eq!(
+            world.input_source[b.index as usize],
+            crate::components::InputSource::Orders
+        );
 
         let mut events = Vec::new();
         run(&mut world, &terrain, &mut events);
         // Both took damage on the very first tick — a real mutual exchange with no player input.
-        assert_eq!(world.health[a.index as usize].cur, fx(90), "A is hit by B unprompted");
-        assert_eq!(world.health[b.index as usize].cur, fx(90), "B is hit by A unprompted");
+        assert_eq!(
+            world.health[a.index as usize].cur,
+            fx(90),
+            "A is hit by B unprompted"
+        );
+        assert_eq!(
+            world.health[b.index as usize].cur,
+            fx(90),
+            "B is hit by A unprompted"
+        );
         assert_eq!(world.last_attacker[a.index as usize], Some(b));
         assert_eq!(world.last_attacker[b.index as usize], Some(a));
     }
@@ -1057,10 +1083,18 @@ mod tests {
                 break;
             }
         }
-        assert!(resolved, "default-stance AI combat must resolve, not deadlock");
-        assert!(world.is_alive(strong), "the higher-damage unit survives the exchange");
         assert!(
-            events.iter().any(|e| matches!(e, SimEvent::Killed { entity, .. } if *entity == weak)),
+            resolved,
+            "default-stance AI combat must resolve, not deadlock"
+        );
+        assert!(
+            world.is_alive(strong),
+            "the higher-damage unit survives the exchange"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SimEvent::Killed { entity, .. } if *entity == weak)),
             "a Killed event fires for the loser — combat reached an outcome",
         );
     }
@@ -1079,7 +1113,11 @@ mod tests {
         for _ in 0..10 {
             run(&mut world, &terrain, &mut events);
         }
-        assert_eq!(world.health[far.index as usize].cur, fx(100), "out of range: no fire");
+        assert_eq!(
+            world.health[far.index as usize].cur,
+            fx(100),
+            "out of range: no fire"
+        );
         assert!(events.is_empty());
 
         // In range but no line of sight: a Heavy wall between an in-range shooter and target blocks it.
@@ -1093,7 +1131,11 @@ mod tests {
         for _ in 0..10 {
             run(&mut world, &terrain, &mut events);
         }
-        assert_eq!(world.health[blocked.index as usize].cur, fx(100), "no LoS: no fire");
+        assert_eq!(
+            world.health[blocked.index as usize].cur,
+            fx(100),
+            "no LoS: no fire"
+        );
         assert!(events.is_empty());
     }
 
@@ -1117,8 +1159,14 @@ mod tests {
             run(&mut w2, &terrain, &mut ev);
         }
         for i in 0..w1.capacity() {
-            assert_eq!(w1.health[i].cur, w2.health[i].cur, "health slot {i} must match");
-            assert_eq!(w1.suppression[i], w2.suppression[i], "suppression slot {i} must match");
+            assert_eq!(
+                w1.health[i].cur, w2.health[i].cur,
+                "health slot {i} must match"
+            );
+            assert_eq!(
+                w1.suppression[i], w2.suppression[i],
+                "suppression slot {i} must match"
+            );
         }
     }
 
@@ -1312,7 +1360,10 @@ mod tests {
             SUPPRESSION_SPLASH_PER_HIT < SUPPRESSION_PER_HIT,
             "splash {SUPPRESSION_SPLASH_PER_HIT:?} must be < per-hit {SUPPRESSION_PER_HIT:?}"
         );
-        assert!(SUPPRESSION_SPLASH_PER_HIT > Fixed::ZERO, "splash must actually suppress");
+        assert!(
+            SUPPRESSION_SPLASH_PER_HIT > Fixed::ZERO,
+            "splash must actually suppress"
+        );
     }
 
     #[test]
@@ -1339,11 +1390,27 @@ mod tests {
         run(&mut world, &terrain, &mut events);
 
         let s = |e: Entity| world.suppression[e.index as usize];
-        assert_eq!(s(a), SUPPRESSION_PER_HIT, "directly-hit A takes the full per-hit");
-        assert_eq!(s(b), SUPPRESSION_SPLASH_PER_HIT, "in-radius enemy B takes splash");
+        assert_eq!(
+            s(a),
+            SUPPRESSION_PER_HIT,
+            "directly-hit A takes the full per-hit"
+        );
+        assert_eq!(
+            s(b),
+            SUPPRESSION_SPLASH_PER_HIT,
+            "in-radius enemy B takes splash"
+        );
         assert_eq!(s(c), Fixed::ZERO, "out-of-radius enemy C is untouched");
-        assert_eq!(s(friendly), Fixed::ZERO, "friendly neighbour is never suppressed");
-        assert_eq!(s(building), Fixed::ZERO, "an enemy building is not a suppressible soldier");
+        assert_eq!(
+            s(friendly),
+            Fixed::ZERO,
+            "friendly neighbour is never suppressed"
+        );
+        assert_eq!(
+            s(building),
+            Fixed::ZERO,
+            "an enemy building is not a suppressible soldier"
+        );
     }
 
     #[test]
@@ -1367,7 +1434,10 @@ mod tests {
         run(&mut w1, &terrain, &mut ev);
         run(&mut w2, &terrain, &mut ev);
         for i in 0..w1.capacity() {
-            assert_eq!(w1.suppression[i], w2.suppression[i], "suppression slot {i} must match");
+            assert_eq!(
+                w1.suppression[i], w2.suppression[i],
+                "suppression slot {i} must match"
+            );
         }
     }
 
@@ -1383,11 +1453,27 @@ mod tests {
         let far = spawn_unit(&mut world, 5, 9, Faction::Enemy, 1000, Weapon::default());
 
         let mut events = Vec::new();
-        resolve_fire(&mut world, &terrain, shooter.index as usize, Vec2::new(fx(1), fx(0)), &mut events);
+        resolve_fire(
+            &mut world,
+            &terrain,
+            shooter.index as usize,
+            Vec2::new(fx(1), fx(0)),
+            &mut events,
+        );
 
-        assert_eq!(world.suppression[a.index as usize], SUPPRESSION_PER_HIT, "embodied direct hit");
-        assert_eq!(world.suppression[b.index as usize], SUPPRESSION_SPLASH_PER_HIT, "embodied splash");
-        assert_eq!(world.suppression[far.index as usize], Fixed::ZERO, "out of radius: no splash");
+        assert_eq!(
+            world.suppression[a.index as usize], SUPPRESSION_PER_HIT,
+            "embodied direct hit"
+        );
+        assert_eq!(
+            world.suppression[b.index as usize], SUPPRESSION_SPLASH_PER_HIT,
+            "embodied splash"
+        );
+        assert_eq!(
+            world.suppression[far.index as usize],
+            Fixed::ZERO,
+            "out of radius: no splash"
+        );
     }
 
     #[test]
@@ -1472,7 +1558,11 @@ mod tests {
 
         let mut events = Vec::new();
         run(&mut world, &terrain, &mut events);
-        assert_eq!(world.health[near_low.index as usize].cur, fx(75), "lowest index hit");
+        assert_eq!(
+            world.health[near_low.index as usize].cur,
+            fx(75),
+            "lowest index hit"
+        );
         assert_eq!(world.health[near_mid.index as usize].cur, fx(100));
         assert_eq!(world.health[near_high.index as usize].cur, fx(100));
     }
@@ -1484,19 +1574,31 @@ mod tests {
         Vec2::new(Fixed::ONE, Fixed::ZERO)
     }
 
-    fn fire(world: &mut World, terrain: &Terrain, shooter: Entity, dir: Vec2, events: &mut Vec<SimEvent>) {
+    fn fire(
+        world: &mut World,
+        terrain: &Terrain,
+        shooter: Entity,
+        dir: Vec2,
+        events: &mut Vec<SimEvent>,
+    ) {
         resolve_fire(world, terrain, shooter.index as usize, dir, events);
     }
 
     /// How many `Damaged` events the shot stream carries — a hit produces exactly one.
     fn count_damaged(events: &[SimEvent]) -> usize {
-        events.iter().filter(|e| matches!(e, SimEvent::Damaged { .. })).count()
+        events
+            .iter()
+            .filter(|e| matches!(e, SimEvent::Damaged { .. }))
+            .count()
     }
 
     /// How many `Fired` events the shot stream carries — a *committed* trigger pull (hit OR miss)
     /// produces exactly one; a dry click / hot-weapon pull produces none.
     fn count_fired(events: &[SimEvent]) -> usize {
-        events.iter().filter(|e| matches!(e, SimEvent::Fired { .. })).count()
+        events
+            .iter()
+            .filter(|e| matches!(e, SimEvent::Fired { .. }))
+            .count()
     }
 
     #[test]
@@ -1510,10 +1612,18 @@ mod tests {
 
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(75), "open terrain = full damage");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(75),
+            "open terrain = full damage"
+        );
         assert_eq!(world.last_attacker[enemy.index as usize], Some(shooter));
         assert_eq!(count_damaged(&events), 1, "one Damaged event for the hit");
-        assert_eq!(count_fired(&events), 1, "and one Fired event committing the shot");
+        assert_eq!(
+            count_fired(&events),
+            1,
+            "and one Fired event committing the shot"
+        );
     }
 
     #[test]
@@ -1527,12 +1637,23 @@ mod tests {
 
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "off-axis target not hit");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(100),
+            "off-axis target not hit"
+        );
         assert_eq!(count_damaged(&events), 0, "a miss deals no damage");
         // …but the trigger pull still COMMITTED: a round went downrange (Fired) and the weapon is
         // now cooling. (Previously a miss was free, so the magazine never drained — the reload bug.)
-        assert_eq!(count_fired(&events), 1, "a miss still fires a round downrange");
-        assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 5, "and the shot spends cooldown");
+        assert_eq!(
+            count_fired(&events),
+            1,
+            "a miss still fires a round downrange"
+        );
+        assert_eq!(
+            world.weapon[shooter.index as usize].cooldown_left, 5,
+            "and the shot spends cooldown"
+        );
     }
 
     #[test]
@@ -1546,7 +1667,11 @@ mod tests {
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.health[enemy.index as usize].cur, fx(100));
-        assert_eq!(count_damaged(&events), 0, "target behind the aim is not hit");
+        assert_eq!(
+            count_damaged(&events),
+            0,
+            "target behind the aim is not hit"
+        );
         assert_eq!(count_fired(&events), 1, "but the round is still fired");
     }
 
@@ -1560,9 +1685,17 @@ mod tests {
 
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "out of range = no hit");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(100),
+            "out of range = no hit"
+        );
         assert_eq!(count_damaged(&events), 0);
-        assert_eq!(count_fired(&events), 1, "an out-of-range pull still fires a round");
+        assert_eq!(
+            count_fired(&events),
+            1,
+            "an out-of-range pull still fires a round"
+        );
     }
 
     #[test]
@@ -1577,9 +1710,17 @@ mod tests {
 
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "LoS-blocked shot misses");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(100),
+            "LoS-blocked shot misses"
+        );
         assert_eq!(count_damaged(&events), 0);
-        assert_eq!(count_fired(&events), 1, "a blocked shot still fires the round");
+        assert_eq!(
+            count_fired(&events),
+            1,
+            "a blocked shot still fires the round"
+        );
     }
 
     #[test]
@@ -1598,9 +1739,17 @@ mod tests {
         assert_eq!(count_fired(&events), 1);
         // A second pull while hot does nothing (no damage, no event, cooldown unchanged).
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(990), "no fire while on cooldown");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(990),
+            "no fire while on cooldown"
+        );
         assert_eq!(count_damaged(&events), 1, "the hot pull added no Damaged");
-        assert_eq!(count_fired(&events), 1, "and no Fired — a hot weapon does not commit a shot");
+        assert_eq!(
+            count_fired(&events),
+            1,
+            "and no Fired — a hot weapon does not commit a shot"
+        );
         assert_eq!(world.weapon[shooter.index as usize].cooldown_left, 5);
     }
 
@@ -1617,7 +1766,11 @@ mod tests {
 
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[live.index as usize].cur, fx(75), "the living target takes the hit");
+        assert_eq!(
+            world.health[live.index as usize].cur,
+            fx(75),
+            "the living target takes the hit"
+        );
         assert_eq!(world.last_attacker[live.index as usize], Some(shooter));
     }
 
@@ -1632,7 +1785,11 @@ mod tests {
 
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[low.index as usize].cur, fx(75), "lowest-index target hit");
+        assert_eq!(
+            world.health[low.index as usize].cur,
+            fx(75),
+            "lowest-index target hit"
+        );
         assert_eq!(world.health[high.index as usize].cur, fx(100));
     }
 
@@ -1674,9 +1831,17 @@ mod tests {
 
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[friendly.index as usize].cur, fx(100), "no friendly fire");
+        assert_eq!(
+            world.health[friendly.index as usize].cur,
+            fx(100),
+            "no friendly fire"
+        );
         assert_eq!(count_damaged(&events), 0, "a friendly is never hit");
-        assert_eq!(count_fired(&events), 1, "but the round is still fired downrange");
+        assert_eq!(
+            count_fired(&events),
+            1,
+            "but the round is still fired downrange"
+        );
     }
 
     #[test]
@@ -1696,7 +1861,10 @@ mod tests {
         let mut rng = Rng::new(1);
         let mut pool = Vec::new();
         combat_system(&mut world, &terrain, &mut rng, &mut pool, &mut events);
-        assert!(!world.is_alive(enemy), "lethal embodied shot despawns the target this tick");
+        assert!(
+            !world.is_alive(enemy),
+            "lethal embodied shot despawns the target this tick"
+        );
         assert!(events.iter().any(|e| matches!(e, SimEvent::Killed { .. })));
     }
 
@@ -1714,9 +1882,17 @@ mod tests {
         let mut events = Vec::new();
         // First shot: 50 dmg at full (open) multiplier — building survives, records the attacker.
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[building.index as usize].cur, fx(50), "building takes fire");
+        assert_eq!(
+            world.health[building.index as usize].cur,
+            fx(50),
+            "building takes fire"
+        );
         assert_eq!(world.last_attacker[building.index as usize], Some(shooter));
-        assert_eq!(count_damaged(&events), 1, "one Damaged event for the hit building");
+        assert_eq!(
+            count_damaged(&events),
+            1,
+            "one Damaged event for the hit building"
+        );
         assert_eq!(count_fired(&events), 1, "and one Fired committing the shot");
 
         // Second shot drops it to zero; the death pass then despawns it (same as a unit).
@@ -1725,7 +1901,10 @@ mod tests {
         let mut rng = Rng::new(1);
         let mut pool = Vec::new();
         combat_system(&mut world, &terrain, &mut rng, &mut pool, &mut events);
-        assert!(!world.is_alive(building), "a razed building is despawned exactly like a unit");
+        assert!(
+            !world.is_alive(building),
+            "a razed building is despawned exactly like a unit"
+        );
         assert!(
             events
                 .iter()
@@ -1784,7 +1963,10 @@ mod tests {
         );
         // Tick 2: the second 50 dmg razes it and the death pass despawns it the same tick.
         run(&mut world, &terrain, &mut events);
-        assert!(!world.is_alive(building), "attack-moving unit razes the enemy building");
+        assert!(
+            !world.is_alive(building),
+            "attack-moving unit razes the enemy building"
+        );
         assert!(events.iter().any(|e| matches!(e, SimEvent::Killed { .. })));
     }
 
@@ -1818,7 +2000,11 @@ mod tests {
         );
         // The embodied pull committed a Fired (a round downrange), but never a Damaged on the
         // friendly base; the auto-combat pass emits nothing at all.
-        assert_eq!(count_damaged(&events), 0, "no damage events against a friendly building");
+        assert_eq!(
+            count_damaged(&events),
+            0,
+            "no damage events against a friendly building"
+        );
     }
 
     #[test]
@@ -1871,7 +2057,10 @@ mod tests {
         let units = (0..world.capacity())
             .filter(|&i| world.is_index_alive(i) && world.kind[i] == EntityKind::Unit)
             .count();
-        assert_eq!(units, 1, "only the shooter remains; the razed camp produced nothing");
+        assert_eq!(
+            units, 1,
+            "only the shooter remains; the razed camp produced nothing"
+        );
         assert!(
             !eco_events
                 .iter()
@@ -1903,7 +2092,14 @@ mod tests {
     fn mag_scene(range: i32, mag: u16, reload: u16) -> (World, Terrain, Entity, Entity) {
         let mut world = World::new();
         let terrain = Terrain::open();
-        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(range, 5, mag, reload));
+        let shooter = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            mag_rifle(range, 5, mag, reload),
+        );
         world.input_source[shooter.index as usize] = InputSource::Embodied;
         let enemy = spawn_unit(&mut world, 4, 0, Faction::Enemy, 10_000, Weapon::default());
         (world, terrain, shooter, enemy)
@@ -1915,10 +2111,17 @@ mod tests {
         let mut events = Vec::new();
         assert_eq!(world.weapon[shooter.index as usize].ammo, 3);
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.weapon[shooter.index as usize].ammo, 2, "one round spent per hit");
+        assert_eq!(
+            world.weapon[shooter.index as usize].ammo, 2,
+            "one round spent per hit"
+        );
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert_eq!(world.weapon[shooter.index as usize].ammo, 1);
-        assert_eq!(count_damaged(&events), 2, "both shots landed while ammo remained");
+        assert_eq!(
+            count_damaged(&events),
+            2,
+            "both shots landed while ammo remained"
+        );
         assert_eq!(count_fired(&events), 2, "and both committed a Fired");
     }
 
@@ -1929,18 +2132,31 @@ mod tests {
         // reload gate needs `ammo < mag_size`). A ready pull at empty air must now cost a round.
         let mut world = World::new();
         let terrain = Terrain::open(); // no enemy anywhere → every pull is a downrange miss
-        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 3, 4));
+        let shooter = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            mag_rifle(10, 5, 3, 4),
+        );
         world.input_source[shooter.index as usize] = InputSource::Embodied;
         let i = shooter.index as usize;
         let mut events = Vec::new();
 
         assert_eq!(world.weapon[i].ammo, 3);
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.weapon[i].ammo, 2, "a miss still spends a round from the magazine");
+        assert_eq!(
+            world.weapon[i].ammo, 2,
+            "a miss still spends a round from the magazine"
+        );
         assert_eq!(count_damaged(&events), 0, "nothing was hit");
         assert_eq!(count_fired(&events), 1, "but a round was fired downrange");
         // Now ammo (2) < mag_size (3), so a reload is finally meaningful.
-        assert!(world.weapon[i].ammo < world.weapon[i].mag_size, "the magazine can now accept a reload");
+        assert!(
+            world.weapon[i].ammo < world.weapon[i].mag_size,
+            "the magazine can now accept a reload"
+        );
     }
 
     #[test]
@@ -1954,9 +2170,16 @@ mod tests {
         let hp_after_first = world.health[enemy.index as usize].cur;
         // Dry click: no hit, no event, ammo stays 0 (and no cooldown was spent — cooldown is 0).
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(count_fired(&events), 1, "the empty pull commits nothing (still just the first)");
+        assert_eq!(
+            count_fired(&events),
+            1,
+            "the empty pull commits nothing (still just the first)"
+        );
         assert_eq!(count_damaged(&events), 1, "and adds no damage");
-        assert_eq!(world.health[enemy.index as usize].cur, hp_after_first, "no damage on empty");
+        assert_eq!(
+            world.health[enemy.index as usize].cur, hp_after_first,
+            "no damage on empty"
+        );
     }
 
     #[test]
@@ -1965,7 +2188,14 @@ mod tests {
         // in progress (as `Command::Reload` would set), then run combat upkeep three times.
         let mut world = World::new();
         let terrain = Terrain::open();
-        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 8, 3));
+        let shooter = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            mag_rifle(10, 5, 8, 3),
+        );
         world.input_source[shooter.index as usize] = InputSource::Embodied;
         let i = shooter.index as usize;
         world.weapon[i].ammo = 0;
@@ -1990,7 +2220,10 @@ mod tests {
         let mut events = Vec::new();
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
         assert!(events.is_empty(), "a reloading weapon cannot fire");
-        assert_eq!(world.health[enemy.index as usize].cur, Fixed::from_int(10_000));
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            Fixed::from_int(10_000)
+        );
         // Finish the reload (4 upkeep ticks), then the same pull lands.
         for _ in 0..4 {
             run(&mut world, &terrain, &mut events);
@@ -2007,7 +2240,14 @@ mod tests {
         let mut world = World::new();
         let terrain = Terrain::open();
         // mag_rifle has cooldown 0, so the only limit on the rate of fire is ammo.
-        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 3, 4));
+        let shooter = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            mag_rifle(10, 5, 3, 4),
+        );
         world.stance[shooter.index as usize] = Stance::FireAtWill;
         let si = shooter.index as usize;
         spawn_unit(&mut world, 4, 0, Faction::Enemy, 10_000, Weapon::default());
@@ -2015,7 +2255,10 @@ mod tests {
         let mut events = Vec::new();
         assert_eq!(world.weapon[si].ammo, 3, "spawns with a full magazine");
         run(&mut world, &terrain, &mut events);
-        assert_eq!(world.weapon[si].ammo, 2, "AI auto-combat spends a round per shot (not infinite)");
+        assert_eq!(
+            world.weapon[si].ammo, 2,
+            "AI auto-combat spends a round per shot (not infinite)"
+        );
         run(&mut world, &terrain, &mut events);
         assert_eq!(world.weapon[si].ammo, 1);
     }
@@ -2026,7 +2269,14 @@ mod tests {
         let terrain = Terrain::open();
         // mag 2, 3-tick reload, reserve = mag*3 = 6. No enemy: isolate the upkeep auto-reload from
         // any firing so the timing is unambiguous. Empty the magazine by hand.
-        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 2, 3));
+        let shooter = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            mag_rifle(10, 5, 2, 3),
+        );
         world.stance[shooter.index as usize] = Stance::FireAtWill;
         let si = shooter.index as usize;
         world.weapon[si].ammo = 0;
@@ -2034,7 +2284,10 @@ mod tests {
         let mut events = Vec::new();
         // Tick 1 upkeep sees AI + dry + reserve > 0 → auto-arms the reload (does not also tick it).
         run(&mut world, &terrain, &mut events);
-        assert_eq!(world.weapon[si].reload_left, 3, "AI auto-starts a reload when dry with reserve");
+        assert_eq!(
+            world.weapon[si].reload_left, 3,
+            "AI auto-starts a reload when dry with reserve"
+        );
         assert_eq!(world.weapon[si].ammo, 0, "still empty mid-reload");
         // Drive the 3-tick reload to completion: 3 -> 2 -> 1 -> 0, then the magazine refills.
         run(&mut world, &terrain, &mut events); // 3 -> 2
@@ -2042,7 +2295,10 @@ mod tests {
         run(&mut world, &terrain, &mut events); // 1 -> 0: draw from reserve
         assert_eq!(world.weapon[si].reload_left, 0, "reload complete");
         assert_eq!(world.weapon[si].ammo, 2, "magazine refilled from reserve");
-        assert_eq!(world.weapon[si].reserve, 4, "two rounds drawn from the reserve of 6");
+        assert_eq!(
+            world.weapon[si].reserve, 4,
+            "two rounds drawn from the reserve of 6"
+        );
     }
 
     #[test]
@@ -2062,11 +2318,17 @@ mod tests {
         run(&mut world, &terrain, &mut events); // fires its one round
         assert_eq!(world.weapon[si].ammo, 0);
         let hp_after_one = world.health[enemy.index as usize].cur;
-        assert!(hp_after_one < Fixed::from_int(10_000), "the one loaded round landed");
+        assert!(
+            hp_after_one < Fixed::from_int(10_000),
+            "the one loaded round landed"
+        );
         for _ in 0..30 {
             run(&mut world, &terrain, &mut events);
         }
-        assert_eq!(world.weapon[si].reload_left, 0, "no reload can start with an empty reserve");
+        assert_eq!(
+            world.weapon[si].reload_left, 0,
+            "no reload can start with an empty reserve"
+        );
         assert_eq!(
             world.health[enemy.index as usize].cur, hp_after_one,
             "a fully dry unit deals no further damage (combat-ineffective until resupply)"
@@ -2077,7 +2339,14 @@ mod tests {
     fn embodied_unit_never_auto_reloads() {
         let mut world = World::new();
         let terrain = Terrain::open();
-        let shooter = spawn_unit(&mut world, 0, 0, Faction::Player, 100, mag_rifle(10, 5, 2, 3));
+        let shooter = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            mag_rifle(10, 5, 2, 3),
+        );
         world.input_source[shooter.index as usize] = InputSource::Embodied;
         let si = shooter.index as usize;
         world.weapon[si].ammo = 0; // empty mag, reserve still full
@@ -2085,8 +2354,14 @@ mod tests {
         for _ in 0..10 {
             run(&mut world, &terrain, &mut events);
         }
-        assert_eq!(world.weapon[si].reload_left, 0, "the embodied player reloads manually, never auto");
-        assert_eq!(world.weapon[si].ammo, 0, "no auto-refill for the embodied unit");
+        assert_eq!(
+            world.weapon[si].reload_left, 0,
+            "the embodied player reloads manually, never auto"
+        );
+        assert_eq!(
+            world.weapon[si].ammo, 0,
+            "no auto-refill for the embodied unit"
+        );
     }
 
     // --- Crouch posture: tighter cone + extended range (resolve_fire) --------------------------
@@ -2105,15 +2380,27 @@ mod tests {
         let mut events = Vec::new();
         world.posture[shooter.index as usize] = Posture::Standing;
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(75), "standing hip-fire clips it");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(75),
+            "standing hip-fire clips it"
+        );
 
         // Reset health; crouch tightens the cone past the target's bearing -> miss.
         world.health[enemy.index as usize].cur = fx(100);
         events.clear();
         world.posture[shooter.index as usize] = Posture::Crouched;
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "crouch demands tighter aim");
-        assert_eq!(count_damaged(&events), 0, "the tighter cone misses this off-axis target");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(100),
+            "crouch demands tighter aim"
+        );
+        assert_eq!(
+            count_damaged(&events),
+            0,
+            "the tighter cone misses this off-axis target"
+        );
         assert_eq!(count_fired(&events), 1, "but the round is still fired");
     }
 
@@ -2129,11 +2416,19 @@ mod tests {
         let mut events = Vec::new();
         world.posture[shooter.index as usize] = Posture::Standing;
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(100), "out of base range standing");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(100),
+            "out of base range standing"
+        );
 
         world.posture[shooter.index as usize] = Posture::Crouched;
         fire(&mut world, &terrain, shooter, aim_pos_x(), &mut events);
-        assert_eq!(world.health[enemy.index as usize].cur, fx(75), "crouch reaches the further target");
+        assert_eq!(
+            world.health[enemy.index as usize].cur,
+            fx(75),
+            "crouch reaches the further target"
+        );
     }
 
     // --- Tank embodiment P4 (D55): all-unit armour facing ------------------------------------
@@ -2141,7 +2436,11 @@ mod tests {
     use crate::components::Armor;
 
     fn armored(front: i32, side: i32, rear: i32) -> Armor {
-        Armor { front: fx(front), side: fx(side), rear: fx(rear) }
+        Armor {
+            front: fx(front),
+            side: fx(side),
+            rear: fx(rear),
+        }
     }
 
     /// An `Angle` for `deg` degrees (binary radians), float-free.
@@ -2181,11 +2480,27 @@ mod tests {
         // Hull facing +Y (90°): broadside → Side.
         assert_eq!(shot_facet(east, deg(90)), Facet::Side);
         // Side/Rear boundary at 60°: just inside (55°) is Rear, just outside (65°) is Side.
-        assert_eq!(shot_facet(east, deg(55)), Facet::Rear, "inside the rear arc");
-        assert_eq!(shot_facet(east, deg(65)), Facet::Side, "past the rear arc → side");
+        assert_eq!(
+            shot_facet(east, deg(55)),
+            Facet::Rear,
+            "inside the rear arc"
+        );
+        assert_eq!(
+            shot_facet(east, deg(65)),
+            Facet::Side,
+            "past the rear arc → side"
+        );
         // Front/Side boundary at 120°: just outside (115°) is Side, just inside (125°) is Front.
-        assert_eq!(shot_facet(east, deg(115)), Facet::Side, "before the front arc → side");
-        assert_eq!(shot_facet(east, deg(125)), Facet::Front, "inside the front arc");
+        assert_eq!(
+            shot_facet(east, deg(115)),
+            Facet::Side,
+            "before the front arc → side"
+        );
+        assert_eq!(
+            shot_facet(east, deg(125)),
+            Facet::Front,
+            "inside the front arc"
+        );
     }
 
     #[test]
@@ -2251,7 +2566,11 @@ mod tests {
             run(&mut world, &terrain, &mut events);
             before - world.health[ti].cur
         }
-        assert_eq!(dmg(10, 0), Fixed::ZERO, "frontal shot bounces off the thick front");
+        assert_eq!(
+            dmg(10, 0),
+            Fixed::ZERO,
+            "frontal shot bounces off the thick front"
+        );
         assert_eq!(dmg(-10, 0), fx(20), "rear shot pens for full damage");
         assert_eq!(dmg(0, 10), fx(20), "flank shot pens for full damage");
     }
@@ -2307,7 +2626,7 @@ mod tests {
             let tank = spawn_produced(&mut world, UnitKind::Tank, fx(0), fx(0), Faction::Enemy);
             world.hull_heading[tank.index as usize] = deg(0); // front faces +X (toward the shooter)
             world.stance[tank.index as usize] = Stance::HoldFire; // isolate the shooter's effect
-            // 13.5 east: in AT/rifle range (14), out of the tank's gun (13).
+                                                                  // 13.5 east: in AT/rifle range (14), out of the tank's gun (13).
             let sx = fx(13) + Fixed::HALF;
             let atk = spawn_produced(&mut world, shooter, sx, fx(0), Faction::Player);
             let mut events = Vec::new();
@@ -2326,14 +2645,20 @@ mod tests {
         }
 
         let (at_killed, at_survived, _) = duel(UnitKind::AntiTank);
-        assert!(at_killed, "anti-tank infantry must crack the tank's frontal armour and kill it");
+        assert!(
+            at_killed,
+            "anti-tank infantry must crack the tank's frontal armour and kill it"
+        );
         assert!(
             at_survived,
             "and survive the duel — it out-ranges the tank's gun (range 14 vs 13)"
         );
 
         let (rifle_killed, _, rifle_left) = duel(UnitKind::Rifleman);
-        assert!(!rifle_killed, "a Rifleman's zero-pen shot must bounce off the front (no kill)");
+        assert!(
+            !rifle_killed,
+            "a Rifleman's zero-pen shot must bounce off the front (no kill)"
+        );
         let (full_tank, _) = crate::economy::unit_stats(UnitKind::Tank);
         assert_eq!(
             rifle_left, full_tank.cur,
@@ -2351,7 +2676,13 @@ mod tests {
         let mut world = World::new();
         let terrain = Terrain::open();
         for k in -3..3i32 {
-            spawn_produced(&mut world, UnitKind::Rifleman, fx(-4), fx(k), Faction::Player);
+            spawn_produced(
+                &mut world,
+                UnitKind::Rifleman,
+                fx(-4),
+                fx(k),
+                Faction::Player,
+            );
         }
         for k in -2..3i32 {
             spawn_produced(&mut world, UnitKind::AntiTank, fx(4), fx(k), Faction::Enemy);
@@ -2365,8 +2696,14 @@ mod tests {
         let rifles = count_alive(&world, Faction::Player);
         let at = count_alive(&world, Faction::Enemy);
         // (Measured: all 6 riflemen survive; all 5 AT are wiped — a decisive equal-cost win.)
-        assert_eq!(at, 0, "equal-cost riflemen must wipe the anti-tank infantry (got {at} AT left)");
-        assert!(rifles > 0, "and several riflemen survive the trade (got {rifles})");
+        assert_eq!(
+            at, 0,
+            "equal-cost riflemen must wipe the anti-tank infantry (got {at} AT left)"
+        );
+        assert!(
+            rifles > 0,
+            "and several riflemen survive the trade (got {rifles})"
+        );
     }
 
     #[test]
@@ -2396,7 +2733,13 @@ mod tests {
             world.armor[ti] = armored(100, 1, 1);
             let before = world.health[ti].cur;
             let mut events = Vec::new();
-            resolve_fire(&mut world, &terrain, shooter.index as usize, aim_pos_x(), &mut events);
+            resolve_fire(
+                &mut world,
+                &terrain,
+                shooter.index as usize,
+                aim_pos_x(),
+                &mut events,
+            );
             before - world.health[ti].cur
         }
         // Hull faces -X → the +X shot meets the front → bounce.
@@ -2439,7 +2782,10 @@ mod tests {
         // One combat tick fires (cooldown_ticks = 30 > flash window), lighting the flag.
         let mut events = Vec::new();
         run(&mut world, &terrain, &mut events);
-        assert!(firing(&world), "the unit that just fired lights the firing flag");
+        assert!(
+            firing(&world),
+            "the unit that just fired lights the firing flag"
+        );
         // The lone non-firing target never lights.
         let target_firing = Snapshot::capture(&world, &Territory::default(), &[], 0, &armies)
             .units
@@ -2453,7 +2799,10 @@ mod tests {
         for _ in 0..MUZZLE_FLASH_TICKS {
             run(&mut world, &terrain, &mut events);
         }
-        assert!(!firing(&world), "the flag clears once the cooldown decays past the flash window");
+        assert!(
+            !firing(&world),
+            "the flag clears once the cooldown decays past the flash window"
+        );
     }
 
     // --- tank P9 (D72): AI-controlled BALLISTIC fire — the produced tank's gun travels -----------
@@ -2466,7 +2815,13 @@ mod tests {
     /// A produced-tank-style **ballistic** main gun: `muzzle_vel > 0` so `combat_system` launches a
     /// traveling shell instead of resolving hitscan (D72). Mirrors the produced Tank's logistics (a
     /// 6-shell magazine) so the ammo gate behaves as in the real economy loadout.
-    fn ballistic_tank_gun(range: i32, damage: i32, muzzle_vel: i32, penetration: i32, cooldown: u16) -> Weapon {
+    fn ballistic_tank_gun(
+        range: i32,
+        damage: i32,
+        muzzle_vel: i32,
+        penetration: i32,
+        cooldown: u16,
+    ) -> Weapon {
         Weapon {
             range: fx(range),
             damage: fx(damage),
@@ -2509,7 +2864,10 @@ mod tests {
             vel2d: Vec2::new(fx(2), Fixed::ZERO),
             height: MUZZLE_HEIGHT,
             vz: LAUNCH_VZ,
-            owner: Entity { index: 0, generation: 0 },
+            owner: Entity {
+                index: 0,
+                generation: 0,
+            },
             faction: Faction::Player,
             damage: fx(10),
             penetration: Fixed::ZERO,
@@ -2527,7 +2885,14 @@ mod tests {
         // the shell has to cross the gap. This is the property the whole fork rests on.
         let mut world = World::new();
         let terrain = Terrain::open();
-        let tank = spawn_unit(&mut world, 0, 0, Faction::Player, 100, ballistic_tank_gun(30, 50, 2, 18, 0));
+        let tank = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            ballistic_tank_gun(30, 50, 2, 18, 0),
+        );
         world.stance[tank.index as usize] = Stance::FireAtWill;
         let target = spawn_unit(&mut world, 6, 0, Faction::Enemy, 1000, Weapon::default());
         world.stance[target.index as usize] = Stance::HoldFire;
@@ -2537,14 +2902,24 @@ mod tests {
         // One combat tick: the AI launches one shell, but the target is UNHARMED this tick — a hitscan
         // would already have landed (compare the golden test below).
         run_with_pool(&mut world, &terrain, &mut pool, &mut events);
-        assert_eq!(pool.len(), 1, "the AI tank launched exactly one traveling shell");
+        assert_eq!(
+            pool.len(),
+            1,
+            "the AI tank launched exactly one traveling shell"
+        );
         assert_eq!(
             world.health[target.index as usize].cur,
             fx(1000),
             "no instant damage — the shell is in flight, not a hitscan"
         );
-        assert!(events.is_empty(), "no Damaged event yet — the shell has not arrived");
-        assert_eq!(world.weapon[tank.index as usize].ammo, 5, "one shell spent on launch");
+        assert!(
+            events.is_empty(),
+            "no Damaged event yet — the shell has not arrived"
+        );
+        assert_eq!(
+            world.weapon[tank.index as usize].ammo, 5,
+            "one shell spent on launch"
+        );
 
         // Advance ONLY the shell (no further combat, so the pool does not refill): 6 units at 2/tick
         // ⇒ ~3 ticks of travel before impact. Flat (no gravity) so travel time is the only variable.
@@ -2553,7 +2928,10 @@ mod tests {
             projectile_system(&mut world, &terrain, &mut pool, &mut events, Fixed::ZERO);
             ticks += 1;
         }
-        assert_eq!(ticks, 3, "6 / 2 = 3 ticks of travel — the shell arrives LATER than a hitscan");
+        assert_eq!(
+            ticks, 3,
+            "6 / 2 = 3 ticks of travel — the shell arrives LATER than a hitscan"
+        );
         assert!(
             world.health[target.index as usize].cur < fx(1000),
             "the traveling AI shell eventually lands and damages the target"
@@ -2576,7 +2954,10 @@ mod tests {
         let mut pool: Vec<Projectile> = Vec::new();
         let mut events = Vec::new();
         run_with_pool(&mut world, &terrain, &mut pool, &mut events);
-        assert!(pool.is_empty(), "a muzzle_vel == 0 gun spawns NO projectile (hitscan, unchanged)");
+        assert!(
+            pool.is_empty(),
+            "a muzzle_vel == 0 gun spawns NO projectile (hitscan, unchanged)"
+        );
         assert_eq!(
             world.health[target.index as usize].cur,
             fx(950),
@@ -2595,7 +2976,14 @@ mod tests {
         // will be). The launched shell's velocity is exactly `normalize(target − shooter) · muzzle_vel`.
         let mut world = World::new();
         let terrain = Terrain::open();
-        let tank = spawn_unit(&mut world, 0, 0, Faction::Player, 100, ballistic_tank_gun(30, 50, 2, 18, 0));
+        let tank = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            ballistic_tank_gun(30, 50, 2, 18, 0),
+        );
         world.stance[tank.index as usize] = Stance::FireAtWill;
         // Off both axes, so a lead would visibly tilt the shot away from the straight bearing.
         let target = spawn_unit(&mut world, 8, 6, Faction::Enemy, 1000, Weapon::default());
@@ -2619,7 +3007,14 @@ mod tests {
         // grows past the cap, so it can't leak) and no spend (the magazine is untouched).
         let mut world = World::new();
         let terrain = Terrain::open();
-        let tank = spawn_unit(&mut world, 0, 0, Faction::Player, 100, ballistic_tank_gun(30, 50, 2, 18, 0));
+        let tank = spawn_unit(
+            &mut world,
+            0,
+            0,
+            Faction::Player,
+            100,
+            ballistic_tank_gun(30, 50, 2, 18, 0),
+        );
         world.stance[tank.index as usize] = Stance::FireAtWill;
         let target = spawn_unit(&mut world, 6, 0, Faction::Enemy, 1000, Weapon::default());
         world.stance[target.index as usize] = Stance::HoldFire;
@@ -2627,9 +3022,19 @@ mod tests {
         let mut pool: Vec<Projectile> = (0..MAX_PROJECTILES).map(|_| dummy_shell()).collect();
         let mut events = Vec::new();
         run_with_pool(&mut world, &terrain, &mut pool, &mut events);
-        assert_eq!(pool.len(), MAX_PROJECTILES, "the pool never exceeds the cap — no leak");
-        assert_eq!(world.weapon[tank.index as usize].ammo, 6, "a dropped shot spends no ammo");
-        assert_eq!(world.weapon[tank.index as usize].cooldown_left, 0, "a dropped shot sets no cooldown");
+        assert_eq!(
+            pool.len(),
+            MAX_PROJECTILES,
+            "the pool never exceeds the cap — no leak"
+        );
+        assert_eq!(
+            world.weapon[tank.index as usize].ammo, 6,
+            "a dropped shot spends no ammo"
+        );
+        assert_eq!(
+            world.weapon[tank.index as usize].cooldown_left, 0,
+            "a dropped shot sets no cooldown"
+        );
     }
 
     #[test]
@@ -2640,9 +3045,23 @@ mod tests {
         // property the cross-arch matrix and 2-peer lockstep rest on.
         let build = || {
             let mut world = World::new();
-            let t = spawn_unit(&mut world, -3, 0, Faction::Player, 300, ballistic_tank_gun(30, 50, 2, 18, 4));
+            let t = spawn_unit(
+                &mut world,
+                -3,
+                0,
+                Faction::Player,
+                300,
+                ballistic_tank_gun(30, 50, 2, 18, 4),
+            );
             world.stance[t.index as usize] = Stance::FireAtWill;
-            let e = spawn_unit(&mut world, 3, 0, Faction::Enemy, 300, ballistic_tank_gun(30, 50, 2, 18, 4));
+            let e = spawn_unit(
+                &mut world,
+                3,
+                0,
+                Faction::Enemy,
+                300,
+                ballistic_tank_gun(30, 50, 2, 18, 4),
+            );
             world.stance[e.index as usize] = Stance::FireAtWill;
             world
         };
@@ -2657,9 +3076,15 @@ mod tests {
             projectile_system(&mut w2, &terrain, &mut p2, &mut ev, projectile::GRAVITY);
         }
         for i in 0..w1.capacity() {
-            assert_eq!(w1.health[i].cur, w2.health[i].cur, "health slot {i} must match");
+            assert_eq!(
+                w1.health[i].cur, w2.health[i].cur,
+                "health slot {i} must match"
+            );
         }
-        assert_eq!(p1, p2, "the in-flight projectile pools must be bit-identical");
+        assert_eq!(
+            p1, p2,
+            "the in-flight projectile pools must be bit-identical"
+        );
     }
 
     // ---- gunsmith breadth (CP-1, D85): per-mechanic tests for the Stock/Muzzle sim slots --------

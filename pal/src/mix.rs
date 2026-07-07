@@ -130,7 +130,7 @@ impl Mixer {
     /// Sum one stereo frame from all live voices **plus the looping music bed**, advancing +
     /// low-passing each voice and advancing (wrapping) the music cursor. Finished voices contribute
     /// nothing (pruned lazily on [`push`](Self::push)). The music bed is added centred (equal to both
-    /// ears) at [`music_gain`]; output is soft-clamped to `[-1, 1]` so stacked cues + music never clip.
+    /// ears) at `music_gain`; output is soft-clamped to `[-1, 1]` so stacked cues + music never clip.
     pub fn next_frame(&mut self) -> (f32, f32) {
         let (mut l, mut r) = (0.0f32, 0.0f32);
         for v in &mut self.voices {
@@ -720,7 +720,10 @@ mod tests {
         }
         let (l, _) = m.next_frame();
         assert_eq!(l, 0.0, "stinger is finished → silent");
-        assert!(!m.music_oneshot_active(), "a finished stinger clears itself");
+        assert!(
+            !m.music_oneshot_active(),
+            "a finished stinger clears itself"
+        );
     }
 
     #[test]
@@ -729,10 +732,13 @@ mod tests {
         m.set_music(Some(flat_bed(0.4, 8))); // a steady bed…
         m.set_music_gain(1.0);
         m.play_music_oneshot(flat_bed(0.6, 2)); // …a 2-sample stinger on top
-        // While the stinger plays, ONLY the stinger sounds (the bed is ducked out): 0.6, not 0.4+0.6.
+                                                // While the stinger plays, ONLY the stinger sounds (the bed is ducked out): 0.6, not 0.4+0.6.
         let (a, _) = m.next_frame();
         let (b, _) = m.next_frame();
-        assert!((a - 0.6).abs() < 1e-6 && (b - 0.6).abs() < 1e-6, "stinger owns the bus: {a},{b}");
+        assert!(
+            (a - 0.6).abs() < 1e-6 && (b - 0.6).abs() < 1e-6,
+            "stinger owns the bus: {a},{b}"
+        );
         // The frame it finishes, the bed resumes (no gap): back to the bed's 0.4.
         let (c, _) = m.next_frame();
         assert!((c - 0.4).abs() < 1e-6, "bed resumes at {c}");

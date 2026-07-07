@@ -13,7 +13,7 @@
 //! the avatar's facing) places the marker at top-center; a positive azimuth (the alert is to
 //! the avatar's right) swings it clockwise toward the right edge, a negative one to the left.
 //! An alert directly behind the avatar lands at bottom-center. The pure placement + fade math
-//! lives in [`marker_for`] so it is unit-testable without a GPU.
+//! lives in `marker_for` so it is unit-testable without a GPU.
 
 use crate::text::Anchor;
 use gonedark_core::alerts::{Alert, AlertChannel, AlertKind};
@@ -149,8 +149,8 @@ pub fn marker_for(
 }
 
 /// [`marker_for`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
-/// Only the marker **glyph** ([`MARKER_HALF_SIZE`]) scales; the ring placement is a positional
-/// encoding (bearing at the fixed [`RING_RADIUS`] edge distance — the no-range-leak fairness
+/// Only the marker **glyph** (`MARKER_HALF_SIZE`) scales; the ring placement is a positional
+/// encoding (bearing at the fixed `RING_RADIUS` edge distance — the no-range-leak fairness
 /// guard, invariant #6) and deliberately does NOT move with `ui_scale`. `ui_scale == 1.0` is
 /// byte-identical to [`marker_for`].
 pub fn marker_for_scaled(
@@ -192,14 +192,23 @@ pub fn place_marker(
     color: [f32; 3],
     shape: f32,
 ) -> Option<HudMarker> {
-    place_marker_scaled(pos_world, event_tick, avatar_world, yaw, tick, color, shape, 1.0)
+    place_marker_scaled(
+        pos_world,
+        event_tick,
+        avatar_world,
+        yaw,
+        tick,
+        color,
+        shape,
+        1.0,
+    )
 }
 
 /// [`place_marker`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
 /// Scales only the marker **glyph** half-size — the ring radius is a positional encoding (the
-/// bearing rides the fixed [`RING_RADIUS`], leaking direction, never range — invariant #6) and
+/// bearing rides the fixed `RING_RADIUS`, leaking direction, never range — invariant #6) and
 /// stays put so a scaled HUD still places every ping at the exact same screen point. Scaling the
-/// radius would also break the tank-HUD M1 collision band (keyed on [`RING_RADIUS`]) and push
+/// radius would also break the tank-HUD M1 collision band (keyed on `RING_RADIUS`) and push
 /// markers off-screen at large scales. `ui_scale == 1.0` is byte-identical to [`place_marker`].
 #[allow(clippy::too_many_arguments)]
 pub fn place_marker_scaled(
@@ -277,7 +286,7 @@ pub fn scale_marker_chrome(markers: &[HudMarker], ui_scale: f32) -> Vec<HudMarke
 }
 
 /// A short, non-color abbreviation for an alert kind — the **colorblind (CVD) cue** (invariant #6).
-/// The shape glyph ([`shape_for`]) + luminance-spread palette ([`alert_color`]) already make the four
+/// The shape glyph (`shape_for`) + luminance-spread palette (`alert_color`) already make the four
 /// kinds distinguishable without hue, but a hue-blind player under a same-hue frame region can still
 /// be unsure *which* kind a glyph is; a two-to-four-letter label removes all ambiguity. Kept terse so
 /// it stays legible at marker size and never crowds the thin thread back.
@@ -319,7 +328,7 @@ pub fn alert_labels(
 }
 
 /// [`alert_labels`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
-/// The label column stays on the marker's (unscaled) ring position; only the [`LABEL_DROP`] gap
+/// The label column stays on the marker's (unscaled) ring position; only the `LABEL_DROP` gap
 /// scales, so the abbrev keeps riding just below the `ui_scale`-grown marker glyph and the text
 /// pass's `px * ui_scale` glyphs. `ui_scale == 1.0` is byte-identical to [`alert_labels`].
 pub fn alert_labels_scaled(
@@ -359,7 +368,7 @@ pub fn hitmarker_marker(last_hit_tick: Option<u64>, tick: u64) -> Option<HudMark
 
 /// [`hitmarker_marker`] with an explicit accessibility `ui_scale` (the picker's `*_scaled`
 /// pattern). The "X" stays dead-center (that placement is the "my own shot connected" read, and
-/// center is scale-independent anyway); only its [`HITMARKER_HALF_SIZE`] glyph grows.
+/// center is scale-independent anyway); only its `HITMARKER_HALF_SIZE` glyph grows.
 /// `ui_scale == 1.0` is byte-identical to [`hitmarker_marker`].
 pub fn hitmarker_marker_scaled(
     last_hit_tick: Option<u64>,
@@ -453,7 +462,7 @@ pub struct SurfaceHint {
     pub alpha: f32,
 }
 
-/// The desktop-only "[key] SURFACE" reminder (M5): while embodied, keyboard players have no
+/// The desktop-only "`key` SURFACE" reminder (M5): while embodied, keyboard players have no
 /// on-screen Surface button (that is a touch affordance), so a low-opacity hint tells them which
 /// key surfaces them back to command. Returns `None` on touch (the touch HUD already draws a
 /// Surface button) or for an empty `label`, so it is **gated to embodied-AND-not-touch** — the
@@ -607,7 +616,7 @@ impl HudRenderer {
     ///   longer takes it. (If aspect correction is ever wanted, re-add a real param there.)
     /// - `tick`: the current sim tick (to fade alerts by age).
     /// - `ui_scale`: the accessibility UI scale — grows the marker glyphs only
-    ///   ([`marker_for_scaled`]); the bearing ring stays at [`RING_RADIUS`].
+    ///   ([`marker_for_scaled`]); the bearing ring stays at `RING_RADIUS`.
     ///
     /// Builds the live marker set via [`marker_for_scaled`], uploads it, and records a single LOAD
     /// render pass so the markers composite over the embodied frame. No-op if nothing is live.
@@ -939,11 +948,23 @@ mod tests {
         // red — one danger red across the whole HUD.
         assert_eq!(CROSSHAIR_COLOR, crate::theme::CROSSHAIR);
         assert_eq!(HITMARKER_COLOR, crate::theme::HITMARKER);
-        assert_eq!(alert_color(AlertKind::BaseUnderAttack), crate::theme::ALERT_DANGER);
+        assert_eq!(
+            alert_color(AlertKind::BaseUnderAttack),
+            crate::theme::ALERT_DANGER
+        );
         assert_eq!(alert_color(AlertKind::TakingFire), crate::theme::ALERT_WARN);
-        assert_eq!(alert_color(AlertKind::TerritoryLost), crate::theme::ALERT_INFO);
-        assert_eq!(alert_color(AlertKind::UnitLost), crate::theme::ALERT_NEUTRAL);
-        assert_eq!(alert_color(AlertKind::BaseUnderAttack), crate::theme::STATUS_CRIT);
+        assert_eq!(
+            alert_color(AlertKind::TerritoryLost),
+            crate::theme::ALERT_INFO
+        );
+        assert_eq!(
+            alert_color(AlertKind::UnitLost),
+            crate::theme::ALERT_NEUTRAL
+        );
+        assert_eq!(
+            alert_color(AlertKind::BaseUnderAttack),
+            crate::theme::STATUS_CRIT
+        );
     }
 
     #[test]
@@ -990,7 +1011,11 @@ mod tests {
         let m = hitmarker_marker(Some(100), 100).expect("a hit this tick is live");
         // Dead center so it never collides with the edge-ring alert markers.
         assert!(m.ndc_x.abs() < 1e-6 && m.ndc_y.abs() < 1e-6, "centered");
-        assert!((m.alpha - 1.0).abs() < 1e-4, "alpha={} should be ~1", m.alpha);
+        assert!(
+            (m.alpha - 1.0).abs() < 1e-4,
+            "alpha={} should be ~1",
+            m.alpha
+        );
         // The distinct hitmarker glyph + bright white color the viz pixel-assert keys on.
         assert_eq!(m.shape, SHAPE_HITMARKER);
         assert_eq!([m.r, m.g, m.b], HITMARKER_COLOR);
@@ -1001,7 +1026,10 @@ mod tests {
         let young = hitmarker_marker(Some(0), 1).unwrap();
         let mid = hitmarker_marker(Some(0), HITMARKER_TICKS / 2).unwrap();
         let old = hitmarker_marker(Some(0), HITMARKER_TICKS - 1).unwrap();
-        assert!(young.alpha > mid.alpha && mid.alpha > old.alpha, "fades with age");
+        assert!(
+            young.alpha > mid.alpha && mid.alpha > old.alpha,
+            "fades with age"
+        );
         assert!(old.alpha > 0.0 && young.alpha <= 1.0, "stays in (0, 1]");
         // Aged past the window → gone (the frame is left untouched).
         assert!(hitmarker_marker(Some(0), HITMARKER_TICKS).is_none());
@@ -1021,7 +1049,10 @@ mod tests {
         let m = crosshair_markers(0.0, 1.0);
         assert_eq!(m.len(), 5, "center + 4 arms");
         // The first is the center pip.
-        assert!(m[0].ndc_x.abs() < 1e-9 && m[0].ndc_y.abs() < 1e-9, "center pip at origin");
+        assert!(
+            m[0].ndc_x.abs() < 1e-9 && m[0].ndc_y.abs() < 1e-9,
+            "center pip at origin"
+        );
         // Every tick is the dot glyph in the crosshair color.
         for t in &m {
             assert_eq!(t.shape, SHAPE_DOT);
@@ -1029,7 +1060,10 @@ mod tests {
         }
         // At rest the arms sit at the resting gap.
         let right = m.iter().find(|t| t.ndc_x > 0.0).unwrap();
-        assert!((right.ndc_x - CROSSHAIR_GAP).abs() < 1e-6, "rest gap at aspect 1");
+        assert!(
+            (right.ndc_x - CROSSHAIR_GAP).abs() < 1e-6,
+            "rest gap at aspect 1"
+        );
     }
 
     #[test]
@@ -1040,7 +1074,10 @@ mod tests {
         let fired_right = fired.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
         let rest_top = rest.iter().find(|t| t.ndc_y > 0.0).unwrap().ndc_y;
         let fired_top = fired.iter().find(|t| t.ndc_y > 0.0).unwrap().ndc_y;
-        assert!(fired_right > rest_right, "horizontal arms spread under fire");
+        assert!(
+            fired_right > rest_right,
+            "horizontal arms spread under fire"
+        );
         assert!(fired_top > rest_top, "vertical arms spread under fire");
         // The bloom adds exactly the recoil bloom to the gap (aspect 1).
         assert!((fired_top - (CROSSHAIR_GAP + 0.05)).abs() < 1e-6);
@@ -1055,7 +1092,10 @@ mod tests {
         let m = crosshair_markers(0.02, aspect);
         let right = m.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
         let top = m.iter().find(|t| t.ndc_y > 0.0).unwrap().ndc_y;
-        assert!((right * aspect - top).abs() < 1e-6, "x·aspect ({right}) matches y ({top})");
+        assert!(
+            (right * aspect - top).abs() < 1e-6,
+            "x·aspect ({right}) matches y ({top})"
+        );
     }
 
     #[test]
@@ -1063,7 +1103,10 @@ mod tests {
         // A stray negative recoil can never collapse the reticle past its resting gap.
         let m = crosshair_markers(-1.0, 1.0);
         let right = m.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
-        assert!((right - CROSSHAIR_GAP).abs() < 1e-6, "floors at the resting gap");
+        assert!(
+            (right - CROSSHAIR_GAP).abs() < 1e-6,
+            "floors at the resting gap"
+        );
     }
 
     // ---- desktop SURFACE key reminder (M5) ----
@@ -1076,10 +1119,16 @@ mod tests {
             "touch already has a Surface button — no key hint"
         );
         // Nothing to say with no label.
-        assert!(surface_reminder("", false).is_none(), "empty label → no hint");
+        assert!(
+            surface_reminder("", false).is_none(),
+            "empty label → no hint"
+        );
         // Desktop (not touch) with a label gets the hint.
         let h = surface_reminder("[F] SURFACE", false).expect("desktop shows the key hint");
-        assert_eq!(h.text, "[F] SURFACE", "carries the caller's keybind label verbatim");
+        assert_eq!(
+            h.text, "[F] SURFACE",
+            "carries the caller's keybind label verbatim"
+        );
         assert_eq!(h.anchor, Anchor::TopCenter);
     }
 
@@ -1087,12 +1136,25 @@ mod tests {
     fn surface_reminder_is_quiet_low_screen_space_chrome() {
         let h = surface_reminder("[F] SURFACE", false).unwrap();
         // Low opacity — a reminder, not chrome that competes with the alert thread.
-        assert!(h.alpha > 0.0 && h.alpha < 0.7, "hint is low-opacity, got {}", h.alpha);
+        assert!(
+            h.alpha > 0.0 && h.alpha < 0.7,
+            "hint is low-opacity, got {}",
+            h.alpha
+        );
         // Screen-space bounded with no world position (invariant #6).
-        assert!(h.pos[0].abs() <= 1.0 && h.pos[1].abs() <= 1.0, "hint is on-screen NDC");
+        assert!(
+            h.pos[0].abs() <= 1.0 && h.pos[1].abs() <= 1.0,
+            "hint is on-screen NDC"
+        );
         // Rides low, clear of the top-center alert ring (RING_RADIUS) and the screen-center reticle.
-        assert!(h.pos[1] < 0.0, "hint sits in the lower screen, off the alert ring");
-        assert!(h.pos[1] > -1.0 + h.size, "hint stays on-screen above the bottom edge");
+        assert!(
+            h.pos[1] < 0.0,
+            "hint sits in the lower screen, off the alert ring"
+        );
+        assert!(
+            h.pos[1] > -1.0 + h.size,
+            "hint stays on-screen above the bottom edge"
+        );
     }
 
     // ---- CVD text labels + place_marker (accessibility) ----
@@ -1138,7 +1200,10 @@ mod tests {
             assert_eq!(l.text, alert_label(a.kind));
             assert_eq!(l.color, [m.r, m.g, m.b]);
             assert!((l.alpha - m.alpha).abs() < 1e-6);
-            assert!((l.ndc_x - m.ndc_x).abs() < 1e-6, "label shares the marker column");
+            assert!(
+                (l.ndc_x - m.ndc_x).abs() < 1e-6,
+                "label shares the marker column"
+            );
             assert!(l.ndc_y < m.ndc_y, "label rides below the marker");
         }
         // A fully faded alert drops its label too.
@@ -1173,7 +1238,16 @@ mod tests {
         assert_eq!([m.r, m.g, m.b], color);
         assert_eq!(m.shape, SHAPE_PLUS);
         assert!((m.alpha - 1.0).abs() < 1e-4, "fresh echo is full alpha");
-        assert!(place_marker((10.0, 0.0), 0, (0.0, 0.0), 0.0, FADE_TICKS, color, SHAPE_PLUS).is_none());
+        assert!(place_marker(
+            (10.0, 0.0),
+            0,
+            (0.0, 0.0),
+            0.0,
+            FADE_TICKS,
+            color,
+            SHAPE_PLUS
+        )
+        .is_none());
         assert!(place_marker((10.0, 0.0), 100, (0.0, 0.0), 0.0, 50, color, SHAPE_PLUS).is_none());
     }
 
@@ -1189,12 +1263,17 @@ mod tests {
         let far = alert(AlertKind::TakingFire, 300, 0, 0); // dead ahead, far
         let mn = marker_for(&near, (0.0, 0.0), 0.0, 0).unwrap();
         let mf = marker_for(&far, (0.0, 0.0), 0.0, 0).unwrap();
-        assert!((mn.ndc_x - mf.ndc_x).abs() < 1e-4 && (mn.ndc_y - mf.ndc_y).abs() < 1e-4,
-            "same bearing must map to the same screen point regardless of range: {mn:?} vs {mf:?}");
+        assert!(
+            (mn.ndc_x - mf.ndc_x).abs() < 1e-4 && (mn.ndc_y - mf.ndc_y).abs() < 1e-4,
+            "same bearing must map to the same screen point regardless of range: {mn:?} vs {mf:?}"
+        );
         // Every marker also rides the fixed edge ring (its radius is RING_RADIUS), so its distance
         // from screen-centre is constant — the position carries no range information at all.
         let r = (mn.ndc_x * mn.ndc_x + mn.ndc_y * mn.ndc_y).sqrt();
-        assert!((r - RING_RADIUS).abs() < 1e-4, "marker sits on the fixed bearing ring, not a range");
+        assert!(
+            (r - RING_RADIUS).abs() < 1e-4,
+            "marker sits on the fixed bearing ring, not a range"
+        );
     }
 
     // ---- accessibility ui_scale (the picker.rs `*_scaled` contract) ----
@@ -1230,10 +1309,20 @@ mod tests {
         let a = alert(AlertKind::BaseUnderAttack, 3, -7, 0);
         let base = marker_for_scaled(&a, (0.0, 0.0), 0.4, 10, 1.0).unwrap();
         let big = marker_for_scaled(&a, (0.0, 0.0), 0.4, 10, 1.5).unwrap();
-        assert!((big.half_size - base.half_size * 1.5).abs() < 1e-6, "glyph grows 1.5x");
-        assert_eq!((big.ndc_x, big.ndc_y), (base.ndc_x, base.ndc_y), "ring point is fixed");
+        assert!(
+            (big.half_size - base.half_size * 1.5).abs() < 1e-6,
+            "glyph grows 1.5x"
+        );
+        assert_eq!(
+            (big.ndc_x, big.ndc_y),
+            (base.ndc_x, base.ndc_y),
+            "ring point is fixed"
+        );
         let r = (big.ndc_x * big.ndc_x + big.ndc_y * big.ndc_y).sqrt();
-        assert!((r - RING_RADIUS).abs() < 1e-4, "still rides the fixed RING_RADIUS");
+        assert!(
+            (r - RING_RADIUS).abs() < 1e-4,
+            "still rides the fixed RING_RADIUS"
+        );
         assert_eq!(
             ([big.r, big.g, big.b], big.alpha, big.shape),
             ([base.r, base.g, base.b], base.alpha, base.shape)
@@ -1245,7 +1334,10 @@ mod tests {
         let base = hitmarker_marker_scaled(Some(0), 2, 1.0).unwrap();
         let big = hitmarker_marker_scaled(Some(0), 2, 1.5).unwrap();
         assert!((big.half_size - base.half_size * 1.5).abs() < 1e-6);
-        assert!(big.ndc_x.abs() < 1e-9 && big.ndc_y.abs() < 1e-9, "stays dead-center");
+        assert!(
+            big.ndc_x.abs() < 1e-9 && big.ndc_y.abs() < 1e-9,
+            "stays dead-center"
+        );
         assert_eq!(big.alpha, base.alpha, "fade is scale-independent");
     }
 
@@ -1257,15 +1349,24 @@ mod tests {
         let big = crosshair_markers_scaled(0.05, 1.0, 1.5);
         let top_b = base.iter().find(|t| t.ndc_y > 0.0).unwrap();
         let top_s = big.iter().find(|t| t.ndc_y > 0.0).unwrap();
-        assert!((top_s.ndc_y - top_b.ndc_y * 1.5).abs() < 1e-6, "gap+bloom scale 1.5x");
-        assert!((top_s.half_size - top_b.half_size * 1.5).abs() < 1e-6, "dots scale 1.5x");
+        assert!(
+            (top_s.ndc_y - top_b.ndc_y * 1.5).abs() < 1e-6,
+            "gap+bloom scale 1.5x"
+        );
+        assert!(
+            (top_s.half_size - top_b.half_size * 1.5).abs() < 1e-6,
+            "dots scale 1.5x"
+        );
         // The center pip never moves.
         assert!(big[0].ndc_x.abs() < 1e-9 && big[0].ndc_y.abs() < 1e-9);
         // Aspect squaring still holds under scale.
         let wide = crosshair_markers_scaled(0.05, 16.0 / 9.0, 1.5);
         let right = wide.iter().find(|t| t.ndc_x > 0.0).unwrap().ndc_x;
         let top = wide.iter().find(|t| t.ndc_y > 0.0).unwrap().ndc_y;
-        assert!((right * (16.0 / 9.0) - top).abs() < 1e-6, "cross stays square when scaled");
+        assert!(
+            (right * (16.0 / 9.0) - top).abs() < 1e-6,
+            "cross stays square when scaled"
+        );
     }
 
     #[test]
@@ -1277,25 +1378,47 @@ mod tests {
         let base = alert_labels_scaled(&ch, (0.0, 0.0), 0.0, 5, 1.0);
         let big = alert_labels_scaled(&ch, (0.0, 0.0), 0.0, 5, 1.5);
         let m = marker_for(&ch.recent[0], (0.0, 0.0), 0.0, 5).unwrap();
-        assert!((big[0].ndc_x - base[0].ndc_x).abs() < 1e-6, "label column is fixed");
+        assert!(
+            (big[0].ndc_x - base[0].ndc_x).abs() < 1e-6,
+            "label column is fixed"
+        );
         assert!((base[0].ndc_y - (m.ndc_y - LABEL_DROP)).abs() < 1e-6);
-        assert!((big[0].ndc_y - (m.ndc_y - LABEL_DROP * 1.5)).abs() < 1e-6, "drop scales");
+        assert!(
+            (big[0].ndc_y - (m.ndc_y - LABEL_DROP * 1.5)).abs() < 1e-6,
+            "drop scales"
+        );
     }
 
     #[test]
     fn scale_marker_chrome_touches_only_the_glyph_size() {
         // The render_markers draw-boundary seam: host echoes built at 1.0 grow their glyphs, but
         // position (the bearing encoding), color, alpha, and shape pass through untouched.
-        let echo =
-            place_marker((10.0, 0.0), 0, (0.0, 0.0), 0.0, 3, [0.3, 0.85, 0.45], SHAPE_PLUS).unwrap();
+        let echo = place_marker(
+            (10.0, 0.0),
+            0,
+            (0.0, 0.0),
+            0.0,
+            3,
+            [0.3, 0.85, 0.45],
+            SHAPE_PLUS,
+        )
+        .unwrap();
         let scaled = scale_marker_chrome(&[echo], 1.5);
         assert_eq!(scaled.len(), 1);
         assert!((scaled[0].half_size - echo.half_size * 1.5).abs() < 1e-6);
         assert_eq!(
-            (scaled[0].ndc_x, scaled[0].ndc_y, scaled[0].alpha, scaled[0].shape),
+            (
+                scaled[0].ndc_x,
+                scaled[0].ndc_y,
+                scaled[0].alpha,
+                scaled[0].shape
+            ),
             (echo.ndc_x, echo.ndc_y, echo.alpha, echo.shape)
         );
-        assert_eq!([scaled[0].r, scaled[0].g, scaled[0].b], [echo.r, echo.g, echo.b]);
+        assert_eq!(
+            [scaled[0].r, scaled[0].g, scaled[0].b],
+            [echo.r, echo.g, echo.b]
+        );
         // At 1.0 it is the identity.
         assert_eq!(scale_marker_chrome(&[echo], 1.0), vec![echo]);
     }

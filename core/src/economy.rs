@@ -381,8 +381,13 @@ const fn building_hp(kind: BuildingKind) -> i32 {
 pub const fn can_produce(building: BuildingKind, unit: UnitKind) -> bool {
     matches!(
         (building, unit),
-        (BuildingKind::Camp, UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Tank)
-            | (BuildingKind::Barracks, UnitKind::Rifleman | UnitKind::Medic | UnitKind::AntiTank)
+        (
+            BuildingKind::Camp,
+            UnitKind::Rifleman | UnitKind::Heavy | UnitKind::Tank
+        ) | (
+            BuildingKind::Barracks,
+            UnitKind::Rifleman | UnitKind::Medic | UnitKind::AntiTank
+        )
     )
 }
 
@@ -731,12 +736,32 @@ const fn faction_logistics_tilt(army: Army, kind: UnitKind) -> Option<LogisticsT
         // Rifleman (baseline mag 30 / reload 90 / reserve 180). US +20 % magazine (deeper belt,
         // longer reload); FR −20 % (snappier swap). Both keep 6 mags of reserve and the same
         // sustained rate (mag/reload scale together) → power-neutral.
-        (Army::Us, UnitKind::Rifleman) => Some(LogisticsTilt { mag_size: 36, reload_ticks: 108, reserve: 216, turret_speed: 0 }),
-        (Army::Fr, UnitKind::Rifleman) => Some(LogisticsTilt { mag_size: 24, reload_ticks: 72, reserve: 144, turret_speed: 0 }),
+        (Army::Us, UnitKind::Rifleman) => Some(LogisticsTilt {
+            mag_size: 36,
+            reload_ticks: 108,
+            reserve: 216,
+            turret_speed: 0,
+        }),
+        (Army::Fr, UnitKind::Rifleman) => Some(LogisticsTilt {
+            mag_size: 24,
+            reload_ticks: 72,
+            reserve: 144,
+            turret_speed: 0,
+        }),
         // Heavy (baseline mag 50 / reload 138 / reserve 200, the support-weapon belt). US deeper
         // belt + longer reload (M249/M240); FR lighter (Minimi/AANF1). 4 reloads of reserve each.
-        (Army::Us, UnitKind::Heavy) => Some(LogisticsTilt { mag_size: 60, reload_ticks: 166, reserve: 240, turret_speed: 0 }),
-        (Army::Fr, UnitKind::Heavy) => Some(LogisticsTilt { mag_size: 40, reload_ticks: 110, reserve: 160, turret_speed: 0 }),
+        (Army::Us, UnitKind::Heavy) => Some(LogisticsTilt {
+            mag_size: 60,
+            reload_ticks: 166,
+            reserve: 240,
+            turret_speed: 0,
+        }),
+        (Army::Fr, UnitKind::Heavy) => Some(LogisticsTilt {
+            mag_size: 40,
+            reload_ticks: 110,
+            reserve: 160,
+            turret_speed: 0,
+        }),
         // Tank: the main-gun magazine (baseline mag 6 / reload 240 / reserve 24) is too SHALLOW for a
         // fair logistics tilt — with only ~6 ready shells, any difference in shell count / reload
         // length shifts the reload PHASE enough that the Lanchester snowball lets the faster-reloading
@@ -745,8 +770,18 @@ const fn faction_logistics_tilt(army: Army, kind: UnitKind) -> Option<LogisticsT
         // **turret slew** — cosmetic by invariant #3 (the slew never picks targets, the AI turret just
         // tracks the hull), so it is provably zero combat power: US the heavier manual-loader turret
         // (M1 Abrams, slower slew); FR the autoloader turret (Leclerc, quicker slew).
-        (Army::Us, UnitKind::Tank) => Some(LogisticsTilt { mag_size: 6, reload_ticks: 240, reserve: 24, turret_speed: 160 }),
-        (Army::Fr, UnitKind::Tank) => Some(LogisticsTilt { mag_size: 6, reload_ticks: 240, reserve: 24, turret_speed: 200 }),
+        (Army::Us, UnitKind::Tank) => Some(LogisticsTilt {
+            mag_size: 6,
+            reload_ticks: 240,
+            reserve: 24,
+            turret_speed: 160,
+        }),
+        (Army::Fr, UnitKind::Tank) => Some(LogisticsTilt {
+            mag_size: 6,
+            reload_ticks: 240,
+            reserve: 24,
+            turret_speed: 200,
+        }),
         // The WW2 armies (D120) carry NO logistics tilt — their identity is the cost-vs-power tank
         // (`faction_power_tilt` + `unit_cost_for`), not the modern logistics rhythm. So their infantry
         // AND their tank keep the shared baseline magazine/reload/reserve/turret.
@@ -791,9 +826,9 @@ const fn faction_power_tilt(army: Army, kind: UnitKind) -> Option<PowerTilt> {
 /// Per-(army, archetype) combat stats a produced unit spawns with (factions-plan WS-B + the WW2
 /// cost-vs-power fork, D120). The [`Army::Neutral`] baseline is exactly [`unit_stats`] (every legacy
 /// scene unchanged); the modern `Us`/`Fr` apply the fairness-banded, power-NEUTRAL **logistics tilt**
-/// ([`faction_logistics_tilt`]) — magazine/reload/reserve/turret only, so the snowball-sensitive gun
+/// (`faction_logistics_tilt`) — magazine/reload/reserve/turret only, so the snowball-sensitive gun
 /// stats (damage/cooldown/range/HP) stay shared and the equal-COUNT mirror trade stays fair. The WW2
-/// `UsWw2`/`Germany` instead apply the **power tilt** ([`faction_power_tilt`]) to the shared tank —
+/// `UsWw2`/`Germany` instead apply the **power tilt** (`faction_power_tilt`) to the shared tank —
 /// replacing HP + penetration — which is compensated by the per-army [`unit_cost_for`] price so the
 /// trade balances at equal BUDGET. Every army fields every archetype — no missing role. Determinism:
 /// the table is fixed-point and identical on every peer, so a given `(army, kind)` spawns the
@@ -939,7 +974,7 @@ pub fn queue_production(
 
 /// Set a producing building's **spawn rally point** — the troop-training rally seam. Units produced
 /// at `camp` thereafter inherit `rally` as their first order ([`economy_system`] spawns them with
-/// [`Order::MoveTo(rally)`](Order::MoveTo) instead of [`Order::Idle`](Order::Idle)). A literal-executor
+/// [`Order::MoveTo(rally)`](Order::MoveTo) instead of [`Order::Idle`]). A literal-executor
 /// move (invariant #3): the unit just walks to the point, it decides nothing. Returns whether it was
 /// set. A no-op (returns `false`) for a dead handle or a non-building entity; a rally may be set on a
 /// still-constructing building (it takes effect once it produces). Deterministic: a plain fixed-point
@@ -1081,7 +1116,16 @@ mod tests {
         let mut rng = Rng::new(1);
         // Full income rate (tick 0, period 1 ⇒ accrue every call), the pre-lever behaviour these
         // tests were written against. The income-period gate is covered separately.
-        economy_system(world, res, terr, &mut events, &mut rng, 0, 1, &NEUTRAL_ARMIES);
+        economy_system(
+            world,
+            res,
+            terr,
+            &mut events,
+            &mut rng,
+            0,
+            1,
+            &NEUTRAL_ARMIES,
+        );
         events
     }
 
@@ -1200,7 +1244,9 @@ mod tests {
             &mut world,
             &mut res,
             camp,
-            UnitKind::Rifleman, &NEUTRAL_ARMIES));
+            UnitKind::Rifleman,
+            &NEUTRAL_ARMIES
+        ));
         assert_eq!(
             res.get(Faction::Player),
             before - RIFLEMAN_COST,
@@ -1252,7 +1298,10 @@ mod tests {
         assert_eq!(world.building[ci].rally, None, "no rally by default");
 
         let rally = Vec2::new(Fixed::from_int(10), Fixed::from_int(-6));
-        assert!(set_camp_rally(&mut world, camp, rally), "a building accepts a rally");
+        assert!(
+            set_camp_rally(&mut world, camp, rally),
+            "a building accepts a rally"
+        );
         assert_eq!(world.building[ci].rally, Some(rally), "rally is stored");
 
         // A dead / stale handle is a no-op.
@@ -1289,7 +1338,13 @@ mod tests {
         // Set a rally, then produce a rifleman.
         let rally = Vec2::new(Fixed::from_int(12), Fixed::from_int(8));
         assert!(set_camp_rally(&mut world, camp, rally));
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            camp,
+            UnitKind::Rifleman,
+            &NEUTRAL_ARMIES
+        ));
         for _ in 0..prod_time(UnitKind::Rifleman, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1322,7 +1377,13 @@ mod tests {
         for _ in 0..CAMP_BUILD_TICKS {
             tick(&mut world, &mut res, &terr);
         }
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            camp,
+            UnitKind::Rifleman,
+            &NEUTRAL_ARMIES
+        ));
         for _ in 0..prod_time(UnitKind::Rifleman, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1357,7 +1418,13 @@ mod tests {
         }
 
         // Produce a Rifleman, then verify the single spawned unit carries Rifleman.
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            camp,
+            UnitKind::Rifleman,
+            &NEUTRAL_ARMIES
+        ));
         for _ in 0..prod_time(UnitKind::Rifleman, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1367,15 +1434,19 @@ mod tests {
         assert_eq!(world.unit_kind[rifle_idx], UnitKind::Rifleman);
 
         // Produce a Heavy, then verify the new unit carries Heavy (and the rifleman is untouched).
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Heavy, &NEUTRAL_ARMIES));
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            camp,
+            UnitKind::Heavy,
+            &NEUTRAL_ARMIES
+        ));
         for _ in 0..prod_time(UnitKind::Heavy, 0) {
             tick(&mut world, &mut res, &terr);
         }
         let heavy_idx = (0..world.capacity())
             .find(|&i| {
-                world.is_index_alive(i)
-                    && world.kind[i] == EntityKind::Unit
-                    && i != rifle_idx
+                world.is_index_alive(i) && world.kind[i] == EntityKind::Unit && i != rifle_idx
             })
             .expect("a heavy should have spawned");
         assert_eq!(world.unit_kind[heavy_idx], UnitKind::Heavy);
@@ -1463,7 +1534,9 @@ mod tests {
             &mut world,
             &mut res,
             camp,
-            UnitKind::Rifleman, &NEUTRAL_ARMIES));
+            UnitKind::Rifleman,
+            &NEUTRAL_ARMIES
+        ));
         let terr = empty_terr();
         for _ in 0..CAMP_BUILD_TICKS {
             tick(&mut world, &mut res, &terr);
@@ -1476,7 +1549,9 @@ mod tests {
             &mut world,
             &mut res,
             camp,
-            UnitKind::Heavy, &NEUTRAL_ARMIES));
+            UnitKind::Heavy,
+            &NEUTRAL_ARMIES
+        ));
         assert!(world.building[camp.index as usize].queue.is_empty());
     }
 
@@ -1504,7 +1579,16 @@ mod tests {
         for t in 0..(3 * period as u64) {
             let before = res.get(Faction::Player);
             let mut events = Vec::new();
-            economy_system(&mut world, &mut res, &terr, &mut events, &mut rng, t, period, &NEUTRAL_ARMIES);
+            economy_system(
+                &mut world,
+                &mut res,
+                &terr,
+                &mut events,
+                &mut rng,
+                t,
+                period,
+                &NEUTRAL_ARMIES,
+            );
             let gained = res.get(Faction::Player) - before;
             if t.is_multiple_of(period as u64) {
                 assert_eq!(gained, per_accrual, "tick {t} is a boundary → full accrual");
@@ -1519,8 +1603,21 @@ mod tests {
         // A period of 0 is clamped to 1 (every tick), and never panics on the modulo.
         let mut r2 = Resources::new(0);
         let mut ev = Vec::new();
-        economy_system(&mut world, &mut r2, &terr, &mut ev, &mut rng, 7, 0, &NEUTRAL_ARMIES);
-        assert_eq!(r2.get(Faction::Player), per_accrual, "period 0 clamps to full rate");
+        economy_system(
+            &mut world,
+            &mut r2,
+            &terr,
+            &mut ev,
+            &mut rng,
+            7,
+            0,
+            &NEUTRAL_ARMIES,
+        );
+        assert_eq!(
+            r2.get(Faction::Player),
+            per_accrual,
+            "period 0 clamps to full rate"
+        );
     }
 
     #[test]
@@ -1582,7 +1679,10 @@ mod tests {
         assert_eq!(PER_POINT_INCOME, 2 * BASE_INCOME);
         // Heavy is a real investment over the spammable Rifleman (220 vs 100 cost — D30).
         assert!(heavy_cost > rifle_cost, "heavy costs more than a rifleman");
-        assert_eq!(heavy_cost, 220, "heavy costs 220 = 11/5 of a rifleman (D30)");
+        assert_eq!(
+            heavy_cost, 220,
+            "heavy costs 220 = 11/5 of a rifleman (D30)"
+        );
     }
 
     /// Lock the measured combat stats so a stray edit that re-breaks the tuned
@@ -1595,19 +1695,44 @@ mod tests {
         let (rh, rw) = unit_stats(UnitKind::Rifleman);
         assert_eq!(rh, Health::full(Fixed::from_int(100)), "rifleman 100 HP");
         assert_eq!(rw.range, Fixed::from_int(14), "rifleman range 14");
-        assert_eq!(rw.damage, Fixed::from_int(30), "rifleman 30 dmg (D66 lethal: ~4 hits to kill)");
-        assert_eq!(rw.cooldown_ticks, 30, "rifleman 30-tick cooldown -> 60 DPS, ~1-2 s 1v1");
+        assert_eq!(
+            rw.damage,
+            Fixed::from_int(30),
+            "rifleman 30 dmg (D66 lethal: ~4 hits to kill)"
+        );
+        assert_eq!(
+            rw.cooldown_ticks, 30,
+            "rifleman 30-tick cooldown -> 60 DPS, ~1-2 s 1v1"
+        );
 
         let (hh, hw) = unit_stats(UnitKind::Heavy);
-        assert_eq!(hh, Health::full(Fixed::from_int(300)), "heavy 300 HP (3x the 100-HP rifle, rebalance WS-A)");
-        assert_eq!(hw.range, Fixed::from_int(11), "heavy range 11 (shorter than rifle -> kiteable)");
-        assert_eq!(hw.damage, Fixed::from_int(100), "heavy 100 dmg (100 vs 30 rifle burst, rebalance WS-A)");
-        assert_eq!(hw.cooldown_ticks, 48, "heavy 48-tick cooldown -> 100 dmg per 48 ticks");
+        assert_eq!(
+            hh,
+            Health::full(Fixed::from_int(300)),
+            "heavy 300 HP (3x the 100-HP rifle, rebalance WS-A)"
+        );
+        assert_eq!(
+            hw.range,
+            Fixed::from_int(11),
+            "heavy range 11 (shorter than rifle -> kiteable)"
+        );
+        assert_eq!(
+            hw.damage,
+            Fixed::from_int(100),
+            "heavy 100 dmg (100 vs 30 rifle burst, rebalance WS-A)"
+        );
+        assert_eq!(
+            hw.cooldown_ticks, 48,
+            "heavy 48-tick cooldown -> 100 dmg per 48 ticks"
+        );
 
         // The Heavy is a bruiser, not a strict upgrade: shorter range than the Rifleman is the
         // load-bearing weakness that makes the matchup range-dependent (the old Heavy was
         // strictly dominated). Guard that relationship explicitly.
-        assert!(hw.range < rw.range, "heavy must out-range LESS than the rifleman");
+        assert!(
+            hw.range < rw.range,
+            "heavy must out-range LESS than the rifleman"
+        );
         assert!(hh.max > rh.max, "heavy is tankier");
         assert!(hw.damage > rw.damage, "heavy hits harder per shot");
 
@@ -1626,9 +1751,15 @@ mod tests {
         // All-unit ammo loadouts (D67): a full reserve at spawn; the rifle carries six spare mags
         // (~210-round loadout), the bruiser four spare belts. Drawn on reload, rearmed at a camp.
         assert_eq!(rw.reserve, 180, "rifleman carries 6 spare mags");
-        assert_eq!(rw.reserve, rw.reserve_max, "spawns with a full reserve loadout");
+        assert_eq!(
+            rw.reserve, rw.reserve_max,
+            "spawns with a full reserve loadout"
+        );
         assert_eq!(hw.reserve, 200, "heavy carries 4 spare belts");
-        assert_eq!(hw.reserve, hw.reserve_max, "spawns with a full reserve loadout");
+        assert_eq!(
+            hw.reserve, hw.reserve_max,
+            "spawns with a full reserve loadout"
+        );
     }
 
     // --- New content (D65): Tank, Medic, Barracks ------------------------------------------------
@@ -1643,29 +1774,64 @@ mod tests {
         assert_eq!(prod_time(UnitKind::Medic, 0), MEDIC_BASE_TICKS);
         assert_eq!(build_cost(BuildingKind::Barracks), BARRACKS_BUILD_COST);
         assert_eq!(build_ticks(BuildingKind::Barracks), BARRACKS_BUILD_TICKS);
-        assert!(unit_cost(UnitKind::Tank) > unit_cost(UnitKind::Heavy), "tank is the priciest unit");
-        assert!(unit_cost(UnitKind::Medic) < unit_cost(UnitKind::Heavy), "medic is cheap");
-        assert!(build_cost(BuildingKind::Barracks) < build_cost(BuildingKind::Camp), "barracks cheaper");
-        assert!(build_ticks(BuildingKind::Barracks) < build_ticks(BuildingKind::Camp), "barracks faster");
+        assert!(
+            unit_cost(UnitKind::Tank) > unit_cost(UnitKind::Heavy),
+            "tank is the priciest unit"
+        );
+        assert!(
+            unit_cost(UnitKind::Medic) < unit_cost(UnitKind::Heavy),
+            "medic is cheap"
+        );
+        assert!(
+            build_cost(BuildingKind::Barracks) < build_cost(BuildingKind::Camp),
+            "barracks cheaper"
+        );
+        assert!(
+            build_ticks(BuildingKind::Barracks) < build_ticks(BuildingKind::Camp),
+            "barracks faster"
+        );
 
         let (th, tw) = unit_stats(UnitKind::Tank);
-        assert!(th.max > unit_stats(UnitKind::Rifleman).0.max, "tank out-HPs a rifleman");
-        assert!(tw.damage > Fixed::ZERO && tw.range > Fixed::ZERO, "tank has a gun");
+        assert!(
+            th.max > unit_stats(UnitKind::Rifleman).0.max,
+            "tank out-HPs a rifleman"
+        );
+        assert!(
+            tw.damage > Fixed::ZERO && tw.range > Fixed::ZERO,
+            "tank has a gun"
+        );
         assert!(tw.turret_speed > 0, "tank has an independent turret slew");
         // P9/D72: the produced tank now carries a real BALLISTIC main gun — a traveling shell with
         // armour penetration, no longer the D65 hitscan stand-in. (Its `Armor` facets are a separate
         // concern; this asserts only the gun.)
-        assert!(tw.muzzle_vel > Fixed::ZERO, "produced tank fires a ballistic shell (P9, D72)");
-        assert!(tw.penetration > Fixed::ZERO, "the ballistic gun carries armour penetration (P9, D72)");
+        assert!(
+            tw.muzzle_vel > Fixed::ZERO,
+            "produced tank fires a ballistic shell (P9, D72)"
+        );
+        assert!(
+            tw.penetration > Fixed::ZERO,
+            "the ballistic gun carries armour penetration (P9, D72)"
+        );
         // The tank's main gun stows finite shells too (D67) — no more infinite ammo.
         assert!(tw.mag_size > 0, "tank rations its main-gun shells");
         assert_eq!(tw.ammo, tw.mag_size, "tank spawns with a loaded gun");
-        assert!(tw.reserve > 0 && tw.reserve == tw.reserve_max, "tank carries a full shell reserve");
+        assert!(
+            tw.reserve > 0 && tw.reserve == tw.reserve_max,
+            "tank carries a full shell reserve"
+        );
 
         let (mh, mw) = unit_stats(UnitKind::Medic);
         assert!(mh.max > Fixed::ZERO, "medic is alive");
-        assert_eq!(mw.range, Fixed::ZERO, "medic has no weapon range → combat never engages it");
-        assert_eq!(mw.damage, Fixed::ZERO, "medic deals no damage (it heals, via crate::heal)");
+        assert_eq!(
+            mw.range,
+            Fixed::ZERO,
+            "medic has no weapon range → combat never engages it"
+        );
+        assert_eq!(
+            mw.damage,
+            Fixed::ZERO,
+            "medic deals no damage (it heals, via crate::heal)"
+        );
     }
 
     #[test]
@@ -1676,13 +1842,25 @@ mod tests {
         assert!(can_produce(Camp, Rifleman));
         assert!(can_produce(Camp, Heavy));
         assert!(can_produce(Camp, Tank));
-        assert!(!can_produce(Camp, Medic), "the Medic comes only from a Barracks");
-        assert!(!can_produce(Camp, AntiTank), "the AT team comes only from a Barracks (D73)");
+        assert!(
+            !can_produce(Camp, Medic),
+            "the Medic comes only from a Barracks"
+        );
+        assert!(
+            !can_produce(Camp, AntiTank),
+            "the AT team comes only from a Barracks (D73)"
+        );
         // Barracks: infantry + Medic + AntiTank, but NOT vehicles.
         assert!(can_produce(Barracks, Rifleman));
         assert!(can_produce(Barracks, Medic));
-        assert!(can_produce(Barracks, AntiTank), "the Barracks fields the specialist AT team (D73)");
-        assert!(!can_produce(Barracks, Tank), "the Barracks cannot build vehicles");
+        assert!(
+            can_produce(Barracks, AntiTank),
+            "the Barracks fields the specialist AT team (D73)"
+        );
+        assert!(
+            !can_produce(Barracks, Tank),
+            "the Barracks cannot build vehicles"
+        );
         assert!(!can_produce(Barracks, Heavy));
     }
 
@@ -1690,8 +1868,14 @@ mod tests {
     fn queue_production_enforces_routing_without_spending_on_a_reject() {
         let mut world = World::new();
         let mut res = Resources::new(100_000);
-        let camp = build(&mut world, &mut res, Faction::Player, BuildingKind::Camp, Vec2::ZERO)
-            .unwrap();
+        let camp = build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Camp,
+            Vec2::ZERO,
+        )
+        .unwrap();
         let barracks = build(
             &mut world,
             &mut res,
@@ -1709,14 +1893,36 @@ mod tests {
             "a Camp cannot make a Medic"
         );
         assert!(
-            !queue_production(&mut world, &mut res, barracks, UnitKind::Tank, &NEUTRAL_ARMIES),
+            !queue_production(
+                &mut world,
+                &mut res,
+                barracks,
+                UnitKind::Tank,
+                &NEUTRAL_ARMIES
+            ),
             "a Barracks cannot make a Tank"
         );
-        assert_eq!(res.get(Faction::Player), before, "a rejected queue never spends");
+        assert_eq!(
+            res.get(Faction::Player),
+            before,
+            "a rejected queue never spends"
+        );
 
         // The valid routes succeed and spend exactly their cost.
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank, &NEUTRAL_ARMIES));
-        assert!(queue_production(&mut world, &mut res, barracks, UnitKind::Medic, &NEUTRAL_ARMIES));
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            camp,
+            UnitKind::Tank,
+            &NEUTRAL_ARMIES
+        ));
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            barracks,
+            UnitKind::Medic,
+            &NEUTRAL_ARMIES
+        ));
         assert_eq!(res.get(Faction::Player), before - TANK_COST - MEDIC_COST);
     }
 
@@ -1724,19 +1930,38 @@ mod tests {
     fn barracks_builds_with_its_own_hp_and_produces_a_medic() {
         let mut world = World::new();
         let mut res = Resources::new(BARRACKS_BUILD_COST + MEDIC_COST);
-        let bar = build(&mut world, &mut res, Faction::Player, BuildingKind::Barracks, Vec2::ZERO)
-            .unwrap();
+        let bar = build(
+            &mut world,
+            &mut res,
+            Faction::Player,
+            BuildingKind::Barracks,
+            Vec2::ZERO,
+        )
+        .unwrap();
         let i = bar.index as usize;
         assert_eq!(world.building[i].kind, BuildingKind::Barracks);
         assert_eq!(world.building[i].build_ticks_left, BARRACKS_BUILD_TICKS);
-        assert_eq!(world.health[i], Health::full(Fixed::from_int(600)), "barracks HP is its own");
+        assert_eq!(
+            world.health[i],
+            Health::full(Fixed::from_int(600)),
+            "barracks HP is its own"
+        );
 
         let terr = empty_terr();
         for _ in 0..BARRACKS_BUILD_TICKS {
             tick(&mut world, &mut res, &terr);
         }
-        assert_eq!(world.building[i].build_ticks_left, 0, "barracks finished constructing");
-        assert!(queue_production(&mut world, &mut res, bar, UnitKind::Medic, &NEUTRAL_ARMIES));
+        assert_eq!(
+            world.building[i].build_ticks_left, 0,
+            "barracks finished constructing"
+        );
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            bar,
+            UnitKind::Medic,
+            &NEUTRAL_ARMIES
+        ));
         for _ in 0..prod_time(UnitKind::Medic, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -1745,7 +1970,10 @@ mod tests {
                 && world.kind[j] == EntityKind::Unit
                 && world.unit_kind[j] == UnitKind::Medic
         });
-        assert!(medic.is_some(), "the Barracks produced a Medic into the world");
+        assert!(
+            medic.is_some(),
+            "the Barracks produced a Medic into the world"
+        );
     }
 
     /// The anti-tank infantry's stat block meets the D73 balance contract: it PENETRATES the tank's
@@ -1769,13 +1997,25 @@ mod tests {
         assert_eq!(at_w.penetration, ANTITANK_PENETRATION);
 
         // Fragile: below a Rifleman's HP.
-        assert!(at_h.max < rifle_h.max, "AT is fragile (HP below a Rifleman)");
+        assert!(
+            at_h.max < rifle_h.max,
+            "AT is fragile (HP below a Rifleman)"
+        );
 
         // Slow: longer cooldown than a Rifleman, and a shallow magazine (few ready rounds, D67).
-        assert!(at_w.cooldown_ticks > rifle_w.cooldown_ticks, "AT fires slower than a Rifleman");
-        assert!(at_w.mag_size > 0 && at_w.mag_size < rifle_w.mag_size, "AT carries few ready rounds");
+        assert!(
+            at_w.cooldown_ticks > rifle_w.cooldown_ticks,
+            "AT fires slower than a Rifleman"
+        );
+        assert!(
+            at_w.mag_size > 0 && at_w.mag_size < rifle_w.mag_size,
+            "AT carries few ready rounds"
+        );
         assert_eq!(at_w.ammo, at_w.mag_size, "AT spawns with a full launcher");
-        assert_eq!(at_w.reserve, at_w.reserve_max, "AT spawns with a full reserve");
+        assert_eq!(
+            at_w.reserve, at_w.reserve_max,
+            "AT spawns with a full reserve"
+        );
 
         // Poor anti-personnel DPS: damage-per-tick below the Rifleman's (cross-multiplied, integer —
         // invariant #1). at.dmg/at.cd  <  rifle.dmg/rifle.cd.
@@ -1784,13 +2024,21 @@ mod tests {
         assert!(lhs < rhs, "AT's anti-personnel DPS is below a Rifleman's");
 
         // Unarmoured infantry, and hitscan like the other infantry (no shell flight).
-        assert_eq!(unit_armor(UnitKind::AntiTank), Armor::default(), "AT wears no armour");
+        assert_eq!(
+            unit_armor(UnitKind::AntiTank),
+            Armor::default(),
+            "AT wears no armour"
+        );
         assert_eq!(at_w.muzzle_vel, Fixed::ZERO, "AT is hitscan");
 
         // Cost/production sanity: exactly ⅓ of a Tank (the 3-AT-vs-1-tank equal-cost trade), slower to
         // build than a Rifleman.
         assert_eq!(unit_cost(UnitKind::AntiTank), ANTITANK_COST);
-        assert_eq!(unit_cost(UnitKind::AntiTank) * 3, unit_cost(UnitKind::Tank), "3 AT == 1 Tank cost");
+        assert_eq!(
+            unit_cost(UnitKind::AntiTank) * 3,
+            unit_cost(UnitKind::Tank),
+            "3 AT == 1 Tank cost"
+        );
         assert!(
             prod_time(UnitKind::AntiTank, 0) > prod_time(UnitKind::Rifleman, 0),
             "AT is slower to produce than a Rifleman"
@@ -1852,14 +2100,23 @@ mod tests {
             // Shared combat-power axes (the fairness bound).
             assert_eq!(uh, fh, "{kind:?}: HP is shared");
             assert_eq!(uw.damage, fw.damage, "{kind:?}: per-shot damage is shared");
-            assert_eq!(uw.cooldown_ticks, fw.cooldown_ticks, "{kind:?}: cadence is shared");
+            assert_eq!(
+                uw.cooldown_ticks, fw.cooldown_ticks,
+                "{kind:?}: cadence is shared"
+            );
             assert_eq!(uw.range, fw.range, "{kind:?}: range is shared");
-            assert_eq!(uw.penetration, fw.penetration, "{kind:?}: penetration is shared");
+            assert_eq!(
+                uw.penetration, fw.penetration,
+                "{kind:?}: penetration is shared"
+            );
         }
         // The Medic (non-combatant) and the AntiTank (shallow 4-round launcher → no fair logistics
         // tilt, and no turret to tilt cosmetically) carry NO per-army tilt — shared across every army.
         for army in [Army::Neutral, Army::Us, Army::Fr] {
-            assert_eq!(unit_stats_for(army, UnitKind::Medic), unit_stats(UnitKind::Medic));
+            assert_eq!(
+                unit_stats_for(army, UnitKind::Medic),
+                unit_stats(UnitKind::Medic)
+            );
             assert_eq!(
                 unit_stats_for(army, UnitKind::AntiTank),
                 unit_stats(UnitKind::AntiTank),
@@ -1879,13 +2136,26 @@ mod tests {
             let us = unit_stats_for(Army::Us, kind).1;
             let fr = unit_stats_for(Army::Fr, kind).1;
             // Doctrine direction: US deeper magazine, FR shallower.
-            assert!(us.mag_size > base.mag_size && base.mag_size > fr.mag_size, "{kind:?}: US deep, FR shallow magazine");
-            assert!(us.reload_ticks > base.reload_ticks && base.reload_ticks > fr.reload_ticks, "{kind:?}: reload tracks magazine depth");
+            assert!(
+                us.mag_size > base.mag_size && base.mag_size > fr.mag_size,
+                "{kind:?}: US deep, FR shallow magazine"
+            );
+            assert!(
+                us.reload_ticks > base.reload_ticks && base.reload_ticks > fr.reload_ticks,
+                "{kind:?}: reload tracks magazine depth"
+            );
             // A full magazine at spawn (mirrors `unit_stats`), and the SAME reserve mag-count for both.
             for w in [us, fr] {
                 assert_eq!(w.ammo, w.mag_size, "{kind:?}: spawns with a full magazine");
-                assert_eq!(w.reserve, w.reserve_max, "{kind:?}: spawns with a full reserve");
-                assert_eq!(w.reserve / w.mag_size, mag_count(kind), "{kind:?}: same reserve mag-count → same depth");
+                assert_eq!(
+                    w.reserve, w.reserve_max,
+                    "{kind:?}: spawns with a full reserve"
+                );
+                assert_eq!(
+                    w.reserve / w.mag_size,
+                    mag_count(kind),
+                    "{kind:?}: same reserve mag-count → same depth"
+                );
             }
             // Reload/magazine ratio preserved (sustained DPS invariant) to within the integer
             // rounding of the reload tick (≤1 tick: e.g. the Heavy's 138/50 ratio at mag 60 rounds
@@ -1893,7 +2163,10 @@ mod tests {
             for w in [us, fr] {
                 let lhs = (w.reload_ticks as i64) * (base.mag_size as i64);
                 let rhs = (base.reload_ticks as i64) * (w.mag_size as i64);
-                assert!((lhs - rhs).abs() <= (w.mag_size as i64), "{kind:?}: reload/mag ratio held (sustained DPS invariant)");
+                assert!(
+                    (lhs - rhs).abs() <= (w.mag_size as i64),
+                    "{kind:?}: reload/mag ratio held (sustained DPS invariant)"
+                );
             }
         }
     }
@@ -1914,7 +2187,10 @@ mod tests {
             assert_eq!(w.damage, base.damage, "tank gun is shared");
         }
         // Only the (cosmetic) turret slew differs: US slower manual-loader, FR quicker autoloader.
-        assert!(us.turret_speed < fr.turret_speed, "US turret slews slower than FR (cosmetic identity)");
+        assert!(
+            us.turret_speed < fr.turret_speed,
+            "US turret slews slower than FR (cosmetic identity)"
+        );
         assert_ne!(us.turret_speed, base.turret_speed);
     }
 
@@ -1928,7 +2204,14 @@ mod tests {
         let produce_for = |army: Army| -> Weapon {
             let mut world = World::new();
             let mut res = Resources::new(CAMP_BUILD_COST + RIFLEMAN_COST);
-            let camp = build(&mut world, &mut res, Faction::Player, BuildingKind::Camp, Vec2::ZERO).unwrap();
+            let camp = build(
+                &mut world,
+                &mut res,
+                Faction::Player,
+                BuildingKind::Camp,
+                Vec2::ZERO,
+            )
+            .unwrap();
             let terr = empty_terr();
             let armies = {
                 let mut a = [Army::Neutral; FACTION_COUNT];
@@ -1938,7 +2221,13 @@ mod tests {
             for _ in 0..CAMP_BUILD_TICKS {
                 tick_armies(&mut world, &mut res, &terr, &armies);
             }
-            assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
+            assert!(queue_production(
+                &mut world,
+                &mut res,
+                camp,
+                UnitKind::Rifleman,
+                &NEUTRAL_ARMIES
+            ));
             for _ in 0..prod_time(UnitKind::Rifleman, 0) {
                 tick_armies(&mut world, &mut res, &terr, &armies);
             }
@@ -1947,11 +2236,27 @@ mod tests {
                 .expect("a rifleman spawned");
             world.weapon[u]
         };
-        assert_eq!(produce_for(Army::Us), unit_stats_for(Army::Us, UnitKind::Rifleman).1, "US camp fields the US variant");
-        assert_eq!(produce_for(Army::Fr), unit_stats_for(Army::Fr, UnitKind::Rifleman).1, "FR camp fields the FR variant");
-        assert_eq!(produce_for(Army::Neutral), unit_stats(UnitKind::Rifleman).1, "non-aligned camp fields the baseline");
+        assert_eq!(
+            produce_for(Army::Us),
+            unit_stats_for(Army::Us, UnitKind::Rifleman).1,
+            "US camp fields the US variant"
+        );
+        assert_eq!(
+            produce_for(Army::Fr),
+            unit_stats_for(Army::Fr, UnitKind::Rifleman).1,
+            "FR camp fields the FR variant"
+        );
+        assert_eq!(
+            produce_for(Army::Neutral),
+            unit_stats(UnitKind::Rifleman).1,
+            "non-aligned camp fields the baseline"
+        );
         // The point of the roster: the US and FR produced units genuinely differ.
-        assert_ne!(produce_for(Army::Us), produce_for(Army::Fr), "the two armies produce distinct units");
+        assert_ne!(
+            produce_for(Army::Us),
+            produce_for(Army::Fr),
+            "the two armies produce distinct units"
+        );
     }
 
     // --- WW2 cost-vs-power armies (D120) -----------------------------------------------------------
@@ -1963,27 +2268,58 @@ mod tests {
     #[test]
     fn ww2_tank_cost_tilt_only_touches_the_ww2_tank() {
         assert_eq!(unit_cost_for(Army::UsWw2, UnitKind::Tank), USWW2_TANK_COST);
-        assert_eq!(unit_cost_for(Army::Germany, UnitKind::Tank), GERMANY_TANK_COST);
+        assert_eq!(
+            unit_cost_for(Army::Germany, UnitKind::Tank),
+            GERMANY_TANK_COST
+        );
         // Bind to locals so clippy doesn't flag the const comparison as a constant assertion (the
         // `balance_baseline_reads_in_seconds` pattern).
         let (sherman, panther, shared) = (USWW2_TANK_COST, GERMANY_TANK_COST, TANK_COST);
         assert_eq!(sherman, 240, "Sherman is the cheap tank");
-        assert_eq!(panther, 960, "Tiger is the pricey tank (D122: raised from 480 — armour makes it far stronger)");
-        assert!(sherman < shared && panther > shared, "cheaper / pricier than shared");
-        assert_eq!(panther, 4 * sherman, "4:1 cost ratio → 4:1 counts at equal budget (D122)");
+        assert_eq!(
+            panther, 960,
+            "Tiger is the pricey tank (D122: raised from 480 — armour makes it far stronger)"
+        );
+        assert!(
+            sherman < shared && panther > shared,
+            "cheaper / pricier than shared"
+        );
+        assert_eq!(
+            panther,
+            4 * sherman,
+            "4:1 cost ratio → 4:1 counts at equal budget (D122)"
+        );
         // unit_cost is the Neutral-baseline delegate: every existing caller is unchanged.
-        for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank, UnitKind::Medic, UnitKind::AntiTank] {
-            assert_eq!(unit_cost(kind), unit_cost_for(Army::Neutral, kind), "{kind:?}: unit_cost == Neutral");
+        for kind in [
+            UnitKind::Rifleman,
+            UnitKind::Heavy,
+            UnitKind::Tank,
+            UnitKind::Medic,
+            UnitKind::AntiTank,
+        ] {
+            assert_eq!(
+                unit_cost(kind),
+                unit_cost_for(Army::Neutral, kind),
+                "{kind:?}: unit_cost == Neutral"
+            );
             // WW2 armies only tilt the TANK price; every other archetype keeps the shared cost.
             for army in [Army::UsWw2, Army::Germany] {
                 if kind != UnitKind::Tank {
-                    assert_eq!(unit_cost_for(army, kind), unit_cost(kind), "{army:?}/{kind:?}: only the tank is tilted");
+                    assert_eq!(
+                        unit_cost_for(army, kind),
+                        unit_cost(kind),
+                        "{army:?}/{kind:?}: only the tank is tilted"
+                    );
                 }
             }
         }
         // The modern armies keep the shared tank price (their equal-COUNT balance, D71, is untouched).
         for army in [Army::Neutral, Army::Us, Army::Fr] {
-            assert_eq!(unit_cost_for(army, UnitKind::Tank), TANK_COST, "{army:?} keeps TANK_COST=360");
+            assert_eq!(
+                unit_cost_for(army, UnitKind::Tank),
+                TANK_COST,
+                "{army:?} keeps TANK_COST=360"
+            );
         }
     }
 
@@ -1998,32 +2334,76 @@ mod tests {
         let (gh, gw) = unit_stats_for(Army::Germany, UnitKind::Tank);
 
         // HP: Sherman below the shared 300, Panther above; matches the tuned constants.
-        assert_eq!(sh, Health::full(Fixed::from_int(USWW2_TANK_HP)), "Sherman HP");
-        assert_eq!(gh, Health::full(Fixed::from_int(GERMANY_TANK_HP)), "Panther HP");
-        assert!(sh.max < base.0.max && base.0.max < gh.max, "Sherman weaker, Panther tougher than shared");
+        assert_eq!(
+            sh,
+            Health::full(Fixed::from_int(USWW2_TANK_HP)),
+            "Sherman HP"
+        );
+        assert_eq!(
+            gh,
+            Health::full(Fixed::from_int(GERMANY_TANK_HP)),
+            "Panther HP"
+        );
+        assert!(
+            sh.max < base.0.max && base.0.max < gh.max,
+            "Sherman weaker, Panther tougher than shared"
+        );
 
         // Penetration: Sherman keeps the shared 18 (bounces 40-front); Panther 20 (2·20 ≥ 40 → cracks it).
-        assert_eq!(sw.penetration, base.1.penetration, "Sherman keeps the shared 18-pen gun");
+        assert_eq!(
+            sw.penetration, base.1.penetration,
+            "Sherman keeps the shared 18-pen gun"
+        );
         assert_eq!(gw.penetration, GERMANY_TANK_PENETRATION);
-        assert!(gw.penetration >= Fixed::from_int(20), "Panther gun cracks the shared 40-front");
-        assert!(2 * gw.penetration.to_bits() >= TANK_ARMOR_FRONT.to_bits(), "2·pen ≥ TANK_ARMOR_FRONT");
-        assert!(2 * sw.penetration.to_bits() < TANK_ARMOR_FRONT.to_bits(), "Sherman bounces the front");
+        assert!(
+            gw.penetration >= Fixed::from_int(20),
+            "Panther gun cracks the shared 40-front"
+        );
+        assert!(
+            2 * gw.penetration.to_bits() >= TANK_ARMOR_FRONT.to_bits(),
+            "2·pen ≥ TANK_ARMOR_FRONT"
+        );
+        assert!(
+            2 * sw.penetration.to_bits() < TANK_ARMOR_FRONT.to_bits(),
+            "Sherman bounces the front"
+        );
 
         // Everything ELSE is the shared baseline: WW2 infantry untouched, gun damage/cadence/range shared.
         for army in [Army::UsWw2, Army::Germany] {
-            for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Medic, UnitKind::AntiTank] {
-                assert_eq!(unit_stats_for(army, kind), unit_stats(kind), "{army:?}/{kind:?}: WW2 infantry is shared");
+            for kind in [
+                UnitKind::Rifleman,
+                UnitKind::Heavy,
+                UnitKind::Medic,
+                UnitKind::AntiTank,
+            ] {
+                assert_eq!(
+                    unit_stats_for(army, kind),
+                    unit_stats(kind),
+                    "{army:?}/{kind:?}: WW2 infantry is shared"
+                );
             }
             let w = unit_stats_for(army, UnitKind::Tank).1;
-            assert_eq!(w.damage, base.1.damage, "{army:?} tank keeps the shared gun damage");
-            assert_eq!(w.cooldown_ticks, base.1.cooldown_ticks, "{army:?} tank keeps the shared cadence");
-            assert_eq!(w.range, base.1.range, "{army:?} tank keeps the shared range");
+            assert_eq!(
+                w.damage, base.1.damage,
+                "{army:?} tank keeps the shared gun damage"
+            );
+            assert_eq!(
+                w.cooldown_ticks, base.1.cooldown_ticks,
+                "{army:?} tank keeps the shared cadence"
+            );
+            assert_eq!(
+                w.range, base.1.range,
+                "{army:?} tank keeps the shared range"
+            );
         }
         // The modern Neutral/Us/Fr tanks carry NO power tilt (their HP + penetration stay shared).
         for army in [Army::Neutral, Army::Us, Army::Fr] {
             let (h, w) = unit_stats_for(army, UnitKind::Tank);
             assert_eq!(h, base.0, "{army:?} tank HP is shared (no power tilt)");
-            assert_eq!(w.penetration, base.1.penetration, "{army:?} tank penetration is shared");
+            assert_eq!(
+                w.penetration, base.1.penetration,
+                "{army:?} tank penetration is shared"
+            );
         }
     }
 
@@ -2035,7 +2415,14 @@ mod tests {
         let charge_for = |army: Army| -> i64 {
             let mut world = World::new();
             let mut res = Resources::new(100_000);
-            let camp = build(&mut world, &mut res, Faction::Player, BuildingKind::Camp, Vec2::ZERO).unwrap();
+            let camp = build(
+                &mut world,
+                &mut res,
+                Faction::Player,
+                BuildingKind::Camp,
+                Vec2::ZERO,
+            )
+            .unwrap();
             world.building[camp.index as usize].build_ticks_left = 0;
             let armies = {
                 let mut a = [Army::Neutral; FACTION_COUNT];
@@ -2043,12 +2430,30 @@ mod tests {
                 a
             };
             let before = res.get(Faction::Player);
-            assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank, &armies));
+            assert!(queue_production(
+                &mut world,
+                &mut res,
+                camp,
+                UnitKind::Tank,
+                &armies
+            ));
             before - res.get(Faction::Player)
         };
-        assert_eq!(charge_for(Army::UsWw2), USWW2_TANK_COST, "Sherman camp charges the cheap price");
-        assert_eq!(charge_for(Army::Germany), GERMANY_TANK_COST, "Panther camp charges the pricey price");
-        assert_eq!(charge_for(Army::Neutral), TANK_COST, "a non-WW2 camp charges the shared price");
+        assert_eq!(
+            charge_for(Army::UsWw2),
+            USWW2_TANK_COST,
+            "Sherman camp charges the cheap price"
+        );
+        assert_eq!(
+            charge_for(Army::Germany),
+            GERMANY_TANK_COST,
+            "Panther camp charges the pricey price"
+        );
+        assert_eq!(
+            charge_for(Army::Neutral),
+            TANK_COST,
+            "a non-WW2 camp charges the shared price"
+        );
     }
 
     // =======================================================================
@@ -2068,7 +2473,11 @@ mod tests {
                 unit_armor(kind).is_unarmored(),
                 "{kind:?} must carry no armour — preserves today's damage exactly",
             );
-            assert_eq!(unit_armor(kind), Armor::default(), "{kind:?} is the unarmoured default");
+            assert_eq!(
+                unit_armor(kind),
+                Armor::default(),
+                "{kind:?} is the unarmoured default"
+            );
         }
     }
 
@@ -2080,7 +2489,10 @@ mod tests {
         assert!(!a.is_unarmored(), "the produced tank is armoured");
         assert!(a.front > a.side, "front is the thickest facet");
         assert!(a.side > a.rear, "side is thicker than rear");
-        assert!(a.rear > Fixed::ZERO, "every facet is real armour (positive)");
+        assert!(
+            a.rear > Fixed::ZERO,
+            "every facet is real armour (positive)"
+        );
         assert_eq!(a.front, TANK_ARMOR_FRONT);
         assert_eq!(a.side, TANK_ARMOR_SIDE);
         assert_eq!(a.rear, TANK_ARMOR_REAR);
@@ -2098,30 +2510,69 @@ mod tests {
         let base = unit_armor_for(Army::Neutral, UnitKind::Tank);
 
         // Tiger: thicker than baseline on every facet, still well-ordered front>side>rear.
-        assert!(tiger.front > base.front && tiger.side > base.side && tiger.rear > base.rear,
-            "the Tiger is more thickly armoured than the shared tank on every facet");
-        assert!(tiger.front > tiger.side && tiger.side > tiger.rear, "Tiger armour stays well-ordered");
+        assert!(
+            tiger.front > base.front && tiger.side > base.side && tiger.rear > base.rear,
+            "the Tiger is more thickly armoured than the shared tank on every facet"
+        );
+        assert!(
+            tiger.front > tiger.side && tiger.side > tiger.rear,
+            "Tiger armour stays well-ordered"
+        );
         // The frontal-stalemate math: the Tiger front bounces BOTH the Sherman's pen 18 (2·18 = 36)
         // and its own pen 20 (2·20 = 40) — hard bounces, since 2·p ≤ front for both.
-        assert!(Fixed::from_int(36) < tiger.front, "Sherman pen 18 hard-bounces the Tiger front (2·18 < front)");
-        assert!(Fixed::from_int(40) < tiger.front, "even the Tiger's own pen 20 bounces its front (2·20 < front)");
+        assert!(
+            Fixed::from_int(36) < tiger.front,
+            "Sherman pen 18 hard-bounces the Tiger front (2·18 < front)"
+        );
+        assert!(
+            Fixed::from_int(40) < tiger.front,
+            "even the Tiger's own pen 20 bounces its front (2·20 < front)"
+        );
         // But the Tiger's FLANK falls to the Sherman's gun (2·18 = 36 ≥ side) — out-flank to kill.
-        assert!(Fixed::from_int(36) >= tiger.side, "the Sherman's pen 18 cracks the Tiger flank (2·18 ≥ side)");
+        assert!(
+            Fixed::from_int(36) >= tiger.side,
+            "the Sherman's pen 18 cracks the Tiger flank (2·18 ≥ side)"
+        );
 
         // Sherman: thinner front than baseline, cracked head-on by the German pen-20 gun (2·20 = 40 > front).
-        assert!(sherman.front < base.front, "the Sherman front is thinner than the shared plate");
-        assert!(Fixed::from_int(40) > sherman.front, "the Tiger gun (pen 20) cracks the Sherman front (2·20 > front)");
+        assert!(
+            sherman.front < base.front,
+            "the Sherman front is thinner than the shared plate"
+        );
+        assert!(
+            Fixed::from_int(40) > sherman.front,
+            "the Tiger gun (pen 20) cracks the Sherman front (2·20 > front)"
+        );
 
         // Every non-WW2 army keeps the shared baseline plate byte-for-byte (modern balance untouched).
         for army in [Army::Neutral, Army::Us, Army::Fr] {
-            assert_eq!(unit_armor_for(army, UnitKind::Tank), base, "{army:?} keeps the shared tank plate");
+            assert_eq!(
+                unit_armor_for(army, UnitKind::Tank),
+                base,
+                "{army:?} keeps the shared tank plate"
+            );
         }
         // `unit_armor` delegates to `unit_armor_for(Neutral, _)` — the canonical byte-identical entry point.
         assert_eq!(unit_armor(UnitKind::Tank), base);
         // Non-tank archetypes stay unarmoured regardless of army (armour is a Tank-only concern).
-        for army in [Army::Neutral, Army::Us, Army::Fr, Army::UsWw2, Army::Germany] {
-            for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Medic, UnitKind::AntiTank] {
-                assert_eq!(unit_armor_for(army, kind), Armor::default(), "{army:?} {kind:?} is unarmoured");
+        for army in [
+            Army::Neutral,
+            Army::Us,
+            Army::Fr,
+            Army::UsWw2,
+            Army::Germany,
+        ] {
+            for kind in [
+                UnitKind::Rifleman,
+                UnitKind::Heavy,
+                UnitKind::Medic,
+                UnitKind::AntiTank,
+            ] {
+                assert_eq!(
+                    unit_armor_for(army, kind),
+                    Armor::default(),
+                    "{army:?} {kind:?} is unarmoured"
+                );
             }
         }
     }
@@ -2147,7 +2598,13 @@ mod tests {
         }
 
         // Produce a Tank → it spawns armoured.
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Tank, &NEUTRAL_ARMIES));
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            camp,
+            UnitKind::Tank,
+            &NEUTRAL_ARMIES
+        ));
         for _ in 0..prod_time(UnitKind::Tank, 0) {
             tick(&mut world, &mut res, &terr);
         }
@@ -2163,15 +2620,19 @@ mod tests {
         assert!(!world.armor[tank_idx].is_unarmored());
 
         // Produce a Rifleman → it spawns unarmoured (no regression at the spawn site).
-        assert!(queue_production(&mut world, &mut res, camp, UnitKind::Rifleman, &NEUTRAL_ARMIES));
+        assert!(queue_production(
+            &mut world,
+            &mut res,
+            camp,
+            UnitKind::Rifleman,
+            &NEUTRAL_ARMIES
+        ));
         for _ in 0..prod_time(UnitKind::Rifleman, 0) {
             tick(&mut world, &mut res, &terr);
         }
         let rifle_idx = (0..world.capacity())
             .find(|&i| {
-                world.is_index_alive(i)
-                    && world.kind[i] == EntityKind::Unit
-                    && i != tank_idx
+                world.is_index_alive(i) && world.kind[i] == EntityKind::Unit && i != tank_idx
             })
             .expect("a rifleman should have spawned");
         assert!(
@@ -2272,16 +2733,30 @@ mod tests {
         // Bind the consts to locals so clippy doesn't flag the comparison as a constant assertion
         // (the pattern `balance_baseline_reads_in_seconds` already uses).
         let (tank_cost, heavy_cost, rifle_cost) = (TANK_COST, HEAVY_COST, RIFLEMAN_COST);
-        assert_eq!(tank_cost, 360, "produced tank costs 360 (measured cost-parity, D30/W7)");
-        assert!(tank_cost > heavy_cost && tank_cost > rifle_cost, "the tank is the priciest unit");
+        assert_eq!(
+            tank_cost, 360,
+            "produced tank costs 360 (measured cost-parity, D30/W7)"
+        );
+        assert!(
+            tank_cost > heavy_cost && tank_cost > rifle_cost,
+            "the tank is the priciest unit"
+        );
         // An equal budget buys whole numbers of each archetype — the equal-cost trade the harness runs.
         assert_eq!(360 / RIFLEMAN_COST, 3, "360 buys 1 tank or 3 riflemen");
         assert_eq!(360 / HEAVY_COST, 1, "360 buys 1 tank or 1 heavy");
 
         // The stat block the measured outcome flows from: 300 HP + a duel-class penetrating gun (18).
         let (th, tw) = unit_stats(UnitKind::Tank);
-        assert_eq!(th, Health::full(Fixed::from_int(300)), "tank 300 HP (the wall the harness measured)");
-        assert_eq!(tw.penetration, Fixed::from_int(18), "tank gun pen 18 (bounces a 40-front, pens 16/8)");
+        assert_eq!(
+            th,
+            Health::full(Fixed::from_int(300)),
+            "tank 300 HP (the wall the harness measured)"
+        );
+        assert_eq!(
+            tw.penetration,
+            Fixed::from_int(18),
+            "tank gun pen 18 (bounces a 40-front, pens 16/8)"
+        );
 
         // The load-bearing D30 mechanism: EVERY existing infantry weapon fires at penetration 0, and a
         // pen-0 shot bounces every facet of the tank's armour → infantry deal literally zero damage, at
@@ -2289,7 +2764,11 @@ mod tests {
         let armor = unit_armor(UnitKind::Tank);
         for inf in [UnitKind::Rifleman, UnitKind::Heavy] {
             let (_h, w) = unit_stats(inf);
-            assert_eq!(w.penetration, Fixed::ZERO, "{inf:?} fires at penetration 0 (cannot pen armour)");
+            assert_eq!(
+                w.penetration,
+                Fixed::ZERO,
+                "{inf:?} fires at penetration 0 (cannot pen armour)"
+            );
             for dir in [
                 Vec2::new(Fixed::ONE, Fixed::ZERO),
                 Vec2::new(-Fixed::ONE, Fixed::ZERO),

@@ -148,17 +148,38 @@ mod tests {
     #[test]
     fn semi_auto_fires_only_on_the_press_edge() {
         // Holding the trigger (held stays true) emits exactly one shot: the frame the press begins.
-        assert!(should_emit_fire(FireMode::Semi, true, false), "rising edge fires");
-        assert!(!should_emit_fire(FireMode::Semi, true, true), "still-held does NOT keep firing");
-        assert!(!should_emit_fire(FireMode::Semi, false, true), "release does not fire");
-        assert!(!should_emit_fire(FireMode::Semi, false, false), "idle does not fire");
+        assert!(
+            should_emit_fire(FireMode::Semi, true, false),
+            "rising edge fires"
+        );
+        assert!(
+            !should_emit_fire(FireMode::Semi, true, true),
+            "still-held does NOT keep firing"
+        );
+        assert!(
+            !should_emit_fire(FireMode::Semi, false, true),
+            "release does not fire"
+        );
+        assert!(
+            !should_emit_fire(FireMode::Semi, false, false),
+            "idle does not fire"
+        );
     }
 
     #[test]
     fn full_auto_fires_every_held_frame() {
-        assert!(should_emit_fire(FireMode::Auto, true, false), "auto fires on the edge");
-        assert!(should_emit_fire(FireMode::Auto, true, true), "and keeps firing while held (spray)");
-        assert!(!should_emit_fire(FireMode::Auto, false, true), "but not once released");
+        assert!(
+            should_emit_fire(FireMode::Auto, true, false),
+            "auto fires on the edge"
+        );
+        assert!(
+            should_emit_fire(FireMode::Auto, true, true),
+            "and keeps firing while held (spray)"
+        );
+        assert!(
+            !should_emit_fire(FireMode::Auto, false, true),
+            "but not once released"
+        );
     }
 
     #[test]
@@ -171,16 +192,31 @@ mod tests {
     #[test]
     fn chamber_cycle_ramps_from_zero_at_the_shot_to_ready() {
         assert_eq!(semi_cycle_phase(None, 100), 1.0, "no shot → ready");
-        assert_eq!(semi_cycle_phase(Some(100), 100), 0.0, "just fired → action open");
+        assert_eq!(
+            semi_cycle_phase(Some(100), 100),
+            0.0,
+            "just fired → action open"
+        );
         let mid = semi_cycle_phase(Some(100), 100 + CHAMBER_CYCLE_TICKS / 2);
-        assert!(mid > 0.0 && mid < 1.0, "mid-cycle is working the action ({mid})");
+        assert!(
+            mid > 0.0 && mid < 1.0,
+            "mid-cycle is working the action ({mid})"
+        );
         assert_eq!(
             semi_cycle_phase(Some(100), 100 + CHAMBER_CYCLE_TICKS),
             1.0,
             "chambered by the end of the window",
         );
-        assert_eq!(semi_cycle_phase(Some(100), 100 + CHAMBER_CYCLE_TICKS + 50), 1.0, "and stays ready");
-        assert_eq!(semi_cycle_phase(Some(100), 90), 1.0, "a future-stamped shot reads as ready");
+        assert_eq!(
+            semi_cycle_phase(Some(100), 100 + CHAMBER_CYCLE_TICKS + 50),
+            1.0,
+            "and stays ready"
+        );
+        assert_eq!(
+            semi_cycle_phase(Some(100), 90),
+            1.0,
+            "a future-stamped shot reads as ready"
+        );
     }
 
     #[test]

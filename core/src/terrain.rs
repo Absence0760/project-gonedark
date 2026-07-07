@@ -79,7 +79,7 @@ pub struct Terrain {
 /// Terrain is static map data (never mutated by a system, never in the per-tick checksum), so the
 /// authoritative snapshot (D28) carries this small id rather than the whole `GRID×GRID` grid: the
 /// resuming peer rebuilds the identical terrain from the id via [`Terrain::from_map_id`]. The
-/// only scene today is the open playfield, which is map id `0` ([`MapId::SCENE`]).
+/// only scene today is the open playfield, which is map id `0` (`MapId::SCENE`).
 pub type MapId = u16;
 
 impl Terrain {
@@ -443,7 +443,10 @@ mod tests {
         assert_eq!(Cover::None.damage_multiplier(), Fixed::ONE);
         assert_eq!(Cover::Light.damage_multiplier(), Fixed::from_ratio(1, 2));
         assert_eq!(Cover::Heavy.damage_multiplier(), Fixed::from_ratio(1, 4));
-        assert_eq!(Cover::Impassable.damage_multiplier(), Fixed::from_ratio(1, 4));
+        assert_eq!(
+            Cover::Impassable.damage_multiplier(),
+            Fixed::from_ratio(1, 4)
+        );
         assert!(!Cover::None.blocks_sight());
         assert!(!Cover::Light.blocks_sight());
         assert!(Cover::Heavy.blocks_sight());
@@ -730,7 +733,7 @@ mod tests {
             grid.push('\n');
         }
         let t = Terrain::from_cover_grid(&grid); // must not panic
-        // In-bounds corner got written; the overflow was dropped.
+                                                 // In-bounds corner got written; the overflow was dropped.
         assert_eq!(
             t.cover_at_cell(GRID as i32 - 1, GRID as i32 - 1),
             Cover::Impassable
@@ -769,7 +772,10 @@ mod tests {
                 }
             }
         }
-        assert!(any_cover > 0, "baked map must have cover (covergrid was read)");
+        assert!(
+            any_cover > 0,
+            "baked map must have cover (covergrid was read)"
+        );
         assert!(
             sight_blocking > 0,
             "baked map must have at least one sight-blocking cell"
@@ -816,8 +822,14 @@ mod tests {
                 );
             }
         }
-        assert!(any_cover > 0, "prokhorovka must have cover (covergrid was read)");
-        assert!(sight_blocking > 0, "prokhorovka must have sight-blocking cover");
+        assert!(
+            any_cover > 0,
+            "prokhorovka must have cover (covergrid was read)"
+        );
+        assert!(
+            sight_blocking > 0,
+            "prokhorovka must have sight-blocking cover"
+        );
     }
 
     #[test]

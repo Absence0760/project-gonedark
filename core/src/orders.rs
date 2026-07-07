@@ -1,7 +1,7 @@
 //! The order/stance executor — the literal-executor unit AI (invariant #3, D3/D23).
 //!
 //! This is where the **depth lives in the order vocabulary, not the AI brain** (game-design
-//! §8): a unit holds its last [`Order`](crate::components::Order) + [`Stance`] and does
+//! §8): a unit holds its last [`Order`] + `Stance` and does
 //! exactly that, every tick, forever, with no autonomy. `order_system` is the sole mover (it
 //! built on the Phase 1 movement, now folded into [`systems::step_toward`]) and handles the
 //! full Phase 2 vocabulary:
@@ -380,7 +380,7 @@ mod tests {
         w.order[fi] = Order::MoveTo(target);
         w.order[bi] = Order::MoveTo(target);
         w.weapon[fi].move_speed_delta = Fixed::from_ratio(1, 32); // faster stock
-        // base unit keeps move_speed_delta == 0 (Weapon::default)
+                                                                  // base unit keeps move_speed_delta == 0 (Weapon::default)
         run(&mut w, 5);
         assert!(
             w.pos[fi].x > w.pos[bi].x,

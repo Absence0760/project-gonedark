@@ -27,8 +27,16 @@ pub(crate) fn build_channel(debug_assertions: bool) -> &'static str {
 /// is about the sim, not the renderer's float boundary).
 pub(crate) fn pointer_to_ndc(pos: [f32; 2], size_points: [f32; 2]) -> [f32; 2] {
     // Guard a zero/negative extent (a not-yet-sized surface) so we never divide by zero.
-    let w = if size_points[0] > 0.0 { size_points[0] } else { 1.0 };
-    let h = if size_points[1] > 0.0 { size_points[1] } else { 1.0 };
+    let w = if size_points[0] > 0.0 {
+        size_points[0]
+    } else {
+        1.0
+    };
+    let h = if size_points[1] > 0.0 {
+        size_points[1]
+    } else {
+        1.0
+    };
     [(pos[0] / w) * 2.0 - 1.0, 1.0 - (pos[1] / h) * 2.0]
 }
 

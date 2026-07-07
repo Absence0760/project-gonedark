@@ -158,7 +158,10 @@ async fn liveops_public_config_without_consent_omits_personalized() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
     let s = String::from_utf8(body.to_vec()).unwrap();
-    assert!(s.contains("\"public\""), "public config always present: {s}");
+    assert!(
+        s.contains("\"public\""),
+        "public config always present: {s}"
+    );
     assert!(
         !s.contains("personalized"),
         "personalized config withheld without consent: {s}"
@@ -253,8 +256,15 @@ async fn liveops_rotation_period_served_without_consent() {
     let cfg: gonedark_server::liveops::LiveOpsConfig = serde_json::from_slice(&body).unwrap();
     assert_eq!(cfg.public.modifier_rotation_period, Some(7));
     assert_eq!(cfg.public.modifier_track, 0);
-    assert_eq!(cfg.personalized, None, "no consent header ⇒ no personalized config");
-    assert_eq!(cfg.effective_modifier_track(), 0, "falls back to the public track without consent");
+    assert_eq!(
+        cfg.personalized, None,
+        "no consent header ⇒ no personalized config"
+    );
+    assert_eq!(
+        cfg.effective_modifier_track(),
+        0,
+        "falls back to the public track without consent"
+    );
 }
 
 /// CP-8: a consent-gated experiment track override only takes effect once analytics consent is
@@ -316,7 +326,12 @@ async fn liveops_track_override_requires_consent_over_http() {
 async fn health_still_ok() {
     let app = router(AppState::in_memory());
     let resp = app
-        .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

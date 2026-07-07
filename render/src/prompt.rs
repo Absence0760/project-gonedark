@@ -3,7 +3,7 @@
 //!
 //! Like [`overlay`](crate::overlay) and [`objective_hud`](crate::objective_hud) this is a screen-
 //! space LOAD pass + a **pure presentation derivation**: the host (`engine::onboarding`) owns the
-//! teach state machine and hands in exactly which [`Prompt`] to draw; this module turns it into NDC
+//! teach state machine and hands in exactly which `Prompt` to draw; this module turns it into NDC
 //! quads + labels through the shared overlay-quad + [`text`](crate::text) passes.
 //!
 //! ## Fairness (invariant #6) is structural
@@ -14,8 +14,8 @@
 //! intel the avatar's own eyes don't already show. The card never spans the screen (it is not a
 //! scrim) and never widens the avatar-only fog beneath it.
 //!
-//! The testable layout math (card rect, line placement, fade) lives in the free [`prompt_quads`] /
-//! [`prompt_labels`] so it is unit-testable without a GPU — exactly the `overlay_quads` /
+//! The testable layout math (card rect, line placement, fade) lives in the free `prompt_quads` /
+//! `prompt_labels` so it is unit-testable without a GPU — exactly the `overlay_quads` /
 //! `objective_hud_quads` pattern. [`Renderer::render_prompt`](crate::Renderer::render_prompt) is the
 //! only GPU-touching glue.
 
@@ -337,8 +337,14 @@ mod tests {
         assert_eq!(ls[1].color, crate::theme::BONE, "body copy is theme::BONE");
         assert_eq!(ls[2].color, BODY_COLOR);
         // Distinct tones give distinct title/accent colors.
-        assert_ne!(tone_color(PromptTone::Caution), tone_color(PromptTone::Danger));
-        assert_ne!(tone_color(PromptTone::Danger), tone_color(PromptTone::Reflect));
+        assert_ne!(
+            tone_color(PromptTone::Caution),
+            tone_color(PromptTone::Danger)
+        );
+        assert_ne!(
+            tone_color(PromptTone::Danger),
+            tone_color(PromptTone::Reflect)
+        );
     }
 
     #[test]
@@ -362,7 +368,10 @@ mod tests {
         let panel = &q[1];
         assert!(panel.cy < 0.0, "card is in the lower half");
         // Its top edge stays well below the screen center (clear of the reticle/hitmarker).
-        assert!(panel.cy + panel.hh < 0.0, "whole card is in the bottom half");
+        assert!(
+            panel.cy + panel.hh < 0.0,
+            "whole card is in the bottom half"
+        );
     }
 
     #[test]
@@ -392,9 +401,10 @@ mod tests {
     fn prompt_type_is_phone_legible_and_card_still_clears_center_and_bottom() {
         // M6: the teach copy must read on a phone — a real cap-height, not the old ~7px. The title is
         // the larger step; both clear a legibility floor.
-        assert!(TITLE_SIZE >= 0.06, "title is phone-legible, got {TITLE_SIZE}");
-        assert!(BODY_SIZE >= 0.045, "body is phone-legible, got {BODY_SIZE}");
-        assert!(TITLE_SIZE > BODY_SIZE, "title is the larger step");
+        // (`const` asserts: pure const comparisons, enforced at compile time on any build.)
+        const _: () = assert!(TITLE_SIZE >= 0.06, "title is phone-legible");
+        const _: () = assert!(BODY_SIZE >= 0.045, "body is phone-legible");
+        const _: () = assert!(TITLE_SIZE > BODY_SIZE, "title is the larger step");
         // Even at the bumped size the card still hugs the lower third: its top edge stays clear of the
         // screen center (the FPS reticle / hitmarker) and its bottom stays on-screen — checked on a
         // wide phone-landscape aspect where the geometry runs through the aspect-aware `measure`.
@@ -436,8 +446,14 @@ mod tests {
     #[test]
     fn ui_scale_one_is_byte_identical() {
         // The identity contract the golden tests rely on.
-        assert_eq!(prompt_quads(&prompt(), 0.7), prompt_quads_scaled(&prompt(), 0.7, 1.0));
-        assert_eq!(prompt_labels(&prompt(), 0.7), prompt_labels_scaled(&prompt(), 0.7, 1.0));
+        assert_eq!(
+            prompt_quads(&prompt(), 0.7),
+            prompt_quads_scaled(&prompt(), 0.7, 1.0)
+        );
+        assert_eq!(
+            prompt_labels(&prompt(), 0.7),
+            prompt_labels_scaled(&prompt(), 0.7, 1.0)
+        );
     }
 
     #[test]

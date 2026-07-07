@@ -132,7 +132,7 @@ impl CommandBarLayout {
         self.button_at_scaled(x, y, 1.0)
     }
 
-    /// [`button_at`] with the physical `ui_scale` applied — the hit-test twin of the renderer's
+    /// `button_at` with the physical `ui_scale` applied — the hit-test twin of the renderer's
     /// scaled DRAW (`render::command_bar::command_bar_quads_scaled`, which inflates each button's
     /// half-extents by `ui_scale` about its center). Scaling the hit rect the same way keeps the
     /// tappable region on the button as drawn; without it, at `ui_scale != 1` (dense phone, retina

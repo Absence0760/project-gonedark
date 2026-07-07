@@ -20,7 +20,7 @@
 //!
 //! ## The shared sink
 //! [`StateSink`] is the abstraction that lets one field-walk drive **both** the checksum and the
-//! serializer (see [`Sim::fold`](crate::sim::Sim::fold)). A [`Checksum`](crate::checksum::Checksum)
+//! serializer (see `Sim::fold`). A [`Checksum`](crate::checksum::Checksum)
 //! is a `StateSink` (it hashes the bytes); a [`Writer`] is a `StateSink` (it records them). So
 //! anything folded into the checksum is serialized for free, and the two can never silently drift
 //! (D28 §4).
@@ -31,7 +31,7 @@
 //! — a divergent world is never silently produced.
 
 /// A sink that consumes the little-endian byte discipline shared by the checksum and the
-/// serializer. The single field-walk in [`Sim::fold`](crate::sim::Sim::fold) writes to one of
+/// serializer. The single field-walk in `Sim::fold` writes to one of
 /// these; a [`Checksum`](crate::checksum::Checksum) hashes the bytes, a [`Writer`] records them.
 ///
 /// The method set is exactly [`Checksum`](crate::checksum::Checksum)'s primitive writers, so the

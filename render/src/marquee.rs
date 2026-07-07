@@ -4,7 +4,7 @@
 //!
 //! Like [`hud`](crate::hud) / [`overlay`](crate::overlay) / [`radial`](crate::radial) it is a
 //! screen-space LOAD pass (composites over the command frame, never clears) and a **pure
-//! presentation derivation** — it reads only the [`Marquee`] rect (already in NDC) the host hands
+//! presentation derivation** — it reads only the `Marquee` rect (already in NDC) the host hands
 //! it. It owns its own tiny pipeline + shader (`marquee.wgsl`).
 //!
 //! ## Fairness (invariant #6)
@@ -18,12 +18,12 @@
 //! box is a **positional encoding**, not chrome: scaling it with the accessibility `ui_scale`
 //! would detach the rectangle from the finger/cursor and select a different band than the player
 //! swept. The only genuine chrome here is the fixed border **thickness**, and that is what
-//! [`marquee_quads_scaled`] scales — the edges thicken around their pointer-defined midlines
+//! `marquee_quads_scaled` scales — the edges thicken around their pointer-defined midlines
 //! while the fill and all four edge positions track the drag exactly. Don't re-flag this module
 //! as "ignoring ui_scale"; ignoring it for the geometry is the correct behaviour.
 //!
 //! The testable layout (a translucent fill plus four border edges) lives in the free
-//! [`marquee_quads`] so it is unit-testable without a GPU — the `overlay_quads` / `radial_quads`
+//! `marquee_quads` so it is unit-testable without a GPU — the `overlay_quads` / `radial_quads`
 //! pattern.
 
 use wgpu::util::DeviceExt;
@@ -48,7 +48,7 @@ pub enum MarqueeRole {
 }
 
 /// One screen-space marquee quad in NDC. The `role` is CPU-side only (drives the color and lets
-/// tests assert structure); it is dropped from the uploaded [`MarqueeInstance`].
+/// tests assert structure); it is dropped from the uploaded `MarqueeInstance`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct MarqueeQuad {
     pub cx: f32,
@@ -136,7 +136,7 @@ pub fn marquee_quads(m: &Marquee) -> Vec<MarqueeQuad> {
 }
 
 /// [`marquee_quads`] with an explicit accessibility `ui_scale` (the picker's `*_scaled` pattern).
-/// Scales ONLY the border half-thickness ([`BORDER_HALF`], the one piece of genuine chrome) — the
+/// Scales ONLY the border half-thickness (`BORDER_HALF`, the one piece of genuine chrome) — the
 /// rect itself is the pointer's drag band (see the module doc) and must keep tracking the drag
 /// endpoints exactly, so the fill and every edge midline are `ui_scale`-independent.
 /// `ui_scale == 1.0` is byte-identical to [`marquee_quads`].
@@ -432,10 +432,16 @@ mod tests {
         let fill = q[0];
         let border = q[1];
         for c in [fill, border] {
-            assert!(c.b > c.r && c.b > c.g, "marquee colour reads cool (player-blue lineage)");
+            assert!(
+                c.b > c.r && c.b > c.g,
+                "marquee colour reads cool (player-blue lineage)"
+            );
         }
         // Border is the higher mix toward bone → lighter than the fill on every channel.
-        assert!(border.r > fill.r && border.g > fill.g, "border is the brighter edge");
+        assert!(
+            border.r > fill.r && border.g > fill.g,
+            "border is the brighter edge"
+        );
         // Exact derivation: the fill/border are mixes of PLAYER toward BONE (one source of truth).
         assert_eq!(
             [fill.r, fill.g, fill.b],
@@ -474,7 +480,11 @@ mod tests {
         // Every border edge keeps its midline (cx, cy) and its long half-span; only the thin
         // half-thickness axis grows 1.5x.
         for (b, g) in base[1..].iter().zip(big[1..].iter()) {
-            assert_eq!((g.cx, g.cy), (b.cx, b.cy), "edge midline stays on the drag corner");
+            assert_eq!(
+                (g.cx, g.cy),
+                (b.cx, b.cy),
+                "edge midline stays on the drag corner"
+            );
             if b.hh < b.hw {
                 // Horizontal edge: thin in y.
                 assert_eq!(g.hw, b.hw, "edge still spans the rect width");

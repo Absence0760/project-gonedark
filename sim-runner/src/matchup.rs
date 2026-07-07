@@ -31,7 +31,14 @@ use gonedark_core::trig::{Angle, ANGLE_FULL};
 /// primitive — byte-identical to the old open-coded writes: these fresh battery sims never call
 /// `set_army`, so the builder's per-army roster read resolves `Army::Neutral` (== the shared
 /// `unit_stats` baseline), and its facing writes are exactly the `World::spawn` defaults.
-fn spawn(sim: &mut Sim, kind: UnitKind, x: i32, y: i32, faction: Faction, stance: Stance) -> Entity {
+fn spawn(
+    sim: &mut Sim,
+    kind: UnitKind,
+    x: i32,
+    y: i32,
+    faction: Faction,
+    stance: Stance,
+) -> Entity {
     let pos = Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
     ScenarioBuilder::new(sim).spawn(kind, pos, faction, stance, Angle(0))
 }
@@ -73,8 +80,22 @@ struct Check {
 fn check_heavy_beats_lone_rifleman() -> Check {
     let mut sim = Sim::new(0x4EA7_1001);
     // 6 apart: inside the rifleman's range 14 AND the Heavy's range 11, so both actually engage.
-    let heavy = spawn(&mut sim, UnitKind::Heavy, 0, 0, Faction::Player, Stance::FireAtWill);
-    let rifle = spawn(&mut sim, UnitKind::Rifleman, 6, 0, Faction::Enemy, Stance::FireAtWill);
+    let heavy = spawn(
+        &mut sim,
+        UnitKind::Heavy,
+        0,
+        0,
+        Faction::Player,
+        Stance::FireAtWill,
+    );
+    let rifle = spawn(
+        &mut sim,
+        UnitKind::Rifleman,
+        6,
+        0,
+        Faction::Enemy,
+        Stance::FireAtWill,
+    );
     run_ticks(&mut sim, 60);
     Check {
         name: "heavy 1v1 rifleman",
@@ -91,8 +112,22 @@ fn check_heavy_beats_lone_rifleman() -> Check {
 /// rifleman the same way — the literal "tank vs rifleman" matchup.
 fn check_tank_beats_lone_rifleman() -> Check {
     let mut sim = Sim::new(0x7A2C_1002);
-    let tank = spawn(&mut sim, UnitKind::Tank, 0, 0, Faction::Player, Stance::FireAtWill);
-    let rifle = spawn(&mut sim, UnitKind::Rifleman, 6, 0, Faction::Enemy, Stance::FireAtWill);
+    let tank = spawn(
+        &mut sim,
+        UnitKind::Tank,
+        0,
+        0,
+        Faction::Player,
+        Stance::FireAtWill,
+    );
+    let rifle = spawn(
+        &mut sim,
+        UnitKind::Rifleman,
+        6,
+        0,
+        Faction::Enemy,
+        Stance::FireAtWill,
+    );
     run_ticks(&mut sim, 60);
     Check {
         name: "tank 1v1 rifleman",
@@ -110,18 +145,37 @@ fn check_tank_beats_lone_rifleman() -> Check {
 /// the bruiser, the core RPS lever.
 fn check_rifle_mass_beats_bruiser() -> Check {
     let mut sim = Sim::new(0x3A55_1003);
-    let heavy = spawn(&mut sim, UnitKind::Heavy, 0, 0, Faction::Enemy, Stance::FireAtWill);
+    let heavy = spawn(
+        &mut sim,
+        UnitKind::Heavy,
+        0,
+        0,
+        Faction::Enemy,
+        Stance::FireAtWill,
+    );
     // Six riflemen clustered at x=8, rows ∓5..5 — all within both the Heavy's range 11 (max dist
     // √(64+25) ≈ 9.4) and the riflemen's range 14, so the whole squad engages.
     let squad: Vec<Entity> = (0..6)
-        .map(|k| spawn(&mut sim, UnitKind::Rifleman, 8, k * 2 - 5, Faction::Player, Stance::FireAtWill))
+        .map(|k| {
+            spawn(
+                &mut sim,
+                UnitKind::Rifleman,
+                8,
+                k * 2 - 5,
+                Faction::Player,
+                Stance::FireAtWill,
+            )
+        })
         .collect();
     run_ticks(&mut sim, 150);
     let survivors = squad.iter().filter(|&&r| alive(&sim, r)).count();
     Check {
         name: "rifle mass vs bruiser",
         pass: !alive(&sim, heavy) && survivors > 0,
-        detail: format!("heavy is {}; {survivors}/6 riflemen survive", if alive(&sim, heavy) { "alive" } else { "dead" }),
+        detail: format!(
+            "heavy is {}; {survivors}/6 riflemen survive",
+            if alive(&sim, heavy) { "alive" } else { "dead" }
+        ),
     }
 }
 
@@ -131,8 +185,22 @@ fn check_rifle_mass_beats_bruiser() -> Check {
 /// skirmish depends on.
 fn check_unarmoured_tank_dies_to_rifles() -> Check {
     let mut sim = Sim::new(0x7A2C_1004);
-    spawn(&mut sim, UnitKind::Rifleman, 0, 0, Faction::Player, Stance::FireAtWill);
-    let tank = spawn(&mut sim, UnitKind::Tank, 6, 0, Faction::Enemy, Stance::HoldFire);
+    spawn(
+        &mut sim,
+        UnitKind::Rifleman,
+        0,
+        0,
+        Faction::Player,
+        Stance::FireAtWill,
+    );
+    let tank = spawn(
+        &mut sim,
+        UnitKind::Tank,
+        6,
+        0,
+        Faction::Enemy,
+        Stance::HoldFire,
+    );
     let tank_hp0 = hp(&sim, tank);
     // 300 HP / 30 dmg per ~30-tick cooldown ≈ 10 shots ≈ 300 ticks to kill; give it headroom.
     run_ticks(&mut sim, 360);
@@ -152,8 +220,22 @@ fn check_unarmoured_tank_dies_to_rifles() -> Check {
 /// that makes the unarmoured-Tank check above meaningful.
 fn check_armour_bounces_rifle_fire() -> Check {
     let mut sim = Sim::new(0xA205_1005);
-    spawn(&mut sim, UnitKind::Rifleman, 0, 0, Faction::Player, Stance::FireAtWill);
-    let armoured = spawn(&mut sim, UnitKind::Heavy, 6, 0, Faction::Enemy, Stance::HoldFire);
+    spawn(
+        &mut sim,
+        UnitKind::Rifleman,
+        0,
+        0,
+        Faction::Player,
+        Stance::FireAtWill,
+    );
+    let armoured = spawn(
+        &mut sim,
+        UnitKind::Heavy,
+        6,
+        0,
+        Faction::Enemy,
+        Stance::HoldFire,
+    );
     let ai = armoured.index as usize;
     // Give it a real front plate and face it −X, into the incoming +X shots. Any front armour > 0
     // overmatches a penetration-0 rifle (2·0 ≤ a ⇒ hard bounce), so the magnitude is irrelevant.
@@ -192,11 +274,39 @@ fn battery() -> Vec<Check> {
 fn simulate_brawl(ticks: u64) -> Vec<u64> {
     let mut sim = Sim::new(0x8A77_B0A7);
     for k in 0..3i32 {
-        spawn(&mut sim, UnitKind::Rifleman, -5, k * 2 - 2, Faction::Player, Stance::FireAtWill);
-        spawn(&mut sim, UnitKind::Rifleman, 5, k * 2 - 2, Faction::Enemy, Stance::FireAtWill);
+        spawn(
+            &mut sim,
+            UnitKind::Rifleman,
+            -5,
+            k * 2 - 2,
+            Faction::Player,
+            Stance::FireAtWill,
+        );
+        spawn(
+            &mut sim,
+            UnitKind::Rifleman,
+            5,
+            k * 2 - 2,
+            Faction::Enemy,
+            Stance::FireAtWill,
+        );
     }
-    spawn(&mut sim, UnitKind::Heavy, -5, 4, Faction::Player, Stance::FireAtWill);
-    spawn(&mut sim, UnitKind::Tank, 5, 4, Faction::Enemy, Stance::FireAtWill);
+    spawn(
+        &mut sim,
+        UnitKind::Heavy,
+        -5,
+        4,
+        Faction::Player,
+        Stance::FireAtWill,
+    );
+    spawn(
+        &mut sim,
+        UnitKind::Tank,
+        5,
+        4,
+        Faction::Enemy,
+        Stance::FireAtWill,
+    );
 
     let mut checksums = vec![sim.checksum()];
     for _ in 1..ticks {
@@ -262,6 +372,10 @@ mod tests {
     #[test]
     fn brawl_advances() {
         let stream = simulate_brawl(200);
-        assert_ne!(stream.first(), stream.last(), "the fight changes world state");
+        assert_ne!(
+            stream.first(),
+            stream.last(),
+            "the fight changes world state"
+        );
     }
 }

@@ -4,7 +4,7 @@
 //! full determinism treatment (invariants #1/#7). An attachment is a **sidegrade**: it spends one
 //! tracked weapon stat to buy another, never a flat upgrade. A player picks a *shape*
 //! (long-range marksman vs. close-quarters runner), not a *tier* — the same anti-degeneracy
-//! discipline the D30 balance harness enforces on units ([`economy::unit_stats`] — a strictly
+//! discipline the D30 balance harness enforces on units (`economy::unit_stats` — a strictly
 //! dominated Heavy was a *bug*).
 //!
 //! ## How it reaches the sim
@@ -26,7 +26,7 @@
 //! axis strictly worse. Because the slot pairs are **disjoint**, any two distinct loadouts differ
 //! in at least one slot, and that slot contributes one strictly-good and one strictly-bad component
 //! that **no other slot can cancel** — so neither loadout is "at least as good on every axis."
-//! That is the definition of *no strict domination*. [`tests`] proves it exhaustively over the full
+//! That is the definition of *no strict domination*. `tests` proves it exhaustively over the full
 //! build space as well, so a future re-tune that breaks the property trips a test.
 //!
 //! Fixed-point only (range/damage are [`Fixed`]; the count stats are integer ticks/rounds), no
@@ -138,7 +138,7 @@ impl StatDelta {
 
     /// Does `self` **strictly dominate** `other` — at least as good on every tracked axis and
     /// strictly better on at least one? This is the relation the sidegrade rule forbids between any
-    /// two real loadouts ([`tests::no_loadout_strictly_dominates_another`]).
+    /// two real loadouts (`tests::no_loadout_strictly_dominates_another`).
     #[inline]
     pub fn strictly_dominates(&self, other: &StatDelta) -> bool {
         self.no_axis_worse(other) && self.some_axis_better(other)
@@ -470,7 +470,7 @@ impl Grip {
 ///
 /// A pool only varies the *magnitudes* of the D60 trades; it preserves the disjoint-axis sidegrade
 /// structure, so the no-strict-domination property holds inside every pool (see the module-level
-/// note above and [`tests::no_pool_build_strictly_dominates_another`]).
+/// note above and `tests::no_pool_build_strictly_dominates_another`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GunsmithPool {
     /// [`Optic::Marksman`] — +range ↔ slower fire (longer cooldown).
@@ -513,7 +513,7 @@ pub struct GunsmithPool {
 ///   cone), paid for with the slowest tempo. Same slots, same trade *axes*, a distinct WW2 feel.
 ///
 /// All five obey the per-pool sidegrade rule by construction (each option a pure trade on its
-/// slot's disjoint axis pair); the property is proven exhaustively per army in [`tests`].
+/// slot's disjoint axis pair); the property is proven exhaustively per army in `tests`.
 pub const fn pool_for(army: Army) -> GunsmithPool {
     match army {
         // The baseline pool IS the slot enums' own deltas — zero behavioural change off-faction.
@@ -696,7 +696,7 @@ impl Loadout {
     /// [`Army::Neutral`] this is byte-identical to [`Loadout::total_delta`] (the pool reproduces the
     /// slot enums' own deltas); `Us`/`Fr` draw their per-faction magnitudes. Still a pure function
     /// of the *(army, selection)* pair — the per-pool no-strict-domination property is proven on it
-    /// in [`tests::no_pool_build_strictly_dominates_another`].
+    /// in `tests::no_pool_build_strictly_dominates_another`.
     #[inline]
     pub fn total_delta_for(self, army: Army) -> StatDelta {
         let pool = pool_for(army);
@@ -719,9 +719,9 @@ impl Loadout {
     ///   untouched — a sidegrade never *arms* a non-combatant.
     /// - The magazine/handling/reserve axes apply **only** to a magazine weapon (`mag_size > 0`);
     ///   a magazine-less weapon (infinite ammo) keeps that property.
-    /// - Every field saturates to a sensible floor ([`MIN_RANGE`]/[`MIN_DAMAGE`] for the [`Fixed`]
+    /// - Every field saturates to a sensible floor (`MIN_RANGE`/`MIN_DAMAGE` for the [`Fixed`]
     ///   axes; `0`/`1` for the counts) so an extreme stack can never produce an invalid weapon.
-    ///   For the Rifleman this WS targets, no floor is ever hit (see [`tests`]).
+    ///   For the Rifleman this WS targets, no floor is ever hit (see `tests`).
     ///
     /// Ammo bookkeeping: if the weapon was at a **full** magazine going in (the just-spawned case),
     /// it stays full at the new capacity; otherwise the loaded count is only clamped down to the
@@ -930,15 +930,27 @@ mod tests {
         for s in Stock::ALL {
             let d = s.delta();
             assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
-            assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
-            assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+            assert_eq!(
+                (d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve),
+                (0, 0, 0, 0)
+            );
+            assert_eq!(
+                (d.supp_out_delta, d.falloff_delta),
+                (Fixed::ZERO, Fixed::ZERO)
+            );
         }
         // Muzzle touches only {supp_out_delta, falloff_delta}.
         for m in Muzzle::ALL {
             let d = m.delta();
             assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
-            assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
-            assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
+            assert_eq!(
+                (d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve),
+                (0, 0, 0, 0)
+            );
+            assert_eq!(
+                (d.move_speed_delta, d.cone_cos_delta),
+                (Fixed::ZERO, Fixed::ZERO)
+            );
         }
     }
 
@@ -1318,20 +1330,38 @@ mod tests {
             for d in [pool.extended, pool.quickdraw] {
                 assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
                 assert_eq!((d.cooldown_ticks, d.reserve), (0, 0));
-                assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
-                assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!(
+                    (d.move_speed_delta, d.cone_cos_delta),
+                    (Fixed::ZERO, Fixed::ZERO)
+                );
+                assert_eq!(
+                    (d.supp_out_delta, d.falloff_delta),
+                    (Fixed::ZERO, Fixed::ZERO)
+                );
             }
             // Stock touches only {move_speed_delta, cone_cos_delta} in every pool.
             for d in [pool.agile, pool.stock_marksman] {
                 assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
-                assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
-                assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!(
+                    (d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve),
+                    (0, 0, 0, 0)
+                );
+                assert_eq!(
+                    (d.supp_out_delta, d.falloff_delta),
+                    (Fixed::ZERO, Fixed::ZERO)
+                );
             }
             // Muzzle touches only {supp_out_delta, falloff_delta} in every pool.
             for d in [pool.brake, pool.suppressor] {
                 assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
-                assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
-                assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!(
+                    (d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve),
+                    (0, 0, 0, 0)
+                );
+                assert_eq!(
+                    (d.move_speed_delta, d.cone_cos_delta),
+                    (Fixed::ZERO, Fixed::ZERO)
+                );
             }
         }
     }
@@ -1519,8 +1549,14 @@ mod tests {
         // Each WW2 bench differs from the Neutral baseline apply AND from the other — observable identity.
         let mut wn = base;
         lo.apply_to_weapon(&mut wn);
-        assert_ne!(us_ww2, wn, "US WW2 pool must differ from the Neutral baseline apply");
-        assert_ne!(de, wn, "Germany pool must differ from the Neutral baseline apply");
+        assert_ne!(
+            us_ww2, wn,
+            "US WW2 pool must differ from the Neutral baseline apply"
+        );
+        assert_ne!(
+            de, wn,
+            "Germany pool must differ from the Neutral baseline apply"
+        );
         assert_ne!(us_ww2, de, "the two WW2 pools must differ from each other");
     }
 
@@ -1532,8 +1568,8 @@ mod tests {
     fn apply_stock_and_muzzle_move_the_new_weapon_fields() {
         let (_, base) = unit_stats(UnitKind::Rifleman);
         let lo = Loadout {
-            stock: Stock::Agile,     // +move, −cone
-            muzzle: Muzzle::Brake,   // +supp, +falloff
+            stock: Stock::Agile,   // +move, −cone
+            muzzle: Muzzle::Brake, // +supp, +falloff
             ..Loadout::STANDARD
         };
         let mut w = base;
@@ -1557,8 +1593,8 @@ mod tests {
     fn apply_opposed_stock_and_muzzle_poles() {
         let (_, base) = unit_stats(UnitKind::Rifleman);
         let lo = Loadout {
-            stock: Stock::Marksman,      // −move, +cone
-            muzzle: Muzzle::Suppressor,  // −supp, −falloff
+            stock: Stock::Marksman,     // −move, +cone
+            muzzle: Muzzle::Suppressor, // −supp, −falloff
             ..Loadout::STANDARD
         };
         let mut w = base;
@@ -1577,13 +1613,20 @@ mod tests {
     #[test]
     fn standard_stock_muzzle_are_byte_neutral_on_the_new_fields() {
         let (_, base) = unit_stats(UnitKind::Rifleman);
-        assert_eq!(base.move_speed_delta, Fixed::ZERO, "fresh weapon: zero move delta");
+        assert_eq!(
+            base.move_speed_delta,
+            Fixed::ZERO,
+            "fresh weapon: zero move delta"
+        );
         assert_eq!(base.cone_cos_delta, Fixed::ZERO);
         assert_eq!(base.supp_out_delta, Fixed::ZERO);
         assert_eq!(base.falloff_delta, Fixed::ZERO);
         let mut w = base;
         Loadout::STANDARD.apply_to_weapon(&mut w);
-        assert_eq!(w, base, "the all-Standard loadout moves no field, including the D85 ones");
+        assert_eq!(
+            w, base,
+            "the all-Standard loadout moves no field, including the D85 ones"
+        );
     }
 
     /// **2-peer checksum agreement with Stock/Muzzle selections (invariant #7).** Two peers running
@@ -1598,7 +1641,11 @@ mod tests {
         };
         let (mut a, _) = fight_with_loadout(0x57_0C6, loadout);
         let (mut b, _) = fight_with_loadout(0x57_0C6, loadout);
-        assert_eq!(a.checksum(), b.checksum(), "tick 0 (pre-step) must already agree");
+        assert_eq!(
+            a.checksum(),
+            b.checksum(),
+            "tick 0 (pre-step) must already agree"
+        );
         for t in 0..180u32 {
             a.step(&[]);
             b.step(&[]);
@@ -1610,8 +1657,14 @@ mod tests {
     /// folded sim state, so a stock/muzzle desync would be caught by the arch matrix like any other.
     #[test]
     fn different_muzzle_diverges_in_the_checksum() {
-        let brake = Loadout { muzzle: Muzzle::Brake, ..Loadout::STANDARD };
-        let suppressor = Loadout { muzzle: Muzzle::Suppressor, ..Loadout::STANDARD };
+        let brake = Loadout {
+            muzzle: Muzzle::Brake,
+            ..Loadout::STANDARD
+        };
+        let suppressor = Loadout {
+            muzzle: Muzzle::Suppressor,
+            ..Loadout::STANDARD
+        };
         let (a, _) = fight_with_loadout(0xF00D, brake);
         let (b, _) = fight_with_loadout(0xF00D, suppressor);
         assert_ne!(

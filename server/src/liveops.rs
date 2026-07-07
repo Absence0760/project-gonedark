@@ -82,7 +82,7 @@ pub struct PersonalizedConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveOpsConfig {
     pub public: PublicConfig,
-    /// Present only when analytics consent was granted (see [`resolve`]).
+    /// Present only when analytics consent was granted (see `resolve`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub personalized: Option<PersonalizedConfig>,
 }
@@ -165,7 +165,10 @@ mod tests {
             ..PersonalizedConfig::default()
         });
         let cfg = src.resolve(ConsentGate::denied());
-        assert_eq!(cfg.personalized, None, "no consent ⇒ no personalized config");
+        assert_eq!(
+            cfg.personalized, None,
+            "no consent ⇒ no personalized config"
+        );
     }
 
     #[test]
@@ -233,7 +236,10 @@ mod tests {
                 ..PersonalizedConfig::default()
             });
         let cfg = src.resolve(ConsentGate::denied());
-        assert_eq!(cfg.personalized, None, "no consent ⇒ no personalized config at all");
+        assert_eq!(
+            cfg.personalized, None,
+            "no consent ⇒ no personalized config at all"
+        );
         assert_eq!(
             cfg.effective_modifier_track(),
             0,

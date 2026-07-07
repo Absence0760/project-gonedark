@@ -80,7 +80,7 @@ fn relative_luminance(c: Rgb) -> f32 {
 }
 
 /// The **WCAG 2.x contrast ratio** between two colours, `(L_lighter + 0.05) / (L_darker + 0.05)`
-/// over their [`relative_luminance`]. Ranges from `1.0` (identical) to `21.0` (black on white), and
+/// over their `relative_luminance`. Ranges from `1.0` (identical) to `21.0` (black on white), and
 /// is symmetric in its arguments. Use this — not [`luminance`] — for every text-legibility check:
 /// WCAG AA wants **≥ 4.5:1** for normal text and **≥ 3:1** for large text / UI components.
 pub fn contrast_ratio(a: Rgb, b: Rgb) -> f32 {
@@ -291,10 +291,10 @@ impl Palette {
     /// ramp leans on it: green player vs red enemy vs grey neutral, with a near-white bright avatar
     /// that separates from all three by luminance (white is stable under tritanopia).
     pub const CVD_TRITAN: Palette = Palette {
-        player: [0.15, 0.60, 0.30],  // green (red-green axis, spared by tritanopia)
-        enemy: [0.90, 0.15, 0.20],   // red
+        player: [0.15, 0.60, 0.30], // green (red-green axis, spared by tritanopia)
+        enemy: [0.90, 0.15, 0.20],  // red
         neutral: [0.60, 0.60, 0.62], // mid grey
-        avatar: [0.96, 0.92, 0.90],  // bright near-white — luminance-separated from the rest
+        avatar: [0.96, 0.92, 0.90], // bright near-white — luminance-separated from the rest
     };
 }
 
@@ -480,14 +480,38 @@ mod tests {
     #[test]
     fn all_palette_colours_are_in_unit_range() {
         let all: &[Rgb] = &[
-            INK, PANEL, PANEL_RAISED, RIM, HAIRLINE, BONE, ASH, MUTED, AMBER, PLAYER, ENEMY,
-            NEUTRAL, AVATAR, STATUS_GOOD, STATUS_CRIT, STATUS_LOST, DATA_KILLS, DATA_TERRITORY,
-            DATA_RESOURCE, CROSSHAIR, HITMARKER, ALERT_DANGER, ALERT_WARN, ALERT_INFO,
+            INK,
+            PANEL,
+            PANEL_RAISED,
+            RIM,
+            HAIRLINE,
+            BONE,
+            ASH,
+            MUTED,
+            AMBER,
+            PLAYER,
+            ENEMY,
+            NEUTRAL,
+            AVATAR,
+            STATUS_GOOD,
+            STATUS_CRIT,
+            STATUS_LOST,
+            DATA_KILLS,
+            DATA_TERRITORY,
+            DATA_RESOURCE,
+            CROSSHAIR,
+            HITMARKER,
+            ALERT_DANGER,
+            ALERT_WARN,
+            ALERT_INFO,
             ALERT_NEUTRAL,
         ];
         for c in all {
             for &ch in c {
-                assert!((0.0..=1.0).contains(&ch), "colour channel {ch} out of [0,1] in {c:?}");
+                assert!(
+                    (0.0..=1.0).contains(&ch),
+                    "colour channel {ch} out of [0,1] in {c:?}"
+                );
             }
         }
     }
@@ -527,19 +551,29 @@ mod tests {
     fn wcag_contrast_meets_aa_for_used_text_pairs() {
         const AA_TEXT: f32 = 4.5; // normal-text floor
         const AA_UI: f32 = 3.0; // large-text / UI-component floor
-        let surfaces = [("INK", INK), ("PANEL", PANEL), ("PANEL_RAISED", PANEL_RAISED)];
+        let surfaces = [
+            ("INK", INK),
+            ("PANEL", PANEL),
+            ("PANEL_RAISED", PANEL_RAISED),
+        ];
 
         for (sn, s) in surfaces {
             for (tn, t) in [("BONE", BONE), ("ASH", ASH)] {
                 let cr = contrast_ratio(t, s);
-                assert!(cr >= AA_TEXT, "{tn} on {sn}: {cr:.3}:1 < {AA_TEXT}:1 (WCAG AA)");
+                assert!(
+                    cr >= AA_TEXT,
+                    "{tn} on {sn}: {cr:.3}:1 < {AA_TEXT}:1 (WCAG AA)"
+                );
             }
         }
 
         // MUTED on its actual surfaces — normal-text AA.
         for (sn, s) in [("PANEL", PANEL), ("INK", INK)] {
             let cr = contrast_ratio(MUTED, s);
-            assert!(cr >= AA_TEXT, "MUTED on {sn}: {cr:.3}:1 < {AA_TEXT}:1 (WCAG AA)");
+            assert!(
+                cr >= AA_TEXT,
+                "MUTED on {sn}: {cr:.3}:1 < {AA_TEXT}:1 (WCAG AA)"
+            );
         }
         // MUTED is not drawn on the raised surface; hold the 3:1 UI-component floor there anyway.
         let cr_raised = contrast_ratio(MUTED, PANEL_RAISED);
@@ -557,7 +591,10 @@ mod tests {
         const BLACK: Rgb = [0.0, 0.0, 0.0];
         let bw = contrast_ratio(WHITE, BLACK);
         assert!((bw - 21.0).abs() < 0.05, "white/black not ~21:1: {bw}");
-        assert!((contrast_ratio(BONE, BONE) - 1.0).abs() < 1e-6, "identical not 1:1");
+        assert!(
+            (contrast_ratio(BONE, BONE) - 1.0).abs() < 1e-6,
+            "identical not 1:1"
+        );
         // Symmetric: swapping the pair leaves the ratio unchanged.
         assert!((contrast_ratio(WHITE, BLACK) - contrast_ratio(BLACK, WHITE)).abs() < 1e-6);
         assert!((contrast_ratio(MUTED, PANEL) - contrast_ratio(PANEL, MUTED)).abs() < 1e-6);
@@ -609,7 +646,10 @@ mod tests {
             let p = palette(mode);
             for c in [p.player, p.enemy, p.neutral, p.avatar] {
                 for ch in c {
-                    assert!((0.0..=1.0).contains(&ch), "{mode:?} colour {c:?} out of [0,1]");
+                    assert!(
+                        (0.0..=1.0).contains(&ch),
+                        "{mode:?} colour {c:?} out of [0,1]"
+                    );
                 }
             }
         }
@@ -650,8 +690,7 @@ mod tests {
             (PaletteMode::Tritanopia, CvdSim::Tritanopia),
         ] {
             let p = palette(mode);
-            let fams = [p.player, p.enemy, p.neutral, p.avatar]
-                .map(|c| simulate_cvd(c, sim));
+            let fams = [p.player, p.enemy, p.neutral, p.avatar].map(|c| simulate_cvd(c, sim));
             for i in 0..fams.len() {
                 for j in (i + 1)..fams.len() {
                     assert!(
@@ -712,7 +751,10 @@ mod tests {
                 let out = simulate_cvd([v, v, v], sim);
                 for ch in out {
                     assert!((0.0..=1.0).contains(&ch));
-                    assert!((ch - v).abs() < 1e-3, "grey {v} shifted under {sim:?}: {out:?}");
+                    assert!(
+                        (ch - v).abs() < 1e-3,
+                        "grey {v} shifted under {sim:?}: {out:?}"
+                    );
                 }
             }
         }
@@ -767,7 +809,10 @@ mod tests {
         let mid = [0.5, 0.5, 0.5];
         let centre = luminance(present_grade(mid, [0.5, 0.5]));
         let corner = luminance(present_grade(mid, [1.0, 1.0]));
-        assert!(corner < centre, "corner {corner} not darker than centre {centre}");
+        assert!(
+            corner < centre,
+            "corner {corner} not darker than centre {centre}"
+        );
     }
 
     /// The split-tone must push the identity mid-grey warm-ward at the bright end and cool-ward at the
@@ -785,10 +830,12 @@ mod tests {
     /// future edit accidentally inverting two sizes.
     #[test]
     fn type_scale_is_descending() {
-        assert!(TYPE_HEADING > TYPE_TITLE);
-        assert!(TYPE_TITLE > TYPE_BODY);
-        assert!(TYPE_BODY > TYPE_CAPTION);
-        assert!(TYPE_CAPTION > TYPE_LABEL);
+        // `const` asserts: the scale steps are consts, so the guard fires at compile
+        // time on any build, not just when this test runs.
+        const _: () = assert!(TYPE_HEADING > TYPE_TITLE);
+        const _: () = assert!(TYPE_TITLE > TYPE_BODY);
+        const _: () = assert!(TYPE_BODY > TYPE_CAPTION);
+        const _: () = assert!(TYPE_CAPTION > TYPE_LABEL);
     }
 
     /// The alert palette's CVD contract, pinned where the constants now live: every pair of alert
@@ -809,7 +856,10 @@ mod tests {
                 let (ni, ci) = alerts[i];
                 let (nj, cj) = alerts[j];
                 let gap = (luminance(ci) - luminance(cj)).abs();
-                assert!(gap > 0.05, "{ni} and {nj} need a luminance spread, got {gap:.3}");
+                assert!(
+                    gap > 0.05,
+                    "{ni} and {nj} need a luminance spread, got {gap:.3}"
+                );
             }
         }
     }
@@ -820,8 +870,14 @@ mod tests {
     /// normal-text floor with room to spare.
     #[test]
     fn reticle_chrome_clears_contrast_over_the_dark_frame() {
-        assert!(contrast_ratio(CROSSHAIR, INK) >= 3.0, "crosshair below the 3:1 UI floor");
-        assert!(contrast_ratio(HITMARKER, INK) >= 4.5, "hitmarker below the 4.5:1 text floor");
+        assert!(
+            contrast_ratio(CROSSHAIR, INK) >= 3.0,
+            "crosshair below the 3:1 UI floor"
+        );
+        assert!(
+            contrast_ratio(HITMARKER, INK) >= 4.5,
+            "hitmarker below the 4.5:1 text floor"
+        );
     }
 
     /// Panel-spec sanity: the alphas are drawable opacities with the rim reading above the fill, the
@@ -829,13 +885,23 @@ mod tests {
     /// step (one source of truth, not a near-copy).
     #[test]
     fn panel_spec_is_sane_and_rides_the_spacing_scale() {
-        assert!(PANEL_BG_ALPHA > 0.0 && PANEL_BG_ALPHA <= 1.0);
-        assert!(PANEL_RIM_ALPHA > 0.0 && PANEL_RIM_ALPHA <= 1.0);
-        assert!(PANEL_RIM_ALPHA > PANEL_BG_ALPHA, "rim reads above the fill");
-        assert!(PANEL_RIM_PAD > 0.0 && PANEL_PAD > 0.0);
-        assert!(PANEL_RIM_PAD < PANEL_PAD, "rim hairline is thinner than the inner pad");
-        assert!(PANEL_PAD < EDGE_INSET, "inner pad sits below the screen-edge inset");
-        assert_eq!(EDGE_INSET, SPACE_MARGIN, "edge inset is the shared margin step");
+        // `const` asserts: pure const comparisons, enforced at compile time on any build.
+        const _: () = assert!(PANEL_BG_ALPHA > 0.0 && PANEL_BG_ALPHA <= 1.0);
+        const _: () = assert!(PANEL_RIM_ALPHA > 0.0 && PANEL_RIM_ALPHA <= 1.0);
+        const _: () = assert!(PANEL_RIM_ALPHA > PANEL_BG_ALPHA, "rim reads above the fill");
+        const _: () = assert!(PANEL_RIM_PAD > 0.0 && PANEL_PAD > 0.0);
+        const _: () = assert!(
+            PANEL_RIM_PAD < PANEL_PAD,
+            "rim hairline is thinner than the inner pad"
+        );
+        const _: () = assert!(
+            PANEL_PAD < EDGE_INSET,
+            "inner pad sits below the screen-edge inset"
+        );
+        assert_eq!(
+            EDGE_INSET, SPACE_MARGIN,
+            "edge inset is the shared margin step"
+        );
     }
 
     /// Spacing scale is strictly ascending across every named step.
@@ -852,7 +918,12 @@ mod tests {
             SPACE_BAR_ROW, // 0.100
         ];
         for w in steps.windows(2) {
-            assert!(w[0] < w[1], "spacing scale not strictly ascending: {} !< {}", w[0], w[1]);
+            assert!(
+                w[0] < w[1],
+                "spacing scale not strictly ascending: {} !< {}",
+                w[0],
+                w[1]
+            );
         }
     }
 }

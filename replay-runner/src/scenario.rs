@@ -113,7 +113,12 @@ fn build_skirmish(seed: u64) -> Built {
 
     // Tick 40: possess the Player troop — go dark (invariant #5). From here the troop is driven by
     // live-player intents, not orders, so the next several ticks exercise the embodied command path.
-    scripted.insert(40, vec![Command::Embody { entity: sk.player_troop }]);
+    scripted.insert(
+        40,
+        vec![Command::Embody {
+            entity: sk.player_troop,
+        }],
+    );
 
     // Ticks 41..=70: an embodied burst — crouch, then walk (+X) and fire (+X) on cadence. These are
     // exactly the intents the FPS host emits per tick; each rides the recorded log like any order.
@@ -158,7 +163,9 @@ fn build_skirmish(seed: u64) -> Built {
     scripted.insert(
         120,
         vec![
-            Command::Surface { entity: sk.player_troop },
+            Command::Surface {
+                entity: sk.player_troop,
+            },
             Command::Move {
                 entity: sk.player_troop,
                 target: v(-10, 4),
@@ -249,7 +256,14 @@ fn build_skirmish_multi(seed: u64) -> BuiltMulti {
         },
     );
     // Tick 40: possess the Player troop — go dark (invariant #5).
-    push(&mut scripted, 40, 0, Command::Embody { entity: sk.player_troop });
+    push(
+        &mut scripted,
+        40,
+        0,
+        Command::Embody {
+            entity: sk.player_troop,
+        },
+    );
     // Tick 41: crouch, then walk (+X) and fire (+X) on cadence — the embodied FPS intents.
     push(
         &mut scripted,
@@ -293,7 +307,14 @@ fn build_skirmish_multi(seed: u64) -> BuiltMulti {
         },
     );
     // Tick 120: surface and resume order control.
-    push(&mut scripted, 120, 0, Command::Surface { entity: sk.player_troop });
+    push(
+        &mut scripted,
+        120,
+        0,
+        Command::Surface {
+            entity: sk.player_troop,
+        },
+    );
     push(
         &mut scripted,
         120,

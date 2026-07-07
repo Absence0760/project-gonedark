@@ -11,24 +11,24 @@
 //! Two seams, both pure + unit-tested off-GPU (mirroring [`crate::interpolate_instances`],
 //! [`crate::token_icons`], [`crate::readout::readout_labels`]):
 //!
-//!  1. **Clip selection** — [`select_clip`] maps a small presentation [`AnimState`] to one of four
-//!     [`AnimClip`]s. This is the load-bearing seam: the eventual skeletal-playback system slots in
-//!     *behind* it (it will read the same [`AnimClip`] to pick a glTF animation track), so the
+//!  1. **Clip selection** — `select_clip` maps a small presentation `AnimState` to one of four
+//!     `AnimClip`s. This is the load-bearing seam: the eventual skeletal-playback system slots in
+//!     *behind* it (it will read the same `AnimClip` to pick a glTF animation track), so the
 //!     classifier is stable even though today's runtime playback is procedural.
-//!  2. **Procedural playback** — [`anim_pose`] samples a cheap per-instance [`AnimPose`] (a vertical
+//!  2. **Procedural playback** — `anim_pose` samples a cheap per-instance `AnimPose` (a vertical
 //!     bob, a forward pitch, a uniform scale) for a clip at a normalized `phase`, and
-//!     [`pose_matrix`] folds that pose into the token's model matrix. This is the *stand-in* until a
+//!     `pose_matrix` folds that pose into the token's model matrix. This is the *stand-in* until a
 //!     real rigid-part / skeletal player consumes the authored glTF clips
 //!     (`tools/models/gen_trooper_rig.py`); it is deliberately subtle and applied **only to
-//!     infantry** ([`is_infantry`]) so vehicles/structures render byte-identically to before.
+//!     infantry** (`is_infantry`) so vehicles/structures render byte-identically to before.
 //!
 //! **Honest floor caveats.** Dead units are still dropped from the render snapshot the instant the
 //! sim despawns them (`core::snapshot::Snapshot::capture` skips `!is_index_alive` — unchanged,
-//! invariant #4/#7 stay untouched), so [`select_clip`] alone never sees a dead unit at runtime. The
+//! invariant #4/#7 stay untouched), so `select_clip` alone never sees a dead unit at runtime. The
 //! owed follow-up has landed on the RENDER side only: [`crate::death_linger::DeathLinger`] notices a
 //! unit present-and-alive in the previous snapshot but gone from the current one, freezes its last
 //! pose, and keeps emitting it (with `AnimClip::Death`) through [`crate::Renderer::prepare`] for a
-//! short fade window — so the [`AnimClip::Death`] branch is now genuinely *driven* to the screen, via
+//! short fade window — so the `AnimClip::Death` branch is now genuinely *driven* to the screen, via
 //! a render-only cross-tick memory rather than a sim-side change. The procedural pose here remains a
 //! placeholder for real skeletal skinning, not a substitute for it.
 

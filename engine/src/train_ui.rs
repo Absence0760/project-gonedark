@@ -36,10 +36,10 @@
 //! [`Order::FallBack(rally)`](gonedark_core::components::Order::FallBack) retreat, which is a unit
 //! order, not a building's spawn rally.)
 //!
-//! [`rally_commands`] is the presentation→intent mapping (the [`train_commands`] pattern): it takes
+//! `rally_commands` is the presentation→intent mapping (the `train_commands` pattern): it takes
 //! the selected camp + the tapped world point, quantizes the point to exact `Fixed` bits at the input
 //! boundary via [`crate::world_to_fixed`] (invariant #1, so no float ever crosses into `core`) with
-//! the pure [`rally_point`] step, and forms at most one `SetCampRally`. It never mutates sim state and
+//! the pure `rally_point` step, and forms at most one `SetCampRally`. It never mutates sim state and
 //! has no `&World`, so it does not pre-check the camp (the sim's `economy::set_camp_rally` no-ops a
 //! dead / non-building handle).
 
@@ -62,7 +62,7 @@ fn unit_for_slot(slot: u8) -> Option<UnitKind> {
 
 /// Map a troop-training UI choice onto the sim production command for the selected camp.
 ///
-/// Pure intent → `Command`s (the [`command_ui`](crate::command_ui) pattern): it never mutates sim
+/// Pure intent → `Command`s (the `command_ui` pattern): it never mutates sim
 /// state and forms at most one [`Command::QueueProduction`].
 ///
 /// - `unit_slot`: the unit-type button pressed this frame (slot 0 = Rifleman, slot 1 = Heavy; see
@@ -91,7 +91,10 @@ pub fn train_commands(unit_slot: Option<u8>, camp: Option<Entity>) -> Vec<Comman
 /// form the sim command.
 pub fn rally_point(target_world: Option<(f32, f32)>) -> Option<Vec2> {
     let (x, y) = target_world?;
-    Some(Vec2::new(crate::world_to_fixed(x), crate::world_to_fixed(y)))
+    Some(Vec2::new(
+        crate::world_to_fixed(x),
+        crate::world_to_fixed(y),
+    ))
 }
 
 /// Map a troop-training rally-point choice onto the [`Command::SetCampRally`] for the selected camp.

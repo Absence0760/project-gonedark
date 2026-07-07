@@ -3,7 +3,7 @@
 //! `Command::Build { faction, kind, pos }` and `economy::build` applies it; this layer is the
 //! missing on-screen seam that turns "player picked a structure + tapped a spot" into that command.
 //!
-//! Like [`command_ui`](crate::command_ui) it is pure presentation→intent mapping: it emits
+//! Like `command_ui` it is pure presentation→intent mapping: it emits
 //! `Command`s, it never mutates sim state, and the float→`Fixed` quantization for the placement
 //! point goes through the engine's input-boundary [`crate::world_to_fixed`] (invariant #1). No
 //! GPU/camera dependency → unit-testable without a window.

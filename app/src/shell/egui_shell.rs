@@ -6,16 +6,16 @@
 
 use crate::shell::about::about_ui;
 use crate::shell::army::{army_label, army_select_ui, ArmySelectAction, ArmySelectState};
+use crate::shell::atlas::{atlas_pins_for, atlas_ui, AtlasAction, AtlasState};
 use crate::shell::briefing::{briefing_ui, BriefingAction};
 use crate::shell::loadout::{loadout_ui, LoadoutAction};
-use crate::shell::atlas::{atlas_pins_for, atlas_ui, AtlasAction, AtlasState};
 use crate::shell::mission_select::{
     atlas_pins, battlefield_pins, mission_select_ui, next_battle_in, overview_view,
     MissionSelectAction, NextOperation,
 };
 use crate::shell::profile::win_rate_pct;
-use crate::shell::pvp::{pvp_ui, PvpAction};
 use crate::shell::profile::{profile_ui, ProfileAction, ProfileState};
+use crate::shell::pvp::{pvp_ui, PvpAction};
 use crate::shell::settings::{settings_ui, SettingsAction, SettingsState};
 use crate::shell::skirmish::{skirmish_setup_ui, SkirmishSetupAction, SkirmishSetupState};
 use crate::shell::theme::*;
@@ -34,7 +34,7 @@ use winit::window::Window;
 
 /// Which live 3D scene paints behind a shell screen (D103): the title **diorama** (the greybox
 /// city — every general screen), or the campaign **globe** (the conflict atlas earth, pins from
-/// [`atlas_pins`](crate::shell::mission_select::atlas_pins) — the Operations hub + briefing).
+/// [`atlas_pins`] — the Operations hub + briefing).
 /// The per-screen `draw_*` wrapper picks; `run_and_paint` just paints what it's told.
 pub(crate) enum ShellBackdrop<'a> {
     /// The title diorama (the shipped default for every out-of-match screen).
@@ -151,7 +151,9 @@ impl EguiShell {
         let stamp = self.stamp.clone();
         // Diorama backdrop: paint the live 3D scene into the frame first, then composite the
         // title HUD over it (`LoadOp::Load`).
-        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| title_ui(ui, &stamp, profile, army, next))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| {
+            title_ui(ui, &stamp, profile, army, next)
+        })
     }
 
     /// Draw the pre-match gunsmith / loadout screen for one frame and return the [`LoadoutAction`]
@@ -198,7 +200,9 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         profile: &mut ProfileState,
     ) -> Option<ProfileAction> {
-        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| profile_ui(ui, profile))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| {
+            profile_ui(ui, profile)
+        })
     }
 
     /// Draw the **army-select** screen for one frame and return the [`ArmySelectAction`] used, if any.
@@ -211,15 +215,19 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         state: &ArmySelectState,
     ) -> Option<ArmySelectAction> {
-        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| army_select_ui(ui, state))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| {
+            army_select_ui(ui, state)
+        })
     }
 
     /// Draw the About / controls-reference screen for one frame. Returns `true` on BACK (the only
     /// control), so the run loop returns to Settings. Static content over the backdrop. Pure.
     pub(crate) fn draw_about(&mut self, surface: &mut DesktopRenderSurface) -> bool {
         let stamp = self.stamp.clone();
-        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| about_ui(ui, &stamp).then_some(()))
-            .is_some()
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| {
+            about_ui(ui, &stamp).then_some(())
+        })
+        .is_some()
     }
 
     /// Draw the **PvP staging** screen for one frame and return the [`PvpAction`] used, if any.
@@ -232,7 +240,9 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         player_army: gonedark_core::components::Army,
     ) -> Option<PvpAction> {
-        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| pvp_ui(ui, player_army))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| {
+            pvp_ui(ui, player_army)
+        })
     }
 
     /// Draw the **skirmish match-setup** screen (`modes.md` §3) for one frame and return the
@@ -247,7 +257,9 @@ impl EguiShell {
         surface: &mut DesktopRenderSurface,
         state: &SkirmishSetupState,
     ) -> Option<SkirmishSetupAction> {
-        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| skirmish_setup_ui(ui, state))
+        self.run_and_paint(surface, ShellBackdrop::Diorama, |ui| {
+            skirmish_setup_ui(ui, state)
+        })
     }
 
     /// Draw the Operations-hub **mission-select** screen for one frame and return the
@@ -291,9 +303,11 @@ impl EguiShell {
         state: &AtlasState,
     ) -> Option<AtlasAction> {
         let pins = atlas_pins_for(campaign, state);
-        self.run_and_paint(surface, ShellBackdrop::Globe(Some(state.view), &pins), |ui| {
-            atlas_ui(ui, campaign, state)
-        })
+        self.run_and_paint(
+            surface,
+            ShellBackdrop::Globe(Some(state.view), &pins),
+            |ui| atlas_ui(ui, campaign, state),
+        )
     }
 
     /// Draw the **briefing** screen for `node` for one frame and return the [`BriefingAction`] used,
@@ -473,7 +487,11 @@ impl EguiShell {
             let mut pass = pass.forget_lifetime();
             self.renderer.render(&mut pass, &paint_jobs, &screen);
         }
-        queue.submit(user_cmds.into_iter().chain(std::iter::once(encoder.finish())));
+        queue.submit(
+            user_cmds
+                .into_iter()
+                .chain(std::iter::once(encoder.finish())),
+        );
         surface.present(frame);
         for id in &full_output.textures_delta.free {
             self.renderer.free_texture(id);
@@ -545,14 +563,19 @@ pub(crate) fn title_ui(
                 // PROFILE no longer needs its own chip.
                 let card = glass_card_frame().show(ui, |ui| {
                     ui.set_width(block_w - 44.0); // block width minus the frame's inner margins
-                    // Re-anchor the card interior left: the surrounding right-aligned column would
-                    // otherwise right-justify these lines against a dead left half.
+                                                  // Re-anchor the card interior left: the surrounding right-aligned column would
+                                                  // otherwise right-justify these lines against a dead left half.
                     ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                         ui.label(
-                            RichText::new(&profile.callsign).color(BONE).size(TYPE_SUBHEAD).strong(),
+                            RichText::new(&profile.callsign)
+                                .color(BONE)
+                                .size(TYPE_SUBHEAD)
+                                .strong(),
                         );
                         ui.label(
-                            RichText::new(army_label(army.selected)).color(AMBER).size(TYPE_CAPTION),
+                            RichText::new(army_label(army.selected))
+                                .color(AMBER)
+                                .size(TYPE_CAPTION),
                         );
                         ui.add_space(4.0);
                         let record = match win_rate_pct(profile.wins, profile.matches_played) {
@@ -638,8 +661,10 @@ pub(crate) fn title_ui(
                         let half = (MENU_BUTTON_W - 10.0) / 2.0;
                         if ui
                             .add(
-                                Button::new(RichText::new("SKIRMISH").color(BONE).size(TYPE_BUTTON))
-                                    .min_size([half, 46.0].into()),
+                                Button::new(
+                                    RichText::new("SKIRMISH").color(BONE).size(TYPE_BUTTON),
+                                )
+                                .min_size([half, 46.0].into()),
                             )
                             .clicked()
                         {
@@ -683,7 +708,11 @@ pub(crate) fn title_ui(
             .show(&ctx, |ui| {
                 glass_card_frame().show(ui, |ui| {
                     ui.set_width(256.0);
-                    let header = if op.replay { "REPLAY OPERATION" } else { "NEXT OPERATION" };
+                    let header = if op.replay {
+                        "REPLAY OPERATION"
+                    } else {
+                        "NEXT OPERATION"
+                    };
                     ui.label(RichText::new(header).color(ASH).size(TYPE_CAPTION).strong());
                     ui.add_space(2.0);
                     ui.label(
@@ -693,12 +722,9 @@ pub(crate) fn title_ui(
                             .strong(),
                     );
                     ui.label(
-                        RichText::new(format!(
-                            "{} / {} OPERATIONS CLEARED",
-                            op.cleared, op.total
-                        ))
-                        .color(MUTED)
-                        .size(TYPE_CAPTION),
+                        RichText::new(format!("{} / {} OPERATIONS CLEARED", op.cleared, op.total))
+                            .color(MUTED)
+                            .size(TYPE_CAPTION),
                     );
                     ui.add_space(10.0);
                     if footer_button(ui, "CONTINUE", Emphasis::Secondary) {

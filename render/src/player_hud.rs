@@ -17,8 +17,8 @@
 //! ## The pure seam
 //!
 //! Like [`tank_hud`](crate::tank_hud) and [`objective_hud`](crate::objective_hud), all the geometry /
-//! formatting math lives in pure free fns — [`health_fraction`], [`ammo_label`], [`player_hud_quads`],
-//! [`player_hud_labels`] — so it is unit-testable without a GPU (exactly the `reload_ring_fill` /
+//! formatting math lives in pure free fns — `health_fraction`, `ammo_label`, `player_hud_quads`,
+//! `player_hud_labels` — so it is unit-testable without a GPU (exactly the `reload_ring_fill` /
 //! `objective_hud_quads` pattern). The bar draws through the shared [`overlay`](crate::overlay) quad
 //! pipeline and the count through the shared [`text`](crate::text) pass (no new pipeline/shader),
 //! so the `lib.rs` wiring mirrors [`render_prompt`](crate::Renderer::render_prompt) exactly.
@@ -152,7 +152,7 @@ pub fn ammo_label(ammo: u32, mag_size: u32) -> String {
     format!("{ammo} / {mag_size}")
 }
 
-/// Is the magazine **low** (some rounds left, at/below [`AMMO_LOW_FRAC`] of capacity)? Exclusive of
+/// Is the magazine **low** (some rounds left, at/below `AMMO_LOW_FRAC` of capacity)? Exclusive of
 /// empty — a dry mag reads as [`ammo_out`], never as merely low. A magazine-less weapon
 /// (`mag_size == 0`) is never low. Pure, host-testable (the cue-state seam).
 pub fn ammo_low(ammo: u32, mag_size: u32) -> bool {
@@ -316,19 +316,44 @@ mod tests {
 
     #[test]
     fn full_hp_is_full_bar_zero_is_empty() {
-        assert!((health_fraction(100.0, 100.0) - 1.0).abs() < 1e-6, "full HP → full bar");
-        assert!((health_fraction(0.0, 100.0) - 0.0).abs() < 1e-6, "zero HP → empty bar");
+        assert!(
+            (health_fraction(100.0, 100.0) - 1.0).abs() < 1e-6,
+            "full HP → full bar"
+        );
+        assert!(
+            (health_fraction(0.0, 100.0) - 0.0).abs() < 1e-6,
+            "zero HP → empty bar"
+        );
     }
 
     #[test]
     fn health_fraction_clamps_and_handles_no_body() {
-        assert_eq!(health_fraction(150.0, 100.0), 1.0, "over-max clamps to full");
-        assert_eq!(health_fraction(-5.0, 100.0), 0.0, "negative clamps to empty");
-        assert_eq!(health_fraction(50.0, 0.0), 0.0, "no body (max 0) reads empty");
-        assert_eq!(health_fraction(50.0, -1.0), 0.0, "no body (max < 0) reads empty");
+        assert_eq!(
+            health_fraction(150.0, 100.0),
+            1.0,
+            "over-max clamps to full"
+        );
+        assert_eq!(
+            health_fraction(-5.0, 100.0),
+            0.0,
+            "negative clamps to empty"
+        );
+        assert_eq!(
+            health_fraction(50.0, 0.0),
+            0.0,
+            "no body (max 0) reads empty"
+        );
+        assert_eq!(
+            health_fraction(50.0, -1.0),
+            0.0,
+            "no body (max < 0) reads empty"
+        );
         for hp in 0..=200 {
             let f = health_fraction(hp as f32, 100.0);
-            assert!((0.0..=1.0).contains(&f), "fraction {f} out of [0,1] at hp={hp}");
+            assert!(
+                (0.0..=1.0).contains(&f),
+                "fraction {f} out of [0,1] at hp={hp}"
+            );
         }
     }
 
@@ -403,10 +428,19 @@ mod tests {
         // More HP → a wider fill.
         assert!(full_fill.hw > half_fill.hw, "fill widens with health");
         // Full fill spans the whole track width.
-        assert!((full_fill.hw - BAR_W * 0.5).abs() < 1e-6, "full HP fills the track");
+        assert!(
+            (full_fill.hw - BAR_W * 0.5).abs() < 1e-6,
+            "full HP fills the track"
+        );
         // Both fills start pinned to the track's left edge (LEFT), never re-centering.
-        assert!((full_fill.cx - full_fill.hw - LEFT).abs() < 1e-6, "full fill left edge at LEFT");
-        assert!((half_fill.cx - half_fill.hw - LEFT).abs() < 1e-6, "half fill left edge at LEFT");
+        assert!(
+            (full_fill.cx - full_fill.hw - LEFT).abs() < 1e-6,
+            "full fill left edge at LEFT"
+        );
+        assert!(
+            (half_fill.cx - half_fill.hw - LEFT).abs() < 1e-6,
+            "half fill left edge at LEFT"
+        );
     }
 
     #[test]
@@ -418,7 +452,10 @@ mod tests {
         assert_eq!(crit, crate::theme::STATUS_CRIT);
         assert_eq!(healthy, crate::theme::STATUS_GOOD);
         assert_ne!(crit, healthy, "critical must not read the same as healthy");
-        assert_ne!(wounded, healthy, "wounded must not read the same as healthy");
+        assert_ne!(
+            wounded, healthy,
+            "wounded must not read the same as healthy"
+        );
         assert_ne!(wounded, crit, "wounded must not read the same as critical");
     }
 
@@ -432,7 +469,10 @@ mod tests {
         assert_eq!(l.text, "12 / 30");
         assert_eq!(l.anchor, Anchor::TopLeft);
         // Shares the bar's left edge.
-        assert!((l.pos[0] - LEFT).abs() < 1e-6, "ammo count left-aligned with the bar");
+        assert!(
+            (l.pos[0] - LEFT).abs() < 1e-6,
+            "ammo count left-aligned with the bar"
+        );
         // Sits above the bar's top edge (its bottom = top - size is above the bar top).
         let bar_top = BOTTOM + 2.0 * BAR_HH;
         assert!(l.pos[1] - l.size >= bar_top, "count rides above the bar");
@@ -444,7 +484,10 @@ mod tests {
         s.mag_size = 0; // e.g. a melee/no-mag weapon
         assert!(player_hud_labels(&s).is_empty(), "no magazine → no count");
         // ...but the HP bar still draws.
-        assert!(!player_hud_quads(&s).is_empty(), "HP bar is independent of the ammo count");
+        assert!(
+            !player_hud_quads(&s).is_empty(),
+            "HP bar is independent of the ammo count"
+        );
     }
 
     #[test]
@@ -459,8 +502,14 @@ mod tests {
             s.ammo = 3; // 3/30 = 0.1 <= AMMO_LOW_FRAC
             player_hud_labels(&s)[0].color
         };
-        assert_eq!(full, AMMO_COLOR, "a full mag reads in the neutral bone tint");
-        assert_eq!(low, AMMO_LOW_COLOR, "a near-empty mag warms to the low-ammo tint");
+        assert_eq!(
+            full, AMMO_COLOR,
+            "a full mag reads in the neutral bone tint"
+        );
+        assert_eq!(
+            low, AMMO_LOW_COLOR,
+            "a near-empty mag warms to the low-ammo tint"
+        );
         assert_ne!(full, low);
     }
 
@@ -495,8 +544,15 @@ mod tests {
         let ls = player_hud_labels(&s);
         assert_eq!(ls.len(), 2, "count + cue line");
         assert_eq!(ls[0].color, AMMO_LOW_COLOR, "count warms (colour channel)");
-        assert_eq!(ls[1].text, "LOW", "…and the state is also spelled out (text channel)");
-        assert_eq!(ls[1].color, crate::theme::ALERT_WARN, "cue in the shared caution tint");
+        assert_eq!(
+            ls[1].text, "LOW",
+            "…and the state is also spelled out (text channel)"
+        );
+        assert_eq!(
+            ls[1].color,
+            crate::theme::ALERT_WARN,
+            "cue in the shared caution tint"
+        );
     }
 
     #[test]
@@ -509,8 +565,16 @@ mod tests {
         // honest empty-mag prompt is RELOAD (resupply-at-camp is the reserve's recovery, which this
         // surface cannot see). Both the count and the cue read in the drained-own-state red.
         assert_eq!(ls[1].text, "MAG EMPTY -- RELOAD");
-        assert_eq!(ls[1].color, crate::theme::STATUS_CRIT, "cannot fight → crit red");
-        assert_eq!(ls[0].color, crate::theme::STATUS_CRIT, "the 0-count reads crit too");
+        assert_eq!(
+            ls[1].color,
+            crate::theme::STATUS_CRIT,
+            "cannot fight → crit red"
+        );
+        assert_eq!(
+            ls[0].color,
+            crate::theme::STATUS_CRIT,
+            "the 0-count reads crit too"
+        );
         assert_ne!(ls[1].text, "LOW", "dry outranks low — never both");
     }
 
@@ -519,8 +583,14 @@ mod tests {
         // The atlas bakes full printable ASCII (0x20..0x7E) — lowercase would render, but the HUD
         // voice is all-caps; and anything outside ASCII (an em dash) would drop glyphs entirely.
         for cue in [AMMO_LOW_TEXT, AMMO_OUT_TEXT] {
-            assert!(cue.chars().all(|c| (' '..='~').contains(&c)), "{cue:?} not printable ASCII");
-            assert!(!cue.chars().any(|c| c.is_ascii_lowercase()), "{cue:?} breaks all-caps");
+            assert!(
+                cue.chars().all(|c| (' '..='~').contains(&c)),
+                "{cue:?} not printable ASCII"
+            );
+            assert!(
+                !cue.chars().any(|c| c.is_ascii_lowercase()),
+                "{cue:?} breaks all-caps"
+            );
         }
     }
 
@@ -531,9 +601,15 @@ mod tests {
             s.ammo = ammo;
             let ls = player_hud_labels(&s);
             let (count, cue) = (&ls[0], &ls[1]);
-            assert!((cue.pos[0] - LEFT).abs() < 1e-6, "cue shares the bar's left edge");
+            assert!(
+                (cue.pos[0] - LEFT).abs() < 1e-6,
+                "cue shares the bar's left edge"
+            );
             // TopLeft anchors grow down: the cue's bottom edge sits at/above the count's top.
-            assert!(cue.pos[1] - cue.size >= count.pos[1], "cue rides above the count");
+            assert!(
+                cue.pos[1] - cue.size >= count.pos[1],
+                "cue rides above the count"
+            );
             // Still inside the bottom-left quadrant (clear of the centre reticle, on-screen).
             assert!(cue.pos[0] < 0.0 && cue.pos[1] < 0.0 && cue.pos[1] > -1.0);
         }
@@ -549,7 +625,10 @@ mod tests {
         // unscaled — the text pass applies ui_scale at draw time (no double-scaling).
         let base = &player_hud_labels_scaled(&s, 1.0)[1];
         let scaled = &player_hud_labels_scaled(&s, 2.0)[1];
-        assert!(scaled.pos[1] > base.pos[1], "cue rises with the scaled stack");
+        assert!(
+            scaled.pos[1] > base.pos[1],
+            "cue rises with the scaled stack"
+        );
         assert_eq!(scaled.size, base.size, "emitted size stays unscaled");
     }
 
@@ -562,7 +641,10 @@ mod tests {
         // At 2× the track's half-width doubles (the bar grows with the scaled ammo glyphs).
         let base_track = player_hud_quads_scaled(&s, 1.0)[1].hw;
         let scaled_track = player_hud_quads_scaled(&s, 2.0)[1].hw;
-        assert!((scaled_track - 2.0 * base_track).abs() < 1e-6, "track half-width doubles at 2×");
+        assert!(
+            (scaled_track - 2.0 * base_track).abs() < 1e-6,
+            "track half-width doubles at 2×"
+        );
     }
 
     // ---- fairness (invariant #6): screen-space only, bottom-left, clear of centre ----
@@ -572,15 +654,24 @@ mod tests {
         // Every quad/label is bounded NDC with no world position, sits in the bottom-left quadrant,
         // and stays clear of the screen center (the reticle / scope overlay).
         for q in player_hud_quads(&state()) {
-            assert!(q.cx >= -1.0 && q.cx <= 1.0 && q.cy >= -1.0 && q.cy <= 1.0, "quad on-screen");
+            assert!(
+                q.cx >= -1.0 && q.cx <= 1.0 && q.cy >= -1.0 && q.cy <= 1.0,
+                "quad on-screen"
+            );
             assert!(q.cx < 0.0, "quad in the left half");
             assert!(q.cy < 0.0, "quad in the bottom half");
             // Its right edge stays well left of screen center (clear of the centered reticle/scope).
-            assert!(q.cx + q.hw < 0.0, "quad stays out of the screen-center column");
+            assert!(
+                q.cx + q.hw < 0.0,
+                "quad stays out of the screen-center column"
+            );
         }
         for l in player_hud_labels(&state()) {
             assert!(l.pos[0] >= -1.0 && l.pos[0] <= 1.0 && l.pos[1] >= -1.0 && l.pos[1] <= 1.0);
-            assert!(l.pos[0] < 0.0 && l.pos[1] < 0.0, "label in the bottom-left quadrant");
+            assert!(
+                l.pos[0] < 0.0 && l.pos[1] < 0.0,
+                "label in the bottom-left quadrant"
+            );
         }
     }
 }

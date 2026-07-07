@@ -23,8 +23,8 @@
 //! Like [`debug`](crate::debug) it is a command-view, world-space pass: a screen-composited **LOAD**
 //! pass (never clears), no depth test (always reads on top), reusing the unit pass's camera bind
 //! group (the top-down view-projection) so world points map to clip exactly as the units do. The
-//! renderable geometry is built by the GPU-free [`detection_vertices`] seam (unit-tested without a
-//! device); [`DetectionRenderer`] is the thin GPU glue.
+//! renderable geometry is built by the GPU-free `detection_vertices` seam (unit-tested without a
+//! device); `DetectionRenderer` is the thin GPU glue.
 //!
 //! ## Fairness (invariant #6) is preserved structurally
 //!
@@ -371,9 +371,21 @@ mod tests {
     #[test]
     fn vertex_count_scales_with_marker_count() {
         let markers = [
-            DetectionMarker { x: 0.0, y: 0.0, alpha: 1.0 },
-            DetectionMarker { x: 5.0, y: 5.0, alpha: 0.5 },
-            DetectionMarker { x: -5.0, y: 2.0, alpha: 0.25 },
+            DetectionMarker {
+                x: 0.0,
+                y: 0.0,
+                alpha: 1.0,
+            },
+            DetectionMarker {
+                x: 5.0,
+                y: 5.0,
+                alpha: 0.5,
+            },
+            DetectionMarker {
+                x: -5.0,
+                y: 2.0,
+                alpha: 0.25,
+            },
         ];
         assert_eq!(detection_vertices(&markers).len(), 3 * VERTS_PER_MARKER);
     }
@@ -383,7 +395,11 @@ mod tests {
         // Each stroke contributes VERTS_PER_STROKE vertices whose `edge` attribute is exactly the
         // ribbon pattern (+1,-1,+1, -1,-1,+1): two corners on each side of the spine. This is what
         // the fragment shader feathers, so it must hold for every stroke.
-        let v = detection_vertices(&[DetectionMarker { x: 1.0, y: 2.0, alpha: 0.7 }]);
+        let v = detection_vertices(&[DetectionMarker {
+            x: 1.0,
+            y: 2.0,
+            alpha: 0.7,
+        }]);
         assert_eq!(v.len() % VERTS_PER_STROKE, 0);
         let want = [1.0, -1.0, 1.0, -1.0, -1.0, 1.0];
         for stroke in v.chunks(VERTS_PER_STROKE) {
@@ -412,7 +428,10 @@ mod tests {
         let min_y = cy - DIAMOND_RADIUS * scale - hw - 1e-3;
         let max_y = cy + CHEV_OUTER_TOP_Y * scale + hw + 1e-3;
         for vert in &v {
-            assert!((vert.world[0] - cx).abs() <= max_dx, "x within marker extent");
+            assert!(
+                (vert.world[0] - cx).abs() <= max_dx,
+                "x within marker extent"
+            );
             assert!(vert.world[1] >= min_y, "no vertex below the diamond");
             assert!(vert.world[1] <= max_y, "no vertex above the chevron stack");
         }
@@ -421,27 +440,50 @@ mod tests {
     #[test]
     fn urgency_alpha_is_propagated_and_clamped() {
         // The per-vertex alpha is exactly the (clamped) marker urgency, uniformly across the marker.
-        let v = detection_vertices(&[DetectionMarker { x: 0.0, y: 0.0, alpha: 0.4 }]);
+        let v = detection_vertices(&[DetectionMarker {
+            x: 0.0,
+            y: 0.0,
+            alpha: 0.4,
+        }]);
         assert!(v.iter().all(|vert| (vert.color[3] - 0.4).abs() < 1e-6));
         // Out-of-range alpha is clamped into [0,1] (defensive — the seam already produces in-range).
-        let hi = detection_vertices(&[DetectionMarker { x: 0.0, y: 0.0, alpha: 2.0 }]);
+        let hi = detection_vertices(&[DetectionMarker {
+            x: 0.0,
+            y: 0.0,
+            alpha: 2.0,
+        }]);
         assert!(hi.iter().all(|vert| vert.color[3] == 1.0));
-        let lo = detection_vertices(&[DetectionMarker { x: 0.0, y: 0.0, alpha: -1.0 }]);
+        let lo = detection_vertices(&[DetectionMarker {
+            x: 0.0,
+            y: 0.0,
+            alpha: -1.0,
+        }]);
         assert!(lo.iter().all(|vert| vert.color[3] == 0.0));
     }
 
     #[test]
     fn fresher_tells_read_stronger_than_aged_lingers() {
         let center = (0.0_f32, 0.0_f32);
-        let fresh = detection_vertices(&[DetectionMarker { x: center.0, y: center.1, alpha: 1.0 }]);
-        let aged = detection_vertices(&[DetectionMarker { x: center.0, y: center.1, alpha: 0.2 }]);
+        let fresh = detection_vertices(&[DetectionMarker {
+            x: center.0,
+            y: center.1,
+            alpha: 1.0,
+        }]);
+        let aged = detection_vertices(&[DetectionMarker {
+            x: center.0,
+            y: center.1,
+            alpha: 0.2,
+        }]);
         assert_eq!(fresh.len(), aged.len());
 
         // Opacity: a fresh tell is more opaque than an aged linger.
         assert!(fresh[0].color[3] > aged[0].color[3]);
 
         // Warmth: fresh trends toward warm amber (more green/blend than the deep aged red).
-        assert!(fresh[0].color[1] > aged[0].color[1], "fresh is warmer (greener amber)");
+        assert!(
+            fresh[0].color[1] > aged[0].color[1],
+            "fresh is warmer (greener amber)"
+        );
 
         // Size: the fresh marker reaches farther from the unit than the aged one (bigger reticle).
         let reach = |verts: &[DetectionVertex]| {
@@ -459,15 +501,26 @@ mod tests {
         // opens downward, aiming at the contact below it. So the highest vertices straddle the
         // center in x (the chevron top corners), and the chevron region is entirely above center.
         let (cx, cy) = (0.0_f32, 0.0_f32);
-        let v = detection_vertices(&[DetectionMarker { x: cx, y: cy, alpha: 1.0 }]);
+        let v = detection_vertices(&[DetectionMarker {
+            x: cx,
+            y: cy,
+            alpha: 1.0,
+        }]);
         let topmost = v
             .iter()
             .max_by(|a, b| a.world[1].partial_cmp(&b.world[1]).unwrap())
             .unwrap();
-        assert!(topmost.world[1] > cy, "the chevron stack floats above the contact");
+        assert!(
+            topmost.world[1] > cy,
+            "the chevron stack floats above the contact"
+        );
         // There exist vertices to the left and to the right of center near the top (the V arms).
-        assert!(v.iter().any(|p| p.world[0] < cx - 0.5 && p.world[1] > cy + DIAMOND_RADIUS));
-        assert!(v.iter().any(|p| p.world[0] > cx + 0.5 && p.world[1] > cy + DIAMOND_RADIUS));
+        assert!(v
+            .iter()
+            .any(|p| p.world[0] < cx - 0.5 && p.world[1] > cy + DIAMOND_RADIUS));
+        assert!(v
+            .iter()
+            .any(|p| p.world[0] > cx + 0.5 && p.world[1] > cy + DIAMOND_RADIUS));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! Two layers, kept apart exactly like the Android shell:
 //!  - a tiny **pure seam** ([`resolve_title_action`], [`build_stamp`]/[`build_channel`], and the
 //!    per-screen `apply_*` action seams) — the testable decision/formatting logic, unit-tested in
-//!    [`tests`] with no GPU or window;
+//!    `tests` with no GPU or window;
 //!  - the **egui glue** ([`EguiShell`]) — device-gated chrome (an egui context + the winit input
 //!    bridge + the wgpu renderer) that draws each screen and reports the clicked action. The glue is
 //!    exempt from unit tests (CLAUDE.md: thin, un-constructible-in-test platform glue), so the real
