@@ -18,6 +18,6 @@ audio = ["dep:cpal"]
 [dependencies]
 gonedark-pal = { path = "../pal" }
 winit = "0.30"
-wgpu = "29"
+wgpu = "30"
 pollster = "0.4"
 cpal = { version = "0.18", optional = true }

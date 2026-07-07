@@ -55,7 +55,7 @@ ndk = "0.9"
 log = "0.4"
 android_logger = "0.15"
 # RHI: wgpu picks the Vulkan backend on Android automatically (platforms.md §3).
-wgpu = "29"
+wgpu = "30"
 # Bridges the NDK `ANativeWindow` to wgpu's surface creation.
 raw-window-handle = "0.6"
 # Low-latency audio sink (platforms.md §2): oboe is Google's official AAudio/OpenSL ES wrapper

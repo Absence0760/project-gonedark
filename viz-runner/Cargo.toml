@@ -21,6 +21,6 @@ gonedark-render = { path = "../render" }
 # MultiReplay + the merged, ascending-peer-id command stream) rather than reimplementing it, and
 # cross-check the rendered playback's per-tick checksums against the replay's proven oracle.
 gonedark-replay-runner = { path = "../replay-runner" }
-wgpu = "29"
+wgpu = "30"
 pollster = "0.4"
 png = "0.18"
