@@ -98,7 +98,7 @@ jobs:
 
       # AGP 8.7 / Gradle 8.11 run on JDK 17; the :app module targets jvmTarget 17.
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -106,10 +106,10 @@ jobs:
       # The :app module is a `com.android.application`, so AGP needs the Android SDK to
       # configure even for pure-JVM unit tests. No NDK — the cargo-ndk/libc++ tasks are excluded.
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
