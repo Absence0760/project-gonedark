@@ -119,7 +119,12 @@ fn spark_layout(k: usize) -> (f32, f32) {
 /// element `[1]` is the **dust puff** (grows with age `age_t = 1 - i`, low warm alpha), and the rest
 /// are crisp **spark embers** flung outward (head + dimmer tail per spark, riding a `sqrt(age_t)`
 /// ease so they snap out early). Pure float math — host-testable without a GPU.
-pub fn impact_instances(ndc_x: f32, ndc_y: f32, intensity: f32, aspect: f32) -> Vec<ImpactInstance> {
+pub fn impact_instances(
+    ndc_x: f32,
+    ndc_y: f32,
+    intensity: f32,
+    aspect: f32,
+) -> Vec<ImpactInstance> {
     let i = intensity.clamp(0.0, 1.0);
     if i <= 0.0 {
         return Vec::new();
@@ -209,12 +214,20 @@ struct QuadVertex {
 }
 
 const QUAD_VERTS: [QuadVertex; 6] = [
-    QuadVertex { corner: [-1.0, -1.0] },
-    QuadVertex { corner: [1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
+    QuadVertex {
+        corner: [1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, 1.0] },
+    QuadVertex {
+        corner: [-1.0, 1.0],
+    },
 ];
 
 const INITIAL_CAP: usize = 4;
@@ -401,9 +414,19 @@ mod tests {
 
     #[test]
     fn impact_fades_over_its_own_window() {
-        assert!((impact_intensity(Some(50), 50) - 1.0).abs() < EPS, "fresh hit is full");
-        assert!(impact_intensity(Some(0), IMPACT_TICKS - 1) > 0.0, "lit just before cutoff");
-        assert_eq!(impact_intensity(Some(0), IMPACT_TICKS), 0.0, "gone at the cutoff");
+        assert!(
+            (impact_intensity(Some(50), 50) - 1.0).abs() < EPS,
+            "fresh hit is full"
+        );
+        assert!(
+            impact_intensity(Some(0), IMPACT_TICKS - 1) > 0.0,
+            "lit just before cutoff"
+        );
+        assert_eq!(
+            impact_intensity(Some(0), IMPACT_TICKS),
+            0.0,
+            "gone at the cutoff"
+        );
     }
 
     // ---- builder ----
@@ -417,12 +440,19 @@ mod tests {
     #[test]
     fn live_burst_emits_flash_dust_and_sparks() {
         let inst = impact_instances(0.3, -0.2, 1.0, 1.0);
-        assert_eq!(inst.len(), 2 + 2 * SPARK_COUNT, "flash + dust + head/tail per spark");
+        assert_eq!(
+            inst.len(),
+            2 + 2 * SPARK_COUNT,
+            "flash + dust + head/tail per spark"
+        );
         assert_eq!(inst[0].shape, SHAPE_CORE, "[0] is the flash core");
         assert_eq!(inst[1].shape, SHAPE_RING, "[1] is the dust puff");
         // The flash + dust sit exactly on the hit point; sparks are flung off it.
         for e in &inst[..2] {
-            assert!((e.ndc_x - 0.3).abs() < EPS && (e.ndc_y + 0.2).abs() < EPS, "centered on the hit");
+            assert!(
+                (e.ndc_x - 0.3).abs() < EPS && (e.ndc_y + 0.2).abs() < EPS,
+                "centered on the hit"
+            );
         }
         assert!(
             inst[2..].iter().all(|e| e.shape == SHAPE_SPARK),
@@ -435,9 +465,15 @@ mod tests {
         let fresh = impact_instances(0.0, 0.0, 1.0, 1.0);
         let aged = impact_instances(0.0, 0.0, 0.2, 1.0);
         // Flash (element 0) shrinks with intensity.
-        assert!(aged[0].half_y < fresh[0].half_y, "flash shrinks as it fades");
+        assert!(
+            aged[0].half_y < fresh[0].half_y,
+            "flash shrinks as it fades"
+        );
         // Dust (element 1) grows as it ages.
-        assert!(aged[1].half_y > fresh[1].half_y, "dust puff expands outward");
+        assert!(
+            aged[1].half_y > fresh[1].half_y,
+            "dust puff expands outward"
+        );
         // Flash alpha fades with intensity (and on an i² curve, so faster than linear).
         assert!(aged[0].a < fresh[0].a, "flash alpha snaps out");
         assert!((fresh[0].a - 1.0).abs() < EPS, "fresh flash is full bright");
@@ -459,8 +495,14 @@ mod tests {
         let aged = impact_instances(0.0, 0.0, 0.2, 1.0);
         // Compare the same spark (first head, element [2]) fresh vs aged.
         let reach = |e: &ImpactInstance| (e.ndc_x * e.ndc_x + e.ndc_y * e.ndc_y).sqrt();
-        assert!(reach(&aged[2]) > reach(&fresh[2]), "sparks travel out from the strike with age");
-        assert!(reach(&fresh[2]) < 0.05, "fresh sparks start at the impact point");
+        assert!(
+            reach(&aged[2]) > reach(&fresh[2]),
+            "sparks travel out from the strike with age"
+        );
+        assert!(
+            reach(&fresh[2]) < 0.05,
+            "fresh sparks start at the impact point"
+        );
         assert!(aged[2].a < fresh[2].a, "spark embers dim as they fly out");
     }
 
@@ -472,7 +514,10 @@ mod tests {
             let head = &inst[2 + 2 * k];
             let tail = &inst[2 + 2 * k + 1];
             assert!(head.a > tail.a, "head brighter than tail (spark {k})");
-            assert!(head.half_y > tail.half_y, "head larger than tail (spark {k})");
+            assert!(
+                head.half_y > tail.half_y,
+                "head larger than tail (spark {k})"
+            );
         }
     }
 
@@ -491,7 +536,10 @@ mod tests {
         let aspect = 16.0 / 9.0;
         let inst = impact_instances(0.0, 0.0, 1.0, aspect);
         for e in &inst {
-            assert!((e.half_x - e.half_y / aspect).abs() < EPS, "round per-axis on a wide window");
+            assert!(
+                (e.half_x - e.half_y / aspect).abs() < EPS,
+                "round per-axis on a wide window"
+            );
         }
     }
 
@@ -499,7 +547,10 @@ mod tests {
     fn degenerate_aspect_does_not_divide_by_zero() {
         let inst = impact_instances(0.0, 0.0, 1.0, 0.0);
         for e in &inst {
-            assert!(e.half_x.is_finite() && e.half_y.is_finite(), "no inf half-size at aspect 0");
+            assert!(
+                e.half_x.is_finite() && e.half_y.is_finite(),
+                "no inf half-size at aspect 0"
+            );
         }
     }
 
@@ -513,6 +564,8 @@ mod tests {
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         );
-        validator.validate(&module).expect("impact.wgsl must validate");
+        validator
+            .validate(&module)
+            .expect("impact.wgsl must validate");
     }
 }

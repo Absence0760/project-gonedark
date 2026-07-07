@@ -82,7 +82,11 @@ fn queue_tile(ui: &mut egui::Ui, queue: &PvpQueue) {
     use egui::RichText;
     let joinable = queue_joinable(queue);
     // FIRST UP reads amber (the next thing that becomes real); the rest stay muted.
-    let status_color = if queue.status == "FIRST UP" { AMBER } else { MUTED };
+    let status_color = if queue.status == "FIRST UP" {
+        AMBER
+    } else {
+        MUTED
+    };
     selectable_row(ui, ("pvp_queue", queue.id), joinable, |ui| {
         ui.horizontal(|ui| {
             ui.label(

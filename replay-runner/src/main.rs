@@ -52,8 +52,8 @@ fn main() -> ExitCode {
         }
     }
 
-    let ticks: u64 = parse_ticks(positional.first().map(|s| s.as_str()))
-        .unwrap_or_else(|bad| fatal_ticks(&bad));
+    let ticks: u64 =
+        parse_ticks(positional.first().map(|s| s.as_str())).unwrap_or_else(|bad| fatal_ticks(&bad));
     let scenario = positional
         .get(1)
         .map(|s| s.as_str())
@@ -164,7 +164,10 @@ fn run_replay_flow<T>(
     });
     let bytes = encode(&replay);
     if let Err(e) = std::fs::write(&path, &bytes) {
-        eprintln!("failed to write {} artifact {path}: {e}", labels.error_label);
+        eprintln!(
+            "failed to write {} artifact {path}: {e}",
+            labels.error_label
+        );
         return ExitCode::FAILURE;
     }
 
@@ -179,7 +182,10 @@ fn run_replay_flow<T>(
     let decoded = match decode(&disk) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("failed to decode {} artifact {path}: {e}", labels.error_label);
+            eprintln!(
+                "failed to decode {} artifact {path}: {e}",
+                labels.error_label
+            );
             return ExitCode::FAILURE;
         }
     };
@@ -197,7 +203,10 @@ fn run_replay_flow<T>(
         extra_header(&decoded),
         bytes.len(),
     );
-    eprintln!("  artifact path: {path}{}", if keep { " (kept)" } else { " (removed)" });
+    eprintln!(
+        "  artifact path: {path}{}",
+        if keep { " (kept)" } else { " (removed)" }
+    );
     eprintln!(
         "  record  final tick {} checksum {:016x}",
         record_stream.len().saturating_sub(1),

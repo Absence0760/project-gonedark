@@ -247,12 +247,20 @@ struct QuadVertex {
 }
 
 const QUAD_VERTS: [QuadVertex; 6] = [
-    QuadVertex { corner: [-1.0, -1.0] },
-    QuadVertex { corner: [1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
+    QuadVertex {
+        corner: [1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, 1.0] },
+    QuadVertex {
+        corner: [-1.0, 1.0],
+    },
 ];
 
 const INITIAL_CAP: usize = 10;
@@ -457,7 +465,11 @@ mod tests {
         h.fire_mode = btn(840.0, 230.0, TouchGlyph::FireAuto);
         let q = build_quads(&h);
         assert_eq!(q[5].shape, 9.0, "auto fire-mode is shape id 9");
-        assert_eq!([q[5].r, q[5].g, q[5].b], FIREMODE_COL, "and carries the fire-mode colour");
+        assert_eq!(
+            [q[5].r, q[5].g, q[5].b],
+            FIREMODE_COL,
+            "and carries the fire-mode colour"
+        );
     }
 
     #[test]
@@ -534,7 +546,10 @@ mod tests {
         let mut h = hud();
         h.fire.opacity = 0.5;
         let q = build_quads(&h);
-        assert!((q[0].a - IDLE_ALPHA * 0.5).abs() < 1e-6, "idle fire faded to half alpha");
+        assert!(
+            (q[0].a - IDLE_ALPHA * 0.5).abs() < 1e-6,
+            "idle fire faded to half alpha"
+        );
         // A pressed-but-faded button scales the HOT alpha, not the idle one.
         h.fire.pressed = true;
         assert!((build_quads(&h)[0].a - HOT_ALPHA * 0.5).abs() < 1e-6);
@@ -554,8 +569,14 @@ mod tests {
             opacity: 0.25,
         });
         let q = build_quads(&h);
-        assert!((q[0].a - STICK_BASE_ALPHA * 0.25).abs() < 1e-6, "ring faded");
-        assert!((q[1].a - STICK_THUMB_ALPHA * 0.25).abs() < 1e-6, "thumb faded");
+        assert!(
+            (q[0].a - STICK_BASE_ALPHA * 0.25).abs() < 1e-6,
+            "ring faded"
+        );
+        assert!(
+            (q[1].a - STICK_THUMB_ALPHA * 0.25).abs() < 1e-6,
+            "thumb faded"
+        );
     }
 
     #[test]

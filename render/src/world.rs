@@ -92,13 +92,21 @@ pub struct WeaponPose {
 impl WeaponPose {
     /// A ready weapon at rest: no flash, fully chambered, no spray.
     pub fn at_rest() -> Self {
-        WeaponPose { flash: 0.0, cycle: 1.0, spray: 0.0 }
+        WeaponPose {
+            flash: 0.0,
+            cycle: 1.0,
+            spray: 0.0,
+        }
     }
 
     /// Just the recoil/flash channel (chambered, no spray) — the pre-animation behaviour, kept for
     /// [`weapon_view_model`] and its tests.
     pub fn from_flash(flash: f32) -> Self {
-        WeaponPose { flash, cycle: 1.0, spray: 0.0 }
+        WeaponPose {
+            flash,
+            cycle: 1.0,
+            spray: 0.0,
+        }
     }
 }
 
@@ -535,11 +543,12 @@ impl WorldRenderer {
                 resource: muzzle_uniform_buf.as_entire_binding(),
             }],
         });
-        let muzzle_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("gonedark.world_muzzle_pipeline_layout"),
-            bind_group_layouts: &[Some(&muzzle_layout)],
-            immediate_size: 0,
-        });
+        let muzzle_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("gonedark.world_muzzle_pipeline_layout"),
+                bind_group_layouts: &[Some(&muzzle_layout)],
+                immediate_size: 0,
+            });
         let muzzle_additive = wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -740,9 +749,19 @@ mod tests {
 
     #[test]
     fn muzzle_flash_fades_over_its_own_window() {
-        assert!((muzzle_flash_intensity(Some(50), 50) - 1.0).abs() < EPS, "fresh shot is full");
-        assert!(muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS - 1) > 0.0, "lit just before");
-        assert_eq!(muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS), 0.0, "gone at cutoff");
+        assert!(
+            (muzzle_flash_intensity(Some(50), 50) - 1.0).abs() < EPS,
+            "fresh shot is full"
+        );
+        assert!(
+            muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS - 1) > 0.0,
+            "lit just before"
+        );
+        assert_eq!(
+            muzzle_flash_intensity(Some(0), MUZZLE_FLASH_TICKS),
+            0.0,
+            "gone at cutoff"
+        );
     }
 
     // ---- world uniform ----
@@ -835,15 +854,30 @@ mod tests {
     fn muzzle_uniform_carries_flash_aspect_and_anchor() {
         let u = MuzzleUniform::new(0.5, 16.0 / 9.0, (0.2, -0.1));
         assert!((u.params[0] - 0.5).abs() < EPS, "flash threads through");
-        assert!((u.params[1] - 16.0 / 9.0).abs() < EPS, "aspect threads through");
-        assert_eq!((u.params[2], u.params[3]), (0.2, -0.1), "anchor threads through");
+        assert!(
+            (u.params[1] - 16.0 / 9.0).abs() < EPS,
+            "aspect threads through"
+        );
+        assert_eq!(
+            (u.params[2], u.params[3]),
+            (0.2, -0.1),
+            "anchor threads through"
+        );
     }
 
     #[test]
     fn muzzle_uniform_clamps_flash() {
         let a = (0.0, 0.0);
-        assert_eq!(MuzzleUniform::new(5.0, 1.0, a).params[0], 1.0, "over-range flash clamps to 1");
-        assert_eq!(MuzzleUniform::new(-2.0, 1.0, a).params[0], 0.0, "under-range flash clamps to 0");
+        assert_eq!(
+            MuzzleUniform::new(5.0, 1.0, a).params[0],
+            1.0,
+            "over-range flash clamps to 1"
+        );
+        assert_eq!(
+            MuzzleUniform::new(-2.0, 1.0, a).params[0],
+            0.0,
+            "under-range flash clamps to 0"
+        );
     }
 
     /// A simple right-handed DirectX-style perspective (glam's `rh::proj::directx::perspective`),
@@ -868,7 +902,10 @@ mod tests {
         let (ax, ay) = muzzle_anchor_ndc(&proj, WeaponPose::at_rest());
         assert!(ax > 0.0, "muzzle anchors right of centre (x={ax})");
         assert!(ay < 0.0, "muzzle anchors below centre (y={ay})");
-        assert!(ax.abs() <= 1.0 && ay.abs() <= 1.0, "anchor stays on-screen ({ax}, {ay})");
+        assert!(
+            ax.abs() <= 1.0 && ay.abs() <= 1.0,
+            "anchor stays on-screen ({ax}, {ay})"
+        );
     }
 
     #[test]
@@ -901,20 +938,45 @@ mod tests {
     fn chambering_rack_moves_the_viewmodel_then_settles() {
         // Semi-auto feel: mid-cycle (cycle≈0.5) the action is worked — the gun is pulled back toward
         // the camera (view +Z) and dropped (−Y) relative to a fully-chambered ready pose (cycle=1).
-        let ready = weapon_view_model_posed(WeaponPose { flash: 0.0, cycle: 1.0, spray: 0.0 });
-        let racking = weapon_view_model_posed(WeaponPose { flash: 0.0, cycle: 0.5, spray: 0.0 });
-        assert!(racking[3][2] > ready[3][2], "the rack pulls the gun back toward the camera");
-        assert!(racking[3][1] < ready[3][1], "and drops it while the action is open");
+        let ready = weapon_view_model_posed(WeaponPose {
+            flash: 0.0,
+            cycle: 1.0,
+            spray: 0.0,
+        });
+        let racking = weapon_view_model_posed(WeaponPose {
+            flash: 0.0,
+            cycle: 0.5,
+            spray: 0.0,
+        });
+        assert!(
+            racking[3][2] > ready[3][2],
+            "the rack pulls the gun back toward the camera"
+        );
+        assert!(
+            racking[3][1] < ready[3][1],
+            "and drops it while the action is open"
+        );
         // By the end of the cycle it is back at the ready placement (bump → 0 at cycle=1).
-        assert_eq!(racking[3][0].max(ready[3][0]).is_finite(), true);
+        assert!(racking[3][0].max(ready[3][0]).is_finite());
     }
 
     #[test]
     fn spray_climbs_the_viewmodel() {
         // Full-auto feel: sustained spray rides the muzzle up (view +Y) vs. no spray.
-        let calm = weapon_view_model_posed(WeaponPose { flash: 0.0, cycle: 1.0, spray: 0.0 });
-        let spraying = weapon_view_model_posed(WeaponPose { flash: 0.0, cycle: 1.0, spray: 1.0 });
-        assert!(spraying[3][1] > calm[3][1], "spray climbs the muzzle upward");
+        let calm = weapon_view_model_posed(WeaponPose {
+            flash: 0.0,
+            cycle: 1.0,
+            spray: 0.0,
+        });
+        let spraying = weapon_view_model_posed(WeaponPose {
+            flash: 0.0,
+            cycle: 1.0,
+            spray: 1.0,
+        });
+        assert!(
+            spraying[3][1] > calm[3][1],
+            "spray climbs the muzzle upward"
+        );
     }
 
     // ---- shaped muzzle-flare geometry (WS-A) ----
@@ -926,8 +988,14 @@ mod tests {
         let fresh = muzzle_ring_radius(1.0);
         let mid = muzzle_ring_radius(0.5);
         let old = muzzle_ring_radius(0.0);
-        assert!(old > mid && mid > fresh, "ring grows as flash decays ({fresh} < {mid} < {old})");
-        assert!(fresh > 0.0 && old < 1.0, "ring radius stays inside the flare quad");
+        assert!(
+            old > mid && mid > fresh,
+            "ring grows as flash decays ({fresh} < {mid} < {old})"
+        );
+        assert!(
+            fresh > 0.0 && old < 1.0,
+            "ring radius stays inside the flare quad"
+        );
     }
 
     #[test]
@@ -935,10 +1003,20 @@ mod tests {
         // The ring is dark at the white-hot flash itself and once fully faded, peaking mid-life — so
         // it reads as a fast expanding puff, not a constant halo.
         let peak = muzzle_ring_weight(0.5);
-        assert!(peak > muzzle_ring_weight(0.1), "ring brightens past the initial flash");
-        assert!(peak > muzzle_ring_weight(0.9), "ring brightens before the flash whites out");
+        assert!(
+            peak > muzzle_ring_weight(0.1),
+            "ring brightens past the initial flash"
+        );
+        assert!(
+            peak > muzzle_ring_weight(0.9),
+            "ring brightens before the flash whites out"
+        );
         assert_eq!(muzzle_ring_weight(0.0), 0.0, "no ring once fully faded");
-        assert_eq!(muzzle_ring_weight(1.0), 0.0, "no ring at the white-hot flash");
+        assert_eq!(
+            muzzle_ring_weight(1.0),
+            0.0,
+            "no ring at the white-hot flash"
+        );
     }
 
     #[test]
@@ -963,7 +1041,10 @@ mod tests {
         let f = 0.92; // ring negligible here, so the variation is pure spike asymmetry
         let horiz = muzzle_flare_shape(0.5, 0.0, f);
         let vert = muzzle_flare_shape(0.0, 0.5, f);
-        assert!((horiz - vert).abs() > 0.05, "axes differ: h={horiz} v={vert}");
+        assert!(
+            (horiz - vert).abs() > 0.05,
+            "axes differ: h={horiz} v={vert}"
+        );
 
         let r = 0.5;
         let mut min = f32::INFINITY;
@@ -974,14 +1055,22 @@ mod tests {
             min = min.min(s);
             max = max.max(s);
         }
-        assert!(max - min > 0.1, "the star must not be rotationally uniform, spread {}", max - min);
+        assert!(
+            max - min > 0.1,
+            "the star must not be rotationally uniform, spread {}",
+            max - min
+        );
     }
 
     #[test]
     fn muzzle_flare_fades_outside_the_quad() {
         // Beyond the flare's local extent there is no light — the additive pass adds nothing in the
         // corners, so the flash stays a compact shape, not a screen-wide wash.
-        assert_eq!(muzzle_flare_shape(1.3, 1.3, 0.5), 0.0, "no light past the quad corner");
+        assert_eq!(
+            muzzle_flare_shape(1.3, 1.3, 0.5),
+            0.0,
+            "no light past the quad corner"
+        );
     }
 
     // ---- ground detail-map metrics contract ----
@@ -1042,7 +1131,11 @@ mod tests {
         // the cell: the SAME input must always give the SAME value (the shader has no time input, so
         // re-evaluating the same ray every frame yields the same star).
         for &(x, y) in &[(0.0, 0.0), (3.0, 7.0), (-12.0, 41.0), (123.5, -8.25)] {
-            assert_eq!(star_hash21(x, y), star_hash21(x, y), "hash must be stable for ({x},{y})");
+            assert_eq!(
+                star_hash21(x, y),
+                star_hash21(x, y),
+                "hash must be stable for ({x},{y})"
+            );
         }
     }
 
@@ -1053,7 +1146,10 @@ mod tests {
             let x = i as f32 * 1.37 - 50.0;
             let y = (i as f32 * 0.91).sin() * 64.0; // spread of inputs (sin is a test-only float)
             let h = star_hash21(x, y);
-            assert!((0.0..1.0).contains(&h), "hash {h} out of [0,1) for ({x},{y})");
+            assert!(
+                (0.0..1.0).contains(&h),
+                "hash {h} out of [0,1) for ({x},{y})"
+            );
         }
     }
 
@@ -1070,7 +1166,11 @@ mod tests {
                 max = max.max(h);
             }
         }
-        assert!(max - min > 0.5, "neighbour cells should span the range, got spread {}", max - min);
+        assert!(
+            max - min > 0.5,
+            "neighbour cells should span the range, got spread {}",
+            max - min
+        );
     }
 
     // ---- moon glow shaping ----
@@ -1092,7 +1192,10 @@ mod tests {
         let center = moon_glow(1.0);
         assert!(near > off, "glow rises toward the moon ({near} !> {off})");
         assert!(center > near, "the disc is brightest ({center} !> {near})");
-        assert!(center >= edge && edge >= off, "monotone across the disc edge");
+        assert!(
+            center >= edge && edge >= off,
+            "monotone across the disc edge"
+        );
         // The crisp disc lights fully at the centre (core 1.0 + halo + bloom).
         assert!(center > 1.0, "disc core peaks bright, got {center}");
     }

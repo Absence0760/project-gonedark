@@ -200,7 +200,10 @@ mod tests {
         let p = picker(&[("Tank", true), ("Rifleman", true)]);
         let ls = picker_labels(&p);
         assert_eq!(ls.len(), 3, "header + 2 rows");
-        assert!(ls[0].text.starts_with("EMBODY"), "first label is the header");
+        assert!(
+            ls[0].text.starts_with("EMBODY"),
+            "first label is the header"
+        );
         assert_eq!(ls[1].text, "[1]  Tank");
         assert_eq!(ls[2].text, "[2]  Rifleman");
         // Rows are centered on x = 0 and stack downward.
@@ -219,7 +222,10 @@ mod tests {
     #[test]
     fn empty_picker_has_no_labels() {
         assert!(picker_labels(&EmbodyPicker::default()).is_empty());
-        assert!(picker_quads(&EmbodyPicker::default()).is_empty(), "no card either");
+        assert!(
+            picker_quads(&EmbodyPicker::default()).is_empty(),
+            "no card either"
+        );
     }
 
     #[test]
@@ -227,8 +233,16 @@ mod tests {
         // The header and rows sit on the theme's title step (no more ad-hoc 0.050 / 0.055) —
         // asserted on the laid-out labels so the wiring is covered.
         let ls = picker_labels(&picker(&[("Tank", true)]));
-        assert_eq!(ls[0].px_size, crate::theme::TYPE_TITLE, "header on the type scale");
-        assert_eq!(ls[1].px_size, crate::theme::TYPE_TITLE, "rows on the type scale");
+        assert_eq!(
+            ls[0].px_size,
+            crate::theme::TYPE_TITLE,
+            "header on the type scale"
+        );
+        assert_eq!(
+            ls[1].px_size,
+            crate::theme::TYPE_TITLE,
+            "rows on the type scale"
+        );
     }
 
     #[test]
@@ -241,17 +255,37 @@ mod tests {
         let (rim, fill) = (&q[0], &q[1]);
         assert_eq!(rim.role, QuadRole::PanelRim);
         assert_eq!(fill.role, QuadRole::Panel);
-        assert!(rim.hw > fill.hw && rim.hh > fill.hh, "rim is larger than the fill");
-        assert_eq!([fill.r, fill.g, fill.b], crate::theme::PANEL, "fill is theme::PANEL");
-        assert_eq!([rim.r, rim.g, rim.b], crate::theme::RIM, "rim is theme::RIM");
+        assert!(
+            rim.hw > fill.hw && rim.hh > fill.hh,
+            "rim is larger than the fill"
+        );
+        assert_eq!(
+            [fill.r, fill.g, fill.b],
+            crate::theme::PANEL,
+            "fill is theme::PANEL"
+        );
+        assert_eq!(
+            [rim.r, rim.g, rim.b],
+            crate::theme::RIM,
+            "rim is theme::RIM"
+        );
         assert_eq!(fill.alpha, crate::theme::PANEL_BG_ALPHA);
         assert_eq!(rim.alpha, crate::theme::PANEL_RIM_ALPHA);
         // Every laid-out line (header + rows) sits inside the fill, and the fill spans the hit band.
         for l in picker_labels(&p) {
-            assert!(l.pos[1] + l.px_size * 0.5 <= fill.cy + fill.hh + 1e-6, "line top inside");
-            assert!(l.pos[1] - l.px_size * 0.5 >= fill.cy - fill.hh - 1e-6, "line bottom inside");
+            assert!(
+                l.pos[1] + l.px_size * 0.5 <= fill.cy + fill.hh + 1e-6,
+                "line top inside"
+            );
+            assert!(
+                l.pos[1] - l.px_size * 0.5 >= fill.cy - fill.hh - 1e-6,
+                "line bottom inside"
+            );
         }
-        assert!(fill.hw >= HALF_WIDTH, "card spans the tappable band (see-what-you-tap)");
+        assert!(
+            fill.hw >= HALF_WIDTH,
+            "card spans the tappable band (see-what-you-tap)"
+        );
         // Centered on x = 0, like the rows.
         assert_eq!(fill.cx, 0.0);
     }
@@ -273,10 +307,17 @@ mod tests {
         // The hit contract: `picker_row_at` is unscaled, so the row centers the labels draw at must
         // not move with ui_scale — only the card wraps the (text-pass-scaled) glyphs.
         let p = picker(&[("Tank", true), ("Rifleman", true)]);
-        assert_eq!(picker_quads(&p), picker_quads_scaled(&p, 1.0), "1.0 is byte-identical");
+        assert_eq!(
+            picker_quads(&p),
+            picker_quads_scaled(&p, 1.0),
+            "1.0 is byte-identical"
+        );
         let base = picker_quads_scaled(&p, 1.0);
         let scaled = picker_quads_scaled(&p, 2.0);
-        assert!(scaled[1].hh > base[1].hh && scaled[1].hw > base[1].hw, "card grows at 2x");
+        assert!(
+            scaled[1].hh > base[1].hh && scaled[1].hw > base[1].hw,
+            "card grows at 2x"
+        );
         // Labels (the hit-band centers) are ui_scale-independent by construction.
         for (i, _) in p.rows.iter().enumerate() {
             assert_eq!(picker_row_at(p.rows.len(), 0.0, row_center_y(i)), Some(i));

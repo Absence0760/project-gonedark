@@ -180,7 +180,11 @@ pub const ENEMY_ZONE: &str = "enemy";
 /// integer math only (invariant #1).
 fn zone_center_world(zone: &SpawnZoneSpec) -> Vec2 {
     let (lo_x, lo_y, hi_x, hi_y) = zone.extent();
-    crate::map_format::CellRef { x: (lo_x + hi_x) / 2, y: (lo_y + hi_y) / 2 }.to_world_center()
+    crate::map_format::CellRef {
+        x: (lo_x + hi_x) / 2,
+        y: (lo_y + hi_y) / 2,
+    }
+    .to_world_center()
 }
 
 /// Seed a **skirmish on a library map**: the map's own battlefield (terrain, control points,
@@ -192,7 +196,11 @@ fn zone_center_world(zone: &SpawnZoneSpec) -> Vec2 {
 /// Deterministic end to end (invariant #1/#7): the spec is validated integer data, the zone
 /// centres are integer midpoints, and both halves it composes are themselves seed-order-stable —
 /// pinned by the double-seed checksum test below, the same floor every shipped mission meets.
-pub fn seed_map_skirmish(sim: &mut Sim, spec: &MapSpec, player_loadout: Loadout) -> Option<Skirmish> {
+pub fn seed_map_skirmish(
+    sim: &mut Sim,
+    spec: &MapSpec,
+    player_loadout: Loadout,
+) -> Option<Skirmish> {
     let player_zone = spec.spawn_zone(PLAYER_ZONE)?;
     let enemy_zone = spec.spawn_zone(ENEMY_ZONE)?;
     let player_pos = zone_center_world(player_zone);
@@ -207,7 +215,12 @@ pub fn seed_map_skirmish(sim: &mut Sim, spec: &MapSpec, player_loadout: Loadout)
 
     // Then the shared force recipe at the zone centres — income pace, US-vs-FR, camps, purse,
     // one posted troop each, the player's loadout (the core-tested half).
-    Some(seed_positioned_skirmish(sim, player_pos, enemy_pos, player_loadout))
+    Some(seed_positioned_skirmish(
+        sim,
+        player_pos,
+        enemy_pos,
+        player_loadout,
+    ))
 }
 
 #[cfg(test)]
@@ -218,7 +231,9 @@ mod tests {
 
     /// Count a faction's entities — the sanity floor a seeded map skirmish must field both sides of.
     fn faction_entity_count(sim: &Sim, faction: Faction) -> usize {
-        (0..sim.world.capacity()).filter(|&i| sim.world.faction[i] == faction).count()
+        (0..sim.world.capacity())
+            .filter(|&i| sim.world.faction[i] == faction)
+            .count()
     }
 
     #[test]
@@ -230,13 +245,24 @@ mod tests {
         for bf in BATTLEFIELDS {
             match bf.kind {
                 BattlefieldKind::Scene(token) => {
-                    assert!(bf.scene().is_some(), "battlefield {:?}: unparseable token {token:?}", bf.id);
+                    assert!(
+                        bf.scene().is_some(),
+                        "battlefield {:?}: unparseable token {token:?}",
+                        bf.id
+                    );
                 }
                 BattlefieldKind::LibraryMap(id) => {
-                    let spec = library_spec(id)
-                        .unwrap_or_else(|| panic!("battlefield {:?}: no valid library map {id:?}", bf.id));
-                    assert!(spec.spawn_zone(PLAYER_ZONE).is_some(), "{id:?} needs a player zone");
-                    assert!(spec.spawn_zone(ENEMY_ZONE).is_some(), "{id:?} needs an enemy zone");
+                    let spec = library_spec(id).unwrap_or_else(|| {
+                        panic!("battlefield {:?}: no valid library map {id:?}", bf.id)
+                    });
+                    assert!(
+                        spec.spawn_zone(PLAYER_ZONE).is_some(),
+                        "{id:?} needs a player zone"
+                    );
+                    assert!(
+                        spec.spawn_zone(ENEMY_ZONE).is_some(),
+                        "{id:?} needs an enemy zone"
+                    );
                 }
             }
         }
@@ -264,7 +290,9 @@ mod tests {
         // Every library map is reachable from the picker (no orphan embeds), and ids are unique.
         for entry in MAP_LIBRARY {
             assert!(
-                BATTLEFIELDS.iter().any(|b| b.library_map() == Some(entry.id)),
+                BATTLEFIELDS
+                    .iter()
+                    .any(|b| b.library_map() == Some(entry.id)),
                 "library map {:?} has no battlefield tile",
                 entry.id
             );
@@ -280,10 +308,21 @@ mod tests {
                 .expect("shipped library map seeds");
             // Both sides fielded (camp + troop each), the skirmish economy set — the same floor
             // the canonical skirmish gives the win-condition evaluator to work with.
-            assert!(faction_entity_count(&sim, Faction::Player) >= 2, "{}: player side", entry.id);
-            assert!(faction_entity_count(&sim, Faction::Enemy) >= 2, "{}: enemy side", entry.id);
+            assert!(
+                faction_entity_count(&sim, Faction::Player) >= 2,
+                "{}: player side",
+                entry.id
+            );
+            assert!(
+                faction_entity_count(&sim, Faction::Enemy) >= 2,
+                "{}: enemy side",
+                entry.id
+            );
             assert_ne!(s.player_base, s.enemy_base);
-            assert_eq!(sim.resources.amounts[Faction::Player.index()], SKIRMISH_START_PURSE);
+            assert_eq!(
+                sim.resources.amounts[Faction::Player.index()],
+                SKIRMISH_START_PURSE
+            );
             assert_eq!(sim.income_period(), SKIRMISH_INCOME_PERIOD);
         }
     }
@@ -306,7 +345,11 @@ mod tests {
             "Pointe du Hoc rides its baked coastal terrain, not the open playfield",
         );
         assert!(spec.spawn_zone(PLAYER_ZONE).is_some() && spec.spawn_zone(ENEMY_ZONE).is_some());
-        assert_eq!(spec.control_points.len(), 3, "three posts up the assault axis");
+        assert_eq!(
+            spec.control_points.len(),
+            3,
+            "three posts up the assault axis"
+        );
 
         // It seeds a real, playable skirmish: both sides fielded on the baked ground.
         let mut sim = Sim::new(0x9013);
@@ -338,9 +381,16 @@ mod tests {
             .cover_props
             .iter()
             .filter(|p| p.kind.is_solid())
-            .filter(|p| sim.terrain.cover_at_cell(p.cell.x, p.cell.y).blocks_movement())
+            .filter(|p| {
+                sim.terrain
+                    .cover_at_cell(p.cell.x, p.cell.y)
+                    .blocks_movement()
+            })
             .count();
-        assert!(solid_cells >= 90, "the hedgerows lay solid walls, got {solid_cells}");
+        assert!(
+            solid_cells >= 90,
+            "the hedgerows lay solid walls, got {solid_cells}"
+        );
     }
 
     #[test]
@@ -357,7 +407,12 @@ mod tests {
             for tick in 0..120 {
                 a.step(&[]);
                 b.step(&[]);
-                assert_eq!(a.checksum(), b.checksum(), "{}: divergence at tick {tick}", entry.id);
+                assert_eq!(
+                    a.checksum(),
+                    b.checksum(),
+                    "{}: divergence at tick {tick}",
+                    entry.id
+                );
             }
         }
     }

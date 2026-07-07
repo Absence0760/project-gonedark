@@ -213,7 +213,12 @@ impl Difficulty {
 
     /// Both combat axes at once — the single convenience the host/registry launch consume so the two
     /// halves of the D83 mapping can never drift apart: `(commander band, scenario situation)`.
-    pub const fn combat_tuning(self) -> (mission_tuning::Difficulty, mission_tuning::ScenarioModifiers) {
+    pub const fn combat_tuning(
+        self,
+    ) -> (
+        mission_tuning::Difficulty,
+        mission_tuning::ScenarioModifiers,
+    ) {
         (self.commander_tier(), self.scenario_modifiers())
     }
 }
@@ -900,8 +905,10 @@ mod tests {
     fn chain() -> Campaign {
         Campaign::new(vec![
             OperationNode::new(NodeId(0), MissionId(100), "A", "take the outpost"),
-            OperationNode::new(NodeId(1), MissionId(101), "B", "hold the ridge").requires([NodeId(0)]),
-            OperationNode::new(NodeId(2), MissionId(102), "C", "seize the base").requires([NodeId(1)]),
+            OperationNode::new(NodeId(1), MissionId(101), "B", "hold the ridge")
+                .requires([NodeId(0)]),
+            OperationNode::new(NodeId(2), MissionId(102), "C", "seize the base")
+                .requires([NodeId(1)]),
         ])
     }
 
@@ -934,7 +941,9 @@ mod tests {
         assert!(outcome.raised_difficulty);
         assert_eq!(
             c.progress(NodeId(0)),
-            NodeProgress::Cleared { best: Difficulty::Recruit }
+            NodeProgress::Cleared {
+                best: Difficulty::Recruit
+            }
         );
         assert_eq!(c.progress(NodeId(1)), NodeProgress::Available);
         // C stays locked: its prerequisite B is not cleared yet.
@@ -1083,7 +1092,10 @@ mod tests {
 
         // Force size: non-decreasing easiest→hardest, with real spread (more bodies as it hardens).
         for w in mods.windows(2) {
-            assert!(w[0].force_scale_pct <= w[1].force_scale_pct, "force size only grows");
+            assert!(
+                w[0].force_scale_pct <= w[1].force_scale_pct,
+                "force size only grows"
+            );
         }
         assert!(
             mods[0].force_scale_pct < mods[mods.len() - 1].force_scale_pct,
@@ -1096,19 +1108,35 @@ mod tests {
             m.reinforcement_period.unwrap_or(SEIZE_BASE_PERIOD)
         };
         for w in mods.windows(2) {
-            assert!(period(&w[0]) >= period(&w[1]), "the drip only gets faster as it hardens");
+            assert!(
+                period(&w[0]) >= period(&w[1]),
+                "the drip only gets faster as it hardens"
+            );
         }
         assert!(
             period(&mods[0]) > period(&mods[mods.len() - 1]),
             "the cadence curve has real spread",
         );
         // Recruit is *slower* than baseline (easier); Veteran/Elite are *faster* (harder).
-        assert!(period(&mods[0]) > SEIZE_BASE_PERIOD, "Recruit reinforces slower than baseline");
-        assert!(period(&mods[2]) < SEIZE_BASE_PERIOD, "Veteran reinforces faster than baseline");
-        assert!(period(&mods[3]) < period(&mods[2]), "Elite is the fastest drip");
+        assert!(
+            period(&mods[0]) > SEIZE_BASE_PERIOD,
+            "Recruit reinforces slower than baseline"
+        );
+        assert!(
+            period(&mods[2]) < SEIZE_BASE_PERIOD,
+            "Veteran reinforces faster than baseline"
+        );
+        assert!(
+            period(&mods[3]) < period(&mods[2]),
+            "Elite is the fastest drip"
+        );
 
         // Fog: the going-dark regime hardens Marked → Subtle → … → Hidden.
-        assert_eq!(mods[0].fog, TellMode::Marked, "Recruit is the most forgiving fog");
+        assert_eq!(
+            mods[0].fog,
+            TellMode::Marked,
+            "Recruit is the most forgiving fog"
+        );
         assert_eq!(mods[1].fog, TellMode::Subtle, "Regular is the baseline fog");
         assert_eq!(mods[3].fog, TellMode::Hidden, "Elite is total blindness");
     }
@@ -1125,7 +1153,9 @@ mod tests {
         assert_eq!(entries[0].mission, MissionId(100));
         assert_eq!(
             entries[0].progress,
-            NodeProgress::Cleared { best: Difficulty::Veteran }
+            NodeProgress::Cleared {
+                best: Difficulty::Veteran
+            }
         );
         assert_eq!(entries[1].progress, NodeProgress::Available);
         assert_eq!(entries[2].progress, NodeProgress::Locked);
@@ -1144,7 +1174,12 @@ mod tests {
         c.clear(NodeId(0), Difficulty::Recruit).unwrap();
         let b = c.briefing(NodeId(0)).unwrap();
         assert!(b.replayable);
-        assert_eq!(b.progress, NodeProgress::Cleared { best: Difficulty::Recruit });
+        assert_eq!(
+            b.progress,
+            NodeProgress::Cleared {
+                best: Difficulty::Recruit
+            }
+        );
     }
 
     // -------- persistence round-trip (host blob, outside the checksum) --------
@@ -1281,12 +1316,18 @@ mod tests {
         let c = atlas();
         assert_eq!(c.conflicts().len(), 2);
         assert_eq!(c.operations().len(), 3);
-        assert_eq!(c.conflict(ConflictId(0)).unwrap().name, "The Channel Crisis");
+        assert_eq!(
+            c.conflict(ConflictId(0)).unwrap().name,
+            "The Channel Crisis"
+        );
         assert_eq!(c.conflict(ConflictId(1)).unwrap().start_year, 1944);
         assert_eq!(c.conflict(ConflictId(2)), None);
         assert_eq!(c.operation(OperationId(3)), None);
         // conflict → operations, operation → nodes, both in authored order.
-        assert_eq!(c.operations_in(ConflictId(0)), vec![OperationId(0), OperationId(1)]);
+        assert_eq!(
+            c.operations_in(ConflictId(0)),
+            vec![OperationId(0), OperationId(1)]
+        );
         assert_eq!(c.operations_in(ConflictId(1)), vec![OperationId(2)]);
         assert_eq!(c.nodes_in(OperationId(0)), vec![NodeId(0), NodeId(1)]);
         assert_eq!(c.nodes_in(OperationId(1)), vec![NodeId(2)]);
@@ -1301,37 +1342,76 @@ mod tests {
         // Fresh: op 0 has a playable root, nothing cleared; op 1 fully locked; op 2 empty.
         assert_eq!(
             c.operation_progress(OperationId(0)),
-            GroupProgress { cleared: 0, total: 2, playable: true }
+            GroupProgress {
+                cleared: 0,
+                total: 2,
+                playable: true
+            }
         );
         assert_eq!(
             c.operation_progress(OperationId(1)),
-            GroupProgress { cleared: 0, total: 1, playable: false }
+            GroupProgress {
+                cleared: 0,
+                total: 1,
+                playable: false
+            }
         );
-        assert_eq!(c.operation_progress(OperationId(2)), GroupProgress::default());
-        assert!(!c.operation_progress(OperationId(2)).is_complete(), "empty is never complete");
+        assert_eq!(
+            c.operation_progress(OperationId(2)),
+            GroupProgress::default()
+        );
+        assert!(
+            !c.operation_progress(OperationId(2)).is_complete(),
+            "empty is never complete"
+        );
         // Conflict 0 rolls up across both its operations (3 nodes; the ungrouped D is excluded).
         assert_eq!(
             c.conflict_progress(ConflictId(0)),
-            GroupProgress { cleared: 0, total: 3, playable: true }
+            GroupProgress {
+                cleared: 0,
+                total: 3,
+                playable: true
+            }
         );
 
         // Clear A, then B: op 0 completes, and B's clear makes op 1's C playable.
         c.clear(NodeId(0), Difficulty::Regular).unwrap();
         c.clear(NodeId(1), Difficulty::Regular).unwrap();
         let op0 = c.operation_progress(OperationId(0));
-        assert_eq!(op0, GroupProgress { cleared: 2, total: 2, playable: true });
+        assert_eq!(
+            op0,
+            GroupProgress {
+                cleared: 2,
+                total: 2,
+                playable: true
+            }
+        );
         assert!(op0.is_complete());
         assert_eq!(
             c.operation_progress(OperationId(1)),
-            GroupProgress { cleared: 0, total: 1, playable: true }
+            GroupProgress {
+                cleared: 0,
+                total: 1,
+                playable: true
+            }
         );
         assert_eq!(
             c.conflict_progress(ConflictId(0)),
-            GroupProgress { cleared: 2, total: 3, playable: true }
+            GroupProgress {
+                cleared: 2,
+                total: 3,
+                playable: true
+            }
         );
         // The unknown-id rollup is the honest zero, same shape as the empty operation.
-        assert_eq!(c.operation_progress(OperationId(99)), GroupProgress::default());
-        assert_eq!(c.conflict_progress(ConflictId(99)), GroupProgress::default());
+        assert_eq!(
+            c.operation_progress(OperationId(99)),
+            GroupProgress::default()
+        );
+        assert_eq!(
+            c.conflict_progress(ConflictId(99)),
+            GroupProgress::default()
+        );
     }
 
     #[test]
@@ -1342,7 +1422,8 @@ mod tests {
         let ungrouped_nodes: Vec<OperationNode> = (0..4)
             .map(|i| {
                 let n = grouped.node(NodeId(i)).unwrap();
-                let mut plain = OperationNode::new(n.id, n.mission, n.title.clone(), n.briefing.clone());
+                let mut plain =
+                    OperationNode::new(n.id, n.mission, n.title.clone(), n.briefing.clone());
                 plain.prerequisites = n.prerequisites.clone();
                 plain
             })
@@ -1354,7 +1435,9 @@ mod tests {
         assert_eq!(grouped.serialize_progress(), ungrouped.serialize_progress());
         // Blobs cross-apply: an ungrouped blob restores onto the grouped campaign and vice versa.
         let mut fresh = atlas();
-        fresh.apply_progress(&ungrouped.serialize_progress()).unwrap();
+        fresh
+            .apply_progress(&ungrouped.serialize_progress())
+            .unwrap();
         assert_eq!(fresh.best_cleared(NodeId(0)), Some(Difficulty::Elite));
     }
 
@@ -1414,7 +1497,7 @@ mod tests {
         // Also covers plain `Campaign::new`: it is `with_atlas` with an empty atlas, so a grouped
         // node there is rejected the same way.
         Campaign::new(vec![
-            OperationNode::new(NodeId(0), MissionId(0), "A", "").in_operation(OperationId(0)),
+            OperationNode::new(NodeId(0), MissionId(0), "A", "").in_operation(OperationId(0))
         ]);
     }
 
@@ -1435,7 +1518,7 @@ mod tests {
     #[should_panic(expected = "out-of-range battlefield anchor")]
     fn atlas_rejects_a_node_anchor_off_the_earth() {
         Campaign::new(vec![
-            OperationNode::new(NodeId(0), MissionId(0), "A", "").at(901, 0),
+            OperationNode::new(NodeId(0), MissionId(0), "A", "").at(901, 0)
         ]);
     }
 

@@ -21,8 +21,8 @@
 
 use gonedark_core::combat::SUPPRESSION_MAX;
 use gonedark_core::components::{Faction, Order, Stance, UnitKind, Vec2};
-use gonedark_core::ecs::Entity;
 use gonedark_core::economy;
+use gonedark_core::ecs::Entity;
 use gonedark_core::event::SimEvent;
 use gonedark_core::fixed::Fixed;
 use gonedark_core::scenario::{self, Infantry, ScenarioBuilder};
@@ -130,8 +130,10 @@ fn simulate_scene(ticks: u64) -> SceneLog {
             });
             crouched = true;
             log.crouch_tick = Some(tick);
-            log.report
-                .push((tick, "crouch — range ×5/4 now reaches the far dummy".to_string()));
+            log.report.push((
+                tick,
+                "crouch — range ×5/4 now reaches the far dummy".to_string(),
+            ));
         }
         // Fire on cadence while a reachable target lives (walled/flank are never reachable aiming +X).
         let reachable_alive =
@@ -424,7 +426,9 @@ pub fn run(ticks: u64) {
         println!("{tick} {sum:016x}");
     }
 
-    eprintln!("== infantry sandbox ==  (player rifleman vs HoldFire dummies; produced rifle stats)");
+    eprintln!(
+        "== infantry sandbox ==  (player rifleman vs HoldFire dummies; produced rifle stats)"
+    );
     for (tick, line) in &log.report {
         eprintln!("  t{tick:>3}  {line}");
     }
@@ -485,10 +489,19 @@ mod tests {
             log.open_dead && log.cover_dead && log.far_dead,
             "the reachable dummies are eliminated",
         );
-        assert!(!log.walled_hit, "LoS: the Heavy wall blocks the walled dummy");
-        assert!(!log.flank_hit, "cone: the off-axis flank dummy is never hit aiming +X");
+        assert!(
+            !log.walled_hit,
+            "LoS: the Heavy wall blocks the walled dummy"
+        );
+        assert!(
+            !log.flank_hit,
+            "cone: the off-axis flank dummy is never hit aiming +X"
+        );
         // range + crouch: far is out of base range until the player crouches.
-        assert!(!log.far_hit_standing, "far is beyond base range while standing");
+        assert!(
+            !log.far_hit_standing,
+            "far is beyond base range while standing"
+        );
         assert!(log.far_hit_crouched, "the crouch range bonus reaches far");
         assert!(log.crouch_tick.is_some(), "the player crouched");
         // cover: a Light-cover hit is strictly less than a full open-ground hit.

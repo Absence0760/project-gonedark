@@ -603,9 +603,7 @@ impl KeybindMap {
     /// rebind (and decode validation) rejects. `None` when the key is free for `action`.
     fn conflicting_owner(&self, action: GameAction, key: KeyId) -> Option<GameAction> {
         GameAction::ALL.into_iter().find(|&b| {
-            b != action
-                && self.keys[b.index()] == key
-                && b.layer().conflicts_with(action.layer())
+            b != action && self.keys[b.index()] == key && b.layer().conflicts_with(action.layer())
         })
     }
 
@@ -658,7 +656,12 @@ impl KeybindMap {
             if i >= keys.len() {
                 break;
             }
-            if let Some(k) = field.trim().parse::<usize>().ok().and_then(KeyId::from_index) {
+            if let Some(k) = field
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .and_then(KeyId::from_index)
+            {
                 keys[i] = k;
             }
         }
@@ -744,7 +747,10 @@ mod tests {
     #[test]
     fn rebind_to_a_free_key_binds_and_reroutes() {
         let mut map = KeybindMap::default();
-        assert_eq!(map.rebind(GameAction::Pause, KeyId::P), RebindOutcome::Bound);
+        assert_eq!(
+            map.rebind(GameAction::Pause, KeyId::P),
+            RebindOutcome::Bound
+        );
         assert_eq!(map.key_for(GameAction::Pause), KeyId::P);
         // The new key now routes to Pause; the old one (Esc) is free.
         assert_eq!(map.action_for(KeyId::P), Some(GameAction::Pause));
@@ -799,7 +805,10 @@ mod tests {
         );
         // Cross-layer is allowed: Surface (embodied) may share Embody's E (command) — the
         // toggle-style bind a player might genuinely want.
-        assert_eq!(map.rebind(GameAction::Surface, KeyId::E), RebindOutcome::Bound);
+        assert_eq!(
+            map.rebind(GameAction::Surface, KeyId::E),
+            RebindOutcome::Bound
+        );
         assert_eq!(map.key_for(GameAction::Embody), KeyId::E);
         assert_eq!(map.key_for(GameAction::Surface), KeyId::E);
         assert!(!map.has_conflict(), "a cross-layer share is not a conflict");
@@ -822,9 +831,15 @@ mod tests {
 
         // A remapped map (host + gameplay rebinds) round-trips too — the identity contract.
         let mut map = KeybindMap::default();
-        assert_eq!(map.rebind(GameAction::Pause, KeyId::P), RebindOutcome::Bound);
+        assert_eq!(
+            map.rebind(GameAction::Pause, KeyId::P),
+            RebindOutcome::Bound
+        );
         assert_eq!(map.rebind(GameAction::Jump, KeyId::G), RebindOutcome::Bound);
-        assert_eq!(map.rebind(GameAction::Embody, KeyId::T), RebindOutcome::Bound);
+        assert_eq!(
+            map.rebind(GameAction::Embody, KeyId::T),
+            RebindOutcome::Bound
+        );
         assert_eq!(
             map.rebind(GameAction::ToggleFullscreen, KeyId::Backquote),
             RebindOutcome::Bound

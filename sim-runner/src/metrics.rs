@@ -248,7 +248,14 @@ pub fn tank_vs_infantry_outcome(infantry: UnitKind, budget: i64, sep: i32) -> (u
     }
     for k in 0..nt {
         // Tanks at +sep facing −X (toward the Player): front plate INTO the incoming fire.
-        spawn_produced(&mut sim, sep, k, Faction::Enemy, UnitKind::Tank, Angle(ANGLE_FULL / 2));
+        spawn_produced(
+            &mut sim,
+            sep,
+            k,
+            Faction::Enemy,
+            UnitKind::Tank,
+            Angle(ANGLE_FULL / 2),
+        );
     }
     for t in 1..=8000u64 {
         sim.step(&[]);
@@ -523,13 +530,19 @@ fn secs(t: u64) -> f64 {
 /// Steps the sim but emits **nothing to stdout** — the checksum stream is the caller's job.
 pub fn report(metric: Metric, ticks: u64) {
     match metric {
-        Metric::OpenDuel => series_duel("open 4v4 rifle", open_duel(4, UnitKind::Rifleman, 5), ticks),
+        Metric::OpenDuel => {
+            series_duel("open 4v4 rifle", open_duel(4, UnitKind::Rifleman, 5), ticks)
+        }
         Metric::CoverDuel => series_duel(
             "4v4 rifle, enemy in Heavy cover",
             cover_duel(4, 5, Cover::Heavy),
             ticks,
         ),
-        Metric::EqualCost => series_duel("equal-cost 1000 (rifle vs heavy)", equal_cost_trade(1000, 5), ticks),
+        Metric::EqualCost => series_duel(
+            "equal-cost 1000 (rifle vs heavy)",
+            equal_cost_trade(1000, 5),
+            ticks,
+        ),
         Metric::Economy => series_economy(economy_only(), ticks),
         Metric::Summary => summary(),
     }
@@ -605,7 +618,11 @@ fn summary() {
             let fair = uf == fu && uf == nn;
             eprintln!(
                 "{kind:?} sep{sep}: US/FR {uf:?}  FR/US {fu:?}  N/N {nn:?}  [{}]",
-                if fair { "fair: swap-invariant" } else { "MISMATCH: roster leaks power" }
+                if fair {
+                    "fair: swap-invariant"
+                } else {
+                    "MISMATCH: roster leaks power"
+                }
             );
         }
     }
@@ -675,14 +692,26 @@ mod tests {
         // BUDGET FLIP at close range (sep3). Return is (end_tick, germany_survivors, sherman_survivors).
         // budget 1920: 2 Tigers (960 ea) vs 8 Shermans (240 ea) — too few flankers, the TIGERS hold.
         let small = equal_budget_quality_vs_quantity(1920, 3, Army::Germany, Army::UsWw2);
-        assert_eq!(small, (995, 2, 0), "budget 1920 sep3: the elite Tigers win the small fight");
+        assert_eq!(
+            small,
+            (995, 2, 0),
+            "budget 1920 sep3: the elite Tigers win the small fight"
+        );
         // budget 2880: 3 Tigers vs 12 Shermans — the swarm now has enough flankers, the MASS wins.
         let big = equal_budget_quality_vs_quantity(2880, 3, Army::Germany, Army::UsWw2);
-        assert_eq!(big, (922, 0, 3), "budget 2880 sep3: the Sherman swarm out-flanks the Tigers");
+        assert_eq!(
+            big,
+            (922, 0, 3),
+            "budget 2880 sep3: the Sherman swarm out-flanks the Tigers"
+        );
         // GEOMETRY FLIP at the SAME budget (2880): pull the range out to sep5 and the Tiger's frontal
         // wall holds — the swarm can't close to flank, so the ELITE wins the identical budget.
         let ranged = equal_budget_quality_vs_quantity(2880, 5, Army::Germany, Army::UsWw2);
-        assert_eq!(ranged, (923, 3, 0), "budget 2880 sep5: at range the Tiger wall holds, the elite wins");
+        assert_eq!(
+            ranged,
+            (923, 3, 0),
+            "budget 2880 sep5: at range the Tiger wall holds, the elite wins"
+        );
 
         // The DEFINITION of balanced, asserted structurally at real (non-capping) budgets/geometries:
         // every trade RESOLVES (a wipe inside the cap) and exactly one side is wiped — and, across the
@@ -690,8 +719,12 @@ mod tests {
         let mut germany_wins = 0;
         let mut sherman_wins = 0;
         for &(budget, sep) in &[(1440i64, 3i32), (1920, 3), (1920, 5), (2880, 3), (2880, 5)] {
-            let (t, elite, cheap) = equal_budget_quality_vs_quantity(budget, sep, Army::Germany, Army::UsWw2);
-            assert!(t < 8000, "budget {budget} sep{sep}: the trade must RESOLVE (a wipe), not hit the cap");
+            let (t, elite, cheap) =
+                equal_budget_quality_vs_quantity(budget, sep, Army::Germany, Army::UsWw2);
+            assert!(
+                t < 8000,
+                "budget {budget} sep{sep}: the trade must RESOLVE (a wipe), not hit the cap"
+            );
             assert!(
                 (elite == 0) ^ (cheap == 0),
                 "budget {budget} sep{sep}: exactly one side must be wiped (germany {elite}, sherman {cheap})",
@@ -702,8 +735,14 @@ mod tests {
                 sherman_wins += 1;
             }
         }
-        assert!(germany_wins > 0, "the elite Tiger must win at least one budget/geometry (no swarm sweep)");
-        assert!(sherman_wins > 0, "the Sherman mass must win at least one budget/geometry (no elite sweep)");
+        assert!(
+            germany_wins > 0,
+            "the elite Tiger must win at least one budget/geometry (no swarm sweep)"
+        );
+        assert!(
+            sherman_wins > 0,
+            "the Sherman mass must win at least one budget/geometry (no elite sweep)"
+        );
     }
 
     /// The cost + HP + ARMOUR block the fairness above rests on (D120 + D122): the Sherman is CHEAPER,
@@ -712,8 +751,16 @@ mod tests {
     #[test]
     fn ww2_cost_hp_and_armour_tilt_is_wired() {
         // Cost tilt: Sherman cheaper than the shared 360, Tiger pricier; 4:1 to each other (D122 re-tune).
-        assert_eq!(unit_cost_for(Army::UsWw2, UnitKind::Tank), 240, "Sherman is the cheap tank");
-        assert_eq!(unit_cost_for(Army::Germany, UnitKind::Tank), 960, "Tiger is the pricey tank");
+        assert_eq!(
+            unit_cost_for(Army::UsWw2, UnitKind::Tank),
+            240,
+            "Sherman is the cheap tank"
+        );
+        assert_eq!(
+            unit_cost_for(Army::Germany, UnitKind::Tank),
+            960,
+            "Tiger is the pricey tank"
+        );
         assert!(unit_cost_for(Army::UsWw2, UnitKind::Tank) < unit_cost(UnitKind::Tank));
         assert!(unit_cost_for(Army::Germany, UnitKind::Tank) > unit_cost(UnitKind::Tank));
         assert_eq!(
@@ -723,30 +770,64 @@ mod tests {
         );
         // Non-WW2 armies keep the shared price (modern balance untouched).
         for a in [Army::Neutral, Army::Us, Army::Fr] {
-            assert_eq!(unit_cost_for(a, UnitKind::Tank), unit_cost(UnitKind::Tank), "{a:?} keeps TANK_COST");
+            assert_eq!(
+                unit_cost_for(a, UnitKind::Tank),
+                unit_cost(UnitKind::Tank),
+                "{a:?} keeps TANK_COST"
+            );
         }
         // Power tilt: Sherman weaker (lower HP), Tiger tougher (higher HP), both vs the shared 300.
         let (sh, _sw) = economy::unit_stats_for(Army::UsWw2, UnitKind::Tank);
         let (gh, gw) = economy::unit_stats_for(Army::Germany, UnitKind::Tank);
         let base = economy::unit_stats(UnitKind::Tank);
-        assert!(sh.max < base.0.max, "Sherman has less HP than the shared tank");
-        assert!(gh.max > base.0.max, "Tiger has more HP than the shared tank");
+        assert!(
+            sh.max < base.0.max,
+            "Sherman has less HP than the shared tank"
+        );
+        assert!(
+            gh.max > base.0.max,
+            "Tiger has more HP than the shared tank"
+        );
         // The Tiger gun's penetration (20) bounces its own thick 60-front (a Tiger-vs-Tiger stalemate);
         // the Sherman keeps the shared baseline penetration (18).
-        assert!(gw.penetration >= Fixed::from_int(20), "Tiger gun penetration ≥ 20");
-        assert_eq!(economy::unit_stats_for(Army::UsWw2, UnitKind::Tank).1.penetration, base.1.penetration);
+        assert!(
+            gw.penetration >= Fixed::from_int(20),
+            "Tiger gun penetration ≥ 20"
+        );
+        assert_eq!(
+            economy::unit_stats_for(Army::UsWw2, UnitKind::Tank)
+                .1
+                .penetration,
+            base.1.penetration
+        );
         // Armour tilt (D122): the Tiger's front bounces BOTH WW2 guns head-on (2·20 = 40 < front and
         // 2·18 = 36 < front); the Sherman's thinner front is cracked by the Tiger gun (2·20 = 40 > front).
         let tiger = unit_armor_for(Army::Germany, UnitKind::Tank);
         let sherman = unit_armor_for(Army::UsWw2, UnitKind::Tank);
-        assert!(tiger.front > Fixed::from_int(40), "Tiger front bounces even its own pen-20 gun (2·20=40)");
-        assert!(tiger.front > sherman.front, "the Tiger is more thickly fronted than the Sherman");
-        assert!(sherman.front < Fixed::from_int(40), "the Tiger gun cracks the Sherman front (2·20=40 > front)");
+        assert!(
+            tiger.front > Fixed::from_int(40),
+            "Tiger front bounces even its own pen-20 gun (2·20=40)"
+        );
+        assert!(
+            tiger.front > sherman.front,
+            "the Tiger is more thickly fronted than the Sherman"
+        );
+        assert!(
+            sherman.front < Fixed::from_int(40),
+            "the Tiger gun cracks the Sherman front (2·20=40 > front)"
+        );
         // The Sherman CAN flank the Tiger: its pen 18 cracks the Tiger's side (2·18 = 36 ≥ side).
-        assert!(Fixed::from_int(36) >= tiger.side, "the Sherman's gun cracks the Tiger's flank (out-flank to kill)");
+        assert!(
+            Fixed::from_int(36) >= tiger.side,
+            "the Sherman's gun cracks the Tiger's flank (out-flank to kill)"
+        );
         // Modern/Neutral tanks keep the shared baseline plate byte-for-byte (invariant #7).
         for a in [Army::Neutral, Army::Us, Army::Fr] {
-            assert_eq!(unit_armor_for(a, UnitKind::Tank), economy::unit_armor(UnitKind::Tank), "{a:?} keeps the shared plate");
+            assert_eq!(
+                unit_armor_for(a, UnitKind::Tank),
+                economy::unit_armor(UnitKind::Tank),
+                "{a:?} keeps the shared plate"
+            );
         }
     }
 
@@ -770,8 +851,18 @@ mod tests {
             // vs RIFLEMAN (cost 100): budget 360 -> 1 tank vs 3 rifles; 720 -> 2 tanks vs 7 rifles.
             (UnitKind::Rifleman, 360, 5, (155, 0, 1, TANK_FULL_HP_BITS)),
             (UnitKind::Rifleman, 360, 9, (157, 0, 1, TANK_FULL_HP_BITS)),
-            (UnitKind::Rifleman, 720, 5, (314, 0, 2, 2 * TANK_FULL_HP_BITS)),
-            (UnitKind::Rifleman, 720, 9, (315, 0, 2, 2 * TANK_FULL_HP_BITS)),
+            (
+                UnitKind::Rifleman,
+                720,
+                5,
+                (314, 0, 2, 2 * TANK_FULL_HP_BITS),
+            ),
+            (
+                UnitKind::Rifleman,
+                720,
+                9,
+                (315, 0, 2, 2 * TANK_FULL_HP_BITS),
+            ),
             // vs HEAVY (cost 220): budget 360 -> 1 tank vs 1 heavy; 720 -> 2 tanks vs 3 heavies.
             (UnitKind::Heavy, 360, 5, (153, 0, 1, TANK_FULL_HP_BITS)),
             (UnitKind::Heavy, 360, 9, (155, 0, 1, TANK_FULL_HP_BITS)),
@@ -782,14 +873,23 @@ mod tests {
             let got = tank_vs_infantry_outcome(kind, budget, sep);
             // Direction (the load-bearing balance facts): infantry wiped, tanks all survive, and the
             // tank HP is UNTOUCHED — the armour ate the entire equal-cost volley for nothing.
-            assert_eq!(got.1, 0, "{kind:?} budget {budget} sep{sep}: infantry must be wiped");
-            assert_eq!(got.2, expected.2, "{kind:?} budget {budget} sep{sep}: every tank survives");
+            assert_eq!(
+                got.1, 0,
+                "{kind:?} budget {budget} sep{sep}: infantry must be wiped"
+            );
+            assert_eq!(
+                got.2, expected.2,
+                "{kind:?} budget {budget} sep{sep}: every tank survives"
+            );
             assert_eq!(
                 got.3, expected.3,
                 "{kind:?} budget {budget} sep{sep}: tanks take ZERO damage (full HP) — pen-0 infantry bounce"
             );
             // Exact regression pin (deterministic, dev==release): catches a silent drift.
-            assert_eq!(got, expected, "{kind:?} budget {budget} sep{sep}: measured cost-parity pin moved");
+            assert_eq!(
+                got, expected,
+                "{kind:?} budget {budget} sep{sep}: measured cost-parity pin moved"
+            );
         }
     }
 
@@ -817,10 +917,19 @@ mod tests {
             );
             // FLANK: the Player faces the Enemy's exposed rear → Enemy dies, Player untouched.
             let (tf, pf, ef, phpf, ehpf) = tank_duel(sep, toward_enemy, away_from_player);
-            assert!(pf == 1 && ef == 0, "sep{sep}: the flanker kills the rear-exposed tank");
-            assert_eq!(phpf, TANK_FULL_HP_BITS, "sep{sep}: the flanker takes no return damage");
+            assert!(
+                pf == 1 && ef == 0,
+                "sep{sep}: the flanker kills the rear-exposed tank"
+            );
+            assert_eq!(
+                phpf, TANK_FULL_HP_BITS,
+                "sep{sep}: the flanker takes no return damage"
+            );
             assert_eq!(ehpf, 0, "sep{sep}: the flanked tank is destroyed");
-            assert!(tf < 4000, "sep{sep}: a flank shot resolves the duel well inside the cap (t={tf})");
+            assert!(
+                tf < 4000,
+                "sep{sep}: a flank shot resolves the duel well inside the cap (t={tf})"
+            );
         }
         // Exact regression pin for the flank kill at the close separation (deterministic dev==release).
         assert_eq!(
@@ -848,7 +957,8 @@ mod tests {
             for &sep in &[3i32, 5, 9] {
                 let us_vs_fr = cross_faction_equal_cost(kind, 2000, sep, Army::Us, Army::Fr);
                 let fr_vs_us = cross_faction_equal_cost(kind, 2000, sep, Army::Fr, Army::Us);
-                let baseline = cross_faction_equal_cost(kind, 2000, sep, Army::Neutral, Army::Neutral);
+                let baseline =
+                    cross_faction_equal_cost(kind, 2000, sep, Army::Neutral, Army::Neutral);
                 assert_eq!(
                     us_vs_fr, fr_vs_us,
                     "{kind:?} sep{sep}: swapping armies changed the trade — the roster is NOT power-neutral"
@@ -890,13 +1000,23 @@ mod tests {
                     return (t, p, e);
                 }
             }
-            (12000, alive_units(&sim.world, Faction::Player), alive_units(&sim.world, Faction::Enemy))
+            (
+                12000,
+                alive_units(&sim.world, Faction::Player),
+                alive_units(&sim.world, Faction::Enemy),
+            )
         };
         let us_fr = run(Army::Us, Army::Fr);
         let fr_us = run(Army::Fr, Army::Us);
         let baseline = run(Army::Neutral, Army::Neutral);
-        assert_eq!(us_fr, fr_us, "tank reload-pressure trade is not swap-invariant — the tilt carries power");
-        assert_eq!(us_fr, baseline, "tank reload-pressure trade diverged from the Neutral baseline");
+        assert_eq!(
+            us_fr, fr_us,
+            "tank reload-pressure trade is not swap-invariant — the tilt carries power"
+        );
+        assert_eq!(
+            us_fr, baseline,
+            "tank reload-pressure trade diverged from the Neutral baseline"
+        );
     }
 
     /// The tilt is REAL, not a no-op (so the parity above is a genuine "feel without power", not a
@@ -907,17 +1027,32 @@ mod tests {
         for kind in [UnitKind::Rifleman, UnitKind::Heavy, UnitKind::Tank] {
             let us = economy::unit_stats_for(Army::Us, kind).1;
             let fr = economy::unit_stats_for(Army::Fr, kind).1;
-            assert_ne!(us, fr, "{kind:?}: US and FR loadouts must differ (a real roster, not a reskin)");
+            assert_ne!(
+                us, fr,
+                "{kind:?}: US and FR loadouts must differ (a real roster, not a reskin)"
+            );
             // The combat-power axes are SHARED (the fairness bound): same damage, cadence, range.
-            assert_eq!(us.damage, fr.damage, "{kind:?}: per-shot damage is shared (fairness)");
-            assert_eq!(us.cooldown_ticks, fr.cooldown_ticks, "{kind:?}: cadence is shared (fairness)");
+            assert_eq!(
+                us.damage, fr.damage,
+                "{kind:?}: per-shot damage is shared (fairness)"
+            );
+            assert_eq!(
+                us.cooldown_ticks, fr.cooldown_ticks,
+                "{kind:?}: cadence is shared (fairness)"
+            );
             assert_eq!(us.range, fr.range, "{kind:?}: range is shared (fairness)");
             // Neutral is byte-for-byte the shared baseline.
-            assert_eq!(economy::unit_stats_for(Army::Neutral, kind), economy::unit_stats(kind));
+            assert_eq!(
+                economy::unit_stats_for(Army::Neutral, kind),
+                economy::unit_stats(kind)
+            );
         }
         // The Medic is shared across every army (no fair combat surface to tilt — see economy.rs).
         for army in [Army::Neutral, Army::Us, Army::Fr] {
-            assert_eq!(economy::unit_stats_for(army, UnitKind::Medic), economy::unit_stats(UnitKind::Medic));
+            assert_eq!(
+                economy::unit_stats_for(army, UnitKind::Medic),
+                economy::unit_stats(UnitKind::Medic)
+            );
         }
     }
 
@@ -972,7 +1107,11 @@ mod tests {
             }
             out
         };
-        assert_eq!(series(()), series(()), "metric extraction must be deterministic");
+        assert_eq!(
+            series(()),
+            series(()),
+            "metric extraction must be deterministic"
+        );
     }
 
     /// TTK extraction is deterministic and lands in the D66 *lethal* band (a measured, not feel,
@@ -981,7 +1120,11 @@ mod tests {
     #[test]
     fn rifle_ttk_in_lethal_band() {
         let t = ttk_1v1(UnitKind::Rifleman).expect("1v1 resolves");
-        assert_eq!(t, ttk_1v1(UnitKind::Rifleman).unwrap(), "TTK is deterministic");
+        assert_eq!(
+            t,
+            ttk_1v1(UnitKind::Rifleman).unwrap(),
+            "TTK is deterministic"
+        );
         // 1 s..=2.5 s band at 60 Hz (D66 target ~1.5 s; measured 91 ticks).
         assert!(
             (HZ..=(5 * HZ / 2)).contains(&t),
@@ -1002,12 +1145,26 @@ mod tests {
     fn heavy_wins_close_rifle_wins_at_range() {
         // CLOSE (sep 5): the Heavy blob trades up at point-blank — heavy survives, rifle 0-for.
         let (t_close, r_close, h_close) = equal_cost_outcome(500, 5);
-        assert!(h_close > 0 && r_close == 0, "close (sep5): heavy must win, got rifle {r_close} heavy {h_close}");
-        assert_eq!((t_close, r_close, h_close), (98, 0, 1), "close 500: measured RPS pin (post-WS-B suppression)");
+        assert!(
+            h_close > 0 && r_close == 0,
+            "close (sep5): heavy must win, got rifle {r_close} heavy {h_close}"
+        );
+        assert_eq!(
+            (t_close, r_close, h_close),
+            (98, 0, 1),
+            "close 500: measured RPS pin (post-WS-B suppression)"
+        );
         // RANGE (sep 9): the longer-reaching rifles kite — rifle survives, heavy 0-for.
         let (t_range, r_range, h_range) = equal_cost_outcome(1000, 9);
-        assert!(r_range > 0 && h_range == 0, "range (sep9): rifle must win, got rifle {r_range} heavy {h_range}");
-        assert_eq!((t_range, r_range, h_range), (181, 3, 0), "ranged 1000: measured RPS pin (post-WS-B suppression)");
+        assert!(
+            r_range > 0 && h_range == 0,
+            "range (sep9): rifle must win, got rifle {r_range} heavy {h_range}"
+        );
+        assert_eq!(
+            (t_range, r_range, h_range),
+            (181, 3, 0),
+            "ranged 1000: measured RPS pin (post-WS-B suppression)"
+        );
     }
 
     /// INTENDED SUPPRESSION (combat-rebalance-plan WS-B, D70, Q18). Area (fire-and-maneuver)
@@ -1021,13 +1178,30 @@ mod tests {
     #[test]
     fn focus_fire_pins_before_kill_but_lone_shooter_never_pins() {
         let (pin4, kill4) = focus_fire_pin_kill(4);
-        assert!(pin4 > 0, "4-shooter focus must pin the cluster (got pin tick {pin4})");
-        assert!(pin4 < kill4, "the cluster must pin BEFORE the first kill (pin {pin4}, kill {kill4})");
-        assert_eq!((pin4, kill4), (1, 31), "4-on-1 cluster: measured pin/kill pin");
+        assert!(
+            pin4 > 0,
+            "4-shooter focus must pin the cluster (got pin tick {pin4})"
+        );
+        assert!(
+            pin4 < kill4,
+            "the cluster must pin BEFORE the first kill (pin {pin4}, kill {kill4})"
+        );
+        assert_eq!(
+            (pin4, kill4),
+            (1, 31),
+            "4-on-1 cluster: measured pin/kill pin"
+        );
         let (pin1, kill1) = focus_fire_pin_kill(1);
-        assert_eq!(pin1, 0, "a lone shooter never pins (suppression decays between shots)");
+        assert_eq!(
+            pin1, 0,
+            "a lone shooter never pins (suppression decays between shots)"
+        );
         assert!(kill1 > 0, "a lone shooter still kills by damage");
-        assert_eq!((pin1, kill1), (0, 91), "lone shooter: measured pin/kill pin");
+        assert_eq!(
+            (pin1, kill1),
+            (0, 91),
+            "lone shooter: measured pin/kill pin"
+        );
     }
 
     /// Cover materially extends survival: the enemy line standing in Heavy cover (1/4 damage)
@@ -1060,6 +1234,10 @@ mod tests {
         let gain_e = sim.resources.get(Faction::Enemy) - start_e;
         // Player held 1 point the whole run: base+per = 3x base = 3x the Enemy's base-only gain.
         assert_eq!(gain_e, (n as i64), "enemy earns base income only (1/tick)");
-        assert_eq!(gain_p, 3 * n as i64, "1 point triples income (base+2*per = 3/tick)");
+        assert_eq!(
+            gain_p,
+            3 * n as i64,
+            "1 point triples income (base+2*per = 3/tick)"
+        );
     }
 }

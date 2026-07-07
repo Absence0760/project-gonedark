@@ -88,10 +88,14 @@ pub(crate) enum HostTransition {
     /// the gunsmith (the player still picks a loadout) before the match starts. The host stashes the
     /// pending launch and switches to the loadout screen; the gunsmith's **Deploy** then creates the
     /// `Game` for this node. The `difficulty` is the
-    /// chosen replay tier: it drives the launched fight on both D83 axes (the 4→3 enemy-commander band
-    /// + the scenario situation modifiers, via `Game::apply_campaign_tuning`) **and** is the tier the
-    /// **clear** is recorded against on a win.
-    LaunchMission { node: NodeId, difficulty: Difficulty },
+    /// chosen replay tier: it drives the launched fight on both D83 axes (the 4→3
+    /// enemy-commander band + the scenario situation modifiers, via
+    /// `Game::apply_campaign_tuning`) **and** is the tier the **clear** is recorded
+    /// against on a win.
+    LaunchMission {
+        node: NodeId,
+        difficulty: Difficulty,
+    },
     /// Switch the host to the Settings screen (audio / video / controls preferences).
     OpenSettings,
     /// Switch the host to the player Profile screen (callsign, faction preference, lifetime record).

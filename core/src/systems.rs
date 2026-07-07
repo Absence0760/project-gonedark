@@ -385,7 +385,10 @@ mod tests {
         // A zero Stock delta returns the base speed unchanged (bit-identical) — the property that
         // keeps every Standard/legacy unit's movement byte-for-byte as before (D85).
         assert_eq!(with_move_delta(MOVE_SPEED, Fixed::ZERO), MOVE_SPEED);
-        assert_eq!(with_move_delta(CROUCH_MOVE_SPEED, Fixed::ZERO), CROUCH_MOVE_SPEED);
+        assert_eq!(
+            with_move_delta(CROUCH_MOVE_SPEED, Fixed::ZERO),
+            CROUCH_MOVE_SPEED
+        );
     }
 
     #[test]
@@ -418,7 +421,10 @@ mod tests {
         let dir = Vec2::new(Fixed::ZERO, Fixed::ONE);
         step_along(&mut w, i, dir, MOVE_SPEED);
         step_along(&mut w, i, dir, MOVE_SPEED);
-        assert_eq!(w.pos[i], Vec2::new(Fixed::ZERO, MOVE_SPEED * Fixed::from_int(2)));
+        assert_eq!(
+            w.pos[i],
+            Vec2::new(Fixed::ZERO, MOVE_SPEED * Fixed::from_int(2))
+        );
     }
 
     #[test]
@@ -448,11 +454,17 @@ mod tests {
         // Far below target: rise by exactly one step.
         assert_eq!(approach(Fixed::ZERO, Fixed::ONE, step), step);
         // Within a step of the target: snap exactly (no overshoot).
-        assert_eq!(approach(Fixed::from_ratio(7, 8), Fixed::ONE, step), Fixed::ONE);
+        assert_eq!(
+            approach(Fixed::from_ratio(7, 8), Fixed::ONE, step),
+            Fixed::ONE
+        );
         // Above target (braking): fall by one step toward it.
         assert_eq!(approach(Fixed::ONE, Fixed::ZERO, step), Fixed::ONE - step);
         // A negative max_step is clamped to zero → holds.
-        assert_eq!(approach(Fixed::HALF, Fixed::ONE, Fixed::from_int(-3)), Fixed::HALF);
+        assert_eq!(
+            approach(Fixed::HALF, Fixed::ONE, Fixed::from_int(-3)),
+            Fixed::HALF
+        );
     }
 
     #[test]
@@ -468,7 +480,10 @@ mod tests {
             crate::trig::Angle(HULL_TURN_RATE),
             "hull turns toward +Y by exactly one step",
         );
-        assert_eq!(w.hull_speed[i], HULL_ACCEL, "accelerates from rest by one step");
+        assert_eq!(
+            w.hull_speed[i], HULL_ACCEL,
+            "accelerates from rest by one step"
+        );
         // Position advances along the (new) hull heading, not straight at the stick.
         assert_ne!(w.pos[i], Vec2::ZERO, "the tank moved");
     }
@@ -482,11 +497,21 @@ mod tests {
         for _ in 0..200 {
             drive_hull(&mut w, i, east);
         }
-        assert_eq!(w.hull_heading[i], crate::trig::Angle(0), "stays aligned to +X");
-        assert_eq!(w.hull_speed[i], MOVE_SPEED, "speed saturates at the cap, no overshoot");
+        assert_eq!(
+            w.hull_heading[i],
+            crate::trig::Angle(0),
+            "stays aligned to +X"
+        );
+        assert_eq!(
+            w.hull_speed[i], MOVE_SPEED,
+            "speed saturates at the cap, no overshoot"
+        );
         // Moving straight +X, y stays put and x has advanced well past one tick of travel.
         assert_eq!(w.pos[i].y, Fixed::ZERO);
-        assert!(w.pos[i].x > MOVE_SPEED, "covered ground along the hull heading");
+        assert!(
+            w.pos[i].x > MOVE_SPEED,
+            "covered ground along the hull heading"
+        );
     }
 
     #[test]
@@ -500,7 +525,11 @@ mod tests {
         for _ in 0..200 {
             drive_hull(&mut w, i, stick);
         }
-        assert_eq!(w.hull_heading[i], crate::trig::Angle(0), "stays aligned to +X");
+        assert_eq!(
+            w.hull_heading[i],
+            crate::trig::Angle(0),
+            "stays aligned to +X"
+        );
         assert_eq!(
             w.hull_speed[i],
             MOVE_SPEED * half,
@@ -522,7 +551,11 @@ mod tests {
         for _ in 0..200 {
             drive_hull(&mut w, i, Vec2::ZERO);
         }
-        assert_eq!(w.hull_speed[i], Fixed::ZERO, "released stick brakes to a halt");
+        assert_eq!(
+            w.hull_speed[i],
+            Fixed::ZERO,
+            "released stick brakes to a halt"
+        );
         assert_eq!(w.hull_heading[i], held, "heading held while braking");
         assert_eq!(w.vel[i], Vec2::ZERO, "stopped tank has zero velocity");
     }
@@ -561,8 +594,16 @@ mod tests {
         w.hull_heading[i] = crate::trig::Angle(12_345);
         w.turret_yaw[i] = crate::trig::Angle(6_789);
         heading_system(&mut w);
-        assert_eq!(w.hull_heading[i], crate::trig::Angle(12_345), "hull untouched");
-        assert_eq!(w.turret_yaw[i], crate::trig::Angle(6_789), "turret untouched");
+        assert_eq!(
+            w.hull_heading[i],
+            crate::trig::Angle(12_345),
+            "hull untouched"
+        );
+        assert_eq!(
+            w.turret_yaw[i],
+            crate::trig::Angle(6_789),
+            "turret untouched"
+        );
     }
 
     #[test]
@@ -574,13 +615,21 @@ mod tests {
         w.weapon[i].turret_speed = 100;
         heading_system(&mut w); // vel is zero, so the hull holds; only the turret slews
         assert_eq!(w.hull_heading[i], crate::trig::Angle(1_000));
-        assert_eq!(w.turret_yaw[i], crate::trig::Angle(100), "turret stepped toward the hull");
+        assert_eq!(
+            w.turret_yaw[i],
+            crate::trig::Angle(100),
+            "turret stepped toward the hull"
+        );
 
         // turret_speed 0 (infantry) never moves the turret.
         let (mut w2, j) = world_with_unit();
         w2.hull_heading[j] = crate::trig::Angle(1_000);
         heading_system(&mut w2);
-        assert_eq!(w2.turret_yaw[j], crate::trig::Angle(0), "fixed mount stays put");
+        assert_eq!(
+            w2.turret_yaw[j],
+            crate::trig::Angle(0),
+            "fixed mount stays put"
+        );
     }
 
     // ---- building collision (a building is solid — you can't walk through it) ----
@@ -643,7 +692,10 @@ mod tests {
         let (mut w, _b, u) =
             world_with_building_and_unit(Fixed::ZERO, Fixed::ZERO, start.x, start.y);
         resolve_building_collisions(&mut w);
-        assert_eq!(w.pos[u], start, "outside the footprint, the unit does not move");
+        assert_eq!(
+            w.pos[u], start,
+            "outside the footprint, the unit does not move"
+        );
     }
 
     #[test]
@@ -666,7 +718,11 @@ mod tests {
         let p = w.pos[u];
         assert_eq!(p.x, p.y, "stayed on the (1,1) diagonal it was pushed along");
         let drift = (p.len() - MIN_DIST).abs();
-        assert!(drift <= Fixed::from_ratio(1, 64), "on the boundary, got len {:?}", p.len());
+        assert!(
+            drift <= Fixed::from_ratio(1, 64),
+            "on the boundary, got len {:?}",
+            p.len()
+        );
         // The fixed-point sqrt truncates, so normalize overshoots slightly: the unit lands ON or
         // just OUTSIDE the boundary, never inside — which is what makes the push idempotent (a
         // second pass sees `len_sq >= min_sq` and does nothing). Prove it rather than tolerate it.
@@ -683,7 +739,10 @@ mod tests {
         resolve_building_collisions(&mut w);
         let once = w.pos[u];
         resolve_building_collisions(&mut w);
-        assert_eq!(w.pos[u], once, "settled position is stable under re-resolution");
+        assert_eq!(
+            w.pos[u], once,
+            "settled position is stable under re-resolution"
+        );
     }
 
     #[test]
@@ -770,7 +829,11 @@ mod tests {
             !t.cover_at(w.pos[i]).blocks_movement(),
             "ejected out of the wall"
         );
-        assert_eq!(w.pos[i].y, cell_lo(cy) + CELL_SIZE + UNIT_RADIUS, "pushed north");
+        assert_eq!(
+            w.pos[i].y,
+            cell_lo(cy) + CELL_SIZE + UNIT_RADIUS,
+            "pushed north"
+        );
         assert_eq!(w.pos[i].x, center.x);
     }
 }

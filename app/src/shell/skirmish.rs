@@ -34,7 +34,9 @@ use gonedark_core::components::Army;
 use gonedark_core::flow_field::GRID;
 use gonedark_engine::map_card::{MapCard, COVER_KINDS};
 use gonedark_engine::map_format::{CoverPropKind, MapSpec};
-use gonedark_engine::map_library::{library_spec, BattlefieldKind, BATTLEFIELDS, ENEMY_ZONE, PLAYER_ZONE};
+use gonedark_engine::map_library::{
+    library_spec, BattlefieldKind, BATTLEFIELDS, ENEMY_ZONE, PLAYER_ZONE,
+};
 use gonedark_engine::Scene;
 
 /// Host-side skirmish setup state — the free-pick match configuration (`modes.md` §3). Session
@@ -228,7 +230,10 @@ pub(crate) fn cell_sketch_rect(panel: egui::Rect, x: i32, y: i32) -> egui::Rect 
     let g = GRID as f32;
     let cell = egui::vec2(panel.width() / g, panel.height() / g);
     egui::Rect::from_min_size(
-        egui::pos2(panel.min.x + x as f32 * cell.x, panel.min.y + y as f32 * cell.y),
+        egui::pos2(
+            panel.min.x + x as f32 * cell.x,
+            panel.min.y + y as f32 * cell.y,
+        ),
         cell,
     )
 }
@@ -288,7 +293,11 @@ pub(crate) fn map_card_metric_lines(card: &MapCard) -> Vec<String> {
         ),
         format!(
             "Cover by quadrant (cells): {}",
-            card.quadrant_cells.iter().map(u32::to_string).collect::<Vec<_>>().join(" / ")
+            card.quadrant_cells
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(" / ")
         ),
     ];
     if card.spawn_zones.is_empty() {
@@ -300,7 +309,11 @@ pub(crate) fn map_card_metric_lines(card: &MapCard) -> Vec<String> {
             .map(|z| format!("{} {}x{}", z.name, z.hi.0 - z.lo.0 + 1, z.hi.1 - z.lo.1 + 1))
             .collect::<Vec<_>>()
             .join(", ");
-        lines.push(format!("Spawn zones: {} -- {}", card.spawn_zones.len(), zones));
+        lines.push(format!(
+            "Spawn zones: {} -- {}",
+            card.spawn_zones.len(),
+            zones
+        ));
     }
     lines
 }
@@ -401,7 +414,11 @@ fn map_card_panel(ui: &mut egui::Ui, kind: BattlefieldKind) {
             BattlefieldKind::LibraryMap(id) => id,
         };
         let Some(spec) = library_spec(id) else {
-            ui.label(RichText::new("Map unavailable.").color(MUTED).size(TYPE_CAPTION));
+            ui.label(
+                RichText::new("Map unavailable.")
+                    .color(MUTED)
+                    .size(TYPE_CAPTION),
+            );
             return;
         };
         let card = MapCard::derive(&spec);
@@ -419,8 +436,8 @@ fn map_card_panel(ui: &mut egui::Ui, kind: BattlefieldKind) {
                         continue;
                     }
                     ui.horizontal(|ui| {
-                        let (swatch, _) = ui
-                            .allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                        let (swatch, _) =
+                            ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                         ui.painter().rect_filled(
                             swatch,
                             egui::CornerRadius::same(2),

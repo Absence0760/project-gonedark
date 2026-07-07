@@ -30,8 +30,8 @@ use crate::components::{
     Armor, Army, BuildingKind, EntityKind, Faction, Health, Order, ShellKind, Stance, UnitKind,
     Vec2, Weapon,
 };
-use crate::ecs::Entity;
 use crate::economy;
+use crate::ecs::Entity;
 use crate::fixed::Fixed;
 use crate::gunsmith::Loadout;
 use crate::sim::Sim;
@@ -156,7 +156,13 @@ impl<'a> ScenarioBuilder<'a> {
     /// `self.spawn(UnitKind::Rifleman, v(x, y), faction, Stance::FireAtWill, Angle(0))` — byte-
     /// identical to what it replaces (invariant #1/#7: no new fold surface).
     pub fn spawn_rifleman(&mut self, x: i32, y: i32, faction: Faction) -> Entity {
-        self.spawn(UnitKind::Rifleman, v(x, y), faction, Stance::FireAtWill, Angle(0))
+        self.spawn(
+            UnitKind::Rifleman,
+            v(x, y),
+            faction,
+            Stance::FireAtWill,
+            Angle(0),
+        )
     }
 
     /// Build an **operational** camp for `faction` at world `pos`. Routes through the canonical
@@ -421,7 +427,14 @@ pub fn seed_infantry(sim: &mut Sim) -> Infantry {
         Angle(0), // +X, at the enemy line
     );
     let enemy = |sim: &mut Sim, p| {
-        spawn_rifleman(sim, at(p), Faction::Enemy, Stance::HoldFire, INF_ENEMY_HP, facing_enemy)
+        spawn_rifleman(
+            sim,
+            at(p),
+            Faction::Enemy,
+            Stance::HoldFire,
+            INF_ENEMY_HP,
+            facing_enemy,
+        )
     };
     let open = enemy(sim, INF_OPEN);
     let cover = enemy(sim, INF_COVER);
@@ -580,8 +593,13 @@ fn build_skirmish_terrain(sim: &mut Sim) {
     // centre; an axis-symmetric input simply overwrites the same cells four times (idempotent).
     let mut sym = |dx0: i32, dy0: i32, dx1: i32, dy1: i32, cover: Cover| {
         for &(sx, sy) in &[(1, 1), (-1, 1), (1, -1), (-1, -1)] {
-            sim.terrain
-                .fill_rect(cx + sx * dx0, cy + sy * dy0, cx + sx * dx1, cy + sy * dy1, cover);
+            sim.terrain.fill_rect(
+                cx + sx * dx0,
+                cy + sy * dy0,
+                cx + sx * dx1,
+                cy + sy * dy1,
+                cover,
+            );
         }
     };
 
@@ -728,8 +746,10 @@ pub fn seed_skirmish_with_loadout(sim: &mut Sim, player_loadout: Loadout) -> Ski
     // checksum with no new fold surface (invariant #7). It touches only the weapon component — spawn
     // order is unchanged — and the Enemy troop is untouched (this is the *player's* gunsmith).
     let player_army = b.sim_mut().army_of(Faction::Player);
-    player_loadout
-        .apply_to_weapon_for(player_army, &mut b.sim_mut().world.weapon[player_troop.index as usize]);
+    player_loadout.apply_to_weapon_for(
+        player_army,
+        &mut b.sim_mut().world.weapon[player_troop.index as usize],
+    );
 
     // Lay the static, fair cover map. It spawns nothing, so entity/spawn order — and thus the
     // per-tick checksum stream — is untouched; terrain is not in the checksum (invariant #7).
@@ -805,16 +825,28 @@ pub fn seed_positioned_skirmish(
     // would deadlock the two starting troops).
     let (player_post, player_facing) = skirmish_troop_post(player_base_pos, enemy_base_pos);
     let (enemy_post, enemy_facing) = skirmish_troop_post(enemy_base_pos, player_base_pos);
-    let player_troop =
-        b.spawn(UnitKind::Rifleman, player_post, Faction::Player, Stance::FireAtWill, player_facing);
-    let enemy_troop =
-        b.spawn(UnitKind::Rifleman, enemy_post, Faction::Enemy, Stance::FireAtWill, enemy_facing);
+    let player_troop = b.spawn(
+        UnitKind::Rifleman,
+        player_post,
+        Faction::Player,
+        Stance::FireAtWill,
+        player_facing,
+    );
+    let enemy_troop = b.spawn(
+        UnitKind::Rifleman,
+        enemy_post,
+        Faction::Enemy,
+        Stance::FireAtWill,
+        enemy_facing,
+    );
 
     // The player's gunsmith loadout on their starting troop's weapon — deterministic match-setup
     // input, already in `Sim::fold`, no new checksum surface (invariant #7); STANDARD is a no-op.
     let player_army = b.sim_mut().army_of(Faction::Player);
-    player_loadout
-        .apply_to_weapon_for(player_army, &mut b.sim_mut().world.weapon[player_troop.index as usize]);
+    player_loadout.apply_to_weapon_for(
+        player_army,
+        &mut b.sim_mut().world.weapon[player_troop.index as usize],
+    );
 
     Skirmish {
         player_base,
@@ -951,7 +983,8 @@ fn build_seize_terrain(sim: &mut Sim) {
     // stagger the approach from the deploy line toward the base's open killing ground.
     let mut bar = |x: i32, half: i32| {
         let (cx, cy) = sim.terrain.cell_of(at((x, 0)));
-        sim.terrain.fill_rect(cx, cy - half, cx, cy + half, Cover::Light);
+        sim.terrain
+            .fill_rect(cx, cy - half, cx, cy + half, Cover::Light);
     };
     bar(-12, 3); // first bound out of the deploy line
     bar(-2, 4); //  the midfield sandbag wall
@@ -1244,7 +1277,14 @@ pub fn seed_hold_mission_with_setup(
     for col in 0..defender_cols {
         for &row_y in &[-2, 2] {
             let x = HOLD_DEFENDER_X - col * 2;
-            let d = spawn_rifleman(sim, at((x, row_y)), Faction::Player, Stance::FireAtWill, hp, Angle(0));
+            let d = spawn_rifleman(
+                sim,
+                at((x, row_y)),
+                Faction::Player,
+                Stance::FireAtWill,
+                hp,
+                Angle(0),
+            );
             sim.world.order[d.index as usize] = Order::HoldPosition;
             defenders.push(d);
         }
@@ -1266,7 +1306,14 @@ pub fn seed_hold_mission_with_setup(
     for col in 0..attacker_cols {
         for &row_y in &[-3, 3] {
             let x = HOLD_ATTACKER_X + col * 2;
-            let a = spawn_rifleman(sim, at((x, row_y)), Faction::Enemy, Stance::FireAtWill, hp, Angle(ANGLE_FULL / 2));
+            let a = spawn_rifleman(
+                sim,
+                at((x, row_y)),
+                Faction::Enemy,
+                Stance::FireAtWill,
+                hp,
+                Angle(ANGLE_FULL / 2),
+            );
             sim.world.order[a.index as usize] = Order::AttackMove(line);
             attackers.push(a);
         }
@@ -1398,7 +1445,9 @@ pub fn seed_push_mission_with_setup(
     setup: PushSetup,
 ) -> PushMission {
     let troops_n = setup.troops.clamp(1, PUSH_TROOPS_MAX) as usize;
-    let guards_n = setup.guards_per_post.clamp(1, PUSH_GUARD_OFFSETS.len() as u32) as usize;
+    let guards_n = setup
+        .guards_per_post
+        .clamp(1, PUSH_GUARD_OFFSETS.len() as u32) as usize;
 
     // Fixed-force attrition: empty purses + a slow income drip ⇒ no reinforcement for either side,
     // exactly like *Hold* — the deterministic footing the host-side Capture objectives rest on.
@@ -1472,7 +1521,11 @@ pub fn seed_push_mission_with_setup(
     // Lay the form-up cover (spawns nothing — entity/spawn order untouched).
     build_push_terrain(sim);
 
-    PushMission { troops, defenders, posts }
+    PushMission {
+        troops,
+        defenders,
+        posts,
+    }
 }
 
 #[cfg(test)]
@@ -1509,7 +1562,10 @@ mod tests {
                 sim.world.kind[i] == EntityKind::Unit && sim.world.faction[i] == Faction::Enemy
             })
             .count();
-        assert!(enemies > 0, "inspection scene must seed an enemy so it doesn't auto-win");
+        assert!(
+            enemies > 0,
+            "inspection scene must seed an enemy so it doesn't auto-win"
+        );
     }
 
     #[test]
@@ -1548,7 +1604,10 @@ mod tests {
         let duel = seed_duel(&mut sim);
         for idx in [duel.player.index as usize, duel.enemy.index as usize] {
             let w = sim.world.weapon[idx];
-            assert!(w.muzzle_vel > Fixed::ZERO, "the gun is ballistic, not hitscan");
+            assert!(
+                w.muzzle_vel > Fixed::ZERO,
+                "the gun is ballistic, not hitscan"
+            );
             assert_eq!(w.penetration, DUEL_GUN_PENETRATION);
             assert!(!sim.world.armor[idx].is_unarmored(), "the tank is armoured");
             // HoldFire so the literal-executor AI never auto-fires (invariant #3) — the harness
@@ -1619,7 +1678,9 @@ mod tests {
         for tick in 1..ticks {
             let mut cmds: Vec<Command> = Vec::new();
             if tick == 1 {
-                cmds.push(Command::Embody { entity: duel.player });
+                cmds.push(Command::Embody {
+                    entity: duel.player,
+                });
             } else if (tick - 2).is_multiple_of(DUEL_GUN_COOLDOWN as u64) {
                 cmds.push(Command::Fire {
                     entity: duel.player,
@@ -1705,12 +1766,15 @@ mod tests {
         let e = s.enemy_troop.index as usize;
         sim.world.input_source[p] = InputSource::Embodied;
         sim.world.stance[e] = Stance::HoldFire; // isolate: only the player's shots matter
-        // Stand the player 5 units west of the enemy troop; the enemy base sits further east on the
-        // same +X line. Regression: the shot must kill the troop in front, not be soaked by the
-        // lower-index enemy base behind it (the original "impossible to kill an enemy" report).
+                                                // Stand the player 5 units west of the enemy troop; the enemy base sits further east on the
+                                                // same +X line. Regression: the shot must kill the troop in front, not be soaked by the
+                                                // lower-index enemy base behind it (the original "impossible to kill an enemy" report).
         sim.world.pos[p] = Vec2::new(sim.world.pos[e].x - Fixed::from_int(5), sim.world.pos[e].y);
         for _ in 0..300 {
-            sim.step(&[Command::Fire { entity: s.player_troop, dir: plus_x() }]);
+            sim.step(&[Command::Fire {
+                entity: s.player_troop,
+                dir: plus_x(),
+            }]);
             if !sim.world.is_alive(s.enemy_troop) {
                 break;
             }
@@ -1719,7 +1783,10 @@ mod tests {
             !sim.world.is_alive(s.enemy_troop),
             "the embodied player kills the troop it is aiming at",
         );
-        assert!(sim.world.is_alive(s.enemy_base), "the base behind it is not what got shot");
+        assert!(
+            sim.world.is_alive(s.enemy_base),
+            "the base behind it is not what got shot"
+        );
     }
 
     #[test]
@@ -1741,7 +1808,10 @@ mod tests {
                 "a base starts operational (no construction)"
             );
             assert_eq!(sim.world.pos[i].x, Fixed::from_int(sign * SKIRMISH_BASE_X));
-            assert!(sim.world.building[i].queue.is_empty(), "no pre-queued production");
+            assert!(
+                sim.world.building[i].queue.is_empty(),
+                "no pre-queued production"
+            );
         }
 
         // Exactly one starting troop per faction — a Rifleman on FireAtWill (the engagement default:
@@ -1767,7 +1837,10 @@ mod tests {
         seed_skirmish(&mut sim);
         assert_eq!(sim.territory.points.len(), 3, "three posts to fight over");
         assert!(
-            sim.territory.points.iter().all(|p| p.owner == Faction::Neutral),
+            sim.territory
+                .points
+                .iter()
+                .all(|p| p.owner == Faction::Neutral),
             "every post starts neutral"
         );
         // No starting troop sits on a post, so income opens at the base rate for both sides.
@@ -1819,9 +1892,21 @@ mod tests {
                 saw_light |= here == Cover::Light;
                 // Reflect across the centre on each axis; every mirror must carry identical cover.
                 let (mx, my) = (2 * cx - x, 2 * cy - y);
-                assert_eq!(here, sim.terrain.cover_at_cell(mx, y), "x-mirror at ({x},{y})");
-                assert_eq!(here, sim.terrain.cover_at_cell(x, my), "y-mirror at ({x},{y})");
-                assert_eq!(here, sim.terrain.cover_at_cell(mx, my), "xy-mirror at ({x},{y})");
+                assert_eq!(
+                    here,
+                    sim.terrain.cover_at_cell(mx, y),
+                    "x-mirror at ({x},{y})"
+                );
+                assert_eq!(
+                    here,
+                    sim.terrain.cover_at_cell(x, my),
+                    "y-mirror at ({x},{y})"
+                );
+                assert_eq!(
+                    here,
+                    sim.terrain.cover_at_cell(mx, my),
+                    "xy-mirror at ({x},{y})"
+                );
             }
         }
         assert!(saw_heavy, "the map has sight-blocking Heavy walls");
@@ -1847,7 +1932,9 @@ mod tests {
             "the central doorway is an open chokepoint between the centre and the flank",
         );
         // Symmetric to the south flank by construction.
-        assert!(sim.terrain.line_of_sight(center, at((0, -SKIRMISH_POST_FLANK_Y))));
+        assert!(sim
+            .terrain
+            .line_of_sight(center, at((0, -SKIRMISH_POST_FLANK_Y))));
     }
 
     #[test]
@@ -1856,8 +1943,16 @@ mod tests {
         let s = seed_skirmish(&mut sim);
         // Forward Light cover sits on the central lane for each side to advance from — and it is the
         // sight-passing kind, not a wall.
-        assert_eq!(sim.terrain.cover_at(at((8, 0))), Cover::Light, "player-side forward cover");
-        assert_eq!(sim.terrain.cover_at(at((-8, 0))), Cover::Light, "enemy-side forward cover");
+        assert_eq!(
+            sim.terrain.cover_at(at((8, 0))),
+            Cover::Light,
+            "player-side forward cover"
+        );
+        assert_eq!(
+            sim.terrain.cover_at(at((-8, 0))),
+            Cover::Light,
+            "enemy-side forward cover"
+        );
         // The regression the embodied-fire test depends on: the central y = 0 lane carries NO
         // sight-blocking wall, so the two front-line troops can see straight down the middle.
         let p = sim.world.pos[s.player_troop.index as usize];
@@ -1868,8 +1963,16 @@ mod tests {
         );
         // The three posts themselves stay open ground (you fight over them from cover, not from
         // inside a wall): none of the post cells is Heavy.
-        for post in [at((0, 0)), at((0, SKIRMISH_POST_FLANK_Y)), at((0, -SKIRMISH_POST_FLANK_Y))] {
-            assert_ne!(sim.terrain.cover_at(post), Cover::Heavy, "a post is never a walled cell");
+        for post in [
+            at((0, 0)),
+            at((0, SKIRMISH_POST_FLANK_Y)),
+            at((0, -SKIRMISH_POST_FLANK_Y)),
+        ] {
+            assert_ne!(
+                sim.terrain.cover_at(post),
+                Cover::Heavy,
+                "a post is never a walled cell"
+            );
         }
     }
 
@@ -1884,7 +1987,10 @@ mod tests {
         seed_skirmish(&mut b);
         for cy in 0..GRID as i32 {
             for cx in 0..GRID as i32 {
-                assert_eq!(a.terrain.cover_at_cell(cx, cy), b.terrain.cover_at_cell(cx, cy));
+                assert_eq!(
+                    a.terrain.cover_at_cell(cx, cy),
+                    b.terrain.cover_at_cell(cx, cy)
+                );
             }
         }
     }
@@ -1914,7 +2020,11 @@ mod tests {
         // (its gameplay effect — the painted terrain — is not per-tick state either).
         let before = sim.checksum();
         sim.obstacles.clear();
-        assert_eq!(sim.checksum(), before, "obstacles must not enter the checksum");
+        assert_eq!(
+            sim.checksum(),
+            before,
+            "obstacles must not enter the checksum"
+        );
     }
 
     #[test]
@@ -1924,7 +2034,10 @@ mod tests {
         // cover decides balance — so this asserts presence, not solidity (see `register_scenery`).
         let mut seize = fresh();
         seed_seize_mission(&mut seize);
-        assert!(!seize.obstacles.is_empty(), "seize dresses the embodied view");
+        assert!(
+            !seize.obstacles.is_empty(),
+            "seize dresses the embodied view"
+        );
 
         let mut hold = fresh();
         seed_hold_mission(&mut hold);
@@ -2033,7 +2146,11 @@ mod tests {
     fn seize_seeds_ten_player_troops_no_player_base() {
         let mut sim = fresh();
         let m = seed_seize_mission(&mut sim);
-        assert_eq!(m.troops.len(), SEIZE_TROOPS, "the player commands exactly ten troops");
+        assert_eq!(
+            m.troops.len(),
+            SEIZE_TROOPS,
+            "the player commands exactly ten troops"
+        );
         // Exactly ten Player units, and NO Player building (production is disabled — no camp).
         assert_eq!(unit_count(&sim, Faction::Player), SEIZE_TROOPS);
         for &t in &m.troops {
@@ -2048,7 +2165,11 @@ mod tests {
                 && sim.world.kind[i] == EntityKind::Building
                 && sim.world.faction[i] == Faction::Player
         });
-        assert_eq!(player_buildings.count(), 0, "the player has no base — it cannot produce");
+        assert_eq!(
+            player_buildings.count(),
+            0,
+            "the player has no base — it cannot produce"
+        );
     }
 
     #[test]
@@ -2059,8 +2180,14 @@ mod tests {
         assert_eq!(sim.world.kind[b], EntityKind::Building);
         assert_eq!(sim.world.faction[b], Faction::Enemy);
         assert_eq!(sim.world.building[b].kind, BuildingKind::Camp);
-        assert_eq!(sim.world.building[b].build_ticks_left, 0, "the base starts operational");
-        assert!(sim.world.building[b].queue.is_empty(), "no pre-queued production");
+        assert_eq!(
+            sim.world.building[b].build_ticks_left, 0,
+            "the base starts operational"
+        );
+        assert!(
+            sim.world.building[b].queue.is_empty(),
+            "no pre-queued production"
+        );
         assert_eq!(sim.world.pos[b].x, Fixed::from_int(SEIZE_BASE_X));
         // The garrison defends FireAtWill; the base + garrison is the enemy strength the objective
         // tracks for the HUD progress bar.
@@ -2071,7 +2198,11 @@ mod tests {
             assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
             assert_eq!(sim.world.stance[i], Stance::FireAtWill);
         }
-        assert_eq!(m.enemy_strength(), m.garrison.len() as u32 + 1, "garrison + the base camp");
+        assert_eq!(
+            m.enemy_strength(),
+            m.garrison.len() as u32 + 1,
+            "garrison + the base camp"
+        );
     }
 
     #[test]
@@ -2081,7 +2212,11 @@ mod tests {
         // The no-man's-land carries Light advance cover the assault bounds between (the midfield
         // sandbag wall), and it is the sight-passing kind — never a Heavy wall that would stall the
         // assault's fire onto the base.
-        assert_eq!(sim.terrain.cover_at(at((-2, 0))), Cover::Light, "midfield sandbag cover exists");
+        assert_eq!(
+            sim.terrain.cover_at(at((-2, 0))),
+            Cover::Light,
+            "midfield sandbag cover exists"
+        );
         // The garrison and base stay in the open: the terrain does NOT fortify the defenders, so the
         // fixed-force assault can still break them (the won-in-time property the objective rests on).
         for &g in &m.garrison {
@@ -2092,7 +2227,8 @@ mod tests {
             );
         }
         assert_eq!(
-            sim.terrain.cover_at(sim.world.pos[m.enemy_base.index as usize]),
+            sim.terrain
+                .cover_at(sim.world.pos[m.enemy_base.index as usize]),
             Cover::None,
             "the objective base is not shielded by cover",
         );
@@ -2207,8 +2343,16 @@ mod tests {
             build_seize_terrain(b.sim_mut());
         }
 
-        assert_eq!(built.checksum(), expect, "the builder re-expresses Seize byte-for-byte");
-        assert_eq!(built.checksum(), SEIZE_OPENING_GOLDEN, "…and matches the pre-builder golden");
+        assert_eq!(
+            built.checksum(),
+            expect,
+            "the builder re-expresses Seize byte-for-byte"
+        );
+        assert_eq!(
+            built.checksum(),
+            SEIZE_OPENING_GOLDEN,
+            "…and matches the pre-builder golden"
+        );
     }
 
     /// The builder's `spawn` / `build_camp` primitives match hand seeding on a from-scratch world:
@@ -2222,7 +2366,13 @@ mod tests {
         let via = {
             let mut b = ScenarioBuilder::new(&mut viab);
             b.set_army(Faction::Player, Army::Us);
-            let u = b.spawn(UnitKind::Rifleman, at((3, 4)), Faction::Player, Stance::FireAtWill, Angle(0));
+            let u = b.spawn(
+                UnitKind::Rifleman,
+                at((3, 4)),
+                Faction::Player,
+                Stance::FireAtWill,
+                Angle(0),
+            );
             let c = b.build_camp(at((7, 0)), Faction::Player);
             (u, c)
         };
@@ -2231,7 +2381,14 @@ mod tests {
         // with the roster HP, then the canonical build path made operational.
         hand.set_army(Faction::Player, Army::Us);
         let hp = economy::unit_stats(UnitKind::Rifleman).0.max;
-        let hu = spawn_rifleman(&mut hand, at((3, 4)), Faction::Player, Stance::FireAtWill, hp, Angle(0));
+        let hu = spawn_rifleman(
+            &mut hand,
+            at((3, 4)),
+            Faction::Player,
+            Stance::FireAtWill,
+            hp,
+            Angle(0),
+        );
         hand.resources.amounts[Faction::Player.index()] = economy::CAMP_BUILD_COST;
         let hc = economy::build(
             &mut hand.world,
@@ -2245,10 +2402,23 @@ mod tests {
 
         assert_eq!(via.0, hu, "same spawned unit entity/order");
         assert_eq!(via.1, hc, "same camp entity");
-        assert_eq!(viab.world.weapon[via.0.index as usize], hand.world.weapon[hu.index as usize]);
-        assert_eq!(viab.world.health[via.0.index as usize], hand.world.health[hu.index as usize]);
-        assert_eq!(viab.world.building[via.1.index as usize].build_ticks_left, 0, "camp is operational");
-        assert_eq!(viab.checksum(), hand.checksum(), "builder primitives are byte-identical to hand seeding");
+        assert_eq!(
+            viab.world.weapon[via.0.index as usize],
+            hand.world.weapon[hu.index as usize]
+        );
+        assert_eq!(
+            viab.world.health[via.0.index as usize],
+            hand.world.health[hu.index as usize]
+        );
+        assert_eq!(
+            viab.world.building[via.1.index as usize].build_ticks_left, 0,
+            "camp is operational"
+        );
+        assert_eq!(
+            viab.checksum(),
+            hand.checksum(),
+            "builder primitives are byte-identical to hand seeding"
+        );
     }
 
     /// [`ScenarioBuilder::spawn_rifleman`] (the hoisted headless-runner convenience) is exactly
@@ -2269,7 +2439,11 @@ mod tests {
         );
 
         assert_eq!(e1, e2, "same spawned entity handle");
-        assert_eq!(via_shorthand.checksum(), via_explicit.checksum(), "byte-identical world");
+        assert_eq!(
+            via_shorthand.checksum(),
+            via_explicit.checksum(),
+            "byte-identical world"
+        );
     }
 
     /// [`fx`]/[`v`] are the trivial integer-world-unit constructors every headless runner used to
@@ -2289,8 +2463,16 @@ mod tests {
         let m = seed_hold_mission(&mut sim);
 
         // A 2-row defence and a 2-row assault at rough parity (the edge is the cover, not numbers).
-        assert_eq!(m.defenders.len(), (HOLD_DEFENDER_COLS * 2) as usize, "10 defenders");
-        assert_eq!(m.attackers.len(), (HOLD_ATTACKER_COLS * 2) as usize, "8 attackers");
+        assert_eq!(
+            m.defenders.len(),
+            (HOLD_DEFENDER_COLS * 2) as usize,
+            "10 defenders"
+        );
+        assert_eq!(
+            m.attackers.len(),
+            (HOLD_ATTACKER_COLS * 2) as usize,
+            "8 attackers"
+        );
         assert_eq!(unit_count(&sim, Faction::Player), m.defenders.len());
         assert_eq!(unit_count(&sim, Faction::Enemy), m.attackers.len());
 
@@ -2300,7 +2482,11 @@ mod tests {
             assert_eq!(sim.world.faction[i], Faction::Player);
             assert_eq!(sim.world.unit_kind[i], UnitKind::Rifleman);
             assert_eq!(sim.world.stance[i], Stance::FireAtWill);
-            assert_eq!(sim.world.order[i], Order::HoldPosition, "the defence is rooted");
+            assert_eq!(
+                sim.world.order[i],
+                Order::HoldPosition,
+                "the defence is rooted"
+            );
         }
 
         // Attackers advance under a baked-in AttackMove onto the defensive line (x == HOLD_DEFENDER_X).
@@ -2308,7 +2494,11 @@ mod tests {
         for &a in &m.attackers {
             let i = a.index as usize;
             assert_eq!(sim.world.faction[i], Faction::Enemy);
-            assert_eq!(sim.world.order[i], Order::AttackMove(line), "the assault advances on the line");
+            assert_eq!(
+                sim.world.order[i],
+                Order::AttackMove(line),
+                "the assault advances on the line"
+            );
         }
 
         // No player base (production disabled) — a fixed-force fight.
@@ -2385,14 +2575,23 @@ mod tests {
 
         // A dug-in FireAtWill defence holds to the timer with survivors (the win path).
         let (firing_survivors, firing_wiped) = drive(Stance::FireAtWill);
-        assert!(firing_survivors > 0, "a firing defence must hold with survivors");
-        assert_eq!(firing_wiped, None, "a firing defence is never wiped before the timer");
+        assert!(
+            firing_survivors > 0,
+            "a firing defence must hold with survivors"
+        );
+        assert_eq!(
+            firing_wiped, None,
+            "a firing defence is never wiped before the timer"
+        );
 
         // A passive HoldFire defence is overrun well before the timer (the loss path).
         let (passive_survivors, passive_wiped) = drive(Stance::HoldFire);
         assert_eq!(passive_survivors, 0, "a passive defence is wiped out");
         let wiped = passive_wiped.expect("a passive defence is wiped");
-        assert!(wiped < HOLD_TICKS, "the wipe lands before the hold window ({wiped} < {HOLD_TICKS})");
+        assert!(
+            wiped < HOLD_TICKS,
+            "the wipe lands before the hold window ({wiped} < {HOLD_TICKS})"
+        );
     }
 
     // -------- Mission 3: the *Push* (lane of guarded posts) --------
@@ -2402,13 +2601,21 @@ mod tests {
         let mut sim = fresh();
         let m = seed_push_mission(&mut sim);
         assert_eq!(m.troops.len(), PUSH_TROOPS, "the fixed squad");
-        assert_eq!(m.defenders.len(), PUSH_POST_XS.len() * 2, "two guards per post");
+        assert_eq!(
+            m.defenders.len(),
+            PUSH_POST_XS.len() * 2,
+            "two guards per post"
+        );
         // The three posts sit on the lane in capture order, and are seeded as neutral points.
         assert_eq!(sim.territory.points.len(), 3);
         for (i, (&post, p)) in m.posts.iter().zip(&sim.territory.points).enumerate() {
             assert_eq!(p.pos, post, "post {i} at its authored lane position");
             assert_eq!(p.owner, Faction::Neutral, "post {i} starts neutral");
-            assert_eq!(post.x, Fixed::from_int(PUSH_POST_XS[i]), "capture order west → east");
+            assert_eq!(
+                post.x,
+                Fixed::from_int(PUSH_POST_XS[i]),
+                "capture order west → east"
+            );
         }
         // Fixed forces: no purse on either side (production disabled), guards hold position.
         assert_eq!(sim.resources.get(Faction::Player), 0);
@@ -2423,8 +2630,16 @@ mod tests {
         // The form-up cover is really laid: a Light bar just west of every post (and the post
         // cell itself stays open — the last stretch is crossed in the open, by design).
         for &px in &PUSH_POST_XS {
-            assert_eq!(sim.terrain.cover_at(at((px - 4, 0))), Cover::Light, "form-up bar at {px}");
-            assert_eq!(sim.terrain.cover_at(at((px, 0))), Cover::None, "post {px} stays open");
+            assert_eq!(
+                sim.terrain.cover_at(at((px - 4, 0))),
+                Cover::Light,
+                "form-up bar at {px}"
+            );
+            assert_eq!(
+                sim.terrain.cover_at(at((px, 0))),
+                Cover::None,
+                "post {px} stays open"
+            );
         }
     }
 
@@ -2479,7 +2694,10 @@ mod tests {
             idle.step(&[]);
         }
         assert!(
-            idle.territory.points.iter().all(|p| p.owner != Faction::Player),
+            idle.territory
+                .points
+                .iter()
+                .all(|p| p.owner != Faction::Player),
             "no post falls to a squad that never advances"
         );
         assert_eq!(mi.troops.len(), PUSH_TROOPS);
@@ -2515,11 +2733,17 @@ mod tests {
         let mut expected = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
         loadout.apply_to_weapon_for(Army::Us, &mut expected);
         for &t in &m.troops {
-            assert_eq!(sim.world.weapon[t.index as usize], expected, "squad carries the build");
+            assert_eq!(
+                sim.world.weapon[t.index as usize], expected,
+                "squad carries the build"
+            );
         }
         let baseline = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
         for &g in &m.defenders {
-            assert_eq!(sim.world.weapon[g.index as usize], baseline, "guards keep their FR baseline");
+            assert_eq!(
+                sim.world.weapon[g.index as usize], baseline,
+                "guards keep their FR baseline"
+            );
         }
     }
 
@@ -2561,7 +2785,10 @@ mod tests {
         }
         // A non-Standard loadout actually moved the weapon off the bare US baseline.
         let bare_us = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
-        assert_ne!(expected, bare_us, "the loadout is a real change off the baseline");
+        assert_ne!(
+            expected, bare_us,
+            "the loadout is a real change off the baseline"
+        );
         // The enemy (FR) assault is unaffected — this is the player's gunsmith, not the enemy's.
         let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
         for &a in &m.attackers {
@@ -2606,7 +2833,11 @@ mod tests {
         seed_infantry(&mut inf_sim);
         for sim in [&duel_sim, &inf_sim] {
             for f in Faction::ALL {
-                assert_eq!(sim.army_of(f), Army::Neutral, "a debug scene fields no real army");
+                assert_eq!(
+                    sim.army_of(f),
+                    Army::Neutral,
+                    "a debug scene fields no real army"
+                );
             }
         }
     }
@@ -2628,14 +2859,26 @@ mod tests {
 
         let us_rifle = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
         let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
-        assert_eq!(sim.world.weapon[s.player_troop.index as usize], us_rifle, "US player troop fields the US variant");
-        assert_eq!(sim.world.weapon[s.enemy_troop.index as usize], fr_rifle, "FR OPFOR troop fields the FR variant");
+        assert_eq!(
+            sim.world.weapon[s.player_troop.index as usize], us_rifle,
+            "US player troop fields the US variant"
+        );
+        assert_eq!(
+            sim.world.weapon[s.enemy_troop.index as usize], fr_rifle,
+            "FR OPFOR troop fields the FR variant"
+        );
         // The two armies' opening troops are *distinct* (the logistics tilt makes them read apart),
         // and neither is the shared baseline.
         let baseline = economy::unit_stats(UnitKind::Rifleman).1;
         assert_ne!(us_rifle, fr_rifle, "the two armies' troops differ");
-        assert_ne!(us_rifle, baseline, "the US troop is tilted off the baseline");
-        assert_ne!(fr_rifle, baseline, "the FR troop is tilted off the baseline");
+        assert_ne!(
+            us_rifle, baseline,
+            "the US troop is tilted off the baseline"
+        );
+        assert_ne!(
+            fr_rifle, baseline,
+            "the FR troop is tilted off the baseline"
+        );
     }
 
     #[test]
@@ -2649,12 +2892,21 @@ mod tests {
         let us_rifle = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
         let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
         for &t in &m.troops {
-            assert_eq!(sim.world.weapon[t.index as usize], us_rifle, "every US assault troop fields the US variant");
+            assert_eq!(
+                sim.world.weapon[t.index as usize], us_rifle,
+                "every US assault troop fields the US variant"
+            );
         }
         for &g in &m.garrison {
-            assert_eq!(sim.world.weapon[g.index as usize], fr_rifle, "every FR garrison defender fields the FR variant");
+            assert_eq!(
+                sim.world.weapon[g.index as usize], fr_rifle,
+                "every FR garrison defender fields the FR variant"
+            );
         }
-        assert_ne!(us_rifle, fr_rifle, "the assault and the garrison read as different armies");
+        assert_ne!(
+            us_rifle, fr_rifle,
+            "the assault and the garrison read as different armies"
+        );
     }
 
     #[test]
@@ -2665,8 +2917,13 @@ mod tests {
         let mut sim = fresh();
         let inf = seed_infantry(&mut sim);
         let baseline = economy::unit_stats(UnitKind::Rifleman).1;
-        for e in [inf.player, inf.open, inf.cover, inf.walled, inf.far, inf.flank] {
-            assert_eq!(sim.world.weapon[e.index as usize], baseline, "a no-army troop keeps the baseline loadout");
+        for e in [
+            inf.player, inf.open, inf.cover, inf.walled, inf.far, inf.flank,
+        ] {
+            assert_eq!(
+                sim.world.weapon[e.index as usize], baseline,
+                "a no-army troop keeps the baseline loadout"
+            );
         }
     }
 
@@ -2686,7 +2943,12 @@ mod tests {
         for &optic in &Optic::ALL {
             for &barrel in &Barrel::ALL {
                 for &magazine in &Magazine::ALL {
-                    v.push(Loadout { optic, barrel, magazine, ..Loadout::STANDARD });
+                    v.push(Loadout {
+                        optic,
+                        barrel,
+                        magazine,
+                        ..Loadout::STANDARD
+                    });
                 }
             }
         }
@@ -2740,7 +3002,10 @@ mod tests {
         let opening: Vec<Command> = m
             .troops
             .iter()
-            .map(|&t| Command::AttackMove { entity: t, target: base_pos })
+            .map(|&t| Command::AttackMove {
+                entity: t,
+                target: base_pos,
+            })
             .collect();
         sim.step(&opening);
         stream.push(sim.checksum());
@@ -2792,7 +3057,10 @@ mod tests {
         }
         // A non-Standard loadout actually moved the weapon off the bare US baseline.
         let bare_us = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
-        assert_ne!(expected, bare_us, "the loadout is a real change off the baseline");
+        assert_ne!(
+            expected, bare_us,
+            "the loadout is a real change off the baseline"
+        );
         // The enemy (FR) garrison is unaffected — this is the player's gunsmith, not the enemy's.
         let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
         for &g in &m.garrison {
@@ -2812,7 +3080,10 @@ mod tests {
         let mut std = fresh();
         let m_plain = seed_seize_mission(&mut plain);
         let m_std = seed_seize_mission_with_loadout(&mut std, Loadout::STANDARD);
-        assert_eq!(m_plain, m_std, "the Standard loadout seeds the identical handles");
+        assert_eq!(
+            m_plain, m_std,
+            "the Standard loadout seeds the identical handles"
+        );
         assert_eq!(
             plain.checksum(),
             std.checksum(),
@@ -2866,7 +3137,10 @@ mod tests {
             a[0], b[0],
             "different loadouts fold to a different pre-step checksum (the weapon stats differ)"
         );
-        assert_ne!(a, b, "different loadouts produce a different sim trajectory");
+        assert_ne!(
+            a, b,
+            "different loadouts produce a different sim trajectory"
+        );
     }
 
     /// **Fairness on the live-spawn path (D30/D60).** Extends the no-strictly-dominant-build property
@@ -2876,7 +3150,10 @@ mod tests {
     /// upgrade in-match trips this.
     #[test]
     fn no_seize_loadout_strictly_dominates_another_on_the_live_weapon() {
-        let weapons: Vec<Weapon> = all_loadouts().iter().map(|&l| seize_player_weapon(l)).collect();
+        let weapons: Vec<Weapon> = all_loadouts()
+            .iter()
+            .map(|&l| seize_player_weapon(l))
+            .collect();
         for (i, a) in weapons.iter().enumerate() {
             for (j, b) in weapons.iter().enumerate() {
                 if i == j {
@@ -2921,7 +3198,10 @@ mod tests {
         stream.push(sim.checksum());
 
         // Open by attack-moving the Player's troop onto the enemy base (FireAtWill fires en route).
-        sim.step(&[Command::AttackMove { entity: s.player_troop, target: enemy_base_pos }]);
+        sim.step(&[Command::AttackMove {
+            entity: s.player_troop,
+            target: enemy_base_pos,
+        }]);
         stream.push(sim.checksum());
 
         for _ in 1..ticks {
@@ -2955,7 +3235,10 @@ mod tests {
         let mut std = fresh();
         let m_plain = seed_skirmish(&mut plain);
         let m_std = seed_skirmish_with_loadout(&mut std, Loadout::STANDARD);
-        assert_eq!(m_plain, m_std, "the Standard loadout seeds the identical handles");
+        assert_eq!(
+            m_plain, m_std,
+            "the Standard loadout seeds the identical handles"
+        );
         assert_eq!(
             plain.checksum(),
             std.checksum(),
@@ -2992,7 +3275,10 @@ mod tests {
         );
         // The non-Standard loadout actually moved the weapon off the bare US baseline.
         let bare_us = economy::unit_stats_for(Army::Us, UnitKind::Rifleman).1;
-        assert_ne!(expected, bare_us, "the loadout is a real change off the baseline");
+        assert_ne!(
+            expected, bare_us,
+            "the loadout is a real change off the baseline"
+        );
         // The enemy (FR) troop is unaffected — this is the player's gunsmith, not the enemy's.
         let fr_rifle = economy::unit_stats_for(Army::Fr, UnitKind::Rifleman).1;
         assert_eq!(
@@ -3053,7 +3339,10 @@ mod tests {
             a[0], b[0],
             "different loadouts fold to a different pre-step checksum (the weapon stats differ)"
         );
-        assert_ne!(a, b, "different loadouts produce a different sim trajectory");
+        assert_ne!(
+            a, b,
+            "different loadouts produce a different sim trajectory"
+        );
     }
 
     /// Drive the US-vs-FR *Seize* mission to a result and return `(final_checksum, enemy_cleared)`:
@@ -3078,7 +3367,10 @@ mod tests {
         let opening: Vec<Command> = m
             .troops
             .iter()
-            .map(|&t| Command::AttackMove { entity: t, target: base_pos })
+            .map(|&t| Command::AttackMove {
+                entity: t,
+                target: base_pos,
+            })
             .collect();
         sim.step(&opening);
 
@@ -3121,7 +3413,10 @@ mod tests {
         let (sum_b, cleared_b) = drive_us_vs_fr_seize(2000);
         // Two peers seeding the identical US-vs-FR scene and replaying the identical input land on the
         // same world (the cross-client checksum agreement the matrix enforces).
-        assert_eq!(sum_a, sum_b, "the US-vs-FR mission is deterministic across runs (lockstep parity)");
+        assert_eq!(
+            sum_a, sum_b,
+            "the US-vs-FR mission is deterministic across runs (lockstep parity)"
+        );
         assert_eq!(cleared_a, cleared_b, "both runs reach the identical result");
         // It actually *reaches a result*: the US assault clears the entire French garrison (the
         // mission progresses to an outcome, not a frozen stalemate).
@@ -3129,7 +3424,10 @@ mod tests {
             let mut probe = fresh();
             seed_seize_mission(&mut probe).garrison.len() as u32
         };
-        assert_eq!(cleared_a, m_strength, "the US assault broke the whole French OPFOR garrison");
+        assert_eq!(
+            cleared_a, m_strength,
+            "the US assault broke the whole French OPFOR garrison"
+        );
     }
 
     // --- The positioned skirmish (the map-library force recipe, D102) ---------------------------
@@ -3191,8 +3489,14 @@ mod tests {
             assert_eq!(sim.world.stance[i], Stance::FireAtWill);
         }
         // The skirmish economy: the small uniform purse + the slow accrual pace.
-        assert_eq!(sim.resources.amounts[Faction::Player.index()], SKIRMISH_START_PURSE);
-        assert_eq!(sim.resources.amounts[Faction::Enemy.index()], SKIRMISH_START_PURSE);
+        assert_eq!(
+            sim.resources.amounts[Faction::Player.index()],
+            SKIRMISH_START_PURSE
+        );
+        assert_eq!(
+            sim.resources.amounts[Faction::Enemy.index()],
+            SKIRMISH_START_PURSE
+        );
         assert_eq!(sim.income_period(), SKIRMISH_INCOME_PERIOD);
         // The matchup: US player, French enemy (WS-A).
         assert_eq!(sim.army_of(Faction::Player), Army::Us);
@@ -3228,7 +3532,11 @@ mod tests {
         let mut b = fresh();
         let n = seed_seize_mission_with_loadout(&mut b, Loadout::STANDARD);
         assert_eq!(m.troops.len(), n.troops.len());
-        assert_eq!(a.checksum(), b.checksum(), "default setup == baseline seeder, byte for byte");
+        assert_eq!(
+            a.checksum(),
+            b.checksum(),
+            "default setup == baseline seeder, byte for byte"
+        );
     }
 
     #[test]
@@ -3238,16 +3546,31 @@ mod tests {
         let m = seed_seize_mission_with_setup(
             &mut sim,
             Loadout::STANDARD,
-            SeizeSetup { troops: 6, garrison: 2 },
+            SeizeSetup {
+                troops: 6,
+                garrison: 2,
+            },
         );
-        assert_eq!(m.troops.len(), 6, "the assault fields the authored troop count");
-        assert_eq!(m.garrison.len(), 2, "the garrison fields the authored count");
+        assert_eq!(
+            m.troops.len(),
+            6,
+            "the assault fields the authored troop count"
+        );
+        assert_eq!(
+            m.garrison.len(),
+            2,
+            "the garrison fields the authored count"
+        );
 
         let mut hold = fresh();
         let h = seed_hold_mission_with_setup(
             &mut hold,
             Loadout::STANDARD,
-            HoldSetup { defender_cols: 3, attacker_cols: 6, hold_secs: 30 },
+            HoldSetup {
+                defender_cols: 3,
+                attacker_cols: 6,
+                hold_secs: 30,
+            },
         );
         assert_eq!(h.defenders.len(), 3 * 2, "2-row defender block at 3 cols");
         assert_eq!(h.attackers.len(), 6 * 2, "2-row attacker block at 6 cols");
@@ -3256,10 +3579,17 @@ mod tests {
         let p = seed_push_mission_with_setup(
             &mut push,
             Loadout::STANDARD,
-            PushSetup { troops: 5, guards_per_post: 3 },
+            PushSetup {
+                troops: 5,
+                guards_per_post: 3,
+            },
         );
         assert_eq!(p.troops.len(), 5);
-        assert_eq!(p.defenders.len(), PUSH_POST_XS.len() * 3, "three guards per post");
+        assert_eq!(
+            p.defenders.len(),
+            PUSH_POST_XS.len() * 3,
+            "three guards per post"
+        );
     }
 
     #[test]
@@ -3268,10 +3598,21 @@ mod tests {
         // the SAME setup on the SAME seed is bit-identical (invariant #1: replayable, cross-platform).
         let build = |troops: u32| {
             let mut s = Sim::new(0x5EED);
-            seed_seize_mission_with_setup(&mut s, Loadout::STANDARD, SeizeSetup { troops, garrison: 4 });
+            seed_seize_mission_with_setup(
+                &mut s,
+                Loadout::STANDARD,
+                SeizeSetup {
+                    troops,
+                    garrison: 4,
+                },
+            );
             s.checksum()
         };
         assert_eq!(build(10), build(10), "same setup + seed folds identically");
-        assert_ne!(build(10), build(6), "a different force size is a different battle");
+        assert_ne!(
+            build(10),
+            build(6),
+            "a different force size is a different battle"
+        );
     }
 }

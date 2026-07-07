@@ -265,14 +265,25 @@ fn shell_screens_to_png() {
     // shipped campaign (fresh progress → first node).
     let next = next_operation(&campaign);
     shoot(&device, &queue, &format!("{dir}/title.png"), |ui| {
-        title_ui(ui, "build dev \u{00b7} v0.0.0", &profile, &army, next.as_ref());
+        title_ui(
+            ui,
+            "build dev \u{00b7} v0.0.0",
+            &profile,
+            &army,
+            next.as_ref(),
+        );
     });
     shoot(&device, &queue, &format!("{dir}/pvp.png"), |ui| {
         pvp_ui(ui, gonedark_core::components::Army::Us);
     });
-    shoot(&device, &queue, &format!("{dir}/skirmish_setup.png"), |ui| {
-        skirmish_setup_ui(ui, &SkirmishSetupState::default());
-    });
+    shoot(
+        &device,
+        &queue,
+        &format!("{dir}/skirmish_setup.png"),
+        |ui| {
+            skirmish_setup_ui(ui, &SkirmishSetupState::default());
+        },
+    );
     shoot(&device, &queue, &format!("{dir}/loadout.png"), |ui| {
         loadout_ui(ui, &loadout);
     });
@@ -281,9 +292,16 @@ fn shell_screens_to_png() {
     });
     // The hub over the LIVE atlas globe (D103) — exercises the real globe WGSL headlessly.
     let pins = atlas_pins(&campaign);
-    shoot_over_globe(&device, &queue, &format!("{dir}/operations_globe.png"), None, &pins, |ui| {
-        mission_select_ui(ui, &campaign, None, None);
-    });
+    shoot_over_globe(
+        &device,
+        &queue,
+        &format!("{dir}/operations_globe.png"),
+        None,
+        &pins,
+        |ui| {
+            mission_select_ui(ui, &campaign, None, None);
+        },
+    );
     // The battlefield overview (D106): the hub filtered to the first war, zoomed onto its
     // battle anchors with progress-toned pins — exercises the tone/scale pin lanes headlessly.
     let first = campaign.conflicts().first().map(|c| c.id);
@@ -305,9 +323,16 @@ fn shell_screens_to_png() {
     // The navigable conflict atlas (D104), over the live globe at its opened view.
     let atlas = AtlasState::opened(&campaign);
     let atlas_pins_now = atlas_pins_for(&campaign, &atlas);
-    shoot_over_globe(&device, &queue, &format!("{dir}/atlas.png"), None, &atlas_pins_now, |ui| {
-        atlas_ui(ui, &campaign, &atlas);
-    });
+    shoot_over_globe(
+        &device,
+        &queue,
+        &format!("{dir}/atlas.png"),
+        None,
+        &atlas_pins_now,
+        |ui| {
+            atlas_ui(ui, &campaign, &atlas);
+        },
+    );
     shoot(&device, &queue, &format!("{dir}/settings.png"), |ui| {
         settings_ui(ui, &mut settings, false, &mut rebinding, &mut conflict);
     });

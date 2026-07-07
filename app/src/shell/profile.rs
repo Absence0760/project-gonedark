@@ -125,7 +125,10 @@ pub(crate) enum ProfileStep {
 
 /// Apply a [`ProfileAction`] to the profile and report the resulting screen step. `Back` sanitises the
 /// callsign (so an empty/over-long field commits a clean value). Pure — the Profile decision seam.
-pub(crate) fn apply_profile_action(action: ProfileAction, profile: &mut ProfileState) -> ProfileStep {
+pub(crate) fn apply_profile_action(
+    action: ProfileAction,
+    profile: &mut ProfileState,
+) -> ProfileStep {
     match action {
         ProfileAction::CycleFaction => {
             profile.faction = profile.faction.next();
@@ -156,53 +159,53 @@ pub(crate) fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Optio
 
         // Left-anchor the identity/record body to one margin (banner + footer stay centred).
         ui.vertical(|ui| {
-        section_label(ui, "IDENTITY");
-        egui::Grid::new("profile.identity")
-            .num_columns(2)
-            .min_col_width(96.0)
-            .spacing([16.0, 10.0])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Callsign").color(BONE).size(TYPE_BODY));
-                ui.add(
-                    TextEdit::singleline(&mut profile.callsign)
-                        .char_limit(CALLSIGN_MAX)
-                        .desired_width(f32::INFINITY),
-                );
-                ui.end_row();
-                ui.label(RichText::new("Faction").color(BONE).size(TYPE_BODY));
-                let fw = ui.available_width();
-                if value_chip(ui, profile.faction.label(), fw) {
-                    action = Some(ProfileAction::CycleFaction);
-                }
-                ui.end_row();
-            });
+            section_label(ui, "IDENTITY");
+            egui::Grid::new("profile.identity")
+                .num_columns(2)
+                .min_col_width(96.0)
+                .spacing([16.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Callsign").color(BONE).size(TYPE_BODY));
+                    ui.add(
+                        TextEdit::singleline(&mut profile.callsign)
+                            .char_limit(CALLSIGN_MAX)
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.end_row();
+                    ui.label(RichText::new("Faction").color(BONE).size(TYPE_BODY));
+                    let fw = ui.available_width();
+                    if value_chip(ui, profile.faction.label(), fw) {
+                        action = Some(ProfileAction::CycleFaction);
+                    }
+                    ui.end_row();
+                });
 
-        section_divider(ui);
-        section_label(ui, "RECORD");
-        let rate = match win_rate_pct(profile.wins, profile.matches_played) {
-            Some(p) => format!("{p}%"),
-            None => "--".to_string(),
-        };
-        // A 3-up stat row: a big amber numeral over a small ash caption per stat, instead of one
-        // flat grey sentence — the same numeral/caption relationship the rest of the shell uses.
-        let stat_col = (ui.available_width() / 3.0 - 8.0).max(64.0);
-        egui::Grid::new("profile.record")
-            .num_columns(3)
-            .min_col_width(stat_col)
-            .spacing([8.0, 6.0])
-            .show(ui, |ui| {
-                for (value, caption) in [
-                    (profile.matches_played.to_string(), "MATCHES"),
-                    (profile.wins.to_string(), "WINS"),
-                    (rate.clone(), "WIN RATE"),
-                ] {
-                    ui.vertical_centered(|ui| {
-                        ui.label(RichText::new(value).color(AMBER).size(TYPE_STAT).strong());
-                        ui.label(RichText::new(caption).color(ASH).size(TYPE_CAPTION));
-                    });
-                }
-                ui.end_row();
-            });
+            section_divider(ui);
+            section_label(ui, "RECORD");
+            let rate = match win_rate_pct(profile.wins, profile.matches_played) {
+                Some(p) => format!("{p}%"),
+                None => "--".to_string(),
+            };
+            // A 3-up stat row: a big amber numeral over a small ash caption per stat, instead of one
+            // flat grey sentence — the same numeral/caption relationship the rest of the shell uses.
+            let stat_col = (ui.available_width() / 3.0 - 8.0).max(64.0);
+            egui::Grid::new("profile.record")
+                .num_columns(3)
+                .min_col_width(stat_col)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    for (value, caption) in [
+                        (profile.matches_played.to_string(), "MATCHES"),
+                        (profile.wins.to_string(), "WINS"),
+                        (rate.clone(), "WIN RATE"),
+                    ] {
+                        ui.vertical_centered(|ui| {
+                            ui.label(RichText::new(value).color(AMBER).size(TYPE_STAT).strong());
+                            ui.label(RichText::new(caption).color(ASH).size(TYPE_CAPTION));
+                        });
+                    }
+                    ui.end_row();
+                });
         }); // end left-anchored body
 
         ui.add_space(18.0);

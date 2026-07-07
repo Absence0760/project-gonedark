@@ -414,12 +414,7 @@ impl TouchControls {
     /// onto a button releases look *this frame* so the button fires without a lift. A finger that
     /// lifts releases its control; the next finger down in that zone/ring re-captures it.
     pub fn update(&mut self, layout: &TouchLayout, touches: &[TouchSample]) -> TouchOutput {
-        let find = |id: u64| {
-            touches
-                .iter()
-                .find(|t| t.id == id)
-                .map(|t| (t.x, t.y))
-        };
+        let find = |id: u64| touches.iter().find(|t| t.id == id).map(|t| (t.x, t.y));
         // A button press is ANY finger inside the circle — buttons win over look/move (COD-Mobile).
         let pressed = |c: &Circle| touches.iter().any(|t| c.contains(t.x, t.y));
         // The stick's neutral origin IS the fixed ring centre (this is a fixed, not floating, stick).
@@ -493,7 +488,11 @@ impl TouchControls {
         // (holding still / no look finger) stays zero. Presentation/input only, above `core`.
         let look_delta = (
             look_delta.0 * self.look_sensitivity,
-            (if self.invert_y { -look_delta.1 } else { look_delta.1 }) * self.look_sensitivity,
+            (if self.invert_y {
+                -look_delta.1
+            } else {
+                look_delta.1
+            }) * self.look_sensitivity,
         );
 
         // --- Buttons: pressed = ANY finger inside the circle (buttons win); edges vs last frame. ---
@@ -598,8 +597,14 @@ mod tests {
         let a = mm_to_px(9.0, 1.0);
         // 9 mm at density 1.0 (mdpi) ≈ 56.7 px (9 · 160/25.4).
         assert!((a - 9.0 * (160.0 / 25.4)).abs() < 1e-3);
-        assert!((mm_to_px(9.0, 2.0) - 2.0 * a).abs() < 1e-3, "doubling density doubles px");
-        assert!((mm_to_px(18.0, 1.0) - 2.0 * a).abs() < 1e-3, "doubling mm doubles px");
+        assert!(
+            (mm_to_px(9.0, 2.0) - 2.0 * a).abs() < 1e-3,
+            "doubling density doubles px"
+        );
+        assert!(
+            (mm_to_px(18.0, 1.0) - 2.0 * a).abs() < 1e-3,
+            "doubling mm doubles px"
+        );
         // A missing/bogus density makes the floor inert (0 px) — never NaN or negative.
         assert_eq!(mm_to_px(9.0, 0.0), 0.0);
         assert_eq!(mm_to_px(9.0, -1.0), 0.0);
@@ -623,7 +628,15 @@ mod tests {
             SURFACE_R_FRAC * m < radius_floor,
             "precondition: fractional Surface radius is below the floor"
         );
-        for c in [l.fire, l.crouch, l.reload, l.surface, l.aim, l.jump, l.fire_mode] {
+        for c in [
+            l.fire,
+            l.crouch,
+            l.reload,
+            l.surface,
+            l.aim,
+            l.jump,
+            l.fire_mode,
+        ] {
             assert!(
                 c.r >= radius_floor - 1e-3,
                 "button radius {} px must be floored to the {radius_floor} px physical minimum",
@@ -665,7 +678,10 @@ mod tests {
         // `with_density` is byte-identical to `new` there (the floor bites only when it needs to).
         let big = TouchLayout::new(3840, 2160);
         let big_d = TouchLayout::with_density(3840, 2160, 1.0);
-        assert_eq!(big, big_d, "an inert floor leaves the fractional layout unchanged");
+        assert_eq!(
+            big, big_d,
+            "an inert floor leaves the fractional layout unchanged"
+        );
     }
 
     #[test]
@@ -675,15 +691,29 @@ mod tests {
         // Finger down at the ring centre: neutral (deflection measured from the FIXED centre).
         let (cx, cy) = stick_center(&l);
         let out = tc.update(&l, &[t(1, cx, cy)]);
-        assert_eq!(out.move_axis, (0.0, 0.0), "a touch at the centre is neutral");
+        assert_eq!(
+            out.move_axis,
+            (0.0, 0.0),
+            "a touch at the centre is neutral"
+        );
         assert!(out.hud.stick_active);
-        assert_eq!(out.hud.stick_origin, (cx, cy), "the origin is the fixed ring centre");
+        assert_eq!(
+            out.hud.stick_origin,
+            (cx, cy),
+            "the origin is the fixed ring centre"
+        );
 
         // Push right + up by half the radius: axis is the normalized offset from the centre.
         let dx = l.stick_base.r * 0.5;
         let out = tc.update(&l, &[t(1, cx + dx, cy - dx)]);
-        assert!((out.move_axis.0 - 0.5).abs() < 1e-5, "right half-deflection");
-        assert!((out.move_axis.1 + 0.5).abs() < 1e-5, "up is -y (screen convention)");
+        assert!(
+            (out.move_axis.0 - 0.5).abs() < 1e-5,
+            "right half-deflection"
+        );
+        assert!(
+            (out.move_axis.1 + 0.5).abs() < 1e-5,
+            "up is -y (screen convention)"
+        );
     }
 
     #[test]
@@ -695,7 +725,10 @@ mod tests {
         // Shove far past the radius straight down: magnitude clamps to 1.
         let out = tc.update(&l, &[t(1, cx, cy + l.stick_base.r * 10.0)]);
         let mag = (out.move_axis.0 * out.move_axis.0 + out.move_axis.1 * out.move_axis.1).sqrt();
-        assert!((mag - 1.0).abs() < 1e-5, "deflection clamps to the unit circle, got {mag}");
+        assert!(
+            (mag - 1.0).abs() < 1e-5,
+            "deflection clamps to the unit circle, got {mag}"
+        );
         assert!(out.move_axis.1 > 0.99, "straight down is +y");
     }
 
@@ -709,14 +742,24 @@ mod tests {
         let (cx, cy) = stick_center(&l);
         // A point just past the ring, still on the left (well clear of the look zone).
         let p = (cx + l.stick_base.r + 8.0, cy);
-        assert!(!l.stick_base.contains(p.0, p.1), "precondition: outside the ring");
-        assert!(!l.look_zone.contains(p.0, p.1), "precondition: not in the look zone either");
+        assert!(
+            !l.stick_base.contains(p.0, p.1),
+            "precondition: outside the ring"
+        );
+        assert!(
+            !l.look_zone.contains(p.0, p.1),
+            "precondition: not in the look zone either"
+        );
         let out = tc.update(&l, &[t(1, p.0, p.1)]);
         assert!(!out.hud.stick_active, "no stick claim outside the ring");
         assert_eq!(out.move_axis, (0.0, 0.0), "and no movement");
         // Dragging that inert finger produces NO look delta — it never became a look finger.
         let out = tc.update(&l, &[t(1, p.0 + 40.0, p.1)]);
-        assert_eq!(out.look_delta, (0.0, 0.0), "an off-ring left touch never pans the camera");
+        assert_eq!(
+            out.look_delta,
+            (0.0, 0.0),
+            "an off-ring left touch never pans the camera"
+        );
     }
 
     #[test]
@@ -755,9 +798,15 @@ mod tests {
         let (ax, ay) = center(&l.aim);
         let out = tc.update(&l, &[t(8, ax, ay)]);
         assert!(out.aim, "aim is true while the ADS button is held");
-        assert!(out.hud.aim_pressed, "the press flash tracks the held button");
+        assert!(
+            out.hud.aim_pressed,
+            "the press flash tracks the held button"
+        );
         let out = tc.update(&l, &[t(8, ax, ay)]);
-        assert!(out.aim, "still aiming on the next held frame (no edge dropout)");
+        assert!(
+            out.aim,
+            "still aiming on the next held frame (no edge dropout)"
+        );
         // Releasing drops ADS the same frame.
         let out = tc.update(&l, &[]);
         assert!(!out.aim, "releasing the button releases the zoom");
@@ -770,7 +819,10 @@ mod tests {
         let mut tc = TouchControls::new();
         // A finger in the bare look region (clear of every button) never holds ADS.
         let p = (l.look_zone.x0 + 250.0, 90.0);
-        assert!(!l.aim.contains(p.0, p.1), "precondition: point is outside the ADS button");
+        assert!(
+            !l.aim.contains(p.0, p.1),
+            "precondition: point is outside the ADS button"
+        );
         let out = tc.update(&l, &[t(1, p.0, p.1)]);
         assert!(!out.aim, "only a touch inside the ADS circle holds aim");
     }
@@ -798,9 +850,19 @@ mod tests {
             ],
         );
         assert!(out.aim, "ADS stays held across the drag");
-        assert_eq!(out.look_delta, (0.0, 0.0), "the ADS finger never drives the look region");
-        assert!(out.move_axis.1 > 0.99, "the move stick still reads full forward");
-        assert!(out.fire, "and the trigger still fires — ADS didn't swallow it");
+        assert_eq!(
+            out.look_delta,
+            (0.0, 0.0),
+            "the ADS finger never drives the look region"
+        );
+        assert!(
+            out.move_axis.1 > 0.99,
+            "the move stick still reads full forward"
+        );
+        assert!(
+            out.fire,
+            "and the trigger still fires — ADS didn't swallow it"
+        );
     }
 
     #[test]
@@ -824,7 +886,10 @@ mod tests {
         let out = tc.update(&l, &[t(4, rx, ry), t(5, sx, sy)]);
         assert!(out.reload_edge && out.surface_edge);
         let out = tc.update(&l, &[t(4, rx, ry), t(5, sx, sy)]);
-        assert!(!out.reload_edge && !out.surface_edge, "held buttons don't re-edge");
+        assert!(
+            !out.reload_edge && !out.surface_edge,
+            "held buttons don't re-edge"
+        );
     }
 
     #[test]
@@ -848,7 +913,10 @@ mod tests {
             ],
         );
         assert!(out.move_axis.1 > 0.99, "stick reads full forward/down");
-        assert!((out.look_delta.0 - 25.0 * LOOK_DRAG_SCALE).abs() < 1e-4, "look tracks the drag");
+        assert!(
+            (out.look_delta.0 - 25.0 * LOOK_DRAG_SCALE).abs() < 1e-4,
+            "look tracks the drag"
+        );
         assert!(out.fire, "and the trigger is held");
     }
 
@@ -864,13 +932,24 @@ mod tests {
         let out = tc.update(&l, &[]);
         assert!(!out.hud.stick_active);
         assert_eq!(out.move_axis, (0.0, 0.0));
-        assert_eq!(out.hud.stick_thumb, (cx, cy), "released thumb rests at the fixed centre");
+        assert_eq!(
+            out.hud.stick_thumb,
+            (cx, cy),
+            "released thumb rests at the fixed centre"
+        );
         // A NEW finger anywhere in the ring re-captures the stick — origin is ALWAYS the fixed
         // centre (fixed stick), and deflection is measured from there.
         let out = tc.update(&l, &[t(9, cx - l.stick_base.r * 0.5, cy)]);
         assert!(out.hud.stick_active);
-        assert_eq!(out.hud.stick_origin, (cx, cy), "origin stays the fixed ring centre");
-        assert!((out.move_axis.0 + 0.5).abs() < 1e-5, "left half-deflection from the centre");
+        assert_eq!(
+            out.hud.stick_origin,
+            (cx, cy),
+            "origin stays the fixed ring centre"
+        );
+        assert!(
+            (out.move_axis.0 + 0.5).abs() < 1e-5,
+            "left half-deflection from the centre"
+        );
     }
 
     #[test]
@@ -883,7 +962,10 @@ mod tests {
         let (fx, fy) = center(&l.fire);
         // Start looking in the bare right region (clear of every button).
         let start = (l.look_zone.x0 + 250.0, 90.0);
-        assert!(!TouchControls::on_any_button(&l, start.0, start.1), "precondition: not on a button");
+        assert!(
+            !TouchControls::on_any_button(&l, start.0, start.1),
+            "precondition: not on a button"
+        );
         tc.update(&l, &[t(5, start.0, start.1)]);
         let out = tc.update(&l, &[t(5, start.0 + 20.0, start.1)]);
         assert!(out.look_delta.0 > 0.0, "it is looking first");
@@ -891,8 +973,15 @@ mod tests {
         // Same finger slides onto Fire: it fires, and look stops the moment it crosses the button.
         let out = tc.update(&l, &[t(5, fx, fy)]);
         assert!(out.fire, "the look finger now fires (buttons win)");
-        assert_eq!(out.look_delta, (0.0, 0.0), "and it stops panning the camera");
-        assert!(tc.look_id.is_none(), "look ownership was released to the button");
+        assert_eq!(
+            out.look_delta,
+            (0.0, 0.0),
+            "and it stops panning the camera"
+        );
+        assert!(
+            tc.look_id.is_none(),
+            "look ownership was released to the button"
+        );
     }
 
     #[test]
@@ -901,10 +990,17 @@ mod tests {
         let l = layout();
         let mut tc = TouchControls::new();
         let (fx, fy) = center(&l.fire);
-        assert!(l.look_zone.contains(fx, fy), "precondition: fire is within the look region");
+        assert!(
+            l.look_zone.contains(fx, fy),
+            "precondition: fire is within the look region"
+        );
         let out = tc.update(&l, &[t(1, fx, fy)]);
         assert!(out.fire);
-        assert_eq!(out.look_delta, (0.0, 0.0), "the fire finger never drives look");
+        assert_eq!(
+            out.look_delta,
+            (0.0, 0.0),
+            "the fire finger never drives look"
+        );
         // Even dragging the held fire finger produces no look delta (it was never the look owner).
         let out = tc.update(&l, &[t(1, fx + 40.0, fy)]);
         assert_eq!(out.look_delta, (0.0, 0.0));
@@ -920,16 +1016,33 @@ mod tests {
         tc.reset();
         // After reset the same held button reads as a fresh press edge (history cleared).
         let out = tc.update(&l, &[t(2, cx, cy)]);
-        assert!(out.crouch_edge, "reset forgets the prior press so re-entry is a clean edge");
+        assert!(
+            out.crouch_edge,
+            "reset forgets the prior press so re-entry is a clean edge"
+        );
         assert!(tc.move_id.is_none() && tc.look_id.is_none());
     }
 
     #[test]
     fn layout_buttons_sit_inside_the_viewport() {
         let l = TouchLayout::new(1920, 1080);
-        for c in [l.fire, l.aim, l.crouch, l.reload, l.surface, l.jump, l.fire_mode] {
-            assert!(c.cx - c.r >= 0.0 && c.cx + c.r <= l.width, "button within width");
-            assert!(c.cy - c.r >= 0.0 && c.cy + c.r <= l.height, "button within height");
+        for c in [
+            l.fire,
+            l.aim,
+            l.crouch,
+            l.reload,
+            l.surface,
+            l.jump,
+            l.fire_mode,
+        ] {
+            assert!(
+                c.cx - c.r >= 0.0 && c.cx + c.r <= l.width,
+                "button within width"
+            );
+            assert!(
+                c.cy - c.r >= 0.0 && c.cy + c.r <= l.height,
+                "button within height"
+            );
         }
         // The new Jump + fire-mode buttons must not overlap any existing control (a shared touch
         // point would fire two intents at once).
@@ -940,7 +1053,10 @@ mod tests {
         };
         for other in [l.fire, l.crouch, l.reload, l.surface, l.aim] {
             assert!(no_overlap(&l.jump, &other), "jump overlaps another button");
-            assert!(no_overlap(&l.fire_mode, &other), "fire-mode overlaps another button");
+            assert!(
+                no_overlap(&l.fire_mode, &other),
+                "fire-mode overlaps another button"
+            );
         }
         assert!(no_overlap(&l.jump, &l.fire_mode), "jump overlaps fire-mode");
         // Jump sits clear of the move ring too (it lives in/near the look zone, not on the stick).
@@ -950,9 +1066,18 @@ mod tests {
         );
         // The move ring sits on the left, entirely clear of the look zone (its right edge is left
         // of the look split) — so the two controls can never claim the same touch.
-        assert!(l.stick_base.cx + l.stick_base.r < l.look_zone.x0, "ring is clear of the look zone");
-        assert!(l.stick_base.cx - l.stick_base.r >= 0.0, "ring stays on-screen");
-        assert!(l.stick_base.cy + l.stick_base.r <= l.height, "ring stays on-screen");
+        assert!(
+            l.stick_base.cx + l.stick_base.r < l.look_zone.x0,
+            "ring is clear of the look zone"
+        );
+        assert!(
+            l.stick_base.cx - l.stick_base.r >= 0.0,
+            "ring stays on-screen"
+        );
+        assert!(
+            l.stick_base.cy + l.stick_base.r <= l.height,
+            "ring stays on-screen"
+        );
     }
 
     #[test]
@@ -965,7 +1090,10 @@ mod tests {
         let (jx, jy) = center(&l.jump);
         let out = tc.update(&l, &[t(1, jx, jy)]);
         assert!(out.jump_edge, "press edge on first contact");
-        assert!(out.hud.jump_pressed, "the press flash tracks the held button");
+        assert!(
+            out.hud.jump_pressed,
+            "the press flash tracks the held button"
+        );
         let out = tc.update(&l, &[t(1, jx, jy)]);
         assert!(!out.jump_edge, "no repeat edge while held");
         // Release then re-press: a fresh edge.
@@ -996,7 +1124,10 @@ mod tests {
         // Both sit inside the look zone; like every other button they must WIN the hit test so a
         // right-thumb finger on them never also drives the camera (COD-Mobile "buttons win").
         let l = layout();
-        assert!(l.look_zone.contains(l.jump.cx, l.jump.cy), "precondition: jump is in the look zone");
+        assert!(
+            l.look_zone.contains(l.jump.cx, l.jump.cy),
+            "precondition: jump is in the look zone"
+        );
         assert!(
             l.look_zone.contains(l.fire_mode.cx, l.fire_mode.cy),
             "precondition: fire-mode is in the look zone"
@@ -1005,7 +1136,11 @@ mod tests {
         let (jx, jy) = center(&l.jump);
         let out = tc.update(&l, &[t(1, jx, jy)]);
         assert!(out.jump_edge);
-        assert_eq!(out.look_delta, (0.0, 0.0), "the jump finger never drives look");
+        assert_eq!(
+            out.look_delta,
+            (0.0, 0.0),
+            "the jump finger never drives look"
+        );
         // Even dragging the held jump finger produces no look delta.
         let out = tc.update(&l, &[t(1, jx + 40.0, jy)]);
         assert_eq!(out.look_delta, (0.0, 0.0));
@@ -1019,10 +1154,16 @@ mod tests {
         tc.set_look_prefs(2.0, false);
         let start = (l.look_zone.x0 + 200.0, 200.0);
         tc.update(&l, &[t(7, start.0, start.1)]); // capture frame (no delta)
-        // Drag right 30 px, up 10 px → each axis scaled by 2.0 (pitch NOT inverted).
+                                                  // Drag right 30 px, up 10 px → each axis scaled by 2.0 (pitch NOT inverted).
         let out = tc.update(&l, &[t(7, start.0 + 30.0, start.1 - 10.0)]);
-        assert!((out.look_delta.0 - 60.0 * LOOK_DRAG_SCALE).abs() < 1e-4, "x scaled ×2");
-        assert!((out.look_delta.1 - (-20.0) * LOOK_DRAG_SCALE).abs() < 1e-4, "y scaled ×2, sign kept");
+        assert!(
+            (out.look_delta.0 - 60.0 * LOOK_DRAG_SCALE).abs() < 1e-4,
+            "x scaled ×2"
+        );
+        assert!(
+            (out.look_delta.1 - (-20.0) * LOOK_DRAG_SCALE).abs() < 1e-4,
+            "y scaled ×2, sign kept"
+        );
     }
 
     #[test]
@@ -1034,8 +1175,14 @@ mod tests {
         let start = (l.look_zone.x0 + 200.0, 200.0);
         tc.update(&l, &[t(7, start.0, start.1)]);
         let out = tc.update(&l, &[t(7, start.0 + 30.0, start.1 - 10.0)]);
-        assert!((out.look_delta.0 - 30.0 * LOOK_DRAG_SCALE).abs() < 1e-4, "yaw unaffected by invert");
-        assert!((out.look_delta.1 - 10.0 * LOOK_DRAG_SCALE).abs() < 1e-4, "pitch flipped: -10 → +10");
+        assert!(
+            (out.look_delta.0 - 30.0 * LOOK_DRAG_SCALE).abs() < 1e-4,
+            "yaw unaffected by invert"
+        );
+        assert!(
+            (out.look_delta.1 - 10.0 * LOOK_DRAG_SCALE).abs() < 1e-4,
+            "pitch flipped: -10 → +10"
+        );
     }
 
     #[test]
@@ -1048,7 +1195,10 @@ mod tests {
         tc.update(&l, &[t(7, start.0, start.1)]);
         let out = tc.update(&l, &[t(7, start.0 + 40.0, start.1 + 20.0)]);
         assert!((out.look_delta.0 - 20.0).abs() < 1e-4, "x: 40 × 0.5 = 20");
-        assert!((out.look_delta.1 - (-10.0)).abs() < 1e-4, "y: -(20) × 0.5 = -10");
+        assert!(
+            (out.look_delta.1 - (-10.0)).abs() < 1e-4,
+            "y: -(20) × 0.5 = -10"
+        );
     }
 
     #[test]
@@ -1061,8 +1211,14 @@ mod tests {
         let start = (l.look_zone.x0 + 200.0, 200.0);
         tc.update(&l, &[t(7, start.0, start.1)]);
         let out = tc.update(&l, &[t(7, start.0 + 10.0, start.1 + 10.0)]);
-        assert!((out.look_delta.0 - 25.0).abs() < 1e-4, "sensitivity persisted through reset");
-        assert!((out.look_delta.1 - (-25.0)).abs() < 1e-4, "invert persisted through reset");
+        assert!(
+            (out.look_delta.0 - 25.0).abs() < 1e-4,
+            "sensitivity persisted through reset"
+        );
+        assert!(
+            (out.look_delta.1 - (-25.0)).abs() < 1e-4,
+            "invert persisted through reset"
+        );
     }
 
     #[test]
@@ -1072,21 +1228,33 @@ mod tests {
         // A held Fire is NOT an edge — no confirmation tick for the continuous trigger.
         let (fx, fy) = center(&l.fire);
         let out = tc.update(&l, &[t(1, fx, fy)]);
-        assert!(out.fire && !has_button_edge(&out), "held Fire is not a button edge");
+        assert!(
+            out.fire && !has_button_edge(&out),
+            "held Fire is not a button edge"
+        );
         // A crouch press IS an edge (fires the tick once).
         let (cx, cy) = center(&l.crouch);
         let out = tc.update(&l, &[t(2, cx, cy)]);
-        assert!(out.crouch_edge && has_button_edge(&out), "a crouch press edge fires the tick");
+        assert!(
+            out.crouch_edge && has_button_edge(&out),
+            "a crouch press edge fires the tick"
+        );
         // Held across the next frame → no repeat edge → no repeat tick.
         let out = tc.update(&l, &[t(2, cx, cy)]);
         assert!(!has_button_edge(&out), "a held button does not re-tick");
         // Jump + fire-mode + reload + surface edges each qualify.
         let (jx, jy) = center(&l.jump);
         let out = tc.update(&l, &[t(3, jx, jy)]);
-        assert!(out.jump_edge && has_button_edge(&out), "a jump edge fires the tick");
+        assert!(
+            out.jump_edge && has_button_edge(&out),
+            "a jump edge fires the tick"
+        );
         // No fingers at all → no edge.
         let out = tc.update(&l, &[]);
-        assert!(!has_button_edge(&out), "an empty frame carries no button edge");
+        assert!(
+            !has_button_edge(&out),
+            "an empty frame carries no button edge"
+        );
     }
 
     #[test]

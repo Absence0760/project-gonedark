@@ -399,7 +399,13 @@ fn reference_stream(ticks: u64, delay: u64) -> Vec<u64> {
 /// any divergence is a cross-client desync — a real lockstep bug (invariant #7) — so it prints a
 /// `::error::` line and returns a NON-agreed [`Outcome`] truncated at the first divergence rather
 /// than a wrong stream. `wire_desyncs` is threaded through unchanged (the caller collected it).
-fn verify(sums: &[Vec<u64>; 2], refsums: &[u64], ticks: usize, delay: u64, wire_desyncs: Vec<Desync>) -> Outcome {
+fn verify(
+    sums: &[Vec<u64>; 2],
+    refsums: &[u64],
+    ticks: usize,
+    delay: u64,
+    wire_desyncs: Vec<Desync>,
+) -> Outcome {
     for t in 0..ticks {
         let a = sums[0][t];
         let b = sums[1][t];
@@ -584,10 +590,10 @@ fn main() {
         .map(|s| s.as_str())
         .filter(|a| *a != "--sockets")
         .collect();
-    let ticks: u64 = parse_arg(positional.first().copied(), 300)
-        .unwrap_or_else(|bad| fatal_arg("ticks", &bad));
-    let delay: u64 = parse_arg(positional.get(1).copied(), 2)
-        .unwrap_or_else(|bad| fatal_arg("delay", &bad));
+    let ticks: u64 =
+        parse_arg(positional.first().copied(), 300).unwrap_or_else(|bad| fatal_arg("ticks", &bad));
+    let delay: u64 =
+        parse_arg(positional.get(1).copied(), 2).unwrap_or_else(|bad| fatal_arg("delay", &bad));
 
     if ticks <= delay {
         eprintln!("::error::ticks ({ticks}) must exceed delay ({delay})");
@@ -879,7 +885,9 @@ mod tests {
             .wire_desyncs
             .iter()
             .find(|d| d.tick == corrupt_tick && d.peer == 1)
-            .expect("the corrupted tick's desync is reported over the socket, attributed to peer 1");
+            .expect(
+                "the corrupted tick's desync is reported over the socket, attributed to peer 1",
+            );
         assert_eq!(
             detected.remote,
             detected.local ^ CORRUPT_XOR,

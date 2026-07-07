@@ -43,7 +43,10 @@ impl std::fmt::Display for ReplayError {
         match self {
             ReplayError::BadMagic => write!(f, "not a Going Dark replay (bad magic)"),
             ReplayError::BadVersion(v) => {
-                write!(f, "unsupported replay format version {v} (expected {FORMAT_VERSION})")
+                write!(
+                    f,
+                    "unsupported replay format version {v} (expected {FORMAT_VERSION})"
+                )
             }
             ReplayError::UnexpectedEof => write!(f, "replay stream ended mid-field"),
             ReplayError::BadTag { what, tag } => write!(f, "bad {what} tag {tag}"),
@@ -289,7 +292,10 @@ impl<'a> Reader<'a> {
 
     fn take(&mut self, n: usize) -> Result<&'a [u8], ReplayError> {
         let end = self.pos.checked_add(n).ok_or(ReplayError::UnexpectedEof)?;
-        let slice = self.buf.get(self.pos..end).ok_or(ReplayError::UnexpectedEof)?;
+        let slice = self
+            .buf
+            .get(self.pos..end)
+            .ok_or(ReplayError::UnexpectedEof)?;
         self.pos = end;
         Ok(slice)
     }
@@ -332,14 +338,20 @@ impl<'a> Reader<'a> {
             0 => Ok(Faction::Player),
             1 => Ok(Faction::Enemy),
             2 => Ok(Faction::Neutral),
-            tag => Err(ReplayError::BadTag { what: "faction", tag }),
+            tag => Err(ReplayError::BadTag {
+                what: "faction",
+                tag,
+            }),
         }
     }
     fn building(&mut self) -> Result<BuildingKind, ReplayError> {
         match self.u8()? {
             0 => Ok(BuildingKind::Camp),
             1 => Ok(BuildingKind::Barracks),
-            tag => Err(ReplayError::BadTag { what: "building", tag }),
+            tag => Err(ReplayError::BadTag {
+                what: "building",
+                tag,
+            }),
         }
     }
     fn unit(&mut self) -> Result<UnitKind, ReplayError> {
@@ -357,7 +369,10 @@ impl<'a> Reader<'a> {
             0 => Ok(Stance::HoldFire),
             1 => Ok(Stance::ReturnFire),
             2 => Ok(Stance::FireAtWill),
-            tag => Err(ReplayError::BadTag { what: "stance", tag }),
+            tag => Err(ReplayError::BadTag {
+                what: "stance",
+                tag,
+            }),
         }
     }
     fn army(&mut self) -> Result<Army, ReplayError> {
@@ -470,7 +485,12 @@ impl<'a> Reader<'a> {
                 camp: self.entity()?,
                 rally: self.vec2()?,
             },
-            tag => return Err(ReplayError::BadTag { what: "command", tag }),
+            tag => {
+                return Err(ReplayError::BadTag {
+                    what: "command",
+                    tag,
+                })
+            }
         })
     }
 }

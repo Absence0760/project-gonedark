@@ -116,7 +116,8 @@ impl MeshCpu {
         if bytes[0..4] != MESH_MAGIC {
             return Err(MeshParseError::BadMagic);
         }
-        let u32_at = |o: usize| u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
+        let u32_at =
+            |o: usize| u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
         let v_count = u32_at(4) as usize;
         let i_count = u32_at(8) as usize;
 
@@ -126,14 +127,20 @@ impl MeshCpu {
             return Err(MeshParseError::LengthMismatch);
         }
 
-        let f32_at = |o: usize| f32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
+        let f32_at =
+            |o: usize| f32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
         let mut vertices = Vec::with_capacity(v_count);
         for k in 0..v_count {
             let o = 12 + k * VERTEX_BYTES;
             vertices.push(MeshVertex {
                 pos: [f32_at(o), f32_at(o + 4), f32_at(o + 8)],
                 normal: [f32_at(o + 12), f32_at(o + 16), f32_at(o + 20)],
-                color: [f32_at(o + 24), f32_at(o + 28), f32_at(o + 32), f32_at(o + 36)],
+                color: [
+                    f32_at(o + 24),
+                    f32_at(o + 28),
+                    f32_at(o + 32),
+                    f32_at(o + 36),
+                ],
             });
         }
 
@@ -922,11 +929,7 @@ fn value_noise(x: [f32; 3]) -> f32 {
 /// keep-in-step pattern as [`ModelKind::base_color`] mirroring `gen_models.py`).
 pub fn surface_mottle(p: [f32; 3]) -> f32 {
     let n1 = value_noise([p[0] * 0.6, p[1] * 0.6, p[2] * 0.6]);
-    let n2 = value_noise([
-        p[0] * 1.9 + 11.3,
-        p[1] * 1.9 + 5.1,
-        p[2] * 1.9 + 7.7,
-    ]);
+    let n2 = value_noise([p[0] * 1.9 + 11.3, p[1] * 1.9 + 5.1, p[2] * 1.9 + 7.7]);
     (n1 - 0.5) * 0.66 + (n2 - 0.5) * 0.34
 }
 
@@ -1038,7 +1041,10 @@ mod tests {
         assert_eq!(MeshCpu::parse(&wrong), Err(MeshParseError::BadMagic));
         let mut truncated = one_triangle_blob();
         truncated.pop();
-        assert_eq!(MeshCpu::parse(&truncated), Err(MeshParseError::LengthMismatch));
+        assert_eq!(
+            MeshCpu::parse(&truncated),
+            Err(MeshParseError::LengthMismatch)
+        );
     }
 
     #[test]
@@ -1070,10 +1076,15 @@ mod tests {
                     "{kind:?} has finite data"
                 );
                 let n = (v.normal[0].powi(2) + v.normal[1].powi(2) + v.normal[2].powi(2)).sqrt();
-                assert!((n - 1.0).abs() < 1e-3, "{kind:?} normals are unit length, got {n}");
+                assert!(
+                    (n - 1.0).abs() < 1e-3,
+                    "{kind:?} normals are unit length, got {n}"
+                );
                 // Per-part colour: albedo + team-mask all in [0, 1] (the shader assumes it).
                 assert!(
-                    v.color.iter().all(|c| c.is_finite() && (0.0..=1.0).contains(c)),
+                    v.color
+                        .iter()
+                        .all(|c| c.is_finite() && (0.0..=1.0).contains(c)),
                     "{kind:?} vertex colour/mask out of [0,1]: {:?}",
                     v.color
                 );
@@ -1107,7 +1118,11 @@ mod tests {
     #[test]
     fn select_lod_switches_at_thresholds() {
         assert_eq!(select_lod(0.0), 0);
-        assert_eq!(select_lod(-5.0), 0, "negative distance clamps to nearest tier");
+        assert_eq!(
+            select_lod(-5.0),
+            0,
+            "negative distance clamps to nearest tier"
+        );
         assert_eq!(select_lod(LOD1_DISTANCE - 0.01), 0);
         assert_eq!(select_lod(LOD1_DISTANCE), 1, "LOD1 threshold is inclusive");
         assert_eq!(select_lod(LOD2_DISTANCE - 0.01), 1);
@@ -1172,7 +1187,9 @@ mod tests {
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         );
-        validator.validate(&module).expect("mesh.wgsl must validate");
+        validator
+            .validate(&module)
+            .expect("mesh.wgsl must validate");
     }
 
     // ---- procedural surface mottle (mirrors mesh.wgsl) ----
@@ -1197,9 +1214,16 @@ mod tests {
                 k += 1;
             }
         }
-        assert!(lo >= -0.5 - 1e-4 && hi <= 0.5 + 1e-4, "mottle in [-0.5,0.5], got [{lo},{hi}]");
+        assert!(
+            lo >= -0.5 - 1e-4 && hi <= 0.5 + 1e-4,
+            "mottle in [-0.5,0.5], got [{lo},{hi}]"
+        );
         // Low-contrast but genuinely varying: it must span a usable range, not collapse to a constant.
-        assert!(hi - lo > 0.2, "mottle varies across space (span {})", hi - lo);
+        assert!(
+            hi - lo > 0.2,
+            "mottle varies across space (span {})",
+            hi - lo
+        );
     }
 
     /// Deterministic: same point → same value (no time/global state). Required for a stable,
@@ -1207,7 +1231,11 @@ mod tests {
     #[test]
     fn surface_mottle_is_deterministic() {
         for p in [[0.0, 0.0, 0.0], [3.2, -1.7, 4.9], [-12.5, 8.1, 0.3]] {
-            assert_eq!(surface_mottle(p), surface_mottle(p), "deterministic at {p:?}");
+            assert_eq!(
+                surface_mottle(p),
+                surface_mottle(p),
+                "deterministic at {p:?}"
+            );
         }
     }
 
@@ -1232,7 +1260,10 @@ mod tests {
         let base = [4.3, -2.1, 1.6];
         let m0 = surface_mottle(base);
         let m1 = surface_mottle([base[0] + 0.01, base[1], base[2]]);
-        assert!((m0 - m1).abs() < 0.05, "small step → small change ({m0} vs {m1})");
+        assert!(
+            (m0 - m1).abs() < 0.05,
+            "small step → small change ({m0} vs {m1})"
+        );
     }
 
     /// The internal value noise stays within its declared [0,1] band (the corner hash is a `fract`,
@@ -1261,10 +1292,10 @@ mod tests {
     #[test]
     fn detail_normal_is_unit_length() {
         let normals = [
-            [0.0, 0.0, 1.0],   // flat up
-            [0.0, 0.0, -1.0],  // flat down
-            [1.0, 0.0, 0.0],   // vertical wall (helper flips)
-            [0.0, 1.0, 0.0],   // vertical wall
+            [0.0, 0.0, 1.0],  // flat up
+            [0.0, 0.0, -1.0], // flat down
+            [1.0, 0.0, 0.0],  // vertical wall (helper flips)
+            [0.0, 1.0, 0.0],  // vertical wall
             normalize3([0.4, -0.6, 0.7]),
             normalize3([0.9, 0.1, 0.05]), // near-vertical → abs(n.z) >= 0.9 branch off
         ];
@@ -1278,7 +1309,10 @@ mod tests {
                 );
                 // Low-strength micro-relief: it tilts but never past the tangent plane (stays on the
                 // lit hemisphere of the face), so a facet can't invert into a back-face.
-                assert!(dot3(out, n) > 0.0, "tilt must not flip the facet: n={n:?} p={p:?}");
+                assert!(
+                    dot3(out, n) > 0.0,
+                    "tilt must not flip the facet: n={n:?} p={p:?}"
+                );
             }
         }
     }
@@ -1296,7 +1330,10 @@ mod tests {
             let out = detail_normal(n, p, surface_mottle(p));
             max_tilt = max_tilt.max(1.0 - dot3(out, n));
         }
-        assert!(max_tilt > 1e-3, "detail normal never tilted across a varied field (max {max_tilt})");
+        assert!(
+            max_tilt > 1e-3,
+            "detail normal never tilted across a varied field (max {max_tilt})"
+        );
     }
 
     /// Deterministic + finite for extreme / negative / large positions (tokens feed far world coords,
@@ -1321,7 +1358,10 @@ mod tests {
     fn yaw_90_maps_x_to_y() {
         let m = model_matrix([0.0, 0.0, 0.0], 1.0, std::f32::consts::FRAC_PI_2);
         let p = mul_point(&m, [1.0, 0.0, 0.0]);
-        assert!(p[0].abs() < EPS && (p[1] - 1.0).abs() < EPS, "X→Y, got {p:?}");
+        assert!(
+            p[0].abs() < EPS && (p[1] - 1.0).abs() < EPS,
+            "X→Y, got {p:?}"
+        );
         // Z (up) is untouched by a yaw about Z.
         let up = mul_point(&m, [0.0, 0.0, 1.0]);
         assert!((up[2] - 1.0).abs() < EPS, "Z stays Z");

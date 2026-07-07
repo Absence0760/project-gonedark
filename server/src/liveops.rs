@@ -165,7 +165,10 @@ mod tests {
             ..PersonalizedConfig::default()
         });
         let cfg = src.resolve(ConsentGate::denied());
-        assert_eq!(cfg.personalized, None, "no consent ⇒ no personalized config");
+        assert_eq!(
+            cfg.personalized, None,
+            "no consent ⇒ no personalized config"
+        );
     }
 
     #[test]
@@ -233,7 +236,10 @@ mod tests {
                 ..PersonalizedConfig::default()
             });
         let cfg = src.resolve(ConsentGate::denied());
-        assert_eq!(cfg.personalized, None, "no consent ⇒ no personalized config at all");
+        assert_eq!(
+            cfg.personalized, None,
+            "no consent ⇒ no personalized config at all"
+        );
         assert_eq!(
             cfg.effective_modifier_track(),
             0,

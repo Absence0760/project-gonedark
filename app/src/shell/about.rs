@@ -49,13 +49,33 @@ pub(crate) fn controls_reference() -> &'static [ControlRow] {
         // The "GOING DARK" concept block — the game's framing ahead of the keymap (mirrors Android's
         // `fieldManualSections` leading section). Not keybindings: the `keys` cell is the concept
         // name, `action` its one-line explanation.
-        row("GOING DARK", "Embodiment", "Possess one unit and fight it in first person"),
-        row("GOING DARK", "Going dark", "Embodying blacks out the strategic map -- alerts, not intel"),
-        row("GOING DARK", "Surface", "Eject back to command; death also ejects you (no respawn)"),
-        row("GOING DARK", "Stay fair", "While dark you get a directional flash + audio, never a map reveal"),
+        row(
+            "GOING DARK",
+            "Embodiment",
+            "Possess one unit and fight it in first person",
+        ),
+        row(
+            "GOING DARK",
+            "Going dark",
+            "Embodying blacks out the strategic map -- alerts, not intel",
+        ),
+        row(
+            "GOING DARK",
+            "Surface",
+            "Eject back to command; death also ejects you (no respawn)",
+        ),
+        row(
+            "GOING DARK",
+            "Stay fair",
+            "While dark you get a directional flash + audio, never a map reveal",
+        ),
         // Command layer (RTS) — pal-desktop keymap (D42 classic-RTS split).
         row("COMMAND", "Left-click", "Select / band-select"),
-        row("COMMAND", "Right-click", "Move or attack-move the selection"),
+        row(
+            "COMMAND",
+            "Right-click",
+            "Move or attack-move the selection",
+        ),
         row("COMMAND", "B", "Place a Camp at the cursor"),
         row("COMMAND", "R / H", "Queue a Rifleman / Heavy at the camp"),
         row("COMMAND", "U", "Upgrade the active camp"),
@@ -92,7 +112,10 @@ pub(crate) fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
         // action column). No nested ScrollArea — `over_backdrop_screen`'s own scroll handles a short
         // window, matching every sibling screen. Left-anchored so headings/rows share one margin.
         ui.vertical(|ui| {
-            for (gi, group) in controls_reference().chunk_by(|a, b| a.group == b.group).enumerate() {
+            for (gi, group) in controls_reference()
+                .chunk_by(|a, b| a.group == b.group)
+                .enumerate()
+            {
                 if gi > 0 {
                     section_divider(ui);
                 }
@@ -109,7 +132,10 @@ pub(crate) fn about_ui(ui: &mut egui::Ui, stamp: &str) -> bool {
                         for row in group {
                             if is_concept {
                                 ui.label(
-                                    RichText::new(row.keys).color(AMBER).size(TYPE_BODY).strong(),
+                                    RichText::new(row.keys)
+                                        .color(AMBER)
+                                        .size(TYPE_BODY)
+                                        .strong(),
                                 );
                             } else {
                                 keycap_chip(ui, row.keys);

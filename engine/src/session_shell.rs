@@ -37,8 +37,7 @@
 use gonedark_core::components::{Faction, FACTION_COUNT};
 use gonedark_core::event::SimEvent;
 use gonedark_core::shell::{
-    ConnectionStatus, EndReason, FactionStats, LinkState, MatchOutcome, MatchSummary,
-    SessionAction,
+    ConnectionStatus, EndReason, FactionStats, LinkState, MatchOutcome, MatchSummary, SessionAction,
 };
 
 /// Which in-session shell surface is currently up. A small, flat state machine — the in-engine
@@ -438,7 +437,13 @@ mod tests {
 
     /// A minimal summary for the surrender-path tests (the assembler is tested separately).
     fn stub_summary() -> MatchSummary {
-        assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads())
+        assemble_summary(
+            &[],
+            0,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        )
     }
 
     // ---- state machine transitions ----
@@ -469,7 +474,10 @@ mod tests {
         s.apply(SessionAction::Surrender, &stub_summary());
         assert!(s.is_ended());
         s.apply(SessionAction::Pause, &stub_summary());
-        assert!(s.is_ended(), "an ended match stays ended through a stray Pause");
+        assert!(
+            s.is_ended(),
+            "an ended match stays ended through a stray Pause"
+        );
     }
 
     #[test]
@@ -529,13 +537,22 @@ mod tests {
         let mut s = InSessionShell::new(false);
         s.end_match(stub_summary());
         assert!(!s.request_reconnect(LinkState::Reconnecting));
-        assert!(s.is_ended(), "an ended match never shows the reconnect prompt");
+        assert!(
+            s.is_ended(),
+            "an ended match never shows the reconnect prompt"
+        );
     }
 
     #[test]
     fn end_match_is_idempotent_keeps_first_summary() {
         let mut s = InSessionShell::new(true);
-        let first = assemble_summary(&[], 10, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        let first = assemble_summary(
+            &[],
+            10,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         let second = assemble_summary(
             &[],
             20,
@@ -773,7 +790,13 @@ mod tests {
     #[test]
     fn assembler_resources_total_is_i64() {
         // A compile-time check documenting intent: resources_total is i64 (no float money).
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        let summary = assemble_summary(
+            &[],
+            0,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         let _total: i64 = summary.faction(Faction::Player).resources_total;
     }
 
@@ -794,7 +817,13 @@ mod tests {
                 to: Faction::Player,
             },
         ];
-        let summary = assemble_summary(&events, 5, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        let summary = assemble_summary(
+            &events,
+            5,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         for f in Faction::ALL {
             let s = summary.faction(f);
             assert_eq!(s.units_produced, 0);
@@ -808,7 +837,12 @@ mod tests {
     /// A long timeout so the elimination/ongoing tests never trip the clock branch.
     const NEVER: u64 = u64::MAX;
 
-    fn forces(alive_units: u32, buildings: u32, territory_held: u32, resources_total: i64) -> FactionForces {
+    fn forces(
+        alive_units: u32,
+        buildings: u32,
+        territory_held: u32,
+        resources_total: i64,
+    ) -> FactionForces {
         FactionForces {
             alive_units,
             buildings,
@@ -822,7 +856,10 @@ mod tests {
         // A faction with any unit OR any building is still in the match; only both-zero is out.
         assert!(forces(0, 0, 0, 0).is_eliminated());
         assert!(!forces(1, 0, 0, 0).is_eliminated(), "a unit keeps you in");
-        assert!(!forces(0, 1, 0, 0).is_eliminated(), "a building keeps you in");
+        assert!(
+            !forces(0, 1, 0, 0).is_eliminated(),
+            "a building keeps you in"
+        );
         assert!(!forces(3, 2, 0, 0).is_eliminated());
     }
 
@@ -923,19 +960,35 @@ mod tests {
 
     /// Both combatants still standing, so elimination/timeout do not fire.
     const BOTH_ALIVE: (FactionForces, FactionForces) = (
-        FactionForces { alive_units: 3, buildings: 1, territory_held: 1, resources_total: 100 },
-        FactionForces { alive_units: 2, buildings: 1, territory_held: 1, resources_total: 100 },
+        FactionForces {
+            alive_units: 3,
+            buildings: 1,
+            territory_held: 1,
+            resources_total: 100,
+        },
+        FactionForces {
+            alive_units: 2,
+            buildings: 1,
+            territory_held: 1,
+            resources_total: 100,
+        },
     );
 
     #[test]
     fn decide_no_objectives_falls_back_to_elimination_then_timeout() {
         // No mission verdict → identical to `evaluate_outcome` (elimination, then timeout tiebreak).
         // Both alive, before timeout → ongoing.
-        assert_eq!(decide_match_end(BOTH_ALIVE.0, BOTH_ALIVE.1, None, 100, NEVER), None);
+        assert_eq!(
+            decide_match_end(BOTH_ALIVE.0, BOTH_ALIVE.1, None, 100, NEVER),
+            None
+        );
         // Enemy eliminated → player wins by elimination.
         assert_eq!(
             decide_match_end(forces(2, 1, 0, 0), forces(0, 0, 0, 0), None, 10, NEVER),
-            Some((MatchOutcome::Victory(Faction::Player), EndReason::Elimination)),
+            Some((
+                MatchOutcome::Victory(Faction::Player),
+                EndReason::Elimination
+            )),
         );
         // Both alive at the clock → timeout tiebreak, tagged Timeout.
         assert_eq!(
@@ -948,7 +1001,10 @@ mod tests {
     fn decide_objective_win_ends_the_match_while_both_alive() {
         // A mission verdict ends the match the tick it decides, even though neither side is
         // eliminated and the clock is nowhere near expiry.
-        let mission = Some((MatchOutcome::Victory(Faction::Player), EndReason::ObjectivesComplete));
+        let mission = Some((
+            MatchOutcome::Victory(Faction::Player),
+            EndReason::ObjectivesComplete,
+        ));
         assert_eq!(
             decide_match_end(BOTH_ALIVE.0, BOTH_ALIVE.1, mission.clone(), 100, NEVER),
             mission,
@@ -979,7 +1035,10 @@ mod tests {
         ));
         assert_eq!(
             decide_match_end(forces(0, 0, 0, 0), forces(2, 1, 0, 0), mission, 50, NEVER),
-            Some((MatchOutcome::Victory(Faction::Enemy), EndReason::Elimination)),
+            Some((
+                MatchOutcome::Victory(Faction::Enemy),
+                EndReason::Elimination
+            )),
             "elimination reason dominates a same-tick mission failure",
         );
     }

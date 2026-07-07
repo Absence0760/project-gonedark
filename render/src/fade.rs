@@ -65,8 +65,16 @@ mod tests {
 
     #[test]
     fn fully_faded_at_and_past_the_window() {
-        assert_eq!(fade_out_since(Some(0), DUR, DUR), 0.0, "gone exactly at the cutoff");
-        assert_eq!(fade_out_since(Some(0), DUR + 100, DUR), 0.0, "stays gone after");
+        assert_eq!(
+            fade_out_since(Some(0), DUR, DUR),
+            0.0,
+            "gone exactly at the cutoff"
+        );
+        assert_eq!(
+            fade_out_since(Some(0), DUR + 100, DUR),
+            0.0,
+            "stays gone after"
+        );
     }
 
     #[test]

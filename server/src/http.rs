@@ -19,7 +19,7 @@ use axum::{
 
 use crate::consent::{ConsentGate, ConsentState};
 use crate::liveops::{LiveOpsConfig, LiveOpsSource};
-use crate::telemetry::{ingest, Ingest, InMemorySink, TelemetryEvent, TelemetrySink};
+use crate::telemetry::{ingest, InMemorySink, Ingest, TelemetryEvent, TelemetrySink};
 
 /// Header carrying the client's analytics-consent decision. `"true"`/`"1"` ⇒ granted; anything
 /// else (including absent) ⇒ denied. The default-deny posture is the safe one for privacy and

@@ -131,7 +131,12 @@ pub fn reload_ring_fill(reload_left: u16, reload_ticks: u16) -> f32 {
 /// So the reticle BLOOMS while the tank moves/traverses and SETTLES when held — the player waits for
 /// it to tighten before firing (plan §5, the skill-honest aim model). Negative dispersion is treated
 /// as zero. Pure, host-testable.
-pub fn dispersion_reticle_radius(dispersion: f32, min_radius: f32, gain: f32, max_radius: f32) -> f32 {
+pub fn dispersion_reticle_radius(
+    dispersion: f32,
+    min_radius: f32,
+    gain: f32,
+    max_radius: f32,
+) -> f32 {
     (min_radius + gain * dispersion.max(0.0)).clamp(min_radius, max_radius)
 }
 
@@ -358,12 +363,20 @@ struct QuadVertex {
 }
 
 const QUAD_VERTS: [QuadVertex; 6] = [
-    QuadVertex { corner: [-1.0, -1.0] },
-    QuadVertex { corner: [1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
+    QuadVertex {
+        corner: [1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, -1.0] },
+    QuadVertex {
+        corner: [-1.0, -1.0],
+    },
     QuadVertex { corner: [1.0, 1.0] },
-    QuadVertex { corner: [-1.0, 1.0] },
+    QuadVertex {
+        corner: [-1.0, 1.0],
+    },
 ];
 
 const INITIAL_CAP: usize = 4;
@@ -534,7 +547,10 @@ mod tests {
     fn aligned_turret_offset_is_zero_and_centered() {
         // Gun pointed the same way as the hull → offset 0 → chevron dead-center on the strip.
         let off = turret_indicator_offset(1.3, 1.3);
-        assert!(off.abs() < 1e-6, "aligned turret has zero offset, got {off}");
+        assert!(
+            off.abs() < 1e-6,
+            "aligned turret has zero offset, got {off}"
+        );
         assert!(turret_indicator_ndc_x(off, TURRET_STRIP_HALF_W).abs() < 1e-6);
     }
 
@@ -557,7 +573,10 @@ mod tests {
         // Every offset stays within (-π, π].
         for deg in (-360..=360).step_by(7) {
             let o = turret_indicator_offset(0.0, (deg as f32).to_radians());
-            assert!(o > -PI - 1e-4 && o <= PI + 1e-4, "{deg}° → {o} out of range");
+            assert!(
+                o > -PI - 1e-4 && o <= PI + 1e-4,
+                "{deg}° → {o} out of range"
+            );
         }
     }
 
@@ -583,7 +602,10 @@ mod tests {
             .iter()
             .find(|i| i.shape == SHAPE_TURRET)
             .expect("turret chevron is always drawn");
-        assert!(chevron.ndc_x.abs() < 1e-6, "hull-aligned chevron is dead-center (worst case)");
+        assert!(
+            chevron.ndc_x.abs() < 1e-6,
+            "hull-aligned chevron is dead-center (worst case)"
+        );
         let top = chevron.ndc_y + chevron.half_y;
         let bot = chevron.ndc_y - chevron.half_y;
         let band_lo = RING_RADIUS - MARKER_HALF_SIZE;
@@ -593,9 +615,15 @@ mod tests {
             bot > band_hi || top < band_lo,
             "chevron [{bot}, {top}] must clear the alert band [{band_lo}, {band_hi}]"
         );
-        assert!(top < band_lo, "the turret strip rides below the alert ring band");
+        assert!(
+            top < band_lo,
+            "the turret strip rides below the alert ring band"
+        );
         // ...while still clearing the widest reticle bloom and the reload ring at screen center.
-        assert!(bot > RETICLE_MAX_R, "chevron clears the max dispersion reticle");
+        assert!(
+            bot > RETICLE_MAX_R,
+            "chevron clears the max dispersion reticle"
+        );
         assert!(bot > RELOAD_R, "chevron clears the reload ring");
     }
 
@@ -613,8 +641,14 @@ mod tests {
     #[test]
     fn reload_just_started_is_empty_done_is_full() {
         // Full reload duration remaining → 0; none remaining → 1.
-        assert!((reload_ring_fill(60, 60) - 0.0).abs() < 1e-6, "fresh reload empty");
-        assert!((reload_ring_fill(0, 60) - 1.0).abs() < 1e-6, "finished reload full");
+        assert!(
+            (reload_ring_fill(60, 60) - 0.0).abs() < 1e-6,
+            "fresh reload empty"
+        );
+        assert!(
+            (reload_ring_fill(0, 60) - 1.0).abs() < 1e-6,
+            "finished reload full"
+        );
     }
 
     #[test]
@@ -631,10 +665,17 @@ mod tests {
     fn reload_fill_clamps_to_unit_interval() {
         // No reload system (reload_ticks == 0) → loaded; a stale over-large reload_left → 0; never out of [0,1].
         assert_eq!(reload_ring_fill(0, 0), 1.0, "no reload system reads loaded");
-        assert_eq!(reload_ring_fill(999, 60), 0.0, "stale over-large left clamps to empty");
+        assert_eq!(
+            reload_ring_fill(999, 60),
+            0.0,
+            "stale over-large left clamps to empty"
+        );
         for left in 0..=120u16 {
             let f = reload_ring_fill(left, 60);
-            assert!((0.0..=1.0).contains(&f), "fill {f} out of [0,1] at left={left}");
+            assert!(
+                (0.0..=1.0).contains(&f),
+                "fill {f} out of [0,1] at left={left}"
+            );
         }
     }
 
@@ -644,7 +685,10 @@ mod tests {
     fn settled_gun_shows_the_tight_reticle() {
         // Zero dispersion → the minimum (tight) radius.
         let r = dispersion_reticle_radius(0.0, RETICLE_MIN_R, RETICLE_GAIN, RETICLE_MAX_R);
-        assert!((r - RETICLE_MIN_R).abs() < 1e-6, "settled gun is tight, got {r}");
+        assert!(
+            (r - RETICLE_MIN_R).abs() < 1e-6,
+            "settled gun is tight, got {r}"
+        );
     }
 
     #[test]
@@ -659,9 +703,15 @@ mod tests {
     fn reticle_caps_and_floors() {
         // A huge dispersion saturates at max; a negative one is treated as settled.
         let big = dispersion_reticle_radius(100.0, RETICLE_MIN_R, RETICLE_GAIN, RETICLE_MAX_R);
-        assert!((big - RETICLE_MAX_R).abs() < 1e-6, "saturates at max, got {big}");
+        assert!(
+            (big - RETICLE_MAX_R).abs() < 1e-6,
+            "saturates at max, got {big}"
+        );
         let neg = dispersion_reticle_radius(-5.0, RETICLE_MIN_R, RETICLE_GAIN, RETICLE_MAX_R);
-        assert!((neg - RETICLE_MIN_R).abs() < 1e-6, "negative reads as settled");
+        assert!(
+            (neg - RETICLE_MIN_R).abs() < 1e-6,
+            "negative reads as settled"
+        );
     }
 
     // ---- lead pip ----
@@ -678,7 +728,11 @@ mod tests {
     fn lead_grows_with_crossing_speed_range_and_slower_shell() {
         // Lead = rel_vel * (range / muzzle_vel) * world_to_ndc.
         let base = lead_pip_offset((2.0, 0.0), 10.0, 5.0, 0.1);
-        assert!((base.0 - (2.0 * (10.0 / 5.0) * 0.1)).abs() < 1e-6, "exact lead, got {:?}", base);
+        assert!(
+            (base.0 - (2.0 * (10.0 / 5.0) * 0.1)).abs() < 1e-6,
+            "exact lead, got {:?}",
+            base
+        );
         // Faster crosser → more lead.
         let fast = lead_pip_offset((4.0, 0.0), 10.0, 5.0, 0.1);
         assert!(fast.0 > base.0);
@@ -694,7 +748,10 @@ mod tests {
     fn lead_carries_both_screen_axes() {
         // A target crossing up-and-right leads up-and-right.
         let (x, y) = lead_pip_offset((3.0, -1.5), 10.0, 5.0, 0.1);
-        assert!(x > 0.0 && y < 0.0, "lead follows the screen-axis rel velocity: {x},{y}");
+        assert!(
+            x > 0.0 && y < 0.0,
+            "lead follows the screen-axis rel velocity: {x},{y}"
+        );
     }
 
     // ---- instance builder ----
@@ -746,7 +803,10 @@ mod tests {
         // renders as a circle, not an ellipse.
         let inst = tank_hud_instances(&state());
         let reticle = inst[0];
-        assert!((reticle.half_x - reticle.half_y / 2.0).abs() < 1e-6, "per-axis half keeps it round");
+        assert!(
+            (reticle.half_x - reticle.half_y / 2.0).abs() < 1e-6,
+            "per-axis half keeps it round"
+        );
     }
 
     #[test]
@@ -755,7 +815,10 @@ mod tests {
         s.reload_ticks = 60;
         s.reload_left = 15; // 3/4 done
         let reload = tank_hud_instances(&s)[1];
-        assert!((reload.param - 0.75).abs() < 1e-6, "reload param is the fill fraction");
+        assert!(
+            (reload.param - 0.75).abs() < 1e-6,
+            "reload param is the fill fraction"
+        );
     }
 
     #[test]
@@ -768,7 +831,10 @@ mod tests {
         s.world_to_ndc = 1.0;
         let pip = *tank_hud_instances(&s).last().unwrap();
         let len = (pip.ndc_x * pip.ndc_x + pip.ndc_y * pip.ndc_y).sqrt();
-        assert!(len <= LEAD_CLAMP_R + 1e-6, "pip clamped to {LEAD_CLAMP_R}, got {len}");
+        assert!(
+            len <= LEAD_CLAMP_R + 1e-6,
+            "pip clamped to {LEAD_CLAMP_R}, got {len}"
+        );
     }
 
     #[test]
@@ -784,14 +850,33 @@ mod tests {
         s.world_to_ndc = 0.05;
         let inst = tank_hud_instances(&s);
         let col = |i: &TankHudInstance| [i.r, i.g, i.b];
-        assert_eq!(col(&inst[0]), crate::theme::CROSSHAIR, "reticle = the shared crosshair");
-        assert_eq!(col(&inst[1]), crate::theme::DATA_RESOURCE, "reload ring = resource gold");
-        assert_eq!(col(&inst[2]), crate::theme::PLAYER, "turret tick = player blue");
-        assert_eq!(col(&inst[3]), crate::theme::AMBER, "lead pip = the amber signal accent");
+        assert_eq!(
+            col(&inst[0]),
+            crate::theme::CROSSHAIR,
+            "reticle = the shared crosshair"
+        );
+        assert_eq!(
+            col(&inst[1]),
+            crate::theme::DATA_RESOURCE,
+            "reload ring = resource gold"
+        );
+        assert_eq!(
+            col(&inst[2]),
+            crate::theme::PLAYER,
+            "turret tick = player blue"
+        );
+        assert_eq!(
+            col(&inst[3]),
+            crate::theme::AMBER,
+            "lead pip = the amber signal accent"
+        );
         let cols = [RETICLE_COL, RELOAD_COL, TURRET_COL, LEAD_COL];
         for i in 0..cols.len() {
             for j in (i + 1)..cols.len() {
-                assert_ne!(cols[i], cols[j], "tank HUD elements must not share a colour");
+                assert_ne!(
+                    cols[i], cols[j],
+                    "tank HUD elements must not share a colour"
+                );
             }
         }
     }
@@ -831,7 +916,8 @@ mod tests {
         for (b, g) in base.iter().zip(big.iter()) {
             assert_eq!(b.shape, g.shape);
             assert!(
-                (g.half_x - b.half_x * 1.5).abs() < 1e-6 && (g.half_y - b.half_y * 1.5).abs() < 1e-6,
+                (g.half_x - b.half_x * 1.5).abs() < 1e-6
+                    && (g.half_y - b.half_y * 1.5).abs() < 1e-6,
                 "shape {} chrome must grow 1.5x: {b:?} vs {g:?}",
                 b.shape
             );
@@ -849,12 +935,23 @@ mod tests {
         let base = tank_hud_instances_scaled(&s, 1.0);
         let big = tank_hud_instances_scaled(&s, 1.5);
         for (b, g) in base.iter().zip(big.iter()) {
-            assert_eq!((g.ndc_x, g.ndc_y), (b.ndc_x, b.ndc_y), "shape {} center fixed", b.shape);
+            assert_eq!(
+                (g.ndc_x, g.ndc_y),
+                (b.ndc_x, b.ndc_y),
+                "shape {} center fixed",
+                b.shape
+            );
             assert_eq!((g.r, g.g, g.b, g.a, g.param), (b.r, b.g, b.b, b.a, b.param));
         }
         let chevron = big.iter().find(|i| i.shape == SHAPE_TURRET).unwrap();
-        assert!((chevron.ndc_y - TURRET_STRIP_Y).abs() < 1e-6, "strip anchor stays put");
-        assert!(chevron.ndc_x < 0.0, "CCW-swung turret still marks left at scale");
+        assert!(
+            (chevron.ndc_y - TURRET_STRIP_Y).abs() < 1e-6,
+            "strip anchor stays put"
+        );
+        assert!(
+            chevron.ndc_x < 0.0,
+            "CCW-swung turret still marks left at scale"
+        );
     }
 
     /// Validate `tank_hud.wgsl` offline with naga (the compiler wgpu uses), so a WGSL regression fails
@@ -867,6 +964,8 @@ mod tests {
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::all(),
         );
-        validator.validate(&module).expect("tank_hud.wgsl must validate");
+        validator
+            .validate(&module)
+            .expect("tank_hud.wgsl must validate");
     }
 }

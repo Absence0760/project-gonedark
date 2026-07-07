@@ -27,9 +27,9 @@ use crate::projectile::{self, Projectile};
 use crate::rng::Rng;
 use crate::snapshot::Snapshot;
 use crate::systems;
-use crate::trig::Angle;
 use crate::terrain::{MapId, Terrain};
 use crate::territory::{self, ControlPoint, Territory};
+use crate::trig::Angle;
 
 /// Sim tick rate (Hz). Locked at a single global 60 Hz for Phase 1 ([`decisions.md`] D21,
 /// closing Q10); 30 Hz proved too coarse for embodied combat (D16). Dual-rate is deferred to
@@ -1319,11 +1319,15 @@ mod tests {
         // A fresh sim is on the open map — no cover anywhere.
         assert!(sim.terrain.cover_at_cell(0, 0) == Cover::None);
 
-        assert!(sim.load_map(Terrain::POINTE_DU_HOC_MAP_ID), "known map id loads");
+        assert!(
+            sim.load_map(Terrain::POINTE_DU_HOC_MAP_ID),
+            "known map id loads"
+        );
 
         // The baked map has cover somewhere (proves terrain was actually rebuilt).
         let has_cover = (0..crate::flow_field::GRID as i32).any(|cy| {
-            (0..crate::flow_field::GRID as i32).any(|cx| sim.terrain.cover_at_cell(cx, cy) != Cover::None)
+            (0..crate::flow_field::GRID as i32)
+                .any(|cx| sim.terrain.cover_at_cell(cx, cy) != Cover::None)
         });
         assert!(has_cover, "baked map must have cover after load_map");
 
@@ -1351,11 +1355,18 @@ mod tests {
         crate::scenario::seed_skirmish(&mut sim);
         assert!(!sim.obstacles.is_empty(), "the skirmish registers props");
         let restored = Sim::deserialize(&sim.serialize()).expect("round-trips");
-        assert!(restored.obstacles.is_empty(), "props are re-seeded host-side, not serialized");
+        assert!(
+            restored.obstacles.is_empty(),
+            "props are re-seeded host-side, not serialized"
+        );
         // And the list never enters the serialized bytes / fold: byte-identical with it cleared.
         let with = sim.serialize();
         sim.obstacles.clear();
-        assert_eq!(sim.serialize(), with, "obstacles are outside the serialize/fold surface");
+        assert_eq!(
+            sim.serialize(),
+            with,
+            "obstacles are outside the serialize/fold surface"
+        );
     }
 
     #[test]
@@ -1363,7 +1374,11 @@ mod tests {
         let mut sim = Sim::new(0);
         sim.terrain.set_cover(1, 1, Cover::Heavy); // a distinctive pre-state
         assert!(!sim.load_map(9999), "unknown id returns false");
-        assert_eq!(sim.terrain.cover_at_cell(1, 1), Cover::Heavy, "sim left unchanged");
+        assert_eq!(
+            sim.terrain.cover_at_cell(1, 1),
+            Cover::Heavy,
+            "sim left unchanged"
+        );
     }
 
     /// Spawn one embodied unit at the origin and return its entity + the sim.
@@ -1483,17 +1498,34 @@ mod tests {
         let i = e.index as usize;
         sim.world.weapon[i].turret_speed = 200;
         let north = Vec2::new(Fixed::ZERO, Fixed::ONE); // bearing = ANGLE_FULL/4
-        // First tick steps the turret toward +Y by exactly turret_speed.
-        sim.step(&[Command::AimTurret { entity: e, dir: north }]);
+                                                        // First tick steps the turret toward +Y by exactly turret_speed.
+        sim.step(&[Command::AimTurret {
+            entity: e,
+            dir: north,
+        }]);
         assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(200));
         // Held long enough, it reaches the bearing and then holds (no overshoot, no drift).
         let quarter = crate::trig::ANGLE_FULL / 4;
         for _ in 0..(quarter / 200 + 4) {
-            sim.step(&[Command::AimTurret { entity: e, dir: north }]);
+            sim.step(&[Command::AimTurret {
+                entity: e,
+                dir: north,
+            }]);
         }
-        assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(quarter), "reaches the bearing");
-        sim.step(&[Command::AimTurret { entity: e, dir: north }]);
-        assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(quarter), "and holds it");
+        assert_eq!(
+            sim.world.turret_yaw[i],
+            crate::trig::Angle(quarter),
+            "reaches the bearing"
+        );
+        sim.step(&[Command::AimTurret {
+            entity: e,
+            dir: north,
+        }]);
+        assert_eq!(
+            sim.world.turret_yaw[i],
+            crate::trig::Angle(quarter),
+            "and holds it"
+        );
     }
 
     #[test]
@@ -1502,7 +1534,10 @@ mod tests {
         let i = e.index as usize;
         sim.world.weapon[i].turret_speed = 200;
         // A zero look-stick has no bearing → no slew.
-        sim.step(&[Command::AimTurret { entity: e, dir: Vec2::ZERO }]);
+        sim.step(&[Command::AimTurret {
+            entity: e,
+            dir: Vec2::ZERO,
+        }]);
         assert_eq!(sim.world.turret_yaw[i], crate::trig::Angle(0));
         // Surfaced (order-driven) → the live aim no-ops, and the AI slew leaves a held turret put.
         sim.world.input_source[i] = InputSource::Orders;
@@ -1518,7 +1553,10 @@ mod tests {
         let (mut sim, e) = sim_with_embodied_unit();
         let i = e.index as usize;
         let east = Vec2::new(Fixed::ONE, Fixed::ZERO); // along the initial +X heading
-        sim.step(&[Command::DriveHull { entity: e, dir: east }]);
+        sim.step(&[Command::DriveHull {
+            entity: e,
+            dir: east,
+        }]);
         // Accelerated from rest by one step and advanced along the hull heading.
         assert_eq!(sim.world.hull_speed[i], systems::HULL_ACCEL);
         assert!(sim.world.pos[i].x > Fixed::ZERO);
@@ -1526,7 +1564,10 @@ mod tests {
         // Surface → DriveHull is ignored (order-driven units never take live locomotion).
         sim.world.input_source[i] = InputSource::Orders;
         let before = sim.world.pos[i];
-        sim.step(&[Command::DriveHull { entity: e, dir: east }]);
+        sim.step(&[Command::DriveHull {
+            entity: e,
+            dir: east,
+        }]);
         assert_eq!(sim.world.pos[i], before);
     }
 
@@ -1536,7 +1577,10 @@ mod tests {
         let i = e.index as usize;
         let east = Vec2::new(Fixed::ONE, Fixed::ZERO);
         for _ in 0..50 {
-            sim.step(&[Command::DriveHull { entity: e, dir: east }]);
+            sim.step(&[Command::DriveHull {
+                entity: e,
+                dir: east,
+            }]);
         }
         assert_eq!(sim.world.hull_speed[i], MOVE_SPEED, "spun up to the cap");
         // Release the stick: a zero-dir DriveHull brakes the chassis to a full stop.
@@ -1658,11 +1702,23 @@ mod tests {
         }
         let bytes = sim.serialize();
         let restored = Sim::deserialize(&bytes).expect("army-selected sim round-trips");
-        assert_eq!(restored.army_of(Faction::Player), Army::Us, "US must survive resume");
-        assert_eq!(restored.army_of(Faction::Enemy), Army::Fr, "FR must survive resume");
+        assert_eq!(
+            restored.army_of(Faction::Player),
+            Army::Us,
+            "US must survive resume"
+        );
+        assert_eq!(
+            restored.army_of(Faction::Enemy),
+            Army::Fr,
+            "FR must survive resume"
+        );
         assert_eq!(restored.army_of(Faction::Neutral), Army::Neutral);
         assert_eq!(restored.checksum(), sim.checksum());
-        assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
+        assert_eq!(
+            restored.serialize(),
+            bytes,
+            "re-serialize is byte-identical"
+        );
     }
 
     #[test]
@@ -1679,10 +1735,22 @@ mod tests {
         }
         let bytes = sim.serialize();
         let restored = Sim::deserialize(&bytes).expect("WW2 army-selected sim round-trips");
-        assert_eq!(restored.army_of(Faction::Player), Army::UsWw2, "Sherman doctrine must survive resume");
-        assert_eq!(restored.army_of(Faction::Enemy), Army::Germany, "Panther doctrine must survive resume");
+        assert_eq!(
+            restored.army_of(Faction::Player),
+            Army::UsWw2,
+            "Sherman doctrine must survive resume"
+        );
+        assert_eq!(
+            restored.army_of(Faction::Enemy),
+            Army::Germany,
+            "Panther doctrine must survive resume"
+        );
         assert_eq!(restored.checksum(), sim.checksum());
-        assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
+        assert_eq!(
+            restored.serialize(),
+            bytes,
+            "re-serialize is byte-identical"
+        );
     }
 
     #[test]
@@ -1763,8 +1831,16 @@ mod tests {
             Some(rally),
             "the rally must survive resume, not silently reset to None"
         );
-        assert_eq!(restored.checksum(), sim.checksum(), "checksum is byte-identical");
-        assert_eq!(restored.serialize(), bytes, "re-serialize is byte-identical");
+        assert_eq!(
+            restored.checksum(),
+            sim.checksum(),
+            "checksum is byte-identical"
+        );
+        assert_eq!(
+            restored.serialize(),
+            bytes,
+            "re-serialize is byte-identical"
+        );
     }
 
     // --- factions WS-B: per-faction rosters fold into the checksum --------------------------------
@@ -1779,18 +1855,40 @@ mod tests {
         sim.resources = Resources::new(100_000);
         let p = Vec2::new(Fixed::from_int(-10), Fixed::ZERO);
         let e = Vec2::new(Fixed::from_int(10), Fixed::ZERO);
-        let pcamp =
-            economy::build(&mut sim.world, &mut sim.resources, Faction::Player, BuildingKind::Camp, p)
-                .expect("player camp affordable");
-        let ecamp =
-            economy::build(&mut sim.world, &mut sim.resources, Faction::Enemy, BuildingKind::Camp, e)
-                .expect("enemy camp affordable");
+        let pcamp = economy::build(
+            &mut sim.world,
+            &mut sim.resources,
+            Faction::Player,
+            BuildingKind::Camp,
+            p,
+        )
+        .expect("player camp affordable");
+        let ecamp = economy::build(
+            &mut sim.world,
+            &mut sim.resources,
+            Faction::Enemy,
+            BuildingKind::Camp,
+            e,
+        )
+        .expect("enemy camp affordable");
         // Make both operational, then queue one Rifleman each (the produced unit's per-army stats are
         // what folds into the checksum).
         sim.world.building[pcamp.index as usize].build_ticks_left = 0;
         sim.world.building[ecamp.index as usize].build_ticks_left = 0;
-        assert!(economy::queue_production(&mut sim.world, &mut sim.resources, pcamp, UnitKind::Rifleman, &sim.armies));
-        assert!(economy::queue_production(&mut sim.world, &mut sim.resources, ecamp, UnitKind::Rifleman, &sim.armies));
+        assert!(economy::queue_production(
+            &mut sim.world,
+            &mut sim.resources,
+            pcamp,
+            UnitKind::Rifleman,
+            &sim.armies
+        ));
+        assert!(economy::queue_production(
+            &mut sim.world,
+            &mut sim.resources,
+            ecamp,
+            UnitKind::Rifleman,
+            &sim.armies
+        ));
         (sim, economy::prod_time(UnitKind::Rifleman, 0))
     }
 
@@ -1817,9 +1915,16 @@ mod tests {
         let ticks = production_scene(Army::Us, Army::Fr).1 + 4;
         let peer_a = checksum_stream(production_scene(Army::Us, Army::Fr).0, ticks);
         let peer_b = checksum_stream(production_scene(Army::Us, Army::Fr).0, ticks);
-        assert_eq!(peer_a, peer_b, "two peers with the same US-vs-FR matchup must agree every tick");
+        assert_eq!(
+            peer_a, peer_b,
+            "two peers with the same US-vs-FR matchup must agree every tick"
+        );
         // And the stream actually advances (the rifles spawn, state changes) — not a frozen sim.
-        assert_ne!(peer_a.first(), peer_a.last(), "production must move the checksum");
+        assert_ne!(
+            peer_a.first(),
+            peer_a.last(),
+            "production must move the checksum"
+        );
     }
 
     /// The per-army roster genuinely **folds into the checksum** (the desync-catch of invariant #7):
@@ -1834,7 +1939,10 @@ mod tests {
         let armed = checksum_stream(production_scene(Army::Us, Army::Fr).0, ticks);
         let neutral = checksum_stream(production_scene(Army::Neutral, Army::Neutral).0, ticks);
         // Identical before any unit spawns (armies are not folded; only their spawned-unit stats are).
-        assert_eq!(armed[0], neutral[0], "pre-production state is army-agnostic");
+        assert_eq!(
+            armed[0], neutral[0],
+            "pre-production state is army-agnostic"
+        );
         // But the final state differs — the produced units' per-army stats moved the fold.
         assert_ne!(
             armed.last(),
@@ -1908,14 +2016,26 @@ mod tests {
         let aim = Vec2::new(Fixed::ONE, Fixed::ZERO);
 
         // Fire twice at nothing: the magazine drains even though nothing is hit.
-        sim.step(&[Command::Fire { entity: e, dir: aim }]);
-        sim.step(&[Command::Fire { entity: e, dir: aim }]);
-        assert_eq!(sim.world.weapon[i].ammo, 1, "air fire drains the magazine (the reload-bug fix)");
+        sim.step(&[Command::Fire {
+            entity: e,
+            dir: aim,
+        }]);
+        sim.step(&[Command::Fire {
+            entity: e,
+            dir: aim,
+        }]);
+        assert_eq!(
+            sim.world.weapon[i].ammo, 1,
+            "air fire drains the magazine (the reload-bug fix)"
+        );
 
         // Reloading is now meaningful: the command starts the timer (ammo 1 < mag 3). Combat upkeep
         // runs in the same step, so it has already counted the fresh timer down once by here.
         sim.step(&[Command::Reload { entity: e }]);
-        assert!(sim.world.weapon[i].reload_left > 0, "Reload starts because the mag isn't full");
+        assert!(
+            sim.world.weapon[i].reload_left > 0,
+            "Reload starts because the mag isn't full"
+        );
         // Upkeep counts the reload down and refills the magazine from reserve on completion.
         for _ in 0..4 {
             sim.step(&[]);
@@ -1945,7 +2065,10 @@ mod tests {
             ..Default::default()
         };
         sim.step(&[Command::Reload { entity: e }]);
-        assert_eq!(sim.world.weapon[i].reload_left, 0, "a full mag never starts a reload");
+        assert_eq!(
+            sim.world.weapon[i].reload_left, 0,
+            "a full mag never starts a reload"
+        );
     }
 
     #[test]
@@ -1953,10 +2076,24 @@ mod tests {
         let (mut sim, tank) = ballistic_tank_scene();
         let i = tank.index as usize;
         assert_eq!(sim.world.weapon[i].shell, ShellKind::Ap, "defaults to AP");
-        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::He }]);
-        assert_eq!(sim.world.weapon[i].shell, ShellKind::He, "SelectShell loads HE");
-        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::Aphe }]);
-        assert_eq!(sim.world.weapon[i].shell, ShellKind::Aphe, "and switches again");
+        sim.step(&[Command::SelectShell {
+            entity: tank,
+            shell: ShellKind::He,
+        }]);
+        assert_eq!(
+            sim.world.weapon[i].shell,
+            ShellKind::He,
+            "SelectShell loads HE"
+        );
+        sim.step(&[Command::SelectShell {
+            entity: tank,
+            shell: ShellKind::Aphe,
+        }]);
+        assert_eq!(
+            sim.world.weapon[i].shell,
+            ShellKind::Aphe,
+            "and switches again"
+        );
     }
 
     #[test]
@@ -1966,20 +2103,40 @@ mod tests {
         // Arm a magazine and put it mid-reload: the chambered round can't be swapped now.
         sim.world.weapon[i].mag_size = 6;
         sim.world.weapon[i].reload_left = 30;
-        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::He }]);
-        assert_eq!(sim.world.weapon[i].shell, ShellKind::Ap, "no swap while reloading");
+        sim.step(&[Command::SelectShell {
+            entity: tank,
+            shell: ShellKind::He,
+        }]);
+        assert_eq!(
+            sim.world.weapon[i].shell,
+            ShellKind::Ap,
+            "no swap while reloading"
+        );
         // Once the reload finishes, the swap takes.
         sim.world.weapon[i].reload_left = 0;
-        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::He }]);
-        assert_eq!(sim.world.weapon[i].shell, ShellKind::He, "swaps once loaded");
+        sim.step(&[Command::SelectShell {
+            entity: tank,
+            shell: ShellKind::He,
+        }]);
+        assert_eq!(
+            sim.world.weapon[i].shell,
+            ShellKind::He,
+            "swaps once loaded"
+        );
     }
 
     #[test]
     fn select_shell_for_a_dead_handle_is_a_noop() {
         // A stale handle must not panic or write anything — just advance the tick.
         let mut sim = Sim::new(0);
-        let stale = Entity { index: 0, generation: 9 };
-        sim.step(&[Command::SelectShell { entity: stale, shell: ShellKind::He }]);
+        let stale = Entity {
+            index: 0,
+            generation: 9,
+        };
+        sim.step(&[Command::SelectShell {
+            entity: stale,
+            shell: ShellKind::He,
+        }]);
         assert_eq!(sim.tick_count(), 1);
     }
 
@@ -1995,14 +2152,28 @@ mod tests {
             }
         }
         sim.step(&[
-            Command::SelectShell { entity: tank, shell: ShellKind::He },
-            Command::Fire { entity: tank, dir: Vec2::new(Fixed::ONE, Fixed::ZERO) },
+            Command::SelectShell {
+                entity: tank,
+                shell: ShellKind::He,
+            },
+            Command::Fire {
+                entity: tank,
+                dir: Vec2::new(Fixed::ONE, Fixed::ZERO),
+            },
         ]);
         assert_eq!(sim.projectiles.len(), 1, "the HE shell is in flight");
         let p = sim.projectiles[0];
         assert_eq!(p.shell, ShellKind::He);
-        assert_eq!(p.splash_radius, Fixed::from_int(4), "HE carries its frag radius");
-        assert_eq!(p.penetration, Fixed::from_int(20) * Fixed::from_ratio(1, 8), "HE pen ×1/8");
+        assert_eq!(
+            p.splash_radius,
+            Fixed::from_int(4),
+            "HE carries its frag radius"
+        );
+        assert_eq!(
+            p.penetration,
+            Fixed::from_int(20) * Fixed::from_ratio(1, 8),
+            "HE pen ×1/8"
+        );
     }
 
     /// 2-peer lockstep agreement with a `SelectShell` in the stream (invariant #7): two peers seed the
@@ -2015,7 +2186,10 @@ mod tests {
         let cmds_for = |tank: Entity, tick: u64| -> Vec<Command> {
             let mut c = Vec::new();
             if tick == 0 {
-                c.push(Command::SelectShell { entity: tank, shell: ShellKind::He });
+                c.push(Command::SelectShell {
+                    entity: tank,
+                    shell: ShellKind::He,
+                });
             }
             if tick.is_multiple_of(5) {
                 c.push(Command::Fire {
@@ -2032,7 +2206,11 @@ mod tests {
         for tick in 0..60u64 {
             a.step(&cmds_for(ta, tick));
             b.step(&cmds_for(tb, tick));
-            assert_eq!(a.checksum(), b.checksum(), "checksums must agree at tick {tick}");
+            assert_eq!(
+                a.checksum(),
+                b.checksum(),
+                "checksums must agree at tick {tick}"
+            );
         }
         // The HE selection actually bit (shells flew and splashed): at least one enemy lost health.
         let hurt = (0..a.world.capacity()).any(|i| {
@@ -2048,7 +2226,10 @@ mod tests {
         // The loaded shell is folded per-tank sim state, so a serialize→deserialize restores it and the
         // checksum is unmoved (it is the persist analogue of the fold round-trip).
         let (mut sim, tank) = ballistic_tank_scene();
-        sim.step(&[Command::SelectShell { entity: tank, shell: ShellKind::Aphe }]);
+        sim.step(&[Command::SelectShell {
+            entity: tank,
+            shell: ShellKind::Aphe,
+        }]);
         let bytes = sim.serialize();
         let restored = Sim::deserialize(&bytes).expect("round-trips");
         assert_eq!(
@@ -2056,6 +2237,10 @@ mod tests {
             ShellKind::Aphe,
             "deserialize restores the loaded shell",
         );
-        assert_eq!(restored.checksum(), sim.checksum(), "checksum is byte-identical");
+        assert_eq!(
+            restored.checksum(),
+            sim.checksum(),
+            "checksum is byte-identical"
+        );
     }
 }

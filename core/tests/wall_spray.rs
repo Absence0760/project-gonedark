@@ -70,9 +70,16 @@ fn rifleman_empties_a_magazine_into_a_single_spot() {
     assert!(on_wall(first), "the aimed shot lands on the wall");
     for _ in 1..MAG {
         let y = impact_y(Angle(0), Fixed::ZERO, &mut rng);
-        assert_eq!(y, first, "every rifle round lands on the identical spot (no spread)");
+        assert_eq!(
+            y, first,
+            "every rifle round lands on the identical spot (no spread)"
+        );
     }
-    assert_eq!(rng.checksum_state(), before, "a pinpoint burst draws no RNG");
+    assert_eq!(
+        rng.checksum_state(),
+        before,
+        "a pinpoint burst draws no RNG"
+    );
 }
 
 #[test]
@@ -84,9 +91,18 @@ fn panning_the_rifle_aim_walks_the_impact_across_the_wall() {
     let centre = impact_y(Angle(0), Fixed::ZERO, &mut rng); //  dead ahead
     let right = impact_y(Angle(-PAN), Fixed::ZERO, &mut rng); // aim the other way
 
-    assert!(left > centre && centre > right, "impact walks across the wall with the aim");
-    assert!(centre.abs() <= Fixed::from_ratio(1, 100), "aimed dead-centre → hits dead-centre");
-    assert!(on_wall(left) && on_wall(right), "the panned shots still land on the wall");
+    assert!(
+        left > centre && centre > right,
+        "impact walks across the wall with the aim"
+    );
+    assert!(
+        centre.abs() <= Fixed::from_ratio(1, 100),
+        "aimed dead-centre → hits dead-centre"
+    );
+    assert!(
+        on_wall(left) && on_wall(right),
+        "the panned shots still land on the wall"
+    );
 }
 
 #[test]
@@ -102,13 +118,19 @@ fn tank_spray_scatters_across_the_wall_and_is_deterministic() {
         let ya = impact_y(Angle(0), DISPERSION_MAX, &mut a);
         let yb = impact_y(Angle(0), DISPERSION_MAX, &mut b);
         assert_eq!(ya, yb, "same seed → identical spray pattern (lockstep)");
-        assert!(on_wall(ya), "every sprayed round still lands on the wall panel");
+        assert!(
+            on_wall(ya),
+            "every sprayed round still lands on the wall panel"
+        );
         pattern_a.push(ya);
     }
 
     let lo = pattern_a.iter().copied().fold(pattern_a[0], Fixed::min);
     let hi = pattern_a.iter().copied().fold(pattern_a[0], Fixed::max);
-    assert!(hi > lo, "the tank spray actually scatters across the wall (not one spot)");
+    assert!(
+        hi > lo,
+        "the tank spray actually scatters across the wall (not one spot)"
+    );
 }
 
 #[test]
@@ -117,7 +139,9 @@ fn tank_spray_recentres_when_the_gun_re_aims() {
     // average, further along the wall than the spray dead-ahead, which sits further than the right.
     let sample = |heading: Angle, seed: u64| -> Fixed {
         let mut rng = Rng::new(seed);
-        let ys: Vec<Fixed> = (0..MAG).map(|_| impact_y(heading, DISPERSION_MAX, &mut rng)).collect();
+        let ys: Vec<Fixed> = (0..MAG)
+            .map(|_| impact_y(heading, DISPERSION_MAX, &mut rng))
+            .collect();
         for y in &ys {
             assert!(on_wall(*y), "re-aimed spray stays on the wall");
         }
@@ -129,5 +153,8 @@ fn tank_spray_recentres_when_the_gun_re_aims() {
     let centre = sample(Angle(0), 0xBEEF);
     let right = sample(Angle(-PAN), 0xBEEF);
 
-    assert!(left > centre && centre > right, "the scatter pattern re-centres on the new aim");
+    assert!(
+        left > centre && centre > right,
+        "the scatter pattern re-centres on the new aim"
+    );
 }

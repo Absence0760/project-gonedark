@@ -793,7 +793,12 @@ impl Lockstep {
         self.delay_seq += 1;
         let seq = self.delay_seq;
         self.pending_delay = Some((effective_tick, new_delay, self.local, seq));
-        self.pending_frame = Some(encode_delay_change(self.local, effective_tick, seq, new_delay));
+        self.pending_frame = Some(encode_delay_change(
+            self.local,
+            effective_tick,
+            seq,
+            new_delay,
+        ));
         Ok(effective_tick)
     }
 
@@ -1236,7 +1241,13 @@ mod tests {
         // Every Army put→get is identity (the tags match sim.rs's `army_tag` + `Army::index`), and the
         // new D120 WW2 armies ride append-only tags 3/4 (0–2 unchanged). An UNKNOWN tag is a loud
         // BadTag, never a silent mis-decode (invariant #7).
-        for army in [Army::Neutral, Army::Us, Army::Fr, Army::UsWw2, Army::Germany] {
+        for army in [
+            Army::Neutral,
+            Army::Us,
+            Army::Fr,
+            Army::UsWw2,
+            Army::Germany,
+        ] {
             let mut w = Writer::new();
             put_army(&mut w, army);
             let mut r = Reader::new(&w.buf);
@@ -1263,8 +1274,14 @@ mod tests {
         // every peer — invariant #7, D120). Mirrors the modern SelectArmy coverage in
         // `frame_codec_roundtrips_all_variants`.
         let cmds = vec![
-            Command::SelectArmy { faction: Faction::Player, army: Army::UsWw2 },
-            Command::SelectArmy { faction: Faction::Enemy, army: Army::Germany },
+            Command::SelectArmy {
+                faction: Faction::Player,
+                army: Army::UsWw2,
+            },
+            Command::SelectArmy {
+                faction: Faction::Enemy,
+                army: Army::Germany,
+            },
         ];
         let bytes = encode_frame(1, 7, &cmds);
         let (peer, tick, decoded) = match decode_frame(&bytes).expect("decode") {
@@ -1874,7 +1891,10 @@ mod tests {
             saw_projectile |= !refsim.projectiles.is_empty();
             refsums.push(refsim.checksum());
         }
-        assert!(saw_projectile, "the AI ballistic path must have launched a real traveling shell");
+        assert!(
+            saw_projectile,
+            "the AI ballistic path must have launched a real traveling shell"
+        );
 
         let mut sessions = [Lockstep::new(2, 0, DELAY), Lockstep::new(2, 1, DELAY)];
         for _ in 0..(TICKS - DELAY) {
@@ -1907,8 +1927,14 @@ mod tests {
             assert!(it < 1_000_000, "lockstep failed to converge");
         }
         assert_eq!(sums[0].len(), TICKS as usize);
-        assert_eq!(sums[0], sums[1], "the two peers must agree every tick over AI ballistic fire");
-        assert_eq!(sums[0], refsums, "lockstep must match the no-network reference");
+        assert_eq!(
+            sums[0], sums[1],
+            "the two peers must agree every tick over AI ballistic fire"
+        );
+        assert_eq!(
+            sums[0], refsums,
+            "lockstep must match the no-network reference"
+        );
     }
 
     // ----- factions WS-A: both peers pick armies over the lockstep stream -----
@@ -1967,7 +1993,10 @@ mod tests {
         }
         // ...and their per-tick checksum streams are bit-identical (no desync from the picks).
         assert!(!sums[0].is_empty(), "the session must have executed ticks");
-        assert_eq!(sums[0], sums[1], "the two peers' checksum streams must agree");
+        assert_eq!(
+            sums[0], sums[1],
+            "the two peers' checksum streams must agree"
+        );
     }
 
     // ----- B7: agreed RTT-adaptive delay change -----
@@ -2029,7 +2058,10 @@ mod tests {
             w.u32(0);
             w.u64(0);
             w.u32(0);
-            assert_eq!(decode_frame(&w.buf).unwrap_err(), DecodeError::BadVersion(old));
+            assert_eq!(
+                decode_frame(&w.buf).unwrap_err(),
+                DecodeError::BadVersion(old)
+            );
         }
     }
 
@@ -2059,13 +2091,26 @@ mod tests {
             ls.submit(Vec::new());
         }
         while ls.next_tick() < eff {
-            assert_eq!(ls.delay(), 2, "delay must hold until the effective tick {eff}");
-            ls.try_advance().expect("single-peer session always advances");
+            assert_eq!(
+                ls.delay(),
+                2,
+                "delay must hold until the effective tick {eff}"
+            );
+            ls.try_advance()
+                .expect("single-peer session always advances");
         }
         assert_eq!(ls.next_tick(), eff);
         ls.try_advance().expect("advance across the effective tick");
-        assert_eq!(ls.delay(), 5, "delay switches exactly at the effective tick");
-        assert_eq!(ls.pending_delay(), None, "the pending change is cleared once applied");
+        assert_eq!(
+            ls.delay(),
+            5,
+            "delay switches exactly at the effective tick"
+        );
+        assert_eq!(
+            ls.pending_delay(),
+            None,
+            "the pending change is cleared once applied"
+        );
     }
 
     /// Like [`run_two_client`] but optionally proposes an agreed delay change mid-run, submitting
@@ -2175,7 +2220,10 @@ mod tests {
         // Peer 1 proposes raising the delay 3 → 7 mid-run, over a lossy/jittery/reordering channel.
         let (sums, refsums, finals) =
             run_two_client_adaptive(3, 1, 2, 1, 4, 0x1234567, 140, Some((45, 1, 7, 5)));
-        assert_eq!(sums[0], sums[1], "peers diverged on a delay increase under loss");
+        assert_eq!(
+            sums[0], sums[1],
+            "peers diverged on a delay increase under loss"
+        );
         assert_eq!(sums[0], refsums, "reference mismatch on a delay increase");
         assert_eq!(finals, [7, 7], "both peers applied the increased delay");
     }

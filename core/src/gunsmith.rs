@@ -930,15 +930,27 @@ mod tests {
         for s in Stock::ALL {
             let d = s.delta();
             assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
-            assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
-            assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+            assert_eq!(
+                (d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve),
+                (0, 0, 0, 0)
+            );
+            assert_eq!(
+                (d.supp_out_delta, d.falloff_delta),
+                (Fixed::ZERO, Fixed::ZERO)
+            );
         }
         // Muzzle touches only {supp_out_delta, falloff_delta}.
         for m in Muzzle::ALL {
             let d = m.delta();
             assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
-            assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
-            assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
+            assert_eq!(
+                (d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve),
+                (0, 0, 0, 0)
+            );
+            assert_eq!(
+                (d.move_speed_delta, d.cone_cos_delta),
+                (Fixed::ZERO, Fixed::ZERO)
+            );
         }
     }
 
@@ -1318,20 +1330,38 @@ mod tests {
             for d in [pool.extended, pool.quickdraw] {
                 assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
                 assert_eq!((d.cooldown_ticks, d.reserve), (0, 0));
-                assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
-                assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!(
+                    (d.move_speed_delta, d.cone_cos_delta),
+                    (Fixed::ZERO, Fixed::ZERO)
+                );
+                assert_eq!(
+                    (d.supp_out_delta, d.falloff_delta),
+                    (Fixed::ZERO, Fixed::ZERO)
+                );
             }
             // Stock touches only {move_speed_delta, cone_cos_delta} in every pool.
             for d in [pool.agile, pool.stock_marksman] {
                 assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
-                assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
-                assert_eq!((d.supp_out_delta, d.falloff_delta), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!(
+                    (d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve),
+                    (0, 0, 0, 0)
+                );
+                assert_eq!(
+                    (d.supp_out_delta, d.falloff_delta),
+                    (Fixed::ZERO, Fixed::ZERO)
+                );
             }
             // Muzzle touches only {supp_out_delta, falloff_delta} in every pool.
             for d in [pool.brake, pool.suppressor] {
                 assert_eq!((d.range, d.damage), (Fixed::ZERO, Fixed::ZERO));
-                assert_eq!((d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve), (0, 0, 0, 0));
-                assert_eq!((d.move_speed_delta, d.cone_cos_delta), (Fixed::ZERO, Fixed::ZERO));
+                assert_eq!(
+                    (d.cooldown_ticks, d.mag_size, d.reload_ticks, d.reserve),
+                    (0, 0, 0, 0)
+                );
+                assert_eq!(
+                    (d.move_speed_delta, d.cone_cos_delta),
+                    (Fixed::ZERO, Fixed::ZERO)
+                );
             }
         }
     }
@@ -1519,8 +1549,14 @@ mod tests {
         // Each WW2 bench differs from the Neutral baseline apply AND from the other — observable identity.
         let mut wn = base;
         lo.apply_to_weapon(&mut wn);
-        assert_ne!(us_ww2, wn, "US WW2 pool must differ from the Neutral baseline apply");
-        assert_ne!(de, wn, "Germany pool must differ from the Neutral baseline apply");
+        assert_ne!(
+            us_ww2, wn,
+            "US WW2 pool must differ from the Neutral baseline apply"
+        );
+        assert_ne!(
+            de, wn,
+            "Germany pool must differ from the Neutral baseline apply"
+        );
         assert_ne!(us_ww2, de, "the two WW2 pools must differ from each other");
     }
 
@@ -1532,8 +1568,8 @@ mod tests {
     fn apply_stock_and_muzzle_move_the_new_weapon_fields() {
         let (_, base) = unit_stats(UnitKind::Rifleman);
         let lo = Loadout {
-            stock: Stock::Agile,     // +move, −cone
-            muzzle: Muzzle::Brake,   // +supp, +falloff
+            stock: Stock::Agile,   // +move, −cone
+            muzzle: Muzzle::Brake, // +supp, +falloff
             ..Loadout::STANDARD
         };
         let mut w = base;
@@ -1557,8 +1593,8 @@ mod tests {
     fn apply_opposed_stock_and_muzzle_poles() {
         let (_, base) = unit_stats(UnitKind::Rifleman);
         let lo = Loadout {
-            stock: Stock::Marksman,      // −move, +cone
-            muzzle: Muzzle::Suppressor,  // −supp, −falloff
+            stock: Stock::Marksman,     // −move, +cone
+            muzzle: Muzzle::Suppressor, // −supp, −falloff
             ..Loadout::STANDARD
         };
         let mut w = base;
@@ -1577,13 +1613,20 @@ mod tests {
     #[test]
     fn standard_stock_muzzle_are_byte_neutral_on_the_new_fields() {
         let (_, base) = unit_stats(UnitKind::Rifleman);
-        assert_eq!(base.move_speed_delta, Fixed::ZERO, "fresh weapon: zero move delta");
+        assert_eq!(
+            base.move_speed_delta,
+            Fixed::ZERO,
+            "fresh weapon: zero move delta"
+        );
         assert_eq!(base.cone_cos_delta, Fixed::ZERO);
         assert_eq!(base.supp_out_delta, Fixed::ZERO);
         assert_eq!(base.falloff_delta, Fixed::ZERO);
         let mut w = base;
         Loadout::STANDARD.apply_to_weapon(&mut w);
-        assert_eq!(w, base, "the all-Standard loadout moves no field, including the D85 ones");
+        assert_eq!(
+            w, base,
+            "the all-Standard loadout moves no field, including the D85 ones"
+        );
     }
 
     /// **2-peer checksum agreement with Stock/Muzzle selections (invariant #7).** Two peers running
@@ -1598,7 +1641,11 @@ mod tests {
         };
         let (mut a, _) = fight_with_loadout(0x57_0C6, loadout);
         let (mut b, _) = fight_with_loadout(0x57_0C6, loadout);
-        assert_eq!(a.checksum(), b.checksum(), "tick 0 (pre-step) must already agree");
+        assert_eq!(
+            a.checksum(),
+            b.checksum(),
+            "tick 0 (pre-step) must already agree"
+        );
         for t in 0..180u32 {
             a.step(&[]);
             b.step(&[]);
@@ -1610,8 +1657,14 @@ mod tests {
     /// folded sim state, so a stock/muzzle desync would be caught by the arch matrix like any other.
     #[test]
     fn different_muzzle_diverges_in_the_checksum() {
-        let brake = Loadout { muzzle: Muzzle::Brake, ..Loadout::STANDARD };
-        let suppressor = Loadout { muzzle: Muzzle::Suppressor, ..Loadout::STANDARD };
+        let brake = Loadout {
+            muzzle: Muzzle::Brake,
+            ..Loadout::STANDARD
+        };
+        let suppressor = Loadout {
+            muzzle: Muzzle::Suppressor,
+            ..Loadout::STANDARD
+        };
         let (a, _) = fight_with_loadout(0xF00D, brake);
         let (b, _) = fight_with_loadout(0xF00D, suppressor);
         assert_ne!(

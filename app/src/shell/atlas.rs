@@ -16,7 +16,9 @@ use crate::shell::mission_select::focused_conflict;
 use crate::shell::theme::*;
 use crate::shell::widgets::*;
 use gonedark_core::campaign::{Campaign, Conflict, NodeId};
-use gonedark_render::globe_backdrop::{eye_elevation, project_pin, GlobeFlight, GlobePin, GlobeView};
+use gonedark_render::globe_backdrop::{
+    eye_elevation, project_pin, GlobeFlight, GlobePin, GlobeView,
+};
 
 /// Radians of globe rotation per logical point of drag at zoom 1 (halves as zoom doubles, so a
 /// zoomed-in drag stays fine-grained over the region under the cursor). Shared by the operations
@@ -55,7 +57,11 @@ impl AtlasState {
             .get(selected)
             .map_or((0.0, 0), |c| (c.lon_x10 as f32 / 10.0, c.start_year));
         AtlasState {
-            view: GlobeView { yaw: -lon.to_radians(), pitch: 0.0, zoom: 1.0 },
+            view: GlobeView {
+                yaw: -lon.to_radians(),
+                pitch: 0.0,
+                zoom: 1.0,
+            },
             year,
             selected,
             flight: None,
@@ -149,8 +155,11 @@ pub(crate) fn apply_atlas_action(
         AtlasAction::Zoom(lines) => {
             // Same player-takeover rule as Drag (D107).
             state.flight = None;
-            state.view =
-                GlobeView { zoom: state.view.zoom * ZOOM_STEP.powf(lines), ..state.view }.clamped();
+            state.view = GlobeView {
+                zoom: state.view.zoom * ZOOM_STEP.powf(lines),
+                ..state.view
+            }
+            .clamped();
             AtlasStep::Stay
         }
         AtlasAction::SetYear(year) => {
@@ -167,7 +176,9 @@ pub(crate) fn apply_atlas_action(
         AtlasAction::Enter => {
             // Defensive re-clamp (a stale index can't outlive the conflict list), written back so
             // the state and the emitted step can never disagree.
-            state.selected = state.selected.min(campaign.conflicts().len().saturating_sub(1));
+            state.selected = state
+                .selected
+                .min(campaign.conflicts().len().saturating_sub(1));
             AtlasStep::Enter(state.selected)
         }
         AtlasAction::Back => AtlasStep::Back,
@@ -251,8 +262,12 @@ pub(crate) fn pick_conflict(
 ) -> Option<usize> {
     let mut best: Option<(usize, f32)> = None;
     for (i, c) in campaign.conflicts().iter().enumerate() {
-        let Some(p) = project_pin(state.view, aspect, c.lat_x10 as f32 / 10.0, c.lon_x10 as f32 / 10.0)
-        else {
+        let Some(p) = project_pin(
+            state.view,
+            aspect,
+            c.lat_x10 as f32 / 10.0,
+            c.lon_x10 as f32 / 10.0,
+        ) else {
             continue;
         };
         let dx = (p[0] - ndc[0]) * aspect; // aspect-correct so the pick radius is circular
@@ -288,13 +303,24 @@ pub(crate) fn atlas_ui(
     let mut action = None;
     // The full viewport in logical points — `InputState.raw.screen_rect` carries the frame's
     // rect in this egui version; fall back to the ui clip rect if a frame ever omits it.
-    let screen = ui.ctx().input(|i| i.raw.screen_rect).unwrap_or_else(|| ui.clip_rect());
-    let aspect = if screen.height() > 1.0 { screen.width() / screen.height() } else { 1.0 };
+    let screen = ui
+        .ctx()
+        .input(|i| i.raw.screen_rect)
+        .unwrap_or_else(|| ui.clip_rect());
+    let aspect = if screen.height() > 1.0 {
+        screen.width() / screen.height()
+    } else {
+        1.0
+    };
 
     // The globe surface: one fullscreen interact area, added FIRST so every widget drawn after it
     // (scrubber, card) wins pointer priority over it. Drag turns the globe; click picks a pin;
     // scroll (anywhere) zooms.
-    let surface = ui.interact(screen, ui.id().with("atlas_surface"), egui::Sense::click_and_drag());
+    let surface = ui.interact(
+        screen,
+        ui.id().with("atlas_surface"),
+        egui::Sense::click_and_drag(),
+    );
     if surface.dragged() {
         let d = surface.drag_delta();
         if d.x != 0.0 || d.y != 0.0 {
@@ -350,7 +376,11 @@ pub(crate) fn atlas_ui(
                             .size(TYPE_CAPTION),
                     );
                     ui.add_space(6.0);
-                    ui.label(RichText::new(&conflict.summary).color(ASH).size(TYPE_CAPTION));
+                    ui.label(
+                        RichText::new(&conflict.summary)
+                            .color(ASH)
+                            .size(TYPE_CAPTION),
+                    );
                     ui.add_space(10.0);
                     if footer_button(ui, "ENTER CONFLICT", Emphasis::Primary) {
                         action = Some(AtlasAction::Enter);

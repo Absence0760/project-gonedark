@@ -198,8 +198,14 @@ mod tests {
 
     #[test]
     fn a_wider_barricade_paints_more_cells_than_a_tree() {
-        let tree = [Obstacle { kind: ObstacleKind::Tree, pos: iv(0, 0) }];
-        let berm = [Obstacle { kind: ObstacleKind::Barricade, pos: iv(0, 0) }];
+        let tree = [Obstacle {
+            kind: ObstacleKind::Tree,
+            pos: iv(0, 0),
+        }];
+        let berm = [Obstacle {
+            kind: ObstacleKind::Barricade,
+            pos: iv(0, 0),
+        }];
         let count = |list: &[Obstacle]| {
             let mut t = Terrain::open();
             paint_impassable(&mut t, list);

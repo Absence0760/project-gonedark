@@ -359,7 +359,11 @@ impl ConnectionStatus {
     /// [`Desync`] the host drained via
     /// [`take_desyncs`](crate::lockstep::Lockstep::take_desyncs), if any. Desync dominates a
     /// stall (a confirmed divergence is the more severe signal).
-    pub fn project(live: &Lockstep, stalled: bool, recent_desync: Option<Desync>) -> ConnectionStatus {
+    pub fn project(
+        live: &Lockstep,
+        stalled: bool,
+        recent_desync: Option<Desync>,
+    ) -> ConnectionStatus {
         let state = if recent_desync.is_some() {
             LinkState::Desynced
         } else if stalled {
@@ -412,7 +416,11 @@ impl InSessionView {
     /// views — never `&World` — so it is structurally incapable of revealing beyond what the host
     /// already computed for the avatar (invariant #6). This is a move/clone of presentation data;
     /// it runs no logic and touches no sim state.
-    pub fn compose(visibility: Visibility, alerts: AlertChannel, tells: Vec<Tell>) -> InSessionView {
+    pub fn compose(
+        visibility: Visibility,
+        alerts: AlertChannel,
+        tells: Vec<Tell>,
+    ) -> InSessionView {
         InSessionView {
             visibility,
             alerts,
@@ -622,8 +630,8 @@ mod tests {
     use super::*;
     use crate::components::{EntityKind, InputSource, Vec2};
     use crate::detection::{detectable_embodiment, DetectionConfig, DetectionMemory};
-    use crate::fixed::Fixed;
     use crate::ecs::World;
+    use crate::fixed::Fixed;
     use crate::fog::{command_visibility, embodied_visibility};
     use crate::terrain::Terrain;
 
@@ -742,7 +750,10 @@ mod tests {
         // lockstep-ordered Command::SelectArmy the host feeds the stream.
         for (faction, army) in [(Faction::Player, Army::Us), (Faction::Enemy, Army::Fr)] {
             match resolve_select_army(faction, army, MatchPhase::NotStarted) {
-                Ok(ResolvedIntent::Command(Command::SelectArmy { faction: f, army: a })) => {
+                Ok(ResolvedIntent::Command(Command::SelectArmy {
+                    faction: f,
+                    army: a,
+                })) => {
                     assert_eq!(f, faction);
                     assert_eq!(a, army);
                 }

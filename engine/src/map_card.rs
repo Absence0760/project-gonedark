@@ -159,7 +159,10 @@ mod tests {
     }
 
     fn prop(kind: CoverPropKind, x: i32, y: i32) -> CoverPropSpec {
-        CoverPropSpec { kind, cell: CellRef { x, y } }
+        CoverPropSpec {
+            kind,
+            cell: CellRef { x, y },
+        }
     }
 
     #[test]

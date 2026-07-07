@@ -7,7 +7,9 @@
 //! snapshot lists the territory control points. None of this is sim state — it is a copy
 //! taken for rendering, so it is not checksummed (invariant #7 covers the world itself).
 
-use crate::components::{Army, EntityKind, Faction, InputSource, UnitKind, Vec2, Weapon, FACTION_COUNT};
+use crate::components::{
+    Army, EntityKind, Faction, InputSource, UnitKind, Vec2, Weapon, FACTION_COUNT,
+};
 use crate::ecs::World;
 use crate::fixed::Fixed;
 use crate::projectile::Projectile;
@@ -202,7 +204,10 @@ mod tests {
     #[test]
     fn never_fired_or_unarmed_is_not_firing() {
         assert!(!weapon_recently_fired(&gun(30, 0)), "ready, never fired");
-        assert!(!weapon_recently_fired(&gun(0, 0)), "unarmed: no cooldown to flash from");
+        assert!(
+            !weapon_recently_fired(&gun(0, 0)),
+            "unarmed: no cooldown to flash from"
+        );
     }
 
     #[test]

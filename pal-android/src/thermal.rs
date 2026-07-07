@@ -204,7 +204,12 @@ impl AndroidThermalSensor {
                     )?
                     .l()?;
                 let thermal_status = env
-                    .call_method(&power_mgr, jni_str!("getThermalStatus"), jni_sig!("()I"), &[])?
+                    .call_method(
+                        &power_mgr,
+                        jni_str!("getThermalStatus"),
+                        jni_sig!("()I"),
+                        &[],
+                    )?
                     .i()?;
 
                 // context.getSystemService("batterymanager") -> BatteryManager; .getIntProperty(int):int
@@ -289,11 +294,26 @@ mod tests {
         use thermal_status as ts;
         assert_eq!(thermal_state_from_status(ts::NONE), ThermalState::Nominal);
         assert_eq!(thermal_state_from_status(ts::LIGHT), ThermalState::Fair);
-        assert_eq!(thermal_state_from_status(ts::MODERATE), ThermalState::Serious);
-        assert_eq!(thermal_state_from_status(ts::SEVERE), ThermalState::Critical);
-        assert_eq!(thermal_state_from_status(ts::CRITICAL), ThermalState::Critical);
-        assert_eq!(thermal_state_from_status(ts::EMERGENCY), ThermalState::Critical);
-        assert_eq!(thermal_state_from_status(ts::SHUTDOWN), ThermalState::Critical);
+        assert_eq!(
+            thermal_state_from_status(ts::MODERATE),
+            ThermalState::Serious
+        );
+        assert_eq!(
+            thermal_state_from_status(ts::SEVERE),
+            ThermalState::Critical
+        );
+        assert_eq!(
+            thermal_state_from_status(ts::CRITICAL),
+            ThermalState::Critical
+        );
+        assert_eq!(
+            thermal_state_from_status(ts::EMERGENCY),
+            ThermalState::Critical
+        );
+        assert_eq!(
+            thermal_state_from_status(ts::SHUTDOWN),
+            ThermalState::Critical
+        );
     }
 
     #[test]

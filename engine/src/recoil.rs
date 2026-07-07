@@ -83,13 +83,19 @@ mod tests {
     #[test]
     fn a_shot_adds_recoil_and_sustained_fire_saturates() {
         let one = add_recoil(0.0, 1);
-        assert!((one - RECOIL_PER_SHOT).abs() < 1e-6, "one shot adds RECOIL_PER_SHOT");
+        assert!(
+            (one - RECOIL_PER_SHOT).abs() < 1e-6,
+            "one shot adds RECOIL_PER_SHOT"
+        );
         // Stacking many shots never exceeds the ceiling.
         let mut r = 0.0;
         for _ in 0..100 {
             r = add_recoil(r, 1);
         }
-        assert!((r - RECOIL_MAX).abs() < 1e-6, "sustained fire saturates at RECOIL_MAX, got {r}");
+        assert!(
+            (r - RECOIL_MAX).abs() < 1e-6,
+            "sustained fire saturates at RECOIL_MAX, got {r}"
+        );
         // A multi-shot bump is the same as several single bumps, still clamped.
         assert!((add_recoil(0.0, 1000) - RECOIL_MAX).abs() < 1e-6);
     }
@@ -141,14 +147,20 @@ mod tests {
     #[test]
     fn pitch_kick_is_zero_at_rest_and_grows_upward_with_recoil() {
         assert_eq!(view_pitch_kick(0.0), 0.0, "no kick at rest");
-        assert!(view_pitch_kick(RECOIL_MAX) > 0.0, "kick looks UP (positive pitch)");
+        assert!(
+            view_pitch_kick(RECOIL_MAX) > 0.0,
+            "kick looks UP (positive pitch)"
+        );
         assert!(
             view_pitch_kick(RECOIL_MAX) > view_pitch_kick(1.0),
             "more recoil ⇒ more climb"
         );
         // Saturated punch stays within a sane, non-disorienting band (~2.4°).
         let max_deg = view_pitch_kick(RECOIL_MAX).to_degrees();
-        assert!((1.0..=4.0).contains(&max_deg), "max punch ~2.4°, got {max_deg}°");
+        assert!(
+            (1.0..=4.0).contains(&max_deg),
+            "max punch ~2.4°, got {max_deg}°"
+        );
         // A stray negative accumulator never produces a downward kick.
         assert_eq!(view_pitch_kick(-5.0), 0.0);
     }
@@ -156,7 +168,10 @@ mod tests {
     #[test]
     fn bloom_is_zero_at_rest_and_spreads_with_recoil() {
         assert_eq!(crosshair_bloom(0.0), 0.0, "tight crosshair at rest");
-        assert!(crosshair_bloom(RECOIL_MAX) > crosshair_bloom(1.0), "more recoil ⇒ more spread");
+        assert!(
+            crosshair_bloom(RECOIL_MAX) > crosshair_bloom(1.0),
+            "more recoil ⇒ more spread"
+        );
         assert_eq!(crosshair_bloom(-1.0), 0.0, "no negative spread");
     }
 }

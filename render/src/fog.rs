@@ -54,7 +54,10 @@ pub fn visible_instances(
                 return true;
             }
             // Everything else is gated on the visibility mask.
-            fog.is_visible(Vec2::new(crate::f32_to_fixed(u.x), crate::f32_to_fixed(u.y)))
+            fog.is_visible(Vec2::new(
+                crate::f32_to_fixed(u.x),
+                crate::f32_to_fixed(u.y),
+            ))
         })
         .collect()
 }

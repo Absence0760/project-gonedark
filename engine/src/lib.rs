@@ -36,7 +36,8 @@ use gonedark_core::gunsmith::Loadout;
 use gonedark_core::lockstep::Lockstep;
 use gonedark_core::rng::Rng;
 use gonedark_core::shell::{
-    resolve_intent, ConnectionStatus, EndReason, LinkState, MatchOutcome, ResolvedIntent, ShellIntent,
+    resolve_intent, ConnectionStatus, EndReason, LinkState, MatchOutcome, ResolvedIntent,
+    ShellIntent,
 };
 use gonedark_core::sim::{Command, Sim, TICK_HZ};
 use gonedark_core::snapshot::Snapshot;
@@ -52,68 +53,25 @@ use session_shell::{EndStateRead, FactionForces, InSessionShell, ShellSurface};
 
 /// Embodied audio mix (worker 3). Owns `mix_cues`: events + listener pose → positioned cues.
 mod audio;
-/// Order/stance command vocabulary (worker 5). Owns `commands_for`: UI intent → sim commands.
-mod command_ui;
 /// Build palette vocabulary. Owns `build_commands`: a chosen structure + placement tap → a
 /// `Command::Build`, quantizing the placement point to `Fixed` at the boundary (invariant #1).
 mod build_ui;
-/// Troop-training command-UI seam (Phase 2). Owns `train_commands`: a camp + unit-type choice →
-/// `Command::QueueProduction`, plus the `rally_point` quantization seam (no camp-rally sim command
-/// exists yet — flagged follow-up). Pure presentation→intent, like `command_ui`. Public so the
-/// `train_commands` / `rally_point` seams are reachable for the host to wire (mirrors the pub
-/// `readout` / `train_panel` render seams); the integrator routes the commands into the loop.
-pub mod train_ui;
-/// Pre-match gunsmith loadout UI (WS-C, D60). Owns `LoadoutEditor`: the command-layer surface that
-/// holds the player's current `core::gunsmith::Loadout` and turns a slot+direction UI input into a
-/// new selection. Pure presentation/state — it NEVER touches the sim; the chosen loadout is handed
-/// to the scenario seeder, which applies it to the spawned weapon at match start
-/// (`core::gunsmith::Loadout::apply_to_weapon`). Public so the host can wire the on-screen gunsmith.
-pub mod loadout_ui;
-/// Camp-upgrade UI intent. Owns `upgrade_commands`: an "upgrade the selected camp" tap →
-/// `Command::Upgrade` (the "growth" half of command-and-grow). Pure intent, never mutates the sim.
-/// Public so a host/integrator can wire the on-screen Upgrade button into the command stream.
-pub mod upgrade_ui;
-/// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
-mod selection;
-/// Command-panel glanceability seams (WS-C / CP-9): pure composition-row budgeting + HP→style
-/// thresholds so a selection reads at a glance on a phone screen. Feeds `command_panel_view`.
-pub mod panel_summary;
-/// Embodied-fire input seam (W1). Owns `fire_command`: host yaw + trigger → `Command::Fire`,
-/// quantizing the aim direction to `Fixed` at the boundary (invariant #1).
-mod fire;
-/// Embodied-locomotion input seam. Owns `locomote_command`: host `move_axis` + look yaw →
-/// `Command::Locomote` (camera-relative twin-stick), quantizing the world heading to `Fixed` at
-/// the boundary (invariant #1, exactly like `fire`).
-mod locomote;
-/// Embodied **sniper / zoom gun-sight** seam (tank embodiment P9). Owns the pure zoom math —
-/// input→zoom-intent gate (`zoom_active`), the FOV interpolation (`step_zoom_t` / `zoom_fov_deg`),
-/// and the magnification readout (`zoom_magnification`). Presentation/input only (invariants #4/#5):
-/// it narrows the embodied camera FOV + drives the `render::scope` overlay, never touching the sim.
-mod scope;
-/// Embodied **recoil / view-kick** seam (WS-A, CP-2 game-feel bar). Owns the pure recoil-accumulator
-/// + camera-pitch-kick + crosshair-bloom math (`add_recoil`/`decay_recoil`/`view_pitch_kick`/
-/// `crosshair_bloom`), driven off the wall-clock `dt`. Presentation/input only (invariant #4): a
-/// transient view punch + reticle spread, never sim state.
-mod recoil;
-/// Embodied **jump** seam — the standard-FPS Space hop, a cosmetic camera/viewmodel arc off the
-/// wall-clock `dt` (invariant #4/#5: the 2-D sim has no vertical axis, so a jump is never sim state).
-mod jump;
-/// On-screen FPS touch controls (the COD-style embodied HUD). Owns the pure `TouchControls` seam:
-/// raw multi-touch points → embodied intents (`move_axis`/look/fire/crouch/reload/surface) + the
-/// screen-space layout the renderer draws. The testable logic `pal-android` can't host. Public so
-/// the renderer (and a host) can read the layout/HUD geometry.
-pub mod touch_controls;
-/// Command-view on-screen touch buttons (build / train / upgrade) — the RTS half's mobile input
-/// affordance. Owns the pure `CommandBarLayout` seam: a bottom row of labelled buttons, hit-tested
-/// per tap, that arm the same `InputFrame` command intents the desktop drives off the B/R/H/U keys
-/// (which had no touch path before). Pure geometry + hit-test (host-tested), command view only.
-pub mod command_touch;
 /// Command-view multi-touch **gesture** seam (pan / pinch-zoom / two-finger embody-tap). Owns the pure
 /// `CommandGesture` state machine: raw two-finger touches → `move_axis` (pan) / `scroll` (zoom) / a
 /// one-shot embody edge, disambiguated so a pinch or a pan can never misfire embody. The testable logic
 /// `pal-android` can't host (an Android `MotionEvent` isn't host-constructible); the backend only feeds
 /// it the down-finger set + a timestamp. Command view only — desktop uses the wheel + edge-pan.
 pub mod command_gesture;
+/// Command-view on-screen touch buttons (build / train / upgrade) — the RTS half's mobile input
+/// affordance. Owns the pure `CommandBarLayout` seam: a bottom row of labelled buttons, hit-tested
+/// per tap, that arm the same `InputFrame` command intents the desktop drives off the B/R/H/U keys
+/// (which had no touch path before). Pure geometry + hit-test (host-tested), command view only.
+pub mod command_touch;
+/// Order/stance command vocabulary (worker 5). Owns `commands_for`: UI intent → sim commands.
+mod command_ui;
+/// Embodied-fire input seam (W1). Owns `fire_command`: host yaw + trigger → `Command::Fire`,
+/// quantizing the aim direction to `Fixed` at the boundary (invariant #1).
+mod fire;
 /// HUD layout editor (PvE-campaign plan WS-D). Owns `HudLayoutProfile`: the per-layer (command vs
 /// embodied) drag/resize/opacity editor layered over the existing touch seams, with saved presets +
 /// reset-to-default and a pure `resolve_embodied` seam (saved layout → `TouchLayout` geometry +
@@ -121,42 +79,85 @@ pub mod command_gesture;
 /// never sim, never checksummed (D61); placement, never information (invariant #6). Public so a host
 /// (and the native settings shell) can drive the editor + persist the profile.
 pub mod hud_layout;
-/// In-session shell (Phase 4 WS-B): the in-engine pause / surrender / post-match-summary /
-/// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
-/// session state — never mutates sim state. Public so a host (and tests) can drive it.
-pub mod session_shell;
+/// Embodied **jump** seam — the standard-FPS Space hop, a cosmetic camera/viewmodel arc off the
+/// wall-clock `dt` (invariant #4/#5: the 2-D sim has no vertical axis, so a jump is never sim state).
+mod jump;
+/// Pre-match gunsmith loadout UI (WS-C, D60). Owns `LoadoutEditor`: the command-layer surface that
+/// holds the player's current `core::gunsmith::Loadout` and turns a slot+direction UI input into a
+/// new selection. Pure presentation/state — it NEVER touches the sim; the chosen loadout is handed
+/// to the scenario seeder, which applies it to the spawned weapon at match start
+/// (`core::gunsmith::Loadout::apply_to_weapon`). Public so the host can wire the on-screen gunsmith.
+pub mod loadout_ui;
+/// Embodied-locomotion input seam. Owns `locomote_command`: host `move_axis` + look yaw →
+/// `Command::Locomote` (camera-relative twin-stick), quantizing the world heading to `Fixed` at
+/// the boundary (invariant #1, exactly like `fire`).
+mod locomote;
 /// Host-side mission objectives (PvE WS-A): the `Objective`/`ObjectiveSet` layer that OBSERVES the
 /// sim (the per-tick event stream + derived faction reads) to drive a mission's win/lose + HUD,
 /// without ever mutating sim state — so it adds NO checksum/desync surface (invariant #1/#7). Owns
 /// the *Seize* mission-1 wiring + the HUD-view mapper. Public so a host (and tests) can drive it.
 pub mod objectives;
+/// Command-panel glanceability seams (WS-C / CP-9): pure composition-row budgeting + HP→style
+/// thresholds so a selection reads at a glance on a phone screen. Feeds `command_panel_view`.
+pub mod panel_summary;
+/// Embodied **recoil / view-kick** seam (WS-A, CP-2 game-feel bar). Owns the pure recoil-accumulator
+/// + camera-pitch-kick + crosshair-bloom math (`add_recoil`/`decay_recoil`/`view_pitch_kick`/
+/// `crosshair_bloom`), driven off the wall-clock `dt`. Presentation/input only (invariant #4): a
+/// transient view punch + reticle spread, never sim state.
+mod recoil;
+/// Embodied **sniper / zoom gun-sight** seam (tank embodiment P9). Owns the pure zoom math —
+/// input→zoom-intent gate (`zoom_active`), the FOV interpolation (`step_zoom_t` / `zoom_fov_deg`),
+/// and the magnification readout (`zoom_magnification`). Presentation/input only (invariants #4/#5):
+/// it narrows the embodied camera FOV + drives the `render::scope` overlay, never touching the sim.
+mod scope;
+/// Command-layer unit selection (worker 4). Owns `Selection`: which units the next order hits.
+mod selection;
+/// In-session shell (Phase 4 WS-B): the in-engine pause / surrender / post-match-summary /
+/// reconnect-prompt state machine + the host-side `MatchSummary` assembler. Pure presentation/
+/// session state — never mutates sim state. Public so a host (and tests) can drive it.
+pub mod session_shell;
+/// On-screen FPS touch controls (the COD-style embodied HUD). Owns the pure `TouchControls` seam:
+/// raw multi-touch points → embodied intents (`move_axis`/look/fire/crouch/reload/surface) + the
+/// screen-space layout the renderer draws. The testable logic `pal-android` can't host. Public so
+/// the renderer (and a host) can read the layout/HUD geometry.
+pub mod touch_controls;
+/// Troop-training command-UI seam (Phase 2). Owns `train_commands`: a camp + unit-type choice →
+/// `Command::QueueProduction`, plus the `rally_point` quantization seam (no camp-rally sim command
+/// exists yet — flagged follow-up). Pure presentation→intent, like `command_ui`. Public so the
+/// `train_commands` / `rally_point` seams are reachable for the host to wire (mirrors the pub
+/// `readout` / `train_panel` render seams); the integrator routes the commands into the loop.
+pub mod train_ui;
+/// Camp-upgrade UI intent. Owns `upgrade_commands`: an "upgrade the selected camp" tap →
+/// `Command::Upgrade` (the "growth" half of command-and-grow). Pure intent, never mutates the sim.
+/// Public so a host/integrator can wire the on-screen Upgrade button into the command stream.
+pub mod upgrade_ui;
 // CP-7 onboarding: the host-side, observe-only teach state machine that drives the going-dark
 // tutorial prompts in PvE mission 1. Owns no `Sim` → adds no checksum surface (invariants #1/#7).
-pub mod onboarding;
-/// Host-side `MissionId → mission` registry (PvE WS-B): resolves an opaque `core::campaign`
-/// `MissionId` to a concrete, runnable `MissionDef` (scenario seed + `ObjectiveSet` + WS-E tuning),
-/// and authors the shipped Operations-hub campaign wired to it. The "registry lives OUTSIDE the
-/// campaign model" half `core::campaign` documents — host-side, so it adds NO checksum surface
-/// (invariant #1/#7). Public so a host (and tests) can launch a node's mission.
-pub mod mission_registry;
+/// Cross-modal alert cues (WS-D accessibility, invariant #6): the pure seam turning the live alert
+/// channel into the NON-visual equivalents of the directional flash — a bearing-panned audio ping
+/// and a coarse haptic pulse — each still an *alert, not intel* (bearing + kind only). Presentation
+/// only; reads no sim state, never checksummed (invariants #1/#4/#7).
+pub mod alert_cues;
 /// CT-B (D76): the host-side RON **mission format** + its float-airlock loader. Owns the
 /// `MissionSpec` schema (serde/RON live here, not in `core` — invariant #2) and the parser/validator
 /// that maps it onto the CT-A `ScenarioBuilder`, converting every integer field to `Fixed` so no
 /// float ever reaches the sim (invariant #1). A data-loaded mission rides the same checksum footing
 /// as a hand seeder; the *Seize* file proves byte-identity.
 pub mod mission_format;
-/// Render quality tuning (Phase 4 WS-C). Owns `RenderTuning`: the tier + dyn-res + thermal-backoff
-/// controller. A RENDERING choice only — never touches the sim (invariant #1/#4).
-pub mod tuning;
+/// Host-side `MissionId → mission` registry (PvE WS-B): resolves an opaque `core::campaign`
+/// `MissionId` to a concrete, runnable `MissionDef` (scenario seed + `ObjectiveSet` + WS-E tuning),
+/// and authors the shipped Operations-hub campaign wired to it. The "registry lives OUTSIDE the
+/// campaign model" half `core::campaign` documents — host-side, so it adds NO checksum surface
+/// (invariant #1/#7). Public so a host (and tests) can launch a node's mission.
+pub mod mission_registry;
 /// Host-side RTT estimator + input-delay hysteresis (Phase 3 WS-B). Owns `RttDelayEstimator`: it
 /// smooths measured RTT (host-side `f64` EWMA) and decides when to ask `core::lockstep` to change
 /// the integer input delay. Floats stay here (engine glue), never `core`/sim (invariants #1/#2).
 pub mod net_tuning;
-/// Cross-modal alert cues (WS-D accessibility, invariant #6): the pure seam turning the live alert
-/// channel into the NON-visual equivalents of the directional flash — a bearing-panned audio ping
-/// and a coarse haptic pulse — each still an *alert, not intel* (bearing + kind only). Presentation
-/// only; reads no sim state, never checksummed (invariants #1/#4/#7).
-pub mod alert_cues;
+pub mod onboarding;
+/// Render quality tuning (Phase 4 WS-C). Owns `RenderTuning`: the tier + dyn-res + thermal-backoff
+/// controller. A RENDERING choice only — never touches the sim (invariant #1/#4).
+pub mod tuning;
 /// The desktop key-rebind model (D90 host toggles + the Q27 gameplay keymap): `GameAction` +
 /// `KeyId` + `KeybindMap`, the pure, **winit-free** rebind / conflict-detection /
 /// ordinal-persistence seam the desktop Settings rebind editor drives. The model now lives in
@@ -166,6 +167,10 @@ pub mod alert_cues;
 /// `winit::KeyCode` / egui `Key` ↔ `KeyId` at its boundary (invariant #2). Presentation only — a
 /// keybind never reaches the sim (invariants #1/#4/#7).
 pub use gonedark_pal::keybind;
+/// The picker's **map card** — preview metrics derived at runtime from a `MapSpec` (`modes.md` §3
+/// shipped v1; the baker's lint PNG / balance metrics stay deferred behind D77). Integer-only
+/// presentation data under the D34 rules: read-only, derived, never a checksum surface.
+pub mod map_card;
 /// Host-side `*.map.ron` battlefield format + its float-airlock loader (content-tooling CT-C). Owns
 /// `MapSpec`: the spatial half of a scenario (terrain id, control points, cover props, spawn zones)
 /// as a designer-editable RON data file, and the validator that turns every authored **integer**
@@ -174,24 +179,20 @@ pub use gonedark_pal::keybind;
 /// range-checked, fails loud; the applied `Sim` adds no checksum surface (invariants #4/#7).
 pub mod map_format;
 pub mod map_library;
-/// The picker's **map card** — preview metrics derived at runtime from a `MapSpec` (`modes.md` §3
-/// shipped v1; the baker's lint PNG / balance metrics stay deferred behind D77). Integer-only
-/// presentation data under the D34 rules: read-only, derived, never a checksum surface.
-pub mod map_card;
 
-pub use tuning::RenderTuning;
+/// The cross-modal alert-cue selection (WS-D), re-exported so the shell/Settings surface can name the
+/// mode + consume the haptic descriptors without reaching into the module path.
+pub use alert_cues::{haptic_pulse_ms, AlertCueMode, HapticPulse, HapticSide, BUTTON_TICK_MS};
 /// The music-bus gain seam (D75 follow-up), re-exported so the desktop host can carry the Settings
 /// music-volume pref to the audio host the same way `pal::mix::scaled_gain` carries master/SFX —
 /// without reaching into the private `audio` module path. Dormant-but-wired (no music source yet).
 pub use audio::music_gain;
-pub use net_tuning::{DelayPolicy, RttDelayEstimator};
 /// The colourblind-palette accessibility mode (WS-D), re-exported so hosts that drive
 /// [`Game::set_accessibility_prefs`] can name it without a direct `gonedark_render` dependency (e.g.
 /// the Android PAL). It lives in `render::theme` — the palette single source of truth.
 pub use gonedark_render::theme::PaletteMode;
-/// The cross-modal alert-cue selection (WS-D), re-exported so the shell/Settings surface can name the
-/// mode + consume the haptic descriptors without reaching into the module path.
-pub use alert_cues::{haptic_pulse_ms, AlertCueMode, HapticPulse, HapticSide, BUTTON_TICK_MS};
+pub use net_tuning::{DelayPolicy, RttDelayEstimator};
+pub use tuning::RenderTuning;
 
 /// The seed both hosts start the sim with, so desktop and Android run the bit-identical
 /// deterministic scene (invariant #1 / #7).
@@ -398,9 +399,11 @@ fn drive_lockstep(
     // the peers' checksum streams stay bit-identical (invariant #7). `effective_tick`'s guard lead
     // far exceeds this one-frame skew, so the receiver's lead still covers the new delay in time.
     let lead = lockstep.submit_tick().saturating_sub(lockstep.next_tick());
-    let target_delay = lockstep
-        .delay()
-        .max(lockstep.pending_delay().map_or(0, |(_, new_delay)| new_delay));
+    let target_delay = lockstep.delay().max(
+        lockstep
+            .pending_delay()
+            .map_or(0, |(_, new_delay)| new_delay),
+    );
     let submits = submit_count(lead, target_delay, budget);
     let mut commands = Some(commands);
     for _ in 0..submits {
@@ -474,7 +477,13 @@ const COMMAND_EYE_DIST: f32 = 120.0;
 /// The tilt is pure pitch (no yaw) so the ground projection stays axis-separable — see
 /// [`COMMAND_PITCH_DEG`]. Pan only translates the eye+target together, so it never shears that
 /// separability (band-select stays exact); zoom only scales the ortho extents.
-fn topdown_view_proj(width: u32, height: u32, focus_x: f32, focus_y: f32, half_extent: f32) -> Mat4 {
+fn topdown_view_proj(
+    width: u32,
+    height: u32,
+    focus_x: f32,
+    focus_y: f32,
+    half_extent: f32,
+) -> Mat4 {
     let aspect = width.max(1) as f32 / height.max(1) as f32;
     let (hx, hy) = if aspect >= 1.0 {
         (half_extent * aspect, half_extent)
@@ -569,8 +578,24 @@ fn embodied_shows_rifle_viewmodel(kind: UnitKind) -> bool {
 /// along the current `yaw` (heading) and `pitch` (up/down tilt, radians; +up, −down).
 /// Test-only base-FOV wrapper; production paths thread the live FOV via [`embodied_view_proj_fov`].
 #[cfg(test)]
-fn embodied_view_proj(eye_x: f32, eye_y: f32, yaw: f32, pitch: f32, width: u32, height: u32) -> Mat4 {
-    embodied_view_proj_fov(eye_x, eye_y, 0.0, yaw, pitch, width, height, EMBODIED_FOV_DEG)
+fn embodied_view_proj(
+    eye_x: f32,
+    eye_y: f32,
+    yaw: f32,
+    pitch: f32,
+    width: u32,
+    height: u32,
+) -> Mat4 {
+    embodied_view_proj_fov(
+        eye_x,
+        eye_y,
+        0.0,
+        yaw,
+        pitch,
+        width,
+        height,
+        EMBODIED_FOV_DEG,
+    )
 }
 
 /// Embodied perspective view-projection at an explicit `fov_deg` — the zoom-aware twin of
@@ -834,7 +859,12 @@ fn command_panel_view(
             // `unit_kind_name` (not the train-panel `label`) so a Heavy reads "Tank" here exactly as
             // it does in the QUEUE rows, the troops panel, and the embody picker.
             lines.push(PanelLine::new(
-                format!("{}  {}  {:.1}s", unit_kind_name(o.kind), o.cost, o.eta_seconds),
+                format!(
+                    "{}  {}  {:.1}s",
+                    unit_kind_name(o.kind),
+                    o.cost,
+                    o.eta_seconds
+                ),
                 afford(o.cost),
             ));
         }
@@ -924,7 +954,11 @@ fn command_panel_view(
         lines.push(PanelLine::new(
             format!(
                 "Stance: {}",
-                if uniform { stance_name(first_stance) } else { "Mixed" }
+                if uniform {
+                    stance_name(first_stance)
+                } else {
+                    "Mixed"
+                }
             ),
             LineStyle::Normal,
         ));
@@ -1143,8 +1177,15 @@ fn sound_echo_markers(
                 ),
             };
             let pos = (fixed_to_f32(e.pos.x), fixed_to_f32(e.pos.y));
-            let mut m =
-                gonedark_render::hud::place_marker(pos, e.tick, avatar_world, yaw, tick, color, shape)?;
+            let mut m = gonedark_render::hud::place_marker(
+                pos,
+                e.tick,
+                avatar_world,
+                yaw,
+                tick,
+                color,
+                shape,
+            )?;
             m.alpha *= alpha_scale;
             Some(m)
         })
@@ -1241,10 +1282,7 @@ fn embodied_input_commands(
         commands.push(Command::Surface { entity: player });
     }
 
-    EmbodiedCommands {
-        commands,
-        surfaced,
-    }
+    EmbodiedCommands { commands, surfaced }
 }
 
 /// Translate the engine-side touch layout + per-frame HUD state into the renderer's own
@@ -1284,7 +1322,13 @@ fn render_touch_hud(
             thumb_y: hud.stick_thumb.1,
             opacity: opacity.stick,
         }),
-        fire: button(&layout.fire, r::TouchGlyph::Fire, hud.fire_pressed, false, opacity.fire),
+        fire: button(
+            &layout.fire,
+            r::TouchGlyph::Fire,
+            hud.fire_pressed,
+            false,
+            opacity.fire,
+        ),
         crouch: button(
             &layout.crouch,
             r::TouchGlyph::Crouch,
@@ -1308,7 +1352,13 @@ fn render_touch_hud(
         ),
         // Jump: the cosmetic hop (the Android twin of desktop Space). Full opacity — the HUD editor
         // doesn't expose it yet (like the ADS button below).
-        jump: button(&layout.jump, r::TouchGlyph::Jump, hud.jump_pressed, false, 1.0),
+        jump: button(
+            &layout.jump,
+            r::TouchGlyph::Jump,
+            hud.jump_pressed,
+            false,
+            1.0,
+        ),
         // Select-fire: the glyph reflects the CURRENT mode (single dot = semi, three dots = auto), so
         // the button doubles as the on-screen fire-mode readout — the Android player can read the mode
         // the desktop player infers. `active` lights the sticky highlight while in AUTO so the
@@ -1327,15 +1377,8 @@ fn render_touch_hud(
         // (`has_scope`). Drawn at full opacity (the HUD-editor doesn't expose it yet; that's a later
         // polish, like the command-view palette buttons). A scope-less avatar leaves it `None`, so
         // the renderer never draws an inert ADS control.
-        aim: has_scope.then(|| {
-            button(
-                &layout.aim,
-                r::TouchGlyph::Aim,
-                hud.aim_pressed,
-                false,
-                1.0,
-            )
-        }),
+        aim: has_scope
+            .then(|| button(&layout.aim, r::TouchGlyph::Aim, hud.aim_pressed, false, 1.0)),
     }
 }
 
@@ -1460,7 +1503,10 @@ fn upgrade_banner_message(pre_level: u8, post_level: u8, next_cost: i64) -> (Str
     if post_level > pre_level {
         (format!("CAMP UPGRADED — TIER {post_level}"), BANNER_OK)
     } else {
-        (format!("NEED {next_cost} RESOURCES TO UPGRADE"), BANNER_FAIL)
+        (
+            format!("NEED {next_cost} RESOURCES TO UPGRADE"),
+            BANNER_FAIL,
+        )
     }
 }
 
@@ -1497,7 +1543,10 @@ fn command_view_production_commands(
         pointer_world,
     ));
     commands.extend(train_ui::train_commands(input.train_slot, active_camp));
-    commands.extend(upgrade_ui::upgrade_commands(input.upgrade_pressed, active_camp));
+    commands.extend(upgrade_ui::upgrade_commands(
+        input.upgrade_pressed,
+        active_camp,
+    ));
     commands
 }
 
@@ -1919,7 +1968,10 @@ impl Scene {
     /// (the picker's first tile) never saw the going-dark teach at all — the hardest-to-grasp
     /// mechanic in the game, silently un-taught on the most-tapped entry point.
     pub fn teaches_going_dark(self) -> bool {
-        matches!(self, Scene::Skirmish | Scene::Mission1 | Scene::Mission2 | Scene::Mission3)
+        matches!(
+            self,
+            Scene::Skirmish | Scene::Mission1 | Scene::Mission2 | Scene::Mission3
+        )
     }
 
     /// Whether this scene is an authored **campaign mission** — the [`for_mission`](Scene::for_mission)
@@ -1988,8 +2040,20 @@ fn seed_default_scene(sim: &mut Sim, player_loadout: Loadout) -> (Entity, bool) 
     ) {
         sim.world.building[camp.index as usize].build_ticks_left = 0; // skip construction
         let armies = *sim.armies();
-        economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman, &armies);
-        economy::queue_production(&mut sim.world, &mut sim.resources, camp, UnitKind::Rifleman, &armies);
+        economy::queue_production(
+            &mut sim.world,
+            &mut sim.resources,
+            camp,
+            UnitKind::Rifleman,
+            &armies,
+        );
+        economy::queue_production(
+            &mut sim.world,
+            &mut sim.resources,
+            camp,
+            UnitKind::Rifleman,
+            &armies,
+        );
     }
 
     // An enemy camp too, so the commander has somewhere to reinforce from — making the
@@ -2113,7 +2177,10 @@ fn seed_duel_scene(sim: &mut Sim) -> (Entity, bool) {
     }]);
     // Mirror the telemetry the normal Command::Embody handler logs, so the embodiment event still
     // shows in the trace at duel launch (the host-side flag is set by the caller, not that handler).
-    log::info!("[tick {}] EMBODY (duel boot) — world goes dark", sim.tick_count());
+    log::info!(
+        "[tick {}] EMBODY (duel boot) — world goes dark",
+        sim.tick_count()
+    );
     (duel.player, true)
 }
 
@@ -2213,7 +2280,8 @@ fn faction_ring_color(f: Faction) -> [f32; 3] {
 // depending on `render`, so the two windows are declared apart; pin them equal at compile time here
 // in `engine` — the one crate that sees both — so they can never silently drift.
 const _: () = assert!(
-    gonedark_core::snapshot::MUZZLE_FLASH_TICKS as u64 == gonedark_render::world::MUZZLE_FLASH_TICKS
+    gonedark_core::snapshot::MUZZLE_FLASH_TICKS as u64
+        == gonedark_render::world::MUZZLE_FLASH_TICKS
 );
 
 /// Count living `Unit`-kind entities of `faction` in `sim`. The testable seam behind
@@ -2446,7 +2514,16 @@ impl Game {
         // host-testable without a device; the renderer below is the only GPU-bound part of boot.
         let (player, start_embodied, objectives) =
             seed_scene_with_loadout(&mut sim, scene, player_loadout);
-        Self::from_seeded_sim(device, surface_format, seed, scene, sim, player, start_embodied, objectives)
+        Self::from_seeded_sim(
+            device,
+            surface_format,
+            seed,
+            scene,
+            sim,
+            player,
+            start_embodied,
+            objectives,
+        )
     }
 
     /// Build the game for a campaign node's per-node [`BattleSpec`](crate::mission_registry::BattleSpec)
@@ -2977,7 +3054,10 @@ impl Game {
     /// invariant #6 is structural). Default [`Veteran`] reproduces the original commander
     /// byte-for-byte. A pure host-side planning knob — never sim state — so changing it perturbs
     /// only future orders, not the running checksum stream. The Operations hub sets this per node.
-    pub fn set_commander_difficulty(&mut self, difficulty: gonedark_core::mission_tuning::Difficulty) {
+    pub fn set_commander_difficulty(
+        &mut self,
+        difficulty: gonedark_core::mission_tuning::Difficulty,
+    ) {
         self.commander_config.difficulty = difficulty;
     }
 
@@ -3049,7 +3129,8 @@ impl Game {
     /// payload can never reach a balance number or grant power (invariants #1/#6) — the same
     /// structural bound [`apply_campaign_tuning`] rests on.
     pub fn apply_live_ops_modifiers(&mut self, period: u64, track: u32) {
-        let modifiers = gonedark_core::mission_tuning::ScenarioModifiers::for_rotation(period, track);
+        let modifiers =
+            gonedark_core::mission_tuning::ScenarioModifiers::for_rotation(period, track);
         modifiers.apply_to_sim(&mut self.sim);
     }
 
@@ -3181,7 +3262,16 @@ impl Game {
         let pitch = self.pitch + recoil::view_pitch_kick(self.view_recoil);
         // Cosmetic jump: lift the whole eye by the current hop height (0 while grounded).
         let rise = jump::jump_height(self.jump_t);
-        embodied_view_proj_fov(px, py, rise, self.yaw, pitch, width, height, self.embodied_fov_deg())
+        embodied_view_proj_fov(
+            px,
+            py,
+            rise,
+            self.yaw,
+            pitch,
+            width,
+            height,
+            self.embodied_fov_deg(),
+        )
     }
 
     /// The embodied camera FOV (degrees) for this frame — the base [`EMBODIED_FOV_DEG`] narrowed by
@@ -3396,7 +3486,9 @@ impl Game {
                     // Arm the intent on the release only; the press merely blocks the drag from starting.
                     if input.pointer_up {
                         match btn {
-                            command_touch::CommandButton::TrainRifleman => input.train_slot = Some(0),
+                            command_touch::CommandButton::TrainRifleman => {
+                                input.train_slot = Some(0)
+                            }
                             command_touch::CommandButton::TrainHeavy => input.train_slot = Some(1),
                             command_touch::CommandButton::Upgrade => input.upgrade_pressed = true,
                         }
@@ -3612,55 +3704,55 @@ impl Game {
             jump_edge,
             select_fire_edge,
         ) = if self.embodied && self.seen_touch {
-                // Resolve the active HUD-editor preset to the embodied control geometry (WS-D). The
-                // draw step below re-resolves the SAME profile + viewport, so the hit shapes the
-                // input seam tests and the shapes the renderer draws can never drift. Runs even with
-                // zero fingers down (empty slice → neutral intents) so the HUD keeps drawing.
-                let layout = self
-                    .hud_layout
-                    .resolve_embodied_with_density(width, height, self.ui_scale)
-                    .layout;
-                let n = (input.touch_count as usize).min(input.touches.len());
-                // On the embody-transition frame, feed an EMPTY slice so the fingers that triggered the
-                // two-finger embody tap don't leak into the first embodied frame's move/look/buttons
-                // (P1-3). The seam was just `reset()` above, so an empty slice yields fully neutral
-                // intents; the next frame passes the live touches through and the sticks re-capture.
-                let touches = embody_frame_touches(was_embodied, self.embodied, &input.touches[..n]);
-                let out = self.touch.update(&layout, touches);
-                self.touch_button_edge = touch_controls::has_button_edge(&out);
-                self.touch_hud = Some(out.hud);
-                (
-                    out.look_delta,
-                    out.move_axis,
-                    out.fire,
-                    // ADS comes from the on-screen button (the held zoom signal), the touch twin of
-                    // the desktop right-mouse `input.aim`. The `has_scope` gate below still decides
-                    // whether it does anything (W2's turret/tank gate), so a scope-less tap is inert.
-                    out.aim,
-                    out.crouch_edge,
-                    out.reload_edge,
-                    out.surface_edge,
-                    // Jump + select-fire touch EDGES — the Android twins of the desktop
-                    // `input.jump_pressed` / `input.select_fire_pressed`, consumed in the same two
-                    // branches below (`jump::start_jump` / `fire_mode.toggled`).
-                    out.jump_edge,
-                    out.fire_mode_edge,
-                )
-            } else {
-                self.touch_hud = None;
-                self.touch_button_edge = false;
-                (
-                    input.look_axis,
-                    input.move_axis,
-                    input.fire,
-                    input.aim, // desktop right-mouse ADS (held); unused in the command view
-                    input.crouch_pressed,
-                    input.reload_pressed,
-                    false, // desktop ejects via the Q-key surface path in `map_input_commands`
-                    input.jump_pressed,        // desktop Space
-                    input.select_fire_pressed, // desktop select-fire key
-                )
-            };
+            // Resolve the active HUD-editor preset to the embodied control geometry (WS-D). The
+            // draw step below re-resolves the SAME profile + viewport, so the hit shapes the
+            // input seam tests and the shapes the renderer draws can never drift. Runs even with
+            // zero fingers down (empty slice → neutral intents) so the HUD keeps drawing.
+            let layout = self
+                .hud_layout
+                .resolve_embodied_with_density(width, height, self.ui_scale)
+                .layout;
+            let n = (input.touch_count as usize).min(input.touches.len());
+            // On the embody-transition frame, feed an EMPTY slice so the fingers that triggered the
+            // two-finger embody tap don't leak into the first embodied frame's move/look/buttons
+            // (P1-3). The seam was just `reset()` above, so an empty slice yields fully neutral
+            // intents; the next frame passes the live touches through and the sticks re-capture.
+            let touches = embody_frame_touches(was_embodied, self.embodied, &input.touches[..n]);
+            let out = self.touch.update(&layout, touches);
+            self.touch_button_edge = touch_controls::has_button_edge(&out);
+            self.touch_hud = Some(out.hud);
+            (
+                out.look_delta,
+                out.move_axis,
+                out.fire,
+                // ADS comes from the on-screen button (the held zoom signal), the touch twin of
+                // the desktop right-mouse `input.aim`. The `has_scope` gate below still decides
+                // whether it does anything (W2's turret/tank gate), so a scope-less tap is inert.
+                out.aim,
+                out.crouch_edge,
+                out.reload_edge,
+                out.surface_edge,
+                // Jump + select-fire touch EDGES — the Android twins of the desktop
+                // `input.jump_pressed` / `input.select_fire_pressed`, consumed in the same two
+                // branches below (`jump::start_jump` / `fire_mode.toggled`).
+                out.jump_edge,
+                out.fire_mode_edge,
+            )
+        } else {
+            self.touch_hud = None;
+            self.touch_button_edge = false;
+            (
+                input.look_axis,
+                input.move_axis,
+                input.fire,
+                input.aim, // desktop right-mouse ADS (held); unused in the command view
+                input.crouch_pressed,
+                input.reload_pressed,
+                false, // desktop ejects via the Q-key surface path in `map_input_commands`
+                input.jump_pressed, // desktop Space
+                input.select_fire_pressed, // desktop select-fire key
+            )
+        };
 
         // Aim-down-sight (P9 + WS-A, presentation only): ease the embodied camera FOV toward the held
         // ADS input. As of WS-A **any** living embodied unit can ADS — infantry to `ADS_FOV_DEG` (a
@@ -3673,7 +3765,8 @@ impl Game {
         let has_scope = self.player_has_turret();
         let can_ads = self.embodied && self.sim.world.is_alive(self.player);
         let zoom_active = scope::zoom_active(self.embodied, can_ads, aim);
-        self.aim_zoom_t = scope::step_zoom_t(self.aim_zoom_t, zoom_active, dt_secs, scope::ZOOM_RATE);
+        self.aim_zoom_t =
+            scope::step_zoom_t(self.aim_zoom_t, zoom_active, dt_secs, scope::ZOOM_RATE);
 
         // Recoil settle (WS-A): decay the view-kick / crosshair-bloom accumulator toward rest every
         // frame on the WALL-CLOCK `dt` (never the sim tick), so the punch recovers frame-rate-
@@ -3976,7 +4069,8 @@ impl Game {
                 // delay-0 session leads only by the sub-tick, which simply smooths the 60 Hz eye.
                 // `dt_secs` + `tick_dt` make the reconcile ease frame-rate-independent (the ease
                 // converges at the same wall-clock rate at 30, 60, or 120 fps).
-                self.avatar.update(pos, vel, alpha * tick_dt, dt_secs, tick_dt);
+                self.avatar
+                    .update(pos, vel, alpha * tick_dt, dt_secs, tick_dt);
             }
         } else {
             self.avatar.clear();
@@ -4134,7 +4228,8 @@ impl Game {
         // bearing + kind only, never range/map (the `alert_cues` seam enforces the constant-gain,
         // never-muffled fairness bound). Presentation only — reads the already-checksummed alert
         // channel, mutates no sim state (invariants #1/#4/#7).
-        if self.embodied && self.alert_cue_mode != AlertCueMode::Off && tick != self.alert_cue_tick {
+        if self.embodied && self.alert_cue_mode != AlertCueMode::Off && tick != self.alert_cue_tick
+        {
             self.alert_cue_tick = tick;
             cues.extend(alert_cues::alert_audio_cues(
                 &self.alerts,
@@ -4143,8 +4238,13 @@ impl Game {
                 tick,
                 self.alert_cue_mode,
             ));
-            self.alert_haptics =
-                alert_cues::alert_haptic_pulses(&self.alerts, listener, self.yaw, tick, self.alert_cue_mode);
+            self.alert_haptics = alert_cues::alert_haptic_pulses(
+                &self.alerts,
+                listener,
+                self.yaw,
+                tick,
+                self.alert_cue_mode,
+            );
         } else if !self.embodied && !self.alert_haptics.is_empty() {
             // Ejected back to command — no embodied haptics stand between matches/views.
             self.alert_haptics.clear();
@@ -4269,7 +4369,11 @@ impl Game {
                 .filter(|cp| cp.owner == Faction::Player)
                 .count() as u32;
             gonedark_render::readout::EconomyReadout {
-                resources: self.sim.resources.get(Faction::Player).clamp(0, u32::MAX as i64) as u32,
+                resources: self
+                    .sim
+                    .resources
+                    .get(Faction::Player)
+                    .clamp(0, u32::MAX as i64) as u32,
                 income_per_tick: gonedark_render::readout::income_per_tick(held_points),
             }
         });
@@ -4321,7 +4425,11 @@ impl Game {
             } else {
                 0.0
             };
-            let pose = gonedark_render::world::WeaponPose { flash, cycle, spray };
+            let pose = gonedark_render::world::WeaponPose {
+                flash,
+                cycle,
+                spray,
+            };
             self.renderer
                 .render_world_weapon(device, queue, &scene_view, &proj, pose, sw, sh);
             // 7a'. Shaped muzzle flash (WS-A): an additive flare at the gun muzzle, flaring with the
@@ -4374,7 +4482,8 @@ impl Game {
             // affordance for the intents the hit-test above reads. Built from the SAME
             // `CommandBarLayout::new(width, height)` so the drawn boxes are exactly the tap targets.
             // Command view only (this whole block is `!self.embodied`); the embodied view stays dark.
-            let bar_view = command_touch::CommandBarLayout::new(width, height).to_view(width, height);
+            let bar_view =
+                command_touch::CommandBarLayout::new(width, height).to_view(width, height);
             self.renderer
                 .render_command_bar(device, queue, view, &bar_view);
         }
@@ -4401,7 +4510,8 @@ impl Game {
         // no-op on an empty set (skirmish/sandbox scenes draw nothing).
         if !self.embodied && !self.objectives.is_empty() {
             let hud = objectives::objective_hud_view(&self.objectives);
-            self.renderer.render_objective_hud(device, queue, view, &hud);
+            self.renderer
+                .render_objective_hud(device, queue, view, &hud);
         }
 
         // 7a''. Embody picker (command view): when open, draw the list of selected units the player
@@ -4464,7 +4574,8 @@ impl Game {
                 tick,
                 &mut self.detection_memory,
             );
-            let markers = detection_markers(&tells, self.embodied, self.detection.tell_linger_ticks);
+            let markers =
+                detection_markers(&tells, self.embodied, self.detection.tell_linger_ticks);
             let verts = gonedark_render::detection::detection_vertices(&markers);
             self.renderer.render_detection(device, queue, view, &verts);
         }
@@ -4509,7 +4620,8 @@ impl Game {
             // embodied-audio channel. Built by the pure `sound_echo_markers` seam from the echo buffer.
             if self.visual_sound_cues {
                 let markers = sound_echo_markers(&self.sound_echoes, listener, self.yaw, tick);
-                self.renderer.render_hud_markers(device, queue, view, &markers);
+                self.renderer
+                    .render_hud_markers(device, queue, view, &markers);
             }
 
             // 8a''. WS-A — the bullet-impact VFX: an additive spark/dust burst at the world point the
@@ -4538,7 +4650,8 @@ impl Game {
             if !has_scope {
                 let aspect = width.max(1) as f32 / height.max(1) as f32;
                 let bloom = recoil::crosshair_bloom(self.view_recoil);
-                self.renderer.render_crosshair(device, queue, view, bloom, aspect);
+                self.renderer
+                    .render_crosshair(device, queue, view, bloom, aspect);
             }
 
             // 8'. WS-4 — the embodied hitmarker: a centered "X" flash confirming the player's OWN
@@ -4557,8 +4670,7 @@ impl Game {
             // mutates the sim (invariant #4); it carries no world position, so it widens no fog
             // beneath the dark frame (invariant #6).
             let pidx = self.player.index as usize;
-            if self.sim.world.is_alive(self.player)
-                && self.sim.world.weapon[pidx].turret_speed > 0
+            if self.sim.world.is_alive(self.player) && self.sim.world.weapon[pidx].turret_speed > 0
             {
                 let w = &self.sim.world.weapon[pidx];
                 // Angle → f32 radians (no interpolation needed for the compass chevron).
@@ -4592,8 +4704,7 @@ impl Game {
             // position and never widens the fog; a read-only derivation of authoritative sim state
             // with the `Fixed`→`f32` hop host-side (invariant #4). Gated OFF for turret units — the
             // tank HUD already surfaces the reload ring, and its own vitals slot is future work.
-            if self.sim.world.is_alive(self.player)
-                && self.sim.world.weapon[pidx].turret_speed == 0
+            if self.sim.world.is_alive(self.player) && self.sim.world.weapon[pidx].turret_speed == 0
             {
                 let h = self.sim.world.health[pidx];
                 let w = &self.sim.world.weapon[pidx];
@@ -4637,9 +4748,9 @@ impl Game {
             if let Some(hud_state) = self.touch_hud {
                 // Re-resolve the SAME HUD-editor preset the input seam used above → identical
                 // geometry + the player-set per-control opacity for the renderer (WS-D).
-                let resolved = self
-                    .hud_layout
-                    .resolve_embodied_with_density(width, height, self.ui_scale);
+                let resolved =
+                    self.hud_layout
+                        .resolve_embodied_with_density(width, height, self.ui_scale);
                 let layout = resolved.layout;
                 let crouched = self.sim.world.is_alive(self.player)
                     && self.sim.world.posture[self.player.index as usize] == Posture::Crouched;
@@ -4796,11 +4907,20 @@ impl Game {
             .filter(|cp| cp.owner == Faction::Player)
             .count() as u32;
         let economy = gonedark_render::readout::EconomyReadout {
-            resources: self.sim.resources.get(Faction::Player).clamp(0, u32::MAX as i64) as u32,
+            resources: self
+                .sim
+                .resources
+                .get(Faction::Player)
+                .clamp(0, u32::MAX as i64) as u32,
             income_per_tick: gonedark_render::readout::income_per_tick(held_points),
         };
-        self.renderer
-            .render_readout(device, queue, view, Some(economy), /* world_dark = */ false);
+        self.renderer.render_readout(
+            device,
+            queue,
+            view,
+            Some(economy),
+            /* world_dark = */ false,
+        );
     }
 }
 
@@ -5013,11 +5133,22 @@ mod tests {
         let seeds: Vec<u64> = (0..15).map(campaign_match_seed).collect();
         for i in 0..seeds.len() {
             for j in (i + 1)..seeds.len() {
-                assert_ne!(seeds[i], seeds[j], "nodes {i} and {j} must seed distinct battles");
+                assert_ne!(
+                    seeds[i], seeds[j],
+                    "nodes {i} and {j} must seed distinct battles"
+                );
             }
         }
-        assert_eq!(campaign_match_seed(3), campaign_match_seed(3), "pure: same node, same seed");
-        assert_ne!(campaign_match_seed(0), DEFAULT_SEED, "node 0 is remixed, not the bare default");
+        assert_eq!(
+            campaign_match_seed(3),
+            campaign_match_seed(3),
+            "pure: same node, same seed"
+        );
+        assert_ne!(
+            campaign_match_seed(0),
+            DEFAULT_SEED,
+            "node 0 is remixed, not the bare default"
+        );
     }
 
     #[test]
@@ -5079,12 +5210,23 @@ mod tests {
         // Every registered mission's scene reads as a campaign mission.
         for mission in [MISSION_SEIZE, MISSION_HOLD, MISSION_PUSH] {
             let scene = Scene::for_mission(mission).expect("registered mission has a scene");
-            assert!(scene.is_campaign_mission(), "{scene:?} must gate as a campaign launch");
+            assert!(
+                scene.is_campaign_mission(),
+                "{scene:?} must gate as a campaign launch"
+            );
         }
         // Nothing else does — a skirmish or sandbox launch must never record a clear.
-        for scene in [Scene::Default, Scene::Skirmish, Scene::Duel, Scene::Infantry, Scene::MapInspect]
-        {
-            assert!(!scene.is_campaign_mission(), "{scene:?} must not gate as a campaign launch");
+        for scene in [
+            Scene::Default,
+            Scene::Skirmish,
+            Scene::Duel,
+            Scene::Infantry,
+            Scene::MapInspect,
+        ] {
+            assert!(
+                !scene.is_campaign_mission(),
+                "{scene:?} must not gate as a campaign launch"
+            );
         }
     }
 
@@ -5100,20 +5242,37 @@ mod tests {
         // `frame` constructs the observed input exactly this way (see the `observe` call site): the
         // live embodied flag, the death edge captured *before* the auto-surface flip via
         // `should_auto_surface`, and the current sim tick.
-        let step = |ob: &mut onboarding::Onboarding, embodied: bool, avatar_present: bool, tick: u64| {
-            let avatar_died = should_auto_surface(embodied, avatar_present);
-            ob.observe(onboarding::TeachInput { embodied, avatar_died, tick })
-        };
+        let step =
+            |ob: &mut onboarding::Onboarding, embodied: bool, avatar_present: bool, tick: u64| {
+                let avatar_died = should_auto_surface(embodied, avatar_present);
+                ob.observe(onboarding::TeachInput {
+                    embodied,
+                    avatar_died,
+                    tick,
+                })
+            };
 
         // A real campaign match: the teach is enabled by the scene gate `new_scene` uses.
         let mut teach = onboarding::Onboarding::new(Scene::Mission1.teaches_going_dark());
-        assert!(teach.is_enabled(), "Mission1 must enable the going-dark teach");
+        assert!(
+            teach.is_enabled(),
+            "Mission1 must enable the going-dark teach"
+        );
 
         // Tick 0 — the player goes dark (embody, avatar alive). The cost is telegraphed instantly.
-        assert_eq!(step(&mut teach, true, true, 0), Some(onboarding::TeachBeat::WentDark));
-        let p = teach.current_prompt(0).expect("WentDark prompt is live the tick it fires");
+        assert_eq!(
+            step(&mut teach, true, true, 0),
+            Some(onboarding::TeachBeat::WentDark)
+        );
+        let p = teach
+            .current_prompt(0)
+            .expect("WentDark prompt is live the tick it fires");
         assert_eq!(p.tone, PromptTone::Caution);
-        assert!(p.title.contains("GOING DARK"), "went-dark title: {:?}", p.title);
+        assert!(
+            p.title.contains("GOING DARK"),
+            "went-dark title: {:?}",
+            p.title
+        );
 
         // A few ticks embodied, no death yet — the WentDark prompt stays up, no new beat.
         assert_eq!(step(&mut teach, true, true, 30), None);
@@ -5125,9 +5284,15 @@ mod tests {
             Some(onboarding::TeachBeat::StayedTooLong),
             "an embodied death must raise the 'you stayed too long' payoff"
         );
-        let p = teach.current_prompt(90).expect("payoff prompt is live the tick it fires");
+        let p = teach
+            .current_prompt(90)
+            .expect("payoff prompt is live the tick it fires");
         assert_eq!(p.tone, PromptTone::Reflect);
-        assert!(p.title.contains("STAYED TOO LONG"), "payoff title: {:?}", p.title);
+        assert!(
+            p.title.contains("STAYED TOO LONG"),
+            "payoff title: {:?}",
+            p.title
+        );
 
         // Negative control: a debug sandbox (teach disabled by the same gate) fed the identical
         // sequence never raises a prompt — no tutorial leaks into the sandboxes.
@@ -5135,7 +5300,10 @@ mod tests {
         assert!(!sandbox.is_enabled());
         assert_eq!(step(&mut sandbox, true, true, 0), None);
         assert_eq!(step(&mut sandbox, true, false, 90), None);
-        assert!(sandbox.current_prompt(90).is_none(), "a sandbox must never teach");
+        assert!(
+            sandbox.current_prompt(90).is_none(),
+            "a sandbox must never teach"
+        );
     }
 
     #[test]
@@ -5158,8 +5326,14 @@ mod tests {
     fn base_fov_clamps_to_the_embodied_band_and_ads_always_narrows() {
         // In-band values pass through unchanged.
         assert_eq!(clamp_base_fov(90.0), Some(90.0));
-        assert_eq!(clamp_base_fov(EMBODIED_FOV_MIN_DEG), Some(EMBODIED_FOV_MIN_DEG));
-        assert_eq!(clamp_base_fov(EMBODIED_FOV_MAX_DEG), Some(EMBODIED_FOV_MAX_DEG));
+        assert_eq!(
+            clamp_base_fov(EMBODIED_FOV_MIN_DEG),
+            Some(EMBODIED_FOV_MIN_DEG)
+        );
+        assert_eq!(
+            clamp_base_fov(EMBODIED_FOV_MAX_DEG),
+            Some(EMBODIED_FOV_MAX_DEG)
+        );
         // Out of band clamps to the nearest bound (never tunnel-vision below the floor, never fisheye
         // past the ceiling).
         assert_eq!(clamp_base_fov(30.0), Some(EMBODIED_FOV_MIN_DEG));
@@ -5172,8 +5346,9 @@ mod tests {
         // widest-allowed base — so aiming down sight always zooms IN, never out, at any chosen base
         // (invariant #6: a narrower FOV reveals *less* of the world).
         assert!((EMBODIED_FOV_MIN_DEG..=EMBODIED_FOV_MAX_DEG).contains(&EMBODIED_FOV_DEG));
-        assert!(scope::ADS_FOV_DEG < EMBODIED_FOV_MIN_DEG);
-        assert!(scope::SCOPED_FOV_DEG < scope::ADS_FOV_DEG);
+        // `const` asserts: pure const comparisons, enforced at compile time on any build.
+        const _: () = assert!(scope::ADS_FOV_DEG < EMBODIED_FOV_MIN_DEG);
+        const _: () = assert!(scope::SCOPED_FOV_DEG < scope::ADS_FOV_DEG);
         // The wiring `embodied_fov_deg` rides: at hip the embodied FOV IS the base; at full ADS it
         // eases to the scoped target strictly below it — for a widened base too.
         assert_eq!(scope::zoom_fov_deg(100.0, scope::ADS_FOV_DEG, 0.0), 100.0);
@@ -5234,9 +5409,18 @@ mod tests {
         let mid = detection_markers(&[tell(0, 1, 1, 50)], false, linger)[0].alpha;
         let old = detection_markers(&[tell(0, 1, 1, 100)], false, linger)[0].alpha;
         assert_eq!(fresh, 1.0, "age 0 is fully opaque");
-        assert!(mid < fresh && mid > old, "alpha falls monotonically as the tell ages");
-        assert!((old - MIN_TELL_ALPHA).abs() < 1e-6, "fades to the floor at the window edge");
-        assert!(old > 0.0, "a last-known marker stays legible until it expires");
+        assert!(
+            mid < fresh && mid > old,
+            "alpha falls monotonically as the tell ages"
+        );
+        assert!(
+            (old - MIN_TELL_ALPHA).abs() < 1e-6,
+            "fades to the floor at the window edge"
+        );
+        assert!(
+            old > 0.0,
+            "a last-known marker stays legible until it expires"
+        );
     }
 
     /// `tell_alpha` edge cases: a zero-linger window (every present tell is in-sight) never fades, and
@@ -5244,9 +5428,17 @@ mod tests {
     #[test]
     fn tell_alpha_edge_cases() {
         assert_eq!(tell_alpha(0, 0), 1.0);
-        assert_eq!(tell_alpha(5, 0), 1.0, "zero linger → no fade (only in-sight tells exist)");
+        assert_eq!(
+            tell_alpha(5, 0),
+            1.0,
+            "zero linger → no fade (only in-sight tells exist)"
+        );
         assert_eq!(tell_alpha(0, 90), 1.0);
-        assert_eq!(tell_alpha(200, 90), MIN_TELL_ALPHA, "past the window clamps to the floor");
+        assert_eq!(
+            tell_alpha(200, 90),
+            MIN_TELL_ALPHA,
+            "past the window clamps to the floor"
+        );
     }
 
     /// End-to-end through the render geometry: command-view markers produce the fixed per-marker
@@ -5271,7 +5463,10 @@ mod tests {
     fn skirmish_scene_boots_in_command_view_with_one_player_troop() {
         let mut sim = Sim::new(DEFAULT_SEED);
         let (player, start_embodied) = seed_skirmish_scene(&mut sim, Loadout::STANDARD);
-        assert!(!start_embodied, "the skirmish boots commanding, not possessing");
+        assert!(
+            !start_embodied,
+            "the skirmish boots commanding, not possessing"
+        );
 
         // The handed-back `player` is a live Player Rifleman, order-driven (not embodied).
         let i = player.index as usize;
@@ -5312,7 +5507,10 @@ mod tests {
         let mut std_sim = Sim::new(DEFAULT_SEED);
         let (std_player, embodied, _obj) =
             seed_seize_mission_scene(&mut std_sim, Loadout::STANDARD);
-        assert!(!embodied, "the PvE mission boots commanding, not possessing");
+        assert!(
+            !embodied,
+            "the PvE mission boots commanding, not possessing"
+        );
         let mut baseline_sim = Sim::new(DEFAULT_SEED);
         let baseline = gonedark_core::scenario::seed_seize_mission(&mut baseline_sim);
         assert_eq!(
@@ -5349,8 +5547,14 @@ mod tests {
         // Standard loadout → identical to the plain seeder (no-op).
         let mut std_sim = Sim::new(DEFAULT_SEED);
         let (std_player, embodied, obj) = seed_hold_mission_scene(&mut std_sim, Loadout::STANDARD);
-        assert!(!embodied, "the PvE mission boots commanding, not possessing");
-        assert!(!obj.is_empty(), "the Hold mission attaches a live Survive objective");
+        assert!(
+            !embodied,
+            "the PvE mission boots commanding, not possessing"
+        );
+        assert!(
+            !obj.is_empty(),
+            "the Hold mission attaches a live Survive objective"
+        );
         let mut baseline_sim = Sim::new(DEFAULT_SEED);
         let baseline = gonedark_core::scenario::seed_hold_mission(&mut baseline_sim);
         assert_eq!(
@@ -5441,7 +5645,8 @@ mod tests {
 
         // Each loadout-bearing live scene paired with the un-loadout-ed `core::scenario` seed it must
         // reproduce byte-for-byte under `Loadout::STANDARD` (the default-loadout fast path).
-        let baselines: [(Scene, fn(&mut Sim)); 5] = [
+        type SeedFn = fn(&mut Sim);
+        let baselines: [(Scene, SeedFn); 5] = [
             (Scene::Mission1, |s| {
                 gonedark_core::scenario::seed_seize_mission(s);
             }),
@@ -5599,10 +5804,16 @@ mod tests {
             control_points: Vec::new(),
             projectiles: Vec::new(),
         };
-        let has_muzzle =
-            |s: &Snapshot| debug_overlay_lines(s, &terrain).iter().any(|v| v.color == COLOR_MUZZLE);
+        let has_muzzle = |s: &Snapshot| {
+            debug_overlay_lines(s, &terrain)
+                .iter()
+                .any(|v| v.color == COLOR_MUZZLE)
+        };
 
-        assert!(has_muzzle(&snap(vec![mk(0, false, true)])), "a firing unit flashes");
+        assert!(
+            has_muzzle(&snap(vec![mk(0, false, true)])),
+            "a firing unit flashes"
+        );
         assert!(
             !has_muzzle(&snap(vec![mk(1, true, true), mk(2, false, false)])),
             "a firing building and an idle unit draw no muzzle flash",
@@ -5717,7 +5928,10 @@ mod tests {
     #[test]
     fn upgrade_banner_reads_success_when_the_tier_rose() {
         let (msg, color) = upgrade_banner_message(1, 2, 400);
-        assert!(msg.contains("UPGRADED"), "a risen tier reads as success: {msg:?}");
+        assert!(
+            msg.contains("UPGRADED"),
+            "a risen tier reads as success: {msg:?}"
+        );
         assert!(msg.contains('2'), "names the new tier");
         assert_eq!(color, BANNER_OK, "success tint");
     }
@@ -5726,15 +5940,27 @@ mod tests {
     fn upgrade_banner_reads_cant_afford_when_the_tier_held() {
         // Tier unchanged → the sim rejected it (couldn't pay): tell the player the cost they were short.
         let (msg, color) = upgrade_banner_message(1, 1, 400);
-        assert!(msg.contains("NEED") && msg.contains("400"), "names the cost: {msg:?}");
+        assert!(
+            msg.contains("NEED") && msg.contains("400"),
+            "names the cost: {msg:?}"
+        );
         assert_eq!(color, BANNER_FAIL, "failure tint");
-        assert_ne!(BANNER_OK, BANNER_FAIL, "the two outcomes are visually distinct");
+        assert_ne!(
+            BANNER_OK, BANNER_FAIL,
+            "the two outcomes are visually distinct"
+        );
     }
 
     #[test]
     fn banner_alpha_fades_linearly_then_expires() {
-        assert!((banner_alpha(0, 150) - 1.0).abs() < 1e-6, "full alpha at the stamp");
-        assert!((banner_alpha(75, 150) - 0.5).abs() < 1e-6, "half way → half alpha");
+        assert!(
+            (banner_alpha(0, 150) - 1.0).abs() < 1e-6,
+            "full alpha at the stamp"
+        );
+        assert!(
+            (banner_alpha(75, 150) - 0.5).abs() < 1e-6,
+            "half way → half alpha"
+        );
         assert_eq!(banner_alpha(150, 150), 0.0, "expired at the lifetime");
         assert_eq!(banner_alpha(999, 150), 0.0, "stays expired after");
         assert_eq!(banner_alpha(0, 0), 0.0, "a zero lifetime never shows");
@@ -5948,10 +6174,16 @@ mod tests {
         // No yaw: ground points sharing world-x share screen-x; sharing world-y share screen-y.
         let (ax, _) = project(5.0, 0.0, 0.0);
         let (bx, _) = project(5.0, 18.0, 0.0);
-        assert!((ax - bx).abs() < 1e-4, "same world-x → same screen-x ({ax} vs {bx})");
+        assert!(
+            (ax - bx).abs() < 1e-4,
+            "same world-x → same screen-x ({ax} vs {bx})"
+        );
         let (_, cy) = project(0.0, 7.0, 0.0);
         let (_, dy) = project(22.0, 7.0, 0.0);
-        assert!((cy - dy).abs() < 1e-4, "same world-y → same screen-y ({cy} vs {dy})");
+        assert!(
+            (cy - dy).abs() < 1e-4,
+            "same world-y → same screen-y ({cy} vs {dy})"
+        );
         // Tilted, not straight down: a point raised in +Z reads higher up the screen than its base.
         let (_, ground_y) = project(0.0, 0.0, 0.0);
         let (_, up_y) = project(0.0, 0.0, 5.0);
@@ -6049,8 +6281,14 @@ mod tests {
     /// the player picked, not the hard-wired original.
     #[test]
     fn map_input_embody_targets_the_resolved_unit() {
-        let avatar = Entity { index: 1, generation: 0 };
-        let picked = Entity { index: 7, generation: 3 };
+        let avatar = Entity {
+            index: 1,
+            generation: 0,
+        };
+        let picked = Entity {
+            index: 7,
+            generation: 3,
+        };
         let input = InputFrame {
             embody_pressed: true,
             ..Default::default()
@@ -6253,8 +6491,17 @@ mod tests {
         let mut res = Resources::new(10_000);
         let camp = build_player_camp(&mut world, &mut res);
         let sel = selection_of(&[camp]);
-        let view = command_panel_view(&world, &sel, res.get(Faction::Player), &[UnitKind::Rifleman, UnitKind::Heavy]);
-        assert!(view.title.starts_with("CAMP"), "title names the camp: {}", view.title);
+        let view = command_panel_view(
+            &world,
+            &sel,
+            res.get(Faction::Player),
+            &[UnitKind::Rifleman, UnitKind::Heavy],
+        );
+        assert!(
+            view.title.starts_with("CAMP"),
+            "title names the camp: {}",
+            view.title
+        );
         assert!(has_line(&view, "TRAIN"), "shows a TRAIN section");
         assert!(has_line(&view, "UPGRADE"), "shows an UPGRADE section");
         assert!(has_line(&view, "Rifleman"), "lists a trainable unit");
@@ -6297,8 +6544,16 @@ mod tests {
         world.kind[unit.index as usize] = EntityKind::Unit;
         let camp = build_player_camp(&mut world, &mut res);
         let sel = selection_of(&[unit, camp]); // troop first, camp second
-        let view = command_panel_view(&world, &sel, res.get(Faction::Player), &[UnitKind::Rifleman, UnitKind::Heavy]);
-        assert!(view.title.starts_with("CAMP"), "a building in the selection wins over troops");
+        let view = command_panel_view(
+            &world,
+            &sel,
+            res.get(Faction::Player),
+            &[UnitKind::Rifleman, UnitKind::Heavy],
+        );
+        assert!(
+            view.title.starts_with("CAMP"),
+            "a building in the selection wins over troops"
+        );
     }
 
     /// Embodied suppresses tap-to-move: a pointer-down while embodied produces no `Move`.
@@ -6345,9 +6600,18 @@ mod tests {
     #[test]
     fn avatar_hit_pos_returns_the_own_shot_point_under_strict_source_gating() {
         use gonedark_core::fixed::Fixed;
-        let avatar = Entity { index: 3, generation: 1 };
-        let other = Entity { index: 9, generation: 0 };
-        let target = Entity { index: 12, generation: 2 };
+        let avatar = Entity {
+            index: 3,
+            generation: 1,
+        };
+        let other = Entity {
+            index: 9,
+            generation: 0,
+        };
+        let target = Entity {
+            index: 12,
+            generation: 2,
+        };
         let hit = Vec2::new(Fixed::from_int(7), Fixed::from_int(-3));
         let elsewhere = Vec2::new(Fixed::from_int(1), Fixed::from_int(1));
         let dmg = |source: Entity, entity: Entity, pos: Vec2| SimEvent::Damaged {
@@ -6369,7 +6633,12 @@ mod tests {
             avatar_hit_pos(
                 &[
                     dmg(other, target, elsewhere),
-                    SimEvent::Killed { entity: target, faction: Faction::Enemy, source: other, pos: elsewhere },
+                    SimEvent::Killed {
+                        entity: target,
+                        faction: Faction::Enemy,
+                        source: other,
+                        pos: elsewhere
+                    },
                     dmg(avatar, target, hit),
                 ],
                 avatar,
@@ -6399,7 +6668,14 @@ mod tests {
         // Empty stream / non-Damaged events → no hit.
         assert_eq!(avatar_hit_pos(&[], avatar, true), None);
         assert_eq!(
-            avatar_hit_pos(&[SimEvent::UnitProduced { faction: Faction::Player, pos: hit }], avatar, true),
+            avatar_hit_pos(
+                &[SimEvent::UnitProduced {
+                    faction: Faction::Player,
+                    pos: hit
+                }],
+                avatar,
+                true
+            ),
             None
         );
     }
@@ -6410,22 +6686,50 @@ mod tests {
     fn ingest_sound_echoes_captures_only_the_audio_only_gaps() {
         use gonedark_core::fixed::Fixed;
         let p = |x: i32, y: i32| Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
-        let unit = Entity { index: 1, generation: 0 };
+        let unit = Entity {
+            index: 1,
+            generation: 0,
+        };
         let mut echoes = Vec::new();
         ingest_sound_echoes(
             &mut echoes,
             &[
                 // Captured: your own reinforcement finished → a ProductionReady echo.
-                SimEvent::UnitProduced { faction: Faction::Player, pos: p(4, 4) },
+                SimEvent::UnitProduced {
+                    faction: Faction::Player,
+                    pos: p(4, 4),
+                },
                 // An enemy's production is not YOUR reinforcement bell → ignored.
-                SimEvent::UnitProduced { faction: Faction::Enemy, pos: p(5, 5) },
+                SimEvent::UnitProduced {
+                    faction: Faction::Enemy,
+                    pos: p(5, 5),
+                },
                 // A capture you did NOT lose (from != Player) → the muffled distant-capture bleed.
-                SimEvent::Captured { pos: p(9, 0), from: Faction::Enemy, to: Faction::Player },
+                SimEvent::Captured {
+                    pos: p(9, 0),
+                    from: Faction::Enemy,
+                    to: Faction::Player,
+                },
                 // A capture you LOST is already the TerritoryLost alert → not echoed here.
-                SimEvent::Captured { pos: p(1, 1), from: Faction::Player, to: Faction::Enemy },
+                SimEvent::Captured {
+                    pos: p(1, 1),
+                    from: Faction::Player,
+                    to: Faction::Enemy,
+                },
                 // Local combat is already covered by the alert HUD (TakingFire / UnitLost) → ignored.
-                SimEvent::Damaged { entity: unit, faction: Faction::Player, source: unit, amount: Fixed::from_int(3), pos: p(2, 2) },
-                SimEvent::Killed { entity: unit, faction: Faction::Player, source: unit, pos: p(2, 2) },
+                SimEvent::Damaged {
+                    entity: unit,
+                    faction: Faction::Player,
+                    source: unit,
+                    amount: Fixed::from_int(3),
+                    pos: p(2, 2),
+                },
+                SimEvent::Killed {
+                    entity: unit,
+                    faction: Faction::Player,
+                    source: unit,
+                    pos: p(2, 2),
+                },
             ],
             7,
         );
@@ -6443,13 +6747,25 @@ mod tests {
         let fade = gonedark_render::hud::FADE_TICKS;
         let p = Vec2::new(Fixed::from_int(1), Fixed::from_int(0));
         let mut echoes = vec![
-            SoundEcho { kind: SoundEchoKind::ProductionReady, pos: p, tick: 0 },
-            SoundEcho { kind: SoundEchoKind::CaptureBleed, pos: p, tick: 10 },
+            SoundEcho {
+                kind: SoundEchoKind::ProductionReady,
+                pos: p,
+                tick: 0,
+            },
+            SoundEcho {
+                kind: SoundEchoKind::CaptureBleed,
+                pos: p,
+                tick: 10,
+            },
         ];
         // Ingest at a tick where the first echo has just aged out (age == fade) but the second is
         // still live; nothing new to add.
         ingest_sound_echoes(&mut echoes, &[], fade);
-        assert_eq!(echoes.len(), 1, "the faded echo is pruned, the live one stays");
+        assert_eq!(
+            echoes.len(),
+            1,
+            "the faded echo is pruned, the live one stays"
+        );
         assert_eq!(echoes[0].tick, 10);
     }
 
@@ -6458,18 +6774,35 @@ mod tests {
         use gonedark_core::fixed::Fixed;
         let p = |x: i32, y: i32| Vec2::new(Fixed::from_int(x), Fixed::from_int(y));
         let echoes = vec![
-            SoundEcho { kind: SoundEchoKind::ProductionReady, pos: p(10, 0), tick: 0 },
-            SoundEcho { kind: SoundEchoKind::CaptureBleed, pos: p(10, 0), tick: 0 },
+            SoundEcho {
+                kind: SoundEchoKind::ProductionReady,
+                pos: p(10, 0),
+                tick: 0,
+            },
+            SoundEcho {
+                kind: SoundEchoKind::CaptureBleed,
+                pos: p(10, 0),
+                tick: 0,
+            },
         ];
         let markers = sound_echo_markers(&echoes, (0.0, 0.0), 0.0, 0);
         assert_eq!(markers.len(), 2);
         // Production ready → the reinforcement "+", full-bright.
         assert_eq!(markers[0].shape, gonedark_render::hud::SHAPE_PLUS);
-        assert_eq!([markers[0].r, markers[0].g, markers[0].b], ECHO_COLOR_PRODUCTION);
-        assert!((markers[0].alpha - 1.0).abs() < 1e-4, "fresh production echo is full alpha");
+        assert_eq!(
+            [markers[0].r, markers[0].g, markers[0].b],
+            ECHO_COLOR_PRODUCTION
+        );
+        assert!(
+            (markers[0].alpha - 1.0).abs() < 1e-4,
+            "fresh production echo is full alpha"
+        );
         // Distant capture → a dimmed ring (the visual analog of the audio muffle).
         assert_eq!(markers[1].shape, gonedark_render::hud::SHAPE_RING);
-        assert_eq!([markers[1].r, markers[1].g, markers[1].b], ECHO_COLOR_CAPTURE);
+        assert_eq!(
+            [markers[1].r, markers[1].g, markers[1].b],
+            ECHO_COLOR_CAPTURE
+        );
         assert!(
             (markers[1].alpha - ECHO_CAPTURE_ALPHA_SCALE).abs() < 1e-4,
             "the distant capture echo is muffled (dimmer): {}",
@@ -6534,18 +6867,31 @@ mod tests {
         );
         let s = r.stick.expect("the fixed stick ring is always drawn");
         // Base + radius come from the layout anchor (fixed ring), NOT the transient hud state.
-        assert_eq!((s.base_x, s.base_y), (layout.stick_base.cx, layout.stick_base.cy));
+        assert_eq!(
+            (s.base_x, s.base_y),
+            (layout.stick_base.cx, layout.stick_base.cy)
+        );
         assert_eq!(s.radius, layout.stick_base.r);
-        assert_eq!((s.thumb_x, s.thumb_y), hud.stick_thumb, "the thumb tracks the seam");
+        assert_eq!(
+            (s.thumb_x, s.thumb_y),
+            hud.stick_thumb,
+            "the thumb tracks the seam"
+        );
         assert_eq!(s.opacity, 1.0, "default profile → full opacity");
         assert!(r.fire.pressed, "held fire carries the pressed flash");
         assert!(r.crouch.active, "crouched avatar lights the Crouch toggle");
         assert!(!r.crouch.pressed);
         // Button circles pass straight through from the layout (pixels).
-        assert_eq!((r.fire.cx, r.fire.cy, r.fire.r), (layout.fire.cx, layout.fire.cy, layout.fire.r));
+        assert_eq!(
+            (r.fire.cx, r.fire.cy, r.fire.r),
+            (layout.fire.cx, layout.fire.cy, layout.fire.r)
+        );
         // Jump carries its held flash + the layout circle.
         assert!(r.jump.pressed, "held jump carries the pressed flash");
-        assert_eq!((r.jump.cx, r.jump.cy, r.jump.r), (layout.jump.cx, layout.jump.cy, layout.jump.r));
+        assert_eq!(
+            (r.jump.cx, r.jump.cy, r.jump.r),
+            (layout.jump.cx, layout.jump.cy, layout.jump.r)
+        );
         // The fire-mode button's glyph reflects the current mode (AUTO here) and lights its toggle.
         assert_eq!(
             r.fire_mode.glyph,
@@ -6560,7 +6906,10 @@ mod tests {
         // The ADS button shows for a scope unit, carries the held flash + the layout circle.
         let a = r.aim.expect("scope-capable avatar → an ADS button");
         assert!(a.pressed, "held ADS carries the pressed flash");
-        assert_eq!((a.cx, a.cy, a.r), (layout.aim.cx, layout.aim.cy, layout.aim.r));
+        assert_eq!(
+            (a.cx, a.cy, a.r),
+            (layout.aim.cx, layout.aim.cy, layout.aim.r)
+        );
 
         // Idle stick (no finger) → ring still drawn, thumb rests at the fixed centre; a scope-LESS
         // avatar (`has_scope = false`) hides ADS; SEMI mode draws the semi glyph and no toggle light.
@@ -6577,11 +6926,19 @@ mod tests {
             fire::FireMode::Semi,
             &op,
         );
-        let s2 = r2.stick.expect("the ring is drawn even with no finger down");
-        assert_eq!((s2.thumb_x, s2.thumb_y), (layout.stick_base.cx, layout.stick_base.cy),
-            "idle thumb rests at the fixed centre");
+        let s2 = r2
+            .stick
+            .expect("the ring is drawn even with no finger down");
+        assert_eq!(
+            (s2.thumb_x, s2.thumb_y),
+            (layout.stick_base.cx, layout.stick_base.cy),
+            "idle thumb rests at the fixed centre"
+        );
         assert!(!r2.crouch.active);
-        assert!(r2.aim.is_none(), "a unit with no gun-sight gets no ADS button (W2 turret gate)");
+        assert!(
+            r2.aim.is_none(),
+            "a unit with no gun-sight gets no ADS button (W2 turret gate)"
+        );
         assert_eq!(
             r2.fire_mode.glyph,
             gonedark_render::touch_controls::TouchGlyph::FireSemi,
@@ -6598,7 +6955,10 @@ mod tests {
         let dir = Vec2::new(Fixed::ONE, Fixed::ZERO);
         assert!(is_oneshot_command(&Command::Embody { entity: e }));
         assert!(is_oneshot_command(&Command::Surface { entity: e }));
-        assert!(is_oneshot_command(&Command::Move { entity: e, target: dir }));
+        assert!(is_oneshot_command(&Command::Move {
+            entity: e,
+            target: dir
+        }));
         assert!(!is_oneshot_command(&Command::Locomote { entity: e, dir }));
         assert!(!is_oneshot_command(&Command::Fire { entity: e, dir }));
     }
@@ -6656,7 +7016,10 @@ mod tests {
             (d60 - d120).abs() < tol && (d120 - d240).abs() < tol,
             "avatar speed must not scale with fps: 60={d60} 120={d120} 240={d240}"
         );
-        assert!(d60 > 7.0 && d60 < 7.6, "and the 60 Hz baseline is ~7.5 wu/s: {d60}");
+        assert!(
+            d60 > 7.0 && d60 < 7.6,
+            "and the 60 Hz baseline is ~7.5 wu/s: {d60}"
+        );
     }
 
     /// Mouse-look must not be inverted: a rightward delta (`look_dx > 0`) turns the view to the
@@ -6666,13 +7029,23 @@ mod tests {
     fn look_is_not_inverted() {
         let right = integrate_look_yaw(0.0, 10.0);
         assert!(right < 0.0, "rightward mouse decreases yaw: {right}");
-        assert!(right.sin() < 0.0, "view heading turns toward world −Y (screen right)");
+        assert!(
+            right.sin() < 0.0,
+            "view heading turns toward world −Y (screen right)"
+        );
 
         let left = integrate_look_yaw(0.0, -10.0);
         assert!(left > 0.0, "leftward mouse increases yaw: {left}");
-        assert!(left.sin() > 0.0, "view heading turns toward world +Y (screen left)");
+        assert!(
+            left.sin() > 0.0,
+            "view heading turns toward world +Y (screen left)"
+        );
 
-        assert_eq!(integrate_look_yaw(1.234, 0.0), 1.234, "no delta → yaw unchanged");
+        assert_eq!(
+            integrate_look_yaw(1.234, 0.0),
+            1.234,
+            "no delta → yaw unchanged"
+        );
     }
 
     /// Vertical look must work, be non-inverted, and clamp shy of vertical. winit screen +Y is down,
@@ -6682,8 +7055,15 @@ mod tests {
         let up = integrate_look_pitch(0.0, -10.0);
         assert!(up > 0.0, "mouse up tilts the view up (pitch +): {up}");
         let down = integrate_look_pitch(0.0, 10.0);
-        assert!(down < 0.0, "mouse down tilts the view down (pitch −): {down}");
-        assert_eq!(integrate_look_pitch(0.3, 0.0), 0.3, "no delta → pitch unchanged");
+        assert!(
+            down < 0.0,
+            "mouse down tilts the view down (pitch −): {down}"
+        );
+        assert_eq!(
+            integrate_look_pitch(0.3, 0.0),
+            0.3,
+            "no delta → pitch unchanged"
+        );
         // Clamp: a huge up/down delta saturates at ±MAX, never flipping past vertical.
         assert_eq!(integrate_look_pitch(0.0, -100_000.0), EMBODIED_PITCH_MAX);
         assert_eq!(integrate_look_pitch(0.0, 100_000.0), -EMBODIED_PITCH_MAX);
@@ -6702,7 +7082,10 @@ mod tests {
             let c = vp * Vec4::new(ahead.x, ahead.y, ahead.z, 1.0);
             c.y / c.w
         };
-        assert!(clip_y(0.0).abs() < 1e-4, "level look centres an eye-level point ahead");
+        assert!(
+            clip_y(0.0).abs() < 1e-4,
+            "level look centres an eye-level point ahead"
+        );
         assert!(
             clip_y(0.6) < clip_y(0.0) && clip_y(0.0) < clip_y(-0.6),
             "pitch up drops the point below centre, pitch down raises it: up={} level={} down={}",
@@ -6749,12 +7132,30 @@ mod tests {
     #[test]
     fn held_fire_emits_aim_matching_yaw_through_the_seam() {
         let player = test_player();
-        for &yaw in &[0.0_f32, 0.5, 1.0, 2.3, -1.2, 3.0, std::f32::consts::FRAC_PI_2] {
+        for &yaw in &[
+            0.0_f32,
+            0.5,
+            1.0,
+            2.3,
+            -1.2,
+            3.0,
+            std::f32::consts::FRAC_PI_2,
+        ] {
             let out = embodied_input_commands(
-                player, yaw, (0.0, 0.0), true, false, false, false, false, true,
+                player,
+                yaw,
+                (0.0, 0.0),
+                true,
+                false,
+                false,
+                false,
+                false,
+                true,
             );
             assert!(
-                out.commands.iter().any(|c| matches!(c, Command::Fire { .. })),
+                out.commands
+                    .iter()
+                    .any(|c| matches!(c, Command::Fire { .. })),
                 "a fire intent emits a Command::Fire",
             );
             let (ax, ay) = fire_dir_of(&out, player);
@@ -6768,9 +7169,20 @@ mod tests {
 
         // Trigger released (no fire intent) → no Fire command.
         let none = embodied_input_commands(
-            player, 1.0, (0.0, 0.0), false, false, false, false, false, true,
+            player,
+            1.0,
+            (0.0, 0.0),
+            false,
+            false,
+            false,
+            false,
+            false,
+            true,
         );
-        assert!(!none.commands.iter().any(|c| matches!(c, Command::Fire { .. })));
+        assert!(!none
+            .commands
+            .iter()
+            .any(|c| matches!(c, Command::Fire { .. })));
     }
 
     /// THE load-bearing guarantee behind the targeting report: the embodied camera's forward
@@ -6787,7 +7199,15 @@ mod tests {
             // the aim the sim will act on.
             let yaw = integrate_look_yaw(yaw, 0.0);
             let out = embodied_input_commands(
-                player, yaw, (0.0, 0.0), true, false, false, false, false, true,
+                player,
+                yaw,
+                (0.0, 0.0),
+                true,
+                false,
+                false,
+                false,
+                false,
+                true,
             );
             let (ax, ay) = fire_dir_of(&out, player);
 
@@ -6797,7 +7217,10 @@ mod tests {
             let dist = 12.0_f32;
             let vp = embodied_view_proj(ex, ey, yaw, 0.0, w, h);
             let clip = vp * Vec4::new(ex + ax * dist, ey + ay * dist, EYE_HEIGHT, 1.0);
-            assert!(clip.w > 0.0, "yaw {yaw}: the aimed point must be in front of the camera");
+            assert!(
+                clip.w > 0.0,
+                "yaw {yaw}: the aimed point must be in front of the camera"
+            );
             let (ndc_x, ndc_y) = (clip.x / clip.w, clip.y / clip.w);
             assert!(
                 ndc_x.abs() < 1e-2 && ndc_y.abs() < 1e-2,
@@ -6823,17 +7246,31 @@ mod tests {
         let aim_after_look = |look_dx: f32| {
             let yaw = integrate_look_yaw(0.0, look_dx);
             let out = embodied_input_commands(
-                player, yaw, (0.0, 0.0), true, false, false, false, false, true,
+                player,
+                yaw,
+                (0.0, 0.0),
+                true,
+                false,
+                false,
+                false,
+                false,
+                true,
             );
             fire_dir_of(&out, player)
         };
 
         // From level (yaw 0, aim +X): rightward look turns the aim toward −Y, still mostly forward.
         let (rx, ry) = aim_after_look(50.0);
-        assert!(rx > 0.0 && ry < 0.0, "rightward look aims forward-and-right (−Y): ({rx}, {ry})");
+        assert!(
+            rx > 0.0 && ry < 0.0,
+            "rightward look aims forward-and-right (−Y): ({rx}, {ry})"
+        );
         // Leftward mirrors: toward +Y.
         let (lx, ly) = aim_after_look(-50.0);
-        assert!(lx > 0.0 && ly > 0.0, "leftward look aims forward-and-left (+Y): ({lx}, {ly})");
+        assert!(
+            lx > 0.0 && ly > 0.0,
+            "leftward look aims forward-and-left (+Y): ({lx}, {ly})"
+        );
     }
 
     /// Crouch (tighter cone) at the COMPOSITION level: the real input seams feed `core::combat`. The
@@ -6921,7 +7358,10 @@ mod tests {
     fn pan_focus_moves_with_the_stick_and_scales_with_zoom() {
         // D held for the frame: focus slides +X, Y untouched.
         let (x, y) = pan_focus(0.0, 0.0, (1.0, 0.0), TOPDOWN_HALF_EXTENT, 0.1);
-        assert!(x > 0.0 && (y - 0.0).abs() < 1e-6, "D pans +X only: ({x}, {y})");
+        assert!(
+            x > 0.0 && (y - 0.0).abs() < 1e-6,
+            "D pans +X only: ({x}, {y})"
+        );
 
         // W is screen-up = −my: north is +Y.
         let (_, ny) = pan_focus(0.0, 0.0, (0.0, -1.0), TOPDOWN_HALF_EXTENT, 0.1);
@@ -6934,7 +7374,10 @@ mod tests {
         // Zoomed out (larger half-extent) sweeps more ground for the same stick + dt.
         let near = pan_focus(0.0, 0.0, (1.0, 0.0), 20.0, 0.1).0;
         let far = pan_focus(0.0, 0.0, (1.0, 0.0), 80.0, 0.1).0;
-        assert!(far > near, "pan speed scales with zoom: far {far} > near {near}");
+        assert!(
+            far > near,
+            "pan speed scales with zoom: far {far} > near {near}"
+        );
 
         // Neutral stick is a no-op.
         assert_eq!(pan_focus(3.0, 5.0, (0.0, 0.0), 40.0, 0.1), (3.0, 5.0));
@@ -6946,13 +7389,22 @@ mod tests {
     fn zoom_half_extent_is_geometric_and_clamped() {
         let start = 40.0;
         let zin = zoom_half_extent(start, 1.0);
-        assert!(zin < start, "positive scroll zooms in (smaller extent): {zin}");
+        assert!(
+            zin < start,
+            "positive scroll zooms in (smaller extent): {zin}"
+        );
         let zout = zoom_half_extent(start, -1.0);
-        assert!(zout > start, "negative scroll zooms out (larger extent): {zout}");
+        assert!(
+            zout > start,
+            "negative scroll zooms out (larger extent): {zout}"
+        );
 
         // Geometric/symmetric: one notch in then one out returns (within fp) to start.
         let roundtrip = zoom_half_extent(zin, -1.0);
-        assert!((roundtrip - start).abs() < 1e-3, "in then out round-trips: {roundtrip}");
+        assert!(
+            (roundtrip - start).abs() < 1e-3,
+            "in then out round-trips: {roundtrip}"
+        );
 
         // Clamps: a huge zoom-in floors at MIN, a huge zoom-out ceils at MAX.
         assert_eq!(zoom_half_extent(start, 100.0), CAM_HALF_EXTENT_MIN);
@@ -6971,27 +7423,56 @@ mod tests {
         // Two fingers sitting right in the move-stick ring (worst case: full deflection would result).
         let ring = (layout.stick_base.cx, layout.stick_base.cy);
         let touches = [
-            TouchSample { id: 1, x: ring.0, y: ring.1 },
-            TouchSample { id: 2, x: ring.0 + 6.0, y: ring.1 + 6.0 },
+            TouchSample {
+                id: 1,
+                x: ring.0,
+                y: ring.1,
+            },
+            TouchSample {
+                id: 2,
+                x: ring.0 + 6.0,
+                y: ring.1 + 6.0,
+            },
         ];
 
         // On the embody frame (was_embodied=false → embodied=true) the slice is emptied → neutral.
         let fed = embody_frame_touches(false, true, &touches);
-        assert!(fed.is_empty(), "the embody-transition frame suppresses the triggering fingers");
+        assert!(
+            fed.is_empty(),
+            "the embody-transition frame suppresses the triggering fingers"
+        );
         let mut tc = touch_controls::TouchControls::new();
         let out = tc.update(&layout, fed);
-        assert_eq!(out.move_axis, (0.0, 0.0), "no leaked stick deflection on the embody frame");
-        assert_eq!(out.look_delta, (0.0, 0.0), "no leaked look on the embody frame");
+        assert_eq!(
+            out.move_axis,
+            (0.0, 0.0),
+            "no leaked stick deflection on the embody frame"
+        );
+        assert_eq!(
+            out.look_delta,
+            (0.0, 0.0),
+            "no leaked look on the embody frame"
+        );
         assert!(!out.hud.stick_active, "no stick claim on the embody frame");
-        assert!(!touch_controls::has_button_edge(&out), "no leaked button edge on the embody frame");
+        assert!(
+            !touch_controls::has_button_edge(&out),
+            "no leaked button edge on the embody frame"
+        );
 
         // A steady-state embodied frame (was_embodied=true) passes the same touches straight through,
         // so the move stick claims and deflects normally.
         let fed = embody_frame_touches(true, true, &touches);
-        assert_eq!(fed.len(), 2, "an already-embodied frame passes the live touches through");
+        assert_eq!(
+            fed.len(),
+            2,
+            "an already-embodied frame passes the live touches through"
+        );
         let mut tc = touch_controls::TouchControls::new();
         let out = tc.update(&layout, fed);
-        assert!(out.hud.stick_active, "the stick claims normally off the embody frame");
+        assert!(
+            out.hud.stick_active,
+            "the stick claims normally off the embody frame"
+        );
 
         // The command view (embodied=false) is likewise untouched — the guard only fires on the flip.
         assert_eq!(embody_frame_touches(false, false, &touches).len(), 2);
@@ -7011,11 +7492,17 @@ mod tests {
         // Same world-X, different world-Y → identical screen-X.
         let (sx0, _) = clip(20.0, -30.0);
         let (sx1, _) = clip(20.0, 25.0);
-        assert!((sx0 - sx1).abs() < 1e-5, "world-X alone fixes screen-X: {sx0} vs {sx1}");
+        assert!(
+            (sx0 - sx1).abs() < 1e-5,
+            "world-X alone fixes screen-X: {sx0} vs {sx1}"
+        );
         // Same world-Y, different world-X → identical screen-Y.
         let (_, sy0) = clip(-40.0, 12.0);
         let (_, sy1) = clip(33.0, 12.0);
-        assert!((sy0 - sy1).abs() < 1e-5, "world-Y alone fixes screen-Y: {sy0} vs {sy1}");
+        assert!(
+            (sy0 - sy1).abs() < 1e-5,
+            "world-Y alone fixes screen-Y: {sy0} vs {sy1}"
+        );
     }
 
     // ---- lockstep drive seam (D27 step 4) ----
@@ -7293,7 +7780,11 @@ mod tests {
     /// dilation (the live-net loop), not a smaller submit count — the documented seam boundary.
     #[test]
     fn submit_count_decrease_holds_budget_never_under_submits() {
-        assert_eq!(submit_count(8, 3, 1), 1, "lowered delay still submits 1:1, never < budget");
+        assert_eq!(
+            submit_count(8, 3, 1),
+            1,
+            "lowered delay still submits 1:1, never < budget"
+        );
         assert_eq!(submit_count(8, 3, 4), 4);
         assert_eq!(submit_count(6, 0, 2), 2);
     }
@@ -7356,24 +7847,23 @@ mod tests {
 
         // One frame each, budget 1, empty input. Peer 0 is driven before peer 1, so peer 0 polls
         // peer 1's PREVIOUS-frame frames (a one-frame ferry lag, well inside the lead).
-        let step_frame =
-            |sim0: &mut Sim,
-             ls0: &mut Lockstep,
-             t0: &mut PairTransport,
-             s0: &mut Vec<u64>,
-             sim1: &mut Sim,
-             ls1: &mut Lockstep,
-             t1: &mut PairTransport,
-             s1: &mut Vec<u64>| {
-                drive_lockstep(sim0, ls0, Some(t0), Vec::new(), 1, |s, m| {
-                    s.step(m);
-                    s0.push(s.checksum());
-                });
-                drive_lockstep(sim1, ls1, Some(t1), Vec::new(), 1, |s, m| {
-                    s.step(m);
-                    s1.push(s.checksum());
-                });
-            };
+        let step_frame = |sim0: &mut Sim,
+                          ls0: &mut Lockstep,
+                          t0: &mut PairTransport,
+                          s0: &mut Vec<u64>,
+                          sim1: &mut Sim,
+                          ls1: &mut Lockstep,
+                          t1: &mut PairTransport,
+                          s1: &mut Vec<u64>| {
+            drive_lockstep(sim0, ls0, Some(t0), Vec::new(), 1, |s, m| {
+                s.step(m);
+                s0.push(s.checksum());
+            });
+            drive_lockstep(sim1, ls1, Some(t1), Vec::new(), 1, |s, m| {
+                s.step(m);
+                s1.push(s.checksum());
+            });
+        };
 
         // Warm up at the initial delay: the lead must hold steady at `init_delay` (pacing == budget
         // in steady state — no spurious growth before any change).
@@ -7400,8 +7890,16 @@ mod tests {
         }
 
         // The change committed identically on both peers.
-        assert_eq!(ls0.delay(), new_delay, "proposer committed the raised delay");
-        assert_eq!(ls1.delay(), new_delay, "peer committed the identical raised delay");
+        assert_eq!(
+            ls0.delay(),
+            new_delay,
+            "proposer committed the raised delay"
+        );
+        assert_eq!(
+            ls1.delay(),
+            new_delay,
+            "peer committed the identical raised delay"
+        );
         // Pacing grew BOTH peers' submit lead to cover the new delay. Without it the lead would stay
         // at `init_delay` and the peer's input would arrive too late for the post-change ticks.
         let lead0 = ls0.submit_tick() - ls0.next_tick();
@@ -7423,7 +7921,10 @@ mod tests {
         // identical to each other and to a single-Sim reference stepped the same number of empty
         // ticks. Peer 0 lags peer 1 by at most the ferry slack, so compare the common prefix.
         let n = s0.len().min(s1.len());
-        assert!(n >= 20, "the run advanced a meaningful number of ticks (got {n})");
+        assert!(
+            n >= 20,
+            "the run advanced a meaningful number of ticks (got {n})"
+        );
         assert_eq!(
             s0[..n],
             s1[..n],
@@ -7628,7 +8129,10 @@ mod tests {
         );
         // Half the reference dt → a smaller per-step fraction (slower convergence per step)...
         let half = dt_scaled_smoothing(base, 0.01, 0.02);
-        assert!(half > 0.0 && half < base, "sub-ref dt eases less per step: {half}");
+        assert!(
+            half > 0.0 && half < base,
+            "sub-ref dt eases less per step: {half}"
+        );
         // ...but two such steps retain the same fraction as one full reference step:
         // (1 - half)^2 == 1 - base. THIS is the frame-rate independence, algebraically.
         assert!(
@@ -7637,7 +8141,10 @@ mod tests {
         );
         // Double the reference dt → a larger per-step fraction, still capped below a full snap.
         let dbl = dt_scaled_smoothing(base, 0.04, 0.02);
-        assert!(dbl > base && dbl < 1.0, "super-ref dt eases more per step: {dbl}");
+        assert!(
+            dbl > base && dbl < 1.0,
+            "super-ref dt eases more per step: {dbl}"
+        );
         // Clamp: base > 1 → 1 (full reach in one step); base < 0 → 0 (hold).
         assert_eq!(dt_scaled_smoothing(2.0, 0.02, 0.02), 1.0);
         assert_eq!(dt_scaled_smoothing(-1.0, 0.02, 0.02), 0.0);
@@ -7669,10 +8176,16 @@ mod tests {
         };
         let slow = converge(30.0);
         let fast = converge(120.0);
-        assert!((slow - fast).abs() < 1e-3, "30fps {slow} vs 120fps {fast} diverge");
+        assert!(
+            (slow - fast).abs() < 1e-3,
+            "30fps {slow} vs 120fps {fast} diverge"
+        );
         // Both match the closed form: target * (1 - (1 - base)^(T / ref_dt)).
         let expected = 10.0 * (1.0 - (1.0_f32 - base).powf(total / ref_dt));
-        assert!((fast - expected).abs() < 1e-3, "got {fast}, want {expected}");
+        assert!(
+            (fast - expected).abs() < 1e-3,
+            "got {fast}, want {expected}"
+        );
     }
 
     #[test]
@@ -7771,19 +8284,29 @@ mod tests {
     #[test]
     fn overlay_for_surface_maps_each_surface() {
         // Playing → no overlay.
-        assert_eq!(overlay_for_surface(&ShellSurface::Playing, true), Overlay::None);
+        assert_eq!(
+            overlay_for_surface(&ShellSurface::Playing, true),
+            Overlay::None
+        );
         // Paused → the pause overlay, carrying the single-player flag through for the copy.
         assert_eq!(
             overlay_for_surface(&ShellSurface::Paused, true),
-            Overlay::Paused { single_player: true }
+            Overlay::Paused {
+                single_player: true
+            }
         );
         assert_eq!(
             overlay_for_surface(&ShellSurface::Paused, false),
-            Overlay::Paused { single_player: false }
+            Overlay::Paused {
+                single_player: false
+            }
         );
         // Reconnect prompt: stalled vs desynced map to the prompt severity.
         assert_eq!(
-            overlay_for_surface(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting), true),
+            overlay_for_surface(
+                &ShellSurface::ReconnectPrompt(LinkState::Reconnecting),
+                true
+            ),
             Overlay::ReconnectPrompt { desynced: false }
         );
         assert_eq!(
@@ -7809,7 +8332,13 @@ mod tests {
             "the pause key closes the menu while paused"
         );
         // An ended match: its summary owns the screen (Dismiss-only), never re-pausable.
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        let summary = assemble_summary(
+            &[],
+            0,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         assert_eq!(pause_toggle_action(&ShellSurface::Ended(summary)), None);
         // A reconnect prompt is dismissed by its own Resume/leave buttons, not the pause key.
         assert_eq!(
@@ -7827,17 +8356,36 @@ mod tests {
     /// because the host frees the cursor / freezes input on the truthy branch.
     #[test]
     fn overlay_active_is_true_for_every_non_playing_surface() {
-        assert!(!overlay_active(&ShellSurface::Playing), "playing has no overlay");
+        assert!(
+            !overlay_active(&ShellSurface::Playing),
+            "playing has no overlay"
+        );
         assert!(overlay_active(&ShellSurface::Paused));
-        assert!(overlay_active(&ShellSurface::ReconnectPrompt(LinkState::Reconnecting)));
-        assert!(overlay_active(&ShellSurface::ReconnectPrompt(LinkState::Desynced)));
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        assert!(overlay_active(&ShellSurface::ReconnectPrompt(
+            LinkState::Reconnecting
+        )));
+        assert!(overlay_active(&ShellSurface::ReconnectPrompt(
+            LinkState::Desynced
+        )));
+        let summary = assemble_summary(
+            &[],
+            0,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         assert!(overlay_active(&ShellSurface::Ended(summary)));
     }
 
     #[test]
     fn overlay_for_surface_ended_carries_the_summary() {
-        let summary = assemble_summary(&[], 1234, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        let summary = assemble_summary(
+            &[],
+            1234,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         match overlay_for_surface(&ShellSurface::Ended(summary.clone()), true) {
             Overlay::Summary(s) => assert_eq!(s, summary),
             other => panic!("Ended must map to Overlay::Summary, got {other:?}"),
@@ -7849,14 +8397,30 @@ mod tests {
     /// result, never `None` (the reported "dismiss button does nothing" path).
     #[test]
     fn overlay_click_action_maps_each_slot() {
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        let summary = assemble_summary(
+            &[],
+            0,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         // Pause: slot 0 resumes, slot 1 surrenders (single-player flag is irrelevant to the action).
         assert_eq!(
-            overlay_click_action(&Overlay::Paused { single_player: true }, 0),
+            overlay_click_action(
+                &Overlay::Paused {
+                    single_player: true
+                },
+                0
+            ),
             Some(OverlayClick::Session(SessionAction::Resume))
         );
         assert_eq!(
-            overlay_click_action(&Overlay::Paused { single_player: false }, 1),
+            overlay_click_action(
+                &Overlay::Paused {
+                    single_player: false
+                },
+                1
+            ),
             Some(OverlayClick::Session(SessionAction::Surrender))
         );
         // Reconnect prompt: same Resume / leave vocabulary.
@@ -7880,7 +8444,12 @@ mod tests {
         // No overlay, and out-of-range slots, resolve to nothing (never a wrong action).
         assert_eq!(overlay_click_action(&Overlay::None, 0), None);
         assert_eq!(
-            overlay_click_action(&Overlay::Paused { single_player: true }, 2),
+            overlay_click_action(
+                &Overlay::Paused {
+                    single_player: true
+                },
+                2
+            ),
             None
         );
     }
@@ -7892,7 +8461,13 @@ mod tests {
     /// slot 0) and the secondary (HUB/leave, slot 1).
     #[test]
     fn overlay_click_resolves_summary_buttons_at_their_centers() {
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        let summary = assemble_summary(
+            &[],
+            0,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         let overlay = overlay_for_surface(&ShellSurface::Ended(summary), true);
         // The primary (REMATCH) button's center, taken from the renderer's own layout.
         let primary = gonedark_render::overlay::overlay_quads(&overlay)
@@ -7900,7 +8475,11 @@ mod tests {
             .find(|q| q.role == gonedark_render::overlay::QuadRole::ButtonPrimary)
             .expect("summary draws a primary REMATCH button");
         let slot = gonedark_render::overlay::button_slot_at(&overlay, primary.cx, primary.cy);
-        assert_eq!(slot, Some(0), "the primary button center hit-tests to slot 0");
+        assert_eq!(
+            slot,
+            Some(0),
+            "the primary button center hit-tests to slot 0"
+        );
         assert_eq!(
             overlay_click_action(&overlay, slot.unwrap()),
             Some(OverlayClick::Rematch),
@@ -7912,7 +8491,11 @@ mod tests {
             .find(|q| q.role == gonedark_render::overlay::QuadRole::Button)
             .expect("summary draws a secondary HUB button");
         let slot2 = gonedark_render::overlay::button_slot_at(&overlay, secondary.cx, secondary.cy);
-        assert_eq!(slot2, Some(1), "the secondary button center hit-tests to slot 1");
+        assert_eq!(
+            slot2,
+            Some(1),
+            "the secondary button center hit-tests to slot 1"
+        );
         assert_eq!(
             overlay_click_action(&overlay, slot2.unwrap()),
             Some(OverlayClick::Dismiss),
@@ -7940,7 +8523,10 @@ mod tests {
         assert_eq!(pixel_to_ndc(800.0, 600.0, w, h), (1.0, -1.0));
         // A degenerate zero-area viewport floors the divisor at 1 — finite, never NaN.
         let (nx, ny) = pixel_to_ndc(0.0, 0.0, 0, 0);
-        assert!(nx.is_finite() && ny.is_finite(), "zero viewport must not divide by zero");
+        assert!(
+            nx.is_finite() && ny.is_finite(),
+            "zero viewport must not divide by zero"
+        );
     }
 
     /// End-to-end the Android/desktop leave-to-title tap in PIXEL space (the seam the JNI
@@ -7951,7 +8537,13 @@ mod tests {
     #[test]
     fn pixel_tap_on_hub_resolves_to_dismiss() {
         let (w, h) = (1280u32, 720u32);
-        let summary = assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads());
+        let summary = assemble_summary(
+            &[],
+            0,
+            MatchOutcome::Draw,
+            EndReason::Surrender,
+            &empty_reads(),
+        );
         let overlay = overlay_for_surface(&ShellSurface::Ended(summary), true);
         // The drawn HUB (secondary) button center in NDC, mapped back to a pixel tap — that's the
         // leave-to-title action now (the primary button is REMATCH).
@@ -7972,7 +8564,10 @@ mod tests {
         );
         // A tap in the top-left pixel corner misses every button.
         let (cnx, cny) = pixel_to_ndc(0.0, 0.0, w, h);
-        assert_eq!(gonedark_render::overlay::button_slot_at(&overlay, cnx, cny), None);
+        assert_eq!(
+            gonedark_render::overlay::button_slot_at(&overlay, cnx, cny),
+            None
+        );
     }
 
     /// End-to-end the reconnect wire-up as `frame` runs it (minus the GPU glue): a confirmed desync
@@ -7986,7 +8581,13 @@ mod tests {
         let mut shell = InSessionShell::new(/* single_player = */ false);
         shell.apply(
             SessionAction::Pause,
-            &assemble_summary(&[], 0, MatchOutcome::Draw, EndReason::Surrender, &empty_reads()),
+            &assemble_summary(
+                &[],
+                0,
+                MatchOutcome::Draw,
+                EndReason::Surrender,
+                &empty_reads(),
+            ),
         );
         assert!(shell.is_paused());
 
@@ -8043,8 +8644,13 @@ mod tests {
                         EndStateRead::default(),
                         EndStateRead::default(),
                     ];
-                    let summary =
-                        assemble_summary(&events, sim.tick_count(), MatchOutcome::Draw, EndReason::Surrender, &reads);
+                    let summary = assemble_summary(
+                        &events,
+                        sim.tick_count(),
+                        MatchOutcome::Draw,
+                        EndReason::Surrender,
+                        &reads,
+                    );
                     // Toggle pause/resume to walk transitions; surrender near the end.
                     if t == 10 {
                         shell.apply(SessionAction::Pause, &summary);
@@ -8239,7 +8845,10 @@ mod tests {
                 any_moved = true;
             }
         }
-        assert!(any_moved, "the commander should have moved its units off their spawn");
+        assert!(
+            any_moved,
+            "the commander should have moved its units off their spawn"
+        );
 
         // 2. It reinforced: more enemy units alive than it started with (camp produced from income).
         let end_count = enemy_unit_positions(&sim).len();
@@ -8265,6 +8874,10 @@ mod tests {
             }
             stream
         }
-        assert_eq!(run(), run(), "commander-driven checksum stream must be reproducible");
+        assert_eq!(
+            run(),
+            run(),
+            "commander-driven checksum stream must be reproducible"
+        );
     }
 }

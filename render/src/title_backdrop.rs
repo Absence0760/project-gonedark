@@ -95,7 +95,11 @@ pub fn backdrop_view_proj(time: f32, cursor: [f32; 2], aspect: f32) -> [[f32; 4]
 /// drift apart.
 fn camera_matrix(time: f32, cursor: [f32; 2], aspect: f32) -> ([[f32; 4]; 4], [f32; 3]) {
     let eye = camera_eye(time, cursor);
-    let aspect = if aspect.is_finite() && aspect > 1e-3 { aspect } else { 1.0 };
+    let aspect = if aspect.is_finite() && aspect > 1e-3 {
+        aspect
+    } else {
+        1.0
+    };
     let proj = perspective_rh_zo(FOVY, aspect, NEAR, FAR);
     let view = look_at_rh(eye, TARGET, [0.0, 1.0, 0.0]);
     (mat4_mul(proj, view), eye)
@@ -239,12 +243,20 @@ struct EmberInstance {
 
 /// The ember billboard quad: two triangles in `[-1, 1]²`.
 const EMBER_QUAD: [EmberCorner; 6] = [
-    EmberCorner { corner: [-1.0, -1.0] },
-    EmberCorner { corner: [1.0, -1.0] },
+    EmberCorner {
+        corner: [-1.0, -1.0],
+    },
+    EmberCorner {
+        corner: [1.0, -1.0],
+    },
     EmberCorner { corner: [1.0, 1.0] },
-    EmberCorner { corner: [-1.0, -1.0] },
+    EmberCorner {
+        corner: [-1.0, -1.0],
+    },
     EmberCorner { corner: [1.0, 1.0] },
-    EmberCorner { corner: [-1.0, 1.0] },
+    EmberCorner {
+        corner: [-1.0, 1.0],
+    },
 ];
 
 /// A tiny deterministic LCG yielding `f32` in `[0, 1)` — so the skyline + ember layouts are a fixed,
@@ -262,12 +274,30 @@ impl Lcg {
 fn unit_cube() -> Vec<CubeVertex> {
     // (normal, 4 CCW corners) per face.
     let faces: [([f32; 3], [[i32; 3]; 4]); 6] = [
-        ([0.0, 0.0, 1.0], [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]]),
-        ([0.0, 0.0, -1.0], [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, 1, -1]]),
-        ([1.0, 0.0, 0.0], [[1, -1, 1], [1, -1, -1], [1, 1, -1], [1, 1, 1]]),
-        ([-1.0, 0.0, 0.0], [[-1, -1, -1], [-1, -1, 1], [-1, 1, 1], [-1, 1, -1]]),
-        ([0.0, 1.0, 0.0], [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1]]),
-        ([0.0, -1.0, 0.0], [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]]),
+        (
+            [0.0, 0.0, 1.0],
+            [[-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1]],
+        ),
+        (
+            [0.0, 0.0, -1.0],
+            [[1, -1, -1], [-1, -1, -1], [-1, 1, -1], [1, 1, -1]],
+        ),
+        (
+            [1.0, 0.0, 0.0],
+            [[1, -1, 1], [1, -1, -1], [1, 1, -1], [1, 1, 1]],
+        ),
+        (
+            [-1.0, 0.0, 0.0],
+            [[-1, -1, -1], [-1, -1, 1], [-1, 1, 1], [-1, 1, -1]],
+        ),
+        (
+            [0.0, 1.0, 0.0],
+            [[-1, 1, 1], [1, 1, 1], [1, 1, -1], [-1, 1, -1]],
+        ),
+        (
+            [0.0, -1.0, 0.0],
+            [[-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1]],
+        ),
     ];
     let mut v = Vec::with_capacity(36);
     for (n, quad) in faces {
@@ -839,7 +869,10 @@ mod tests {
     #[test]
     fn parallax_centered_cursor_is_zero() {
         let o = parallax_offset([0.0, 0.0], PARALLAX_STRENGTH);
-        assert!(o[0].abs() < 1e-6 && o[1].abs() < 1e-6, "centred → ~0, got {o:?}");
+        assert!(
+            o[0].abs() < 1e-6 && o[1].abs() < 1e-6,
+            "centred → ~0, got {o:?}"
+        );
     }
 
     #[test]
@@ -861,7 +894,10 @@ mod tests {
         // Inside [-1,1] the offset tracks the cursor proportionally and keeps its sign (the camera
         // later applies it opposite, but the offset itself follows the cursor).
         let o = parallax_offset([0.5, -0.25], 1.0);
-        assert!((o[0] - 0.5).abs() < 1e-6 && (o[1] + 0.25).abs() < 1e-6, "got {o:?}");
+        assert!(
+            (o[0] - 0.5).abs() < 1e-6 && (o[1] + 0.25).abs() < 1e-6,
+            "got {o:?}"
+        );
     }
 
     // ---- view-projection ----
@@ -877,7 +913,10 @@ mod tests {
         ];
         for (t, c, a) in cases {
             let m = backdrop_view_proj(t, c, a);
-            assert!(finite_mat(&m), "non-finite matrix for (t={t}, c={c:?}, a={a})");
+            assert!(
+                finite_mat(&m),
+                "non-finite matrix for (t={t}, c={c:?}, a={a})"
+            );
         }
     }
 
@@ -886,7 +925,10 @@ mod tests {
         // A zero / non-finite aspect must not produce NaNs/Inf (it falls back to 1.0).
         for a in [0.0f32, -1.0, f32::NAN, f32::INFINITY] {
             let m = backdrop_view_proj(2.0, [0.2, 0.3], a);
-            assert!(finite_mat(&m), "non-finite matrix for degenerate aspect {a}");
+            assert!(
+                finite_mat(&m),
+                "non-finite matrix for degenerate aspect {a}"
+            );
         }
     }
 
@@ -898,7 +940,10 @@ mod tests {
         let square = backdrop_view_proj(0.0, [0.0, 0.0], 1.0);
         // The first row carries the aspect-dependent X scale; it must change.
         let changed = (0..4).any(|c| (wide[c][0] - square[c][0]).abs() > 1e-4);
-        assert!(changed, "aspect did not change the projection (stretch bug)");
+        assert!(
+            changed,
+            "aspect did not change the projection (stretch bug)"
+        );
     }
 
     #[test]
@@ -927,7 +972,10 @@ mod tests {
         let p = perspective_rh_zo(FOVY, 1.6, NEAR, FAR);
         assert!(finite_mat(&p));
         // X scale = f/aspect, Y scale = f → wider aspect shrinks the X term below Y.
-        assert!(p[0][0] < p[1][1], "x scale must be f/aspect < f for aspect>1");
+        assert!(
+            p[0][0] < p[1][1],
+            "x scale must be f/aspect < f for aspect>1"
+        );
     }
 
     #[test]
@@ -943,7 +991,10 @@ mod tests {
                 tv[r] += view[j][r] * TARGET[j];
             }
         }
-        assert!(tv[2] < 0.0, "target should be in front of the camera (−Z), got {tv:?}");
+        assert!(
+            tv[2] < 0.0,
+            "target should be in front of the camera (−Z), got {tv:?}"
+        );
     }
 
     // ---- geometry sanity ----
@@ -954,7 +1005,10 @@ mod tests {
         assert_eq!(v.len(), 36, "12 triangles");
         for cv in &v {
             assert!(cv.pos.iter().chain(&cv.normal).all(|c| c.is_finite()));
-            assert!(cv.pos.iter().all(|c| c.abs() <= 1.0 + 1e-6), "cube spans [-1,1]");
+            assert!(
+                cv.pos.iter().all(|c| c.abs() <= 1.0 + 1e-6),
+                "cube spans [-1,1]"
+            );
             let n = (cv.normal[0].powi(2) + cv.normal[1].powi(2) + cv.normal[2].powi(2)).sqrt();
             assert!((n - 1.0).abs() < 1e-6, "unit normal");
         }
@@ -968,7 +1022,11 @@ mod tests {
         assert_eq!(a.len(), b.len());
         assert!(!a.is_empty());
         for (x, y) in a.iter().zip(&b) {
-            assert_eq!(bytemuck::bytes_of(x), bytemuck::bytes_of(y), "skyline must be deterministic");
+            assert_eq!(
+                bytemuck::bytes_of(x),
+                bytemuck::bytes_of(y),
+                "skyline must be deterministic"
+            );
             assert!(finite_mat(&x.model) && x.tint.iter().all(|c| c.is_finite()));
             // Box base sits on the ground (translation y == half-height).
             assert!(x.model[3][1] > 0.0, "tower stands above the ground plane");
@@ -978,9 +1036,20 @@ mod tests {
         assert_eq!(e1.len(), e2.len());
         assert!(!e1.is_empty());
         for (x, y) in e1.iter().zip(&e2) {
-            assert_eq!(bytemuck::bytes_of(x), bytemuck::bytes_of(y), "embers must be deterministic");
-            assert!(x.anchor_phase.iter().chain(&x.params).all(|c| c.is_finite()));
-            assert!(x.params[0] > 0.0 && x.params[2] > 0.0, "positive size + rise range");
+            assert_eq!(
+                bytemuck::bytes_of(x),
+                bytemuck::bytes_of(y),
+                "embers must be deterministic"
+            );
+            assert!(x
+                .anchor_phase
+                .iter()
+                .chain(&x.params)
+                .all(|c| c.is_finite()));
+            assert!(
+                x.params[0] > 0.0 && x.params[2] > 0.0,
+                "positive size + rise range"
+            );
         }
     }
 
