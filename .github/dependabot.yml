@@ -24,6 +24,17 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
+    ignore:
+      # wgpu/naga MAJORS are never independently adoptable: egui-wgpu pins its own wgpu
+      # major (0.35 → ^29), and the app hands its shared wgpu::Device into
+      # egui_wgpu::Renderer (app/src/shell/egui_shell.rs) — two wgpu majors can't
+      # interoperate, so an automated major PR is red by construction (see #11, wgpu 30).
+      # Bump wgpu manually, in lockstep with the egui release that supports the new major.
+      # Minor/patch bumps keep flowing through the wgpu group below.
+      - dependency-name: "wgpu"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "naga"
+        update-types: ["version-update:semver-major"]
     groups:
       # The wgpu + naga render stack versions in lockstep — group so a bump can't ship half.
       wgpu:
