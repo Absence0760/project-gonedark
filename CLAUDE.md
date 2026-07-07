@@ -167,6 +167,10 @@ Do not "improve" past them without the user explicitly reopening the decision.
   (sim/netcode, PAL, embodiment). CI enforces the floor: `test.yml` runs the workspace
   suite, `determinism.yml` runs `core` tests across the arch matrix.
 
+## Merging & branch protection
+
+`main` follows the estate "sealed main + CI gate" standard: every change reaches `origin/main` through a PR — **no direct pushes** (enforced on admins, including the owner). Merging requires a green **`CI gate`** status check — the single required check, an aggregator job present in each functional CI workflow that `needs:` that workflow's jobs. There are **0 required approvals** — a green CI is the merge gate, not a human sign-off. Force-pushes, branch deletion, and unresolved conversations are blocked; history is linear. Commit locally per-piece, but land via a CI-gated PR.
+
 ## Engine code conventions
 
 - **Language: Rust** (`decisions.md` D10). Renderer via `wgpu` (native

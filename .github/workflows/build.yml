@@ -162,3 +162,23 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: cargo ndk -t arm64-v8a build -p gonedark-pal-android
+
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [checks, graphics-build, android-build]
+    steps:
+      - name: Require every upstream job to have passed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS_JSON"
+          bad=$(echo "$NEEDS_JSON" | jq -r \
+            'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "\(.key)=\(.value.result)"')
+          if [ -n "$bad" ]; then
+            echo "::error::CI gate failing — upstream jobs did not pass:"
+            echo "$bad"
+            exit 1
+          fi
+          echo "All upstream jobs passed."
