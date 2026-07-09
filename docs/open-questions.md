@@ -889,3 +889,41 @@ an afternoon; the kill counter is real plumbing with an unresolved "what is 100%
 question that only a concrete mission design can answer. Cross-link:
 [`pve-campaign.md`](pve-campaign.md) (objective system), invariant #6
 ([`game-design.md`](game-design.md) §6).
+
+## Q31 — Going-dark team fairness: shared vision or independent fog? <a id="q31--going-dark-team-fairness"></a>
+
+Opened by the team-mode design pass ([D131](decisions.md),
+[`plans/team-mode-plan.md`](plans/team-mode-plan.md) §5). In 1v1, going dark costs *you* the
+strategic map. In a team, a teammate can see the battlefield — so does going dark still cost
+anything, or does the team become your eyes and dissolve the tension?
+
+| Option | For | Against |
+|---|---|---|
+| **(a) Shared team vision, never shared command** (the lean) | Genre-standard; lets teammates *warn* you; keeps the team a team. The diver still can't *re-command* their own force mid-dive (invariant #3) — pings arrive on the *alert* channel, not as a map reveal (invariant #6), so going dark still costs **control**, not just sight | A teammate seeing your sector softens the *informational* sting of diving; the cost is now "you can't act," not "you're blind" |
+| **(b) Independent per-player fog** | Going dark stays maximally personal — nobody is your eyes | Fights the whole point of a *team*; no coordinated cover; likely un-fun and un-genre |
+
+**Why it matters:** invariant #6 — *every loss reads "I dove at the wrong moment," never "the game
+robbed me."* The lean (a) keeps that: the team can shout, only you can act, and you're not there.
+Cross-link: [`modes.md`](modes.md) §4d, [`plans/team-mode-plan.md`](plans/team-mode-plan.md) §5.
+
+**Current lean:** **(a)** — shared vision without shared command; revisit if playtests show diving
+carries no real cost in teams.
+
+## Q32 — Team random-army distribution rule <a id="q32--team-random-army-distribution"></a>
+
+Opened by [D130](decisions.md)/[D131](decisions.md). The 1v1 ranked anti-mirror guard is **settled**
+(never US-vs-US by random draw). Its `2N`-seat generalization for team ranked is open: given `N`
+players per side drawn from the roster, what is fair?
+
+| Option | For | Against |
+|---|---|---|
+| **(a) No duplicate armies within a team** | Forces per-team variety | Impossible until the roster ≥ `N`; degenerate at two armies |
+| **(b) Balanced per side, sides mirrored** | Each side gets the same army *mix* — provably fair by construction | Removes asymmetry entirely; the two armies are meant to *differ* ([`factions.md`](factions.md)) |
+| **(c) Free random per seat, only the 1v1 anti-mirror survives** | Simplest; matches [D130](decisions.md) as-is | Says nothing about team composition fairness at larger sizes |
+
+**Why it matters:** the same fairness contract as [D130](decisions.md), scaled — a random draw must
+never seat a team into a structural disadvantage. Only a concrete roster size (> 2) makes the choice
+real. Cross-link: [`plans/team-mode-plan.md`](plans/team-mode-plan.md) §7, [`factions.md`](factions.md).
+
+**Current lean:** **defer** — the 1v1 case ships under [D130](decisions.md); pick the team rule when
+a larger roster and the team mode both exist.

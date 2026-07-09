@@ -5460,3 +5460,61 @@ unchanged (`76f33d570df8e3ba`); a fresh model regen diffs clean (D124). **Note:*
 still draws a shared rifle mesh for *every* army (a pre-existing WS-D host-plumbing gap, not a regression
 here) — the WW2 viewmodels are routed + validated but not yet drawn embodied. Files: `core/src/gunsmith.rs`,
 `render/src/{lib,mesh}.rs`, `tools/models/gen_models.py`, `assets/models/**`.
+
+## D130 — PvP army selection is a per-queue policy: Ranked randomizes (anti-mirror), Quick/Custom pick
+
+**Status: design locked; ranked-random path unbuilt (rides the Phase 3 handshake).** Refines
+[`modes.md`](modes.md) §4a. Army selection stops being one blanket "pick before queueing for every
+queue" rule and becomes a **per-queue policy**, exactly paralleling the per-queue *map* policy §4b
+already has:
+
+- **Quick / Custom** — the player picks their army; mirror matchups (US vs US) stay legal because
+  [D71](decisions.md) keeps armies inside the fairness band. **Unchanged.**
+- **Ranked** — the army is **assigned randomly**, not picked. The competitive test is *can you
+  command and fight*, not *did you pre-pick the flavour you drill best*; randomization also denies
+  army-targeting the pre-game meta.
+- **Anti-mirror guard.** A random 1v1 ranked assignment must never hand both players the same army.
+  The assignment is a **pure, seed-driven, unit-tested seam** riding the match-setup handshake seed
+  (identical on every peer — the deterministic path skirmish config already uses, not sim state, so
+  no checksum surface: invariants #1/#7).
+
+**Why:** this supersedes §4a's "pick before queueing / mirrors always legal / no draft-ban while the
+roster is two armies" framing *for ranked only*, at the player's direction. It keeps the honest,
+fairness-bounded model everywhere else. **Honest caveat:** with today's two-army roster (US/FR),
+"random + anti-mirror" in 1v1 is degenerate — always US-vs-FR (the only non-mirror pairing) — so it
+is genuinely random only once a third army lands ([`factions.md`](factions.md) deferred). We build
+the guard now anyway, because it is a few lines of tested pure logic and makes the third-army day a
+no-op. Supersedes part of §4a; the team-mode generalization of the distribution rule is
+[Q32](open-questions.md). Files (when built): the match-setup handshake seam + its tests; doc:
+`docs/modes.md` §4a.
+
+## D131 — Team mode is multi-commander, never split-role; the pillar scales, it does not reopen
+
+**Status: design pass opened; nothing built.** At the player's direction, PvP gains a team mode
+(target **5v5**, ramped from 2v2) — the first PvP surface that touches the *core premise*, so it
+gets a full design pass ([`plans/team-mode-plan.md`](plans/team-mode-plan.md)), not a feature
+ticket. The load-bearing decision, locked here:
+
+**Every player in a team is a full "does both jobs" player** — commands their own sub-force *and*
+embodies their own units. There is **no dedicated commander and no dedicated soldiers.** The team is
+`N` such players sharing one battlefield, `N` sectors, and one win condition; coordination is
+social/positional, not a shared unit pool or purse.
+
+**Why:** the FPS/RTS-hybrid graveyard ([`positioning/positioning.md`](positioning/positioning.md) —
+Natural Selection 2, Savage, Nuclear Dawn, **Eximius**, Silica) died from one cause: **splitting the
+two jobs across different players** — the commander seat never fills, the grunts ignore orders. The
+game's entire competitive moat is that it *deletes that failure mode by construction* (invariants #3
+and #5). A naive 5v5 (1 commander + 4 soldiers) **is** Eximius and would throw the moat away.
+Multi-commander is the only model that scales to a team without reopening the pillar: the
+divided-attention tension survives per-player, and gains a team-coordination axis on top. Corollary
+rules locked with it: **shared team vision, never shared command** (a teammate sees your sector,
+never drives your units — invariant #3); going dark still costs the diver *control*, not just sight,
+and teammate pings arrive on the *alert* channel, never as a map reveal (invariant #6). Determinism
+is untouched — a team match is still seed + per-tick command log; only lockstep *scale/topology*
+(`2N` peers) and the *team* unit budget on mid-range silicon change (both real Phase-3+ work). The
+draft/ban the request asked for maps to **army (per [D130](decisions.md)) + a new fairness-bounded
+doctrine layer**, not heroes (the game has none). Open sub-forks: [Q31](open-questions.md)
+(going-dark team fairness), [Q32](open-questions.md) (team random-army distribution), doctrine
+vocabulary, team rating ([Q29](open-questions.md) extension), `2N` net topology, team unit budget.
+Does **not** reopen [D58](decisions.md) (PvE-first) — this is the last PvP fast-follow surface. Docs:
+`docs/plans/team-mode-plan.md`, `docs/modes.md` §4, `docs/positioning/positioning.md`.

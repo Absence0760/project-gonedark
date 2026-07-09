@@ -94,7 +94,11 @@ soft per-stat tilt, or a hard StarCraft-style divergence) are the open fork in [
   framing: the campaign is played **US-side**, with the **French Army as one OPFOR** among the PvE
   threats — so factions debut in PvE (no cross-play fairness pressure yet, [Q17](open-questions.md))
   and graduate to PvP later. The PvP army-selection surface built on this roster is
-  [`modes.md`](modes.md) §4a — pick-before-queue, no draft/ban while the roster is two armies.
+  [`modes.md`](modes.md) §4a — a **per-queue policy** ([D130](decisions.md)): player-pick in
+  quick/custom (mirrors legal), **random assignment in ranked** (1v1 anti-mirror guard). A
+  draft/ban surface exists only for the specced **team mode** (§4d,
+  [`plans/team-mode-plan.md`](plans/team-mode-plan.md)), over army + a future doctrine layer — and a
+  meaningful army draft still needs a roster larger than two (the deferred third army above).
 - **Balance ([Q18](open-questions.md)).** Do the **lethal-speed re-tune of the shared archetypes
   first**, *then* tilt them per faction — balance the skeleton once, against the harness, before adding
   per-faction variance on top. Re-tuning twice (before and after factions) is wasted measurement.

@@ -93,6 +93,12 @@ seat to go unfilled, no grunts to ignore orders — your army is a literal execu
 last command (invariant #3), and you're the one who dives. The thing that killed the genre
 is a multiplayer-role problem we don't have.
 
+> **The team mode does not walk back into this.** When a cooperative team mode was specced
+> ([D131](../decisions.md), [`plans/team-mode-plan.md`](../plans/team-mode-plan.md)), the
+> non-negotiable was that **every player is a full command-and-embody player** — `N` mini-commanders
+> sharing a battlefield, *never* one commander plus soldiers. That is precisely a naive 5v5 = Eximius,
+> and it is rejected by construction. The moat scales; it is not reopened.
+
 > **Take:** the fantasy is real and under-served — people *want* command-and-embody. **Avoid:**
 > never split the two roles across players. The PvP pillar (Phase 3) must stay
 > *symmetric* — each player is their own commander-and-avatar — not asymmetric commander-vs-grunts.
