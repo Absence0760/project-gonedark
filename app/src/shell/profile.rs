@@ -154,59 +154,71 @@ pub(crate) fn profile_ui(ui: &mut egui::Ui, profile: &mut ProfileState) -> Optio
     use egui::{RichText, TextEdit};
     let mut action = None;
 
-    over_backdrop_screen(ui, "profile", |ui| {
+    over_backdrop_screen_responsive(ui, "profile", |ui| {
         screen_banner(ui, "PROFILE", 110.0);
 
-        // Left-anchor the identity/record body to one margin (banner + footer stay centred).
-        ui.vertical(|ui| {
-            section_label(ui, "IDENTITY");
-            egui::Grid::new("profile.identity")
-                .num_columns(2)
-                .min_col_width(96.0)
-                .spacing([16.0, 10.0])
-                .show(ui, |ui| {
-                    ui.label(RichText::new("Callsign").color(BONE).size(TYPE_BODY));
-                    ui.add(
-                        TextEdit::singleline(&mut profile.callsign)
-                            .char_limit(CALLSIGN_MAX)
-                            .desired_width(f32::INFINITY),
-                    );
-                    ui.end_row();
-                    ui.label(RichText::new("Faction").color(BONE).size(TYPE_BODY));
-                    let fw = ui.available_width();
-                    if value_chip(ui, profile.faction.label(), fw) {
-                        action = Some(ProfileAction::CycleFaction);
-                    }
-                    ui.end_row();
-                });
-
-            section_divider(ui);
-            section_label(ui, "RECORD");
-            let rate = match win_rate_pct(profile.wins, profile.matches_played) {
-                Some(p) => format!("{p}%"),
-                None => "--".to_string(),
-            };
-            // A 3-up stat row: a big amber numeral over a small ash caption per stat, instead of one
-            // flat grey sentence — the same numeral/caption relationship the rest of the shell uses.
-            let stat_col = (ui.available_width() / 3.0 - 8.0).max(64.0);
-            egui::Grid::new("profile.record")
-                .num_columns(3)
-                .min_col_width(stat_col)
-                .spacing([8.0, 6.0])
-                .show(ui, |ui| {
-                    for (value, caption) in [
-                        (profile.matches_played.to_string(), "MATCHES"),
-                        (profile.wins.to_string(), "WINS"),
-                        (rate.clone(), "WIN RATE"),
-                    ] {
-                        ui.vertical_centered(|ui| {
-                            ui.label(RichText::new(value).color(AMBER).size(TYPE_STAT).strong());
-                            ui.label(RichText::new(caption).color(ASH).size(TYPE_CAPTION));
-                        });
-                    }
-                    ui.end_row();
-                });
-        }); // end left-anchored body
+        // On a wide desktop card IDENTITY sits left and RECORD right; on the narrow mobile card
+        // they stack (the old single left-anchored column). `two_col` threads `&mut profile` so
+        // the identity column can edit it while the record column reads it. Banner + footer stay
+        // outside so they span the full card width.
+        let (identity_action, _) = two_col(
+            ui,
+            profile,
+            |ui, profile| {
+                let mut a = None;
+                section_label(ui, "IDENTITY");
+                egui::Grid::new("profile.identity")
+                    .num_columns(2)
+                    .min_col_width(96.0)
+                    .spacing([16.0, 10.0])
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("Callsign").color(BONE).size(TYPE_BODY));
+                        ui.add(
+                            TextEdit::singleline(&mut profile.callsign)
+                                .char_limit(CALLSIGN_MAX)
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.end_row();
+                        ui.label(RichText::new("Faction").color(BONE).size(TYPE_BODY));
+                        let fw = ui.available_width();
+                        if value_chip(ui, profile.faction.label(), fw) {
+                            a = Some(ProfileAction::CycleFaction);
+                        }
+                        ui.end_row();
+                    });
+                a
+            },
+            |ui, profile| {
+                section_label(ui, "RECORD");
+                let rate = match win_rate_pct(profile.wins, profile.matches_played) {
+                    Some(p) => format!("{p}%"),
+                    None => "--".to_string(),
+                };
+                // A 3-up stat row: a big amber numeral over a small ash caption per stat, instead
+                // of one flat grey sentence — the numeral/caption relationship the shell uses.
+                let stat_col = (ui.available_width() / 3.0 - 8.0).max(64.0);
+                egui::Grid::new("profile.record")
+                    .num_columns(3)
+                    .min_col_width(stat_col)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        for (value, caption) in [
+                            (profile.matches_played.to_string(), "MATCHES"),
+                            (profile.wins.to_string(), "WINS"),
+                            (rate.clone(), "WIN RATE"),
+                        ] {
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    RichText::new(value).color(AMBER).size(TYPE_STAT).strong(),
+                                );
+                                ui.label(RichText::new(caption).color(ASH).size(TYPE_CAPTION));
+                            });
+                        }
+                        ui.end_row();
+                    });
+            },
+        );
+        action = action.or(identity_action);
 
         ui.add_space(18.0);
         // RESET RECORD zeroes lifetime matches/wins with no recovery — gate it behind a confirm.

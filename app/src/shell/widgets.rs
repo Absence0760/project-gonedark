@@ -23,6 +23,44 @@ pub(crate) const SHELL_CARD_W: f32 = 480.0;
 /// per-screen free-for-all.
 pub(crate) const SHELL_CARD_WIDE_W: f32 = 800.0;
 
+/// The card width the two-column-capable screens grow to on a wide desktop window
+/// ([`over_backdrop_screen_responsive`]): wide enough to seat two readable [`SHELL_CARD_W`]-ish
+/// columns side by side, capped so a very wide monitor keeps the live backdrop framing the card
+/// instead of stretching it edge-to-edge. Below the breakpoint (a phone, or a shrunk desktop
+/// window) these screens fall back to the narrow [`SHELL_CARD_W`] single column — the design is
+/// mobile-first, and the narrow card *is* the phone screen. Sits under the 960 px min window
+/// ([`crate`]'s `with_min_inner_size`) with room for a [`SHELL_CARD_MARGIN`] gutter each side.
+pub(crate) const SHELL_CARD_TWO_COL_W: f32 = 860.0;
+
+/// The inner content width (inside the card frame's margins) at or above which [`two_col`] lays
+/// its two section groups side by side; below it the groups stack (the narrow mobile column, or a
+/// shrunk window). Chosen so the narrow [`SHELL_CARD_W`] card (≈436 px inner) always stacks and
+/// the wide [`SHELL_CARD_TWO_COL_W`] card (≈772 px inner) always splits, each column landing near
+/// the mobile card's comfortable ≈390 px reading width.
+pub(crate) const TWO_COL_MIN_INNER: f32 = 640.0;
+
+/// The gutter between [`two_col`]'s two columns.
+pub(crate) const TWO_COL_GAP: f32 = 28.0;
+
+/// The card width a two-column-capable screen should use for a given viewport width: the wide
+/// [`SHELL_CARD_TWO_COL_W`] card when the viewport can seat it with a [`SHELL_CARD_MARGIN`] gutter
+/// each side, else the narrow mobile [`SHELL_CARD_W`]. This is the one desktop-vs-mobile layout
+/// breakpoint; keeping it pure keeps it unit-tested (the scaffold glue just feeds it
+/// `ui.available_width()`).
+pub(crate) fn responsive_card_width(viewport_w: f32) -> f32 {
+    if viewport_w >= SHELL_CARD_TWO_COL_W + 2.0 * SHELL_CARD_MARGIN {
+        SHELL_CARD_TWO_COL_W
+    } else {
+        SHELL_CARD_W
+    }
+}
+
+/// Whether a screen's body should split into two side-by-side columns at this inner content
+/// width, or stack them — the [`two_col`] breakpoint, pure so it's unit-tested.
+pub(crate) fn is_two_col(inner_w: f32) -> bool {
+    inner_w >= TWO_COL_MIN_INNER
+}
+
 /// The label column width shared by the two-column key/value rows on the shell screens (Settings
 /// sliders/cyclers, Profile identity), so every value control starts at the same x.
 pub(crate) const SETTINGS_LABEL_W: f32 = 172.0;
@@ -240,6 +278,19 @@ pub(crate) fn over_backdrop_screen<T>(
     over_backdrop_screen_sized(ui, id_salt, SHELL_CARD_W, build)
 }
 
+/// [`over_backdrop_screen`] at a **viewport-responsive** width: the wide two-column card on a
+/// desktop window, the narrow mobile card on a phone (or a shrunk window) — see
+/// [`responsive_card_width`]. The screens that pair this with [`two_col`] fill a wide desktop
+/// window with two columns and collapse cleanly to one column when narrow. Glue.
+pub(crate) fn over_backdrop_screen_responsive<T>(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    build: impl FnOnce(&mut egui::Ui) -> T,
+) -> T {
+    let card_w = responsive_card_width(ui.available_width());
+    over_backdrop_screen_sized(ui, id_salt, card_w, build)
+}
+
 /// [`over_backdrop_screen`] at an explicit card width — only for the sanctioned wide screens
 /// ([`SHELL_CARD_WIDE_W`]); everything else takes the default-width wrapper above.
 pub(crate) fn over_backdrop_screen_sized<T>(
@@ -315,6 +366,54 @@ pub(crate) fn over_backdrop_screen_at<T>(
             });
         });
     out.expect("over_backdrop_screen build ran")
+}
+
+/// Lay a screen's two section groups side by side when the enclosing card is wide enough
+/// ([`is_two_col`] on `ui.available_width()`), or stacked (left then right) when narrow — the
+/// responsive shell body. On a wide desktop card each closure gets its own fixed-width column with
+/// a [`TWO_COL_GAP`] gutter between them, both interiors laid top-down so full-width rows
+/// ([`selectable_row`], [`card_frame`]) fill the column; on the narrow mobile card the two run in
+/// sequence exactly as if written inline, so a phone sees the original single column. Banner,
+/// intro copy, and footer buttons stay *outside* this call so they span the full card width.
+///
+/// The two columns run **sequentially** (left fully, then right) in both modes, so they may share
+/// one mutable context `ctx: &mut C` — each closure receives it as an argument rather than
+/// capturing it, which is what lets a screen mutate the same state (`&mut ProfileState`, a settings
+/// bundle) from both columns without the borrow checker rejecting two live `&mut` captures. Each
+/// closure also **returns** a value; [`two_col`] returns the pair `(left_out, right_out)` for the
+/// caller to fold (typically an `Option<Action>` per side: `action.or(l).or(r)`). A screen that
+/// needs neither channel passes `&mut ()` and `()` returns. Glue (needs a live `Ui`); the
+/// breakpoint is the pure [`is_two_col`] seam.
+pub(crate) fn two_col<C, L, R>(
+    ui: &mut egui::Ui,
+    ctx: &mut C,
+    left: impl FnOnce(&mut egui::Ui, &mut C) -> L,
+    right: impl FnOnce(&mut egui::Ui, &mut C) -> R,
+) -> (L, R) {
+    if is_two_col(ui.available_width()) {
+        let col_w = ((ui.available_width() - TWO_COL_GAP) * 0.5).floor();
+        let mut lout = None;
+        let mut rout = None;
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(col_w);
+                lout = Some(left(ui, ctx));
+            });
+            ui.add_space(TWO_COL_GAP);
+            ui.vertical(|ui| {
+                ui.set_width(col_w);
+                rout = Some(right(ui, ctx));
+            });
+        });
+        (
+            lout.expect("two_col left ran"),
+            rout.expect("two_col right ran"),
+        )
+    } else {
+        let l = left(ui, ctx);
+        let r = right(ui, ctx);
+        (l, r)
+    }
 }
 
 /// One keybinding rendered as a small rounded "keycap" — [`PANEL_RAISED`] fill, [`RIM`] hairline,

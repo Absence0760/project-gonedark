@@ -111,7 +111,7 @@ pub(crate) fn pvp_ui(ui: &mut egui::Ui, player_army: Army) -> Option<PvpAction> 
     use egui::RichText;
     let mut action = None;
 
-    over_backdrop_screen(ui, "pvp", |ui| {
+    over_backdrop_screen_responsive(ui, "pvp", |ui| {
         screen_banner(ui, "PVP", 130.0);
         ui.label(
             RichText::new(
@@ -123,34 +123,43 @@ pub(crate) fn pvp_ui(ui: &mut egui::Ui, player_army: Army) -> Option<PvpAction> 
         );
         ui.add_space(16.0);
 
-        section_label(ui, "QUEUES");
-        for (i, queue) in PVP_QUEUES.iter().enumerate() {
-            queue_tile(ui, queue);
-            if i + 1 < PVP_QUEUES.len() {
-                ui.add_space(8.0);
-            }
-        }
-        ui.add_space(10.0);
-
-        section_label(ui, "YOU QUEUE AS");
-        card_frame().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(
-                RichText::new(army_label(player_army))
-                    .color(BONE)
-                    .size(TYPE_SUBHEAD)
-                    .strong(),
-            );
-            ui.add_space(4.0);
-            ui.label(
-                RichText::new(
-                    "Your army and gunsmith loadout travel into every queue. Change them under \
-                     ARMY and Settings on the title.",
-                )
-                .color(MUTED)
-                .size(TYPE_CAPTION),
-            );
-        });
+        // On a wide desktop card the queue list sits left and the "you queue as" card right; on
+        // the narrow mobile card they stack. Neither column emits an action (BACK is the footer),
+        // so the shared context is unit.
+        two_col(
+            ui,
+            &mut (),
+            |ui, _| {
+                section_label(ui, "QUEUES");
+                for (i, queue) in PVP_QUEUES.iter().enumerate() {
+                    queue_tile(ui, queue);
+                    if i + 1 < PVP_QUEUES.len() {
+                        ui.add_space(8.0);
+                    }
+                }
+            },
+            |ui, _| {
+                section_label(ui, "YOU QUEUE AS");
+                card_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        RichText::new(army_label(player_army))
+                            .color(BONE)
+                            .size(TYPE_SUBHEAD)
+                            .strong(),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(
+                            "Your army and gunsmith loadout travel into every queue. Change them \
+                             under ARMY and Settings on the title.",
+                        )
+                        .color(MUTED)
+                        .size(TYPE_CAPTION),
+                    );
+                });
+            },
+        );
 
         ui.add_space(FOOTER_GAP);
         // Sole exit on this screen — Secondary, not the dimmest Tertiary (the mission-select rule

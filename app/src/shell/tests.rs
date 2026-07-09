@@ -396,6 +396,40 @@ fn over_backdrop_top_settles_at_the_optical_centre_and_clamps() {
 }
 
 #[test]
+fn responsive_card_width_widens_on_desktop_and_falls_back_to_the_mobile_card() {
+    // A phone / narrow window keeps the single-column mobile card.
+    assert_eq!(responsive_card_width(480.0), SHELL_CARD_W);
+    assert_eq!(responsive_card_width(720.0), SHELL_CARD_W);
+    // Just below the breakpoint (wide card + a full margin each side) still falls back.
+    let breakpoint = SHELL_CARD_TWO_COL_W + 2.0 * SHELL_CARD_MARGIN;
+    assert_eq!(responsive_card_width(breakpoint - 1.0), SHELL_CARD_W);
+    // At and above the breakpoint the card grows to the wide two-column size.
+    assert_eq!(responsive_card_width(breakpoint), SHELL_CARD_TWO_COL_W);
+    // The 960 px min window (main.rs `with_min_inner_size`) seats the wide card.
+    assert_eq!(responsive_card_width(960.0), SHELL_CARD_TWO_COL_W);
+    assert_eq!(responsive_card_width(2560.0), SHELL_CARD_TWO_COL_W);
+}
+
+#[test]
+fn is_two_col_stacks_the_narrow_card_and_splits_the_wide_one() {
+    // The narrow mobile card's inner width (≈ SHELL_CARD_W minus the frame margins) stacks.
+    let narrow_inner = SHELL_CARD_W - 44.0;
+    assert!(
+        !is_two_col(narrow_inner),
+        "the mobile card must stay one column"
+    );
+    // The wide desktop card's inner width splits into two columns.
+    let wide_inner = SHELL_CARD_TWO_COL_W - 44.0;
+    assert!(is_two_col(wide_inner), "the wide card must split");
+    // The split leaves each column near the mobile card's comfortable reading width.
+    let col_w = (wide_inner - TWO_COL_GAP) * 0.5;
+    assert!(
+        col_w >= 340.0 && col_w <= narrow_inner,
+        "each column ({col_w}) should read like a slightly-tighter mobile column"
+    );
+}
+
+#[test]
 fn each_slot_advertises_its_own_trade_axis_pair() {
     // Every slot trades a distinct, disjoint axis pair (the source of the no-strict-domination
     // proof in core::gunsmith); the hints must reflect that and stay ASCII (no tofu).
