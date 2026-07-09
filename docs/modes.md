@@ -150,14 +150,26 @@ backends, and different failure modes — designed separately, composed at the q
 
 The *mechanism* is done: [D71](decisions.md) locked fairness-bounded soft asymmetry
 (logistics rhythm, not gun stats), verified swap-invariant, with native army-select on both
-platforms feeding `Game::select_army`. The PvP layer on top is thin and should stay thin:
+platforms feeding `Game::select_army`. The PvP layer on top is thin and should stay thin —
+and, like map selection (§4b), army selection is a **per-queue policy**, not one blanket rule
+([D130](decisions.md)):
 
-- **Pick before queueing**, alongside loadout — the queue matches *players*, not army
-  matchups, and mirror matches (US vs US) are legal precisely because [D71](decisions.md)
-  keeps armies inside the fairness band. No draft/ban phase while the roster is two
-  armies; revisit only if a third army ([`factions.md`](factions.md) § deferred) lands.
-- The picks travel in the match-setup handshake and seed the deterministic sim start —
-  the same path skirmish uses. Nothing army-specific enters matchmaking.
+| Queue | Army policy | Why |
+|---|---|---|
+| **Custom / Quick** | **Player picks** (alongside loadout); mirror matchups (US vs US) legal | The queue matches *players*, not army matchups; [D71](decisions.md) keeps mirrors fair |
+| **Ranked** | **Assigned randomly**, with a **1v1 anti-mirror guard** (never US vs US by draw) | The competitive test is *can you command and fight*, not *did you pre-pick your best-drilled flavour*; randomization denies army-targeting the pre-game meta |
+
+- The picks (or the random assignment) travel in the match-setup handshake and seed the
+  deterministic sim start — the same path skirmish uses. Nothing army-specific enters
+  matchmaking. The random ranked assignment is a **pure, seed-driven, unit-tested seam**
+  (identical on every peer — not sim state, no checksum surface: invariants #1/#7).
+- **Honest caveat:** with the two-army roster, "random + anti-mirror" in 1v1 is degenerate
+  (always US-vs-FR); it becomes genuinely random only once a third army
+  ([`factions.md`](factions.md) § deferred) lands. The guard is built now anyway — a few lines
+  of tested pure logic that make the third-army day a no-op.
+- The old "no draft/ban while the roster is two armies" line is superseded by the **team-mode
+  design pass** (§4d): a draft/ban surface is now specced (for a team mode, over
+  army + doctrine), gated on that mode and a larger roster.
 
 ### 4b. Map selection — a policy per queue
 
@@ -207,6 +219,24 @@ The competitive spine, and the only part of PvP that is genuinely *new* system d
   *same-build* replay, so [Q26](open-questions.md#q26--replay-compatibility)'s disposable
   lean suffices. Leaver policy gets a real reconnect window for free —
   `core::reconnect`/[D28](decisions.md) already exists — then a forfeit after grace.
+
+### 4d. Team mode — cooperative multi-commander (design pass)
+
+PvP was implicitly **1v1** (the whole "one player does both jobs" pillar). A **team mode** (target
+**5v5**, ramped from 2v2) is now a design pass — [`plans/team-mode-plan.md`](plans/team-mode-plan.md),
+locked in [D131](decisions.md). The one non-negotiable, because it is the game's entire competitive
+moat: **every player is a full command-and-embody player** — there is *no dedicated commander and no
+dedicated soldiers*. The FPS/RTS-hybrid graveyard ([`positioning/positioning.md`](positioning/positioning.md):
+**Eximius** and its cohort) died from splitting the two jobs across players; a naive 5v5 (1
+commander + 4 soldiers) **is** that failure mode. Multi-commander scales the pillar to `N` players
+instead of reopening it: `N` sub-forces, `N` sectors, one shared win condition; **shared team vision,
+never shared command**. The Mobile-Legends-style **pick/ban** the player asked for maps to
+**army ([D130](decisions.md)) + a new fairness-bounded *doctrine* layer** (the game has no heroes),
+gated on that doctrine system and a roster larger than two. Determinism is untouched (seed + per-tick
+command log); only lockstep scale/topology (`2N` peers) and the *team* unit budget change. Open
+sub-forks: [Q31](open-questions.md#q31--going-dark-team-fairness) (going-dark team fairness),
+[Q32](open-questions.md#q32--team-random-army-distribution) (team random-army distribution). This is
+the **last** PvP surface by dependency — see the plan's build ramp.
 
 ---
 
