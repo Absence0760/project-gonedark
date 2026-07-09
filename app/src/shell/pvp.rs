@@ -66,6 +66,33 @@ pub(crate) fn queue_joinable(_queue: &PvpQueue) -> bool {
     false
 }
 
+/// How a queue decides which army each side fields (D130, `modes.md` §4a). Ranked **randomizes**
+/// the army at match start (with the 1v1 anti-mirror guard — [`assign_ranked_1v1`]), so no player
+/// pre-commits to a matchup; the low-ceremony queues (custom lobby, quick match) let the player
+/// field the army they picked, legal mirrors and all.
+///
+/// [`assign_ranked_1v1`]: gonedark_core::army_assign::assign_ranked_1v1
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ArmyPolicy {
+    /// The player fields the army they selected (custom lobby, quick match). Mirrors are legal.
+    Pick,
+    /// The army is assigned at match start from a shared match seed — random, anti-mirror (ranked).
+    Random,
+}
+
+/// The per-queue army policy (D130). Ranked → [`ArmyPolicy::Random`]; every other queue lets the
+/// player field their pick → [`ArmyPolicy::Pick`]. Matched on the stable queue `id` the way the
+/// rest of the screen distinguishes queues, so it stays a pure, unit-tested decision seam — the
+/// honest counterpart to the [`assign_ranked_1v1`] core seam it fronts.
+///
+/// [`assign_ranked_1v1`]: gonedark_core::army_assign::assign_ranked_1v1
+pub(crate) fn queue_army_policy(queue: &PvpQueue) -> ArmyPolicy {
+    match queue.id {
+        "ranked" => ArmyPolicy::Random,
+        _ => ArmyPolicy::Pick,
+    }
+}
+
 /// An action the PvP staging screen can emit in a frame. BACK is the only live control — the
 /// queues are staged, not joinable ([`queue_joinable`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -151,12 +178,30 @@ pub(crate) fn pvp_ui(ui: &mut egui::Ui, player_army: Army) -> Option<PvpAction> 
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(
-                            "Your army and gunsmith loadout travel into every queue. Change them \
-                             under ARMY and Settings on the title.",
+                            "Your army and gunsmith loadout travel into the pick queues (Custom \
+                             Lobby, Quick Match). Change them under ARMY and Settings on the title.",
                         )
                         .color(MUTED)
                         .size(TYPE_CAPTION),
                     );
+                    // Honest per-queue policy (D130): ranked does NOT field your pick — it assigns
+                    // the army at match start (random, with the 1v1 anti-mirror guard), so no one
+                    // pre-commits to a matchup. Derived from the pure `queue_army_policy` seam so
+                    // the card can never drift from the policy it describes.
+                    if PVP_QUEUES
+                        .iter()
+                        .any(|q| queue_army_policy(q) == ArmyPolicy::Random)
+                    {
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new(
+                                "RANKED assigns your army at match start -- random, and never a \
+                                 mirror. Your pick above does not apply there.",
+                            )
+                            .color(ASH)
+                            .size(TYPE_CAPTION),
+                        );
+                    }
                 });
             },
         );

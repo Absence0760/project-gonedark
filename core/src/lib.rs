@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 pub mod alerts;
+pub mod army_assign;
 pub mod campaign;
 pub mod checksum;
 pub mod combat;

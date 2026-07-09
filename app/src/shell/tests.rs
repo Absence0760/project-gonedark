@@ -2736,3 +2736,22 @@ fn pvp_queue_table_is_distinct_ascii_and_complete() {
         }
     }
 }
+
+#[test]
+fn queue_army_policy_randomizes_only_ranked() {
+    // D130: ranked assigns the army at match start (random, anti-mirror — the pure
+    // `assign_ranked_1v1` core seam); the low-ceremony queues let the player field their pick.
+    for q in PVP_QUEUES {
+        let expected = if q.id == "ranked" {
+            ArmyPolicy::Random
+        } else {
+            ArmyPolicy::Pick
+        };
+        assert_eq!(
+            queue_army_policy(q),
+            expected,
+            "queue {:?} has the wrong army policy",
+            q.id
+        );
+    }
+}
