@@ -482,7 +482,7 @@ pub(crate) fn skirmish_setup_ui(
     use egui::RichText;
     let mut action = None;
 
-    over_backdrop_screen(ui, "skirmish_setup", |ui| {
+    over_backdrop_screen_responsive(ui, "skirmish_setup", |ui| {
         screen_banner(ui, "SKIRMISH", 130.0);
         ui.label(
             RichText::new(
@@ -494,79 +494,89 @@ pub(crate) fn skirmish_setup_ui(
         );
         ui.add_space(12.0);
 
-        section_label(ui, "BATTLEFIELD");
         let selected_bf = clamp_battlefield(state.battlefield);
-        for i in 0..BATTLEFIELDS.len() {
-            if let Some(act) = battlefield_tile(ui, i, i == selected_bf) {
-                action = Some(act);
-            }
-            if i + 1 < BATTLEFIELDS.len() {
-                ui.add_space(8.0);
-            }
-        }
-        ui.add_space(10.0);
-
-        // The selected battlefield's map card (`modes.md` §3's picker preview, shipped v1):
-        // a library map shows its derived sketch + metrics, a scene the one-line note.
-        section_label(ui, "MAP CARD");
-        map_card_panel(ui, BATTLEFIELDS[selected_bf].kind);
-        ui.add_space(10.0);
-
-        section_label(ui, "FORCES");
-        card_frame().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if cycle_row(ui, "Your army", army_label(state.player_army)) {
-                action = Some(SkirmishSetupAction::CyclePlayerArmy);
-            }
-            ui.add_space(6.0);
-            if cycle_row(ui, "Enemy army", army_label(state.enemy_army)) {
-                action = Some(SkirmishSetupAction::CycleEnemyArmy);
-            }
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new(
-                    "Asymmetry is of flavour and feel, never of power. Your gunsmith loadout \
-                     carries in -- edit it under Settings.",
-                )
-                .color(MUTED)
-                .size(TYPE_CAPTION),
-            );
-        });
-        ui.add_space(10.0);
-
-        section_label(ui, "OPPONENT");
-        card_frame().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            // The D83 tier — commander band + situation modifiers, exactly the campaign replay
-            // vocabulary (a harder tier is a better commander, never an omniscient one).
-            if cycle_row(ui, "Difficulty", difficulty_label(state.difficulty)) {
-                action = Some(SkirmishSetupAction::CycleDifficulty);
-            }
-            ui.add_space(6.0);
-            // The briefing's 4-pip ladder (Recruit -> Elite), so the cycle reads as "n of 4".
-            ui.horizontal(|ui| {
-                for d in Difficulty::ALL {
-                    let filled = d <= state.difficulty;
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(30.0, 4.0), egui::Sense::hover());
-                    ui.painter().rect_filled(
-                        rect,
-                        egui::CornerRadius::same(2),
-                        if filled { AMBER } else { RIM },
-                    );
-                    ui.add_space(4.0);
+        // On a wide desktop card the battlefield list takes the left column and the picked
+        // map's card + the FORCES / OPPONENT config take the right; on the narrow mobile card
+        // both stack in the original order. `two_col` threads the shared `action` slot so both
+        // columns can write it (they run sequentially).
+        two_col(
+            ui,
+            &mut action,
+            |ui, action| {
+                section_label(ui, "BATTLEFIELD");
+                for i in 0..BATTLEFIELDS.len() {
+                    if let Some(act) = battlefield_tile(ui, i, i == selected_bf) {
+                        *action = Some(act);
+                    }
+                    if i + 1 < BATTLEFIELDS.len() {
+                        ui.add_space(8.0);
+                    }
                 }
-            });
-            ui.add_space(8.0);
-            ui.label(
-                RichText::new(
-                    "Difficulty reshapes the situation -- a sharper commander, a faster enemy \
-                     reinforcement drip -- never the balance numbers.",
-                )
-                .color(MUTED)
-                .size(TYPE_CAPTION),
-            );
-        });
+            },
+            |ui, action| {
+                // The selected battlefield's map card (`modes.md` §3's picker preview, shipped
+                // v1): a library map shows its derived sketch + metrics, a scene the one-line note.
+                section_label(ui, "MAP CARD");
+                map_card_panel(ui, BATTLEFIELDS[selected_bf].kind);
+                ui.add_space(10.0);
+
+                section_label(ui, "FORCES");
+                card_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    if cycle_row(ui, "Your army", army_label(state.player_army)) {
+                        *action = Some(SkirmishSetupAction::CyclePlayerArmy);
+                    }
+                    ui.add_space(6.0);
+                    if cycle_row(ui, "Enemy army", army_label(state.enemy_army)) {
+                        *action = Some(SkirmishSetupAction::CycleEnemyArmy);
+                    }
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(
+                            "Asymmetry is of flavour and feel, never of power. Your gunsmith \
+                             loadout carries in -- edit it under Settings.",
+                        )
+                        .color(MUTED)
+                        .size(TYPE_CAPTION),
+                    );
+                });
+                ui.add_space(10.0);
+
+                section_label(ui, "OPPONENT");
+                card_frame().show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    // The D83 tier — commander band + situation modifiers, exactly the campaign
+                    // replay vocabulary (a harder tier is a better commander, never omniscient).
+                    if cycle_row(ui, "Difficulty", difficulty_label(state.difficulty)) {
+                        *action = Some(SkirmishSetupAction::CycleDifficulty);
+                    }
+                    ui.add_space(6.0);
+                    // The briefing's 4-pip ladder (Recruit -> Elite), so the cycle reads "n of 4".
+                    ui.horizontal(|ui| {
+                        for d in Difficulty::ALL {
+                            let filled = d <= state.difficulty;
+                            let (rect, _) =
+                                ui.allocate_exact_size(egui::vec2(30.0, 4.0), egui::Sense::hover());
+                            ui.painter().rect_filled(
+                                rect,
+                                egui::CornerRadius::same(2),
+                                if filled { AMBER } else { RIM },
+                            );
+                            ui.add_space(4.0);
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(
+                            "Difficulty reshapes the situation -- a sharper commander, a faster \
+                             enemy reinforcement drip -- never the balance numbers.",
+                        )
+                        .color(MUTED)
+                        .size(TYPE_CAPTION),
+                    );
+                });
+            },
+        );
 
         ui.add_space(FOOTER_GAP);
         if footer_button(ui, "DEPLOY", Emphasis::Primary) {
