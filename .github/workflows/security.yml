@@ -85,10 +85,18 @@ jobs:
         # languages that are actually here instead. All of them run under
         # `build-mode: none` below, so none of them needs an autobuilder.
         #
-        # Rust is deliberately absent: CodeQL's Rust support is still public
-        # preview. `cargo-deny` in audit.yml covers the Rust dependency
-        # surface in the meantime — revisit when Rust reaches GA.
-        language: [actions, python, java-kotlin]
+        # Two languages here are deliberately absent:
+        #
+        #   - Rust: CodeQL's Rust support is still public preview.
+        #     `cargo-deny` in audit.yml covers the Rust dependency surface in
+        #     the meantime — revisit when Rust reaches GA.
+        #   - Java/Kotlin: the 47 .kt files under android/ are Android app
+        #     sources, and `build-mode: none` cannot index them — CodeQL
+        #     exits 32 with "could not process any code written in
+        #     Java/Kotlin". Analysing them needs a real Gradle build
+        #     (`build-mode: autobuild` plus a JDK and the Android SDK), which
+        #     is its own piece of work rather than a matrix entry.
+        language: [actions, python]
 
     steps:
       - name: Checkout
