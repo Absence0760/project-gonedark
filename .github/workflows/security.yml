@@ -77,7 +77,18 @@ jobs:
         # step before "Initialize CodeQL":
         #   - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         #     with: { python-version: '3.14' }
-        language: [javascript-typescript, actions]
+        # This project is Rust (161 files), Kotlin (47) and Python (19) with
+        # no JavaScript to speak of, so base's default
+        # `javascript-typescript` entry fails the whole workflow outright:
+        # CodeQL exits 32 with "could not process any code written in
+        # JavaScript/TypeScript" when it finds only empty files. Analyse the
+        # languages that are actually here instead. All of them run under
+        # `build-mode: none` below, so none of them needs an autobuilder.
+        #
+        # Rust is deliberately absent: CodeQL's Rust support is still public
+        # preview. `cargo-deny` in audit.yml covers the Rust dependency
+        # surface in the meantime — revisit when Rust reaches GA.
+        language: [actions, python, java-kotlin]
 
     steps:
       - name: Checkout
