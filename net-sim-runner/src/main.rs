@@ -636,9 +636,50 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gonedark_core::checksum::digest_stream;
 
     fn cfg(ticks: u64, delay: u64) -> Config {
         Config::for_run(ticks, delay)
+    }
+
+    // ---- The pinned golden gate (D132) -------------------------------------------------------
+    //
+    // `stream_is_deterministic` below compares the agreed stream to ITSELF, and
+    // `determinism.yml`'s `compare-net` job diffs it across the arch matrix — together those
+    // prove every peer and every target agree, but not *what* they agree on. A change that moves
+    // the 2-peer lockstep stream identically everywhere slips through both. This pins it.
+    //
+    // The config is exactly what CI runs:
+    //   cargo run -p gonedark-net-sim-runner --release -- 300     (ticks 300, delay 2)
+    //
+    // Unlike the sim-runner goldens, this one rides `cargo test -p gonedark-net-sim-runner
+    // --release` in determinism.yml, so it is checked on EVERY arch in the matrix, not just the
+    // x86_64 workspace-test runner.
+    //
+    // **When this fails:** same rule as the sim-runner goldens — a deliberate change to the
+    // scene, the scripted commands, the lockstep protocol or the seeded channel legitimately
+    // moves it, and the new value goes in the same commit. A dependency bump moving it does not.
+
+    /// The agreed 2-peer stream @ 300 ticks / delay 2.
+    const NET_300_D2_FINAL: u64 = 0xfdeb_3bb5_ecbe_c8ad;
+    const NET_300_D2_DIGEST: u64 = 0x91f3_e950_a39f_8d88;
+
+    #[test]
+    fn net_300_matches_its_pinned_golden() {
+        let stream = agreed_stream(cfg(300, 2));
+        let got_final = *stream.last().expect("stream must not be empty");
+        let got_digest = digest_stream(&stream);
+        assert!(
+            got_final == NET_300_D2_FINAL && got_digest == NET_300_D2_DIGEST,
+            "\nNET_300_D2 agreed stream no longer matches its pinned golden.\n\
+             \n  final  expected {NET_300_D2_FINAL:#018x}  got {got_final:#018x}\
+             \n  digest expected {NET_300_D2_DIGEST:#018x}  got {got_digest:#018x}\n\
+             \nIf you MEANT to change lockstep/scene behaviour, update in the same commit:\n\
+             \n    const NET_300_D2_FINAL: u64 = {got_final:#018x};\
+             \n    const NET_300_D2_DIGEST: u64 = {got_digest:#018x};\n\
+             \nIf you did NOT, this is a real behaviour regression — do not update the constant \
+             to make it pass.\n"
+        );
     }
 
     #[test]

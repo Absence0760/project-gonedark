@@ -1,7 +1,7 @@
 //! Core determinism + math tests. These run in CI on every target in the matrix
 //! (docs/plans/phase-1-plan.md §6); a cross-arch divergence shows up as a checksum mismatch.
 
-use crate::checksum::Checksum;
+use crate::checksum::{digest_stream, Checksum};
 use crate::components::{InputSource, Order, Stance, Vec2};
 use crate::ecs::World;
 use crate::fixed::Fixed;
@@ -610,6 +610,52 @@ fn checksum_width_helpers_agree_with_byte_writes() {
         bytes.write_u8(b);
     }
     assert_eq!(wide.finish(), bytes.finish());
+}
+
+// --- digest_stream: the whole-stream fold the golden gate pins ------------------------------
+
+#[test]
+fn digest_stream_is_deterministic_and_order_sensitive() {
+    let a = [0x11u64, 0x22, 0x33];
+    let b = [0x11u64, 0x33, 0x22];
+    assert_eq!(
+        digest_stream(&a),
+        digest_stream(&a),
+        "same stream, same digest"
+    );
+    assert_ne!(
+        digest_stream(&a),
+        digest_stream(&b),
+        "a reordered stream must digest differently — tick order is the whole point"
+    );
+}
+
+#[test]
+fn digest_stream_is_length_sensitive_even_on_a_shared_prefix() {
+    // The desync case: a run that stops early shares its prefix with a healthy longer run.
+    // Folding the length first is what stops those two colliding.
+    let full = [0x11u64, 0x22, 0x33];
+    let truncated = [0x11u64, 0x22];
+    assert_ne!(
+        digest_stream(&full),
+        digest_stream(&truncated),
+        "a truncated stream must never digest to the same value as the full one"
+    );
+    // An empty stream is still distinct from the bare hasher — the length fold sees to it.
+    assert_ne!(digest_stream(&[]), Checksum::new().finish());
+}
+
+#[test]
+fn digest_stream_changes_when_any_single_tick_changes() {
+    // The mid-stream case the final-tick check alone would miss.
+    let base = [0x11u64, 0x22, 0x33, 0x44];
+    let mut middle_moved = base;
+    middle_moved[1] ^= 1;
+    assert_ne!(
+        digest_stream(&base),
+        digest_stream(&middle_moved),
+        "a one-bit change on ANY tick must move the digest, not just the last one"
+    );
 }
 
 // ---------------------------------------------------------------------------
