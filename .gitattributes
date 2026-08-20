@@ -57,8 +57,10 @@ gradlew text eol=lf
 *.apk binary
 *.aab binary
 
-# Lockfiles are review noise — collapse them in diffs. Reviewers who need
-# the detail still get it from an explicit `git diff Cargo.lock`.
+# Lockfiles are review noise — collapse them in diffs. `-diff` makes git
+# treat them as binary, so a plain `git diff Cargo.lock` prints "Bin ... bytes";
+# the escape hatch is `git diff --text Cargo.lock` (or `--text` on any diff that
+# needs to show one). Verified against the real dependabot bump in PR #21.
 Cargo.lock -diff
 gradle/wrapper/gradle-wrapper.properties -diff
 
