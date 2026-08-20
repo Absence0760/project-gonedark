@@ -495,6 +495,7 @@ fn report_timing(which: Which, durations: &[u128]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gonedark_core::checksum::digest_stream;
 
     /// Drive a freshly-built scenario `ticks` ticks and return the final checksum. Pure-core,
     /// no I/O — the deterministic property we assert against.
@@ -702,6 +703,103 @@ mod tests {
         assert_eq!(
             full_stream(Which::Stress(200), 120),
             full_stream(Which::Stress(200), 120)
+        );
+    }
+
+    // ---- The pinned golden gate (D132) -------------------------------------------------------
+    //
+    // `determinism.yml` diffs the per-tick streams ACROSS the arch matrix, which proves every
+    // target agrees — but not *what* they agree on. A change that shifts sim behaviour
+    // identically everywhere (a dependency bump, an accidental tuning edit, a reordered spawn)
+    // passes that gate untouched, and `phase2_is_deterministic` above only compares a stream to
+    // itself. These goldens pin the streams to committed values so such a change lands LOUDLY.
+    //
+    // The two scenarios and tick counts are exactly the ones CI emits:
+    //   cargo run -p gonedark-sim-runner --release -- 300           (phase2)
+    //   cargo run -p gonedark-sim-runner --release -- 300 stress    (stress:200)
+    //
+    // Each pins BOTH the final tick checksum and `digest_stream` over the whole stream — the
+    // final tick alone would miss a divergence that re-converges before tick 299.
+    //
+    // **When this fails.** A deliberate sim change (a balance re-tune, a new system folded into
+    // the checksum, a scenario edit) legitimately moves these. Read the new values off the
+    // failure message and update the constants IN THE SAME COMMIT as the change that moved them,
+    // so the diff shows cause and effect together. What must never happen is the value moving in
+    // a commit that had no business touching sim behaviour — a dependency bump above all. That
+    // is the case this gate exists to catch, and it is what makes Dependabot auto-merge
+    // (`.github/workflows/dependabot-auto-merge.yml`) safe to leave on.
+
+    /// `phase2` @ 300 ticks — the original CI baseline stream.
+    const PHASE2_300_FINAL: u64 = 0xc732_f253_4de2_7faf;
+    const PHASE2_300_DIGEST: u64 = 0x2109_71d7_899f_3061;
+    /// `stress:200` @ 300 ticks — the 200-unit scale stream.
+    const STRESS_200_300_FINAL: u64 = 0x541b_77bd_e1fb_6269;
+    const STRESS_200_300_DIGEST: u64 = 0x14cc_2703_0255_0ae1;
+
+    /// Assert one stream against its pinned pair, printing copy-pasteable replacements on
+    /// failure so an intentional sim change is a one-line update rather than a hunt.
+    fn assert_golden(label: &str, stream: &[u64], want_final: u64, want_digest: u64) {
+        let got_final = *stream.last().expect("stream must not be empty");
+        let got_digest = digest_stream(stream);
+        assert!(
+            got_final == want_final && got_digest == want_digest,
+            "\n{label} stream no longer matches its pinned golden.\n\
+             \n  final  expected {want_final:#018x}  got {got_final:#018x}\
+             \n  digest expected {want_digest:#018x}  got {got_digest:#018x}\n\
+             \nIf you MEANT to change sim behaviour, update the constants in the same commit:\n\
+             \n    const {u}_FINAL: u64 = {got_final:#018x};\
+             \n    const {u}_DIGEST: u64 = {got_digest:#018x};\n\
+             \nIf you did NOT (a dependency bump, a refactor, a CI change), this is a real \
+             behaviour regression — do not update the constant to make it pass.\n",
+            u = label
+        );
+    }
+
+    #[test]
+    fn phase2_300_matches_its_pinned_golden() {
+        assert_golden(
+            "PHASE2_300",
+            &full_stream(Which::Phase2, 300),
+            PHASE2_300_FINAL,
+            PHASE2_300_DIGEST,
+        );
+    }
+
+    #[test]
+    fn stress_200_300_matches_its_pinned_golden() {
+        assert_golden(
+            "STRESS_200_300",
+            &full_stream(Which::Stress(200), 300),
+            STRESS_200_300_FINAL,
+            STRESS_200_300_DIGEST,
+        );
+    }
+
+    /// The gate can actually fail: a stream that differs by one tick must not match a golden
+    /// taken from the unmodified stream. Without this, a bug in `assert_golden` (or in
+    /// `digest_stream`) could leave the goldens permanently, silently green.
+    #[test]
+    fn the_golden_gate_rejects_a_perturbed_stream() {
+        let mut perturbed = full_stream(Which::Phase2, 300);
+        let last = perturbed.len() - 1;
+        perturbed[last] ^= 1;
+        assert_ne!(
+            digest_stream(&perturbed),
+            PHASE2_300_DIGEST,
+            "a one-bit change must break the digest"
+        );
+        // And a mid-stream change the final-tick check alone would sail past.
+        let mut mid = full_stream(Which::Phase2, 300);
+        mid[150] ^= 1;
+        assert_eq!(
+            *mid.last().unwrap(),
+            PHASE2_300_FINAL,
+            "final tick untouched"
+        );
+        assert_ne!(
+            digest_stream(&mid),
+            PHASE2_300_DIGEST,
+            "…but the digest must still catch it"
         );
     }
 

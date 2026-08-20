@@ -53,3 +53,28 @@ impl Default for Checksum {
         Self::new()
     }
 }
+
+/// Fold a whole per-tick checksum stream into a single 64-bit digest.
+///
+/// The cross-arch CI diff (`determinism.yml`) compares streams **against each other**, which
+/// proves every target agrees but says nothing about *what* they agree on: a change that
+/// shifts sim behaviour identically on every arch passes that gate untouched. A golden test
+/// closes it by comparing a stream against a **pinned** value.
+///
+/// Pinning all 300 tick checksums would be unreadable, and pinning only the final one would
+/// miss a divergence that re-converges before the end — so the golden gate pins this digest
+/// (whole-stream, order-sensitive, length-sensitive) alongside the final tick.
+///
+/// FNV-1a over the little-endian tick checksums, same construction as [`Checksum`] itself, so
+/// the digest is endianness-stable and float-free like everything else in the sim.
+pub fn digest_stream(stream: &[u64]) -> u64 {
+    let mut c = Checksum::new();
+    // Fold the length FIRST so a truncated stream can never digest to the same value as a
+    // longer one that shares its prefix — a desync that stops the stream early is exactly the
+    // case we must not let collide with a healthy short run.
+    c.write_u64(stream.len() as u64);
+    for &tick in stream {
+        c.write_u64(tick);
+    }
+    c.finish()
+}

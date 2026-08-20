@@ -149,6 +149,12 @@ render(lerp(prevState, curState, alpha));
   lives in the presentation/input path only; it reads sim state but must never mutate it,
   or lockstep desyncs silently.
 - **Per-tick checksum diffing in CI** across devices and compilers, from day one.
+- **A pinned golden stream, not just a cross-arch diff** ([D132](decisions.md)). Diffing the
+  streams against *each other* proves the targets agree but not **what** they agree on — a
+  change that moves the sim identically everywhere passes the whole matrix. `sim-runner` and
+  `net-sim-runner` therefore pin the exact streams CI emits to committed constants, both the
+  final tick **and** a whole-stream `checksum::digest_stream` fold (a real perturbation can
+  re-converge by the last tick, so the final value alone is not enough).
 
 Free win: a deterministic sim gives **replays and tiny save files** for nothing —
 store the input stream, not the world state.
