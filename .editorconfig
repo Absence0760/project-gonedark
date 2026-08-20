@@ -1,0 +1,31 @@
+# Editor defaults. Deliberately narrow: rustfmt owns *.rs formatting and
+# ktlint/AGP owns *.kt — the rules below only stop an editor from fighting
+# them (and from re-indenting the tooling files nobody runs a formatter on).
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+# rustfmt's default is 4-space hard tabs=false; Kotlin/Gradle and the asset
+# generator scripts agree. Listed explicitly so the intent survives an edit
+# to the [*] block above.
+[*.{rs,kt,kts,py}]
+indent_size = 4
+
+# Data / config files conventionally sit at 2.
+[*.{json,yml,yaml,toml}]
+indent_size = 2
+
+# Two trailing spaces are a hard line break in markdown — never strip them.
+# Docs prose wraps at ~88 columns by hand (see CLAUDE.md).
+[*.md]
+trim_trailing_whitespace = false
+
+# WGSL shaders follow the Rust convention.
+[*.wgsl]
+indent_size = 4
