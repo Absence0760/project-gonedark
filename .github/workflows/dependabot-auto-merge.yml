@@ -1,0 +1,87 @@
+name: Dependabot auto-merge
+
+# Queues minor + patch Dependabot PRs for auto-merge once every required check
+# is green. `.github/dependabot.yml` opens grouped weekly PRs across three
+# ecosystems (cargo, github-actions, terraform); without this, most of the
+# review budget goes to eyeballing a patch bump of a transitive crate.
+#
+# ---- Why this is safe HERE, specifically ----
+#
+# The obvious objection to auto-merging dependency bumps into a deterministic
+# lockstep engine is that a crate could shift sim behaviour and desync live
+# clients (invariant #1/#7). `determinism.yml` alone does NOT close that:
+# its jobs diff the per-tick checksum streams ACROSS the arch matrix, which
+# proves every target agrees but says nothing about *what* they agree on. A
+# change that moves the sim identically on x86_64, aarch64 and Windows sails
+# straight through.
+#
+# The gate that closes it is the pinned golden (D132): `sim-runner` and
+# `net-sim-runner` pin the exact streams CI emits (`phase2` @300,
+# `stress:200` @300, the 2-peer net stream @300/delay-2) to committed
+# constants, both the final tick AND a whole-stream digest. A dependency bump
+# has no business moving those, so if one does, the workspace test job goes
+# red and this workflow's auto-merge simply never fires — the PR sits waiting
+# for a human, which is the correct outcome.
+#
+# Do not enable this workflow in a repo that lacks that golden gate.
+#
+# ---- Scope ----
+#
+# MAJOR bumps stay manual, always. `.github/dependabot.yml` additionally
+# pins wgpu/naga majors out of Dependabot's reach entirely (egui-wgpu pins
+# its own wgpu major; two majors cannot interoperate), and a winit or AGP
+# major routinely needs code changes.
+#
+# Repository setting required: "Allow auto-merge" under
+# Settings -> General -> Pull Requests. Without it `gh pr merge --auto`
+# errors and the workflow no-ops — PRs then sit for a human exactly as they
+# did before, so the failure mode is degenerate, not destructive.
+
+on:
+  pull_request_target:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  auto-merge:
+    name: Auto-merge minor + patch
+    runs-on: ubuntu-latest
+    # Author gate. `fetch-metadata` below is itself hardened against forged
+    # commit messages from a compromised branch, but checking the actor too
+    # costs nothing and fails closed.
+    if: github.actor == 'dependabot[bot]'
+    timeout-minutes: 5
+    permissions:
+      # `pull_request_target` runs in the base-branch context, so the write
+      # grants are explicit and scoped to this job — a future job added to
+      # this workflow inherits the read-only default instead.
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Read dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Approve + queue auto-merge for minor / patch
+        if: steps.meta.outputs.update-type == 'version-update:semver-minor' || steps.meta.outputs.update-type == 'version-update:semver-patch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          # Best-effort approval. Branch protection on main requires 0
+          # approvals (a green CI is the merge gate), so this is courtesy
+          # metadata rather than a requirement — and it fails soft when the
+          # "Allow GitHub Actions to create and approve pull requests"
+          # setting is off.
+          gh pr review --approve "$PR_URL" \
+            || echo "::notice::PR approval not permitted; proceeding to queue auto-merge."
+          # `--auto` lands the merge only once every required check is green
+          # (the `CI gate` aggregator emitted by build.yml, test.yml and
+          # determinism.yml). A red run leaves the PR queued indefinitely.
+          # `--squash` keeps main's history linear, which branch protection
+          # requires.
+          gh pr merge --auto --squash "$PR_URL"
