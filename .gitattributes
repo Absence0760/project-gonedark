@@ -1,0 +1,71 @@
+# Normalize line endings on commit. Shell scripts and Gradle wrappers must
+# stay LF — CRLF breaks shebangs and the `gradlew` launcher.
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.bash text eol=lf
+gradlew text eol=lf
+
+# ...but Windows batch launchers must KEEP CRLF. `android/gradlew.bat` is
+# committed CRLF; the blanket rule above would renormalise it to LF in the
+# object store and break the launcher on Windows — a supported target
+# (invariant #7's checksum matrix builds there). `-text` leaves the stored
+# bytes exactly as they are on every platform.
+*.bat -text
+*.cmd -text
+
+# Binary — never line-ending-convert, never diff as text.
+#
+# The game-asset formats matter here: the scripted pipeline commits cooked
+# meshes (`.mesh`, GDM1), Csound/SoX-generated WAVs, the raw R8 font atlas
+# and the earth landmask (`.gray`), all of which git would otherwise sniff
+# and mangle. Generator scripts stay text and diffable — the binaries they
+# produce do not (see CLAUDE.md, "Asset / content pipeline tooling").
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.tar.gz binary
+*.tgz binary
+*.gz binary
+*.wav binary
+*.ogg binary
+*.mp3 binary
+*.mp4 binary
+*.webm binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.mesh binary
+*.gray binary
+*.glb binary
+*.blend binary
+*.ktx2 binary
+*.dds binary
+*.skel binary
+*.rgba binary
+*.f32 binary
+*.wasm binary
+*.jar binary
+*.keystore binary
+*.apk binary
+*.aab binary
+
+# Lockfiles are review noise — collapse them in diffs. Reviewers who need
+# the detail still get it from an explicit `git diff Cargo.lock`.
+Cargo.lock -diff
+gradle/wrapper/gradle-wrapper.properties -diff
+
+# GitHub Linguist — this is a Rust project. Keep the language stats off the
+# design corpus (docs/ is the largest thing in the repo by line count) and
+# off the generated shader/asset chatter.
+docs/**       linguist-documentation
+*.md          linguist-documentation
+reviews/**    linguist-documentation
+tools/earth/*.geojson linguist-generated
