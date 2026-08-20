@@ -5518,3 +5518,42 @@ doctrine layer**, not heroes (the game has none). Open sub-forks: [Q31](open-que
 vocabulary, team rating ([Q29](open-questions.md) extension), `2N` net topology, team unit budget.
 Does **not** reopen [D58](decisions.md) (PvE-first) — this is the last PvP fast-follow surface. Docs:
 `docs/plans/team-mode-plan.md`, `docs/modes.md` §4, `docs/positioning/positioning.md`.
+
+## D132 — Pinned golden sim streams close the cross-arch blind spot; Dependabot minor/patch auto-merges
+
+**Status: built.** The determinism CI gains a **golden gate**, and on the strength of it minor +
+patch Dependabot PRs now auto-merge once every required check is green
+(`.github/workflows/dependabot-auto-merge.yml`).
+
+**The blind spot.** [`determinism.yml`](../.github/workflows/determinism.yml) diffs the per-tick
+checksum streams **across the arch matrix** — `x86_64-{linux,windows}`, `aarch64-{linux,darwin}`,
+plus the on-device arm64 run. That proves every target *agrees*; it says nothing about **what** they
+agree on. A change that moves sim behaviour **identically everywhere** — a dependency bump, a stray
+tuning edit, a reordered spawn — passes the whole matrix untouched. The in-crate guards did not
+close it either: `phase2_is_deterministic` and `stream_is_deterministic` compare a stream **to
+itself**, which catches nondeterminism, not behaviour change.
+
+**The gate.** `core::checksum::digest_stream` folds a whole stream into one endianness-stable,
+float-free FNV-1a value (length folded first, so a desync that truncates a run can never collide
+with a healthy shorter one). `sim-runner` and `net-sim-runner` pin the exact streams CI emits —
+`phase2` @300, `stress:200` @300, and the 2-peer net stream @300/delay-2 — to committed constants,
+**both the final tick and the whole-stream digest**.
+
+**Why both, and not just the final tick:** proven, not assumed. Perturbing one real constant
+(`combat::SUPPRESSION_DECAY`, 1/64 → 1/63) leaves the `phase2` **final checksum bit-identical** —
+the change washes out by tick 299 — while the digest catches it. A final-tick-only golden would have
+waved a genuine behaviour change straight through.
+
+**Why this unlocks auto-merge.** The objection to auto-merging dependency bumps into a lockstep
+engine is that a crate could shift the sim and desync live clients (invariants #1/#7). With the
+golden pinned, a bump that moves sim behaviour turns the workspace test job red, auto-merge never
+fires, and the PR waits for a human — the correct outcome. MAJOR bumps stay manual regardless, and
+[`dependabot.yml`](../.github/dependabot.yml) keeps wgpu/naga majors out of Dependabot's reach
+entirely. Do not enable the auto-merge workflow in a repo without the golden gate.
+
+**Living with it.** A deliberate sim change (a balance re-tune, a new checksum-folded system, a
+scenario edit) legitimately moves these constants; the failure message prints copy-pasteable
+replacements, and the rule is that the new value lands **in the same commit** as the change that
+moved it, so the diff shows cause and effect together. A golden moving in a commit that had no
+business touching sim behaviour is the bug this exists to surface — never update the constant to
+make it pass. Docs: `.github/workflows/dependabot-auto-merge.yml`, `core/src/checksum.rs`.
