@@ -69,5 +69,5 @@ gonedark-pal-android = { path = "../pal-android" }
 # out-of-match screen to a PNG offscreen so the egui layout can be eyeballed without a window. Mirrors
 # the `viz-runner` readback path (pollster-blocked device, png readback). Not shipped in the binary.
 [dev-dependencies]
-pollster = "0.4"
+pollster = "1.0"
 png = "0.17"
