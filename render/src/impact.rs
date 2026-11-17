@@ -293,7 +293,7 @@ impl ImpactRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[quad_layout, instance_layout],
+                buffers: &[Some(quad_layout), Some(instance_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {

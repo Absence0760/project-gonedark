@@ -17,7 +17,7 @@ gonedark-core = { path = "../core" }
 # quality-tuning policy in `tiers` reasons about (invariant #2: render may read a PAL signal; the
 # PAL stays a trait/data crate with no GPU/windowing deps). No concrete backend is referenced here.
 gonedark-pal = { path = "../pal" }
-wgpu = "29"
+wgpu = "30"
 bytemuck = { version = "1", features = ["derive"] }
 
 [dev-dependencies]

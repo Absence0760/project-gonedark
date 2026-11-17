@@ -525,7 +525,7 @@ impl TerrainRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[quad_layout, instance_layout],
+                buffers: &[Some(quad_layout), Some(instance_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -562,7 +562,7 @@ impl TerrainRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_ground"),
-                buffers: &[ground_vertex_layout],
+                buffers: &[Some(ground_vertex_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -611,7 +611,7 @@ impl TerrainRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_overlay"),
-                buffers: &[overlay_quad_layout, overlay_instance_layout],
+                buffers: &[Some(overlay_quad_layout), Some(overlay_instance_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {

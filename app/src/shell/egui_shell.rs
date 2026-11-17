@@ -391,8 +391,10 @@ impl EguiShell {
         {
             let device = surface.device();
             let queue = surface.queue();
-            for (id, delta) in &full_output.textures_delta.set {
-                self.renderer.update_texture(device, queue, *id, delta);
+            for (id, deltas) in &full_output.textures_delta.set {
+                for delta in deltas {
+                    self.renderer.update_texture(device, queue, *id, delta);
+                }
             }
         }
 

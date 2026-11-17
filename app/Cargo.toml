@@ -34,7 +34,7 @@ gonedark-pal = { path = "../pal" }
 # loadout model. The mission *registry* (`MissionId -> runnable mission`) lives in `engine`.
 gonedark-core = { path = "../core" }
 winit = "0.30"
-wgpu = "29"
+wgpu = "30"
 log = "0.4"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
@@ -47,9 +47,9 @@ gonedark-pal-desktop = { path = "../pal-desktop" }
 # android — its entry is `android_main`), so these sit under the not-android target alongside
 # pal-desktop. The shell holds no game logic; it drives the shared engine the same way the Android
 # Compose shell (D35) does (invariant #2).
-egui = "0.35"
-egui-wgpu = "0.35"
-egui-winit = "0.35"
+egui = "0.36"
+egui-wgpu = "0.36"
+egui-winit = "0.36"
 
 # The live 3D title backdrop the egui title screen composites over (`gonedark_render::title_backdrop`).
 # A direct host-side dep on `render` for out-of-match presentation — `app` is the platform shell, not

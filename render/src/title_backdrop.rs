@@ -508,7 +508,7 @@ impl TitleBackdrop {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_grid"),
-                buffers: &[grid_layout],
+                buffers: &[Some(grid_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -546,7 +546,7 @@ impl TitleBackdrop {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_box"),
-                buffers: &[cube_layout, box_inst_layout],
+                buffers: &[Some(cube_layout), Some(box_inst_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -594,7 +594,7 @@ impl TitleBackdrop {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_ember"),
-                buffers: &[ember_corner_layout, ember_inst_layout],
+                buffers: &[Some(ember_corner_layout), Some(ember_inst_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {

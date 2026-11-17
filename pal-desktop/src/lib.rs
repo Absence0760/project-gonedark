@@ -94,6 +94,7 @@ impl DesktopRenderSurface {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
+            apply_limit_buckets: false,
         }))
         .expect("request a wgpu adapter compatible with the surface");
 
@@ -143,6 +144,8 @@ impl DesktopRenderSurface {
             } else {
                 vec![shell_format]
             },
+            // `Auto` keeps wgpu's pre-30 behaviour (sRGB for these formats).
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
 
@@ -257,7 +260,7 @@ impl DesktopRenderSurface {
 
     /// Present a previously [`acquire`](Self::acquire)d frame to the screen.
     pub fn present(&self, frame: wgpu::SurfaceTexture) {
-        frame.present();
+        self.queue.present(frame);
     }
 }
 
