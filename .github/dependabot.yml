@@ -3,8 +3,8 @@
 #
 # Adapted from the sibling project-running repo for this Rust workspace. Three ecosystems:
 #   - cargo: the engine's Cargo dep tree (one root lockfile covers every workspace member).
-#   - github-actions: keeps the pinned action refs current (gitleaks pins by SHA — without
-#     Dependabot that pinning rots silently).
+#   - github-actions: keeps the pinned action refs current (secret-scan and others pin by
+#     SHA — without Dependabot that pinning rots silently).
 #   - terraform: the infra/ stack (aws + carlpett/sops providers).
 # Minor/patch bumps are grouped into a single PR per ecosystem; MAJOR bumps stay ungrouped
 # so each gets individual review (a wgpu/winit/AGP major can break the render or Android
