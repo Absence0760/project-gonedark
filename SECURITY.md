@@ -31,7 +31,7 @@ acknowledgement within a week, not an SLA.
 
 | Control | Where |
 |---|---|
-| Secret scanning (push, PR, weekly full-history sweep) | `.github/workflows/gitleaks.yml` + `.gitleaks.toml` |
+| Secret scanning (push, PR, weekly full-history sweep; TruffleHog, fails on a verified or unverifiable credential) | `.github/workflows/secret-scan.yml` (`.gitleaks.toml` is for a local `gitleaks` run) |
 | Rust dependency advisories + license/source bans | `.github/workflows/audit.yml` + `deny.toml` |
 | Static analysis (CodeQL: GitHub Actions + Python) | `.github/workflows/security.yml` |
 | Supply-chain posture score (weekly, advisory) | `.github/workflows/scorecard.yml` |
