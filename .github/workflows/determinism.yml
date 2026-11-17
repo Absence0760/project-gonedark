@@ -16,7 +16,7 @@
 #
 # Decision (step6/7) — why NOT to add device jobs here, and the ADD-ONLY posture:
 #   * The two arm64 entries already present (aarch64-unknown-linux-gnu on
-#     ubuntu-24.04-arm, aarch64-apple-darwin on macos-14) cover the Android and iOS
+#     ubuntu-24.04-arm, aarch64-apple-darwin on macos-15) cover the Android and iOS
 #     SHIP ISAs *at the sim level*: both ship targets are arm64, and the float-free
 #     fixed-point sim is ABI/compiler-stable across them, so a per-tick desync on the
 #     Android-family or Apple-Silicon ISA already fails this matrix without a device.
@@ -62,7 +62,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-          - os: macos-14 # Apple Silicon — the aarch64 side of the cross-arch check
+          - os: macos-15 # Apple Silicon (macos-14 images were retired) — the aarch64 side of the cross-arch check
             target: aarch64-apple-darwin
           # Native arm64 LINUX (GitHub's free ubuntu-24.04-arm runner — no qemu, no
           # cross-linker; aarch64-unknown-linux-gnu is the host target so rustup honors
