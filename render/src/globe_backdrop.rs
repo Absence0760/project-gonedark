@@ -618,7 +618,7 @@ impl GlobeBackdrop {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_globe"),
-                buffers: &[sphere_layout],
+                buffers: &[Some(sphere_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -657,7 +657,7 @@ impl GlobeBackdrop {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_pin"),
-                buffers: &[pin_layout],
+                buffers: &[Some(pin_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {

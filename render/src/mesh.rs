@@ -686,7 +686,7 @@ impl MeshPipeline {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[MeshGpu::vertex_layout(), instance_layout],
+                buffers: &[Some(MeshGpu::vertex_layout()), Some(instance_layout)],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {

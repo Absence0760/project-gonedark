@@ -23,6 +23,7 @@ fn headless() -> (wgpu::Device, wgpu::Queue) {
         power_preference: wgpu::PowerPreference::HighPerformance,
         force_fallback_adapter: false,
         compatible_surface: None,
+        apply_limit_buckets: false,
     }))
     .expect("request a headless wgpu adapter");
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -83,7 +84,13 @@ fn shoot_impl(
     // egui-wgpu samples that atlas for every primitive (solid fills use its white texel).
     let mut deltas = Vec::new();
     let mut full = ctx.run_ui(raw.clone(), |ui| build(ui));
-    deltas.append(&mut full.textures_delta.set);
+    // egui 0.36 keys `set` by texture id, each with its ordered deltas; flatten in emit order.
+    deltas.extend(
+        full.textures_delta
+            .set
+            .drain()
+            .flat_map(|(id, ds)| ds.into_iter().map(move |d| (id, d))),
+    );
     // Advance the clock a full second on the settled pass so egui's animations (Area fade-in,
     // style eases) complete — back-to-back passes share ~0ms of wall time and would render the
     // title screen mid-fade.
@@ -92,7 +99,13 @@ fn shoot_impl(
         ..raw
     };
     let mut full = ctx.run_ui(raw, |ui| build(ui));
-    deltas.append(&mut full.textures_delta.set);
+    // egui 0.36 keys `set` by texture id, each with its ordered deltas; flatten in emit order.
+    deltas.extend(
+        full.textures_delta
+            .set
+            .drain()
+            .flat_map(|(id, ds)| ds.into_iter().map(move |d| (id, d))),
+    );
 
     let jobs = ctx.tessellate(full.shapes, full.pixels_per_point);
     let mut renderer =
@@ -221,7 +234,9 @@ fn read_pixels(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Textu
         .expect("poll the device for the readback map");
     rx.recv().expect("map_async result").expect("buffer map ok");
 
-    let data = slice.get_mapped_range();
+    let data = slice
+        .get_mapped_range()
+        .expect("map the readback buffer range");
     let mut out = Vec::with_capacity((unpadded * H) as usize);
     for row in 0..H {
         let start = (row * padded) as usize;

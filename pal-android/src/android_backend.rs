@@ -1270,6 +1270,7 @@ impl AndroidRhi {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .map_err(|e| format!("request_adapter: {e}"))?;
         let ainfo = adapter.get_info();
@@ -1326,6 +1327,7 @@ impl AndroidRhi {
             alpha_mode: caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         // `surface.configure` reports failure via wgpu's uncaptured-error channel (a fatal
         // panic by default), not a Result — wrap it in a validation scope so a bad config is a
@@ -1404,7 +1406,7 @@ impl AndroidRhi {
 
     /// Present a previously acquired frame.
     pub fn present(&self, frame: wgpu::SurfaceTexture) {
-        frame.present();
+        self.queue.present(frame);
     }
 }
 

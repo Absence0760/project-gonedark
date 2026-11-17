@@ -59,6 +59,7 @@ fn init_gpu() -> Option<Gpu> {
         power_preference: wgpu::PowerPreference::HighPerformance,
         force_fallback_adapter: false,
         compatible_surface: None, // headless — no window/surface
+        apply_limit_buckets: false,
     }))
     .ok()?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -152,7 +153,9 @@ fn read_pixels_sized(
         .expect("poll the device for the readback map");
     rx.recv().expect("map_async result").expect("buffer map ok");
 
-    let data = slice.get_mapped_range();
+    let data = slice
+        .get_mapped_range()
+        .expect("map the readback buffer range");
     let mut out = Vec::with_capacity((unpadded * h) as usize);
     for row in 0..h {
         let start = (row * padded) as usize;
